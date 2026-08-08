@@ -197,6 +197,32 @@ export interface components {
             /** Url */
             url: string;
         };
+        /**
+         * RunEventOut
+         * @description The JSON payload of one SSE message on /runs/{id}/events.
+         *
+         *     Declared on the route's response documentation so it lands in the OpenAPI
+         *     components and the web app consumes the generated type (spec 006). The
+         *     stream itself is text/event-stream; each message's data field is one of
+         *     these, flattened per event type: log_line carries line, progress carries
+         *     step/total/message, state_change carries state/exit_code.
+         */
+        RunEventOut: {
+            /** Exit Code */
+            exit_code?: number | null;
+            /** Line */
+            line?: string | null;
+            /** Message */
+            message?: string | null;
+            /** State */
+            state?: ("queued" | "running" | "succeeded" | "failed" | "cancelled") | null;
+            /** Step */
+            step?: number | null;
+            /** Total */
+            total?: number | null;
+            /** Type */
+            type: string;
+        };
         /** RunOut */
         RunOut: {
             /** Created At */
@@ -425,13 +451,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Successful Response */
+            /** @description SSE stream; each message's data field is a RunEventOut JSON payload. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["RunEventOut"];
                 };
             };
             /** @description Validation Error */

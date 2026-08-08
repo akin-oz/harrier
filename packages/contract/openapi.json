@@ -218,6 +218,93 @@
         "title": "JobOut",
         "type": "object"
       },
+      "RunEventOut": {
+        "description": "The JSON payload of one SSE message on /runs/{id}/events.\n\nDeclared on the route's response documentation so it lands in the OpenAPI\ncomponents and the web app consumes the generated type (spec 006). The\nstream itself is text/event-stream; each message's data field is one of\nthese, flattened per event type: log_line carries line, progress carries\nstep/total/message, state_change carries state/exit_code.",
+        "properties": {
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
+          "line": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "queued",
+                  "running",
+                  "succeeded",
+                  "failed",
+                  "cancelled"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          },
+          "step": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "RunEventOut",
+        "type": "object"
+      },
       "RunOut": {
         "properties": {
           "created_at": {
@@ -598,10 +685,12 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/RunEventOut"
+                }
               }
             },
-            "description": "Successful Response"
+            "description": "SSE stream; each message's data field is a RunEventOut JSON payload."
           },
           "422": {
             "content": {

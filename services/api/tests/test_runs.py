@@ -167,3 +167,11 @@ def test_endpoints_start_poll_cancel(tmp_path: Path, monkeypatch: pytest.MonkeyP
             time.sleep(0.05)
         assert state == "cancelled"
         assert client.get("/runs/nope").status_code == 404
+
+
+def test_run_event_payload_is_in_the_contract() -> None:
+    """Spec 006 review follow-up: SSE payload shape lives in the OpenAPI schema."""
+    schema = create_app().openapi()
+    assert "RunEventOut" in schema["components"]["schemas"]
+    properties = schema["components"]["schemas"]["RunEventOut"]["properties"]
+    assert set(properties) >= {"type", "line", "step", "total", "message", "state", "exit_code"}

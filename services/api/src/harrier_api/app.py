@@ -123,6 +123,25 @@ class StartRunIn(BaseModel):
     kind: Literal["demo"]
 
 
+class RunEventOut(BaseModel):
+    """The JSON payload of one SSE message on /runs/{id}/events.
+
+    Declared on the route's response documentation so it lands in the OpenAPI
+    components and the web app consumes the generated type (spec 006). The
+    stream itself is text/event-stream; each message's data field is one of
+    these, flattened per event type: log_line carries line, progress carries
+    step/total/message, state_change carries state/exit_code.
+    """
+
+    type: str
+    line: str | None = None
+    step: int | None = None
+    total: int | None = None
+    message: str | None = None
+    state: RunState | None = None
+    exit_code: int | None = None
+
+
 def _run_out(run: Run) -> RunOut:
     return RunOut(
         id=run.id,
@@ -170,7 +189,16 @@ async def cancel_run(run_id: str, manager: Manager) -> RunOut:
     return _run_out(run)
 
 
-@runs_router.get("/runs/{run_id}/events", operation_id="streamRunEvents")
+@runs_router.get(
+    "/runs/{run_id}/events",
+    operation_id="streamRunEvents",
+    responses={
+        200: {
+            "model": RunEventOut,
+            "description": "SSE stream; each message's data field is a RunEventOut JSON payload.",
+        }
+    },
+)
 async def stream_run_events(run_id: str, request: Request, manager: Manager) -> StreamingResponse:
     if manager.get(run_id) is None:
         raise HTTPException(status_code=404, detail="run not found")

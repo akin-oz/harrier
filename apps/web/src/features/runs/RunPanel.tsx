@@ -1,3 +1,4 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { components } from "@harrier/contract";
@@ -5,21 +6,13 @@ import type { components } from "@harrier/contract";
 import { api } from "../../shared/api/client";
 
 type RunOut = components["schemas"]["RunOut"];
-
-// SSE payload shape: outside the OpenAPI document, pinned by spec 006 and
-// mirrored by services/api tests (test_format_sse_shape).
-interface RunEventPayload {
-  type: string;
-  line?: string;
-  step?: number;
-  total?: number;
-  message?: string;
-  state?: string;
-}
+// SSE message payload: generated from the contract (spec 006 review follow-up);
+// the stream route declares RunEventOut on its response documentation.
+type RunEventPayload = components["schemas"]["RunEventOut"];
 
 export type EventSourceFactory = (url: string) => EventSource;
 
-const TERMINAL_STATES = new Set(["succeeded", "failed", "cancelled"]);
+const TERMINAL_STATES = new Set<RunOut["state"]>(["succeeded", "failed", "cancelled"]);
 
 function describeEvent(payload: RunEventPayload): string {
   if (payload.type === "log_line") {
@@ -34,14 +27,24 @@ function describeEvent(payload: RunEventPayload): string {
   return JSON.stringify(payload);
 }
 
+async function fetchRun(runId: string): Promise<RunOut> {
+  const { data, error } = await api.GET("/runs/{run_id}", {
+    params: { path: { run_id: runId } },
+  });
+  if (error !== undefined) {
+    throw new Error(`getRun failed: ${JSON.stringify(error)}`);
+  }
+  return data;
+}
+
 export function RunPanel({
   createEventSource = (url: string) => new EventSource(url),
 }: {
   createEventSource?: EventSourceFactory;
 }) {
-  const [run, setRun] = useState<RunOut | null>(null);
+  const queryClient = useQueryClient();
+  const [runId, setRunId] = useState<string | null>(null);
   const [lines, setLines] = useState<readonly string[]>([]);
-  const [error, setError] = useState<string | null>(null);
   const sourceRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
@@ -50,53 +53,73 @@ export function RunPanel({
     };
   }, []);
 
+  // TanStack Query owns the run resource (ADR-001); SSE feeds the cache, and
+  // a broken stream invalidates it so server truth wins over a stuck state.
+  const runQuery = useQuery({
+    queryKey: ["run", runId],
+    queryFn: () => fetchRun(runId ?? ""),
+    enabled: runId !== null,
+  });
+  const run = runQuery.data ?? null;
+
   const subscribe = useCallback(
-    (runId: string) => {
+    (id: string) => {
       sourceRef.current?.close();
-      const source = createEventSource(`/api/runs/${runId}/events`);
+      const source = createEventSource(`/api/runs/${id}/events`);
       source.onmessage = (message: MessageEvent<string>) => {
         const payload = JSON.parse(message.data) as RunEventPayload;
         setLines((existing) => [...existing, describeEvent(payload)]);
-        if (payload.type === "state_change") {
-          const state = payload.state ?? "";
-          setRun((existing) =>
-            existing ? { ...existing, state: state as RunOut["state"] } : existing,
+        if (payload.type === "state_change" && payload.state != null) {
+          const state = payload.state;
+          queryClient.setQueryData<RunOut>(["run", id], (existing) =>
+            existing ? { ...existing, state, exit_code: payload.exit_code ?? null } : existing,
           );
           if (TERMINAL_STATES.has(state)) {
             source.close();
           }
         }
       };
+      source.onerror = () => {
+        void queryClient.invalidateQueries({ queryKey: ["run", id] });
+      };
       sourceRef.current = source;
     },
-    [createEventSource],
+    [createEventSource, queryClient],
   );
 
-  const start = useCallback(async () => {
-    setError(null);
-    setLines([]);
-    const { data, error: apiError } = await api.POST("/runs", { body: { kind: "demo" } });
-    if (apiError !== undefined) {
-      setError(`start failed: ${JSON.stringify(apiError)}`);
-      return;
-    }
-    setRun(data);
-    subscribe(data.id);
-  }, [subscribe]);
+  const startMutation = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await api.POST("/runs", { body: { kind: "demo" } });
+      if (error !== undefined) {
+        throw new Error(`start failed: ${JSON.stringify(error)}`);
+      }
+      return data;
+    },
+    onSuccess: (data) => {
+      setLines([]);
+      setRunId(data.id);
+      queryClient.setQueryData<RunOut>(["run", data.id], data);
+      subscribe(data.id);
+    },
+  });
 
-  const cancel = useCallback(async () => {
-    if (run === null) {
-      return;
-    }
-    const { error: apiError } = await api.POST("/runs/{run_id}/cancel", {
-      params: { path: { run_id: run.id } },
-    });
-    if (apiError !== undefined) {
-      setError(`cancel failed: ${JSON.stringify(apiError)}`);
-    }
-  }, [run]);
+  const cancelMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const { data, error } = await api.POST("/runs/{run_id}/cancel", {
+        params: { path: { run_id: id } },
+      });
+      if (error !== undefined) {
+        throw new Error(`cancel failed: ${JSON.stringify(error)}`);
+      }
+      return data;
+    },
+    onSuccess: (data) => {
+      queryClient.setQueryData<RunOut>(["run", data.id], data);
+    },
+  });
 
   const active = run !== null && !TERMINAL_STATES.has(run.state);
+  const mutationError = startMutation.error ?? cancelMutation.error;
 
   return (
     <section aria-label="runs">
@@ -105,18 +128,20 @@ export function RunPanel({
         <button
           type="button"
           onClick={() => {
-            void start();
+            startMutation.mutate();
           }}
-          disabled={active}
+          disabled={active || startMutation.isPending}
         >
           Start demo run
         </button>{" "}
         <button
           type="button"
           onClick={() => {
-            void cancel();
+            if (run !== null) {
+              cancelMutation.mutate(run.id);
+            }
           }}
-          disabled={!active}
+          disabled={!active || cancelMutation.isPending}
         >
           Cancel
         </button>{" "}
@@ -126,7 +151,7 @@ export function RunPanel({
           </span>
         )}
       </p>
-      {error !== null && <p role="alert">{error}</p>}
+      {mutationError !== null && <p role="alert">{mutationError.message}</p>}
       {lines.length > 0 && <pre aria-label="run log">{lines.join("\n")}</pre>}
     </section>
   );
