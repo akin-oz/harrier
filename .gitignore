@@ -32,3 +32,6 @@ dist/
 
 # Generated TypeScript build state
 *.tsbuildinfo
+
+# Real hold list: reason column is personal operational data (spec 007)
+/config/companies-hold.csv
