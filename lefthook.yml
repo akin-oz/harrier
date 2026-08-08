@@ -1,0 +1,27 @@
+# Pre-commit layer: fast, staged-files-only. Heavier gates run in `just gate`
+# (turn-end) and `just check` (CI). See docs/quality-ci-plan.md.
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: gitleaks
+      run: gitleaks protect --staged --redact -v
+    - name: ruff
+      glob: "*.py"
+      run: uv run --project services/api ruff check --force-exclude {staged_files}
+    - name: ruff-format
+      glob: "*.py"
+      run: uv run --project services/api ruff format --check --force-exclude {staged_files}
+    - name: eslint
+      root: "apps/web/"
+      glob: "*.{ts,tsx}"
+      run: pnpm --filter @harrier/web exec eslint {staged_files}
+    - name: prettier
+      root: "apps/web/"
+      glob: "*.{ts,tsx,css,json}"
+      run: pnpm --filter @harrier/web exec prettier --check {staged_files}
+
+commit-msg:
+  jobs:
+    - name: spec-trailer
+      run: ./scripts/check-spec-trailer.sh {1}

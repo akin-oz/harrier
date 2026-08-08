@@ -1,0 +1,45 @@
+[project]
+name = "harrier-api"
+version = "0.1.0"
+description = "Harrier domain, API service, and CLI"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.9",
+    "pyright>=1.1.390",
+    "import-linter>=2.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/harrier", "src/harrier_api", "src/harrier_cli"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.pyright]
+include = ["src", "tests"]
+typeCheckingMode = "strict"
+pythonVersion = "3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.importlinter]
+root_packages = ["harrier", "harrier_api", "harrier_cli"]
+
+[[tool.importlinter.contracts]]
+name = "domain is API-free"
+type = "forbidden"
+source_modules = ["harrier"]
+forbidden_modules = ["harrier_api", "harrier_cli"]

@@ -1,0 +1,12 @@
+{
+  "name": "@harrier/contract",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Generated API contract: openapi.json and TypeScript types. Never hand-edited; regenerate with 'just contract'. Populated by spec 005.",
+  "types": "./src/schema.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/schema.d.ts"
+    }
+  }
+}
