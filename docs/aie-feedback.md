@@ -52,3 +52,10 @@ issues for the package. Source references are to the compiler checkout at
 - Local rules/agents/commands composing alongside the pack (with collision errors
   instead of silent override) worked first try; `aie sync`, `check`, and `explain`
   were green on first run over seven local rules, four agents, one command.
+
+8. **No floating `v0` major tag on the GitHub Action.** The compiler's spec 012
+   says "Version the action tag in lockstep with the package major", and this
+   repo's brief assumed `akin-oz/ai-engineering@v0` exists. Only exact tags
+   (`v0.1.0`, `v0.1.1`, `v0.2.0`) exist, so `@v0` fails CI resolution with
+   "unable to find version v0". Harrier pins `@v0.2.0`. Suggested fix: publish
+   and move a `v0` tag on each release, as actions conventionally do.

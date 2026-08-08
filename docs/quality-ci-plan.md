@@ -17,7 +17,7 @@ drift (ADR-007).
 | TS unit tests | vitest | turn-end + `just check` | yes | yes |
 | Import direction | import-linter (`harrier` never imports `harrier_api`; sources never import screening/tracker) | `just check` | yes | yes |
 | Contract codegen drift | regenerate `packages/contract`, `git diff --exit-code` | `just contract` | yes | yes |
-| Governance drift | `aie check` via `akin-oz/ai-engineering@v0` | `aie check` | yes | yes |
+| Governance drift | `aie check` via `akin-oz/ai-engineering@v0.2.0` (no floating v0 tag exists) | `aie check` | yes | yes |
 | Spec trailer gate | every commit's `Spec: NNN` resolves to a spec file with `approved: yes` | commit guard (shape only) + lefthook commit-msg | yes (authoritative) | merge-protected |
 | Secret scan | gitleaks with project rules | pre-commit (staged) | yes (full diff) | yes (full history, scheduled weekly) |
 
