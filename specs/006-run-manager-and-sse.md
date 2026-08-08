@@ -1,7 +1,7 @@
 ---
 spec: 006
 title: Run manager, SSE channel, live run streaming
-status: in-progress
+status: shipped
 approved: yes
 milestone: M1
 depends: [005]
