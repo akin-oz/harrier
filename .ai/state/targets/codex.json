@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "adapter": "codex",
+  "generator": "@akinlabs/ai-engineering",
+  "paths": [
+    "AGENTS.md"
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "adapter": "workspace",
+  "generator": "@akinlabs/ai-engineering",
+  "paths": [
+    ".ai/generated/agents/implementer.md",
+    ".ai/generated/agents/spec-author.md",
+    ".ai/generated/commands/spec.md",
+    ".ai/generated/rules/change-boundary.md",
+    ".ai/generated/rules/spec-first.md",
+    ".ai/generated/templates/spec.md"
+  ]
+}

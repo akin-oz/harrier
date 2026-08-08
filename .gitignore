@@ -4,16 +4,18 @@
 !.env.example
 secrets/
 
-# All personal data lives in the local database and local files (ADR-008)
-data/
-tracker/
-runtime/
-reports/
-state/
-incoming/
-logs/
-interview-prep/
-backups/
+# All personal data lives in the local database and local files (ADR-008).
+# Anchored to the repo root: unanchored patterns would also ignore nested dirs
+# like .ai/state/ (which bit CI once) or a future apps/web/src/state.
+/data/
+/tracker/
+/runtime/
+/reports/
+/state/
+/incoming/
+/logs/
+/interview-prep/
+/backups/
 
 # Toolchains
 node_modules/

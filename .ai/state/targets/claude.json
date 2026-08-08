@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "adapter": "claude",
+  "generator": "@akinlabs/ai-engineering",
+  "paths": [
+    ".claude/agents/contract-guardian.md",
+    ".claude/agents/data-integrity-reviewer.md",
+    ".claude/agents/fsd-reviewer.md",
+    ".claude/agents/implementer.md",
+    ".claude/agents/privacy-reviewer.md",
+    ".claude/agents/spec-author.md",
+    ".claude/commands/spec-review.md",
+    ".claude/commands/spec.md",
+    "CLAUDE.md"
+  ]
+}
