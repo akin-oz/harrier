@@ -5,6 +5,9 @@ description = "Harrier domain, API service, and CLI"
 requires-python = ">=3.12"
 dependencies = []
 
+[project.scripts]
+harrier = "harrier_cli.main:main"
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",
