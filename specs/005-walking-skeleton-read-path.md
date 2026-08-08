@@ -1,7 +1,7 @@
 ---
 spec: 005
 title: Walking skeleton: tracker read path end to end
-status: in-progress
+status: shipped
 approved: yes
 milestone: M1
 depends: [004]
