@@ -1,0 +1,363 @@
+{
+  "components": {
+    "schemas": {
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthOut": {
+        "properties": {
+          "database": {
+            "title": "Database",
+            "type": "string"
+          },
+          "demo": {
+            "title": "Demo",
+            "type": "boolean"
+          },
+          "job_count": {
+            "title": "Job Count",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "demo",
+          "database",
+          "job_count"
+        ],
+        "title": "HealthOut",
+        "type": "object"
+      },
+      "JobOut": {
+        "properties": {
+          "added_at": {
+            "title": "Added At",
+            "type": "string"
+          },
+          "applied_date": {
+            "title": "Applied Date",
+            "type": "string"
+          },
+          "archetype": {
+            "title": "Archetype",
+            "type": "string"
+          },
+          "best_contact_linkedin": {
+            "title": "Best Contact Linkedin",
+            "type": "string"
+          },
+          "best_contact_name": {
+            "title": "Best Contact Name",
+            "type": "string"
+          },
+          "company": {
+            "title": "Company",
+            "type": "string"
+          },
+          "contacts_found": {
+            "title": "Contacts Found",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "external_key": {
+            "title": "External Key",
+            "type": "string"
+          },
+          "fit_score": {
+            "title": "Fit Score",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "last_contact": {
+            "title": "Last Contact",
+            "type": "string"
+          },
+          "last_outreach_at": {
+            "title": "Last Outreach At",
+            "type": "string"
+          },
+          "location": {
+            "title": "Location",
+            "type": "string"
+          },
+          "manual_added": {
+            "title": "Manual Added",
+            "type": "string"
+          },
+          "manual_reject": {
+            "title": "Manual Reject",
+            "type": "string"
+          },
+          "next_action": {
+            "title": "Next Action",
+            "type": "string"
+          },
+          "next_outreach_action": {
+            "title": "Next Outreach Action",
+            "type": "string"
+          },
+          "notes": {
+            "title": "Notes",
+            "type": "string"
+          },
+          "outreach_priority": {
+            "title": "Outreach Priority",
+            "type": "string"
+          },
+          "outreach_status": {
+            "title": "Outreach Status",
+            "type": "string"
+          },
+          "rejection_reason": {
+            "title": "Rejection Reason",
+            "type": "string"
+          },
+          "remote_filter": {
+            "title": "Remote Filter",
+            "type": "string"
+          },
+          "score": {
+            "title": "Score",
+            "type": "string"
+          },
+          "signals": {
+            "title": "Signals",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "source_label": {
+            "title": "Source Label",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "prospect",
+              "shortlisted",
+              "tailored_cv_requested",
+              "applied",
+              "interviewing",
+              "rejected"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "company",
+          "title",
+          "location",
+          "url",
+          "source",
+          "added_at",
+          "fit_score",
+          "status",
+          "applied_date",
+          "last_contact",
+          "next_action",
+          "outreach_status",
+          "last_outreach_at",
+          "next_outreach_action",
+          "best_contact_name",
+          "best_contact_linkedin",
+          "contacts_found",
+          "outreach_priority",
+          "rejection_reason",
+          "notes",
+          "score",
+          "archetype",
+          "source_label",
+          "external_key",
+          "signals",
+          "remote_filter",
+          "manual_reject",
+          "manual_added",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "JobOut",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Local-first job search automation API.",
+    "title": "harrier",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health"
+      }
+    },
+    "/jobs": {
+      "get": {
+        "operationId": "listJobs",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "prospect",
+                    "shortlisted",
+                    "tailored_cv_requested",
+                    "applied",
+                    "interviewing",
+                    "rejected"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/JobOut"
+                  },
+                  "title": "Response Listjobs",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Jobs"
+      }
+    }
+  }
+}
