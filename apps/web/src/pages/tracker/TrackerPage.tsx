@@ -3,6 +3,7 @@ import { useState } from "react";
 
 import { JOB_STATUSES, JobTable } from "../../entities/job";
 import type { Job, JobStatus } from "../../entities/job";
+import { RunPanel } from "../../features/runs/RunPanel";
 import { api } from "../../shared/api/client";
 
 async function fetchJobs(status: JobStatus | ""): Promise<readonly Job[]> {
@@ -24,6 +25,7 @@ export function TrackerPage() {
 
   return (
     <section>
+      <RunPanel />
       <h2>Tracker</h2>
       <label>
         Status{" "}

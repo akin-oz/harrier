@@ -71,6 +71,37 @@ def _cmd_profile_list(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_demo_run(args: argparse.Namespace) -> int:
+    """Exercise the run machinery (spec 006): progress protocol plus log lines."""
+    import json
+    import signal
+    import time
+    from types import FrameType
+
+    interrupted = False
+
+    def handle_term(_signum: int, _frame: FrameType | None) -> None:
+        nonlocal interrupted
+        interrupted = True
+
+    signal.signal(signal.SIGTERM, handle_term)
+    steps = int(args.steps)
+    delay = float(args.delay)
+    for step in range(1, steps + 1):
+        if interrupted:
+            print("demo run interrupted", flush=True)
+            return 130
+        payload = {"event": "progress", "step": step, "total": steps, "message": f"step {step}"}
+        print(f"::harrier::{json.dumps(payload)}", flush=True)
+        print(f"working on step {step} of {steps}", flush=True)
+        time.sleep(delay)
+    if interrupted:
+        print("demo run interrupted", flush=True)
+        return 130
+    print("demo run complete", flush=True)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="harrier", description="Harrier CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -102,6 +133,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     profile_list = profile_sub.add_parser("list", help="list stored documents")
     profile_list.set_defaults(func=_cmd_profile_list)
+
+    demo_run = sub.add_parser("demo-run", help="exercise the run machinery (spec 006)")
+    demo_run.add_argument("--steps", default="8", help="number of progress steps")
+    demo_run.add_argument("--delay", default="0.4", help="seconds between steps")
+    demo_run.set_defaults(func=_cmd_demo_run)
 
     return parser
 
