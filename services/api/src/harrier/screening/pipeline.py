@@ -194,6 +194,13 @@ def screen_jobs(
             continue
 
         scored_job = enrich_job_description_for_scoring(job)
+        # Cache before the cutoff: an enrichment fetch must never be repeated
+        # for a job that then scores low (PR #4 review finding).
+        if cache_descriptions:
+            scored_url = scored_job["url"].strip()
+            scored_desc = scored_job["description"].strip()
+            if scored_url and scored_desc:
+                save_description_cache(scored_url, scored_desc)
         score, reasons = score_job(scored_job, candidate_cfg)
         if score < SCORE_CUTOFF:
             reject_reason = "low_score"
@@ -207,11 +214,6 @@ def screen_jobs(
 
         result.new_tracker_rows.append(build_tracker_row(scored_job, score, reasons))
         result.latest_items.append(_build_latest_item(scored_job, score, reasons, remote_reason))
-        if cache_descriptions:
-            scored_url = scored_job["url"].strip()
-            scored_desc = scored_job["description"].strip()
-            if scored_url and scored_desc:
-                save_description_cache(scored_url, scored_desc)
         if url_norm:
             indexes.urls.add(url_norm)
         if company_norm and title_norm:

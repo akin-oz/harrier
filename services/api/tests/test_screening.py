@@ -343,3 +343,92 @@ def test_request_text_raises_runtime_error_after_retries() -> None:
         pytest.raises(RuntimeError, match="HTTP request failed after 2 attempts"),
     ):
         screening_http.request_text("https://example.com/jobs.json", retries=2)
+
+
+def test_enrich_url_allowed_blocks_spoofed_hosts() -> None:
+    from harrier.screening.descriptions import enrich_url_allowed
+
+    assert enrich_url_allowed("https://job-boards.greenhouse.io/acme/jobs/1") is True
+    assert enrich_url_allowed("https://jobs.lever.co/acme/1") is True
+    assert enrich_url_allowed("https://greenhouse.io/acme") is True
+    # Userinfo trick: the hint is in userinfo, the host is an internal IP.
+    assert enrich_url_allowed("https://greenhouse.io@169.254.169.254/") is False
+    # Suffix spoof: approved name embedded in an attacker domain.
+    assert enrich_url_allowed("https://greenhouse.io.attacker.example/") is False
+    assert enrich_url_allowed("ftp://greenhouse.io/x") is False
+    assert enrich_url_allowed("https://user:pass@greenhouse.io/") is False
+    assert enrich_url_allowed("") is False
+
+
+def test_should_enrich_rejects_spoofed_urls() -> None:
+    from harrier.screening.descriptions import should_enrich_description_for_scoring
+
+    assert (
+        should_enrich_description_for_scoring(
+            build_job(url="https://greenhouse.io@169.254.169.254/", description="")
+        )
+        is False
+    )
+
+
+def test_redirect_to_disallowed_host_is_blocked() -> None:
+    from email.message import Message
+    from urllib.request import Request
+
+    from harrier.screening.descriptions import enrich_url_allowed
+    from harrier.screening.http import DisallowedUrlError, ValidatingRedirectHandler
+
+    handler = ValidatingRedirectHandler(enrich_url_allowed)
+    request = Request("https://greenhouse.io/jobs/1")
+    with pytest.raises(DisallowedUrlError, match="redirect to disallowed URL"):
+        handler.redirect_request(
+            request, MagicMock(), 302, "Found", Message(), "http://169.254.169.254/latest"
+        )
+
+
+def test_request_text_refuses_disallowed_initial_url() -> None:
+    from harrier.screening.descriptions import enrich_url_allowed
+    from harrier.screening.http import DisallowedUrlError
+
+    with pytest.raises(DisallowedUrlError, match="request to disallowed URL"):
+        screening_http.request_text(
+            "https://greenhouse.io.attacker.example/", url_allowed=enrich_url_allowed
+        )
+
+
+def test_low_score_enrichment_is_cached_and_not_refetched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path))
+    # A thin job whose enriched description still scores below the cutoff.
+    thin_job = build_job(
+        title="Senior Frontend Engineer",
+        location="Remote, Europe",
+        url="https://job-boards.greenhouse.io/acme/jobs/9",
+        description="",
+    )
+    html = "<html><body><p>Remote Europe role. Nothing else relevant here.</p></body></html>"
+    cfg = candidate_cfg()
+    cfg["scoring"]["base_score"] = 0
+    cfg["scoring"]["exact_title_bonus"] = 0
+    cfg["scoring"]["include_keyword_bonus"] = 0
+    cfg["scoring"]["remote_bonus"] = 0
+    cfg["scoring"]["preferred_region_bonus"] = 0
+    cfg["scoring"]["skill_signals"] = {}
+    cfg["scoring"]["preferred_signal_weights"] = {}
+
+    with patch.object(screening_http, "request_text", return_value=html) as fetch:
+        first = _screen([thin_job], cfg, cache_descriptions=True)
+        assert first.rejected_counts.get("low_score") == 1
+        assert fetch.call_count == 1
+
+        # Same URL screened again (fresh seen-state): served from the cache.
+        again = build_job(
+            title="Senior Frontend Engineer",
+            location="Remote, Europe",
+            url="https://job-boards.greenhouse.io/acme/jobs/9",
+            description="",
+        )
+        second = _screen([again], cfg, cache_descriptions=True)
+        assert second.rejected_counts.get("low_score") == 1
+        assert fetch.call_count == 1

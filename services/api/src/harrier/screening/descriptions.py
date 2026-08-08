@@ -20,12 +20,37 @@ from harrier.screening.normalized import NormalizedJob
 logger = logging.getLogger(__name__)
 
 MIN_DESCRIPTION_LENGTH_FOR_SCORING = 120
-SCORING_ENRICH_HOST_HINTS: tuple[str, ...] = (
-    "greenhouse.io",
-    "ashbyhq.com",
-    "lever.co",
-    "workable.com",
+SCORING_ENRICH_HOSTS: frozenset[str] = frozenset(
+    {
+        "greenhouse.io",
+        "ashbyhq.com",
+        "lever.co",
+        "workable.com",
+    }
 )
+
+
+def enrich_url_allowed(url: str) -> bool:
+    """Strict allow-list for enrichment fetches (PR #4 review finding).
+
+    Job URLs come from external feeds. The old substring hint check accepted
+    userinfo tricks (https://greenhouse.io@169.254.169.254/) and suffix
+    spoofs (greenhouse.io.attacker.example). Requires an http(s) scheme, no
+    userinfo, and a hostname that is an approved ATS host or a dot-prefixed
+    subdomain of one. Redirect targets are validated with the same rule
+    (http.request_text's url_allowed hook).
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return False
+    if parsed.username is not None or parsed.password is not None:
+        return False
+    hostname = (parsed.hostname or "").lower()
+    if not hostname:
+        return False
+    return any(
+        hostname == allowed or hostname.endswith(f".{allowed}") for allowed in SCORING_ENRICH_HOSTS
+    )
 
 
 def _cache_dir() -> Path:
@@ -68,8 +93,7 @@ def should_enrich_description_for_scoring(job: NormalizedJob) -> bool:
     url = job["url"].strip()
     if not url:
         return False
-    host = urlparse(url).netloc.lower()
-    return any(hint in host for hint in SCORING_ENRICH_HOST_HINTS)
+    return enrich_url_allowed(url)
 
 
 def enrich_job_description_for_scoring(job: NormalizedJob) -> NormalizedJob:
@@ -94,9 +118,10 @@ def enrich_job_description_for_scoring(job: NormalizedJob) -> NormalizedJob:
             enriched["description"] = cached
             return enriched
 
-    # 3. Fetch from a supported ATS URL (Greenhouse, Ashby, Lever, Workable).
+    # 3. Fetch from a supported ATS URL (Greenhouse, Ashby, Lever, Workable),
+    #    validating the URL and every redirect target against the allow-list.
     try:
-        html = http.request_text(url)
+        html = http.request_text(url, url_allowed=enrich_url_allowed)
     except Exception as exc:
         logger.warning("Could not enrich scoring description for %s: %s", url, exc)
         return job
