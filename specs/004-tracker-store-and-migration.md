@@ -1,7 +1,7 @@
 ---
 spec: 004
 title: Tracker store, profile tables, and legacy migration
-status: in-progress
+status: shipped
 approved: yes
 milestone: M1
 depends: [002, 003]
