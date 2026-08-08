@@ -15,10 +15,11 @@ rewrite. Changing any of them requires an explicit spec.
 - **Remote-only and EMEA scope are enforced.** Hybrid and onsite are rejected
   on location signals; the deliberate scoping of negative hints to the
   location field (not descriptions) is documented in
-  harrier.screening.rules and pinned by tests. EU-permit and EU-entity
-  phrases ("EU work permit required", "must be based in EU", "EU-based
-  contractor") are positive scoring signals, never filters: the candidate
-  can contract through an EU legal entity.
+  harrier.screening.rules and pinned by
+  services/api/tests/test_screening.py. EU-permit and EU-entity phrases
+  ("EU work permit required", "must be based in EU", "EU-based contractor")
+  are positive scoring signals, never filters: the candidate can contract
+  through an EU legal entity.
 - **Nothing auto-sends.** Outreach, applications, and emails are drafted; a human
   sends them. Telegram notifications are the only outbound messages. Contact discovery
   stages candidates for approval; nothing writes contacts directly.

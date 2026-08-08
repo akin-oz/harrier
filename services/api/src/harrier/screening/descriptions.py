@@ -40,12 +40,17 @@ def enrich_url_allowed(url: str) -> bool:
     subdomain of one. Redirect targets are validated with the same rule
     (http.request_text's url_allowed hook).
     """
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https"):
+    # Malformed netlocs (https://[) raise ValueError on attribute access; a
+    # bad feed URL must not stop a screening batch.
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        if parsed.username is not None or parsed.password is not None:
+            return False
+        hostname = (parsed.hostname or "").lower()
+    except ValueError:
         return False
-    if parsed.username is not None or parsed.password is not None:
-        return False
-    hostname = (parsed.hostname or "").lower()
     if not hostname:
         return False
     return any(

@@ -3,7 +3,10 @@
 The optional url_allowed hook validates the initial URL and every redirect
 target before a request is made. Job URLs come from external feeds, so a
 crafted posting URL must not be able to point a fetch at internal endpoints
-(PR #4 review finding).
+(PR #4 review finding). Proof: tests/test_screening.py
+(test_request_text_refuses_disallowed_initial_url,
+test_redirect_to_disallowed_host_is_blocked,
+test_enrich_url_allowed_blocks_spoofed_hosts).
 """
 
 from __future__ import annotations

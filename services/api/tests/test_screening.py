@@ -464,3 +464,15 @@ def test_must_be_based_in_eu_description_stays_accepted() -> None:
         minimal_cfg,
     )
     assert with_signal > base
+
+
+def test_malformed_url_is_rejected_without_raising() -> None:
+    from harrier.screening.descriptions import (
+        enrich_url_allowed,
+        should_enrich_description_for_scoring,
+    )
+
+    assert enrich_url_allowed("https://[") is False
+    assert (
+        should_enrich_description_for_scoring(build_job(url="https://[", description="")) is False
+    )
