@@ -22,7 +22,6 @@ harrier/
     src/harrier_cli/         #   CLI entry points (same domain code paths as the API)
     tests/
   packages/contract/         # openapi.json + generated TS types (committed, never hand-edited)
-  private/                   # SOPS-encrypted candidate data (ADR-002)
   config/                    # public config: feeds, schedule, data classification
   fixtures/                  # synthetic demo data, scrubbed importer recordings
   specs/                     # spec-gated backlog (approved: yes gates implementation)
@@ -71,13 +70,13 @@ the turn-end hook and CI, not pre-commit, to keep commits fast.
 **just** as the task runner (`justfile` at root):
 
 - `just dev`: starts FastAPI (uvicorn reload) and Vite together (honcho or
-  process-compose), real data mode if `private/decrypted/` exists.
+  process-compose), real data mode if the local database exists (ADR-008).
 - `just demo`: seeds a temp SQLite from `fixtures/`, starts the API in demo mode
   serving the built SPA; the stranger's one command.
 - `just check`: the full local gate (both type-checks, both linters, both test suites,
   contract drift, `aie check`); identical to CI by construction: CI calls the same
   recipes.
-- `just decrypt`, `just export`, `just schedule-install` wrap the flows from ADR-002,
+- `just backup`, `just export`, `just schedule-install` wrap the flows from ADR-008,
   ADR-003, ADR-006.
 
 ## Consequences

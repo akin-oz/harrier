@@ -15,7 +15,7 @@ field must become a compile error, never a hand-edit.
    agents and commands. Generated output is never hand-edited.
 
 A pre-edit guard (`.claude/hooks/guard-source-of-truth.sh`) pauses for human review on:
-the contract package, tracker schema and migrations, the encryption config
-(`.sops.yaml`, `.gitattributes`, `config/data-classification.json`, `.gitignore`),
-CI workflows, and the governance layer itself. Approve such an edit only when an
+the contract package, tracker schema and migrations, the classification config
+(`config/data-classification.json`, `.gitignore`), CI workflows, and the
+governance layer itself. Approve such an edit only when an
 approved spec covers it.

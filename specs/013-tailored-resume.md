@@ -15,7 +15,7 @@ The flagship artifact: verified content only, PDF or failure, no internal labels
 
 ## Scope
 
-- bullet pool and truth sources loaded from the encrypted data layer (content out of code)
+- bullet pool and truth sources loaded from the profile tables in the local database (ADR-008; content out of code)
 - content plan validation (require_truth, bullet ID validation, evidence-group dedupe)
 - HTML template render, Playwright PDF, validate_rendered_pdf (non-empty, no replacement chars, no placeholders, one page)
 - internal metadata sidecar only; visible header scrubbing

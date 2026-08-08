@@ -140,7 +140,7 @@ Legend:
 | `_bmad/` | drop | BMAD framework install; nothing in the job-hunt code references it. |
 | `downloaded_skills/` + `skills.json` | drop | 51 marketplace skills unrelated to this project. |
 | `.claude/skills/` | drop | BMAD skills, same. |
-| `interview-prep/` | keep (data) | Real prep content; migrates into the encrypted data layer, not public. |
+| `interview-prep/` | keep (data) | Real prep content; migrates into the local database (ADR-008), not public. |
 | `reports/` | keep (data) | 266 evaluation reports; regenerable but useful history. Migrates as private data; existence-gating for re-runs keeps. |
 | `templates/resume-template.html` + css, cover-letter templates | keep | Render shells for the PDF pipeline. |
 | `templates/job-fit-rubric*`, `job-eval-*` | drop | Human reference docs no code reads; scoring lives in code and config. |

@@ -1,39 +1,45 @@
 ---
 spec: 003
-title: Encryption setup and classification coverage
-status: accepted
+title: Classification coverage and secret scanning
+status: shipped
 approved: yes
 milestone: M0
 depends: [001]
 ---
 
-# Spec 003: Encryption setup and classification coverage
+# Spec 003: Classification coverage and secret scanning
+
+Amended 2026-08-08 per ADR-008: the original encrypted-in-repo scope (SOPS with
+age, `private/`, `just decrypt`) shipped and was then removed the same day when
+Akin decided personal data must not enter git in any form. Personal data lives
+in the local database instead (profile tables land with spec 004). This spec now
+covers classification and scanning only.
 
 ## Problem
 
-PII must be encrypted-in-repo and credentials kept out of git before any real data enters the repo (ADR-002).
+The repo is public. Personal data and credentials must be provably absent from
+git, and that absence must be enforced by tests and scanners, not discipline.
 
 ## Scope
 
-- age keypair generation procedure (documented, key never committed)
-- .sops.yaml creation rules for private/
-- config/data-classification.json (machine-readable classification table from ADR-002)
-- tests/test_encryption_coverage.py: every encrypted-in-repo path matches a sops rule and is ciphertext in HEAD; every never-in-git path is gitignored and absent from the index
+- config/data-classification.json: two classes (public, never-in-git)
+- tests/test_classification_coverage.py: never-in-git patterns gitignored and absent
+  from the index; encrypted-layer artifacts must not return
 - .gitignore and .env.example
 - gitleaks config with project-specific token patterns
-- just decrypt recipe writing private/decrypted/ (gitignored)
+- just backup: timestamped local archive of all personal data (ADR-008)
 
 ## Acceptance criteria
 
-- [ ] coverage test green and running in CI
-- [ ] a plaintext file added under private/ fails the coverage test
-- [ ] gitleaks catches a planted fake Apify token in pre-commit and CI
+- [x] coverage test green and running in CI
+- [x] a tracked file matching a never-in-git pattern fails the coverage test
+- [x] gitleaks catches a planted realistic Apify token in pre-commit and CI
 
 ## Proof / origin
 
-docs/adr/ADR-002-data-at-rest.md
+docs/adr/ADR-002-data-at-rest.md; docs/adr/ADR-008-personal-data-in-database.md
 
 ## Out of scope
 
-To be refined before approval. This stub sequences the backlog; scope narrows or
-splits when the spec is drafted for real.
+Profile tables and the import from the old repo (spec 004). Local disk
+encryption and backup custody (user responsibility, docs/privacy-plan.md).

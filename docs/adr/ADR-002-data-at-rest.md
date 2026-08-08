@@ -1,6 +1,9 @@
 # ADR-002: Data at rest in one public repo
 
-- Status: accepted
+- Status: partially superseded by ADR-008 (2026-08-08): the encrypted-in-repo
+  class and the SOPS mechanics are dropped; personal data lives in the local
+  database instead. The classification reasoning and the credentials-never-in-git
+  refinement stand.
 - Date: 2026-08-08
 
 ## Context
@@ -117,7 +120,7 @@ demo mode never calls it.
 - **Secret scanning**: gitleaks in pre-commit (via the hook chain) and as a CI job on
   every PR and push to main. The gitleaks config adds patterns for this project's shapes
   (Apify tokens, Telegram bot tokens, age private keys).
-- **Coverage test**: an automated test (`tests/test_encryption_coverage.py` in the new
+- **Coverage test**: an automated test (`tests/test_classification_coverage.py` in the new
   repo) that walks the classification table (kept machine-readable in
   `config/data-classification.json`), asserts every encrypted-in-repo path matches a
   `.sops.yaml` rule and is actually encrypted in HEAD, and asserts every never-in-git

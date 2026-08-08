@@ -53,21 +53,23 @@ split the spec, not just the branch.
 ## Rule: privacy
 
 This repo is public. Every path has exactly one class in
-`config/data-classification.json`: public, encrypted-in-repo, or never-in-git
-(ADR-002).
+`config/data-classification.json`: public or never-in-git (ADR-002 as revised by
+ADR-008). There is no encrypted-in-repo class.
 
-- Candidate PII (profile, resume truth sources, application narrative, interview prep)
-  is SOPS-encrypted under `private/`. Never commit it in plaintext, never paste its
+- All personal data (candidate profile, resume truth sources, bullet pool,
+  application narrative, interview prep, tracker rows, contacts) lives in the
+  local database or local files, never in git in any form. Never paste its
   contents into public files, fixtures, tests, code, or commit messages.
-- Live credentials never enter git, even encrypted. `.env` and OAuth material stay
-  local; committed `.example` files document shapes with placeholder values only.
-- Tracker data, generated artifacts, reports, state, and logs are never-in-git.
-- Fixtures must be synthetic or scrubbed. Real company names in job data are fine;
-  real people, real credentials, and real application content are not.
-- Logs redact candidate and contact identity values. LLM prompt logging is opt-in
-  debug only and never committed.
-- When adding any new file or directory, classify it first. If the classification
-  table does not cover it, that is a spec-worthy gap, not a judgment call.
+- Live credentials never enter git. `.env` and OAuth material stay local;
+  committed `.example` files document shapes with placeholder values only.
+- Generated artifacts, reports, state, logs, and backups are never-in-git.
+- Fixtures must be synthetic or scrubbed. Real company names in job data are
+  fine; real people, real credentials, and real application content are not.
+- Logs redact candidate and contact identity values. LLM prompt logging is
+  opt-in debug only and never committed.
+- When adding any new file or directory, classify it first. If the
+  classification table does not cover it, that is a spec-worthy gap, not a
+  judgment call.
 
 ---
 
@@ -141,9 +143,9 @@ field must become a compile error, never a hand-edit.
    agents and commands. Generated output is never hand-edited.
 
 A pre-edit guard (`.claude/hooks/guard-source-of-truth.sh`) pauses for human review on:
-the contract package, tracker schema and migrations, the encryption config
-(`.sops.yaml`, `.gitattributes`, `config/data-classification.json`, `.gitignore`),
-CI workflows, and the governance layer itself. Approve such an edit only when an
+the contract package, tracker schema and migrations, the classification config
+(`config/data-classification.json`, `.gitignore`), CI workflows, and the
+governance layer itself. Approve such an edit only when an
 approved spec covers it.
 
 ---
@@ -243,21 +245,23 @@ split the spec, not just the branch.
 ## Rule: privacy
 
 This repo is public. Every path has exactly one class in
-`config/data-classification.json`: public, encrypted-in-repo, or never-in-git
-(ADR-002).
+`config/data-classification.json`: public or never-in-git (ADR-002 as revised by
+ADR-008). There is no encrypted-in-repo class.
 
-- Candidate PII (profile, resume truth sources, application narrative, interview prep)
-  is SOPS-encrypted under `private/`. Never commit it in plaintext, never paste its
+- All personal data (candidate profile, resume truth sources, bullet pool,
+  application narrative, interview prep, tracker rows, contacts) lives in the
+  local database or local files, never in git in any form. Never paste its
   contents into public files, fixtures, tests, code, or commit messages.
-- Live credentials never enter git, even encrypted. `.env` and OAuth material stay
-  local; committed `.example` files document shapes with placeholder values only.
-- Tracker data, generated artifacts, reports, state, and logs are never-in-git.
-- Fixtures must be synthetic or scrubbed. Real company names in job data are fine;
-  real people, real credentials, and real application content are not.
-- Logs redact candidate and contact identity values. LLM prompt logging is opt-in
-  debug only and never committed.
-- When adding any new file or directory, classify it first. If the classification
-  table does not cover it, that is a spec-worthy gap, not a judgment call.
+- Live credentials never enter git. `.env` and OAuth material stay local;
+  committed `.example` files document shapes with placeholder values only.
+- Generated artifacts, reports, state, logs, and backups are never-in-git.
+- Fixtures must be synthetic or scrubbed. Real company names in job data are
+  fine; real people, real credentials, and real application content are not.
+- Logs redact candidate and contact identity values. LLM prompt logging is
+  opt-in debug only and never committed.
+- When adding any new file or directory, classify it first. If the
+  classification table does not cover it, that is a spec-worthy gap, not a
+  judgment call.
 
 ---
 
@@ -331,9 +335,9 @@ field must become a compile error, never a hand-edit.
    agents and commands. Generated output is never hand-edited.
 
 A pre-edit guard (`.claude/hooks/guard-source-of-truth.sh`) pauses for human review on:
-the contract package, tracker schema and migrations, the encryption config
-(`.sops.yaml`, `.gitattributes`, `config/data-classification.json`, `.gitignore`),
-CI workflows, and the governance layer itself. Approve such an edit only when an
+the contract package, tracker schema and migrations, the classification config
+(`config/data-classification.json`, `.gitignore`), CI workflows, and the
+governance layer itself. Approve such an edit only when an
 approved spec covers it.
 
 ---

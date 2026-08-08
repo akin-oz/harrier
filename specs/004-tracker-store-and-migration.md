@@ -16,8 +16,10 @@ The tracker becomes SQLite as truth (ADR-003). The old CSVs must migrate with fu
 ## Scope
 
 - SQLite schema: jobs and contacts tables, status lifecycle constraint, unique dedupe indexes (url, company+title, external_key)
+- profile tables (ADR-008): candidate profile, resume truth sources and achievement blocks, bullet pool, application profile, outreach defaults, interview prep and story bank; owned by harrier.profile
 - the single write-path module harrier.tracker with transition enforcement
 - one-shot migration from ~/job-hunt-local/tracker/jobs.csv and contacts.csv expanding notes key=value pairs into columns
+- harrier profile import (one-shot from the old repo's config files) and harrier profile export for editing round-trips
 - CSV export in the current 20-column and 17-column shapes (just export)
 
 ## Acceptance criteria

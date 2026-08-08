@@ -28,8 +28,8 @@ case "$REL_PATH" in
     ask "This edits the API contract package. It is generated from FastAPI (ADR-005); hand-edits here are always wrong. Regenerate with 'just contract' instead." ;;
   services/api/src/harrier/tracker/schema*|services/api/src/harrier/tracker/migrations/*)
     ask "This edits the tracker schema or its migrations, the single source of truth for application state (ADR-003)." ;;
-  .sops.yaml|.gitattributes|.gitignore|config/data-classification.json)
-    ask "This edits the encryption/classification config. A wrong rule here can leak PII into a public repo (ADR-002)." ;;
+  .gitattributes|.gitignore|config/data-classification.json)
+    ask "This edits the classification config. A wrong rule here can leak PII into a public repo (ADR-002/ADR-008)." ;;
   .github/workflows/*)
     ask "This edits CI, the authoritative enforcement layer (spec gate, contract drift, secret scan)." ;;
   CLAUDE.md|AGENTS.md|.ai/generated/*|.claude/agents/*|.claude/commands/*)

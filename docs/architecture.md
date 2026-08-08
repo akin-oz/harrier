@@ -136,11 +136,12 @@ bookmarklet -> GET/POST /capture/add on the API (mixed-content-safe HTML respons
 
 ## Data at rest
 
-Per ADR-002: source and fixtures public; candidate and application content
-SOPS-encrypted under `private/`; tracker DB, artifacts, state, logs, and all
-credentials never in git. Demo mode boots from `fixtures/` with zero secrets and no
-decryption. gitleaks guards every commit and CI run; a coverage test binds the
-classification table to `.sops.yaml` and `.gitignore`.
+Per ADR-002 as revised by ADR-008: source and fixtures public; everything
+personal (candidate and application content, tracker, contacts, artifacts,
+state, logs) lives in the local database and local files, never in git in any
+form; credentials never in git. Demo mode boots from `fixtures/` with zero
+secrets. gitleaks guards every commit and CI run; a coverage test binds the
+classification table to `.gitignore`.
 
 ## Governance chain
 
@@ -152,7 +153,7 @@ The Sorrel chain (see `/Users/akinoztorun/Documents/projects/sorrel`, README
 1. Specs in `specs/`, `approved: yes` gates implementation, only Akin flips approval.
 2. Turn-end gate: pyright + tsc + unit tests; red fails the turn (exit 2 Stop hook).
 3. Pre-edit guard pauses on: `packages/contract/**`, `harrier/tracker/` schema and
-   migrations, `.sops.yaml` and `.gitattributes`, `.github/workflows/**`, `.ai/**`
+   migrations, the classification config and `.gitignore`, `.github/workflows/**`, `.ai/**`
    generated outputs.
 4. Every commit carries `Spec: NNN`; CI resolves trailers to approved specs.
 

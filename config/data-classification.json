@@ -1,23 +1,11 @@
 {
-  "description": "Machine-readable data classification (ADR-002). Every path has exactly one class. 'public' is the complement of the other two: any tracked file not matching below is public by definition, and the coverage test enforces the two explicit classes.",
-  "encrypted_in_repo": {
-    "description": "Committed only as SOPS ciphertext. Must match a .sops.yaml creation rule.",
-    "patterns": [
-      "private/*.enc.json",
-      "private/*.enc.yaml",
-      "private/*.enc.md",
-      "private/**/*.enc.json",
-      "private/**/*.enc.yaml",
-      "private/**/*.enc.md"
-    ]
-  },
+  "description": "Machine-readable data classification (ADR-002 as revised by ADR-008). Two classes; every path has exactly one. 'public' is the complement: any tracked file not matching never_in_git is public by definition, and the coverage test enforces that nothing personal is tracked.",
   "never_in_git": {
-    "description": "Exists only on this machine. Must be gitignored and absent from the index.",
+    "description": "Exists only on this machine: the database (all personal data per ADR-008), credentials, artifacts, state, logs. Must be gitignored and absent from the index.",
     "patterns": [
       ".env",
       ".env.local",
       "secrets/**",
-      "private/decrypted/**",
       "data/**",
       "tracker/**",
       "runtime/**",
@@ -25,11 +13,8 @@
       "state/**",
       "incoming/**",
       "logs/**",
-      "interview-prep/**"
+      "interview-prep/**",
+      "backups/**"
     ]
-  },
-  "plaintext_forbidden_under": {
-    "description": "Directories where any tracked file MUST be ciphertext (no plaintext exceptions, not even docs).",
-    "patterns": ["private/**"]
   }
 }

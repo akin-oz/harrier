@@ -46,10 +46,11 @@ contract:
 aie-check:
     npx aie check
 
-# Decrypt private data into private/decrypted/ (gitignored). Requires the age key.
-decrypt:
-    ./scripts/decrypt.sh
-
 # Export tracker data to CSV. Implemented by spec 004.
 export:
     @echo "export: implemented by spec 004 (SQLite to CSV)." && exit 1
+
+# Snapshot all local personal data (database, state, artifacts) to a timestamped
+# archive OUTSIDE the repo (ADR-008: backup is entirely local).
+backup:
+    ./scripts/backup.sh

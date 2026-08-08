@@ -17,7 +17,7 @@ Both draft paths; nothing sends.
 
 - AI drafts with audience inference (recruiter, hiring_manager, peer)
 - template path with lint-and-repair loop and connection-note length limits
-- outreach config files ported (public class; defaults containing PII go to the encrypted layer)
+- outreach config files ported (public class; defaults containing PII go to the profile tables, ADR-008)
 
 ## Acceptance criteria
 
