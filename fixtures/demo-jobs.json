@@ -1,0 +1,59 @@
+[
+  {
+    "company": "Northwind Labs",
+    "title": "Senior Frontend Engineer",
+    "location": "Remote, Europe",
+    "url": "https://boards.example.com/northwind/101",
+    "source": "greenhouse",
+    "added_at": "2026-08-01",
+    "fit_score": "84",
+    "status": "prospect",
+    "notes": "score=84; archetype=product_engineer; signals=remote|typescript|react; external_key=demo:northwind:101"
+  },
+  {
+    "company": "Fjord Systems",
+    "title": "Staff Engineer, Design Systems",
+    "location": "Remote (EMEA)",
+    "url": "https://jobs.example.eu/fjord/design-systems",
+    "source": "ashby",
+    "added_at": "2026-08-02",
+    "fit_score": "77",
+    "status": "shortlisted",
+    "notes": "score=77; archetype=design_system; signals=remote|vue|design tokens; external_key=demo:fjord:22"
+  },
+  {
+    "company": "Meridian Health",
+    "title": "Product Engineer (Frontend)",
+    "location": "Anywhere (CET +/- 3)",
+    "url": "https://jobs.example.org/meridian/pe-frontend",
+    "source": "lever",
+    "added_at": "2026-08-03",
+    "fit_score": "71",
+    "status": "tailored_cv_requested",
+    "notes": "score=71; archetype=fullstack_light; signals=remote|nuxt; external_key=demo:meridian:9"
+  },
+  {
+    "company": "Quill and Co",
+    "title": "Senior Product Engineer",
+    "location": "Remote, EU work permit required",
+    "url": "https://boards.example.com/quill/305",
+    "source": "apify_linkedin",
+    "added_at": "2026-08-05",
+    "fit_score": "88",
+    "status": "applied",
+    "applied_date": "2026-08-06",
+    "notes": "score=88; archetype=product_engineer; signals=remote|eu entity|typescript; external_key=demo:quill:305"
+  },
+  {
+    "company": "Basalt Analytics",
+    "title": "Frontend Platform Engineer",
+    "location": "Hybrid, Berlin",
+    "url": "https://jobs.example.de/basalt/platform",
+    "source": "wellfound_manual",
+    "added_at": "2026-08-04",
+    "fit_score": "35",
+    "status": "rejected",
+    "rejection_reason": "hybrid, remote-only policy",
+    "notes": "score=35; remote_filter=fail; external_key=demo:basalt:4"
+  }
+]

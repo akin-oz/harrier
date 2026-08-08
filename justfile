@@ -5,9 +5,11 @@ api_dir := "services/api"
 default:
     @just --list
 
-# Start FastAPI and Vite together for development. Real API arrives with spec 005.
+# Start FastAPI and Vite together for development. PID-based cleanup: just runs
+# recipes in a non-interactive sh with no job control, so %1 would not work.
 dev:
-    @echo "dev: FastAPI service lands with spec 005; starting the web app only."
+    (cd {{api_dir}} && uv run uvicorn harrier_api.app:app --reload --port 8000) & api_pid=$!; \
+    trap 'kill "$api_pid" 2>/dev/null || true' EXIT INT TERM; \
     pnpm --filter @harrier/web dev
 
 # Demo mode for strangers: seeded fixtures, no secrets. Implemented by spec 021.
@@ -39,16 +41,18 @@ gate:
     pnpm --filter @harrier/web type-check
     pnpm --filter @harrier/web test
 
-# Regenerate the API contract and fail on drift. Real generation arrives with spec 005.
+# Regenerate the API contract artifacts (openapi.json + TS types). CI runs this
+# and fails on any git diff (ADR-005).
 contract:
-    @echo "contract: no API routes yet; generation lands with spec 005."
+    cd {{api_dir}} && uv run python -m harrier_api.export_openapi ../../packages/contract/openapi.json
+    pnpm --filter @harrier/contract generate
 
 aie-check:
     npx aie check
 
-# Export tracker data to CSV. Implemented by spec 004.
+# Export tracker data to CSV in the legacy shapes.
 export:
-    @echo "export: implemented by spec 004 (SQLite to CSV)." && exit 1
+    cd {{api_dir}} && uv run harrier export --dest ../../tracker
 
 # Snapshot all local personal data (database, state, artifacts) to a timestamped
 # archive OUTSIDE the repo (ADR-008: backup is entirely local).

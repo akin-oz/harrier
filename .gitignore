@@ -29,3 +29,6 @@ dist/
 # OS / editor noise
 .DS_Store
 .idea/
+
+# Generated TypeScript build state
+*.tsbuildinfo

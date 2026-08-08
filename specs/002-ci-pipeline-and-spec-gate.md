@@ -1,7 +1,7 @@
 ---
 spec: 002
 title: CI pipeline and spec-trailer gate
-status: accepted
+status: shipped
 approved: yes
 milestone: M0
 depends: [001]

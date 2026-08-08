@@ -1,8 +1,20 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+
+import { TrackerPage } from "../pages/tracker/TrackerPage";
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: { retry: false, refetchOnWindowFocus: false },
+  },
+});
+
 export function App() {
   return (
-    <main>
-      <h1>Harrier</h1>
-      <p>Local-first job search automation. The tracker UI lands with spec 005.</p>
-    </main>
+    <QueryClientProvider client={queryClient}>
+      <main>
+        <h1>Harrier</h1>
+        <TrackerPage />
+      </main>
+    </QueryClientProvider>
   );
 }
