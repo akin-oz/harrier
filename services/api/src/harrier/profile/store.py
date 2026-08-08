@@ -40,22 +40,36 @@ def put_document(conn: sqlite3.Connection, kind: str, name: str, fmt: str, conte
 
 
 def get_document(conn: sqlite3.Connection, kind: str, name: str) -> str | None:
+    # Positional access: works with any row factory, not only harrier.db.connect's.
     row = conn.execute(
         "SELECT content FROM profile_documents WHERE kind = ? AND name = ?", (kind, name)
     ).fetchone()
-    return str(row["content"]) if row is not None else None
+    return str(row[0]) if row is not None else None
 
 
 def list_documents(conn: sqlite3.Connection) -> list[dict[str, str]]:
+    columns = ("kind", "name", "format", "updated_at")
     rows = conn.execute(
-        "SELECT kind, name, format, updated_at FROM profile_documents ORDER BY kind, name"
+        f"SELECT {', '.join(columns)} FROM profile_documents ORDER BY kind, name"
     ).fetchall()
-    return [{key: str(row[key]) for key in row.keys()} for row in rows]  # noqa: SIM118
+    return [dict(zip(columns, (str(value) for value in row), strict=True)) for row in rows]
 
 
 def _format_for(path: Path) -> str:
     suffix = path.suffix.lower().lstrip(".")
     return {"md": "markdown", "json": "json"}.get(suffix, "text")
+
+
+def _read_exact(path: Path) -> str:
+    # newline="" disables universal-newline translation so CRLF content
+    # round-trips byte-identically (spec 004 acceptance).
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        return handle.read()
+
+
+def _write_exact(path: Path, content: str) -> None:
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        handle.write(content)
 
 
 def import_from(conn: sqlite3.Connection, old_root: Path) -> tuple[list[str], list[str]]:
@@ -71,7 +85,7 @@ def import_from(conn: sqlite3.Connection, old_root: Path) -> tuple[list[str], li
         if not source.is_file():
             missing.append(rel_path)
             continue
-        put_document(conn, kind, source.name, fmt, source.read_text(encoding="utf-8"))
+        put_document(conn, kind, source.name, fmt, _read_exact(source))
         imported.append(f"{kind}/{source.name} <- {rel_path}")
 
     prep_dir = old_root / INTERVIEW_PREP_DIR
@@ -84,7 +98,7 @@ def import_from(conn: sqlite3.Connection, old_root: Path) -> tuple[list[str], li
                 "interview_prep",
                 source.name,
                 _format_for(source),
-                source.read_text(encoding="utf-8"),
+                _read_exact(source),
             )
             imported.append(f"interview_prep/{source.name} <- {INTERVIEW_PREP_DIR}/{source.name}")
     else:
@@ -98,8 +112,9 @@ def export_to(conn: sqlite3.Connection, dest: Path) -> list[Path]:
     written: list[Path] = []
     rows = conn.execute("SELECT kind, name, content FROM profile_documents").fetchall()
     for row in rows:
-        target = dest / str(row["kind"]) / str(row["name"])
+        kind, name, content = (str(row[0]), str(row[1]), str(row[2]))
+        target = dest / kind / name
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(str(row["content"]), encoding="utf-8")
+        _write_exact(target, content)
         written.append(target)
     return sorted(written)

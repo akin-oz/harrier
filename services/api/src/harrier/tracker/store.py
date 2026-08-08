@@ -100,11 +100,17 @@ def add_job(conn: sqlite3.Connection, fields: Mapping[str, str]) -> int:
     row_values = [values[name] if name != "status" else status for name in TRACKER_FIELDS]
     row_values += [promoted[key] for key in NOTE_KEYS]
     placeholders = ", ".join("?" for _ in columns)
-    with conn:
-        cursor = conn.execute(
-            f"INSERT INTO jobs ({', '.join(columns)}) VALUES ({placeholders})",
-            row_values,
-        )
+    try:
+        with conn:
+            cursor = conn.execute(
+                f"INSERT INTO jobs ({', '.join(columns)}) VALUES ({placeholders})",
+                row_values,
+            )
+    except sqlite3.IntegrityError as error:
+        # A concurrent writer can insert between find_duplicate and this
+        # INSERT; the unique indexes are the authority, so map their refusal
+        # to the same domain error the pre-check raises.
+        raise DuplicateJobError(f"duplicate detected by unique index: {error}") from error
     row_id = cursor.lastrowid
     assert row_id is not None
     return int(row_id)

@@ -61,3 +61,18 @@ def test_reimport_updates_in_place(tmp_path: Path) -> None:
 
     assert get_document(conn, "candidate", "candidate.json") == '{"name": "Pat Two"}\n'
     assert len(list_documents(conn)) == len(SYNTHETIC_FILES)
+
+
+def test_crlf_content_round_trips_byte_identically(tmp_path: Path) -> None:
+    old_root = tmp_path / "old"
+    old_root.joinpath("config").mkdir(parents=True)
+    crlf = '{"name": "Pat Placeholder"}\r\n{"line": "two"}\r\n'
+    with (old_root / "config/candidate.json").open("w", encoding="utf-8", newline="") as handle:
+        handle.write(crlf)
+    conn = connect(tmp_path / "t.db")
+    import_from(conn, old_root)
+
+    out = tmp_path / "export"
+    export_to(conn, out)
+    exported = out / "candidate" / "candidate.json"
+    assert exported.read_bytes() == crlf.encode("utf-8")

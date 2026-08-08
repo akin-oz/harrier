@@ -154,3 +154,50 @@ def test_export_reimport_round_trip(tmp_path: Path, csv_pair: tuple[Path, Path])
         for name in TRACKER_FIELDS:
             assert row_a[name] == row_b[name]
     assert [c["person_name"] for c in list_contacts(conn2)] == ["Sam Sample"]
+
+
+def test_aborted_replace_leaves_existing_data_intact(
+    tmp_path: Path, csv_pair: tuple[Path, Path]
+) -> None:
+    jobs_csv, contacts_csv = csv_pair
+    conn = connect(tmp_path / "t.db")
+    migrate(conn, jobs_csv, contacts_csv)
+
+    bad_rows = [dict(SYNTHETIC_JOBS[0]), dict(SYNTHETIC_JOBS[0])]
+    bad_csv = tmp_path / "bad.csv"
+    _write_csv(bad_csv, TRACKER_FIELDS, bad_rows)
+    with pytest.raises(MigrationError, match="url appears 2 times"):
+        migrate(conn, bad_csv, None, replace=True)
+
+    assert len(list_jobs(conn)) == len(SYNTHETIC_JOBS)
+    assert len(list_contacts(conn)) == len(SYNTHETIC_CONTACTS)
+
+
+def test_export_restores_legacy_status_and_strips_marker(
+    tmp_path: Path, csv_pair: tuple[Path, Path]
+) -> None:
+    jobs_csv, contacts_csv = csv_pair
+    conn = connect(tmp_path / "t.db")
+    migrate(conn, jobs_csv, contacts_csv)
+
+    exported_jobs, _ = export_csv(conn, tmp_path / "export")
+    with exported_jobs.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    gamma = rows[2]
+    assert gamma["status"] == "weird_legacy_status"
+    assert "legacy_status" not in gamma["notes"]
+    assert gamma["notes"] == SYNTHETIC_JOBS[2]["notes"]
+
+
+def test_reimport_of_export_does_not_double_mark(
+    tmp_path: Path, csv_pair: tuple[Path, Path]
+) -> None:
+    jobs_csv, contacts_csv = csv_pair
+    conn = connect(tmp_path / "a.db")
+    migrate(conn, jobs_csv, contacts_csv)
+    exported_jobs, exported_contacts = export_csv(conn, tmp_path / "export")
+
+    conn2 = connect(tmp_path / "b.db")
+    migrate(conn2, exported_jobs, exported_contacts)
+    gamma = list_jobs(conn2)[2]
+    assert gamma["notes"].count("legacy_status=") == 1

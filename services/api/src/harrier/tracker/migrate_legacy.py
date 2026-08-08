@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from harrier.tracker.schema import CONTACT_FIELDS, NOTE_KEYS, STATUSES, TRACKER_FIELDS
-from harrier.tracker.store import TrackerError, expand_notes
+from harrier.tracker.store import TrackerError, expand_notes, extract_note_value
 
 
 class MigrationError(TrackerError):
@@ -95,16 +95,15 @@ def migrate(
     *,
     replace: bool = False,
 ) -> MigrationReport:
-    existing = conn.execute("SELECT COUNT(*) AS c FROM jobs").fetchone()
-    if int(existing["c"]) > 0:
-        if not replace:
-            raise MigrationError(
-                f"jobs table already has {existing['c']} rows; pass --replace to reimport"
-            )
-        with conn:
-            conn.execute("DELETE FROM jobs")
-            conn.execute("DELETE FROM contacts")
+    existing = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()
+    existing_count = int(existing[0])
+    if existing_count > 0 and not replace:
+        raise MigrationError(
+            f"jobs table already has {existing_count} rows; pass --replace to reimport"
+        )
 
+    # Read and validate everything BEFORE touching the database, so an abort
+    # (duplicates, unreadable CSV) can never leave it emptied under --replace.
     report = MigrationReport()
     job_rows, jobs_backfilled = _read_csv(jobs_csv, TRACKER_FIELDS)
     report.jobs_read = len(job_rows)
@@ -118,11 +117,23 @@ def migrate(
             + listing
         )
 
+    contact_rows: list[dict[str, str]] = []
+    if contacts_csv is not None:
+        contact_rows, contacts_backfilled = _read_csv(contacts_csv, CONTACT_FIELDS)
+        report.contacts_read = len(contact_rows)
+        report.missing_columns_filled += contacts_backfilled
+
     expanded_counts: Counter[str] = Counter()
     status_fallbacks: Counter[str] = Counter()
     insert_columns = [*TRACKER_FIELDS, *NOTE_KEYS]
     placeholders = ", ".join("?" for _ in insert_columns)
+    contact_placeholders = ", ".join("?" for _ in CONTACT_FIELDS)
+
+    # One transaction for replacement plus both imports: all or nothing.
     with conn:
+        if existing_count > 0:
+            conn.execute("DELETE FROM jobs")
+            conn.execute("DELETE FROM contacts")
         for row in job_rows:
             promoted = expand_notes(row["notes"])
             for key, value in promoted.items():
@@ -130,11 +141,14 @@ def migrate(
                     expanded_counts[key] += 1
             status = row["status"].strip()
             if status not in STATUSES:
-                # Preserve the original value in notes rather than inventing data.
+                # Preserve the original value in notes rather than inventing
+                # data; export restores it (see export.py). Reimporting an
+                # already-marked row must not append a second marker.
                 status_fallbacks[status or "(blank)"] += 1
                 row = dict(row)
-                marker = f"legacy_status={status}"
-                row["notes"] = f"{row['notes']}; {marker}" if row["notes"] else marker
+                if not extract_note_value(row["notes"], "legacy_status"):
+                    marker = f"legacy_status={status}"
+                    row["notes"] = f"{row['notes']}; {marker}" if row["notes"] else marker
                 row["status"] = "prospect"
             values = [row[name] for name in TRACKER_FIELDS]
             values += [promoted[key] for key in NOTE_KEYS]
@@ -143,22 +157,14 @@ def migrate(
                 values,
             )
             report.jobs_imported += 1
+        for row in contact_rows:
+            conn.execute(
+                f"INSERT INTO contacts ({', '.join(CONTACT_FIELDS)}) "
+                f"VALUES ({contact_placeholders})",
+                [row[name] for name in CONTACT_FIELDS],
+            )
+            report.contacts_imported += 1
 
     report.notes_keys_expanded = dict(expanded_counts)
     report.unknown_statuses = dict(status_fallbacks)
-
-    if contacts_csv is not None:
-        contact_rows, contacts_backfilled = _read_csv(contacts_csv, CONTACT_FIELDS)
-        report.contacts_read = len(contact_rows)
-        report.missing_columns_filled += contacts_backfilled
-        contact_placeholders = ", ".join("?" for _ in CONTACT_FIELDS)
-        with conn:
-            for row in contact_rows:
-                conn.execute(
-                    f"INSERT INTO contacts ({', '.join(CONTACT_FIELDS)}) "
-                    f"VALUES ({contact_placeholders})",
-                    [row[name] for name in CONTACT_FIELDS],
-                )
-                report.contacts_imported += 1
-
     return report

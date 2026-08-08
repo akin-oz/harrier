@@ -114,3 +114,22 @@ def test_list_jobs_filters(conn: sqlite3.Connection) -> None:
     assert len(list_jobs(conn)) == 2
     assert [j["company"] for j in list_jobs(conn, status="shortlisted")] == ["Acme"]
     assert len(list_jobs(conn, source="greenhouse")) == 2
+
+
+def test_unique_index_race_maps_to_duplicate_error(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from harrier.tracker import store as store_module
+
+    add_job(conn, _job())
+
+    # Simulate the concurrent-writer race: the pre-check sees nothing, the
+    # unique index still refuses.
+    def no_precheck(
+        conn: sqlite3.Connection, url: str, company: str, title: str, external_key: str
+    ) -> None:
+        return None
+
+    monkeypatch.setattr(store_module, "find_duplicate", no_precheck)
+    with pytest.raises(DuplicateJobError, match="unique index"):
+        store_module.add_job(conn, _job(company="Other", title="Other role"))
