@@ -7,15 +7,17 @@ Routes speak Pydantic models only; the web app speaks generated types only.
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterator
-from typing import Annotated, Literal
+from collections.abc import AsyncIterator, Iterator
+from typing import Annotated, Literal, cast
 
-from fastapi import APIRouter, Depends, FastAPI, Query
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from harrier.db import connect, default_db_path
 from harrier.tracker import list_jobs
 from harrier_api.demo import demo_db_path, is_demo_mode, seed_demo_db
+from harrier_api.runs import Run, RunManager, RunState, format_sse
 
 API_VERSION = "0.1.0"
 
@@ -107,7 +109,117 @@ def jobs(
     return [JobOut.model_validate({**row, "id": int(row["id"])}) for row in rows]
 
 
-def create_app() -> FastAPI:
+class RunOut(BaseModel):
+    id: str
+    kind: str
+    state: RunState
+    created_at: str
+    started_at: str | None
+    ended_at: str | None
+    exit_code: int | None
+
+
+class StartRunIn(BaseModel):
+    kind: Literal["demo"]
+
+
+class RunEventOut(BaseModel):
+    """The JSON payload of one SSE message on /runs/{id}/events.
+
+    Declared on the route's response documentation so it lands in the OpenAPI
+    components and the web app consumes the generated type (spec 006). The
+    stream itself is text/event-stream; each message's data field is one of
+    these, flattened per event type: log_line carries line, progress carries
+    step/total/message, state_change carries state/exit_code.
+    """
+
+    type: str
+    line: str | None = None
+    step: int | None = None
+    total: int | None = None
+    message: str | None = None
+    state: RunState | None = None
+    exit_code: int | None = None
+
+
+def _run_out(run: Run) -> RunOut:
+    return RunOut(
+        id=run.id,
+        kind=run.kind,
+        state=run.state,
+        created_at=run.created_at,
+        started_at=run.started_at,
+        ended_at=run.ended_at,
+        exit_code=run.exit_code,
+    )
+
+
+def get_manager(request: Request) -> RunManager:
+    return cast(RunManager, request.app.state.run_manager)
+
+
+Manager = Annotated[RunManager, Depends(get_manager)]
+
+runs_router = APIRouter()
+
+
+@runs_router.post("/runs", operation_id="startRun")
+async def start_run(body: StartRunIn, manager: Manager) -> RunOut:
+    return _run_out(await manager.start(body.kind))
+
+
+@runs_router.get("/runs", operation_id="listRuns")
+def list_runs(manager: Manager) -> list[RunOut]:
+    return [_run_out(run) for run in manager.list_runs()]
+
+
+@runs_router.get("/runs/{run_id}", operation_id="getRun")
+def get_run(run_id: str, manager: Manager) -> RunOut:
+    run = manager.get(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    return _run_out(run)
+
+
+@runs_router.post("/runs/{run_id}/cancel", operation_id="cancelRun")
+async def cancel_run(run_id: str, manager: Manager) -> RunOut:
+    run = await manager.cancel(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    return _run_out(run)
+
+
+@runs_router.get(
+    "/runs/{run_id}/events",
+    operation_id="streamRunEvents",
+    responses={
+        200: {
+            "model": RunEventOut,
+            "description": "SSE stream; each message's data field is a RunEventOut JSON payload.",
+        }
+    },
+)
+async def stream_run_events(run_id: str, request: Request, manager: Manager) -> StreamingResponse:
+    if manager.get(run_id) is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    last_id_header = request.headers.get("last-event-id", "0")
+    try:
+        last_event_id = int(last_id_header)
+    except ValueError:
+        last_event_id = 0
+
+    async def event_stream() -> AsyncIterator[str]:
+        async for event in manager.stream(run_id, last_event_id):
+            yield format_sse(event)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+def create_app(run_manager: RunManager | None = None) -> FastAPI:
     if is_demo_mode():
         seed_demo_db()
     app = FastAPI(
@@ -115,7 +227,9 @@ def create_app() -> FastAPI:
         version=API_VERSION,
         description="Local-first job search automation API.",
     )
+    app.state.run_manager = run_manager if run_manager is not None else RunManager()
     app.include_router(router)
+    app.include_router(runs_router)
     return app
 
 
