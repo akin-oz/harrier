@@ -1,0 +1,8 @@
+{
+  "name": "harrier",
+  "private": true,
+  "version": "0.0.0",
+  "devDependencies": {
+    "@akinlabs/ai-engineering": "^0.2.0"
+  }
+}

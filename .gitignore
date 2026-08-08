@@ -1,0 +1,31 @@
+# Credentials: never in git, even encrypted (ADR-002)
+.env
+.env.*
+!.env.example
+secrets/
+
+# Decrypted private data (the encrypted originals under private/ ARE committed)
+private/decrypted/
+
+# Runtime data: never-in-git class (ADR-002)
+data/
+tracker/
+runtime/
+reports/
+state/
+incoming/
+logs/
+interview-prep/
+
+# Toolchains
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# OS / editor noise
+.DS_Store
+.idea/

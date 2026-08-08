@@ -1,0 +1,10 @@
+schema: 2
+
+project:
+  type: monorepo
+
+workflow:
+  development: spec-driven
+
+ai:
+  runtimes: [claude, codex]
