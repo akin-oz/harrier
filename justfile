@@ -5,10 +5,12 @@ api_dir := "services/api"
 default:
     @just --list
 
-# Start FastAPI and Vite together for development.
+# Start FastAPI and Vite together for development. PID-based cleanup: just runs
+# recipes in a non-interactive sh with no job control, so %1 would not work.
 dev:
-    (cd {{api_dir}} && uv run uvicorn harrier_api.app:app --reload --port 8000) & \
-    pnpm --filter @harrier/web dev; kill %1 2>/dev/null || true
+    (cd {{api_dir}} && uv run uvicorn harrier_api.app:app --reload --port 8000) & api_pid=$!; \
+    trap 'kill "$api_pid" 2>/dev/null || true' EXIT INT TERM; \
+    pnpm --filter @harrier/web dev
 
 # Demo mode for strangers: seeded fixtures, no secrets. Implemented by spec 021.
 demo:

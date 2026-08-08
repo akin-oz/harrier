@@ -1,1 +1,0 @@
-{"root":["./src/app/app.test.tsx","./src/app/app.tsx","./src/app/main.tsx","./src/entities/job/jobtable.test.tsx","./src/entities/job/jobtable.tsx","./src/entities/job/index.ts","./src/entities/job/types.ts","./src/pages/tracker/trackerpage.tsx","./src/shared/api/client.ts","./vite.config.ts","./vitest.config.ts"],"version":"5.9.3"}
