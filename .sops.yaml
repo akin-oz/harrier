@@ -1,0 +1,9 @@
+# Encryption rules (ADR-002). Everything under private/ with .enc. in the name is
+# encrypted to Akin's age key. The private key lives in the standard SOPS location
+# (~/.config/sops/age/keys.txt) plus one offline backup; never in this repo.
+creation_rules:
+  - path_regex: ^private/.*\.enc\.(json|yaml|yml)$
+    age: age12765h925qsh9rughkq6s9anxz7ysz0h20gecmwjacdfeqx2juqdqag7l0c
+  - path_regex: ^private/.*\.enc\.md$
+    input_type: binary
+    age: age12765h925qsh9rughkq6s9anxz7ysz0h20gecmwjacdfeqx2juqdqag7l0c

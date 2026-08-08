@@ -1,0 +1,24 @@
+# Project-specific secret patterns on top of the gitleaks defaults
+# (docs/privacy-plan.md section 3).
+title = "harrier gitleaks config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "age-secret-key"
+description = "age private key"
+regex = '''AGE-SECRET-KEY-1[A-Z0-9]{58}'''
+keywords = ["age-secret-key-"]
+
+[[rules]]
+id = "telegram-bot-token"
+description = "Telegram bot token"
+regex = '''\b\d{8,10}:AA[A-Za-z0-9_-]{33}\b'''
+keywords = [":aa"]
+
+[[rules]]
+id = "apify-token"
+description = "Apify API token"
+regex = '''\bapify_api_[A-Za-z0-9]{36}\b'''
+keywords = ["apify_api_"]
