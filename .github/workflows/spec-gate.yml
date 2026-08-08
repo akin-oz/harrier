@@ -1,0 +1,49 @@
+# Governance mirror: the local commit contract, made provable in the PR tab.
+# Every commit's Spec: NNN trailer must resolve to a spec with approved: yes.
+# Mechanics adapted from Sorrel's spec-gate.yml.
+name: Spec gate
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  spec-trailer:
+    name: Commits reference an approved spec
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Resolve trailers
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          fail=0
+          commits=$(git rev-list --no-merges "$BASE..$HEAD")
+          if [ -z "$commits" ]; then echo "No commits to check."; exit 0; fi
+          for c in $commits; do
+            subject=$(git log -1 --format=%s "$c")
+            spec=$(git log -1 --format=%B "$c" | grep -oiE 'Spec:[[:space:]]*[0-9]{3}' | head -1 | grep -oE '[0-9]{3}' || true)
+            if [ -z "$spec" ]; then
+              echo "::error::Commit ${c:0:9} (\"$subject\") is missing a 'Spec: NNN' trailer."
+              fail=1; continue
+            fi
+            file=$(ls "specs/${spec}-"*.md 2>/dev/null | head -1 || true)
+            if [ -z "$file" ]; then
+              echo "::error::Commit ${c:0:9} references Spec: $spec, but specs/${spec}-*.md does not exist."
+              fail=1
+            elif ! grep -qiE '^approved:[[:space:]]*yes' "$file"; then
+              echo "::error::Commit ${c:0:9} references Spec: $spec, but $file is not 'approved: yes'."
+              fail=1
+            else
+              echo "ok: ${c:0:9} \"$subject\" -> $file"
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo ""
+            echo "Every commit must reference an approved spec. See specs/README.md."
+            exit 1
+          fi

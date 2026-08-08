@@ -1,0 +1,66 @@
+# CI runs the same just recipes as local `just check` (docs/quality-ci-plan.md).
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  check-python:
+    name: Python (ruff, pyright, import-linter, pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: extractions/setup-just@v3
+      - run: just check-python
+
+  check-ts:
+    name: TypeScript (tsc, eslint, prettier, vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: extractions/setup-just@v3
+      - run: just check-ts
+
+  contract-drift:
+    name: Contract codegen drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: extractions/setup-just@v3
+      - run: pnpm install --frozen-lockfile
+      - run: just contract
+      - name: Fail on drift
+        run: git diff --exit-code packages/contract
+
+  aie-check:
+    name: Governance drift (aie check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: akin-oz/ai-engineering@v0
+
+  gitleaks:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
