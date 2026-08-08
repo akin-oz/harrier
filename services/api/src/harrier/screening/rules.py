@@ -72,10 +72,9 @@ REGION_NEGATIVE_HINTS: frozenset[str] = frozenset(
     }
 )
 # NOTE: EU work permit / EU residency / EU citizenship phrases are intentionally
-# NOT in any hard-rejection list. The candidate operates through an Estonian OU
-# (e-Residency), so an EU legal entity satisfies "EU work permit required" and
-# "EU-based contractor" requirements via B2B. See PREFERRED_SIGNAL_WEIGHTS:
-# those phrases are POSITIVE signals.
+# NOT in any hard-rejection list. The candidate can contract through an EU legal
+# entity, so these requirements are satisfiable via B2B, never blockers. See
+# PREFERRED_SIGNAL_WEIGHTS: those phrases are POSITIVE signals.
 
 REMOTE_POSITIVE_PATTERNS: tuple[str, ...] = (
     r"\bremote\b",
@@ -124,7 +123,7 @@ PREFERRED_SIGNAL_WEIGHTS: dict[str, int] = {
     "strong engineering culture": 3,
     "observability": 4,
     "performance": 4,
-    # EU contractor signals: the Estonian OU makes these an exact fit.
+    # EU contractor signals: an EU legal entity makes these an exact fit.
     "eu work permit": 5,
     "right to work in eu": 5,
     "eu-based contractor": 5,
@@ -218,6 +217,14 @@ def remote_region_allowed(job: NormalizedJob, candidate_cfg: CandidateConfig) ->
     description = normalize(job["description"])
     combined = f"{title} {location} {description}".strip()
 
+    # DELIBERATE: negative hints check the location field only, never the
+    # description. Descriptions routinely contain the words in comparisons
+    # ("unlike hybrid roles, we are fully remote") and, critically,
+    # "must be based" appears in "must be based in EU", which is a POSITIVE
+    # signal per the product invariants. Widening this check to descriptions
+    # would reject valid remote-EMEA roles. Pinned by
+    # test_hybrid_wording_in_description_does_not_reject and
+    # test_must_be_based_in_eu_description_stays_accepted.
     if any(token in location for token in REMOTE_NEGATIVE_HINTS):
         return False, "location says hybrid/on-site"
 

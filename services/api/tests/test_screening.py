@@ -432,3 +432,35 @@ def test_low_score_enrichment_is_cached_and_not_refetched(
         second = _screen([again], cfg, cache_descriptions=True)
         assert second.rejected_counts.get("low_score") == 1
         assert fetch.call_count == 1
+
+
+def test_hybrid_wording_in_description_does_not_reject() -> None:
+    """Negative hints are location-only by design: descriptions use the words
+    in comparisons without describing the role's own policy."""
+    allowed, _ = remote_region_allowed(
+        build_job(
+            location="Remote, Europe",
+            description="Unlike hybrid roles, we are fully remote across Europe.",
+        ),
+        candidate_cfg(),
+    )
+    assert allowed is True
+
+
+def test_must_be_based_in_eu_description_stays_accepted() -> None:
+    """'must be based' is a negative hint, but 'must be based in EU' in a
+    description is an explicitly positive signal (product invariant); the
+    location-only scoping of negative hints is what keeps this true."""
+    job = build_job(
+        location="Remote, Europe",
+        description="Fully remote. You must be based in EU for this role.",
+    )
+    allowed, _ = remote_region_allowed(job, candidate_cfg())
+    assert allowed is True
+    minimal_cfg = candidate_cfg()
+    base, _ = score_job(build_job(description="Remote Europe role."), minimal_cfg)
+    with_signal, _ = score_job(
+        build_job(description="Remote Europe role. Based in EU contractors welcome."),
+        minimal_cfg,
+    )
+    assert with_signal > base
