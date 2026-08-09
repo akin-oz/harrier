@@ -182,6 +182,90 @@ def _cmd_tailor(args: argparse.Namespace) -> int:
     return 0
 
 
+def _read_jd_file(path_value: str | None) -> tuple[str | None, int | None]:
+    if not path_value:
+        return None, None
+    try:
+        return Path(path_value).read_text(encoding="utf-8"), None
+    except (OSError, UnicodeError) as error:
+        print(f"cannot read --jd-file: {error}", file=sys.stderr)
+        return None, 1
+
+
+def _cmd_cover_letter(args: argparse.Namespace) -> int:
+    from harrier.apply import generate_cover_letter, write_cover_letter_artifacts
+    from harrier.apply.profile import ApplicationProfileError
+    from harrier.screening.descriptions import load_cached_description
+    from harrier.tracker import get_job
+
+    jd_text, error_code = _read_jd_file(args.jd_file)
+    if error_code is not None:
+        return error_code
+    conn = connect()
+    try:
+        row = get_job(conn, args.job_id)
+        if not jd_text:
+            jd_text = load_cached_description(row.get("url", "")) or None
+        letter = generate_cover_letter(
+            conn,
+            row.get("company", ""),
+            row.get("title", ""),
+            job_url=row.get("url", ""),
+            tracker_row=row,
+            jd_text=jd_text,
+            extra_notes=args.notes,
+        )
+        artifacts = write_cover_letter_artifacts(
+            conn,
+            row.get("company", ""),
+            row.get("title", ""),
+            row.get("url", ""),
+            letter["short_version"],
+            letter["full_version"],
+        )
+    except (ApplicationProfileError, TrackerError, ValueError, RuntimeError) as error:
+        print(f"cover letter failed: {error}", file=sys.stderr)
+        return 1
+    for kind, path in artifacts.items():
+        print(f"{kind}={path}")
+    return 0
+
+
+def _cmd_answers(args: argparse.Namespace) -> int:
+    from harrier.apply import generate_answer_set, parse_questions, render_markdown, write_output
+    from harrier.apply.profile import ApplicationProfileError
+    from harrier.screening.descriptions import load_cached_description
+    from harrier.tracker import get_job
+
+    jd_text, error_code = _read_jd_file(args.jd_file)
+    if error_code is not None:
+        return error_code
+    conn = connect()
+    try:
+        row = get_job(conn, args.job_id)
+        if not jd_text:
+            jd_text = load_cached_description(row.get("url", "")) or None
+        questions = parse_questions(args.question, args.questions_file)
+        drafts = generate_answer_set(
+            conn,
+            row.get("company", ""),
+            row.get("title", ""),
+            questions,
+            job_url=row.get("url", ""),
+            tracker_row=row,
+            jd_text=jd_text,
+        )
+        content = render_markdown(
+            row.get("company", ""), row.get("title", ""), row.get("url", ""), row, drafts
+        )
+        output_path = write_output(row.get("company", ""), row.get("title", ""), content)
+    except (ApplicationProfileError, TrackerError, OSError, ValueError, RuntimeError) as error:
+        print(f"answers failed: {error}", file=sys.stderr)
+        return 1
+    print(f"answers={output_path}")
+    return 0
+
+
 def _cmd_demo_run(args: argparse.Namespace) -> int:
     """Exercise the run machinery (spec 006): progress protocol plus log lines."""
     import json
@@ -281,6 +365,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="use the deterministic evidence plan only (reproducible validation)",
     )
     tailor.set_defaults(func=_cmd_tailor)
+
+    cover = sub.add_parser(
+        "cover-letter", help="generate a cover letter with the PDF gate (spec 014)"
+    )
+    cover.add_argument("--job-id", type=int, required=True)
+    cover.add_argument("--jd-file", help="path to a job description text file")
+    cover.add_argument("--notes", help="extra guidance passed to the generator")
+    cover.set_defaults(func=_cmd_cover_letter)
+
+    answers = sub.add_parser(
+        "answers", help="draft application answers for a tracker job (spec 014)"
+    )
+    answers.add_argument("--job-id", type=int, required=True)
+    answers_group = answers.add_mutually_exclusive_group()
+    answers_group.add_argument("--question", help="a single question")
+    answers_group.add_argument("--questions-file", help="file with one question per line")
+    answers.add_argument("--jd-file", help="path to a job description text file")
+    answers.set_defaults(func=_cmd_answers)
 
     demo_run = sub.add_parser("demo-run", help="exercise the run machinery (spec 006)")
     demo_run.add_argument("--steps", default="8", help="number of progress steps")

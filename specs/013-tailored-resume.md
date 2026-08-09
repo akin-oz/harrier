@@ -1,7 +1,7 @@
 ---
 spec: 013
 title: Tailored resume generation with truth validation and PDF gate
-status: in-progress
+status: shipped
 approved: yes
 milestone: M3
 depends: [012, 004]
