@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{name}} — {{headline}}</title>
+  <link rel="stylesheet" href="./cover-letter-template.css" />
+</head>
+<body>
+  <main class="page">
+    <header class="header">
+      <h1>{{name}}</h1>
+      <p class="headline">{{headline}}</p>
+      <p class="meta">
+        <span>{{location}}</span>
+        <span>&bull;</span>
+        <a href="mailto:{{email}}">{{email}}</a>
+        <span>&bull;</span>
+        <a href="{{linkedin_url}}">{{linkedin_label}}</a>
+      </p>
+    </header>
+
+    <section class="full-letter">
+      <div class="letter-copy">
+        {{full_version_html}}
+      </div>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,90 @@
+:root {
+  --bg: #ffffff;
+  --ink: #0f172a;
+  --muted: #475569;
+  --soft: #64748b;
+  --line: #e2e8f0;
+  --accent: #0f766e;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  padding: 20px;
+}
+
+.page {
+  max-width: 210mm;
+  margin: 0 auto;
+}
+
+.header {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 10px;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+
+.headline {
+  margin: 6px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.meta {
+  margin: 8px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.meta a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.full-letter {
+  margin-top: 18px;
+}
+
+.letter-copy p {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  line-height: 1.56;
+  color: var(--ink);
+}
+
+.letter-copy p:last-child {
+  margin-bottom: 0;
+}
+
+@media print {
+  body {
+    padding: 0;
+  }
+
+  .page {
+    max-width: none;
+    min-height: auto;
+  }
+}

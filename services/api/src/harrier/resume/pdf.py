@@ -16,7 +16,7 @@ import subprocess
 from pathlib import Path
 
 
-def render_pdf(html_text: str, pdf_path: Path) -> None:
+def render_pdf(html_text: str, pdf_path: Path, margin_mm: int = 10) -> None:
     try:
         from playwright.sync_api import Error as PlaywrightError
         from playwright.sync_api import sync_playwright
@@ -37,7 +37,12 @@ def render_pdf(html_text: str, pdf_path: Path) -> None:
                 path=str(pdf_path),
                 format="A4",
                 print_background=True,
-                margin={"top": "10mm", "right": "10mm", "bottom": "10mm", "left": "10mm"},
+                margin={
+                    "top": f"{margin_mm}mm",
+                    "right": f"{margin_mm}mm",
+                    "bottom": f"{margin_mm}mm",
+                    "left": f"{margin_mm}mm",
+                },
                 prefer_css_page_size=True,
             )
             browser.close()

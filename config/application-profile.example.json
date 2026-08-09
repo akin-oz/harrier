@@ -1,0 +1,91 @@
+{
+  "_comment": "Synthetic application profile (spec 014). Import YOUR profile into the profile store as kind application_profile (json format); this example documents the shape and doubles as the public test fixture (services/api/tests/test_apply.py). deterministic_answers templates may use {company}, {product_signal}, {salary_min}, and {salary_target} placeholders.",
+  "core_positioning": {
+    "identity": "Senior Frontend Engineer",
+    "strongest_evidence": [
+      "TypeScript-first product delivery",
+      "conversion-critical flow ownership",
+      "frontend quality infrastructure"
+    ]
+  },
+  "ai_tooling_workflow": {
+    "actual_tools": ["An AI coding assistant", "An LLM API"],
+    "real_example": "Built a local automation that drafts application materials from verified truth sources with validation gates."
+  },
+  "professional_stories": [
+    {
+      "id": "funnel_conversion_improvement",
+      "summary": "Improved a signup funnel's completion from about 40% to 70% across roughly 250K annual applications."
+    },
+    {
+      "id": "ai_assisted_workflow_automation",
+      "summary": "Built an AI-assisted local automation pipeline with truth-source validation for application materials."
+    }
+  ],
+  "engineering_principles": [
+    "Evidence over claims",
+    "Small reviewable changes",
+    "Quality gates in CI"
+  ],
+  "safe_framing": {
+    "do_not_claim": [
+      "Do not claim React Native experience",
+      "Do not claim Cursor as an actual tool",
+      "Do not claim backend ownership beyond adjacent utilities"
+    ]
+  },
+  "question_mapping": {
+    "How do you use AI tools in your workflow?": {
+      "best_story_ids": ["ai_assisted_workflow_automation"],
+      "guidance": "Name the actual tools and the real local automation example; do not inflate."
+    },
+    "Why are you interested in this role/company?": {
+      "best_story_ids": ["funnel_conversion_improvement"],
+      "guidance": "Tie interest to the product signal and verified delivery work."
+    }
+  },
+  "style_guidance": {
+    "voice": ["direct", "practical", "understated"],
+    "selection_guidance": [
+      "Favor proof points that match the JD over the most impressive-sounding ones.",
+      "For frontend roles, prefer user-facing ownership, performance, and design systems."
+    ]
+  },
+  "deterministic_answers": {
+    "interest": {
+      "short": "I'm interested in this role because it fits my background in TypeScript-first product engineering and user-facing delivery.",
+      "medium": "I'm interested in {company} because {product_signal}. This role fits my background well: TypeScript-first frontend and product engineering, shipping user-facing features end to end, and improving performance and reliability in production.",
+      "notes": ["Use JD language where it maps directly to verified experience."]
+    },
+    "fit": {
+      "short": "This role fits my background well because my strongest work is TypeScript-first frontend and product engineering.",
+      "medium": "My background is strongest in TypeScript-first frontend and product engineering. I've shipped user-facing work end to end and improved conversion-critical flows in production.",
+      "notes": []
+    },
+    "experience": {
+      "short": "My most relevant experience is shipping TypeScript-first frontend products and improving conversion-critical flows.",
+      "medium": "I've improved a signup funnel's completion from about 40% to 70% across roughly 250K annual applications, built shared UI libraries, and led frontend quality work in production codebases.",
+      "notes": ["Signup funnel completion improved from ~40% to ~70%"]
+    },
+    "leaving": {
+      "short": "I'm selective about the next role and looking for a good fit on ownership, engineering quality, and product work.",
+      "medium": "I'm not leaving because of one specific issue. I'm looking for the next role with real ownership, strong engineering standards, and a sensible long-term match on stack and scope.",
+      "notes": []
+    },
+    "salary": {
+      "short": "My target range is around EUR {salary_target}, depending on scope, level, and total package.",
+      "medium": "My target is around EUR {salary_target} total cash, and I would usually look for at least EUR {salary_min} for the right fit. I am open to discussing the full package based on scope and seniority.",
+      "notes": []
+    },
+    "availability": {
+      "short": "I can start interview conversations immediately and confirm exact start timing during the process.",
+      "medium": "I can start interview conversations immediately. I prefer to confirm exact notice period and start timing once process details are clear.",
+      "notes": []
+    },
+    "generic": {
+      "short": "This role looks close to work I have done well before: TypeScript-first product engineering and end-to-end feature ownership.",
+      "medium": "My background is most relevant where the role needs strong frontend or product-engineering execution, cross-functional delivery, and disciplined quality.",
+      "notes": []
+    }
+  }
+}

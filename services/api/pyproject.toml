@@ -42,8 +42,10 @@ target-version = "py312"
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
-# The tailoring system prompt is parity text from the old repo; long lines stay.
+# System prompts are parity text from the old repo; long lines stay.
 "src/harrier/resume/ai.py" = ["E501"]
+"src/harrier/apply/answers.py" = ["E501"]
+"src/harrier/apply/letters.py" = ["E501"]
 
 [tool.pyright]
 include = ["src", "tests"]
