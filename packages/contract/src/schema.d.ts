@@ -305,9 +305,9 @@ export interface components {
         StartRunIn: {
             /**
              * Kind
-             * @constant
+             * @enum {string}
              */
-            kind: "demo";
+            kind: "demo" | "discovery";
         };
         /** ValidationError */
         ValidationError: {

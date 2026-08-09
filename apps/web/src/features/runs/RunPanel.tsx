@@ -6,6 +6,7 @@ import type { components } from "@harrier/contract";
 import { api } from "../../shared/api/client";
 
 type RunOut = components["schemas"]["RunOut"];
+type RunKind = components["schemas"]["StartRunIn"]["kind"];
 // SSE message payload: generated from the contract (spec 006 review follow-up);
 // the stream route declares RunEventOut on its response documentation.
 type RunEventPayload = components["schemas"]["RunEventOut"];
@@ -88,8 +89,8 @@ export function RunPanel({
   );
 
   const startMutation = useMutation({
-    mutationFn: async () => {
-      const { data, error } = await api.POST("/runs", { body: { kind: "demo" } });
+    mutationFn: async (kind: RunKind) => {
+      const { data, error } = await api.POST("/runs", { body: { kind } });
       if (error !== undefined) {
         throw new Error(`start failed: ${JSON.stringify(error)}`);
       }
@@ -128,7 +129,16 @@ export function RunPanel({
         <button
           type="button"
           onClick={() => {
-            startMutation.mutate();
+            startMutation.mutate("discovery");
+          }}
+          disabled={active || startMutation.isPending}
+        >
+          Run discovery
+        </button>{" "}
+        <button
+          type="button"
+          onClick={() => {
+            startMutation.mutate("demo");
           }}
           disabled={active || startMutation.isPending}
         >

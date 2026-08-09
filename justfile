@@ -7,8 +7,10 @@ default:
 
 # Start FastAPI and Vite together for development. PID-based cleanup: just runs
 # recipes in a non-interactive sh with no job control, so %1 would not work.
+# uvicorn runs from the REPO ROOT (uv --project) so run-manager subprocesses
+# inherit a cwd where config/, data/, and .env resolve (spec 011).
 dev:
-    (cd {{api_dir}} && uv run uvicorn harrier_api.app:app --reload --port 8000) & api_pid=$!; \
+    uv run --project {{api_dir}} uvicorn harrier_api.app:app --reload --port 8000 & api_pid=$!; \
     trap 'kill "$api_pid" 2>/dev/null || true' EXIT INT TERM; \
     pnpm --filter @harrier/web dev
 
