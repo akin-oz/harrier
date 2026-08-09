@@ -1,7 +1,7 @@
 ---
 spec: 011
 title: Discovery orchestrator, summaries, Telegram notify
-status: in-progress
+status: shipped
 approved: yes
 milestone: M2
 depends: [008, 009, 010]

@@ -1,8 +1,8 @@
 ---
 spec: 023
 title: User configuration in the database
-status: proposed
-approved: no   # only Akin flips this to yes
+status: accepted
+approved: yes
 milestone: M5
 depends: [004, 011]
 ---
