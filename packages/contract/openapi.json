@@ -433,7 +433,10 @@
       "StartRunIn": {
         "properties": {
           "kind": {
-            "const": "demo",
+            "enum": [
+              "demo",
+              "discovery"
+            ],
             "title": "Kind",
             "type": "string"
           }

@@ -1,0 +1,4 @@
+{
+  "_comment": "Scheduled-run policy (spec 011). apify_scheduled_count is a per-search ceiling, not a typical haul: the LinkedIn search URLs carry f_TPR=r86400, a recency boundary (past 24h) that reduces re-scraping of stale top-N results. Deduplication itself is the seen-state and tracker layers (services/api/tests/test_screening.py). 50 is what the old production wrapper ran; the CLI default for manual runs stays 150.",
+  "apify_scheduled_count": 50
+}

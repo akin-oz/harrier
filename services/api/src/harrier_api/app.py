@@ -111,7 +111,7 @@ class RunOut(BaseModel):
 
 
 class StartRunIn(BaseModel):
-    kind: Literal["demo"]
+    kind: Literal["demo", "discovery"]
 
 
 class RunEventOut(BaseModel):

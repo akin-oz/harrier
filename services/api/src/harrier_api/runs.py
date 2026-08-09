@@ -24,8 +24,9 @@ PROTOCOL_PREFIX = "::harrier::"
 RunState = Literal["queued", "running", "succeeded", "failed", "cancelled"]
 TERMINAL_STATES: frozenset[str] = frozenset({"succeeded", "failed", "cancelled"})
 
-# Run kinds and their commands. Spec 011 registers the discovery kind here.
+# Run kinds and their commands.
 KIND_COMMANDS: dict[str, list[str]] = {
+    "discovery": [sys.executable, "-m", "harrier_cli.main", "discover"],
     "demo": [
         sys.executable,
         "-m",

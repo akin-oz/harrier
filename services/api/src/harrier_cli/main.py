@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
 from pathlib import Path
 
@@ -11,6 +13,87 @@ from harrier.profile import export_to, import_from, list_documents
 from harrier.tracker.export import export_csv
 from harrier.tracker.migrate_legacy import MigrationError, migrate
 from harrier.tracker.store import TrackerError
+
+
+def load_project_env(path: Path | None = None) -> None:
+    """Load .env from the working directory (spec 011; launchd wrappers rely
+    on it). Existing environment variables are never overridden."""
+    env_path = path if path is not None else Path(".env")
+    if not env_path.is_file():
+        return
+    for raw_line in env_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+def _cmd_discover(args: argparse.Namespace) -> int:
+    from harrier.discovery import (
+        SOURCE_ORDER,
+        DiscoveryOptions,
+        apify_allowed_now,
+        run_discovery,
+    )
+
+    only = frozenset(item.strip() for item in args.only_source if item.strip())
+    unknown = sorted(only - set(SOURCE_ORDER))
+    if unknown:
+        print(
+            f"unknown --only-source value(s): {', '.join(unknown)}; "
+            f"valid: {', '.join(SOURCE_ORDER)}",
+            file=sys.stderr,
+        )
+        return 2
+
+    def runnable(name: str) -> bool:
+        if only and name not in only:
+            return False
+        if name == "wellfound":
+            return bool(args.wellfound_file)
+        if name == "wttj":
+            return bool(args.wttj_file)
+        if name == "apify_linkedin" and args.scheduled:
+            return apify_allowed_now()
+        return True
+
+    enabled = [name for name in SOURCE_ORDER if runnable(name)]
+    total = len(enabled)
+    state = {"step": 0}
+
+    def progress(source: str, stage: str) -> None:
+        if stage == "fetching":
+            state["step"] += 1
+        payload = {
+            "event": "progress",
+            "step": state["step"],
+            "total": total,
+            "message": f"{source}: {stage}",
+        }
+        print(f"::harrier::{json.dumps(payload)}", flush=True)
+        print(f"{source}: {stage}", flush=True)
+
+    conn = connect()
+    aggregate = run_discovery(
+        conn,
+        DiscoveryOptions(
+            dry_run=args.dry_run,
+            notify=not args.no_notify,
+            only_sources=only,
+            apify_count=int(args.apify_count),
+            dataset_files=list(args.dataset_file),
+            wellfound_files=list(args.wellfound_file),
+            wttj_files=list(args.wttj_file),
+            scheduled=args.scheduled,
+        ),
+        progress,
+    )
+    print(json.dumps(aggregate, indent=2, ensure_ascii=False))
+    return 0
 
 
 def _cmd_migrate_legacy(args: argparse.Namespace) -> int:
@@ -134,6 +217,29 @@ def build_parser() -> argparse.ArgumentParser:
     profile_list = profile_sub.add_parser("list", help="list stored documents")
     profile_list.set_defaults(func=_cmd_profile_list)
 
+    discover = sub.add_parser("discover", help="run discovery over all sources (spec 011)")
+    discover.add_argument("--dry-run", action="store_true", help="evaluate without writes")
+    discover.add_argument("--no-notify", action="store_true", help="skip the Telegram summary")
+    discover.add_argument(
+        "--only-source", action="append", default=[], help="restrict to a source (repeatable)"
+    )
+    discover.add_argument("--apify-count", type=int, default=150, help="Apify job count")
+    discover.add_argument(
+        "--dataset-file", action="append", default=[], help="local Apify dataset JSON (repeatable)"
+    )
+    discover.add_argument(
+        "--wellfound-file", action="append", default=[], help="Wellfound export (repeatable)"
+    )
+    discover.add_argument(
+        "--wttj-file", action="append", default=[], help="WTTJ export (repeatable)"
+    )
+    discover.add_argument(
+        "--scheduled",
+        action="store_true",
+        help="apply the scheduled policy: Apify on weekday mornings only, configured count",
+    )
+    discover.set_defaults(func=_cmd_discover)
+
     demo_run = sub.add_parser("demo-run", help="exercise the run machinery (spec 006)")
     demo_run.add_argument("--steps", default="8", help="number of progress steps")
     demo_run.add_argument("--delay", default="0.4", help="seconds between steps")
@@ -143,6 +249,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_project_env()
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

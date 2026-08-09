@@ -35,3 +35,9 @@ dist/
 
 # Real hold list: reason column is personal operational data (spec 007)
 /config/companies-hold.csv
+
+# User configuration: real watchlists and searches are personal data
+# (ADR-009); committed .example files document the shapes.
+/config/feeds.txt
+/config/linkedin_search_urls.txt
+/config/discovery.json

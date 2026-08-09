@@ -1,7 +1,7 @@
 ---
 spec: 010
 title: Batch imports, capture endpoints, bookmarklets
-status: in-progress
+status: shipped
 approved: yes
 milestone: M2
 depends: [007, 008]
