@@ -1,7 +1,7 @@
 ---
 spec: 012
 title: LLM provider seam
-status: in-progress
+status: shipped
 approved: yes
 milestone: M3
 depends: [001]
