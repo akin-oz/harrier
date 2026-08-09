@@ -61,7 +61,7 @@ own Telegram channel.
   seen state, and Telegram messages for actionable events only.
 - Failure modes: missing env variables raise RuntimeError naming them;
   a missing or invalid token raises RuntimeError pointing at harrier
-  gmail-oauth; missing google dependencies raise RuntimeError with the
+  gmail-oauth; missing Google dependencies raise RuntimeError with the
   install command; a Telegram send failure stops the run with its exit
   code (per the old behavior) after the event was already logged;
   malformed API payloads normalize to empty fields rather than raising.
@@ -73,14 +73,14 @@ own Telegram channel.
   repo-root gmail_handler.log.
 - Tracker matching runs over the database rows and the event carries
   the job id (the old csv row number stays only in the migration path).
-- The google client libraries are an optional dependency group (gmail),
+- The Google client libraries are an optional dependency group (gmail),
   lazily imported like Playwright in spec 013.
 - The run is a library function returning a summary plus printable
   lines, so the counters are tested without patching print.
 
 ## Acceptance criteria
 
-- [ ] Behavior pins ported from the old tests/test_gmail_watch.py:
+- [x] Behavior pins ported from the old tests/test_gmail_watch.py:
       the classification cascade (interview invite with tracker match,
       rejection, marketing ignore with reason, recruiter follow-up
       beating application confirmation, both confirmation phrasings,
@@ -88,7 +88,10 @@ own Telegram channel.
       low-noise confirmation), API message normalization, and the run
       counters (unseen and ignored counts, actionable counts, missing
       message id reporting, seen-skip reporting)
-- [ ] Dry-run prints per-message classification and sends nothing
+      (services/api/tests/test_mail.py)
+- [x] Dry-run prints per-message classification and sends nothing
+      (test_dry_run_counts_and_classifies_without_sending: the send
+      function raises if called)
 - [ ] All gates green on PR
 
 ## Proof / origin

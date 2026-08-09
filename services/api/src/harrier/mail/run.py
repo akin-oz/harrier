@@ -68,10 +68,13 @@ def run_watch(
     summary = WatchSummary()
     state = load_state()
     seen_raw = state.get("seen_message_ids")
-    seen_ids: set[str] = (
-        {str(item) for item in cast("list[object]", seen_raw)}
+    # A dict as an ordered set: the cap must drop the OLDEST ids, and a
+    # plain set's hash order would discard an arbitrary subset and cause
+    # duplicate alerts on reclassification (review finding).
+    seen_ids: dict[str, None] = (
+        dict.fromkeys(str(item) for item in cast("list[object]", seen_raw))
         if isinstance(seen_raw, list)
-        else set()
+        else {}
     )
     rows = tracker_rows(conn)
     messages = fetch()
@@ -128,7 +131,7 @@ def run_watch(
                     break
         else:
             summary.ignored_count += 1
-        seen_ids.add(message_id)
+        seen_ids[message_id] = None
 
     state["seen_message_ids"] = list(seen_ids)[-SEEN_STATE_LIMIT:]
     state["updated_at"] = now_iso()

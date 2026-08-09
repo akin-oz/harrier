@@ -278,6 +278,34 @@ def test_seen_message_reports_already_seen(db: sqlite3.Connection) -> None:
     assert second.unseen_count == 0
 
 
+def test_seen_state_cap_drops_the_oldest_ids(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import harrier.mail.run as run_module
+    from harrier.mail.watch import load_state, save_state
+
+    monkeypatch.setattr(run_module, "SEEN_STATE_LIMIT", 5)
+    save_state({"seen_message_ids": ["old1", "old2", "old3", "old4"]})
+    messages = [
+        build_message("Interview invitation", "We invite you to interview.", message_id="new1"),
+        build_message("Interview invitation b", "We invite you to interview.", message_id="new2"),
+        build_message("Interview invitation c", "We invite you to interview.", message_id="new3"),
+    ]
+    run_watch(db, dry_run=True, fetch=lambda: messages, send=no_send)
+    state = load_state()
+    # The cap keeps the NEWEST ids in insertion order (review finding:
+    # a set-based cap dropped an arbitrary subset).
+    assert state["seen_message_ids"] == ["old3", "old4", "new1", "new2", "new3"]
+
+
+def test_int_env_guard_raises_runtime_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    from harrier.mail.watch import env_config
+
+    monkeypatch.setenv("GMAIL_POLL_LOOKBACK_DAYS", "soon")
+    with pytest.raises(RuntimeError, match="GMAIL_POLL_LOOKBACK_DAYS"):
+        env_config()
+
+
 def test_live_run_sends_actionable_and_stops_on_send_failure(
     db: sqlite3.Connection,
 ) -> None:

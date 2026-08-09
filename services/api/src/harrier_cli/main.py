@@ -525,8 +525,10 @@ def _cmd_gmail_watch(args: argparse.Namespace) -> int:
     for line in summary.lines:
         print(line)
     if summary.send_failure:
-        return summary.send_failure
-    if not args.dry_run and summary.unseen_count == 0:
+        # Clamp: POSIX exit statuses are modulo 256, so a raw helper value
+        # like 256 would read as success (review finding).
+        return min(max(1, summary.send_failure), 255)
+    if not args.dry_run and summary.actionable_count == 0:
         print("gmail_watch=no_new_actionable_messages")
     return 0
 
@@ -568,6 +570,7 @@ def _cmd_gmail_oauth(args: argparse.Namespace) -> int:
     credentials = flow.run_local_server(port=0, open_browser=True)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     token_file.parent.mkdir(parents=True, exist_ok=True)
     token_file.write_text(credentials.to_json(), encoding="utf-8")  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+    token_file.chmod(0o600)
     print(f"gmail_oauth_token={token_file}")
     return 0
 

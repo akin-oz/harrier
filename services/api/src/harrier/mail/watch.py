@@ -472,13 +472,23 @@ def tracker_rows(conn: sqlite3.Connection) -> list[dict[str, str]]:
     return list_jobs(conn)
 
 
+def _int_env(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be an integer, got {raw!r}") from exc
+
+
 def env_config() -> dict[str, object]:
     return {
         "account": os.getenv("GMAIL_ACCOUNT"),
         "client_secret_file": os.getenv("GMAIL_OAUTH_CLIENT_SECRET_FILE"),
         "token_file": os.getenv("GMAIL_OAUTH_TOKEN_FILE"),
-        "lookback_days": int(os.getenv("GMAIL_POLL_LOOKBACK_DAYS", "7")),
-        "max_messages": int(os.getenv("GMAIL_POLL_MAX_MESSAGES", "25")),
+        "lookback_days": _int_env("GMAIL_POLL_LOOKBACK_DAYS", 7),
+        "max_messages": _int_env("GMAIL_POLL_MAX_MESSAGES", 25),
     }
 
 
