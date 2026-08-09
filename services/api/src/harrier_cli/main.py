@@ -325,6 +325,145 @@ def _cmd_evaluate_prospects(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_find_contacts(args: argparse.Namespace) -> int:
+    from harrier.outreach import find_best_contacts_for_job, find_contacts_for_job
+    from harrier.tracker import get_job
+
+    conn = connect()
+    try:
+        row = get_job(conn, args.job_id)
+        finder = find_best_contacts_for_job if args.best_only else find_contacts_for_job
+        summary = finder(
+            company=row.get("company", ""),
+            role=row.get("title", ""),
+            job_url=row.get("url", ""),
+            max_items=args.max_items,
+        )
+    except (TrackerError, RuntimeError) as error:
+        print(f"find-contacts failed: {error}", file=sys.stderr)
+        return 1
+    from typing import cast
+
+    print(json.dumps({k: v for k, v in summary.items() if k != "candidates"}, indent=2))
+    candidates_raw = summary.get("candidates")
+    candidates = cast("list[object]", candidates_raw) if isinstance(candidates_raw, list) else []
+    for index, item in enumerate(candidates[:8], start=1):
+        row_data = cast("dict[str, str]", item) if isinstance(item, dict) else {}
+        print(
+            f"{index}. {row_data.get('person_name', '')} | {row_data.get('person_title', '')} | "
+            f"{row_data.get('relevance', '')} | fit={row_data.get('fit_score', '')} | "
+            f"{row_data.get('linkedin_url', '')}"
+        )
+    return 0
+
+
+def _cmd_contacts(args: argparse.Namespace) -> int:
+    from harrier.outreach import (
+        approve_candidate,
+        set_best_contact_for_job,
+        sync_tracker_outreach,
+        update_candidate_review_status,
+    )
+    from harrier.tracker import get_job, list_contacts
+
+    conn = connect()
+    if args.contacts_command == "list":
+        for contact in list_contacts(conn):
+            print(
+                f"{contact['id']}. {contact.get('person_name', '')} | "
+                f"{contact.get('person_title', '')} | {contact.get('relevance', '')} | "
+                f"{contact.get('company', '')} | {contact.get('contact_status', '')}"
+            )
+        return 0
+    try:
+        row = get_job(conn, args.job_id)
+    except TrackerError as error:
+        print(f"contacts failed: {error}", file=sys.stderr)
+        return 1
+    company = row.get("company", "")
+    role = row.get("title", "")
+    if args.contacts_command == "set-best":
+        updated_row = set_best_contact_for_job(conn, args.job_id, args.linkedin_url)
+        if updated_row is None:
+            print("contact is not linked to this job", file=sys.stderr)
+            return 1
+        print(f"best_contact={updated_row.get('best_contact_name', '')}")
+        return 0
+    if args.contacts_command == "approve":
+        added = approve_candidate(conn, company, role, row.get("url", ""), args.linkedin_url)
+        if added is None:
+            print("candidate not found in the staged artifact", file=sys.stderr)
+            return 1
+        sync_tracker_outreach(conn)
+        print(f"approved: {added.get('person_name', '')} ({added.get('linkedin_url', '')})")
+        return 0
+    updated = update_candidate_review_status(company, role, args.linkedin_url, "rejected")
+    if updated is None:
+        print("candidate not found in the staged artifact", file=sys.stderr)
+        return 1
+    print(f"rejected: {updated.get('person_name', '')}")
+    return 0
+
+
+def _cmd_outreach(args: argparse.Namespace) -> int:
+    from harrier.outreach import (
+        mark_job_outreach_replied,
+        mark_job_outreach_sent,
+        outreach_due_rows,
+        snooze_job_outreach,
+        sync_tracker_outreach,
+    )
+
+    conn = connect()
+    try:
+        if args.outreach_command == "sync":
+            rows = sync_tracker_outreach(conn)
+            print(f"synced {len(rows)} rows")
+        elif args.outreach_command == "due":
+            for row in outreach_due_rows(conn):
+                print(
+                    f"{row['id']}. {row.get('company', '')} | {row.get('title', '')} | "
+                    f"{row.get('next_outreach_action', '')} | "
+                    f"best={row.get('best_contact_name', '')}"
+                )
+        elif args.outreach_command == "mark-sent":
+            row = mark_job_outreach_sent(conn, args.job_id, sent_at=args.date)
+            print(f"outreach_status={row['outreach_status']}")
+        elif args.outreach_command == "mark-replied":
+            row = mark_job_outreach_replied(conn, args.job_id, replied_at=args.date)
+            print(f"outreach_status={row['outreach_status']}")
+        else:
+            row = snooze_job_outreach(conn, args.job_id, args.until)
+            print(f"next_outreach_action={row['next_outreach_action']}")
+    except (TrackerError, ValueError) as error:
+        print(f"outreach failed: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _cmd_backfill_posters(args: argparse.Namespace) -> int:
+    from harrier.outreach import backfill_posters
+
+    conn = connect()
+    summary = backfill_posters(conn, limit=args.limit, dry_run=args.dry_run)
+    for line in summary.lines:
+        print(line)
+    print(
+        json.dumps(
+            {
+                "checked": summary.checked,
+                "staged": summary.staged,
+                "skipped_existing": summary.skipped_existing,
+                "no_poster": summary.no_poster,
+                "errors": summary.errors,
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    )
+    return 0
+
+
 def _cmd_demo_run(args: argparse.Namespace) -> int:
     """Exercise the run machinery (spec 006): progress protocol plus log lines."""
     import json
@@ -472,6 +611,49 @@ def build_parser() -> argparse.ArgumentParser:
         help="also auto-reject borderline verdicts",
     )
     prospects.set_defaults(func=_cmd_evaluate_prospects)
+
+    find_contacts = sub.add_parser(
+        "find-contacts", help="stage outreach candidates via Apify profile search (spec 016)"
+    )
+    find_contacts.add_argument("--job-id", type=int, required=True)
+    find_contacts.add_argument("--max-items", type=int, default=10)
+    find_contacts.add_argument(
+        "--best-only", action="store_true", help="stop early on a strong match"
+    )
+    find_contacts.set_defaults(func=_cmd_find_contacts)
+
+    contacts = sub.add_parser("contacts", help="contact operations (spec 016)")
+    contacts_sub = contacts.add_subparsers(dest="contacts_command", required=True)
+    contacts_sub.add_parser("list", help="list stored contacts")
+    for name, help_text in (
+        ("approve", "copy a staged candidate into contacts"),
+        ("reject", "mark a staged candidate rejected"),
+        ("set-best", "pin a linked contact as the job's best contact"),
+    ):
+        stage_cmd = contacts_sub.add_parser(name, help=help_text)
+        stage_cmd.add_argument("--job-id", type=int, required=True)
+        stage_cmd.add_argument("--linkedin-url", required=True)
+    contacts.set_defaults(func=_cmd_contacts)
+
+    outreach = sub.add_parser("outreach", help="outreach queue actions (spec 016)")
+    outreach_sub = outreach.add_subparsers(dest="outreach_command", required=True)
+    outreach_sub.add_parser("sync", help="re-derive outreach fields for every row")
+    outreach_sub.add_parser("due", help="list due outreach actions")
+    for name in ("mark-sent", "mark-replied"):
+        mark_cmd = outreach_sub.add_parser(name)
+        mark_cmd.add_argument("--job-id", type=int, required=True)
+        mark_cmd.add_argument("--date", default=None)
+    snooze_cmd = outreach_sub.add_parser("snooze")
+    snooze_cmd.add_argument("--job-id", type=int, required=True)
+    snooze_cmd.add_argument("--until", required=True)
+    outreach.set_defaults(func=_cmd_outreach)
+
+    backfill = sub.add_parser(
+        "backfill-posters", help="backfill LinkedIn poster contacts via guest endpoint (spec 016)"
+    )
+    backfill.add_argument("--limit", type=int, default=0)
+    backfill.add_argument("--dry-run", action="store_true")
+    backfill.set_defaults(func=_cmd_backfill_posters)
 
     demo_run = sub.add_parser("demo-run", help="exercise the run machinery (spec 006)")
     demo_run.add_argument("--steps", default="8", help="number of progress steps")

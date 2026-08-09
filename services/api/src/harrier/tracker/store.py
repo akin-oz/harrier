@@ -222,3 +222,26 @@ def add_contact(conn: sqlite3.Connection, fields: Mapping[str, str]) -> int:
 def list_contacts(conn: sqlite3.Connection) -> list[dict[str, str]]:
     rows = conn.execute("SELECT * FROM contacts ORDER BY id").fetchall()
     return [_job_row_to_dict(row) for row in rows]
+
+
+def update_contact_fields(
+    conn: sqlite3.Connection, contact_id: int, fields: Mapping[str, str]
+) -> None:
+    """Update contact columns by id (spec 016). Unknown fields are an error."""
+    unknown = [name for name in fields if name not in CONTACT_FIELDS]
+    if unknown:
+        raise TrackerError(f"unknown contact fields: {', '.join(sorted(unknown))}")
+    if not fields:
+        return
+    assignments = ", ".join(f"{name} = ?" for name in fields)
+    with conn:
+        conn.execute(
+            f"UPDATE contacts SET {assignments} WHERE id = ?",
+            [*[str(value) for value in fields.values()], contact_id],
+        )
+
+
+def delete_contact(conn: sqlite3.Connection, contact_id: int) -> bool:
+    with conn:
+        cursor = conn.execute("DELETE FROM contacts WHERE id = ?", (contact_id,))
+    return cursor.rowcount > 0
