@@ -19,6 +19,12 @@ harrier = "harrier_cli.main:main"
 pdf = [
     "playwright>=1.40",
 ]
+# Gmail polling is optional: install with `uv sync --group gmail`.
+gmail = [
+    "google-api-python-client>=2.100",
+    "google-auth>=2.23",
+    "google-auth-oauthlib>=1.1",
+]
 dev = [
     "pytest>=8.0",
     "ruff>=0.9",

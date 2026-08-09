@@ -513,6 +513,77 @@ def _cmd_outreach_draft(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_gmail_watch(args: argparse.Namespace) -> int:
+    from harrier.mail import run_watch
+
+    conn = connect()
+    try:
+        summary = run_watch(conn, dry_run=args.dry_run)
+    except RuntimeError as error:
+        print(f"gmail watch failed: {error}", file=sys.stderr)
+        return 1
+    for line in summary.lines:
+        print(line)
+    if summary.send_failure:
+        return summary.send_failure
+    if not args.dry_run and summary.unseen_count == 0:
+        print("gmail_watch=no_new_actionable_messages")
+    return 0
+
+
+def _cmd_gmail_oauth(args: argparse.Namespace) -> int:
+    from harrier.mail import GMAIL_SCOPES, env_config
+
+    config = env_config()
+    client_secret_raw = args.client_secret_file or str(config.get("client_secret_file") or "")
+    token_raw = args.token_file or str(config.get("token_file") or "")
+    if not client_secret_raw.strip():
+        print("missing GMAIL_OAUTH_CLIENT_SECRET_FILE", file=sys.stderr)
+        return 2
+    if not token_raw.strip():
+        print("missing GMAIL_OAUTH_TOKEN_FILE", file=sys.stderr)
+        return 2
+    client_secret_file = Path(client_secret_raw).expanduser().resolve()
+    token_file = Path(token_raw).expanduser().resolve()
+    print(f"resolved_client_secret={client_secret_file}")
+    print(f"resolved_token_file={token_file}")
+    if client_secret_file.is_dir() or not client_secret_file.exists():
+        print(f"client secret file not found: {client_secret_file}", file=sys.stderr)
+        return 2
+    if token_file.exists() and token_file.is_dir():
+        print(f"token path is a directory: {token_file}", file=sys.stderr)
+        return 2
+    try:
+        from google_auth_oauthlib.flow import (  # pyright: ignore[reportMissingImports]
+            InstalledAppFlow,  # pyright: ignore[reportUnknownVariableType]
+        )
+    except ImportError:
+        print(
+            "missing Gmail OAuth dependencies. Install with:\n"
+            "uv sync --project services/api --group gmail",
+            file=sys.stderr,
+        )
+        return 2
+    flow = InstalledAppFlow.from_client_secrets_file(str(client_secret_file), GMAIL_SCOPES)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    credentials = flow.run_local_server(port=0, open_browser=True)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    token_file.parent.mkdir(parents=True, exist_ok=True)
+    token_file.write_text(credentials.to_json(), encoding="utf-8")  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+    print(f"gmail_oauth_token={token_file}")
+    return 0
+
+
+def _cmd_gmail_migrate_state(args: argparse.Namespace) -> int:
+    from harrier.mail import migrate_seen_state
+
+    try:
+        target = migrate_seen_state(Path(args.from_root))
+    except FileNotFoundError as error:
+        print(f"gmail state migration failed: {error}", file=sys.stderr)
+        return 1
+    print(f"migrated_state={target}")
+    return 0
+
+
 def _cmd_demo_run(args: argparse.Namespace) -> int:
     """Exercise the run machinery (spec 006): progress protocol plus log lines."""
     import json
@@ -720,6 +791,27 @@ def build_parser() -> argparse.ArgumentParser:
     backfill.add_argument("--limit", type=int, default=0)
     backfill.add_argument("--dry-run", action="store_true")
     backfill.set_defaults(func=_cmd_backfill_posters)
+
+    gmail_watch = sub.add_parser(
+        "gmail-watch", help="poll Gmail (readonly) and classify job emails (spec 018)"
+    )
+    gmail_watch.add_argument(
+        "--dry-run", action="store_true", help="print classifications; send nothing"
+    )
+    gmail_watch.set_defaults(func=_cmd_gmail_watch)
+
+    gmail_oauth = sub.add_parser(
+        "gmail-oauth", help="bootstrap the local Gmail OAuth token (spec 018)"
+    )
+    gmail_oauth.add_argument("--client-secret-file", default=None)
+    gmail_oauth.add_argument("--token-file", default=None)
+    gmail_oauth.set_defaults(func=_cmd_gmail_oauth)
+
+    gmail_migrate = sub.add_parser(
+        "gmail-migrate-state", help="copy the old repo's seen state (spec 018)"
+    )
+    gmail_migrate.add_argument("--from-root", required=True)
+    gmail_migrate.set_defaults(func=_cmd_gmail_migrate_state)
 
     demo_run = sub.add_parser("demo-run", help="exercise the run machinery (spec 006)")
     demo_run.add_argument("--steps", default="8", help="number of progress steps")
