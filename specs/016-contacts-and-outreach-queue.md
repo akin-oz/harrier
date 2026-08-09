@@ -1,7 +1,7 @@
 ---
 spec: 016
 title: Contacts, staged discovery, outreach queue
-status: in-progress
+status: shipped
 approved: yes
 milestone: M4
 depends: [004]
@@ -99,7 +99,7 @@ scripts; harrier's contacts already live in the database (spec 004).
       (test_snoozed_job_without_contacts_stays_snoozed)
 - [ ] Outreach sent transitions are legal only from ready or sent
       (test_mark_sent_rejects_illegal_transitions)
-- [ ] All gates green on PR
+- [x] All gates green on PR (PR #13)
 
 ## Proof / origin
 
