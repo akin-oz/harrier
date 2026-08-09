@@ -162,7 +162,11 @@ def _cmd_tailor(args: argparse.Namespace) -> int:
     if args.jd_text:
         jd_text = args.jd_text
     elif args.jd_file:
-        jd_text = Path(args.jd_file).read_text(encoding="utf-8")
+        try:
+            jd_text = Path(args.jd_file).read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            print(f"tailor failed: cannot read --jd-file: {error}", file=sys.stderr)
+            return 1
 
     conn = connect()
     try:

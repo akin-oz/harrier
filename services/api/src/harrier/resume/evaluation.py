@@ -3,7 +3,13 @@
 The JD identifies requirements and their wording only; candidate evidence
 always attaches from the verified bullet pool. Dimension behavior is keyed
 by the bundle's dimension kind, not hardcoded dimension names (stated
-change: the engine is persona-free).
+change: the engine is persona-free). Known limitation: requirement
+extraction recognizes only the signals configured on the bundle's
+dimensions; JD units matching no dimension are dropped (except the
+compensation scan below). Proof: tests/test_resume.py
+(test_fit_evaluation_marks_architecture_strong_and_backend_partial,
+test_fit_evaluation_does_not_invent_game_or_ai_experience,
+test_fit_evaluation_does_not_assume_salary_information).
 """
 
 from __future__ import annotations
@@ -20,7 +26,8 @@ _NO_EVIDENCE_NOTE = "The CV does not establish this requirement; absence is not 
 
 
 def _jd_units(jd_text: str) -> list[str]:
-    """Readable JD bullets/sentences, never treated as candidate facts."""
+    """Readable JD bullets/sentences, never treated as candidate facts
+    (proof: test_fit_evaluation_does_not_invent_game_or_ai_experience)."""
     units: list[str] = []
     for raw in re.split(r"(?:\r?\n+|(?<=[.!?])\s+)", jd_text or ""):
         unit = re.sub(r"^\s*[-*•\d.)]+\s*", "", raw).strip()
@@ -32,7 +39,9 @@ def _jd_units(jd_text: str) -> list[str]:
 def extract_jd_requirements(
     bundle: ResumeBundle, jd_text: str, role: str = ""
 ) -> list[dict[str, str]]:
-    """Extract atomic, auditable requirement records from JD text."""
+    """Extract atomic, auditable requirement records from JD text
+    (deduped per dimension and unit; proof:
+    test_fit_evaluation_marks_architecture_strong_and_backend_partial)."""
     requirements: list[dict[str, str]] = []
     seen: set[str] = set()
     for unit in _jd_units(jd_text):
@@ -122,7 +131,8 @@ def _status_for_evidence(
 
 
 def evaluate_resume_fit(bundle: ResumeBundle, jd_text: str, role: str = "") -> dict[str, object]:
-    """Build a fact-grounded fit analysis suitable for metadata or a report."""
+    """Build a fact-grounded fit analysis suitable for metadata or a
+    report (proof: the three fit-evaluation tests in tests/test_resume.py)."""
     requirements = extract_jd_requirements(bundle, jd_text, role)
     by_name = {dimension.name: dimension for dimension in bundle.evaluation_dimensions}
     matrix: list[dict[str, object]] = []
@@ -190,15 +200,18 @@ def evaluate_resume_fit(bundle: ResumeBundle, jd_text: str, role: str = "") -> d
         )
 
     strengths = [item for item in dimensions if item["evidence_status"] == "Strong evidence"]
+    # Gaps stay at requirement granularity: a strong dimension can still
+    # contain an unevidenced requirement (review finding on PR #10).
     partial = [
         item
-        for item in dimensions
-        if item["evidence_status"] in {"Partial evidence", "No evidence"}
+        for item in matrix
+        if item["evidence_status"] in {"Partial evidence", "No evidence", "Contradiction"}
     ]
     questions: list[str] = []
+    # Compensation is scanned on the raw JD units so a standalone salary
+    # line still raises the question even when it matches no dimension.
     if any(
-        "salary" in item["requirement"].lower() or "compensation" in item["requirement"].lower()
-        for item in requirements
+        "salary" in unit.lower() or "compensation" in unit.lower() for unit in _jd_units(jd_text)
     ):
         questions.append(
             "What salary or compensation range should be used? The CV does not provide one."
@@ -294,7 +307,7 @@ def format_fit_evaluation_markdown(evaluation: dict[str, object], company: str, 
         lines.append(f"- {item.get('dimension')}: {refs_text}")
     lines.extend(["", "## 4. Unsupported or partial requirements"])
     lines.extend(
-        f"- {item.get('dimension')}: {item.get('evidence_status')}"
+        f"- {item.get('dimension')}: {item.get('evidence_status')} ({item.get('requirement')})"
         for item in rows("unsupported_or_partial_requirements")
     )
     lines.extend(

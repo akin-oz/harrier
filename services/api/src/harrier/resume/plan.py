@@ -96,7 +96,11 @@ def build_content_plan(
     """Make a deterministic, evidence-backed resume content plan before
     rendering."""
     skills = rank_skills(bundle, jd_text, requested_role, as_of)
-    achievement_ids = [key for key in bundle.bullet_pool if key.startswith("ach_")]
+    # The full ach_ pool ranks best; a bundle using another naming scheme
+    # still gets its validated default_achievements as the candidate pool.
+    achievement_ids = [key for key in bundle.bullet_pool if key.startswith("ach_")] or list(
+        bundle.default_achievements
+    )
     achievements = choose_distinct(
         bundle, rank_bullet_ids(bundle, achievement_ids, jd_text, requested_role), 4
     )
@@ -111,9 +115,11 @@ def build_content_plan(
             jd_text,
             requested_role,
         )
-        selected = choose_distinct(bundle, candidates, role.bullet_count, achievement_groups)
-        fallback = [item for item in candidates if item not in selected]
-        roles[role.id] = selected + fallback[: max(0, role.bullet_count - len(selected))]
+        # choose_distinct already yields every group-distinct candidate up
+        # to the count; refilling from the skipped remainder would reinsert
+        # a duplicated evidence group and fail validate_content_plan, so a
+        # shorter role section is accepted instead (review finding on PR #10).
+        roles[role.id] = choose_distinct(bundle, candidates, role.bullet_count, achievement_groups)
 
     jd_scores = jd_technology_scores(bundle, jd_text, requested_role)
     primary_jd_skills = [skill for skill in skills if jd_scores.get(skill, 0)][:5]

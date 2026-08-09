@@ -12,6 +12,13 @@ dependencies = [
 harrier = "harrier_cli.main:main"
 
 [dependency-groups]
+# PDF rendering is optional: install with `uv sync --group pdf`, then
+# `uv run playwright install chromium`. Page-count validation also uses
+# the pdfinfo binary (poppler). Without them, `harrier tailor` fails
+# with an actionable error and the tracker row is never touched.
+pdf = [
+    "playwright>=1.40",
+]
 dev = [
     "pytest>=8.0",
     "ruff>=0.9",

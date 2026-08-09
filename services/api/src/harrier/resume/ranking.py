@@ -68,11 +68,13 @@ def bullet_score(bundle: ResumeBundle, bullet_id: str, jd_text: str, role: str) 
     text = bullet.lower()
     source = f"{role}\n{jd_text}".lower()
     score = 0
-    if re.search(r"(?:~?\d+[kK]?|\d+%)", bullet):
+    # Quantified means a real metric (percent, K-scale, or multi-digit),
+    # not a bare version digit like "Vue 3" (review finding on PR #10).
+    if re.search(r"(?:~?\d+[kK]|\d+%|\d{2,})", bullet):
         score += 100
     for aliases in bundle.technology_aliases.values():
         if any(_occurrences(source, alias) for alias in aliases) and any(
-            alias in text for alias in aliases
+            _occurrences(text, alias) for alias in aliases
         ):
             score += 70
     for terms in bundle.target_signal_weights.values():

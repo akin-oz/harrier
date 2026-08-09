@@ -30,7 +30,7 @@ a public repo.
   certifications, and contact fields. A JSON-schema-style validator
   rejects malformed bundles with named errors. The repo commits a fully
   synthetic example bundle; the real bundle is a one-time local data
-  operation into Akin's database during this spec's landing and never
+  operation into the operator's database during this spec's landing and never
   touches git.
 - Package harrier.resume, a data-driven port of the old pipeline:
   - facts: date parsing, completed-anniversary experience math,
@@ -73,7 +73,7 @@ a public repo.
 - All candidate content (bullets, groups, aliases, dimensions, education,
   certifications, phone) moves from code constants into the resume_data
   profile document. The engine is persona-free; the old repo's constants
-  become Akin's private bundle data.
+  become the operator's private bundle data.
 - Role handling is data-driven: any number of roles, each with its bullet
   count and default selection, instead of hardcoded r1/r2/r3 constants.
 - Evaluation prose (executive conclusion, positioning, tailoring changes)

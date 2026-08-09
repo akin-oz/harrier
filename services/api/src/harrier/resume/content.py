@@ -128,7 +128,12 @@ def _parse_role(raw: object, index: int, errors: list[str]) -> ResumeRole | None
     if not period_start:
         errors.append(f"{context}: missing period.start")
     raw_count = role.get("bullet_count")
-    bullet_count = raw_count if isinstance(raw_count, int) and raw_count > 0 else 2
+    bullet_count = 2
+    if raw_count is not None:
+        if isinstance(raw_count, int) and not isinstance(raw_count, bool) and raw_count > 0:
+            bullet_count = raw_count
+        else:
+            errors.append(f"{context}: bullet_count must be a positive integer, got {raw_count!r}")
     if role_id and organization and title and period_start:
         return ResumeRole(
             id=role_id,
@@ -227,6 +232,15 @@ def parse_bundle(raw: object) -> ResumeBundle:
     verified_skills = _str_tuple(data.get("verified_skills"))
     if not all_skills:
         errors.append("bundle has no all_skills ordering")
+    # Planning treats these as mandatory; failing here keeps the diagnostic
+    # next to the bundle instead of deep inside plan validation.
+    if not verified_skills:
+        errors.append("bundle has no verified_skills")
+    unknown_verified = [skill for skill in verified_skills if skill not in all_skills]
+    if unknown_verified:
+        errors.append(
+            "verified_skills entries missing from all_skills: " + ", ".join(unknown_verified)
+        )
 
     bundle = ResumeBundle(
         name=_require_str(candidate, "name", errors, "candidate"),
@@ -253,6 +267,8 @@ def parse_bundle(raw: object) -> ResumeBundle:
         certifications=_str_tuple(data.get("certifications")),
         profile_summary=str(data.get("profile_summary") or ""),
     )
+    if not bundle.positioning_technologies:
+        errors.append("candidate has no positioning_technologies")
     if errors:
         raise ResumeBundleError("invalid resume content bundle: " + "; ".join(errors))
     return bundle

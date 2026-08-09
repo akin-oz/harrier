@@ -53,9 +53,13 @@ def _validate_bullet_ids(
     min_count: int,
 ) -> list[str]:
     valid: list[str] = []
+    seen: set[str] = set()
     for bullet_id in ids:
         if not isinstance(bullet_id, str) or not bullet_id.startswith(pool_prefix):
             continue
+        if bullet_id in seen:
+            continue
+        seen.add(bullet_id)
         text = bundle.bullet_pool.get(bullet_id)
         if not text:
             logger.warning("unknown bullet ID %r skipped", bullet_id)

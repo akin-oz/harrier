@@ -240,6 +240,81 @@ def test_bullet_failing_truth_check_is_omitted(bundle: ResumeBundle) -> None:
     assert omitted == ["r1_b2"]
 
 
+def test_bundle_validation_rejects_invalid_bullet_count() -> None:
+    raw = load_raw_bundle()
+    roles = cast("list[dict[str, object]]", raw["roles"])
+    roles[0]["bullet_count"] = "4"
+    with pytest.raises(ResumeBundleError, match="bullet_count"):
+        parse_bundle(raw)
+
+
+def test_bundle_validation_requires_verified_and_positioning_skills() -> None:
+    raw = load_raw_bundle()
+    raw["verified_skills"] = []
+    with pytest.raises(ResumeBundleError, match="verified_skills"):
+        parse_bundle(raw)
+    raw = load_raw_bundle()
+    cast("dict[str, object]", raw["candidate"])["positioning_technologies"] = []
+    with pytest.raises(ResumeBundleError, match="positioning_technologies"):
+        parse_bundle(raw)
+
+
+def test_sparse_role_pool_yields_shorter_section_not_duplicate_evidence() -> None:
+    # With only grouped bullets left after achievements claim their groups,
+    # the plan accepts a shorter role section instead of refilling with a
+    # duplicated evidence group (review finding on PR #10).
+    raw = load_raw_bundle()
+    pool = cast("dict[str, str]", raw["bullet_pool"])
+    for bullet_id in ("r1_b4", "r1_b6"):
+        del pool[bullet_id]
+    roles = cast("list[dict[str, object]]", raw["roles"])
+    roles[0]["default_bullets"] = ["r1_b1"]
+    sparse_bundle = parse_bundle(raw)
+    plan = build_content_plan(
+        sparse_bundle, "architecture migration design system", "Engineer", AS_OF
+    )
+    assert len(plan.role_bullets["r1"]) < 4
+    assert validate_content_plan(plan, sparse_bundle) == []
+
+
+def test_ai_id_validation_deduplicates_before_minimum_count(
+    bundle: ResumeBundle, sources: TruthSources
+) -> None:
+    from harrier.resume.ai import (
+        _validate_bullet_ids,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    repeated: list[object] = ["r1_b1", "r1_b1", "r1_b1"]
+    assert _validate_bullet_ids(bundle, sources, repeated, "r1_", 3) == []
+
+
+def test_ai_tailored_content_is_none_on_llm_failure_or_garbage(
+    bundle: ResumeBundle, sources: TruthSources, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import harrier.resume.ai as ai_module
+    from harrier.llm import LLMClientError
+
+    def raising_generate(system_prompt: str, user_input: str) -> str:
+        raise LLMClientError("all auto AI providers failed")
+
+    monkeypatch.setattr(ai_module, "generate_text", raising_generate)
+    assert ai_module.build_ai_tailored_content(bundle, sources, "jd", "Co", "Role") is None
+
+    def garbage_generate(system_prompt: str, user_input: str) -> str:
+        return "not json at all"
+
+    monkeypatch.setattr(ai_module, "generate_text", garbage_generate)
+    assert ai_module.build_ai_tailored_content(bundle, sources, "jd", "Co", "Role") is None
+
+
+def test_standalone_compensation_requirement_still_raises_question(
+    bundle: ResumeBundle,
+) -> None:
+    evaluation = evaluate_resume_fit(bundle, "Compensation range is required.", "Engineer")
+    questions = cast("list[str]", evaluation["candidate_questions"])
+    assert any("compensation range" in question for question in questions)
+
+
 def test_bundle_validation_names_unknown_refs() -> None:
     raw = load_raw_bundle()
     cast("dict[str, str]", raw["evidence_groups"])["ghost_bullet"] = "some_group"
