@@ -35,7 +35,26 @@ from harrier.outreach.discovery import (
     update_candidate_review_status,
     write_candidates_artifact,
 )
+from harrier.outreach.drafts import (
+    generate_ai_outreach,
+    generate_outreach,
+    infer_audience,
+    parse_ai_outreach_response,
+    render_outreach_markdown,
+    write_outreach_draft,
+)
 from harrier.outreach.hunter import domain_search, find_email, verify_email
+from harrier.outreach.messages import (
+    MESSAGE_KINDS,
+    MessageVariant,
+    OutreachRequest,
+    check_message,
+    generate_message_bundle,
+    load_configs,
+    rewrite_message,
+    save_generated_bundle,
+    save_target,
+)
 from harrier.outreach.state import (
     business_days_after,
     filter_outreach_rows,
@@ -49,13 +68,17 @@ from harrier.outreach.state import (
 )
 
 __all__ = [
+    "MESSAGE_KINDS",
     "BackfillSummary",
+    "MessageVariant",
+    "OutreachRequest",
     "approve_candidate",
     "backfill_posters",
     "best_contact",
     "build_best_contact_search_specs",
     "build_search_specs",
     "business_days_after",
+    "check_message",
     "contact_sort_key",
     "contacts_for_job",
     "delete_contact",
@@ -65,17 +88,27 @@ __all__ = [
     "find_contact",
     "find_contacts_for_job",
     "find_email",
+    "generate_ai_outreach",
+    "generate_message_bundle",
+    "generate_outreach",
     "has_strong_best_contact",
+    "infer_audience",
     "infer_relevance",
     "load_candidates_artifact",
+    "load_configs",
     "mark_job_outreach_replied",
     "mark_job_outreach_sent",
     "merge_ranked_contacts",
     "normalize_profile_result",
     "outreach_due_rows",
     "outreach_slug",
+    "parse_ai_outreach_response",
     "parse_linked_jobs",
     "refresh_outreach_fields",
+    "render_outreach_markdown",
+    "rewrite_message",
+    "save_generated_bundle",
+    "save_target",
     "score_contact_fit",
     "serialize_linked_jobs",
     "set_best_contact_for_job",
@@ -87,4 +120,5 @@ __all__ = [
     "upsert_contact",
     "verify_email",
     "write_candidates_artifact",
+    "write_outreach_draft",
 ]

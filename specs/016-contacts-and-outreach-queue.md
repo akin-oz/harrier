@@ -1,7 +1,7 @@
 ---
 spec: 016
 title: Contacts, staged discovery, outreach queue
-status: in-progress
+status: shipped
 approved: yes
 milestone: M4
 depends: [004]
@@ -82,7 +82,7 @@ scripts; harrier's contacts already live in the database (spec 004).
 
 ## Acceptance criteria
 
-- [ ] Behavior pins ported from the old tests/test_find_contacts.py and
+- [x] Behavior pins ported from the old tests/test_find_contacts.py and
       test_outreach_lib.py: search specs, applied_job_title vs
       person_title split, hiring-side scoring over generic HR, profile
       dedupe by best fit score, missing-token failure, staging writes no
@@ -90,16 +90,17 @@ scripts; harrier's contacts already live in the database (spec 004).
       relevance inference, state machine transitions (needs_contacts,
       ready with window, wait for reply with business-day math), due
       filtering, and same-person merge across jobs with linked_jobs
-- [ ] Nothing writes a contact without an approval step: staging alone
+      (services/api/tests/test_outreach.py, 21 tests)
+- [x] Nothing writes a contact without an approval step: staging alone
       never touches the contacts table
       (test_find_contacts_stages_candidates_without_writing_contacts),
       and the poster backfill stages rather than writes
       (test_backfill_stages_posters_without_writing_contacts)
-- [ ] A snoozed job never surfaces as due through sync
+- [x] A snoozed job never surfaces as due through sync
       (test_snoozed_job_without_contacts_stays_snoozed)
-- [ ] Outreach sent transitions are legal only from ready or sent
+- [x] Outreach sent transitions are legal only from ready or sent
       (test_mark_sent_rejects_illegal_transitions)
-- [ ] All gates green on PR
+- [x] All gates green on PR (PR #13)
 
 ## Proof / origin
 

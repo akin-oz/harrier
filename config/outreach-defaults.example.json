@@ -1,0 +1,25 @@
+{
+  "_comment": "Synthetic outreach defaults (spec 017). Import YOUR defaults into the profile store as kind outreach_defaults (name defaults.json); this example documents the shape and doubles as the public test fixture. Strength keys are referenced by config/outreach/role-profiles.json.",
+  "candidate_name": "Deniz Örnek",
+  "headline": "Senior frontend engineer",
+  "strengths": {
+    "typescript_first": "TypeScript-first engineering",
+    "frontend_architecture": "frontend architecture",
+    "shared_ui": "shared UI systems",
+    "performance": "performance",
+    "reliability": "reliability",
+    "observability": "observability",
+    "high_scale_data": "high-scale data flows",
+    "systems_thinking": "systems thinking",
+    "product_delivery": "product delivery",
+    "cross_functional": "cross-functional collaboration",
+    "ownership": "high ownership",
+    "contribution": "steady contribution"
+  },
+  "work_style": "direct, pragmatic, evidence-first",
+  "target_roles": ["Senior Frontend Engineer", "Senior Product Engineer"],
+  "preferred_domains": ["developer tooling", "product platforms"],
+  "open_domains": ["most product domains"],
+  "geography": "remote, Europe",
+  "preferences": {}
+}

@@ -1,0 +1,85 @@
+{
+  "banned_terms": [
+    "passionate",
+    "excited",
+    "thrilled",
+    "rockstar",
+    "ninja",
+    "journey",
+    "perfect fit"
+  ],
+  "flattery_phrases": [
+    "amazing company",
+    "incredible team",
+    "love what you are building",
+    "hugely impressed",
+    "world-class",
+    "cutting-edge"
+  ],
+  "generic_phrases": [
+    "wanted to reach out",
+    "thought i would connect",
+    "i believe i would be a great fit",
+    "please let me know",
+    "value add"
+  ],
+  "vague_phrases": [
+    "relevant experience",
+    "strong background",
+    "good fit",
+    "help where useful",
+    "many years of experience"
+  ],
+  "trim_phrases": [
+    "if useful",
+    "from my side",
+    "here as well",
+    "briefly",
+    "on this role",
+    "on the role"
+  ],
+  "tone_presets": {
+    "direct": {
+      "greeting": "Hi {first_name},",
+      "connection_close": "Thought it made sense to connect.",
+      "standard_close": "Happy to share more context if useful.",
+      "follow_up_close": "Happy to leave it there if timing is not right.",
+      "peer_close": "Curious how you see the role from inside the team."
+    },
+    "warm": {
+      "greeting": "Hi {first_name},",
+      "connection_close": "Thought I'd say hello here as well.",
+      "standard_close": "No pressure either way, but happy to share more if useful.",
+      "follow_up_close": "No pressure on timing, just wanted to follow up once.",
+      "peer_close": "Would be glad to hear how the role looks from your side if useful."
+    },
+    "concise": {
+      "greeting": "Hi {first_name},",
+      "connection_close": "Thought it made sense to connect.",
+      "standard_close": "Happy to share more if useful.",
+      "follow_up_close": "No pressure, just following up once.",
+      "peer_close": "Curious how the role looks from your side."
+    },
+    "confident": {
+      "greeting": "Hi {first_name},",
+      "connection_close": "The role looks closely aligned, so I wanted to connect.",
+      "standard_close": "If useful, I can share a bit more context on the fit.",
+      "follow_up_close": "If the role is still moving, happy to share more context.",
+      "peer_close": "I think the fit is fairly clear on paper, and I'd be glad to compare notes."
+    }
+  },
+  "audience_rules": {
+    "recruiter": {
+      "focus": "easy to skim, low-pressure, fast fit signal",
+      "role_reference": "screening fit"
+    },
+    "hiring_manager": {
+      "focus": "role alignment, architecture, delivery, ownership",
+      "role_reference": "role alignment"
+    },
+    "peer": {
+      "focus": "natural and low-formality, still role-aware",
+      "role_reference": "team-level fit"
+    }
+  }
+}
