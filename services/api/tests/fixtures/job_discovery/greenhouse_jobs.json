@@ -1,0 +1,14 @@
+{
+  "jobs": [
+    {
+      "id": 101,
+      "title": "Senior Frontend Engineer",
+      "absolute_url": "https://boards.greenhouse.io/exampleco/jobs/101",
+      "updated_at": "2026-03-17T00:00:00Z",
+      "location": {
+        "name": "Remote, Europe"
+      },
+      "content": "<p>TypeScript React ownership testing ci/cd strong engineering culture remote Europe.</p>"
+    }
+  ]
+}

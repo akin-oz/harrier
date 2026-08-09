@@ -50,3 +50,17 @@ name = "domain is API-free"
 type = "forbidden"
 source_modules = ["harrier"]
 forbidden_modules = ["harrier_api", "harrier_cli"]
+
+[[tool.importlinter.contracts]]
+name = "sources are ingestion only"
+type = "forbidden"
+source_modules = ["harrier.sources"]
+forbidden_modules = [
+    "harrier.screening.rules",
+    "harrier.screening.pipeline",
+    "harrier.screening.archetypes",
+    "harrier.screening.descriptions",
+    "harrier.screening.seen",
+    "harrier.screening.config",
+    "harrier.tracker",
+]
