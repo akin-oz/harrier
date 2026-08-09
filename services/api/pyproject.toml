@@ -46,6 +46,7 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 "src/harrier/resume/ai.py" = ["E501"]
 "src/harrier/apply/answers.py" = ["E501"]
 "src/harrier/apply/letters.py" = ["E501"]
+"src/harrier/offers/evaluate.py" = ["E501"]
 
 [tool.pyright]
 include = ["src", "tests"]
