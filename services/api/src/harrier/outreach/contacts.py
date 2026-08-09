@@ -150,12 +150,16 @@ def contact_key(contact: dict[str, str]) -> str:
 
 
 def find_contact(conn: sqlite3.Connection, identifier: str) -> dict[str, str] | None:
-    """Match by linkedin_url first, then person_name."""
+    """Match by linkedin_url first, then person_name. An empty identifier
+    matches nothing (review finding: "" must never select a row)."""
     id_norm = normalize(identifier)
-    for row in list_contacts(conn):
+    if not id_norm:
+        return None
+    rows = list_contacts(conn)
+    for row in rows:
         if normalize(row.get("linkedin_url", "")) == id_norm:
             return row
-    for row in list_contacts(conn):
+    for row in rows:
         if normalize(row.get("person_name", "")) == id_norm:
             return row
     return None
@@ -182,19 +186,22 @@ def upsert_contact(
     linkedin_url (or person_name) and merges linked_jobs across jobs."""
     relevance = relevance or infer_relevance(person_title)
     key = normalize(linkedin_url or person_name)
+    if not key:
+        raise ValueError("contact needs a linkedin_url or person_name identity")
     for existing in list_contacts(conn):
         if contact_key(existing) != key:
             continue
+        # Empty incoming values never clobber stored ones (review finding).
         updates = {
-            "person_name": person_name,
-            "person_title": person_title,
+            "person_name": person_name or existing.get("person_name", ""),
+            "person_title": person_title or existing.get("person_title", ""),
             "person_email": person_email or existing.get("person_email", ""),
             "relevance": relevance,
             "fit_score": fit_score or existing.get("fit_score", ""),
             "fit_reason": fit_reason or existing.get("fit_reason", ""),
             "location": location or existing.get("location", ""),
-            "source": source,
-            "linkedin_url": linkedin_url,
+            "source": source or existing.get("source", ""),
+            "linkedin_url": linkedin_url or existing.get("linkedin_url", ""),
         }
         if notes:
             existing_notes = (existing.get("notes") or "").strip()

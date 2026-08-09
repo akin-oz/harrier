@@ -477,9 +477,10 @@ def approve_candidate(
     for candidate in _artifact_candidates(payload):
         if str(candidate.get("linkedin_url") or "").strip().lower() != linkedin_url.strip().lower():
             continue
-        candidate["review_status"] = "approved"
-        write_candidates_artifact(company, role, payload)
-        return upsert_contact(
+        # Persist the contact first; only a successful write marks the
+        # artifact approved (review finding: a failed write must stay
+        # retryable through the normal path).
+        added = upsert_contact(
             conn,
             company=company,
             role=role,
@@ -494,6 +495,9 @@ def approve_candidate(
             fit_reason=str(candidate.get("fit_reason") or ""),
             notes=f"staged_candidate_query={candidate.get('raw_query', '')}",
         )
+        candidate["review_status"] = "approved"
+        write_candidates_artifact(company, role, payload)
+        return added
     return None
 
 

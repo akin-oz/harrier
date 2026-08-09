@@ -360,6 +360,7 @@ def _cmd_find_contacts(args: argparse.Namespace) -> int:
 def _cmd_contacts(args: argparse.Namespace) -> int:
     from harrier.outreach import (
         approve_candidate,
+        set_best_contact_for_job,
         sync_tracker_outreach,
         update_candidate_review_status,
     )
@@ -381,6 +382,13 @@ def _cmd_contacts(args: argparse.Namespace) -> int:
         return 1
     company = row.get("company", "")
     role = row.get("title", "")
+    if args.contacts_command == "set-best":
+        updated_row = set_best_contact_for_job(conn, args.job_id, args.linkedin_url)
+        if updated_row is None:
+            print("contact is not linked to this job", file=sys.stderr)
+            return 1
+        print(f"best_contact={updated_row.get('best_contact_name', '')}")
+        return 0
     if args.contacts_command == "approve":
         added = approve_candidate(conn, company, role, row.get("url", ""), args.linkedin_url)
         if added is None:
@@ -444,7 +452,7 @@ def _cmd_backfill_posters(args: argparse.Namespace) -> int:
         json.dumps(
             {
                 "checked": summary.checked,
-                "added": summary.added,
+                "staged": summary.staged,
                 "skipped_existing": summary.skipped_existing,
                 "no_poster": summary.no_poster,
                 "errors": summary.errors,
@@ -620,6 +628,7 @@ def build_parser() -> argparse.ArgumentParser:
     for name, help_text in (
         ("approve", "copy a staged candidate into contacts"),
         ("reject", "mark a staged candidate rejected"),
+        ("set-best", "pin a linked contact as the job's best contact"),
     ):
         stage_cmd = contacts_sub.add_parser(name, help=help_text)
         stage_cmd.add_argument("--job-id", type=int, required=True)

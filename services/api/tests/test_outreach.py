@@ -339,6 +339,204 @@ def test_refresh_outreach_fields_waits_for_reply_with_business_day_math() -> Non
     assert row["next_action"].startswith("wait for outreach reply until ")
 
 
+def test_snoozed_job_without_contacts_stays_snoozed() -> None:
+    row = {
+        "status": "applied",
+        "applied_date": "2026-03-17",
+        "outreach_status": "snoozed",
+        "last_outreach_at": "",
+        "next_outreach_action": "snoozed until 2026-09-01",
+        "next_action": "snoozed until 2026-09-01",
+    }
+    refresh_outreach_fields(row, [])
+    assert row["outreach_status"] == "snoozed"
+    assert row["next_outreach_action"] == "snoozed until 2026-09-01"
+    assert filter_outreach_rows([row], due_only=True) == []
+
+
+def test_mark_sent_rejects_illegal_transitions(db: sqlite3.Connection) -> None:
+    from harrier.outreach import mark_job_outreach_sent
+    from harrier.tracker import add_job, set_status, update_fields
+
+    job_id = add_job(
+        db,
+        {
+            "company": "Acme",
+            "title": "Senior Frontend Engineer",
+            "url": "https://example.com/jobs/9",
+            "source": "greenhouse",
+            "status": "prospect",
+        },
+    )
+    set_status(db, job_id, "applied")
+    update_fields(db, job_id, {"outreach_status": "ready"})
+    assert mark_job_outreach_sent(db, job_id)["outreach_status"] == "sent"
+    assert mark_job_outreach_sent(db, job_id)["outreach_status"] == "follow_up_sent"
+    with pytest.raises(ValueError, match="cannot mark outreach sent"):
+        mark_job_outreach_sent(db, job_id)
+    update_fields(db, job_id, {"outreach_status": "replied"})
+    with pytest.raises(ValueError, match="cannot mark outreach sent"):
+        mark_job_outreach_sent(db, job_id)
+
+
+def test_empty_identity_never_matches_or_writes(db: sqlite3.Connection) -> None:
+    from harrier.outreach import find_contact
+
+    upsert_contact(
+        db,
+        company="Acme",
+        role="Senior Frontend Engineer",
+        job_url="https://example.com/jobs/1",
+        person_name="Jane Recruiter",
+        person_title="Recruiter",
+        linkedin_url="https://linkedin.com/in/jane",
+        source="manual",
+    )
+    assert find_contact(db, "") is None
+    assert find_contact(db, "   ") is None
+    with pytest.raises(ValueError, match="identity"):
+        upsert_contact(
+            db,
+            company="Acme",
+            role="Role",
+            job_url="",
+            person_name="",
+            person_title="",
+            linkedin_url="",
+            source="manual",
+        )
+
+
+def test_approve_marks_artifact_only_after_contact_write(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload: dict[str, object] = {
+        "company": "Remote",
+        "role": "Senior Frontend Engineer",
+        "candidates": [
+            {
+                "person_name": "Jane Recruiter",
+                "person_title": "Recruiter",
+                "linkedin_url": "https://www.linkedin.com/in/jane-recruiter/",
+                "relevance": "recruiter",
+                "review_status": "pending",
+            }
+        ],
+    }
+    write_candidates_artifact("Remote", "Senior Frontend Engineer", payload)
+
+    def failing_upsert(*args: object, **kwargs: object) -> dict[str, str]:
+        raise ValueError("boom")
+
+    monkeypatch.setattr(discovery_module, "upsert_contact", failing_upsert)
+    with pytest.raises(ValueError, match="boom"):
+        approve_candidate(
+            db,
+            "Remote",
+            "Senior Frontend Engineer",
+            "https://example.com/job",
+            "https://www.linkedin.com/in/jane-recruiter/",
+        )
+    refreshed = load_candidates_artifact("Remote", "Senior Frontend Engineer")
+    assert refreshed is not None
+    candidates = refreshed["candidates"]
+    assert isinstance(candidates, list)
+    from typing import cast as _cast
+
+    first = _cast("dict[str, str]", _cast("list[object]", candidates)[0])
+    assert first["review_status"] == "pending"
+
+
+def test_backfill_stages_posters_without_writing_contacts(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import harrier.outreach.backfill as backfill_module
+    from harrier.outreach import backfill_posters
+    from harrier.tracker import add_job
+
+    add_job(
+        db,
+        {
+            "company": "Acme",
+            "title": "Senior Frontend Engineer",
+            "url": "https://www.linkedin.com/jobs/view/12345",
+            "source": "apify_linkedin",
+            "status": "applied",
+        },
+    )
+
+    def fake_details(urls: list[str], **kwargs: object) -> dict[str, dict[str, object]]:
+        return {
+            url: {
+                "poster": {
+                    "name": "Poster Person",
+                    "linkedin_url": "https://linkedin.com/in/poster-person",
+                    "title": "Engineering Manager",
+                }
+            }
+            for url in urls
+        }
+
+    monkeypatch.setattr(backfill_module, "fetch_linkedin_job_details", fake_details)
+    summary = backfill_posters(db)
+    assert summary.staged == 1
+    # The approval invariant: staging never writes a contact.
+    assert list_contacts(db) == []
+    artifact = load_candidates_artifact("Acme", "Senior Frontend Engineer")
+    assert artifact is not None
+    approved = approve_candidate(
+        db,
+        "Acme",
+        "Senior Frontend Engineer",
+        "https://www.linkedin.com/jobs/view/12345",
+        "https://linkedin.com/in/poster-person",
+    )
+    assert approved is not None
+    assert len(list_contacts(db)) == 1
+
+
+def test_hunter_functions_require_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    from harrier.outreach import domain_search, find_email, verify_email
+
+    monkeypatch.delenv("HUNTER_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="missing HUNTER_API_KEY"):
+        domain_search("example.com")
+    with pytest.raises(RuntimeError, match="missing HUNTER_API_KEY"):
+        find_email("example.com", "Jane", "Recruiter")
+    with pytest.raises(RuntimeError, match="missing HUNTER_API_KEY"):
+        verify_email("jane@example.com")
+
+
+def test_set_best_contact_for_job(db: sqlite3.Connection) -> None:
+    from harrier.outreach import set_best_contact_for_job
+    from harrier.tracker import add_job
+
+    job_id = add_job(
+        db,
+        {
+            "company": "Acme",
+            "title": "Senior Frontend Engineer",
+            "url": "https://example.com/jobs/1",
+            "source": "greenhouse",
+            "status": "applied",
+        },
+    )
+    upsert_contact(
+        db,
+        company="Acme",
+        role="Senior Frontend Engineer",
+        job_url="https://example.com/jobs/1",
+        person_name="Jane Recruiter",
+        person_title="Recruiter",
+        linkedin_url="https://linkedin.com/in/jane",
+        source="manual",
+    )
+    updated = set_best_contact_for_job(db, job_id, "https://linkedin.com/in/jane")
+    assert updated is not None
+    assert updated["best_contact_name"] == "Jane Recruiter"
+    assert set_best_contact_for_job(db, job_id, "https://linkedin.com/in/stranger") is None
+
+
 def test_filter_outreach_rows_due_only_excludes_waiting_rows() -> None:
     rows = [
         {"status": "applied", "next_outreach_action": "send first outreach", "company": "Ready"},

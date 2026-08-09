@@ -56,8 +56,12 @@ scripts; harrier's contacts already live in the database (spec 004).
     urllib with HUNTER_API_KEY (50 free credits/month; domain search is
     the best value at 1 credit for up to 10 emails)
   - backfill: guest poster backfill over non-rejected LinkedIn rows via
-    the spec 009 guest helpers; skips posters already in contacts;
-    dry-run reports without writing
+    the spec 009 guest helpers, STAGED like every other discovery path:
+    posters land in the job's candidates artifact with review_status
+    pending and enter contacts only through approval (stated change from
+    the old direct-write backfill; the approval invariant has no
+    exceptions); posters already in contacts are skipped; dry-run
+    reports without writing anything
 - CLI: harrier find-contacts --job-id N [--best-only], harrier contacts
   {list | approve | reject | set-best}, harrier outreach
   {sync | due | mark-sent | mark-replied | snooze}, harrier
@@ -88,6 +92,13 @@ scripts; harrier's contacts already live in the database (spec 004).
       filtering, and same-person merge across jobs with linked_jobs
 - [ ] Nothing writes a contact without an approval step: staging alone
       never touches the contacts table
+      (test_find_contacts_stages_candidates_without_writing_contacts),
+      and the poster backfill stages rather than writes
+      (test_backfill_stages_posters_without_writing_contacts)
+- [ ] A snoozed job never surfaces as due through sync
+      (test_snoozed_job_without_contacts_stays_snoozed)
+- [ ] Outreach sent transitions are legal only from ready or sent
+      (test_mark_sent_rejects_illegal_transitions)
 - [ ] All gates green on PR
 
 ## Proof / origin
@@ -95,7 +106,10 @@ scripts; harrier's contacts already live in the database (spec 004).
 Old repo scripts/outreach_lib.py, find_contacts.py, hunter_lib.py,
 outreach_queue.py, backfill_linkedin_posters_guest.py,
 tests/test_find_contacts.py, tests/test_outreach_lib.py. Proving file:
-services/api/tests/test_outreach.py.
+services/api/tests/test_outreach.py. Honest limitations: the Hunter
+functions are proven only for the missing-key failure path (live API
+calls are not exercised in tests), and the CLI commands are thin shells
+over the proven library functions without their own subprocess tests.
 
 ## Out of scope
 

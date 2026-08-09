@@ -107,6 +107,11 @@ def refresh_outreach_fields(row: dict[str, str], contact_rows: list[dict[str, st
         row["next_outreach_action"] = ""
         row["next_action"] = "continue conversation with contact"
         return
+    if outreach_status == "snoozed":
+        # A snoozed row stays snoozed through sync; it must never surface
+        # as due (review finding: the no-contacts branch was overriding it).
+        refresh_primary_next_action_from_outreach(row)
+        return
     if not contact_rows:
         row["outreach_status"] = outreach_status or "needs_contacts"
         row["next_outreach_action"] = "find contacts"
@@ -162,6 +167,10 @@ def mark_job_outreach_sent(
     row = get_job(conn, job_id)
     sent_at = sent_at or today_iso()
     current = normalize(row.get("outreach_status", ""))
+    # Legal transitions only: ready (or fresh) -> sent, sent -> follow_up_sent
+    # (review finding: replied/snoozed/follow_up_sent must not move backward).
+    if current not in {"", "needs_contacts", "ready", "sent"}:
+        raise ValueError(f"cannot mark outreach sent from state {current!r}")
     row["outreach_status"] = "follow_up_sent" if current == "sent" else "sent"
     row["last_outreach_at"] = sent_at
     row["next_outreach_action"] = "wait for reply"
@@ -219,6 +228,33 @@ def snooze_job_outreach(conn: sqlite3.Connection, job_id: int, until_date: str) 
         "outreach_status": "snoozed",
         "next_outreach_action": f"snoozed until {until_date}",
         "next_action": f"snoozed until {until_date}",
+    }
+    return update_fields(conn, job_id, updates)
+
+
+def set_best_contact_for_job(
+    conn: sqlite3.Connection, job_id: int, linkedin_url: str
+) -> dict[str, str] | None:
+    """Pin a specific contact as the job's best contact (spec 016 port of
+    set_best_contact_for_job); returns None when the contact is not linked
+    to the job."""
+    row = get_job(conn, job_id)
+    contacts = list_contacts(conn)
+    linked = contacts_for_job(
+        contacts, row.get("company", ""), row.get("title", ""), row.get("url", "")
+    )
+    chosen = None
+    for contact in linked:
+        if normalize(contact.get("linkedin_url", "")) == normalize(linkedin_url):
+            chosen = contact
+            break
+    if chosen is None:
+        return None
+    updates = {
+        "best_contact_name": chosen.get("person_name", ""),
+        "best_contact_linkedin": chosen.get("linkedin_url", ""),
+        "contacts_found": str(len(linked)),
+        "outreach_status": (row.get("outreach_status", "") or "").strip() or "ready",
     }
     return update_fields(conn, job_id, updates)
 

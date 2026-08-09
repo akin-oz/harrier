@@ -43,6 +43,7 @@ from harrier.outreach.state import (
     mark_job_outreach_sent,
     outreach_due_rows,
     refresh_outreach_fields,
+    set_best_contact_for_job,
     snooze_job_outreach,
     sync_tracker_outreach,
 )
@@ -77,6 +78,7 @@ __all__ = [
     "refresh_outreach_fields",
     "score_contact_fit",
     "serialize_linked_jobs",
+    "set_best_contact_for_job",
     "snooze_job_outreach",
     "sync_tracker_outreach",
     "update_candidate_review_status",
