@@ -14,7 +14,8 @@
       "incoming/**",
       "logs/**",
       "interview-prep/**",
-      "backups/**"
+      "backups/**",
+      "config/companies-hold.csv"
     ]
   }
 }

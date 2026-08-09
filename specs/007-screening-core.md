@@ -1,7 +1,7 @@
 ---
 spec: 007
 title: Screening core: shared shape, gates, scoring, dedupe
-status: accepted
+status: in-progress
 approved: yes
 milestone: M2
 depends: [004]
@@ -9,28 +9,81 @@ depends: [004]
 
 # Spec 007: Screening core: shared shape, gates, scoring, dedupe
 
+Refined from the stub before implementation; scope below is the real scope.
+
 ## Problem
 
-The shared screening path is the heart of discovery and must port with behavior pinned before any importer lands.
+The shared screening path is the heart of discovery. Every importer feeds it;
+no source gets its own filtering or scoring. It must port with behavior
+pinned before any importer lands (specs 008 to 011 depend on it).
 
 ## Scope
 
-- normalized job shape (all fields of make_normalized_job)
-- gate order: seen-state, hold list, title rules, remote/EMEA policy, tracker dedupe, enrichment, scoring with cutoff 55
-- EU-permit phrases as positive weights; linkedin_search region bypass; location-only negative hints
-- archetype detection (single implementation)
-- description cache and enrichment fetch; seen-state migration from the old repo
+Package `harrier.screening`, a faithful port of the old repo's
+`scripts/job_sources.py` lines 1 to 915 (the per-source runner glue,
+run_source_import, belongs to spec 011):
+
+- `normalized.py`: the shared job shape (make_normalized_job as a TypedDict
+  producer, job_key identity via stable_key) and in-batch dedupe by
+  external_id then url.
+- `rules.py`: the policy constants with their load-bearing comments
+  (EXCLUDED_TITLE_HINTS; REMOTE_NEGATIVE_HINTS with the documented "office"
+  and "flex" false-positive exclusions; REGION_NEGATIVE_HINTS checked against
+  title+location only; EU-permit phrases as positive weights, never filters),
+  title_allowed, title-variant matching, remote_region_allowed with the
+  linkedin_search bypass, scoring_config overrides, and score_job with the
+  non-stacking domain bonus and the 120 cap.
+- `archetypes.py`: detect_archetype, the single implementation (the old
+  repo's two other copies die with their hosts in specs 013 and 015).
+- `http.py`: request_text with retry/backoff, request_json, strip_html.
+- `descriptions.py`: URL-keyed description cache under the data directory
+  and enrich_job_description_for_scoring (cache first, then ATS-host fetch,
+  120-char threshold).
+- `seen.py`: per-source seen-state JSON under the data directory, capped at
+  the last 10,000 keys.
+- `pipeline.py`: screen_jobs with the exact gate order: seen-state, hold
+  list, title rules, remote/EMEA policy, tracker dedupe (url, company+title,
+  external_key), enrichment, scoring with the hard cutoff at 55. Accepted
+  jobs produce tracker-ready field dicts (the notes key=value string is
+  built exactly as before; harrier.tracker.add_job promotes the keys to
+  columns) and their descriptions are cached.
+- `config.py`: candidate config from the profile store (kind=candidate,
+  imported by spec 004) with fallback to the public
+  `config/candidate.example.json`; hold list from `config/companies-hold.csv`.
+
+Deliberate changes from the old code, stated:
+
+- Persistence is the caller's job: screen_jobs returns rows; nothing in this
+  package writes the tracker (single write path, ADR-003). The old CSV
+  append and repair paths are not ported.
+- State lives under HARRIER_DATA_DIR (descriptions/, discovery/), not repo
+  paths. Existing caches migrate at cutover (spec 022).
+- File logging is replaced by the logging module; the old log() side effect
+  in screen_jobs (description caching) is kept, the log file is not.
+- The real candidate config is personal and lives in the database (ADR-008);
+  the committed example carries structure and default weights only.
 
 ## Acceptance criteria
 
-- [ ] behavior pins ported from tests/test_job_sources.py all pass
-- [ ] the documented false-positive cases (Remote Home Office, US-offices-in-description) stay accepted
+- [ ] All ScreeningTests and RequestTests behavior pins from the old repo's
+      tests/test_job_sources.py pass against the port
+- [ ] The documented false-positive cases stay accepted: "Remote (Home
+      Office)" location passes, "flex remote" passes, US offices mentioned
+      only in the description do not reject an EMEA-remote role
+- [ ] EU-permit phrases raise the score and appear in no rejection path
+- [ ] The import-linter contract restricting sources to
+      harrier.screening.normalized lands with the sources package itself
+      (spec 008); until then there is nothing for it to bind to
+- [ ] All gates green on PR
 
 ## Proof / origin
 
-scripts/job_sources.py screen_jobs, score_job, remote_region_allowed
+Old repo: scripts/job_sources.py (constants, screen_jobs, score_job,
+remote_region_allowed); tests/test_job_sources.py; CLAUDE.md "Candidate EU
+status".
 
 ## Out of scope
 
-To be refined before approval. This stub sequences the backlog; scope narrows or
-splits when the spec is drafted for real.
+run_source_import and summaries (spec 011), importers (008 to 010), Telegram
+(011), the rejected-debug CSV (011 decides its fate), migration of existing
+seen-state and description caches (spec 022).
