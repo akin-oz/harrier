@@ -1,7 +1,7 @@
 ---
 spec: 014
 title: Cover letters and application answers
-status: in-progress
+status: shipped
 approved: yes
 milestone: M3
 depends: [013]
