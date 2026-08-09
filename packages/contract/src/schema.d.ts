@@ -135,32 +135,32 @@ export interface components {
              * Company
              * @default
              */
-            company: string;
+            company?: string;
             /**
              * Description
              * @default
              */
-            description: string;
+            description?: string;
             /**
              * Location
              * @default
              */
-            location: string;
+            location?: string;
             /**
              * Source
              * @default manual
              */
-            source: string;
+            source?: string;
             /**
              * Title
              * @default
              */
-            title: string;
+            title?: string;
             /**
              * Url
              * @default
              */
-            url: string;
+            url?: string;
         };
         /** CaptureOut */
         CaptureOut: {
@@ -356,6 +356,24 @@ export interface operations {
                     "text/html": string;
                 };
             };
+            /** @description company and title are required */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": unknown;
+                };
+            };
+            /** @description already in tracker */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": unknown;
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -364,6 +382,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+            /** @description unexpected error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -415,6 +440,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+            /** @description unexpected error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

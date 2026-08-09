@@ -2,6 +2,13 @@
 
 Manual exports (JSON or CSV) from sources without free APIs. Both share the
 reading and key-picking helpers; only the key lists differ.
+
+Supported shapes: a CSV with a header row, a JSON list of objects, or a JSON
+object carrying the list under "items" or "results". Anything else raises:
+a wrong-shaped export must fail loudly, never report a successful zero-row
+import (deliberate change from the old code, which returned []). Proof:
+tests/test_batch_and_capture.py (test_read_export_rows_csv_json_and_container,
+test_read_export_rows_rejects_bad_shapes).
 """
 
 from __future__ import annotations
@@ -24,14 +31,20 @@ def read_export_rows(path: Path) -> list[dict[str, Any]]:
     payload: object = json.loads(path.read_text(encoding="utf-8"))
     if isinstance(payload, dict):
         typed = cast("dict[str, Any]", payload)
-        payload = cast("object", typed.get("items") or typed.get("results") or [])
+        if "items" in typed:
+            payload = cast("object", typed["items"])
+        elif "results" in typed:
+            payload = cast("object", typed["results"])
+        else:
+            raise RuntimeError(f"unsupported export payload (no items/results container): {path}")
     if not isinstance(payload, list):
         raise RuntimeError(f"unsupported export payload: {path}")
-    return [
-        cast("dict[str, Any]", item)
-        for item in cast("list[object]", payload)
-        if isinstance(item, dict)
-    ]
+    rows: list[dict[str, Any]] = []
+    for index, item in enumerate(cast("list[object]", payload)):
+        if not isinstance(item, dict):
+            raise RuntimeError(f"export row {index} is not an object: {path}")
+        rows.append(cast("dict[str, Any]", item))
+    return rows
 
 
 def pick(row: dict[str, Any], *keys: str) -> str:

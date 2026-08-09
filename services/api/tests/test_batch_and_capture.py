@@ -121,11 +121,14 @@ def test_capture_endpoints_status_contract(capture_env: Path) -> None:
         assert "Added: Acme" in response.text
         assert "back to job posting" in response.text
 
-        # Description was truncated to 4000 chars on the stored row's cache.
+        # Description cache written by the GET route, truncated to 4000 chars.
+        from harrier.screening.descriptions import load_cached_description
+
         conn = connect()
         stored = list_jobs(conn)
         assert len(stored) == 1
         conn.close()
+        assert len(load_cached_description("https://example.com/jobs/1")) == 4000
 
         # 409: duplicate via POST, source defaults to manual.
         response = client.post(
@@ -172,3 +175,52 @@ def test_captured_description_truncated_at_4000(capture_env: Path) -> None:
     )
     cached = load_cached_description("https://example.com/jobs/9")
     assert len(cached) == 4000
+
+
+def test_read_export_rows_rejects_bad_shapes(tmp_path: Path) -> None:
+    no_container = tmp_path / "bad1.json"
+    no_container.write_text(json.dumps({"jobs": [{"company": "A"}]}), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="no items/results container"):
+        read_export_rows(no_container)
+
+    scalar = tmp_path / "bad2.json"
+    scalar.write_text(json.dumps("nope"), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="unsupported export payload"):
+        read_export_rows(scalar)
+
+    bad_row = tmp_path / "bad3.json"
+    bad_row.write_text(json.dumps([{"company": "A"}, "not-an-object"]), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="row 1 is not an object"):
+        read_export_rows(bad_row)
+
+    results_container = tmp_path / "results.json"
+    results_container.write_text(json.dumps({"results": [{"company": "R"}]}), encoding="utf-8")
+    assert read_export_rows(results_container) == [{"company": "R"}]
+
+
+def test_whitespace_source_defaults_to_manual(capture_env: Path) -> None:
+    conn = connect()
+    add_captured_job(conn, company="Delta", title="Engineer", source="   ")
+    job = next(job for job in list_jobs(conn) if job["company"] == "Delta")
+    assert job["source"] == "manual"
+
+
+def test_cache_write_failure_does_not_break_capture(
+    capture_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import harrier.capture as capture_module
+
+    def boom(url: str, description: str) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(capture_module, "save_description_cache", boom)
+    conn = connect()
+    result = add_captured_job(
+        conn,
+        company="Epsilon",
+        title="Engineer",
+        url="https://example.com/jobs/50",
+        description="some description",
+    )
+    assert result.status == "added"
+    assert any(job["company"] == "Epsilon" for job in list_jobs(conn))

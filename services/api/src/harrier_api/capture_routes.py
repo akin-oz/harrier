@@ -60,7 +60,16 @@ h1{{font-size:1.4rem;color:{color};}} p{{color:#444;line-height:1.5;}}</style>
 </body></html>"""
 
 
-@capture_router.get("/capture/add", operation_id="captureJobViaGet", response_class=HTMLResponse)
+@capture_router.get(
+    "/capture/add",
+    operation_id="captureJobViaGet",
+    response_class=HTMLResponse,
+    responses={
+        400: {"content": {"text/html": {}}, "description": "company and title are required"},
+        409: {"content": {"text/html": {}}, "description": "already in tracker"},
+        500: {"description": "unexpected error"},
+    },
+)
 def capture_via_get(
     conn: Conn,
     company: str = "",
@@ -90,6 +99,7 @@ def capture_via_get(
     responses={
         400: {"model": CaptureOut, "description": "company and title are required"},
         409: {"model": CaptureOut, "description": "already in tracker"},
+        500: {"description": "unexpected error"},
     },
 )
 def capture_via_post(body: CaptureIn, conn: Conn) -> CaptureOut:

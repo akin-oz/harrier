@@ -8,6 +8,7 @@ regardless of score.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -19,6 +20,8 @@ from harrier.screening.normalized import make_normalized_job, normalize
 from harrier.screening.pipeline import build_tracker_row
 from harrier.screening.rules import score_job
 from harrier.tracker import DuplicateJobError, add_job
+
+logger = logging.getLogger(__name__)
 
 MAX_DESCRIPTION_CHARS = 4000
 
@@ -47,9 +50,10 @@ def add_captured_job(
         return CaptureResult(status="invalid", message="company and title are required")
 
     description = description.strip()[:MAX_DESCRIPTION_CHARS]
+    source = source.strip() or "manual"
     candidate_cfg = load_candidate_config(conn)
     job = make_normalized_job(
-        source=(source or "manual").strip(),
+        source=source,
         company=company,
         title=title,
         location=location.strip(),
@@ -67,5 +71,11 @@ def add_captured_job(
         return CaptureResult(status="duplicate", message=f"Already in tracker: {company}: {title}")
 
     if job["url"] and description:
-        save_description_cache(job["url"], description)
+        try:
+            save_description_cache(job["url"], description)
+        except OSError as error:
+            # The tracker insert already committed; a cache failure must not
+            # turn a successful capture into a 500 (which would 409 on retry).
+            # Log without job content.
+            logger.warning("description cache write failed: %s", error)
     return CaptureResult(status="added", message=f"Added: {company}: {title}")

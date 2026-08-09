@@ -569,6 +569,18 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "text/html": {}
+            },
+            "description": "company and title are required"
+          },
+          "409": {
+            "content": {
+              "text/html": {}
+            },
+            "description": "already in tracker"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -578,6 +590,9 @@
               }
             },
             "description": "Validation Error"
+          },
+          "500": {
+            "description": "unexpected error"
           }
         },
         "summary": "Capture Via Get"
@@ -634,6 +649,9 @@
               }
             },
             "description": "Validation Error"
+          },
+          "500": {
+            "description": "unexpected error"
           }
         },
         "summary": "Capture Via Post"
