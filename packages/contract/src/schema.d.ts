@@ -4,6 +4,24 @@
  */
 
 export interface paths {
+    "/capture/add": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Capture Via Get */
+        get: operations["captureJobViaGet"];
+        put?: never;
+        /** Capture Via Post */
+        post: operations["captureJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -111,6 +129,46 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** CaptureIn */
+        CaptureIn: {
+            /**
+             * Company
+             * @default
+             */
+            company?: string;
+            /**
+             * Description
+             * @default
+             */
+            description?: string;
+            /**
+             * Location
+             * @default
+             */
+            location?: string;
+            /**
+             * Source
+             * @default manual
+             */
+            source?: string;
+            /**
+             * Title
+             * @default
+             */
+            title?: string;
+            /**
+             * Url
+             * @default
+             */
+            url?: string;
+        };
+        /** CaptureOut */
+        CaptureOut: {
+            /** Message */
+            message: string;
+            /** Ok */
+            ok: boolean;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -273,6 +331,125 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    captureJobViaGet: {
+        parameters: {
+            query?: {
+                company?: string;
+                title?: string;
+                location?: string;
+                url?: string;
+                source?: string;
+                description?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description company and title are required */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": unknown;
+                };
+            };
+            /** @description already in tracker */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description unexpected error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    captureJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CaptureIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaptureOut"];
+                };
+            };
+            /** @description company and title are required */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaptureOut"];
+                };
+            };
+            /** @description already in tracker */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaptureOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description unexpected error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     getHealth: {
         parameters: {
             query?: never;

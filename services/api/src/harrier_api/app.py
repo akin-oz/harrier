@@ -6,17 +6,18 @@ Routes speak Pydantic models only; the web app speaks generated types only.
 
 from __future__ import annotations
 
-import sqlite3
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from typing import Annotated, Literal, cast
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from harrier.db import connect, default_db_path
+from harrier.db import default_db_path
 from harrier.tracker import list_jobs
+from harrier_api.capture_routes import capture_router
 from harrier_api.demo import demo_db_path, is_demo_mode, seed_demo_db
+from harrier_api.deps import Conn
 from harrier_api.runs import Run, RunManager, RunState, format_sse
 
 API_VERSION = "0.1.0"
@@ -73,16 +74,6 @@ class HealthOut(BaseModel):
     database: str
     job_count: int
 
-
-def get_conn() -> Iterator[sqlite3.Connection]:
-    conn = connect(demo_db_path() if is_demo_mode() else None)
-    try:
-        yield conn
-    finally:
-        conn.close()
-
-
-Conn = Annotated[sqlite3.Connection, Depends(get_conn)]
 
 router = APIRouter()
 
@@ -230,6 +221,7 @@ def create_app(run_manager: RunManager | None = None) -> FastAPI:
     app.state.run_manager = run_manager if run_manager is not None else RunManager()
     app.include_router(router)
     app.include_router(runs_router)
+    app.include_router(capture_router)
     return app
 
 
