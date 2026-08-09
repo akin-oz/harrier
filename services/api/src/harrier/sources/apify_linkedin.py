@@ -72,7 +72,7 @@ def unwrap_apify_data(payload: object) -> object:
     return cast("object", payload)
 
 
-def _request_json(
+def request_json(
     url: str,
     *,
     method: str = "GET",
@@ -117,7 +117,7 @@ def start_apify_run(
         scrape_company,
     )
     run = unwrap_apify_data(
-        _request_json(
+        request_json(
             endpoint,
             method="POST",
             payload=actor_input(urls, count, scrape_company),
@@ -133,7 +133,7 @@ def poll_apify_run(run_id: str, token: str, timeout_seconds: int) -> dict[str, A
     deadline = time.time() + timeout_seconds
     endpoint = f"{API_BASE_URL}/actor-runs/{run_id}?" + urlencode({"token": token})
     while True:
-        run = unwrap_apify_data(_request_json(endpoint, timeout_seconds=min(timeout_seconds, 60)))
+        run = unwrap_apify_data(request_json(endpoint, timeout_seconds=min(timeout_seconds, 60)))
         if not isinstance(run, dict):
             raise RuntimeError("Apify run poll did not return a run object")
         typed = cast("dict[str, Any]", run)
@@ -151,7 +151,7 @@ def fetch_dataset_items(dataset_id: str, token: str, timeout_seconds: int) -> li
         {"token": token, "clean": "true", "format": "json"}
     )
     logger.info("Apify dataset fetch start: dataset_id=%s", dataset_id)
-    data = unwrap_apify_data(_request_json(endpoint, timeout_seconds=timeout_seconds))
+    data = unwrap_apify_data(request_json(endpoint, timeout_seconds=timeout_seconds))
     if not isinstance(data, list):
         raise RuntimeError("Apify dataset fetch did not return a list")
     items = [

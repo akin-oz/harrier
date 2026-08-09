@@ -18,10 +18,12 @@ from harrier.tracker.store import (
     UnknownStatusError,
     add_contact,
     add_job,
+    delete_contact,
     get_job,
     list_contacts,
     list_jobs,
     set_status,
+    update_contact_fields,
     update_fields,
 )
 
@@ -37,9 +39,11 @@ __all__ = [
     "UnknownStatusError",
     "add_contact",
     "add_job",
+    "delete_contact",
     "get_job",
     "list_contacts",
     "list_jobs",
     "set_status",
+    "update_contact_fields",
     "update_fields",
 ]
