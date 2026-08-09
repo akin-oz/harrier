@@ -266,6 +266,65 @@ def _cmd_answers(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_evaluate(args: argparse.Namespace) -> int:
+    from harrier.offers import EvaluationError, evaluate_offer
+    from harrier.screening.descriptions import load_cached_description
+    from harrier.tracker import get_job
+
+    jd_text, error_code = _read_jd_file(args.jd_file)
+    if error_code is not None:
+        return error_code
+    if args.jd_text:
+        jd_text = args.jd_text
+    conn = connect()
+    try:
+        row = get_job(conn, args.job_id)
+        if not jd_text:
+            jd_text = load_cached_description(row.get("url", ""))
+        result = evaluate_offer(
+            conn,
+            row.get("company", ""),
+            row.get("title", ""),
+            row.get("url", ""),
+            jd_text or "",
+        )
+    except (EvaluationError, TrackerError, ValueError) as error:
+        print(f"evaluate failed: {error}", file=sys.stderr)
+        return 1
+    print(f"evaluation_report={result.report_path}")
+    print(f"verdict={result.verdict.verdict}")
+    print(f"confidence={result.verdict.confidence}")
+    print(f"reason={result.verdict.reason}")
+    return 0
+
+
+def _cmd_evaluate_prospects(args: argparse.Namespace) -> int:
+    from harrier.offers import BatchOptions, evaluate_prospects
+
+    conn = connect()
+    summary = evaluate_prospects(
+        conn,
+        BatchOptions(
+            apply=args.apply,
+            threshold=args.threshold,
+            limit=args.limit,
+            refresh=args.refresh,
+            include_borderline=args.include_borderline,
+        ),
+    )
+    for line in summary.lines:
+        print(line)
+    print(f"processed={summary.processed}")
+    print(f"skipped_existing={summary.skipped_existing}")
+    print(f"errors={summary.errors}")
+    print(f"verdict_counts={json.dumps(summary.verdict_counts)}")
+    label = "auto_rejected" if args.apply else "would_reject"
+    print(f"{label}={summary.auto_rejected if args.apply else summary.would_reject}")
+    if not args.apply and summary.would_reject:
+        print("re-run with --apply to commit the rejections")
+    return 0
+
+
 def _cmd_demo_run(args: argparse.Namespace) -> int:
     """Exercise the run machinery (spec 006): progress protocol plus log lines."""
     import json
@@ -383,6 +442,36 @@ def build_parser() -> argparse.ArgumentParser:
     answers_group.add_argument("--questions-file", help="file with one question per line")
     answers.add_argument("--jd-file", help="path to a job description text file")
     answers.set_defaults(func=_cmd_answers)
+
+    evaluate = sub.add_parser(
+        "evaluate", help="six-block offer evaluation for a tracker job (spec 015)"
+    )
+    evaluate.add_argument("--job-id", type=int, required=True)
+    evaluate_group = evaluate.add_mutually_exclusive_group()
+    evaluate_group.add_argument("--jd-text", help="inline job description text")
+    evaluate_group.add_argument("--jd-file", help="path to a job description text file")
+    evaluate.set_defaults(func=_cmd_evaluate)
+
+    prospects = sub.add_parser(
+        "evaluate-prospects",
+        help="batch-evaluate prospects with opt-in auto-reject (spec 015)",
+    )
+    prospects.add_argument(
+        "--apply", action="store_true", help="commit auto-rejects (default: dry run)"
+    )
+    prospects.add_argument(
+        "--threshold", type=float, default=0.8, help="min confidence to auto-reject"
+    )
+    prospects.add_argument("--limit", type=int, default=0, help="only the first N prospects")
+    prospects.add_argument(
+        "--refresh", action="store_true", help="re-evaluate even if a report exists"
+    )
+    prospects.add_argument(
+        "--include-borderline",
+        action="store_true",
+        help="also auto-reject borderline verdicts",
+    )
+    prospects.set_defaults(func=_cmd_evaluate_prospects)
 
     demo_run = sub.add_parser("demo-run", help="exercise the run machinery (spec 006)")
     demo_run.add_argument("--steps", default="8", help="number of progress steps")

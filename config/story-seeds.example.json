@@ -1,0 +1,20 @@
+[
+  {
+    "id": "funnel_conversion_turnaround",
+    "theme": "Impact at Scale",
+    "situation": "Inherited a signup funnel handling ~250K applications/year with a ~40% completion rate.",
+    "task": "Own the frontend end to end, identify drop-off causes, and measurably improve completion.",
+    "action": "Instrumented the funnel with structured telemetry, identified the biggest friction points, rebuilt key form steps with better validation UX, and added performance checks to CI.",
+    "result": "Completion grew from ~40% to ~70% across hundreds of thousands of applications.",
+    "reflection": "Set up telemetry on day one rather than reverse-engineering drop-off from logs."
+  },
+  {
+    "id": "architecture_migration",
+    "theme": "Technical Leadership / Architecture Decision",
+    "situation": "A growing frontend codebase had increasing cross-feature coupling; reviews were slow and ownership unclear.",
+    "task": "Lead a framework migration that also established long-term architectural direction.",
+    "action": "Proposed and executed a vertical-slice architecture, codified dependency direction with lint rules, and documented conventions.",
+    "result": "Smaller reviewable PRs, explicit ownership, faster onboarding.",
+    "reflection": "Involve the team earlier in the design phase to surface edge cases and build buy-in sooner."
+  }
+]
