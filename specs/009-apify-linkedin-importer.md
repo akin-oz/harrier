@@ -1,7 +1,7 @@
 ---
 spec: 009
 title: Apify LinkedIn importer
-status: in-progress
+status: shipped
 approved: yes
 milestone: M2
 depends: [007, 008]
