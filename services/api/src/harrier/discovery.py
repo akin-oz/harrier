@@ -330,7 +330,9 @@ def run_discovery(
         "source_summaries": summaries,
     }
 
-    if totals["new_prospects"] and options.notify:
+    # Dry runs have zero side effects: no writes and no notifications
+    # (spec 011; stated change from the old accidental independence).
+    if totals["new_prospects"] and options.notify and not options.dry_run:
         send_telegram_message(build_telegram_message(all_items))
     if not options.dry_run:
         target = _incoming_dir() / "job_imports_run.json"

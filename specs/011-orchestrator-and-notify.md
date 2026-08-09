@@ -40,8 +40,10 @@ manager converge: discovery becomes a live-streamed run in the GUI.
   cost-saver, wired here), dataset-file mode passthrough.
 - Aggregate: the old run-job-imports.py totals and shape, written to
   data/incoming/job_imports_run.json; exactly one Telegram message when
-  new_prospects > 0 and notify is on (parity note: notify is independent of
-  dry_run, as before; scheduled wrappers pass --no-notify with --dry-run).
+  new_prospects > 0, notify is on, and the run is not a dry run. Stated
+  change from the old code, where notify was technically independent of
+  dry_run: a dry run now has zero side effects (the old combination was
+  never exercised; wrappers always paired --dry-run with --no-notify).
 - Scheduled policy (--scheduled): Apify runs only on weekday mornings
   (hour < 12, Monday to Friday), with the count from config/discovery.json.
   This resolves the old count discrepancy: the CLI default stays 150 (the

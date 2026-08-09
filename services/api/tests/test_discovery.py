@@ -273,3 +273,81 @@ def test_cli_discover_dry_run_emits_progress_protocol(
         or "greenhouse: fetching" in out
     )
     assert '"new_prospects": 1' in out
+
+
+def test_dry_run_never_notifies_even_with_notify_on(
+    discovery_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(discovery_module, "parse_ats_feeds", _fake_feeds)
+    monkeypatch.setattr(discovery_module, "fetch_greenhouse_jobs", _one_greenhouse_job)
+    sent: list[str] = []
+
+    def _capture_send(message: str) -> int:
+        sent.append(message)
+        return 0
+
+    monkeypatch.setattr(discovery_module, "send_telegram_message", _capture_send)
+    conn = connect()
+    aggregate = run_discovery(
+        conn,
+        DiscoveryOptions(dry_run=True, notify=True, only_sources=frozenset({"greenhouse"})),
+    )
+    assert aggregate["new_prospects"] == 1
+    assert sent == []
+
+
+def test_unknown_only_source_is_an_argument_error(capsys: pytest.CaptureFixture[str]) -> None:
+    from harrier_cli.main import main as cli_main
+
+    rc = cli_main(["discover", "--dry-run", "--no-notify", "--only-source", "greenhose"])
+    assert rc == 2
+    assert "unknown --only-source" in capsys.readouterr().err
+
+
+def test_progress_total_counts_only_runnable_sources(
+    discovery_env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Batch sources without files and policy-gated Apify emit no progress,
+    so they must not inflate the total (Monday-evening scheduled run: the
+    four free sources are runnable, apify/wellfound/wttj are not)."""
+    monkeypatch.setattr(discovery_module, "parse_ats_feeds", _fake_feeds)
+    monkeypatch.setattr(discovery_module, "fetch_greenhouse_jobs", _one_greenhouse_job)
+
+    def _empty_remoteok() -> list[NormalizedJob]:
+        return []
+
+    monkeypatch.setattr(discovery_module, "fetch_remoteok_jobs", _empty_remoteok)
+    import harrier_cli.main as cli_module
+
+    monkeypatch.setattr(cli_module, "connect", connect)
+
+    def _gate_closed(now: object = None) -> bool:
+        return False
+
+    monkeypatch.setattr(discovery_module, "apify_allowed_now", _gate_closed)
+    # The CLI does a function-level "from harrier.discovery import" at each
+    # call, so patching the module attribute above covers it.
+    from harrier_cli.main import main as cli_main
+
+    rc = cli_main(["discover", "--dry-run", "--no-notify", "--scheduled"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert '"total": 4' in out
+
+
+def test_telegram_message_is_bounded_at_4096() -> None:
+    from harrier.notify import TELEGRAM_MESSAGE_LIMIT
+
+    items: list[dict[str, object]] = [
+        {
+            "company": "C" * 400,
+            "title": "T" * 400,
+            "location": "L" * 400,
+            "fit_score": 90,
+            "url": "https://example.com/" + "u" * 400,
+        }
+        for _ in range(8)
+    ]
+    message = build_telegram_message(items)
+    assert len(message) <= TELEGRAM_MESSAGE_LIMIT
+    assert message.startswith("Job imports: 8 new prospects")

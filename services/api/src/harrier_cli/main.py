@@ -33,10 +33,35 @@ def load_project_env(path: Path | None = None) -> None:
 
 
 def _cmd_discover(args: argparse.Namespace) -> int:
-    from harrier.discovery import SOURCE_ORDER, DiscoveryOptions, run_discovery
+    from harrier.discovery import (
+        SOURCE_ORDER,
+        DiscoveryOptions,
+        apify_allowed_now,
+        run_discovery,
+    )
 
     only = frozenset(item.strip() for item in args.only_source if item.strip())
-    enabled = [name for name in SOURCE_ORDER if not only or name in only]
+    unknown = sorted(only - set(SOURCE_ORDER))
+    if unknown:
+        print(
+            f"unknown --only-source value(s): {', '.join(unknown)}; "
+            f"valid: {', '.join(SOURCE_ORDER)}",
+            file=sys.stderr,
+        )
+        return 2
+
+    def runnable(name: str) -> bool:
+        if only and name not in only:
+            return False
+        if name == "wellfound":
+            return bool(args.wellfound_file)
+        if name == "wttj":
+            return bool(args.wttj_file)
+        if name == "apify_linkedin" and args.scheduled:
+            return apify_allowed_now()
+        return True
+
+    enabled = [name for name in SOURCE_ORDER if runnable(name)]
     total = len(enabled)
     state = {"step": 0}
 

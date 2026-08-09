@@ -49,13 +49,24 @@ def send_telegram_message(
         return 1
 
 
+TELEGRAM_MESSAGE_LIMIT = 4096
+
+
 def build_telegram_message(new_jobs: list[dict[str, object]]) -> str:
-    """The 8-item prospect summary (spec 011 port)."""
+    """The 8-item prospect summary (spec 011 port), bounded to Telegram's
+    4096-character sendMessage limit: entries stop before the limit and the
+    result is hard-capped as a last resort."""
     lines = [f"Job imports: {len(new_jobs)} new prospects", ""]
     for index, job in enumerate(new_jobs[:8], start=1):
-        lines.append(f"{index}. {job.get('company', 'Unknown')}: {job.get('title', 'Unknown')}")
-        lines.append(f"   {job.get('location', '')}")
-        lines.append(f"   score: {job.get('fit_score', '')}")
-        lines.append(f"   {job.get('url', '')}")
-        lines.append("")
-    return "\n".join(lines).rstrip()
+        entry = [
+            f"{index}. {job.get('company', 'Unknown')}: {job.get('title', 'Unknown')}",
+            f"   {job.get('location', '')}",
+            f"   score: {job.get('fit_score', '')}",
+            f"   {job.get('url', '')}",
+            "",
+        ]
+        candidate = "\n".join([*lines, *entry]).rstrip()
+        if len(candidate) > TELEGRAM_MESSAGE_LIMIT:
+            break
+        lines.extend(entry)
+    return "\n".join(lines).rstrip()[:TELEGRAM_MESSAGE_LIMIT]
