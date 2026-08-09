@@ -1,5 +1,8 @@
 """Behavior pins for the LLM provider seam (spec 012), ported from the old
-repo's tests/test_llm_client.py plus the error-path pins."""
+repo's tests/test_llm_client.py plus the error-path and debug-log pins."""
+
+import json
+from pathlib import Path
 
 import pytest
 
@@ -22,6 +25,12 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "CLAUDE_CLI_MODEL",
         "CODEX_CLI_PATH",
         "CLAUDE_CLI_PATH",
+        "ANTHROPIC_MAX_TOKENS",
+        "AI_DEBUG",
+        "OPENAI_DEBUG",
+        "ANTHROPIC_DEBUG",
+        "CODEX_CLI_DEBUG",
+        "CLAUDE_CLI_DEBUG",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -79,7 +88,7 @@ def test_unknown_provider_raises() -> None:
 
 
 def test_auto_generation_falls_back_after_provider_error(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     calls: list[tuple[str, str]] = []
 
@@ -100,10 +109,16 @@ def test_auto_generation_falls_back_after_provider_error(
     monkeypatch.setattr(llm, "resolve_auto_providers", two_providers)
     monkeypatch.setattr(llm, "generate_with_config", fake_generate)
 
-    output = generate_text("system", "user")
+    with caplog.at_level("WARNING", logger="harrier.llm"):
+        output = generate_text("system", "user")
 
     assert output == "ok"
     assert calls == [("openai-api", "gpt-5-mini"), ("anthropic-api", "claude-sonnet-4-5")]
+    assert any(
+        "fell back to anthropic-api" in record.getMessage()
+        and "openai-api: quota exceeded" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 def test_auto_generation_raises_with_every_error_when_all_fail(
@@ -146,8 +161,10 @@ def test_fixed_provider_empty_response_raises(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_explicit_model_is_honored_in_auto_mode(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Stated change from the old client, which dropped an explicit model
-    # during auto fallback unless AI_MODEL was also set.
+    # Contract: an explicitly passed model reaches the provider config in
+    # auto mode; this test proves it for the single-available-provider
+    # case. (Stated change in spec 012: the old client dropped the model
+    # argument during auto fallback unless AI_MODEL was also set.)
     captured: list[str] = []
 
     def fake_generate(
@@ -166,6 +183,66 @@ def test_explicit_model_is_honored_in_auto_mode(monkeypatch: pytest.MonkeyPatch)
 
     generate_text("system", "user", model="my-model")
     assert captured == ["my-model"]
+
+
+def test_invalid_anthropic_max_tokens_raises_llm_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # LLMClientError, not ValueError, so the auto chain can catch and
+    # aggregate it instead of dying mid-fallback.
+    config = LLMConfig(provider="anthropic-api", model="m", api_key="key")
+    monkeypatch.setenv("ANTHROPIC_MAX_TOKENS", "lots")
+    with pytest.raises(LLMClientError, match="must be an integer"):
+        llm_providers.generate_with_config("system", "user", config, 30)
+    monkeypatch.setenv("ANTHROPIC_MAX_TOKENS", "0")
+    with pytest.raises(LLMClientError, match="must be positive"):
+        llm_providers.generate_with_config("system", "user", config, 30)
+
+
+def test_api_debug_flag_logs_success_without_the_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    data_directory = tmp_path / "data"
+    monkeypatch.setenv("HARRIER_DATA_DIR", str(data_directory))
+    monkeypatch.setenv("OPENAI_DEBUG", "1")
+
+    def fake_post(
+        url: str, headers: dict[str, str], body: dict[str, object], timeout: int
+    ) -> object:
+        return {"output_text": "hello"}
+
+    monkeypatch.setattr(llm_providers, "_post_json", fake_post)
+    config = LLMConfig(provider="openai-api", model="m", api_key="sk-secret-value")
+    output = llm_providers.generate_with_config("system", "user", config, 30)
+    assert output == "hello"
+
+    log_path = data_directory / "llm-logs" / "openai-api.log"
+    entry = json.loads(log_path.read_text().splitlines()[-1])
+    assert entry["output_text"] == "hello"
+    assert "sk-secret-value" not in log_path.read_text()
+
+
+def test_api_debug_flag_logs_failure_without_the_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    data_directory = tmp_path / "data"
+    monkeypatch.setenv("HARRIER_DATA_DIR", str(data_directory))
+    monkeypatch.setenv("ANTHROPIC_DEBUG", "1")
+
+    def fake_post(
+        url: str, headers: dict[str, str], body: dict[str, object], timeout: int
+    ) -> object:
+        raise LLMClientError("api exited 500")
+
+    monkeypatch.setattr(llm_providers, "_post_json", fake_post)
+    config = LLMConfig(provider="anthropic-api", model="m", api_key="sk-ant-secret")
+    with pytest.raises(LLMClientError, match="api exited 500"):
+        llm_providers.generate_with_config("system", "user", config, 30)
+
+    log_path = data_directory / "llm-logs" / "anthropic-api.log"
+    entry = json.loads(log_path.read_text().splitlines()[-1])
+    assert entry["error"] == "api exited 500"
+    assert "sk-ant-secret" not in log_path.read_text()
 
 
 def test_claude_cli_error_envelope_surfaces(monkeypatch: pytest.MonkeyPatch) -> None:

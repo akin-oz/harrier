@@ -230,38 +230,91 @@ def _post_json(url: str, headers: dict[str, str], body: dict[str, object], timeo
         raise LLMClientError(f"{url} returned non-JSON output") from exc
 
 
+def _api_debug_log(
+    config: LLMConfig,
+    started: str,
+    url: str,
+    system_prompt: str,
+    user_input: str,
+    *,
+    output_text: str = "",
+    error: str = "",
+) -> None:
+    """Sanitized debug record for the API providers: never headers, never
+    the API key."""
+    if not debug_enabled(config.provider):
+        return
+    _log_call(
+        config.provider,
+        {
+            "started_at": started,
+            "url": url,
+            "model": config.model,
+            "input_preview": user_input[:500],
+            "input_chars": len(system_prompt) + len(user_input),
+            "output_text": output_text,
+            "error": error,
+        },
+    )
+
+
 def _generate_openai_api(
     system_prompt: str, user_input: str, config: LLMConfig, timeout: int
 ) -> str:
     if not config.api_key:
         raise LLMClientError("OPENAI_API_KEY is required when AI_PROVIDER=openai-api")
-    data = _post_json(
-        OPENAI_RESPONSES_URL,
-        {"authorization": f"Bearer {config.api_key}"},
-        {"model": config.model, "instructions": system_prompt, "input": user_input},
-        timeout,
+    started = _now_iso()
+    try:
+        data = _post_json(
+            OPENAI_RESPONSES_URL,
+            {"authorization": f"Bearer {config.api_key}"},
+            {"model": config.model, "instructions": system_prompt, "input": user_input},
+            timeout,
+        )
+    except LLMClientError as exc:
+        _api_debug_log(
+            config, started, OPENAI_RESPONSES_URL, system_prompt, user_input, error=str(exc)
+        )
+        raise
+    result = ""
+    if isinstance(data, dict):
+        payload = cast("dict[str, object]", data)
+        output_text = payload.get("output_text")
+        if isinstance(output_text, str) and output_text.strip():
+            result = output_text.strip()
+        else:
+            chunks: list[str] = []
+            output = payload.get("output")
+            if isinstance(output, list):
+                for item in cast("list[object]", output):
+                    if not isinstance(item, dict):
+                        continue
+                    content = cast("dict[str, object]", item).get("content")
+                    if not isinstance(content, list):
+                        continue
+                    for part in cast("list[object]", content):
+                        if isinstance(part, dict):
+                            text = cast("dict[str, object]", part).get("text")
+                            if isinstance(text, str) and text:
+                                chunks.append(text)
+            result = "\n".join(chunks).strip()
+    _api_debug_log(
+        config, started, OPENAI_RESPONSES_URL, system_prompt, user_input, output_text=result
     )
-    if not isinstance(data, dict):
-        return ""
-    payload = cast("dict[str, object]", data)
-    output_text = payload.get("output_text")
-    if isinstance(output_text, str) and output_text.strip():
-        return output_text.strip()
-    chunks: list[str] = []
-    output = payload.get("output")
-    if isinstance(output, list):
-        for item in cast("list[object]", output):
-            if not isinstance(item, dict):
-                continue
-            content = cast("dict[str, object]", item).get("content")
-            if not isinstance(content, list):
-                continue
-            for part in cast("list[object]", content):
-                if isinstance(part, dict):
-                    text = cast("dict[str, object]", part).get("text")
-                    if isinstance(text, str) and text:
-                        chunks.append(text)
-    return "\n".join(chunks).strip()
+    return result
+
+
+def _anthropic_max_tokens() -> int:
+    """Validated so a bad value raises LLMClientError, which the auto chain
+    catches and aggregates instead of dying on ValueError."""
+    raw = os.getenv("ANTHROPIC_MAX_TOKENS", "4096").strip()
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise LLMClientError(f"ANTHROPIC_MAX_TOKENS must be an integer, got {raw!r}") from exc
+    if value < 1:
+        raise LLMClientError(f"ANTHROPIC_MAX_TOKENS must be positive, got {value}")
+    return value
 
 
 def _generate_anthropic_api(
@@ -269,30 +322,41 @@ def _generate_anthropic_api(
 ) -> str:
     if not config.api_key:
         raise LLMClientError("ANTHROPIC_API_KEY is required when AI_PROVIDER=anthropic-api")
-    data = _post_json(
-        ANTHROPIC_MESSAGES_URL,
-        {"x-api-key": config.api_key, "anthropic-version": "2023-06-01"},
-        {
-            "model": config.model,
-            "max_tokens": int(os.getenv("ANTHROPIC_MAX_TOKENS", "4096")),
-            "system": system_prompt,
-            "messages": [{"role": "user", "content": user_input}],
-        },
-        timeout,
-    )
-    if not isinstance(data, dict):
-        return ""
-    content = cast("dict[str, object]", data).get("content")
+    max_tokens = _anthropic_max_tokens()
+    started = _now_iso()
+    try:
+        data = _post_json(
+            ANTHROPIC_MESSAGES_URL,
+            {"x-api-key": config.api_key, "anthropic-version": "2023-06-01"},
+            {
+                "model": config.model,
+                "max_tokens": max_tokens,
+                "system": system_prompt,
+                "messages": [{"role": "user", "content": user_input}],
+            },
+            timeout,
+        )
+    except LLMClientError as exc:
+        _api_debug_log(
+            config, started, ANTHROPIC_MESSAGES_URL, system_prompt, user_input, error=str(exc)
+        )
+        raise
     chunks: list[str] = []
-    if isinstance(content, list):
-        for item in cast("list[object]", content):
-            if isinstance(item, dict):
-                item_dict = cast("dict[str, object]", item)
-                if item_dict.get("type") == "text":
-                    text = item_dict.get("text")
-                    if isinstance(text, str) and text:
-                        chunks.append(text)
-    return "\n".join(chunks).strip()
+    if isinstance(data, dict):
+        content = cast("dict[str, object]", data).get("content")
+        if isinstance(content, list):
+            for item in cast("list[object]", content):
+                if isinstance(item, dict):
+                    item_dict = cast("dict[str, object]", item)
+                    if item_dict.get("type") == "text":
+                        text = item_dict.get("text")
+                        if isinstance(text, str) and text:
+                            chunks.append(text)
+    result = "\n".join(chunks).strip()
+    _api_debug_log(
+        config, started, ANTHROPIC_MESSAGES_URL, system_prompt, user_input, output_text=result
+    )
+    return result
 
 
 def generate_with_config(
