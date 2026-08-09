@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 from harrier.screening.http import request_json, request_text, strip_html
 from harrier.screening.normalized import NormalizedJob, make_normalized_job
+from harrier.sources import redact_url
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,9 @@ _APP_DATA_RE = re.compile(r"window\.__appData\s*=\s*(\{.*?\});", re.DOTALL)
 
 def extract_ashby_board(board_url: str) -> str:
     parsed = urlparse(board_url)
-    if "jobs.ashbyhq.com" not in parsed.netloc.lower():
+    hostname = (parsed.hostname or "").lower()
+    # Exact host, not substring: lookalike hosts must not route here.
+    if hostname != "jobs.ashbyhq.com":
         return ""
     parts = [part for part in parsed.path.split("/") if part]
     return parts[0] if parts else ""
@@ -111,7 +114,9 @@ def normalize_ashby_job(item: dict[str, Any], board_url: str) -> NormalizedJob:
         ]
         compensation = " ".join(parts).strip()
 
-    job_id = str(item.get("id") or item.get("_id") or item.get("jobId") or "").strip()
+    job_id = str(
+        item.get("id") or item.get("_id") or item.get("jobId") or item.get("jobIdString") or ""
+    ).strip()
     url = (
         str(
             item.get("jobUrl")
@@ -151,7 +156,7 @@ def fetch_ashby_jobs_via_api(board_url: str) -> list[NormalizedJob]:
             f"https://api.ashbyhq.com/posting-api/job-board/{board}?includeCompensation=true"
         )
     except Exception as exc:
-        logger.warning("Ashby API fetch failed for %s: %s", board_url, exc)
+        logger.warning("Ashby API fetch failed for %s: %s", redact_url(board_url), exc)
         return []
     if not isinstance(payload, dict):
         return []
@@ -173,8 +178,10 @@ def fetch_ashby_jobs(board_url: str) -> list[NormalizedJob]:
     try:
         html = request_text(board_url)
     except Exception as exc:
-        logger.warning("Ashby HTML fetch failed for %s: %s", board_url, exc)
-        return []
+        # Both the API and the HTML fallback failed: raise so fetch_many
+        # records a board failure instead of a successful empty import.
+        logger.warning("Ashby HTML fetch failed for %s: %s", redact_url(board_url), exc)
+        raise
     match = _APP_DATA_RE.search(html)
     if not match:
         return []

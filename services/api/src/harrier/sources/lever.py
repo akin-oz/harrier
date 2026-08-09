@@ -20,7 +20,9 @@ def extract_lever_company(value: str) -> str:
     if "://" not in value:
         return value.strip().strip("/")
     parsed = urlparse(value)
-    if "lever.co" not in parsed.netloc:
+    hostname = (parsed.hostname or "").lower()
+    # Label-suffix match, not substring: cleverlever.co.example must not pass.
+    if not (hostname == "lever.co" or hostname.endswith(".lever.co")):
         return ""
     parts = [part for part in parsed.path.split("/") if part]
     return parts[0] if parts else ""

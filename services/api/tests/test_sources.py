@@ -110,3 +110,57 @@ def test_parse_ats_feeds_routes_by_netloc(tmp_path: Path) -> None:
         "https://jobs.lever.co/exampleco",
         "https://jobs.eu.lever.co/euco",
     ]
+
+
+def test_lookalike_hosts_are_rejected_everywhere(tmp_path: Path) -> None:
+    from harrier.sources.ashby import extract_ashby_board
+    from harrier.sources.greenhouse import extract_greenhouse_token
+    from harrier.sources.lever import extract_lever_company
+
+    assert extract_greenhouse_token("https://badgreenhouse.io/acme") == ""
+    assert extract_greenhouse_token("https://greenhouse.io.evil.example/acme") == ""
+    assert extract_ashby_board("https://jobs.ashbyhq.com.evil.example/acme") == ""
+    assert extract_ashby_board("https://evil.example/jobs.ashbyhq.com/acme") == ""
+    assert extract_lever_company("https://cleverlever.co.evil.example/acme") == ""
+
+    feeds = tmp_path / "feeds.txt"
+    feeds.write_text(
+        "https://badgreenhouse.io/acme\n"
+        "https://jobs.ashbyhq.com.evil.example/acme\n"
+        "https://evil.example/path?netloc=jobs.lever.co\n",
+        encoding="utf-8",
+    )
+    grouped = parse_ats_feeds(feeds)
+    assert grouped == {"greenhouse": [], "ashby": [], "lever": []}
+
+
+def test_ashby_job_id_string_is_used_for_identity() -> None:
+    from harrier.sources.ashby import normalize_ashby_job
+
+    job = normalize_ashby_job(
+        {"postingTitle": "Senior Frontend Engineer", "jobIdString": "ashby-str-7"},
+        "https://jobs.ashbyhq.com/exampleco",
+    )
+    assert job["external_id"] == "ashby-str-7"
+    assert job["url"].endswith("/ashby-str-7")
+
+
+def test_ashby_double_failure_raises_for_board_error_reporting() -> None:
+    import pytest as pytest_module
+
+    with (
+        patch.object(ashby_module, "request_json", side_effect=RuntimeError("api down")),
+        patch.object(ashby_module, "request_text", side_effect=RuntimeError("html down")),
+        pytest_module.raises(RuntimeError, match="html down"),
+    ):
+        fetch_ashby_jobs("https://jobs.ashbyhq.com/exampleco")
+
+
+def test_redact_url_strips_userinfo_and_query() -> None:
+    from harrier.sources import redact_url
+
+    assert (
+        redact_url("https://user:secret@boards.greenhouse.io/acme?token=abc")
+        == "https://boards.greenhouse.io/acme"
+    )
+    assert redact_url("https://[") == "<unparseable url>"

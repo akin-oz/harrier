@@ -31,11 +31,12 @@ def parse_ats_feeds(path: Path | None = None) -> dict[str, list[str]]:
     }
     feeds_path = path if path is not None else FEEDS_PATH
     for feed_url in read_line_config(feeds_path):
-        netloc = urlparse(feed_url).netloc.lower()
-        if netloc.endswith("greenhouse.io"):
+        hostname = (urlparse(feed_url).hostname or "").lower()
+        # Label-suffix matches, not substrings: lookalike hosts route nowhere.
+        if hostname == "greenhouse.io" or hostname.endswith(".greenhouse.io"):
             grouped["greenhouse"].append(feed_url)
-        elif "jobs.ashbyhq.com" in netloc:
+        elif hostname == "jobs.ashbyhq.com":
             grouped["ashby"].append(feed_url)
-        elif "lever.co" in netloc:
+        elif hostname == "lever.co" or hostname.endswith(".lever.co"):
             grouped["lever"].append(feed_url)
     return grouped

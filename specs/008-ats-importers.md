@@ -13,7 +13,7 @@ Refined from the stub before implementation; scope below is the real scope.
 
 ## Problem
 
-The free sources, ingestion only. Each produces the shared normalized shape
+The source modules are ingestion-only. Each produces the shared normalized shape
 and nothing else; the runner glue that screens and persists arrives with the
 orchestrator (spec 011).
 
@@ -40,8 +40,10 @@ Boundary enforcement: a new import-linter contract "sources are ingestion
 only" forbids `harrier.sources` from importing screening policy
 (rules, pipeline, archetypes, descriptions, seen) and the tracker. Sources
 may import `harrier.screening.normalized` (the shared shape) and
-`harrier.screening.http` (fetch and strip primitives). This makes
-per-source scoring structurally impossible, not just reviewed against.
+`harrier.screening.http` (fetch and strip primitives). The contract
+enforces the module boundary; inline scoring logic written inside a source
+module is still possible and stays a review and test concern
+(data-integrity-reviewer audits it).
 
 Deliberate changes from the old code, stated:
 

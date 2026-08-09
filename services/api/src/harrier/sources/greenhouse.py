@@ -14,7 +14,9 @@ SOURCE_NAME = "greenhouse"
 def extract_greenhouse_token(board_url: str) -> str:
     parsed = urlparse(board_url)
     parts = [part for part in parsed.path.split("/") if part]
-    if parsed.netloc.endswith("greenhouse.io") and parts:
+    hostname = (parsed.hostname or "").lower()
+    # Label-suffix match, not string suffix: badgreenhouse.io must not pass.
+    if (hostname == "greenhouse.io" or hostname.endswith(".greenhouse.io")) and parts:
         return parts[0]
     return ""
 
