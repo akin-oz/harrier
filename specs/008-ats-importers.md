@@ -1,7 +1,7 @@
 ---
 spec: 008
 title: ATS importers: Greenhouse, Ashby, Lever, RemoteOK
-status: in-progress
+status: shipped
 approved: yes
 milestone: M2
 depends: [007]
