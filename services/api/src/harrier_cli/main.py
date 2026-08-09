@@ -154,6 +154,30 @@ def _cmd_profile_list(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_tailor(args: argparse.Namespace) -> int:
+    from harrier.resume.content import ResumeBundleError
+    from harrier.resume.tailor import run_tailor
+
+    jd_text: str | None = None
+    if args.jd_text:
+        jd_text = args.jd_text
+    elif args.jd_file:
+        jd_text = Path(args.jd_file).read_text(encoding="utf-8")
+
+    conn = connect()
+    try:
+        result = run_tailor(conn, args.job_id, jd_text=jd_text, no_ai=args.no_ai)
+    except (ResumeBundleError, ValueError, RuntimeError) as error:
+        print(f"tailor failed: {error}", file=sys.stderr)
+        return 1
+    print(f"tailored_pdf={result.pdf_path}")
+    print(f"metadata={result.metadata_path}")
+    if result.evaluation_path is not None:
+        print(f"evaluation_report={result.evaluation_path}")
+    print(f"ai_tailored={'yes' if result.ai_tailored else 'no'}")
+    return 0
+
+
 def _cmd_demo_run(args: argparse.Namespace) -> int:
     """Exercise the run machinery (spec 006): progress protocol plus log lines."""
     import json
@@ -239,6 +263,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="apply the scheduled policy: Apify on weekday mornings only, configured count",
     )
     discover.set_defaults(func=_cmd_discover)
+
+    tailor = sub.add_parser(
+        "tailor", help="generate a tailored resume PDF for a tracker job (spec 013)"
+    )
+    tailor.add_argument("--job-id", type=int, required=True)
+    jd_group = tailor.add_mutually_exclusive_group()
+    jd_group.add_argument("--jd-text", help="inline job description text")
+    jd_group.add_argument("--jd-file", help="path to a job description text file")
+    tailor.add_argument(
+        "--no-ai",
+        action="store_true",
+        help="use the deterministic evidence plan only (reproducible validation)",
+    )
+    tailor.set_defaults(func=_cmd_tailor)
 
     demo_run = sub.add_parser("demo-run", help="exercise the run machinery (spec 006)")
     demo_run.add_argument("--steps", default="8", help="number of progress steps")

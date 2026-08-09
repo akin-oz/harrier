@@ -1,0 +1,186 @@
+{
+  "_comment": "Synthetic resume content bundle (spec 013). The engine is persona-free: import YOUR bundle into the profile store as kind resume_data; this example documents the shape and doubles as the public test fixture (services/api/tests/test_resume.py). Every bullet must appear verbatim in your resume_truth or achievements document.",
+  "candidate": {
+    "name": "Deniz Örnek",
+    "location": "Exampleland",
+    "email": "deniz@example.com",
+    "phone": "+00 000 000 0000",
+    "linkedin": "https://linkedin.com/in/deniz-ornek",
+    "primary_identity": "Senior Frontend Engineer",
+    "professional_career_start": "2016-06-01",
+    "positioning_technologies": ["TypeScript", "React", "Vue 3", "Nuxt"]
+  },
+  "profile_summary": "Brings end-to-end frontend ownership across conversion-critical flows, shared UI systems, architecture, and quality engineering.",
+  "roles": [
+    {
+      "id": "r1",
+      "organization": "Acme Talent",
+      "title": "Senior Frontend Engineer",
+      "employment_type": "Freelance",
+      "period": { "start": "2025-11-01", "end": "2026-06-15" },
+      "counts_towards_professional_experience": true,
+      "technologies": ["Vue 3", "Nuxt", "TypeScript", "Storybook", "Vitest", "Playwright", "Sentry", "Mixpanel"],
+      "competencies": ["frontend"],
+      "bullet_count": 4,
+      "default_bullets": ["r1_b1", "r1_b2", "r1_b3", "r1_b4"]
+    },
+    {
+      "id": "r2",
+      "organization": "Acme Platform",
+      "title": "Senior Software Engineer",
+      "employment_type": "",
+      "period": { "start": "2021-09-01", "end": "2025-10-31" },
+      "counts_towards_professional_experience": true,
+      "technologies": ["React", "TypeScript", "Storybook", "Node.js"],
+      "competencies": ["frontend"],
+      "bullet_count": 4,
+      "default_bullets": ["r2_b1", "r2_b2", "r2_b3", "r2_b4"]
+    },
+    {
+      "id": "r3",
+      "organization": "Exampleworks",
+      "title": "Frontend Engineer",
+      "employment_type": "",
+      "period": { "start": "2016-06-01", "end": "2021-08-31" },
+      "counts_towards_professional_experience": true,
+      "technologies": ["React", "TypeScript", "Node.js", "AWS Lambda"],
+      "competencies": ["frontend"],
+      "bullet_count": 2,
+      "default_bullets": ["r3_b1", "r3_b2"]
+    }
+  ],
+  "all_skills": [
+    "TypeScript", "React", "Next.js", "Vue 3", "Nuxt", "Node.js",
+    "Storybook", "Vitest", "Playwright", "Sentry", "Mixpanel",
+    "CI/CD", "REST", "GraphQL", "AWS Lambda"
+  ],
+  "verified_skills": [
+    "TypeScript", "React", "Next.js", "Vue 3", "Nuxt", "Node.js",
+    "Storybook", "Vitest", "Playwright", "Sentry", "Mixpanel",
+    "CI/CD", "REST", "GraphQL", "AWS Lambda"
+  ],
+  "bullet_pool": {
+    "r1_b1": "Took over full frontend ownership of a Vue 3 / Nuxt platform for a fintech client.",
+    "r1_b2": "Led a Nuxt migration to a vertical-slice architecture, codifying ownership and dependency direction to keep changes reviewable.",
+    "r1_b3": "Established a token-driven design-system layer, shipping reusable primitives with Storybook documentation.",
+    "r1_b4": "Added frontend observability with Mixpanel, Sentry, and structured telemetry to improve release traceability.",
+    "r1_b5": "Designed a release pipeline with semantic versioning, release tracking, and CI quality checks.",
+    "r1_b6": "Improved frontend developer experience and CI reliability by standardizing lockfile generation.",
+    "r2_b1": "Owned a signup funnel handling ~250K applications/year.",
+    "r2_b2": "Increased completion from ~40% to ~70%.",
+    "r2_b3": "Built shared UI libraries with Storybook and semantic versioning.",
+    "r2_b4": "Worked with product and backend on typed API contracts, validation, and observable error handling.",
+    "r2_b5": "Instituted CI/CD quality gates and automated performance checks.",
+    "r2_b6": "Received a company-wide engineering quality award.",
+    "r2_b7": "Built a self-service onboarding portal.",
+    "r3_b1": "Served as primary frontend owner for React/TypeScript SPAs and dashboards.",
+    "r3_b2": "Raised Lighthouse scores from the 40s to the 90s.",
+    "r3_b3": "Built small backend-adjacent utilities with Node.js and AWS Lambda.",
+    "ach_1": "Grew signup funnel completion from 40% to 70% across ~250K annual applications, directly improving customer acquisition.",
+    "ach_2": "Raised Lighthouse scores from the 40s to the 90s.",
+    "ach_4": "Led a Nuxt migration to a vertical-slice architecture, codifying ownership and dependency direction to keep changes reviewable.",
+    "ach_5": "Established a token-driven design-system layer, shipping reusable primitives with Storybook documentation.",
+    "ach_6": "Built end-to-end frontend quality infrastructure: token-driven design system, deterministic test suites, CI quality gates, and production observability."
+  },
+  "evidence_groups": {
+    "r1_b2": "architecture_migration",
+    "ach_4": "architecture_migration",
+    "r1_b3": "design_system",
+    "ach_5": "design_system",
+    "r2_b1": "funnel_conversion",
+    "r2_b2": "funnel_conversion",
+    "ach_1": "funnel_conversion",
+    "r3_b2": "lighthouse_performance",
+    "ach_2": "lighthouse_performance",
+    "r2_b5": "quality_infrastructure",
+    "ach_6": "quality_infrastructure"
+  },
+  "technology_aliases": {
+    "TypeScript": ["typescript"],
+    "React": ["react", "react.js"],
+    "Next.js": ["next.js", "nextjs"],
+    "Vue 3": ["vue", "vue.js", "vue 3"],
+    "Nuxt": ["nuxt", "nuxt.js"],
+    "Node.js": ["node.js", "node js", "nodejs"],
+    "Storybook": ["storybook"],
+    "Vitest": ["vitest"],
+    "Playwright": ["playwright"],
+    "Sentry": ["sentry"],
+    "Mixpanel": ["mixpanel"],
+    "CI/CD": ["ci/cd", "continuous integration", "continuous delivery"],
+    "REST": ["rest api", "restful", "rest"],
+    "GraphQL": ["graphql"],
+    "AWS Lambda": ["aws lambda", "lambda"]
+  },
+  "target_signal_weights": {
+    "architecture": ["architecture", "migration", "vertical slice"],
+    "design_system": ["design system", "storybook", "component library", "ui library"],
+    "performance": ["performance", "lighthouse", "web vitals", "accessibility"],
+    "quality": ["testing", "test", "quality", "ci/cd", "reliability"],
+    "observability": ["observability", "telemetry", "monitoring", "sentry", "logging"],
+    "product": ["product", "conversion", "funnel", "onboarding", "customer"],
+    "delivery": ["release", "deployment", "devops", "pipeline"]
+  },
+  "evaluation_dimensions": [
+    {
+      "name": "frontend/UI engineering",
+      "signals": ["frontend", "react", "typescript", "vue", "css", "ui", "interface"],
+      "evidence_refs": ["r1_b1", "r3_b1", "r3_b2"]
+    },
+    {
+      "name": "backend/full-stack ownership",
+      "kind": "backend_ownership",
+      "signals": ["backend", "full-stack", "full stack", "server", "api development", "api ownership"],
+      "evidence_refs": ["r2_b4", "r3_b3"]
+    },
+    {
+      "name": "architecture and code boundaries",
+      "signals": ["architecture", "code boundaries", "modular", "monorepo", "design system", "migration"],
+      "evidence_refs": ["r1_b2", "r1_b3"]
+    },
+    {
+      "name": "scalability and performance",
+      "signals": ["scalability", "scale", "performance", "lighthouse", "high-performance", "scalable"],
+      "evidence_refs": ["r2_b1", "r2_b2", "r3_b2"]
+    },
+    {
+      "name": "testing, automation, and CI/CD",
+      "signals": ["testing", "test", "automation", "ci/cd", "continuous integration", "pipeline"],
+      "evidence_refs": ["r2_b5", "r1_b5"]
+    },
+    {
+      "name": "product judgment and user impact",
+      "signals": ["product", "user impact", "conversion", "funnel", "onboarding"],
+      "evidence_refs": ["r2_b1", "r2_b2", "r2_b7"]
+    },
+    {
+      "name": "databases and APIs",
+      "kind": "database",
+      "signals": ["database", "relational", "sql", "rest", "graphql", "api"],
+      "evidence_refs": ["r2_b4", "r3_b3"]
+    },
+    {
+      "name": "AI fluency",
+      "kind": "absent_by_default",
+      "signals": ["ai", "artificial intelligence", "llm", "copilot", "ai-first"],
+      "evidence_refs": [],
+      "candidate_question": "Which AI tools or AI-first workflow practices can you substantiate before inclusion?"
+    },
+    {
+      "name": "domain motivation",
+      "kind": "absent_by_default",
+      "signals": ["game", "games", "board game", "player", "gaming"],
+      "evidence_refs": [],
+      "candidate_question": "Do you have relevant game/board-game experience or motivation that is not in the CV? Confirm before inclusion."
+    }
+  ],
+  "forbidden_phrases": ["placeholder", "open source", "public talk"],
+  "default_achievements": ["ach_1", "ach_6", "ach_2"],
+  "education": [
+    "Bachelor's Degree, Example Engineering",
+    "Example Technical University"
+  ],
+  "certifications": [
+    "Example Framework Certification Level II"
+  ]
+}
