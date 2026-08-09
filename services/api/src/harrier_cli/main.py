@@ -464,6 +464,46 @@ def _cmd_backfill_posters(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_outreach_draft(args: argparse.Namespace) -> int:
+    from harrier.outreach import find_contact, generate_outreach, write_outreach_draft
+    from harrier.tracker import get_job
+
+    jd_text, error_code = _read_jd_file(args.jd_file)
+    if error_code is not None:
+        return error_code
+    conn = connect()
+    try:
+        row = get_job(conn, args.job_id)
+        contact_name = args.contact_name or ""
+        contact_role = args.contact_role or ""
+        contact_linkedin = args.contact_linkedin or ""
+        if contact_linkedin and not contact_name:
+            contact = find_contact(conn, contact_linkedin)
+            if contact is not None:
+                contact_name = contact.get("person_name", "")
+                contact_role = contact.get("person_title", "")
+        drafts = generate_outreach(
+            conn,
+            company=row.get("company", ""),
+            role=row.get("title", ""),
+            job_url=row.get("url", ""),
+            contact_name=contact_name,
+            contact_role=contact_role,
+            contact_linkedin=contact_linkedin,
+            jd_text=jd_text or "",
+            audience=args.audience or "",
+            tone=args.tone,
+            ai=args.ai,
+        )
+        paths = write_outreach_draft(row.get("company", ""), row.get("title", ""), drafts)
+    except (TrackerError, ValueError, RuntimeError, OSError) as error:
+        print(f"outreach-draft failed: {error}", file=sys.stderr)
+        return 1
+    for kind, path in paths.items():
+        print(f"{kind}={path}")
+    return 0
+
+
 def _cmd_demo_run(args: argparse.Namespace) -> int:
     """Exercise the run machinery (spec 006): progress protocol plus log lines."""
     import json
@@ -647,6 +687,23 @@ def build_parser() -> argparse.ArgumentParser:
     snooze_cmd.add_argument("--job-id", type=int, required=True)
     snooze_cmd.add_argument("--until", required=True)
     outreach.set_defaults(func=_cmd_outreach)
+
+    outreach_draft = sub.add_parser(
+        "outreach-draft", help="generate outreach message drafts (spec 017; nothing sends)"
+    )
+    outreach_draft.add_argument("--job-id", type=int, required=True)
+    outreach_draft.add_argument("--contact-linkedin", default="")
+    outreach_draft.add_argument("--contact-name", default="")
+    outreach_draft.add_argument("--contact-role", default="")
+    outreach_draft.add_argument(
+        "--audience", choices=["recruiter", "hiring_manager", "peer"], default=""
+    )
+    outreach_draft.add_argument(
+        "--tone", choices=["direct", "warm", "concise", "confident"], default="direct"
+    )
+    outreach_draft.add_argument("--jd-file", default=None)
+    outreach_draft.add_argument("--ai", action="store_true", help="AI drafts instead of templates")
+    outreach_draft.set_defaults(func=_cmd_outreach_draft)
 
     backfill = sub.add_parser(
         "backfill-posters", help="backfill LinkedIn poster contacts via guest endpoint (spec 016)"

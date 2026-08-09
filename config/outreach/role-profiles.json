@@ -1,0 +1,135 @@
+{
+  "profiles": [
+    {
+      "key": "frontend_engineer",
+      "match_any": [
+        "frontend engineer",
+        "frontend developer",
+        "ux engineer",
+        "web engineer",
+        "react.js",
+        "react"
+      ],
+      "strength_keys": [
+        "typescript_first",
+        "frontend_architecture",
+        "shared_ui",
+        "performance",
+        "reliability",
+        "cross_functional"
+      ],
+      "angle_lines": [
+        "frontend architecture, performance, and maintainable UI systems",
+        "user-facing product delivery with strong reliability and ownership",
+        "shared UI, clean boundaries, and frontend quality at product scale"
+      ],
+      "role_labels": [
+        "frontend architecture",
+        "shared UI systems",
+        "performance and reliability"
+      ]
+    },
+    {
+      "key": "product_engineer",
+      "match_any": [
+        "product engineer",
+        "product engineering"
+      ],
+      "strength_keys": [
+        "typescript_first",
+        "product_delivery",
+        "systems_thinking",
+        "frontend_architecture",
+        "reliability",
+        "cross_functional"
+      ],
+      "angle_lines": [
+        "product-facing engineering with clear ownership and fast iteration",
+        "shipping user-facing features while keeping systems maintainable",
+        "cross-functional product delivery with strong technical judgment"
+      ],
+      "role_labels": [
+        "product delivery",
+        "clear ownership",
+        "maintainable systems"
+      ]
+    },
+    {
+      "key": "web_staff",
+      "match_any": [
+        "staff web engineer",
+        "senior/staff web engineer",
+        "staff frontend engineer",
+        "frontend platform engineer",
+        "platform engineer"
+      ],
+      "strength_keys": [
+        "typescript_first",
+        "frontend_architecture",
+        "systems_thinking",
+        "performance",
+        "reliability",
+        "observability",
+        "ownership"
+      ],
+      "angle_lines": [
+        "architecture, frontend platform work, and long-term maintainability",
+        "performance, reliability, and system-level thinking on product teams",
+        "shared foundations, observability, and high-ownership delivery"
+      ],
+      "role_labels": [
+        "architecture",
+        "platform work",
+        "systems thinking"
+      ]
+    },
+    {
+      "key": "general_senior_ic",
+      "match_any": [
+        "senior software engineer",
+        "senior engineer",
+        "staff engineer",
+        "software developer",
+        "software engineer"
+      ],
+      "strength_keys": [
+        "typescript_first",
+        "frontend_architecture",
+        "reliability",
+        "observability",
+        "systems_thinking",
+        "ownership"
+      ],
+      "angle_lines": [
+        "high-ownership engineering with strong technical clarity",
+        "maintainable systems, reliability, and practical product delivery",
+        "clear contracts, strong ownership, and steady execution"
+      ],
+      "role_labels": [
+        "ownership",
+        "reliability",
+        "technical clarity"
+      ]
+    }
+  ],
+  "fallback": {
+    "key": "general_senior_ic",
+    "strength_keys": [
+      "typescript_first",
+      "frontend_architecture",
+      "reliability",
+      "systems_thinking",
+      "ownership"
+    ],
+    "angle_lines": [
+      "TypeScript-first product engineering with strong ownership",
+      "frontend architecture, reliable delivery, and maintainable systems",
+      "clarity-first engineering with practical product focus"
+    ],
+    "role_labels": [
+      "ownership",
+      "maintainable systems",
+      "reliable delivery"
+    ]
+  }
+}
