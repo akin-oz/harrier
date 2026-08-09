@@ -1,7 +1,7 @@
 ---
 spec: 007
 title: Screening core: shared shape, gates, scoring, dedupe
-status: in-progress
+status: shipped
 approved: yes
 milestone: M2
 depends: [004]
