@@ -1,6 +1,35 @@
 {
   "profiles": [
     {
+      "key": "web_staff",
+      "match_any": [
+        "staff web engineer",
+        "senior/staff web engineer",
+        "staff frontend engineer",
+        "frontend platform engineer",
+        "platform engineer"
+      ],
+      "strength_keys": [
+        "typescript_first",
+        "frontend_architecture",
+        "systems_thinking",
+        "performance",
+        "reliability",
+        "observability",
+        "ownership"
+      ],
+      "angle_lines": [
+        "architecture, frontend platform work, and long-term maintainability",
+        "performance, reliability, and system-level thinking on product teams",
+        "shared foundations, observability, and high-ownership delivery"
+      ],
+      "role_labels": [
+        "architecture",
+        "platform work",
+        "systems thinking"
+      ]
+    },
+    {
       "key": "frontend_engineer",
       "match_any": [
         "frontend engineer",
@@ -52,35 +81,6 @@
         "product delivery",
         "clear ownership",
         "maintainable systems"
-      ]
-    },
-    {
-      "key": "web_staff",
-      "match_any": [
-        "staff web engineer",
-        "senior/staff web engineer",
-        "staff frontend engineer",
-        "frontend platform engineer",
-        "platform engineer"
-      ],
-      "strength_keys": [
-        "typescript_first",
-        "frontend_architecture",
-        "systems_thinking",
-        "performance",
-        "reliability",
-        "observability",
-        "ownership"
-      ],
-      "angle_lines": [
-        "architecture, frontend platform work, and long-term maintainability",
-        "performance, reliability, and system-level thinking on product teams",
-        "shared foundations, observability, and high-ownership delivery"
-      ],
-      "role_labels": [
-        "architecture",
-        "platform work",
-        "systems thinking"
       ]
     },
     {

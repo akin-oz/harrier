@@ -23,9 +23,9 @@
       "{greeting} I recently applied for {role_title} at {company}. My background is mostly {strength_sentence}, and the role looks relevant on {angle_sentence}. {standard_close}"
     ],
     "hiring_manager": [
-      "{greeting} I recently applied for {role_title} at {company}. My background is strongest in {strength_sentence}, and the role looks aligned on {angle_sentence}. {company_note_sentence}{standard_close}",
+      "{greeting} I recently applied for {role_title} at {company}. My background is strongest in {strength_sentence}, and the role looks aligned on {angle_sentence}. {company_note_sentence} {standard_close}",
       "{greeting} I applied for {role_title} at {company}. Most of my work has been in {strength_sentence}, with a lot of emphasis on clarity, ownership, and maintainable systems. From the role, the fit looks strongest around {angle_sentence}. {standard_close}",
-      "{greeting} I recently applied for {role_title} at {company}. My strongest work sits around {strength_sentence}, and the role reads like a good match on {angle_sentence}. {custom_angle_sentence}{standard_close}"
+      "{greeting} I recently applied for {role_title} at {company}. My strongest work sits around {strength_sentence}, and the role reads like a good match on {angle_sentence}. {custom_angle_sentence} {standard_close}"
     ],
     "peer": [
       "{greeting} I recently applied for {role_title} at {company}. Most of my work has been in {strength_sentence}, and the role looks aligned on {angle_sentence}. {peer_close}",
@@ -40,7 +40,7 @@
       "{greeting} Thanks for connecting. I recently applied for {role_title} at {company}. My strongest work sits around {strength_sentence}, and the role looks aligned on {angle_sentence}. {standard_close}"
     ],
     "hiring_manager": [
-      "{greeting} Thanks for connecting. I recently applied for {role_title} at {company}. My background is strongest in {strength_sentence}, and the role looks closely aligned on {angle_sentence}. {custom_angle_sentence}{standard_close}",
+      "{greeting} Thanks for connecting. I recently applied for {role_title} at {company}. My background is strongest in {strength_sentence}, and the role looks closely aligned on {angle_sentence}. {custom_angle_sentence} {standard_close}",
       "{greeting} Thanks for connecting. I applied for {role_title} at {company}. Most of my work has been in {strength_sentence}, with a lot of emphasis on ownership and maintainable systems. The role looks aligned on {angle_sentence}. {standard_close}",
       "{greeting} Thanks for connecting. I recently applied for {role_title} at {company}, and the strongest overlap from my side is {angle_sentence}. My background is mostly {strength_sentence}. {standard_close}"
     ],
@@ -57,7 +57,7 @@
       "{greeting} Just following up once on my application for {role_title} at {company}. The strongest overlap from my side is {angle_sentence}, and my background is mostly {strength_sentence}. {follow_up_close}"
     ],
     "hiring_manager": [
-      "{greeting} Following up once on my application for {role_title} at {company}. My strongest work sits around {strength_sentence}, and the role still looks aligned on {angle_sentence}. {custom_angle_sentence}{follow_up_close}",
+      "{greeting} Following up once on my application for {role_title} at {company}. My strongest work sits around {strength_sentence}, and the role still looks aligned on {angle_sentence}. {custom_angle_sentence} {follow_up_close}",
       "{greeting} A brief follow-up on my application for {role_title} at {company}. Most of my work has been in {strength_sentence}, with a lot of focus on ownership and clean execution. The role looks relevant on {angle_sentence}. {follow_up_close}",
       "{greeting} Just checking in once on my application for {role_title} at {company}. The strongest overlap from my side is {angle_sentence}, and my background is mostly {strength_sentence}. {follow_up_close}"
     ],

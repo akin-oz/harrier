@@ -205,9 +205,16 @@ def parse_ai_outreach_response(text: str) -> dict[str, list[dict[str, Any]]]:
             raise ValueError(f"missing or empty message kind: {kind}")
         checked: list[dict[str, Any]] = []
         for raw in cast("list[object]", variants):
-            if not isinstance(raw, dict) or not cast("dict[str, Any]", raw).get("text"):
+            if not isinstance(raw, dict):
                 raise ValueError(f"invalid variant in {kind}")
-            checked.append(cast("dict[str, Any]", raw))
+            entry = cast("dict[str, Any]", raw)
+            if not str(entry.get("text") or "").strip():
+                raise ValueError(f"invalid variant in {kind}")
+            checked.append(entry)
+        # The spec requires three variants per kind (review finding: one
+        # variant or blank text must not reach artifact generation).
+        if len(checked) < 3:
+            raise ValueError(f"message kind {kind} has {len(checked)} variants; need 3")
         result[kind] = checked
     _validate_short_notes(result)
     return result
@@ -280,6 +287,14 @@ def generate_ai_outreach(
             selected[kind] = str(formatted[0]["text"])
 
     return {
+        "request": {
+            "company_name": company,
+            "role_title": role,
+            "target_person_name": contact_name or "there",
+            "audience": audience,
+            "tone": tone,
+            "mode": "ai",
+        },
         "messages": messages,
         "selected_messages": selected,
         "job_description_text": jd_text,
@@ -314,6 +329,10 @@ def selected_messages(payload: dict[str, object]) -> dict[str, str]:
 def build_request(payload: dict[str, object]) -> OutreachRequest:
     contact_raw = payload.get("contact")
     contact = cast("dict[str, object]", contact_raw) if isinstance(contact_raw, dict) else {}
+    # The resolved JD feeds the template's company-note sentence so the
+    # deterministic output actually varies with the description (review
+    # finding: it was loaded but never reached the request).
+    jd_text = str(payload.get("job_description_text") or "")
     return OutreachRequest.from_dict(
         {
             "job_post_url": payload.get("job_url") or "https://local.invalid/outreach",
@@ -324,6 +343,7 @@ def build_request(payload: dict[str, object]) -> OutreachRequest:
             "tone": payload.get("tone") or "direct",
             "target_person_role": contact.get("role_title") or "",
             "linkedin_profile_url": contact.get("linkedin_url") or "",
+            "company_notes": jd_text,
         }
     )
 
@@ -484,10 +504,25 @@ def render_outreach_markdown(payload: dict[str, object]) -> str:
     return "\n".join(lines).strip() + "\n"
 
 
+def _draft_slug(company: str, role: str, payload: dict[str, object]) -> str:
+    """Company-role plus the target identity, so drafts for different
+    contacts, audiences, tones, or modes never overwrite each other
+    (review finding)."""
+    parts = [company, role]
+    request_raw = payload.get("request")
+    if isinstance(request_raw, dict):
+        request = cast("dict[str, object]", request_raw)
+        for key in ("target_person_name", "audience", "tone", "mode"):
+            value = str(request.get(key) or "").strip()
+            if value and value != "there":
+                parts.append(value)
+    return slugify("-".join(parts))
+
+
 def write_outreach_draft(company: str, role: str, payload: dict[str, object]) -> dict[str, Path]:
     directory = outreach_drafts_dir()
     directory.mkdir(parents=True, exist_ok=True)
-    slug = slugify(f"{company}-{role}")
+    slug = _draft_slug(company, role, payload)
     json_path = directory / f"{slug}.json"
     md_path = directory / f"{slug}.md"
     json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")

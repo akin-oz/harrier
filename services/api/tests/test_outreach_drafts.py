@@ -194,6 +194,75 @@ def test_write_outreach_draft_renders_sections(db: sqlite3.Connection) -> None:
     assert "## Alternative v2" in markdown
 
 
+def test_staff_titles_resolve_before_broad_frontend(configs: dict[str, Any]) -> None:
+    from harrier.outreach.messages import resolve_role_profile
+
+    profile = resolve_role_profile("Staff Frontend Engineer", configs["role_profiles"])
+    assert profile.get("key") == "web_staff"
+    broad = resolve_role_profile("Senior Frontend Engineer", configs["role_profiles"])
+    assert broad.get("key") == "frontend_engineer"
+
+
+def test_optional_sentences_keep_a_separator(
+    configs: dict[str, Any], request_fixture: OutreachRequest
+) -> None:
+    bundle = generate_message_bundle(request_fixture, configs, variant_count=3)
+    for variants in bundle.values():
+        for variant in variants:
+            assert ".Happy" not in variant.text
+            assert (
+                not any(
+                    left.isalnum() and right.isalnum() and left == "."
+                    for left, right in zip(variant.text, variant.text[1:], strict=False)
+                )
+                or "." not in variant.text
+            )
+
+
+def test_supplied_jd_changes_deterministic_output(db: sqlite3.Connection) -> None:
+    # The hiring-manager standard note consumes the company-note sentence,
+    # which the resolved JD now feeds (review finding: the JD was loaded
+    # but never reached the template request).
+    without_jd = generate_outreach(
+        db,
+        company="Veriff",
+        role="Senior Frontend Engineer",
+        contact_name="Miguel",
+        contact_role="Engineering Manager",
+        jd_text="",
+        config_dir=CONFIG_DIR,
+    )
+    with_jd = generate_outreach(
+        db,
+        company="Veriff",
+        role="Senior Frontend Engineer",
+        contact_name="Miguel",
+        contact_role="Engineering Manager",
+        jd_text="A verification platform with document scanning flows.",
+        config_dir=CONFIG_DIR,
+    )
+    assert json.dumps(without_jd["messages"]) != json.dumps(with_jd["messages"])
+    assert "verification platform" in json.dumps(with_jd["messages"]).lower()
+
+
+def test_drafts_for_two_contacts_write_distinct_artifacts(db: sqlite3.Connection) -> None:
+    paths_by_contact: list[Path] = []
+    for name in ("Fernanda", "Miguel"):
+        payload = generate_outreach(
+            db,
+            company="Veriff",
+            role="Senior Frontend Engineer",
+            contact_name=name,
+            contact_role="Talent Partner",
+            jd_text="Frontend role with TypeScript.",
+            config_dir=CONFIG_DIR,
+        )
+        paths = write_outreach_draft("Veriff", "Senior Frontend Engineer", payload)
+        paths_by_contact.append(paths["json"])
+    assert paths_by_contact[0] != paths_by_contact[1]
+    assert all(path.exists() for path in paths_by_contact)
+
+
 # ---------------------------------------------------------------------------
 # AI path
 # ---------------------------------------------------------------------------
@@ -216,9 +285,22 @@ def full_ai_response(short_text: str = "Short note about DataCamp frontend work.
 
 
 def test_parse_ai_response_rejects_missing_kind() -> None:
-    incomplete = json.dumps({"connection_note_short": ai_kind(["a"])})
+    incomplete_payload = {
+        kind: ai_kind(["a", "b", "c"])
+        for kind in MESSAGE_KINDS
+        if kind != "follow_up_after_application_second"
+    }
     with pytest.raises(ValueError, match="missing or empty message kind"):
-        parse_ai_outreach_response(incomplete)
+        parse_ai_outreach_response(json.dumps(incomplete_payload))
+
+
+def test_parse_ai_response_rejects_one_variant_or_blank_text() -> None:
+    single = json.dumps({kind: ai_kind(["only one"]) for kind in MESSAGE_KINDS})
+    with pytest.raises(ValueError, match="need 3"):
+        parse_ai_outreach_response(single)
+    blank = json.dumps({kind: ai_kind(["a", "  ", "c"]) for kind in MESSAGE_KINDS})
+    with pytest.raises(ValueError, match="invalid variant"):
+        parse_ai_outreach_response(blank)
 
 
 def test_parse_ai_response_hard_trims_short_notes() -> None:

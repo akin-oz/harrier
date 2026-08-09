@@ -55,6 +55,25 @@ holds here as everywhere.
   [--jd-file ...] [--ai]; with --contact-linkedin the contact fields
   resolve from the contacts store
 
+## Inputs, outputs, failure modes
+
+- Inputs: a tracker job (company, role, url), optional contact fields or
+  a contacts-store identifier, optional JD text or file, audience, tone,
+  and the ai flag. Outputs: a draft payload (messages keyed by kind with
+  scored variants, selected_messages, legacy keys) and two artifacts
+  (json and sectioned markdown) whose name carries the target identity
+  so different contacts, audiences, tones, or modes never overwrite each
+  other.
+- Failure modes: an invalid audience or tone raises ValueError from
+  OutreachRequest validation; a missing outreach_defaults document
+  raises ValueError naming the example file; malformed AI JSON, a
+  missing message kind, fewer than three variants, or blank variant text
+  surface as RuntimeError ("failed to parse AI response"); an
+  unavailable AI backend surfaces as RuntimeError ("AI request failed");
+  artifact write failures propagate as OSError and the CLI reports them
+  through its documented error path; an unknown --contact-linkedin
+  identifier is a CLI error, never a silent continue.
+
 ## Stated changes from the old code
 
 - The outreach defaults come from the profile store document, not a
@@ -76,8 +95,11 @@ holds here as everywhere.
       flagging, banned-language rewrite, target-store upsert by
       identity, audience inference, payload assembly, and the template
       path's selected messages and legacy keys
-- [ ] AI-path pins: response validation rejects a missing kind, short
-      notes hard-trim to 280, AI errors surface as RuntimeError
+- [ ] AI-path pins: response validation rejects a missing kind, fewer
+      than three variants, and blank variant text; short notes hard-trim
+      to 280; AI errors surface as RuntimeError
+- [ ] The resolved JD changes the deterministic output, and drafts for
+      two different contacts on one job write distinct artifacts
 - [ ] Nothing sends: the package exposes no transport of any kind
 - [ ] All gates green on PR
 

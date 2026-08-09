@@ -477,11 +477,20 @@ def _cmd_outreach_draft(args: argparse.Namespace) -> int:
         contact_name = args.contact_name or ""
         contact_role = args.contact_role or ""
         contact_linkedin = args.contact_linkedin or ""
-        if contact_linkedin and not contact_name:
+        if contact_linkedin:
+            # A supplied identifier always resolves; explicit manual fields
+            # take precedence over the stored values (review finding: an
+            # unknown identifier must not silently continue).
             contact = find_contact(conn, contact_linkedin)
-            if contact is not None:
-                contact_name = contact.get("person_name", "")
-                contact_role = contact.get("person_title", "")
+            if contact is None:
+                print(
+                    f"no stored contact matches {contact_linkedin!r}; "
+                    "add it via contacts approve or pass --contact-name",
+                    file=sys.stderr,
+                )
+                return 1
+            contact_name = contact_name or contact.get("person_name", "")
+            contact_role = contact_role or contact.get("person_title", "")
         drafts = generate_outreach(
             conn,
             company=row.get("company", ""),
