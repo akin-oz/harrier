@@ -92,6 +92,22 @@ def load_cached_description(url: str) -> str:
     return ""
 
 
+def cache_job_descriptions(jobs: list[NormalizedJob]) -> int:
+    """Cache descriptions for every job carrying one (spec 009).
+
+    The Apify cost-saver: everything fetched is cached, including jobs that
+    screening will reject, so re-evaluation and artifact generation never
+    re-run the actor for the same URLs. Called by the run path."""
+    cached = 0
+    for job in jobs:
+        url = job["url"].strip()
+        description = job["description"].strip()
+        if url and description:
+            save_description_cache(url, description)
+            cached += 1
+    return cached
+
+
 def should_enrich_description_for_scoring(job: NormalizedJob) -> bool:
     if len(job["description"].strip()) >= MIN_DESCRIPTION_LENGTH_FOR_SCORING:
         return False
