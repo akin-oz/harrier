@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field
+from typing import cast
 
 from harrier.outreach.contacts import infer_relevance, normalize
 from harrier.outreach.discovery import (
@@ -71,7 +72,9 @@ def _stage_poster(row: dict[str, str], job_url: str, poster: dict[str, str]) -> 
         "candidates": [],
     }
     candidates_raw = payload.get("candidates")
-    candidates: list[object] = candidates_raw if isinstance(candidates_raw, list) else []
+    candidates: list[object] = (
+        cast("list[object]", candidates_raw) if isinstance(candidates_raw, list) else []
+    )
     key = normalize(poster_url or poster_name)
     for item in candidates:
         if not isinstance(item, dict):
@@ -122,7 +125,9 @@ def backfill_posters(
         for row, url in batch:
             info = details.get(url) or {}
             poster_raw: object = info.get("poster")
-            poster = poster_raw if isinstance(poster_raw, dict) else {}
+            poster: dict[str, str] = (
+                cast("dict[str, str]", poster_raw) if isinstance(poster_raw, dict) else {}
+            )
             poster_url = str(poster.get("linkedin_url") or "").strip()
             poster_name = str(poster.get("name") or "").strip()
             if not poster_url and not poster_name:
