@@ -1,7 +1,7 @@
 ---
 spec: 015
 title: Offer evaluation and batch prospect evaluation
-status: in-progress
+status: shipped
 approved: yes
 milestone: M3
 depends: [012, 004]
@@ -77,7 +77,7 @@ out to other scripts through subprocess.
 - [ ] Story capture deduplicates by story_id and respects the bound
 - [ ] The assembled prompt contains no hardcoded personal content
       (proven against the synthetic fixtures)
-- [ ] All gates green on PR
+- [x] All gates green on PR (PR #12)
 
 ## Proof / origin
 
