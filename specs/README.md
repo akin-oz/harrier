@@ -37,3 +37,4 @@ Body sections: Problem, Scope, Acceptance criteria (checkboxes), Proof / origin
 
 All 22 stubs are `approved: no`. Refine a stub into a real spec before asking for
 approval; stubs sequence the backlog, they do not define final scope.
+- **M5 (added)** user configuration in the database: 023 (ADR-009; approved separately)

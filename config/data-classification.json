@@ -15,7 +15,10 @@
       "logs/**",
       "interview-prep/**",
       "backups/**",
-      "config/companies-hold.csv"
+      "config/companies-hold.csv",
+      "config/feeds.txt",
+      "config/linkedin_search_urls.txt",
+      "config/discovery.json"
     ]
   }
 }

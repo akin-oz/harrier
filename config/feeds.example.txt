@@ -1,0 +1,10 @@
+# Curated ATS board feeds, one URL per line, # comments allowed (ADR-009).
+# Copy to config/feeds.txt (gitignored) and replace with your own watchlist.
+# Keep the list small and high-signal. All feeds are ingestion-only and run
+# through the shared screening pipeline; the netloc routes each URL to the
+# right importer (greenhouse.io, jobs.ashbyhq.com, lever.co).
+
+https://boards.greenhouse.io/exampleco
+https://jobs.ashbyhq.com/exampleco
+https://jobs.lever.co/exampleco
+https://jobs.eu.lever.co/example-eu-co
