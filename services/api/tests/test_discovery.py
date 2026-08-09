@@ -93,8 +93,14 @@ def test_apify_count_override_passes_through(
 
 
 def test_scheduled_run_uses_configured_count(
-    discovery_env: Path, monkeypatch: pytest.MonkeyPatch
+    discovery_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # discovery.json is user configuration and never in git (ADR-009); the
+    # test supplies its own instead of reading a repo file that a fresh
+    # clone does not have.
+    config_path = tmp_path / "discovery.json"
+    config_path.write_text('{"apify_scheduled_count": 50}', encoding="utf-8")
+    monkeypatch.setattr(discovery_module, "DISCOVERY_CONFIG_PATH", config_path)
     captured: dict[str, Any] = {}
 
     def fake_apify(**kwargs: Any) -> list[NormalizedJob]:
@@ -115,6 +121,12 @@ def test_scheduled_run_uses_configured_count(
     )
     assert captured["count"] == scheduled_apify_count()
     assert scheduled_apify_count() == 50
+
+
+def test_scheduled_count_falls_back_to_cli_default_without_config(
+    tmp_path: Path,
+) -> None:
+    assert scheduled_apify_count(tmp_path / "missing.json") == 150
 
 
 def test_scheduled_policy_gates_apify() -> None:
