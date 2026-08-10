@@ -1,7 +1,7 @@
 ---
 spec: 019
 title: Daily digest
-status: in-progress
+status: shipped
 approved: yes
 milestone: M4
 depends: [018, 016]
@@ -62,21 +62,21 @@ limit of its own).
 
 ## Acceptance criteria
 
-- [ ] The digest over fixtures renders all five sections
+- [x] The digest over fixtures renders all five sections
       (test_digest_renders_all_five_sections)
-- [ ] Dry-run sends nothing (test_dry_run_sends_nothing: the send
+- [x] Dry-run sends nothing (test_dry_run_sends_nothing: the send
       function raises if called)
-- [ ] Ghosted uses the 21-day cutoff inclusively at the boundary, and
+- [x] Ghosted uses the 21-day cutoff inclusively at the boundary, and
       the rendered label says at-least rather than more-than
       (test_ghosted_cutoff_boundary)
-- [ ] A migrated row without added_at still lands in the new-prospects
+- [x] A migrated row without added_at still lands in the new-prospects
       section via its auto_added or tier_a_seed note
       (test_legacy_auto_added_note_counts_as_added_at)
-- [ ] A malformed event kind is skipped rather than aborting the digest
+- [x] A malformed event kind is skipped rather than aborting the digest
       (test_malformed_event_kind_is_skipped)
-- [ ] Updates are date-filtered, deduplicated, and newest first
+- [x] Updates are date-filtered, deduplicated, and newest first
       (test_updates_filter_dedupe_and_order)
-- [ ] All gates green on PR
+- [x] All gates green on PR (PR #16)
 
 ## Proof / origin
 
