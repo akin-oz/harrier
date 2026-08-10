@@ -26,8 +26,9 @@ Cutover plan phases 3 and 4 (docs/cutover-plan.md), unchanged in substance:
 
 - quiesce: unload the three old plists
 - snapshot the old tracker, state, and gmail event log
-- final migration refresh, including the discovery seen-state that spec 022
-  named as a precondition for a meaningful screening diff
+- final migration refresh: tracker rows added during the dual run, the
+  description cache, the gmail seen-state, and a refresh of the discovery
+  seen-state already migrated in phase 2a
 - verify: row counts, schedule status, one dry-run discovery and digest
 - go live: harrier schedule install, watch the next scheduled run
 - one-week fallback window, then archive the old repo read-only
@@ -35,10 +36,12 @@ Cutover plan phases 3 and 4 (docs/cutover-plan.md), unchanged in substance:
 ## Preconditions, to be met before this is approved
 
 - `harrier parity status` reports every checklist item checked or waived.
-- At least one `harrier parity diff` over a post-migration shadow run is
-  clean, including a weekday morning so the Apify path and its cost gate
-  are exercised. Before the seen-state migration the diff declines to
-  compare screening at all, so this cannot be satisfied early.
+- Phase 2a has been performed: the discovery seen-state is migrated, so the
+  diff compares screening rather than declining to. This is a precondition
+  of the dual-run period, not of cutover; listing it here as a cutover step
+  made these preconditions circular (review finding on PR #19).
+- At least one `harrier parity diff` over a shadow run is clean, including a
+  weekday morning so the Apify path and its cost gate are exercised.
 - The `.env` defect in the old repo is fixed or knowingly accepted: a value
   spanning a line break makes the shell wrapper exit 127 under `set -e`,
   which is why the old digest stopped running. It matters here because the

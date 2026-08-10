@@ -1,8 +1,15 @@
 # Parity checklist
 
-Generated from `docs/parity-matrix.md` by `harrier parity checklist`; do not
-edit the item text. Tick an item when you have verified it, or waive it with
-a reason:
+Generated from `docs/parity-matrix.md` by `harrier parity checklist`, and
+committed on purpose. The skeleton is derived, but the ticks and waivers are
+not: they are a human's review record, reproducible from nothing, and losing
+them means redoing every item. That is the same reason
+`packages/contract/openapi.json` is committed rather than ignored, and like
+that file this one is drift-checked, by
+`test_parity.py::test_the_committed_checklist_matches_the_matrix`.
+
+Do not edit the item text. Tick an item when you have verified it, or waive it
+with a reason:
 
     - [x] `slug` capability ... (waived: reason)
 

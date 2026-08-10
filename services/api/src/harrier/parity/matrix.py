@@ -78,27 +78,52 @@ def parse_matrix(path: Path | None = None) -> list[MatrixRow]:
     rows: list[MatrixRow] = []
     section = ""
     header: list[str] = []
+    previous: tuple[int, list[str]] | None = None
     for number, line in enumerate(text.splitlines(), start=1):
         heading = _SECTION_RE.match(line)
         if heading:
             section = heading.group("title")
             header = []
+            previous = None
             continue
         cells = _split_row(line)
         if not cells:
+            previous = None
             continue
         if _is_separator(cells):
+            # The row above a separator is the table's header, whatever it
+            # says. Recognising headers by looking for the word "verdict"
+            # instead would let a typo silently turn every row beneath it
+            # into a skipped row (review finding on PR #19).
+            if previous is None:
+                raise MatrixError(f"parity matrix line {number}: separator with no header above it")
+            header = _validated_header(previous[1], previous[0])
+            previous = None
             continue
-        lowered = [cell.lower() for cell in cells]
-        if "verdict" in lowered:
-            header = lowered
-            continue
-        if not header:
-            continue
-        rows.append(_row_from_cells(cells, header, section, number))
+        if header:
+            rows.append(_row_from_cells(cells, header, section, number))
+        previous = (number, cells)
     if not rows:
         raise MatrixError(f"{target} contained no capability rows")
     return rows
+
+
+# The two table shapes the document uses. A header matching neither is an
+# error rather than a table to ignore: the checklist is fail-closed.
+SUPPORTED_HEADERS = (
+    ("capability", "source", "verdict", "rationale"),
+    ("path", "verdict", "rationale"),
+)
+
+
+def _validated_header(cells: list[str], number: int) -> list[str]:
+    lowered = [cell.lower() for cell in cells]
+    if tuple(lowered) not in SUPPORTED_HEADERS:
+        shapes = " or ".join(" | ".join(shape) for shape in SUPPORTED_HEADERS)
+        raise MatrixError(
+            f"parity matrix line {number}: unrecognized table header {lowered}; expected {shapes}"
+        )
+    return lowered
 
 
 def _row_from_cells(cells: list[str], header: list[str], section: str, number: int) -> MatrixRow:

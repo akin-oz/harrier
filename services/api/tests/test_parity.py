@@ -14,6 +14,7 @@ from typing import cast
 import pytest
 
 from harrier.db import connect
+from harrier.demo import repo_root
 from harrier.discovery import DiscoveryOptions, run_discovery
 from harrier.parity import (
     ChecklistStatus,
@@ -109,6 +110,35 @@ def test_stated_counts_match_the_table() -> None:
     assert stated_counts() == verdict_counts(rows)
 
 
+def test_an_unrecognized_table_header_fails_rather_than_skipping_its_rows(
+    tmp_path: Path,
+) -> None:
+    """Recognising headers by looking for the word "verdict" let a typo turn
+    every row beneath it into a skipped row, silently, which is the opposite
+    of the fail-closed invariant this parser claims (review finding)."""
+    path = tmp_path / "m.md"
+    path.write_text(MATRIX.replace("| Verdict | Rationale |", "| Verdicts | Rationale |"), "utf-8")
+    with pytest.raises(MatrixError, match="unrecognized table header"):
+        parse_matrix(path)
+
+
+def test_the_headers_own_example_is_not_parsed_as_a_decision() -> None:
+    """The header shows the waiver syntax. Stripping each line before matching
+    made that example a real decision, adding a phantom `slug` item no matrix
+    row could retire, so the checklist could never report complete."""
+    rows = parse_matrix()
+    committed = (repo_root() / "docs" / "parity-checklist.md").read_text(encoding="utf-8")
+    assert "slug" not in parse_decisions(committed)
+    assert checklist_status(committed, rows).orphaned == []
+
+
+def test_the_committed_checklist_matches_the_matrix() -> None:
+    """The checklist is generated and committed, like the OpenAPI document,
+    so like that file it is drift-checked rather than trusted."""
+    committed = (repo_root() / "docs" / "parity-checklist.md").read_text(encoding="utf-8")
+    assert render_checklist(parse_matrix(), committed) == committed
+
+
 def test_the_real_matrix_has_unique_slugs() -> None:
     # Two rows sharing a slug would let one item's tick satisfy the other.
     slugs = [row.slug for row in parse_matrix()]
@@ -149,6 +179,35 @@ def test_a_retired_item_is_reported_not_silently_dropped(matrix_file: Path) -> N
     again = render_checklist(rows, edited)
     assert "## Retired items" in again
     assert "`gone-capability`" in again
+
+
+def test_a_retired_decision_keeps_its_tick_across_regenerations(matrix_file: Path) -> None:
+    """Rendering retired items as bare slugs dropped the decision on the next
+    pass: parse_decisions could not read them back, so a review of a since
+    removed capability vanished unread (review finding)."""
+    rows = parse_matrix(matrix_file)
+    edited = (
+        render_checklist(rows)
+        + "- [x] `gone-capability` **Gone** (drop: x) (waived: removed in spec 011)\n"
+    )
+    second = render_checklist(rows, edited)
+    third = render_checklist(rows, second)
+    decision = parse_decisions(third)["gone-capability"]
+    assert decision.checked
+    assert decision.waiver == "removed in spec 011"
+
+
+def test_a_retired_decision_keeps_the_checklist_incomplete(matrix_file: Path) -> None:
+    rows = parse_matrix(matrix_file)
+    text = render_checklist(rows)
+    for row in rows:
+        text = text.replace(f"- [ ] `{row.slug}`", f"- [x] `{row.slug}`")
+    text += "- [x] `gone-capability` **Gone** (drop: x)\n"
+    status = checklist_status(text, rows)
+    assert status.open_items == []
+    # Whether it was removed on purpose is an open question until answered.
+    assert status.orphaned == ["gone-capability"]
+    assert not status.complete
 
 
 def test_status_counts_checked_waived_and_open(matrix_file: Path) -> None:
@@ -259,6 +318,50 @@ def test_a_real_input_difference_is_not_called_agreement() -> None:
     report = diff_runs(aggregate(old), aggregate(new))
     assert not report.sources[0].inputs_agree
     assert "inputs DIFFER" in render_diff(report)
+
+
+def test_a_source_only_the_new_run_had_is_not_clean() -> None:
+    # An unexpectedly enabled source rendered in the report but still exited
+    # zero, which would pass a dual-run gate (review finding).
+    report = diff_runs(
+        aggregate(summary("greenhouse")),
+        aggregate(summary("greenhouse"), summary("remoteok")),
+    )
+    assert report.only_new_sources == ["remoteok"]
+    assert not report.clean
+
+
+def test_differing_fetch_counts_block_the_screening_comparison() -> None:
+    # A board that gained or lost postings between fetches moves every count;
+    # reporting that as a screening finding is the seen-state mistake again.
+    old = summary("greenhouse", fetched_count=100, skipped_seen=50)
+    new = summary("greenhouse", fetched_count=40, skipped_seen=20, new_prospects=9)
+    report = diff_runs(aggregate(old), aggregate(new))
+    assert report.decidable_divergences == 0
+    assert "inputs differ" in render_diff(report)
+
+
+def test_equal_suppressed_shares_do_not_block_on_unequal_fetch_counts() -> None:
+    """Dividing both counts by the larger fetch total called equal shares
+    divergent whenever the totals differed (review finding)."""
+    old = summary("greenhouse", fetched_count=100, skipped_seen=50)
+    new = summary("greenhouse", fetched_count=99, skipped_seen=50)
+    report = diff_runs(aggregate(old), aggregate(new))
+    assert not report.blocked
+
+
+def test_an_object_that_is_not_a_run_summary_is_rejected(tmp_path: Path) -> None:
+    """{} parsed, yielded no sources, and diffed clean against anything: a
+    parity gate passing on garbage is worse than one that errors (review
+    finding)."""
+    empty = tmp_path / "empty.json"
+    empty.write_text("{}", encoding="utf-8")
+    with pytest.raises(RunSummaryError, match="neither a source name nor"):
+        load_run_summary(empty)
+    wrong = tmp_path / "wrong.json"
+    wrong.write_text(json.dumps({"source_summaries": "not-a-list"}), encoding="utf-8")
+    with pytest.raises(RunSummaryError, match="neither a source name nor"):
+        load_run_summary(wrong)
 
 
 def test_a_source_missing_from_the_new_run_is_not_clean() -> None:

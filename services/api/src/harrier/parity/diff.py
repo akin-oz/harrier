@@ -109,7 +109,12 @@ class DiffReport:
     def clean(self) -> bool:
         """A clean diff means the screening comparison ran and found nothing.
         A blocked source is not clean: it was never compared."""
-        return self.decidable_divergences == 0 and not self.only_old_sources and not self.blocked
+        return (
+            self.decidable_divergences == 0
+            and not self.only_old_sources
+            and not self.only_new_sources
+            and not self.blocked
+        )
 
 
 def load_run_summary(path: Path) -> dict[str, object]:
@@ -119,7 +124,18 @@ def load_run_summary(path: Path) -> dict[str, object]:
         raise RunSummaryError(f"cannot read a run summary at {path}: {exc}") from exc
     if not isinstance(parsed, dict):
         raise RunSummaryError(f"{path} is not a run summary object")
-    return cast("dict[str, object]", parsed)
+    summary = cast("dict[str, object]", parsed)
+    # {} parses, yields no sources, and would diff clean against anything.
+    # A parity gate that passes on garbage is worse than one that errors
+    # (review finding on PR #19).
+    if not isinstance(summary.get("source"), str) and not isinstance(
+        summary.get("source_summaries"), list
+    ):
+        raise RunSummaryError(
+            f"{path} has neither a source name nor a source_summaries list; "
+            "expected an aggregate run summary or a per-source one"
+        )
+    return summary
 
 
 def source_summaries(summary: dict[str, object]) -> dict[str, dict[str, object]]:
@@ -182,18 +198,24 @@ def _seen_asymmetry(old: dict[str, object], new: dict[str, object]) -> str:
     has been migrated (cutover plan phase 3 step 3), so the diff refuses
     rather than presenting the artifact as findings.
     """
-    fetched = max(_int(old, "fetched_count"), _int(new, "fetched_count"))
-    if fetched == 0:
+    old_fetched = _int(old, "fetched_count")
+    new_fetched = _int(new, "fetched_count")
+    if old_fetched == 0 or new_fetched == 0:
         return ""
     old_seen = _int(old, "skipped_seen")
     new_seen = _int(new, "skipped_seen")
-    if abs(old_seen - new_seen) / fetched <= SEEN_TOLERANCE:
+    # Each run's own suppressed share. Dividing both by the larger fetch
+    # count would call equal shares divergent whenever the fetch counts
+    # differ (review finding on PR #19).
+    old_share = old_seen / old_fetched
+    new_share = new_seen / new_fetched
+    if abs(old_share - new_share) <= SEEN_TOLERANCE:
         return ""
     return (
-        f"seen-state differs: the old run suppressed {old_seen} of {fetched} postings as "
-        f"already seen and this one suppressed {new_seen}. The runs screened different "
-        "inputs, so their counts are not comparable. Migrate the discovery seen-state "
-        "into harrier before reading this section."
+        f"seen-state differs: the old run suppressed {old_seen} of {old_fetched} postings as "
+        f"already seen ({old_share:.0%}) and this one suppressed {new_seen} of {new_fetched} "
+        f"({new_share:.0%}). The runs screened different inputs, so their counts are not "
+        "comparable. Migrate the discovery seen-state into harrier before reading this section."
     )
 
 
@@ -204,6 +226,15 @@ def diff_sources(old: dict[str, object], new: dict[str, object], source: str) ->
         seen_suppressed=(_int(old, "skipped_seen"), _int(new, "skipped_seen")),
         incomparable=_seen_asymmetry(old, new),
     )
+    if not diff.incomparable and not diff.inputs_agree:
+        # A board that gained or lost postings between the two fetches moves
+        # every downstream count. Reporting that as a screening finding would
+        # be the same mistake as the seen-state one (review finding on PR #19).
+        diff.incomparable = (
+            f"inputs differ: the old run fetched {diff.fetched[0]} postings and this one "
+            f"fetched {diff.fetched[1]}. The screening counts below would reflect the "
+            "different populations, not different decisions."
+        )
     for key in COMPARED_COUNTS:
         if key in PATH_KEYS:
             continue

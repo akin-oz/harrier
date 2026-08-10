@@ -35,8 +35,11 @@ Body sections: Problem, Scope, Acceptance criteria (checkboxes), Proof / origin
 - **M4** outreach, Gmail, digest: 016, 017, 018, 019
 - **M5** scheduling, demo, parity, cutover: 020, 021, 022, 024
 
-All 22 stubs are `approved: no`. Refine a stub into a real spec before asking for
-approval; stubs sequence the backlog, they do not define final scope.
+Stubs sequence the backlog; they do not define final scope. Refine a stub into a
+real spec before asking for approval, and expect the scope to narrow or split at
+that point. Awaiting approval today: 023 and 024. Everything else is approved and
+either shipped or in progress; `ls specs/` and the frontmatter are the record,
+not this paragraph.
 - **M5 (added)** user configuration in the database: 023 (ADR-009; approved separately)
 
 Spec 022 was split while being drafted: verification (022) is read-only and

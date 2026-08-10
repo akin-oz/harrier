@@ -60,9 +60,11 @@ all of them stated in the report rather than left for the reader to infer:
    not the other is usually a board change. Reported separately from
    divergences that are decidable.
 2. Screening counts are only comparable when both runs suppressed a similar
-   share of postings as already seen. They are not, before the seen-state
-   migration, and the diff refuses to compare rather than presenting the
-   artifact as findings (see below).
+   share of postings as already seen, and when both fetched a similar number
+   of postings. Neither holds before the seen-state migration, which the
+   cutover plan now performs at the start of the dual-run period (phase 2a)
+   rather than at cutover. The diff refuses to compare rather than presenting
+   the artifact as findings.
 3. The stronger proof, replaying one recorded input through both screeners,
    would mean importing the old repo's modules. The old repo is read-only
    by rule (cutover plan phase 0), so it is out of scope.
@@ -98,8 +100,10 @@ one changed the tool:
   diff reported twelve divergences that were entirely an artifact: the old
   system had already seen almost every posting, so it screened 11 of 7,416
   Greenhouse results, while a fresh harrier store screened 6,531. The diff
-  now detects this and declines to compare, which makes the seen-state
-  migration a precondition of phase 2 rather than a step in phase 3.
+  now detects this and declines to compare, and docs/cutover-plan.md moves
+  the seen-state migration into a new phase 2a. As written, phase 2's exit
+  criteria were unreachable: they required a clean diff that could not be
+  produced until a phase 3 step had run.
 
 ## Acceptance criteria
 
@@ -120,9 +124,28 @@ one changed the tool:
       test_a_score_change_on_the_same_posting_is_decidable,
       test_a_posting_only_one_run_saw_is_not_counted_as_a_divergence)
 - [ ] a seen-state asymmetry blocks the screening comparison instead of
-      producing findings, while fetch counts are still reported
+      producing findings, while fetch counts are still reported, and the
+      comparison is by suppressed share rather than absolute count
       (test_seen_state_asymmetry_blocks_the_screening_comparison,
-      test_matching_fetch_counts_are_reported_even_when_screening_is_blocked)
+      test_matching_fetch_counts_are_reported_even_when_screening_is_blocked,
+      test_equal_suppressed_shares_do_not_block_on_unequal_fetch_counts)
+- [ ] differing fetch counts also block the screening comparison, and a
+      source present in only one run is not clean
+      (test_differing_fetch_counts_block_the_screening_comparison,
+      test_a_source_only_the_new_run_had_is_not_clean,
+      test_a_source_missing_from_the_new_run_is_not_clean)
+- [ ] an object that is not a run summary is rejected rather than diffing
+      clean (test_an_object_that_is_not_a_run_summary_is_rejected)
+- [ ] an unrecognized table header fails rather than skipping its rows
+      (test_an_unrecognized_table_header_fails_rather_than_skipping_its_rows)
+- [ ] a retired decision keeps its tick across regenerations and keeps the
+      checklist incomplete until a human resolves it
+      (test_a_retired_decision_keeps_its_tick_across_regenerations,
+      test_a_retired_decision_keeps_the_checklist_incomplete)
+- [ ] the committed checklist cannot drift from the matrix, and the
+      header's own example is not read as a decision
+      (test_the_committed_checklist_matches_the_matrix,
+      test_the_headers_own_example_is_not_parsed_as_a_decision)
 - [ ] no report carries a filesystem path
       (test_report_carries_no_filesystem_paths)
 - [ ] a shadow run is a dry run and never reaches the paid source
@@ -145,6 +168,6 @@ here decides that parity is reached: that judgement is Akin's, in spec 024.
 ## Out of scope
 
 The cutover event: quiesce, final migration, switchover, fallback window,
-archive (spec 024). Migrating the discovery seen-state, which the diff
-names as a precondition and spec 024 performs. Replaying recorded inputs
-through the old screener.
+archive (spec 024). Performing the phase 2a seen-state migration, which uses
+spec 004's migration machinery and is an operational step rather than new
+code. Replaying recorded inputs through the old screener.

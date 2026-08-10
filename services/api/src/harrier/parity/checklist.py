@@ -35,9 +35,16 @@ _WAIVED_RE = re.compile(r"\(waived:\s*(?P<reason>[^)]*)\)\s*$")
 
 HEADER = """# Parity checklist
 
-Generated from `docs/parity-matrix.md` by `harrier parity checklist`; do not
-edit the item text. Tick an item when you have verified it, or waive it with
-a reason:
+Generated from `docs/parity-matrix.md` by `harrier parity checklist`, and
+committed on purpose. The skeleton is derived, but the ticks and waivers are
+not: they are a human's review record, reproducible from nothing, and losing
+them means redoing every item. That is the same reason
+`packages/contract/openapi.json` is committed rather than ignored, and like
+that file this one is drift-checked, by
+`test_parity.py::test_the_committed_checklist_matches_the_matrix`.
+
+Do not edit the item text. Tick an item when you have verified it, or waive it
+with a reason:
 
     - [x] `slug` capability ... (waived: reason)
 
@@ -64,13 +71,21 @@ class ChecklistStatus:
 
     @property
     def complete(self) -> bool:
-        return not self.open_items
+        # A retired item is an open question, not a closed one: someone
+        # reviewed a capability the matrix no longer lists, and whether it
+        # was removed on purpose is unanswered until a human says so
+        # (review finding on PR #19).
+        return not self.open_items and not self.orphaned
 
 
 def parse_decisions(text: str) -> dict[str, Decision]:
     decisions: dict[str, Decision] = {}
     for line in text.splitlines():
-        match = _ITEM_RE.match(line.strip())
+        # Column zero only. Stripping first made the indented example in this
+        # file's own header parse as a decision, which added a phantom
+        # `slug` item that no matrix row could ever retire, so the checklist
+        # could never report complete (found by the review-fix tests).
+        match = _ITEM_RE.match(line.rstrip())
         if match is None:
             continue
         waived = _WAIVED_RE.search(match.group("rest"))
@@ -80,6 +95,22 @@ def parse_decisions(text: str) -> dict[str, Decision]:
             waiver=(waived.group("reason").strip() if waived else ""),
         )
     return decisions
+
+
+def _retired_row(slug: str) -> MatrixRow:
+    """A stand-in row so a retired decision renders in the item format.
+
+    Its slug property derives from the capability, so the capability is set
+    to the recorded slug to keep the round trip stable.
+    """
+    return MatrixRow(
+        section="Retired items",
+        capability=slug,
+        source="",
+        verdict="drop",
+        qualifier="",
+        rationale="",
+    )
 
 
 def _item_line(row: MatrixRow, decision: Decision | None) -> str:
@@ -117,11 +148,15 @@ def render_checklist(rows: list[MatrixRow], existing: str = "") -> str:
                 "## Retired items",
                 "",
                 "Decisions recorded against capabilities the matrix no longer lists.",
-                "Confirm each was removed on purpose, then delete the line.",
+                "Confirm each was removed on purpose, then delete the line. Until then",
+                "`harrier parity status` reports the checklist as incomplete.",
                 "",
             ]
         )
-        lines.extend(f"- `{slug}`" for slug in orphans)
+        # Rendered in the same parseable shape as a live item, so a later
+        # regeneration carries the tick and waiver forward instead of
+        # discarding a review decision unread (review finding on PR #19).
+        lines.extend(_item_line(_retired_row(slug), decisions[slug]) for slug in orphans)
     return "\n".join(lines) + "\n"
 
 
