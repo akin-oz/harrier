@@ -153,6 +153,11 @@ Legend:
 
 ## Counts
 
-Keep 58, change 20, drop 15. Every change and drop above traces to a spec in the backlog
-before implementation; nothing is dropped by accident at cutover (the parity checklist in
-`docs/cutover-plan.md` is generated from this table).
+Keep 60, change 20, drop 16, across 96 rows. Every change and drop above traces to a spec
+in the backlog before implementation; nothing is dropped by accident at cutover: the parity
+checklist (`docs/parity-checklist.md`) is generated from this table by
+`harrier parity checklist`, and `test_parity.py::test_stated_counts_match_the_table` fails
+if these totals and the table disagree.
+
+These totals read 58/20/15 until spec 022, which undercounted the table by three rows. The
+checklist generator was what noticed: it parsed 96 rows out of a document claiming 93.
