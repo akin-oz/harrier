@@ -156,7 +156,9 @@ def fetch_ashby_jobs_via_api(board_url: str) -> list[NormalizedJob]:
             f"https://api.ashbyhq.com/posting-api/job-board/{board}?includeCompensation=true"
         )
     except Exception as exc:
-        logger.warning("Ashby API fetch failed for %s: %s", redact_url(board_url), exc)
+        # Expected for a board that has moved to HTML-only or closed: the
+        # caller falls back, and only a failure of BOTH paths is a warning.
+        logger.info("Ashby API fetch failed for %s: %s", redact_url(board_url), exc)
         return []
     if not isinstance(payload, dict):
         return []

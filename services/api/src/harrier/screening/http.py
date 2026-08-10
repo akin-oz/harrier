@@ -31,6 +31,24 @@ USER_AGENT = "Mozilla/5.0 (compatible; harrier-job-discovery/1.0)"
 DEFAULT_HTTP_TIMEOUT_SECONDS = 30
 DEFAULT_HTTP_RETRIES = 3
 
+# 429 and 5xx are the server saying "later"; everything else in 4xx is the
+# server saying "no", and asking twice more cannot change the answer.
+RETRYABLE_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
+
+
+def is_retryable(error: Exception) -> bool:
+    """Whether trying again could plausibly succeed.
+
+    A dead job board answers 404 forever. Retrying it burned two extra
+    requests and up to ten seconds of sleep per board, twice over (the API
+    then the HTML fallback), and printed eight alarming lines for something
+    that is simply gone. With a watchlist of hundreds of boards that turned
+    an ordinary run into a wall of red.
+    """
+    if isinstance(error, HTTPError):
+        return error.code in RETRYABLE_STATUSES
+    return True
+
 
 def _offline_body(url: str) -> str | None:
     """The fixture body for this URL, or None when fixtures are off.
@@ -121,12 +139,14 @@ def request_text(
             raise
         except (TimeoutError, URLError, HTTPError) as exc:
             last_error = exc
-            if attempt >= retries:
+            if attempt >= retries or not is_retryable(exc):
                 break
             logger.warning(
                 "HTTP request retry %d/%d for %s after error: %s", attempt, retries - 1, url, exc
             )
             time.sleep(min(2 * attempt, 5))
+    if isinstance(last_error, HTTPError) and not is_retryable(last_error):
+        raise RuntimeError(f"HTTP {last_error.code} for {url}")
     raise RuntimeError(f"HTTP request failed after {retries} attempts for {url}: {last_error}")
 
 

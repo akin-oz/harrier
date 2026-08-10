@@ -476,3 +476,62 @@ def test_malformed_url_is_rejected_without_raising() -> None:
     assert (
         should_enrich_description_for_scoring(build_job(url="https://[", description="")) is False
     )
+
+
+def _no_sleep(seconds: float) -> None:
+    """A typed def, not a lambda: pyright strict cannot infer the parameter."""
+
+
+def test_a_404_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A dead job board answers 404 forever. Retrying burned two extra
+    requests and up to ten seconds of sleep per board, twice over, and the
+    watchlist holds hundreds of boards."""
+    from urllib.error import HTTPError
+
+    from harrier.screening import http as http_module
+
+    attempts: list[str] = []
+
+    def always_404(request: object, timeout: int = 0) -> object:
+        attempts.append("call")
+        raise HTTPError("https://example.test/gone", 404, "Not Found", {}, None)  # pyright: ignore[reportArgumentType]
+
+    monkeypatch.setattr(http_module, "urlopen", always_404)
+    monkeypatch.setattr(http_module.time, "sleep", _no_sleep)
+    with pytest.raises(RuntimeError, match="HTTP 404"):
+        http_module.request_text("https://example.test/gone")
+    assert len(attempts) == 1
+
+
+def test_a_503_is_still_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    from urllib.error import HTTPError
+
+    from harrier.screening import http as http_module
+
+    attempts: list[str] = []
+
+    def always_503(request: object, timeout: int = 0) -> object:
+        attempts.append("call")
+        raise HTTPError("https://example.test/busy", 503, "Busy", {}, None)  # pyright: ignore[reportArgumentType]
+
+    monkeypatch.setattr(http_module, "urlopen", always_503)
+    monkeypatch.setattr(http_module.time, "sleep", _no_sleep)
+    with pytest.raises(RuntimeError, match="failed after 3 attempts"):
+        http_module.request_text("https://example.test/busy")
+    assert len(attempts) == 3
+
+
+def test_a_timeout_is_still_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    from harrier.screening import http as http_module
+
+    attempts: list[str] = []
+
+    def times_out(request: object, timeout: int = 0) -> object:
+        attempts.append("call")
+        raise TimeoutError("slow")
+
+    monkeypatch.setattr(http_module, "urlopen", times_out)
+    monkeypatch.setattr(http_module.time, "sleep", _no_sleep)
+    with pytest.raises(RuntimeError):
+        http_module.request_text("https://example.test/slow")
+    assert len(attempts) == 3
