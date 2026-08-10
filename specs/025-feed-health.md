@@ -18,8 +18,12 @@ so every run pays for them and prints failures that make a working system
 look broken.
 
 The retry defect behind the noise is already fixed: a non-transient status
-is no longer retried (harrier/screening/http.py `is_retryable`, proven by
-tests/test_screening.py::test_a_404_is_not_retried). What is missing is the
+is no longer retried (`is_retryable` in
+services/api/src/harrier/screening/http.py, proven by
+services/api/tests/test_screening.py::test_a_404_is_not_retried and
+::test_a_403_is_not_retried, with ::test_a_503_is_still_retried,
+::test_an_unlisted_5xx_is_still_retried, ::test_a_429_is_still_retried and
+::test_a_timeout_is_still_retried pinning the other side). What is missing is the
 ability to find and remove dead entries rather than re-discovering them in
 a log every four hours.
 
@@ -33,8 +37,10 @@ a log every four hours.
   during an outage is not dead, so removal is a decision the operator makes
   after seeing the report.
 - The run summary keeps recording `board_errors` as it does now
-  (harrier/discovery.py, the ATS loop's `extra=`); this is the deliberate
-  check, not a change to discovery.
+  (services/api/src/harrier/discovery.py, the ATS loop's `extra=`, covered
+  by
+  services/api/tests/test_discovery.py::test_board_errors_are_recorded_per_source);
+  this is the deliberate check, not a change to discovery.
 
 - Bounded concurrency and a per-board budget, so one hung host cannot stall
   the report: at most 8 in flight, one attempt per board (this is a probe,

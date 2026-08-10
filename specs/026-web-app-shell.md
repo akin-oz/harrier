@@ -96,8 +96,27 @@ verified at 1280x800 and at 720x800 in the preview browser, light and dark.
 
 ## Proof / origin
 
-The demo screenshot from 2026-08-10: unstyled serif, the run log occupying
-the entire viewport, the tracker below the fold.
+In the repository, which is where the claims are checkable:
+
+- No stylesheet exists: `find apps/web/src -name '*.css'` returns nothing,
+  and no component imports one.
+- The shell is three elements: apps/web/src/app/App.tsx renders `main`, an
+  `h1` and the page, with no layout or tokens.
+- The run log is unbounded and above the tracker:
+  apps/web/src/features/runs/RunPanel.tsx renders every `lines` entry into
+  a `pre`, with no disclosure control, and
+  apps/web/src/pages/tracker/TrackerPage.tsx renders it before the table.
+- The table is unstyled markup: apps/web/src/entities/job/JobTable.tsx
+  emits a bare `table` and renders `status` and `score` as raw text.
+
+Supporting evidence: the demo screenshot from 2026-08-10, showing serif
+defaults with the tracker below the fold.
+
+Limitations of the existing tests: App.test.tsx, JobTable.test.tsx and
+RunPanel.test.tsx assert content and behavior only. None of them asserts
+anything visual, so they will keep passing throughout this work and cannot
+be cited as evidence for any of it. That is why the criteria above name
+browser checks with viewports and numbers.
 
 ## Out of scope
 
