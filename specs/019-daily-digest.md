@@ -11,8 +11,10 @@ depends: [018, 016]
 
 ## Problem
 
-The 20:30 Telegram summary: one message a day tying together discovery,
-the outreach queue, and the mail watch.
+The Telegram summary tying together discovery, the outreach queue, and
+the mail watch: one message per invocation, intended to run once a day
+at 20:30 once spec 020 schedules it (this spec enforces no per-date
+limit of its own).
 
 ## Scope
 
@@ -64,8 +66,14 @@ the outreach queue, and the mail watch.
       (test_digest_renders_all_five_sections)
 - [ ] Dry-run sends nothing (test_dry_run_sends_nothing: the send
       function raises if called)
-- [ ] Ghosted uses the 21-day cutoff inclusively at the boundary
+- [ ] Ghosted uses the 21-day cutoff inclusively at the boundary, and
+      the rendered label says at-least rather than more-than
       (test_ghosted_cutoff_boundary)
+- [ ] A migrated row without added_at still lands in the new-prospects
+      section via its auto_added or tier_a_seed note
+      (test_legacy_auto_added_note_counts_as_added_at)
+- [ ] A malformed event kind is skipped rather than aborting the digest
+      (test_malformed_event_kind_is_skipped)
 - [ ] Updates are date-filtered, deduplicated, and newest first
       (test_updates_filter_dedupe_and_order)
 - [ ] All gates green on PR

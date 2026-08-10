@@ -1,7 +1,8 @@
 """The daily Telegram digest (spec 019 port of send_daily_digest.py).
 
-Five sections over the database and the mail watch event log; one
-message a day, and dry runs never send.
+Five sections over the database and the mail watch event log. One
+message per non-dry-run invocation (scheduling is spec 020's job; this
+module enforces no per-date limit), and dry runs never send.
 """
 
 from __future__ import annotations
@@ -151,7 +152,10 @@ def actionable_updates(target_date: date) -> list[dict[str, object]]:
         if not payload:
             continue
         kind = payload.get("kind") or payload.get("action")
-        if kind not in DIGEST_ACTIONABLE_KINDS:
+        # A malformed event (a list or dict kind) must be skipped, not
+        # abort the digest on an unhashable membership test (review
+        # finding).
+        if not isinstance(kind, str) or kind not in DIGEST_ACTIONABLE_KINDS:
             continue
         timestamp = parse_event_timestamp(str(payload.get("timestamp") or ""))
         if not timestamp or timestamp.date() != target_date:
@@ -159,7 +163,7 @@ def actionable_updates(target_date: date) -> list[dict[str, object]]:
         company = str(payload.get("company") or "Unknown company").strip() or "Unknown company"
         role = str(payload.get("role") or "Unknown role").strip() or "Unknown role"
         tracker_row = payload.get("tracker_row")
-        key = (str(kind), company, role, str(tracker_row), timestamp.isoformat())
+        key = (kind, company, role, str(tracker_row), timestamp.isoformat())
         if key in seen:
             continue
         seen.add(key)
@@ -219,7 +223,12 @@ def render_digest(
         lines.append("  All caught up.")
 
     if ghosted:
-        lines.extend(["", f"⚠️ {len(ghosted)} applications ghosted (>21d no response)"])
+        lines.extend(
+            [
+                "",
+                f"⚠️ {len(ghosted)} applications ghosted (≥{GHOSTED_DAYS}d no response)",
+            ]
+        )
         for company in ghosted[:10]:
             lines.append(f"  - {company}")
         if len(ghosted) > 10:

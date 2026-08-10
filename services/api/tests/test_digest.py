@@ -119,6 +119,37 @@ def test_live_run_sends_once(db: sqlite3.Connection) -> None:
     assert sent == [digest]
 
 
+def test_legacy_auto_added_note_counts_as_added_at(db: sqlite3.Connection) -> None:
+    # Migrated rows can carry the date only in their notes (spec 019).
+    from harrier.tracker import update_fields
+
+    job_id = seed_job(db, "Migrated Co", added_at="")
+    update_fields(db, job_id, {"notes": "auto_added=2026-08-10; source_label=greenhouse"})
+    seeded = seed_job(db, "Seeded Co", added_at="")
+    update_fields(db, seeded, {"notes": "tier_a_seed=2026-08-10"})
+    digest = build_digest(db, TARGET)
+    assert "New prospects today: 2" in digest
+    assert "Migrated Co" in digest
+    assert "Seeded Co" in digest
+
+
+def test_malformed_event_kind_is_skipped(db: sqlite3.Connection) -> None:
+    # A list or dict kind must not abort the digest on an unhashable
+    # membership test (review finding).
+    path = events_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"kind": ["interview_invite"], "timestamp": "2026-08-10T09:00:00+00:00"})
+        + "\n"
+        + json.dumps({"kind": {"a": 1}, "timestamp": "2026-08-10T09:00:00+00:00"})
+        + "\n",
+        encoding="utf-8",
+    )
+    write_event(company="Good Co")
+    digest = build_digest(db, TARGET)
+    assert "interview invite: Good Co" in digest
+
+
 def test_ghosted_cutoff_boundary(db: sqlite3.Connection) -> None:
     seed_job(db, "Exactly 21", status="applied", applied_date="2026-07-20")
     seed_job(db, "Twenty Days", status="applied", applied_date="2026-07-21")
@@ -126,6 +157,8 @@ def test_ghosted_cutoff_boundary(db: sqlite3.Connection) -> None:
 
     ghosted = ghosted_applications(list_jobs(db), TARGET)
     assert ghosted == ["Exactly 21"]
+    # The rendered label must match the inclusive cutoff.
+    assert "≥21d no response" in build_digest(db, TARGET)
 
 
 def test_outreach_grouping_excludes_wait_states(db: sqlite3.Connection) -> None:
