@@ -1,7 +1,7 @@
 ---
 spec: 023
 title: User configuration in the database
-status: in-progress
+status: shipped
 approved: yes
 milestone: M5
 depends: [004, 011]
@@ -87,38 +87,40 @@ purpose, and a user who empties it must not silently get the file back.
 
 ## Acceptance criteria
 
-- [ ] discovery reads feeds and searches from the store, and a fresh clone
+- [x] discovery reads feeds and searches from the store, and a fresh clone
       with no files and no store rows runs cleanly with empty sources
       (test_stored_feeds_route_to_their_importers,
       test_a_fresh_install_with_no_store_and_no_files_runs_with_no_sources)
-- [ ] the file is used until something is stored, and clearing a value is
+- [x] the file is used until something is stored, and clearing a value is
       distinguishable from never setting one
       (test_the_file_is_used_until_something_is_stored,
       test_an_empty_list_is_not_the_same_as_no_row)
-- [ ] a bad shape or unknown kind is refused at the write, by both surfaces
+- [x] a bad shape or unknown kind is refused at the write, by both surfaces
       with the same message (test_a_bad_shape_is_refused_at_the_write,
       test_the_api_refuses_a_bad_shape_with_the_stores_own_message,
       test_an_unknown_kind_is_a_404_on_every_verb)
-- [ ] config is editable through the API and the CLI, and every answer says
+- [x] config is editable through the API and the CLI, and every answer says
       where the value came from
       (test_the_api_lists_every_kind_with_its_source,
       test_putting_a_value_makes_it_the_stored_source,
       test_deleting_a_value_restores_the_fallback,
       test_unset_reports_whether_anything_was_removed)
-- [ ] the import command round-trips the current files, ignoring the
+- [x] the import command round-trips the current files, ignoring the
       example file's reader-facing comment key
       (test_import_round_trips_the_current_files,
       test_import_with_no_files_reports_rather_than_claiming_success)
-- [ ] the schema carries a scope column that partitions
+- [x] the schema carries a scope column that partitions
       (test_the_schema_carries_a_scope_column_for_later_tenancy)
-- [ ] the discovery settings survive the move, including the boolean trap
+- [x] the discovery settings survive the move, including the boolean trap
       (test_discovery_settings_come_from_the_store,
       test_a_boolean_count_does_not_pass_as_an_integer)
-- [ ] a corrupted row is refused on read rather than coerced, and a
+- [x] a corrupted row is refused on read rather than coerced, and a
       malformed request body stays a distinct failure from a bad value
       (test_a_corrupted_row_is_refused_rather_than_coerced,
       test_a_malformed_body_and_a_bad_value_are_different_failures)
-- [ ] All gates green on PR
+- [x] All gates green: `just check` (ruff, ruff-format, pyright,
+      lint-imports, pytest; tsc, eslint, prettier, vitest; contract
+      regeneration; aie check), run by the CI workflow. History: PR #20.
 
 ## Proof / origin
 
