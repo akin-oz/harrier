@@ -145,7 +145,6 @@ def test_a_dry_run_touches_nothing(db: sqlite3.Connection, old_repo: Path, tmp_p
 
     result = run_cutover(db, old_root=old_repo, stamp="2026-08-10-1200", launchctl=recording)
     assert not result.executed
-    assert result.ok
     assert all(line.startswith(("would", "verify")) for line in result.lines), result.lines
     # Only the preflight probe, never a bootout.
     assert all(args[0] == "list" for args in calls)
@@ -218,6 +217,114 @@ def test_a_full_execution_quiesces_snapshots_verifies_and_installs(
     log = tmp_path / "data" / "cutover" / "2026-08-10-1200.md"
     assert log.is_file()
     assert "unloaded" in log.read_text(encoding="utf-8")
+
+
+def test_a_blocked_dry_run_reports_the_blockers_and_is_not_ok(
+    db: sqlite3.Connection, old_repo: Path
+) -> None:
+    """A rehearsal that reports success while the real run would refuse is
+    worse than no rehearsal at all (review finding on PR #22)."""
+    result = run_cutover(db, old_root=old_repo, stamp="s", launchctl=loaded)
+    assert not result.executed
+    assert not result.ok
+    assert any("parity checklist" in line for line in result.blocked)
+
+
+def test_a_clear_dry_run_is_ok(
+    db: sqlite3.Connection, old_repo: Path, ready_checklist: Path
+) -> None:
+    result = run_cutover(
+        db, old_root=old_repo, stamp="s", checklist_path=ready_checklist, launchctl=loaded
+    )
+    assert result.ok
+    assert result.blocked == []
+
+
+def test_a_failed_unload_rolls_back_what_was_already_stopped(
+    db: sqlite3.Connection, old_repo: Path, ready_checklist: Path, tmp_path: Path
+) -> None:
+    """Stopping at the first failure still leaves the old system half down.
+    The only state worth ending in is the one we started from."""
+    calls: list[list[str]] = []
+
+    def fails_on_the_second(args: list[str]) -> tuple[int, str, str]:
+        calls.append(args)
+        if args[0] == "bootout" and OLD_LABELS[1] in args[1]:
+            return (1, "", "Operation not permitted")
+        return (0, "", "")
+
+    result = run_cutover(
+        db,
+        old_root=old_repo,
+        stamp="s",
+        execute=True,
+        attested=True,
+        checklist_path=ready_checklist,
+        launchctl=fails_on_the_second,
+        agents_dir=tmp_path / "agents",
+    )
+    assert not result.ok
+    # The third was never attempted, and the first was put back.
+    booted = [args[1] for args in calls if args[0] == "bootout"]
+    assert OLD_LABELS[2] not in " ".join(booted)
+    assert any("rolled back: reloaded" in line for line in result.lines)
+    assert result.snapshot is None
+
+
+def test_a_rollback_that_itself_fails_is_reported(tmp_path: Path) -> None:
+    """The operator has to learn which jobs are still down here, not at the
+    next scheduled run that silently does not happen."""
+
+    def everything_fails(args: list[str]) -> tuple[int, str, str]:
+        if args[0] == "bootout" and OLD_LABELS[0] in args[1]:
+            return (0, "", "")
+        return (1, "", "Operation not permitted")
+
+    result = CutoverResult(executed=True)
+    quiesce(
+        OLD_LABELS,
+        everything_fails,
+        execute=True,
+        result=result,
+        agents_dir=tmp_path / "agents",
+    )
+    assert any("rollback failed" in failure for failure in result.failures)
+    assert any(OLD_LABELS[0] in failure for failure in result.failures)
+
+
+def test_a_failing_install_still_writes_the_record(
+    db: sqlite3.Connection,
+    old_repo: Path,
+    ready_checklist: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """By this point the old jobs are down and the snapshot is taken. Losing
+    the record of that is losing the only account of an irreversible step
+    (review finding on PR #22)."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+
+    def explode() -> list[str]:
+        raise RuntimeError("launchctl refused the new plists")
+
+    result = run_cutover(
+        db,
+        old_root=old_repo,
+        stamp="2026-08-10-1200",
+        execute=True,
+        attested=True,
+        checklist_path=ready_checklist,
+        launchctl=loaded,
+        install=explode,
+        agents_dir=tmp_path / "agents",
+    )
+    assert not result.ok
+    assert any("launchctl refused" in failure for failure in result.failures)
+    log = tmp_path / "data" / "cutover" / "2026-08-10-1200.md"
+    assert log.is_file()
+    body = log.read_text(encoding="utf-8")
+    assert "unloaded" in body
+    assert "schedule install FAILED" in body
 
 
 def test_a_refused_unload_stops_before_the_data_is_touched(

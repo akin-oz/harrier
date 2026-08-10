@@ -651,8 +651,17 @@ def _cmd_cutover(args: argparse.Namespace) -> int:
             print(line)
         for failure in result.failures:
             print(f"failure: {failure}", file=sys.stderr)
+        for blocker in result.blocked:
+            print(f"blocked: {blocker}", file=sys.stderr)
         if not result.executed:
-            print("\ndry run: nothing was changed. Add --execute --attested to do it for real.")
+            if result.blocked:
+                print(
+                    "\ndry run: nothing was changed, and the real run would be REFUSED "
+                    "for the blocked check(s) above.",
+                    file=sys.stderr,
+                )
+            else:
+                print("\ndry run: nothing was changed. Add --execute --attested to do it for real.")
         return 0 if result.ok else 1
     finally:
         conn.close()

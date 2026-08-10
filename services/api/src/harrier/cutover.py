@@ -33,7 +33,7 @@ from pathlib import Path
 from harrier.db import data_dir
 from harrier.parity import checklist_status, parse_matrix
 from harrier.parity.checklist import CHECKLIST_PATH
-from harrier.schedule import default_launchctl
+from harrier.schedule import default_launchctl, launch_agents_dir
 
 # The old system's launchd labels, from its committed plists.
 OLD_LABELS = (
@@ -169,11 +169,12 @@ class CutoverResult:
     executed: bool
     lines: list[str] = field(default_factory=list[str])
     failures: list[str] = field(default_factory=list[str])
+    blocked: list[str] = field(default_factory=list[str])
     snapshot: Path | None = None
 
     @property
     def ok(self) -> bool:
-        return not self.failures
+        return not self.failures and not self.blocked
 
 
 def snapshot_dir(stamp: str) -> Path:
@@ -182,21 +183,61 @@ def snapshot_dir(stamp: str) -> Path:
 
 
 def quiesce(
-    labels: tuple[str, ...], launchctl: LaunchctlFn, *, execute: bool, result: CutoverResult
+    labels: tuple[str, ...],
+    launchctl: LaunchctlFn,
+    *,
+    execute: bool,
+    result: CutoverResult,
+    agents_dir: Path | None = None,
 ) -> None:
+    """Stop every old job, or leave the old system exactly as it was.
+
+    A failed unload cannot be shrugged off and it cannot be pressed through:
+    either would end with some old jobs stopped and one still running, which
+    is two systems able to write application state, and the plan forbids
+    that outright. So the first failure aborts and rolls back, reloading
+    what was already unloaded (review finding on PR #22, which pointed out
+    that the loop contradicted this comment by continuing).
+    """
+    directory = agents_dir if agents_dir is not None else launch_agents_dir()
+    unloaded: list[str] = []
     for label in labels:
         if not execute:
             result.lines.append(f"would unload {label}")
             continue
         code, _out, err = launchctl(["bootout", f"gui/{_uid()}/{label}"])
         if code == 0:
+            unloaded.append(label)
             result.lines.append(f"unloaded {label}")
         elif "No such process" in err or code == 3:
             result.lines.append(f"{label} was not loaded")
         else:
-            # A job still running while its replacement starts would mean two
-            # systems writing application state, which the plan forbids.
             result.failures.append(f"{label}: unload failed: {err.strip() or code}")
+            _rollback(unloaded, launchctl, directory, result)
+            return
+
+
+def _rollback(
+    unloaded: list[str], launchctl: LaunchctlFn, agents_dir: Path, result: CutoverResult
+) -> None:
+    """Put back what was already stopped, so the old system is running again.
+
+    Reported line by line including its own failures: a rollback that itself
+    fails leaves jobs down, and the operator has to know which ones to start
+    by hand rather than discovering it at the next scheduled run.
+    """
+    if not unloaded:
+        result.lines.append("nothing to roll back")
+        return
+    for label in reversed(unloaded):
+        plist = agents_dir / f"{label}.plist"
+        code, _out, err = launchctl(["bootstrap", f"gui/{_uid()}", str(plist)])
+        if code == 0:
+            result.lines.append(f"rolled back: reloaded {label}")
+        else:
+            result.failures.append(
+                f"{label}: rollback failed, it is still unloaded: {err.strip() or code}"
+            )
 
 
 def _uid() -> int:
@@ -262,6 +303,7 @@ def run_cutover(
     launchctl: LaunchctlFn | None = None,
     install: Callable[[], list[str]] | None = None,
     checklist_path: Path | None = None,
+    agents_dir: Path | None = None,
 ) -> CutoverResult:
     """Phases 3 and 4, in order. Refuses to execute unless preflight passes
     and the operator has attested to what a machine cannot check."""
@@ -275,18 +317,24 @@ def run_cutover(
         labels=labels,
         launchctl=runner,
     )
-    if execute and not checks.ready:
-        raise CutoverError(
-            "preflight is blocked; run `harrier cutover preflight` and clear it first:\n"
-            + "\n".join(check.line() for check in checks.blocked)
-        )
+    if not checks.ready:
+        # A dry run that hides the blockers is worse than no dry run: the
+        # rehearsal reports success and the real thing refuses (review
+        # finding on PR #22). Blocked checks are reported in both modes and
+        # only the execution is refused.
+        result.blocked = [check.line() for check in checks.blocked]
+        if execute:
+            raise CutoverError(
+                "preflight is blocked; run `harrier cutover preflight` and clear it first:\n"
+                + "\n".join(result.blocked)
+            )
     if execute and not attested:
         raise CutoverError(
             "the attestations have not been made; re-run with --attested once every "
             "line under `harrier cutover preflight` is true"
         )
 
-    quiesce(labels, runner, execute=execute, result=result)
+    quiesce(labels, runner, execute=execute, result=result, agents_dir=agents_dir)
     if result.failures:
         # Stop before touching data: a half-quiesced system with a snapshot
         # taken mid-write is worse than one that never started.
@@ -302,7 +350,18 @@ def run_cutover(
         return result
 
     if install is not None:
-        result.lines.extend(install() if execute else ["would install the harrier schedule"])
+        if not execute:
+            result.lines.append("would install the harrier schedule")
+        else:
+            try:
+                result.lines.extend(install())
+            except Exception as error:
+                # The old jobs are down and the snapshot is taken. Whatever
+                # went wrong, the operator needs the record of what already
+                # happened during the one irreversible step (review finding
+                # on PR #22).
+                result.failures.append(f"schedule install failed: {error}")
+                result.lines.append(f"schedule install FAILED: {error}")
     log_path = write_log(stamp, result, execute=execute)
     result.lines.append(f"{'wrote' if execute else 'would write'} the cutover log to {log_path}")
     return result

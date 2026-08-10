@@ -51,25 +51,35 @@ Cutover plan phases 3 and 4 (docs/cutover-plan.md), unchanged in substance:
 
 Criteria for the tooling, which is what this spec delivers:
 
-- [ ] preflight blocks on an undecided parity checklist, an empty tracker,
+- [x] preflight blocks on an undecided parity checklist, an empty tracker,
       old jobs already gone, and a malformed old .env, naming the line
       (test_an_undecided_checklist_blocks, test_an_empty_tracker_blocks,
       test_jobs_already_gone_blocks,
       test_a_malformed_env_line_blocks_and_names_the_line)
-- [ ] a dry run is the default and issues no bootout
+- [x] a dry run is the default and issues no bootout
       (test_a_dry_run_touches_nothing)
-- [ ] execution is refused when preflight is blocked, and refused again
+- [x] execution is refused when preflight is blocked, and refused again
       when the attestations have not been made
       (test_executing_without_a_clear_preflight_is_refused,
       test_executing_without_attestation_is_refused)
-- [ ] a full execution quiesces, snapshots outside the repo, verifies, and
+- [x] a full execution quiesces, snapshots outside the repo, verifies, and
       installs, writing its record to data/
       (test_a_full_execution_quiesces_snapshots_verifies_and_installs)
-- [ ] a refused unload stops before any data is copied, and an
+- [x] a refused unload stops before any data is copied, rolls back what it
+      already stopped, and reports a rollback that itself fails; an
       already-unloaded job is not a failure
       (test_a_refused_unload_stops_before_the_data_is_touched,
+      test_a_failed_unload_rolls_back_what_was_already_stopped,
+      test_a_rollback_that_itself_fails_is_reported,
       test_an_already_unloaded_job_is_not_a_failure)
-- [ ] All gates green on PR
+- [x] a blocked dry run reports its blockers rather than reading as clean
+      (test_a_blocked_dry_run_reports_the_blockers_and_is_not_ok,
+      test_a_clear_dry_run_is_ok)
+- [x] a failing schedule install still writes the record of the
+      irreversible steps already taken
+      (test_a_failing_install_still_writes_the_record)
+- [x] All gates green: `just check`, run by the CI workflow's Python and
+      TypeScript jobs
 
 Criteria for the cutover event itself, which only Akin can satisfy:
 
