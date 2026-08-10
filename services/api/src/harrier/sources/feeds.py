@@ -9,6 +9,8 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.parse import urlparse
 
+from harrier.demo import resolve_config_path
+
 FEEDS_PATH = Path("config") / "feeds.txt"
 
 
@@ -29,7 +31,7 @@ def parse_ats_feeds(path: Path | None = None) -> dict[str, list[str]]:
         "ashby": [],
         "lever": [],
     }
-    feeds_path = path if path is not None else FEEDS_PATH
+    feeds_path = resolve_config_path(path if path is not None else FEEDS_PATH)
     for feed_url in read_line_config(feeds_path):
         hostname = (urlparse(feed_url).hostname or "").lower()
         # Label-suffix matches, not substrings: lookalike hosts route nowhere.

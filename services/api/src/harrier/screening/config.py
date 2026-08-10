@@ -15,6 +15,7 @@ import sqlite3
 from pathlib import Path
 from typing import cast
 
+from harrier.demo import anchored_path
 from harrier.profile import get_document
 from harrier.screening.normalized import normalize
 from harrier.screening.rules import CandidateConfig
@@ -35,7 +36,7 @@ def load_candidate_config(
             parsed: object = json.loads(stored)
             if isinstance(parsed, dict):
                 return cast(CandidateConfig, parsed)
-    path = example_path if example_path is not None else EXAMPLE_CONFIG_PATH
+    path = anchored_path(example_path if example_path is not None else EXAMPLE_CONFIG_PATH)
     parsed_example: object = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(parsed_example, dict):
         raise ValueError(f"candidate config at {path} is not a JSON object")

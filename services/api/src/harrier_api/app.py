@@ -7,13 +7,17 @@ Routes speak Pydantic models only; the web app speaks generated types only.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Annotated, Literal, cast
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from harrier.db import default_db_path
+from harrier.demo import repo_root
 from harrier.tracker import list_jobs
 from harrier_api.capture_routes import capture_router
 from harrier_api.demo import demo_db_path, is_demo_mode, seed_demo_db
@@ -210,7 +214,33 @@ async def stream_run_events(run_id: str, request: Request, manager: Manager) -> 
     )
 
 
-def create_app(run_manager: RunManager | None = None) -> FastAPI:
+def spa_dist_dir() -> Path:
+    return repo_root() / "apps" / "web" / "dist"
+
+
+class ApiPrefixMiddleware:
+    """Strip a leading /api so one server can host both the SPA and the API.
+
+    The web app always calls /api/... : in development Vite proxies that to
+    this service and rewrites the prefix away, and when the built SPA is
+    served from here (spec 021's demo) there is no proxy to do it. Rewriting
+    in one ASGI hop keeps a single router set, so the OpenAPI document, and
+    therefore the generated client, stays byte-identical (ADR-005).
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            path = cast(str, scope.get("path", ""))
+            if path == "/api" or path.startswith("/api/"):
+                rewritten = path[len("/api") :] or "/"
+                scope = {**scope, "path": rewritten, "raw_path": rewritten.encode("utf-8")}
+        await self.app(scope, receive, send)
+
+
+def create_app(run_manager: RunManager | None = None, spa_dir: Path | None = None) -> FastAPI:
     if is_demo_mode():
         seed_demo_db()
     app = FastAPI(
@@ -222,6 +252,13 @@ def create_app(run_manager: RunManager | None = None) -> FastAPI:
     app.include_router(router)
     app.include_router(runs_router)
     app.include_router(capture_router)
+    app.add_middleware(ApiPrefixMiddleware)
+    dist = spa_dir if spa_dir is not None else spa_dist_dir()
+    if dist.is_dir():
+        # Mounted last so every API route still wins; html=True serves
+        # index.html for the app shell. Absent before `pnpm build`, which is
+        # why `just demo` builds first and `just dev` does not need this.
+        app.mount("/", StaticFiles(directory=dist, html=True), name="web")
     return app
 
 

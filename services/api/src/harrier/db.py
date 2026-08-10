@@ -10,11 +10,17 @@ import os
 import sqlite3
 from pathlib import Path
 
+from harrier.demo import demo_data_dir, is_demo_mode
+
 DB_FILENAME = "tracker.db"
 
 
 def data_dir() -> Path:
-    return Path(os.environ.get("HARRIER_DATA_DIR", "data"))
+    override = os.environ.get("HARRIER_DATA_DIR", "").strip()
+    if override:
+        return Path(override)
+    # A demo run writes to a temp directory, never into the clone (spec 021).
+    return demo_data_dir() if is_demo_mode() else Path("data")
 
 
 def default_db_path() -> Path:

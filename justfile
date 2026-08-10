@@ -14,9 +14,19 @@ dev:
     trap 'kill "$api_pid" 2>/dev/null || true' EXIT INT TERM; \
     pnpm --filter @harrier/web dev
 
-# Demo mode for strangers: seeded fixtures, no secrets. Implemented by spec 021.
+# Demo mode for strangers: synthetic fixtures, no keys, no network, and
+# nothing written into the clone (spec 021). Builds the SPA, then serves it
+# and the API from one origin against a throwaway database in a temp dir.
 demo:
-    @echo "demo: implemented by spec 021 (fixtures + API serving the built SPA)." && exit 1
+    pnpm install --frozen-lockfile
+    pnpm --filter @harrier/web build
+    @echo "harrier demo on http://127.0.0.1:8000 (synthetic data, ctrl-c to stop)"
+    HARRIER_DEMO=1 uv run --project {{api_dir}} uvicorn harrier_api.app:app --port 8000
+
+# One offline discovery run over the demo fixtures: the real screening
+# pipeline, synthetic boards, nothing written into the clone.
+demo-discover:
+    HARRIER_DEMO=1 uv run --project {{api_dir}} harrier discover
 
 # Full local gate, identical to CI.
 check: check-python check-ts contract aie-check

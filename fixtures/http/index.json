@@ -1,0 +1,8 @@
+{
+  "_comment": "Offline HTTP fixtures for demo mode (spec 021). Maps the exact URL each importer builds from config/feeds.example.txt to a response body in this directory. Demo mode serves these instead of the network; a URL with no entry raises OfflineFixtureError rather than falling through to a request, so the demo cannot become quietly network-dependent. Every body is authored, not recorded: no real board was scraped, so no real company or person appears (test_demo.py::test_fixtures_reference_only_reserved_domains).",
+  "https://boards-api.greenhouse.io/v1/boards/exampleco/jobs?content=true": "greenhouse-exampleco.json",
+  "https://api.ashbyhq.com/posting-api/job-board/exampleco?includeCompensation=true": "ashby-exampleco.json",
+  "https://api.lever.co/v0/postings/exampleco?mode=json&skip=0&limit=100": "lever-exampleco.json",
+  "https://api.eu.lever.co/v0/postings/example-eu-co?mode=json&skip=0&limit=100": "lever-example-eu-co.json",
+  "https://remoteok.com/api": "remoteok.json"
+}

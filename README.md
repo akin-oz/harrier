@@ -1,41 +1,128 @@
 # harrier
 
-Local-first job search automation: discovery across job boards, a tracker as the
-single source of truth, tailored resume and cover letter generation with hard
-correctness gates, outreach drafting, and a daily digest. Python domain behind a
-FastAPI service, React frontend with strict TypeScript, one machine, no cloud.
+Local-first job search automation. It watches job boards, screens what it finds
+against a policy you set, keeps one tracker as the source of truth, generates a
+tailored resume and cover letter per application with hard correctness gates,
+drafts outreach, watches your inbox for replies, and sends a nightly digest.
+Python domain behind a FastAPI service, React with strict TypeScript in front,
+SQLite underneath, one machine, no cloud.
 
-**Status: ground-up rewrite in progress, built in the open.** This repo replaces
-a working private system and reaches feature parity milestone by milestone. The
-architecture and every decision are documented before the code exists:
+```bash
+git clone https://github.com/akin-oz/harrier && cd harrier && just demo
+```
 
-- [Target architecture](docs/architecture.md)
-- [Decision records](docs/adr/) (ADR-001 through ADR-008, all accepted)
-- [Spec backlog](specs/) : every change is gated on an approved spec, and every
-  commit carries a `Spec: NNN` trailer that CI resolves or blocks
-- [Parity matrix](docs/parity-matrix.md) : what the old system does and what
-  happens to each capability
-- [Privacy plan](docs/privacy-plan.md) : this is a public repo about a real
-  person's job search; nothing personal enters git in any form, and tests
-  enforce that
+The demo needs no API keys, no accounts, and no network access. It builds the
+web app, seeds a throwaway database from synthetic fixtures, and serves both
+from `http://127.0.0.1:8000`. Nothing is written into your clone.
 
-The governance chain (spec gating, commit trailers, turn-end verification
-hooks, CI resolution) is compiled from [.ai/](.ai/) sources by
-[@akinlabs/ai-engineering](https://www.npmjs.com/package/@akinlabs/ai-engineering)
-and is a first-class feature of the project, not scaffolding.
+## What it actually does
 
-## Current state
+**Discovery.** Greenhouse, Ashby, Lever, and RemoteOK are free and run four
+times a day. Apify LinkedIn scraping costs money, so it runs on weekday
+mornings only. Every source is ingestion only: it normalizes into one shape and
+hands off. Nothing bypasses the shared path.
 
-Milestone M0 (toolchain, CI, privacy enforcement) is complete. M1 (the walking
-skeleton: tracker store, API contract seam, live run streaming) is next. The
-full sequence lives in [specs/README.md](specs/README.md).
+**Screening.** One pipeline decides. Remote-only and region policy are hard
+gates, title and stack matching feed a score, and each decision records the
+signals behind it. In the demo, six of the fifteen fixture postings are
+rejected on title and one for being hybrid, which is the policy visible at
+work rather than described.
 
-Until milestone M5, the demo mode described in the docs does not exist yet and
-this repo is not runnable in any interesting way. Watching the commit history
-is the current demo.
+**The tracker.** One SQLite table is the source of truth for every job, from
+first sighting to offer. No spreadsheet, no second copy, no sync.
 
-## Limitations
+**Application artifacts.** Resume tailoring reorders and selects real evidence
+against the job description; it never invents any. A truth validator checks
+every generated line against a source-of-truth document and refuses to emit a
+PDF when a claim cannot be traced. Cover letters and application answers work
+the same way.
 
-Single user, single machine, macOS as the production platform. No auth on the
-API (localhost only). Personal data lives exclusively in a local database with
-local backups; the repo cannot restore it by design.
+**Outreach and replies.** Contacts are discovered, staged for approval, and
+never messaged automatically. A Gmail watch classifies incoming mail into
+interview invites, assessments, rejections, and confirmations, and the nightly
+digest reports new prospects, the top of the list, outreach due, applications
+gone quiet for three weeks, and anything the inbox surfaced.
+
+## Architecture
+
+```
+apps/web          React 19, strict TypeScript, feature-sliced, generated API types only
+services/api      FastAPI service + the harrier domain package + the CLI
+packages/contract OpenAPI document and the TS types generated from it
+specs/            the approved change log: nothing ships without one
+docs/adr/         nine accepted decision records
+fixtures/         synthetic demo data, doubling as public test fixtures
+```
+
+Four rules hold the shape:
+
+1. **The domain knows nothing about the API.** `harrier` may not import
+   `harrier_api` or `harrier_cli`. Enforced by import-linter in CI.
+2. **Sources are ingestion only.** An importer may not reach screening,
+   scoring, or the tracker. Also enforced by import-linter.
+3. **The OpenAPI document is the contract.** The frontend consumes generated
+   types and nothing else; CI regenerates both and fails on any diff.
+4. **The tracker is written through one path.** Every insert goes through the
+   same function, so deduplication and validation cannot be skipped.
+
+The same domain code serves the API, the CLI, and the scheduled jobs. launchd
+plists are generated at install time from `config/schedule.json` rather than
+committed, because a committed plist carries an absolute path that drifts from
+the installed copy, and a job that runs through a shell wrapper dies on a
+malformed line in an env file. Both were real failures in the system this
+replaces.
+
+## Specs as the unit of change
+
+Every change to observable behavior starts as a file in [specs/](specs/) with
+`approved: no`. A human flips it to `approved: yes`; the agent never does. Each
+commit then carries a `Spec: NNN` trailer, a git hook rejects commits without
+one, and CI resolves every trailer to an approved spec or fails the build.
+
+The point is not ceremony. It is that the spec states the acceptance criteria
+and names the test that proves each one before the code exists, so "done" is
+something you can check rather than something you are told. The specs also
+record where each behavior came from and, where the port changed it, what
+changed and why. The governance chain itself is compiled from [.ai/](.ai/)
+sources by [@akinlabs/ai-engineering](https://www.npmjs.com/package/@akinlabs/ai-engineering).
+
+## Running it for real
+
+```bash
+just check      # the full gate, identical to CI
+just dev        # FastAPI on :8000, Vite on :5173
+just demo       # the built SPA and the API on :8000, synthetic data
+```
+
+To use it on your own search, copy the `config/*.example.*` files to their real
+names and fill them in. They are gitignored: your board watchlist, your search
+URLs, and your hold list are your data, not the project's (ADR-009). Everything
+personal lives in `data/tracker.db` and never enters git in any form (ADR-008).
+
+Optional and off by default: an LLM provider for drafting (Codex CLI, Claude
+CLI, or the OpenAI and Anthropic APIs, selected by `AI_PROVIDER`), Apify for
+LinkedIn, Gmail for the inbox watch, Telegram for the digest, and Playwright for
+PDF rendering. None of them is required to run the pipeline.
+
+## Honest limitations
+
+- **Single user, single machine.** No auth on the API because it binds to
+  localhost. Multi-tenancy is a direction (ADR-009), not a feature: nothing new
+  is allowed to block it, and nothing today delivers it.
+- **macOS is the production platform.** Scheduling is launchd. Everything else
+  is portable; the scheduler is not, and reports as much on other systems.
+- **Personal data has exactly one home.** This machine, plus your own backups.
+  Losing both loses the data. The repo cannot help you, by design.
+- **Never-in-git protects the repository, not the machine.** Disk encryption and
+  backup custody are yours to handle.
+- **The generation gates reduce invention; they do not eliminate it.** The
+  resume validator checks claims against a truth document, which means it can
+  only catch what that document contradicts. Read what it produces.
+- **A rewrite in progress.** M0 through M4 are shipped and M5 is underway. The
+  private system it replaces is still the one in daily use until the parity
+  cutover (spec 022) verifies this one matches it.
+
+## License
+
+Not yet chosen, which means default copyright applies until one is added.
+A license lands before the repository goes public.

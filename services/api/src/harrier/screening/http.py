@@ -18,15 +18,50 @@ import time
 from collections.abc import Callable
 from email.message import Message
 from http.client import HTTPResponse
-from typing import IO
+from pathlib import Path
+from typing import IO, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
+
+from harrier.demo import FIXTURE_INDEX_NAME, OfflineFixtureError, http_fixtures_dir
 
 logger = logging.getLogger(__name__)
 
 USER_AGENT = "Mozilla/5.0 (compatible; harrier-job-discovery/1.0)"
 DEFAULT_HTTP_TIMEOUT_SECONDS = 30
 DEFAULT_HTTP_RETRIES = 3
+
+
+def _offline_body(url: str) -> str | None:
+    """The fixture body for this URL, or None when fixtures are off.
+
+    An uncovered URL raises instead of returning None: falling through to a
+    real request would make demo mode silently network-dependent, which is
+    the one property the demo promises (spec 021).
+    """
+    directory = http_fixtures_dir()
+    if directory is None:
+        return None
+    index_path = directory / FIXTURE_INDEX_NAME
+    if not index_path.is_file():
+        raise OfflineFixtureError(f"offline HTTP fixtures are enabled but {index_path} is missing")
+    parsed: object = json.loads(index_path.read_text(encoding="utf-8"))
+    if not isinstance(parsed, dict):
+        raise OfflineFixtureError(f"{index_path} must be a JSON object of url -> filename")
+    index = cast("dict[str, object]", parsed)
+    entry: object = index.get(url)
+    if not isinstance(entry, str) or not entry:
+        raise OfflineFixtureError(f"no offline HTTP fixture for {url}; add one to {index_path}")
+    # A plain filename only: the index is data, and a traversing entry
+    # would let it read outside the fixture directory.
+    if entry != Path(entry).name:
+        raise OfflineFixtureError(
+            f"fixture entry for {url} must be a plain filename, got {entry!r}"
+        )
+    body_path = directory / entry
+    if not body_path.is_file():
+        raise OfflineFixtureError(f"fixture {body_path} named by {index_path} does not exist")
+    return body_path.read_text(encoding="utf-8")
 
 
 class DisallowedUrlError(RuntimeError):
@@ -61,6 +96,10 @@ def request_text(
 ) -> str:
     if url_allowed is not None and not url_allowed(url):
         raise DisallowedUrlError(f"request to disallowed URL blocked: {url}")
+    # After the allowlist, so demo mode cannot widen what a URL may reach.
+    offline = _offline_body(url)
+    if offline is not None:
+        return offline
     request = Request(url, headers={"User-Agent": USER_AGENT})
     opener_open = (
         build_opener(ValidatingRedirectHandler(url_allowed)).open

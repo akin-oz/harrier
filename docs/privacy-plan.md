@@ -61,11 +61,20 @@ gets content; an uncovered path is a spec-worthy gap, not a judgment call.
 
 ## 6. Fixture policy
 
-- Fixtures are synthetic (invented candidate, invented contacts) or scrubbed
-  recordings (real importer responses with every person name, email, profile
-  URL, and free-text-about-a-person field replaced).
-- Real company names and public job titles are acceptable; real people are not.
-- Every fixture addition gets a privacy-reviewer pass
+- Fixtures are authored, not recorded (revised by spec 021). Scrubbing a real
+  importer response makes privacy a review step that can be skipped; authoring
+  means nothing real was ever in the file. The cost is that fixtures pin the
+  shapes the importers parse rather than whatever a live board returns today.
+- Real people are never acceptable. Real company names are no longer used
+  either: a fixture board slug is the one field where a real employer can ride
+  into a public file unnoticed, so every host is a reserved example name or an
+  ATS API endpoint, and every board slug begins with `example`.
+- Those three rules are tests, not intentions
+  (`services/api/tests/test_demo.py`, the privacy pass at the bottom): hosts,
+  board slugs, and email addresses across every file under `fixtures/` and
+  every `config/*.example.*`.
+- The tests cannot judge whether a synthetic persona resembles a real person.
+  Every fixture addition still gets a privacy-reviewer pass
   (`.ai/agents/privacy-reviewer.md`).
 
 ## 7. Pre-publish checklist
@@ -84,7 +93,14 @@ any history rewrite:
 - [ ] `.env.example` contains placeholders only.
 - [ ] README limitations section states what privacy this design does and does
       not provide.
+- [ ] A license file exists. Without one, default copyright applies and
+      "open source" is not what publishing produces.
 - [ ] Second pass by Akin, not the agent, before flipping visibility.
+
+The mechanical items above are covered by the suite and re-run on every commit:
+the classification coverage test, gitleaks (lefthook pre-commit and CI), and
+the fixture privacy pass. The rest are human steps by construction. The last
+two lines are Akin's alone; an agent cannot sign off on either.
 
 ## Honest limitations
 
