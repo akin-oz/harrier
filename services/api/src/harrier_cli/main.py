@@ -605,6 +605,97 @@ def _cmd_digest(args: argparse.Namespace) -> int:
     return rc
 
 
+def _cmd_config(args: argparse.Namespace) -> int:
+    from harrier.sources.feeds import FEEDS_PATH, read_line_config
+    from harrier.userconfig import (
+        COMPANY_HOLDS,
+        DISCOVERY,
+        DISCOVERY_PATH,
+        FEEDS,
+        HOLDS_PATH,
+        KINDS,
+        LINKEDIN_SEARCHES,
+        SEARCH_URLS_PATH,
+        ConfigError,
+        delete_config,
+        get_config,
+        list_config,
+        read_hold_file_raw,
+        set_config,
+    )
+
+    conn = connect()
+    try:
+        if args.config_command == "list":
+            rows = list_config(conn)
+            if not rows:
+                print("no configuration stored; the file fallbacks are in use")
+            for row in rows:
+                print(f"{row['kind']:20s} {row['updated_at']}  {row['value'][:80]}")
+        elif args.config_command == "get":
+            value = get_config(conn, args.kind)
+            if value is None:
+                print(f"no stored {args.kind}; the file fallback is in use", file=sys.stderr)
+                return 1
+            print(json.dumps(value, indent=2, ensure_ascii=False))
+        elif args.config_command == "set":
+            raw = Path(args.file).read_text(encoding="utf-8") if args.file else sys.stdin.read()
+            set_config(conn, args.kind, json.loads(raw))
+            print(f"{args.kind} stored")
+        elif args.config_command == "unset":
+            removed = delete_config(conn, args.kind)
+            print(f"{args.kind} {'removed' if removed else 'was not stored'}")
+            return 0 if removed else 1
+        else:
+            # import: read each committed or local file once into the store.
+            sources: dict[str, list[str]] = {
+                FEEDS: read_line_config(FEEDS_PATH),
+                LINKEDIN_SEARCHES: read_line_config(SEARCH_URLS_PATH),
+                COMPANY_HOLDS: read_hold_file_raw(HOLDS_PATH),
+            }
+            imported = 0
+            for kind, values in sources.items():
+                if not values:
+                    print(f"{kind}: no file to import, skipped")
+                    continue
+                set_config(conn, kind, values)
+                print(f"{kind}: {len(values)} entries imported")
+                imported += 1
+            settings = _settings_from_file(DISCOVERY_PATH)
+            if settings:
+                set_config(conn, DISCOVERY, settings)
+                print(f"{DISCOVERY}: {len(settings)} settings imported")
+                imported += 1
+            if not imported:
+                print("nothing to import; no configuration files found", file=sys.stderr)
+                return 1
+            print(f"imported {imported} of {len(KINDS)} kinds")
+    except (ConfigError, json.JSONDecodeError, OSError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    finally:
+        conn.close()
+    return 0
+
+
+def _settings_from_file(path: Path) -> dict[str, object]:
+    from typing import cast
+
+    try:
+        parsed: object = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    # The committed example carries a _comment key for the reader; it is not
+    # a setting and must not become one.
+    return {
+        key: value
+        for key, value in cast("dict[str, object]", parsed).items()
+        if not key.startswith("_")
+    }
+
+
 def _cmd_parity(args: argparse.Namespace) -> int:
     from harrier.parity import (
         CHECKLIST_PATH,
@@ -954,6 +1045,19 @@ def build_parser() -> argparse.ArgumentParser:
     schedule_sub.add_parser("status", help="installed, loaded, drift, and next run")
     schedule_sub.add_parser("uninstall", help="unload and remove the plists")
     schedule.set_defaults(func=_cmd_schedule)
+
+    config = sub.add_parser("config", help="user configuration in the database (spec 023)")
+    config_sub = config.add_subparsers(dest="config_command", required=True)
+    config_sub.add_parser("list", help="what is stored")
+    config_get = config_sub.add_parser("get", help="print one stored value as JSON")
+    config_get.add_argument("kind")
+    config_set = config_sub.add_parser("set", help="store one value from JSON")
+    config_set.add_argument("kind")
+    config_set.add_argument("--file", default=None, help="JSON file (default: stdin)")
+    config_unset = config_sub.add_parser("unset", help="remove one value, restoring the fallback")
+    config_unset.add_argument("kind")
+    config_sub.add_parser("import", help="import the config/ files into the store, once")
+    config.set_defaults(func=_cmd_config)
 
     parity = sub.add_parser("parity", help="parity verification against the old system (spec 022)")
     parity_sub = parity.add_subparsers(dest="parity_command", required=True)

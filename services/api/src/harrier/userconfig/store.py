@@ -56,7 +56,7 @@ def _validate(kind: str, value: object) -> object:
     if kind == DISCOVERY:
         if not isinstance(value, dict):
             raise ConfigError(f"{kind} must be a JSON object, got {type(value).__name__}")
-        return value
+        return cast("dict[str, object]", value)
     if not isinstance(value, list):
         raise ConfigError(f"{kind} must be a JSON list, got {type(value).__name__}")
     items = cast("list[object]", value)

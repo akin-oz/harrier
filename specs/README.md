@@ -37,7 +37,7 @@ Body sections: Problem, Scope, Acceptance criteria (checkboxes), Proof / origin
 
 Stubs sequence the backlog; they do not define final scope. Refine a stub into a
 real spec before asking for approval, and expect the scope to narrow or split at
-that point. Awaiting approval today: 023 and 024. Everything else is approved and
+that point. Awaiting approval today: 024. Everything else is approved and
 either shipped or in progress; `ls specs/` and the frontmatter are the record,
 not this paragraph.
 - **M5 (added)** user configuration in the database: 023 (ADR-009; approved separately)

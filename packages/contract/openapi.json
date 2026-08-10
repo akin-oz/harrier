@@ -55,6 +55,57 @@
         "title": "CaptureOut",
         "type": "object"
       },
+      "ConfigIn": {
+        "properties": {
+          "value": {
+            "title": "Value"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "ConfigIn",
+        "type": "object"
+      },
+      "ConfigOut": {
+        "description": "One configuration kind and where its current value comes from.\n\n`source` is the point of this endpoint: a reader has to be able to tell\na value someone set from a value that is still coming out of a file,\nbecause unsetting the first restores the second (spec 023).",
+        "properties": {
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "store",
+              "file"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "value": {
+            "title": "Value"
+          }
+        },
+        "required": [
+          "kind",
+          "value",
+          "source",
+          "updated_at"
+        ],
+        "title": "ConfigOut",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -658,6 +709,152 @@
           }
         },
         "summary": "Capture Via Post"
+      }
+    },
+    "/config": {
+      "get": {
+        "operationId": "listConfig",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ConfigOut"
+                  },
+                  "title": "Response Listconfig",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Configuration"
+      }
+    },
+    "/config/{kind}": {
+      "delete": {
+        "description": "Remove a stored value, restoring the file fallback.",
+        "operationId": "deleteConfig",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "title": "Kind",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Configuration"
+      },
+      "get": {
+        "operationId": "getConfig",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "title": "Kind",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Configuration"
+      },
+      "put": {
+        "operationId": "putConfig",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "title": "Kind",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Configuration"
       }
     },
     "/health": {

@@ -105,8 +105,12 @@ just demo       # the built SPA and the API on :8000, synthetic data
 ```
 
 To use it on your own search, copy the `config/*.example.*` files to their real
-names and fill them in. They are gitignored: your board watchlist, your search
-URLs, and your hold list are your data, not the project's (ADR-009). Personal
+names, fill them in, and run `harrier config import` to move them into the
+database, where they are editable through `harrier config set` and the `/config`
+endpoints without touching a checkout. The files keep working as a fallback if
+you would rather not import them. Either way they are gitignored: your board
+watchlist, your search URLs, and your hold list are your data, not the
+project's (ADR-009). Personal
 search data lives in `data/tracker.db`, credentials in `.env` and `secrets/`,
 and backups outside the repository entirely. None of it enters git in any form
 (ADR-008, docs/privacy-plan.md).
@@ -119,8 +123,9 @@ PDF rendering. None of them is required to run the pipeline.
 ## Honest limitations
 
 - **Single user, single machine.** No auth on the API because it binds to
-  localhost. Multi-tenancy is a direction (ADR-009), not a feature: nothing new
-  is allowed to block it, and nothing today delivers it.
+  localhost. Multi-tenancy is a direction (ADR-009), not a feature: the config
+  store has a scope column that partitions, and that is the whole of it. There
+  is no authentication, no tenant resolution, and no isolation.
 - **macOS is the production platform.** Scheduling is launchd. Everything else
   is portable; the scheduler is not, and reports as much on other systems.
 - **Personal data has exactly one home.** This machine, plus your own backups.

@@ -26,7 +26,7 @@ from harrier_cli.main import build_parser
 # pyright: reportUnknownArgumentType=false
 
 
-def _fake_feeds(path: Path | None = None) -> dict[str, list[str]]:
+def _fake_feeds(conn: object = None, *, scope: str = "default") -> dict[str, list[str]]:
     return {
         "greenhouse": ["https://boards.greenhouse.io/exampleco"],
         "ashby": [],
@@ -159,7 +159,7 @@ def test_scheduled_evening_run_skips_apify(
 def test_full_run_aggregates_and_notifies_once(
     discovery_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(discovery_module, "parse_ats_feeds", _fake_feeds)
+    monkeypatch.setattr(discovery_module, "load_ats_feeds", _fake_feeds)
     monkeypatch.setattr(discovery_module, "fetch_greenhouse_jobs", _one_greenhouse_job)
 
     def _one_remoteok() -> list[NormalizedJob]:
@@ -200,7 +200,7 @@ def test_full_run_aggregates_and_notifies_once(
 def test_dry_run_writes_nothing_and_notify_gate(
     discovery_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(discovery_module, "parse_ats_feeds", _fake_feeds)
+    monkeypatch.setattr(discovery_module, "load_ats_feeds", _fake_feeds)
     monkeypatch.setattr(discovery_module, "fetch_greenhouse_jobs", _one_greenhouse_job)
     sent: list[str] = []
 
@@ -271,7 +271,7 @@ def test_load_project_env_does_not_override(
 def test_cli_discover_dry_run_emits_progress_protocol(
     discovery_env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(discovery_module, "parse_ats_feeds", _fake_feeds)
+    monkeypatch.setattr(discovery_module, "load_ats_feeds", _fake_feeds)
     monkeypatch.setattr(discovery_module, "fetch_greenhouse_jobs", _one_greenhouse_job)
     from harrier_cli.main import main as cli_main
 
@@ -290,7 +290,7 @@ def test_cli_discover_dry_run_emits_progress_protocol(
 def test_dry_run_never_notifies_even_with_notify_on(
     discovery_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(discovery_module, "parse_ats_feeds", _fake_feeds)
+    monkeypatch.setattr(discovery_module, "load_ats_feeds", _fake_feeds)
     monkeypatch.setattr(discovery_module, "fetch_greenhouse_jobs", _one_greenhouse_job)
     sent: list[str] = []
 
@@ -322,7 +322,7 @@ def test_progress_total_counts_only_runnable_sources(
     """Batch sources without files and policy-gated Apify emit no progress,
     so they must not inflate the total (Monday-evening scheduled run: the
     four free sources are runnable, apify/wellfound/wttj are not)."""
-    monkeypatch.setattr(discovery_module, "parse_ats_feeds", _fake_feeds)
+    monkeypatch.setattr(discovery_module, "load_ats_feeds", _fake_feeds)
     monkeypatch.setattr(discovery_module, "fetch_greenhouse_jobs", _one_greenhouse_job)
 
     def _empty_remoteok() -> list[NormalizedJob]:
