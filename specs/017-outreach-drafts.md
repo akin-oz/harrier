@@ -1,7 +1,7 @@
 ---
 spec: 017
 title: Outreach draft generation
-status: in-progress
+status: shipped
 approved: yes
 milestone: M4
 depends: [016, 012]
@@ -89,19 +89,19 @@ holds here as everywhere.
 
 ## Acceptance criteria
 
-- [ ] Behavior pins ported from the old tests/test_outreach_messages.py
+- [x] Behavior pins ported from the old tests/test_outreach_messages.py
       and test_generate_outreach.py: bundle has three variants for all
       five kinds, connection-note length limit, generic and flattery
       flagging, banned-language rewrite, target-store upsert by
       identity, audience inference, payload assembly, and the template
       path's selected messages and legacy keys
-- [ ] AI-path pins: response validation rejects a missing kind, fewer
+- [x] AI-path pins: response validation rejects a missing kind, fewer
       than three variants, and blank variant text; short notes hard-trim
       to 280; AI errors surface as RuntimeError
-- [ ] The resolved JD changes the deterministic output, and drafts for
+- [x] The resolved JD changes the deterministic output, and drafts for
       two different contacts on one job write distinct artifacts
-- [ ] Nothing sends: the package exposes no transport of any kind
-- [ ] All gates green on PR
+- [x] Nothing sends: the package exposes no transport of any kind
+- [x] All gates green on PR (PR #14)
 
 ## Proof / origin
 
