@@ -208,6 +208,22 @@ export interface components {
             /** Ok */
             ok: boolean;
         };
+        /**
+         * ConfigErrorOut
+         * @description The body behind a 404 or a 400 on these routes.
+         *
+         *     Declared so the generated client knows these outcomes exist. Store
+         *     validation answers 400 rather than 422 on purpose: FastAPI already owns
+         *     422 for a malformed request body, where the detail is a list of field
+         *     errors. Reusing it would have put two different shapes behind one status
+         *     and hidden the automatic one from the contract entirely (review finding
+         *     on PR #20). A well-formed ConfigIn whose value is wrong for its kind is
+         *     a different failure, and says so with a different code.
+         */
+        ConfigErrorOut: {
+            /** Detail */
+            detail: string;
+        };
         /** ConfigIn */
         ConfigIn: {
             /** Value */
@@ -555,6 +571,15 @@ export interface operations {
                     "application/json": components["schemas"]["ConfigOut"];
                 };
             };
+            /** @description No such configuration kind. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigErrorOut"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -590,6 +615,24 @@ export interface operations {
                     "application/json": components["schemas"]["ConfigOut"];
                 };
             };
+            /** @description The value is not the shape this kind requires. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigErrorOut"];
+                };
+            };
+            /** @description No such configuration kind. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigErrorOut"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -619,6 +662,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConfigOut"];
+                };
+            };
+            /** @description No such configuration kind. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigErrorOut"];
                 };
             };
             /** @description Validation Error */

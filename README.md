@@ -108,7 +108,8 @@ To use it on your own search, copy the `config/*.example.*` files to their real
 names, fill them in, and run `harrier config import` to move them into the
 database, where they are editable through `harrier config set` and the `/config`
 endpoints without touching a checkout. The files keep working as a fallback if
-you would rather not import them. Either way they are gitignored: your board
+you would rather not import them (all of it proven by
+`services/api/tests/test_userconfig.py`). Either way they are gitignored: your board
 watchlist, your search URLs, and your hold list are your data, not the
 project's (ADR-009). Personal
 search data lives in `data/tracker.db`, credentials in `.env` and `secrets/`,

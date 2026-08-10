@@ -55,6 +55,20 @@
         "title": "CaptureOut",
         "type": "object"
       },
+      "ConfigErrorOut": {
+        "description": "The body behind a 404 or a 400 on these routes.\n\nDeclared so the generated client knows these outcomes exist. Store\nvalidation answers 400 rather than 422 on purpose: FastAPI already owns\n422 for a malformed request body, where the detail is a list of field\nerrors. Reusing it would have put two different shapes behind one status\nand hidden the automatic one from the contract entirely (review finding\non PR #20). A well-formed ConfigIn whose value is wrong for its kind is\na different failure, and says so with a different code.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "ConfigErrorOut",
+        "type": "object"
+      },
       "ConfigIn": {
         "properties": {
           "value": {
@@ -759,6 +773,16 @@
             },
             "description": "Successful Response"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigErrorOut"
+                }
+              }
+            },
+            "description": "No such configuration kind."
+          },
           "422": {
             "content": {
               "application/json": {
@@ -795,6 +819,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigErrorOut"
+                }
+              }
+            },
+            "description": "No such configuration kind."
           },
           "422": {
             "content": {
@@ -842,6 +876,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigErrorOut"
+                }
+              }
+            },
+            "description": "The value is not the shape this kind requires."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigErrorOut"
+                }
+              }
+            },
+            "description": "No such configuration kind."
           },
           "422": {
             "content": {

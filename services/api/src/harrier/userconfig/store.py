@@ -45,11 +45,14 @@ class ConfigError(ValueError):
 
 
 def _validate(kind: str, value: object) -> object:
-    """Reject a value that its readers would later mishandle.
-
-    Validation lives at the write path, not the read path: a bad value
+    """Reject a value that its readers would later mishandle, and normalize
+    what survives. Used on both the write and the read path: a bad value
     stored once would otherwise surface as a confusing failure inside
-    discovery, far from whoever set it.
+    discovery, far from whoever set it, and a row can appear without going
+    through set_config at all.
+
+    Normalization (trimming, dropping blanks) is idempotent, so applying it
+    twice on a value that was written through set_config changes nothing.
     """
     if kind not in KINDS:
         raise ConfigError(f"unknown configuration kind {kind!r}; expected one of {KINDS}")
@@ -95,9 +98,15 @@ def get_config(conn: sqlite3.Connection, kind: str, *, scope: str = DEFAULT_SCOP
     if row is None:
         return None
     try:
-        return cast("object", json.loads(str(row[0])))
+        parsed: object = json.loads(str(row[0]))
     except json.JSONDecodeError as exc:
         raise ConfigError(f"stored {kind} configuration is not valid JSON: {exc}") from exc
+    # Validated on the way out as well as the way in. Writing through
+    # set_config is not the only way a row can appear: a hand-edited
+    # database, a restored backup, or a future migration can all put a bad
+    # value here, and the read path was coercing rather than refusing, so
+    # a stored [7] reached discovery as ["7"] (review finding on PR #20).
+    return _validate(kind, parsed)
 
 
 def delete_config(conn: sqlite3.Connection, kind: str, *, scope: str = DEFAULT_SCOPE) -> bool:
@@ -123,6 +132,6 @@ def stored_list(
     value = get_config(conn, kind, scope=scope)
     if value is None:
         return None
-    if not isinstance(value, list):
-        raise ConfigError(f"stored {kind} configuration is not a list")
-    return [str(item) for item in cast("list[object]", value)]
+    # get_config validates, so a list of strings is the only thing that can
+    # arrive here: nothing to re-check and nothing to coerce.
+    return cast("list[str]", value)

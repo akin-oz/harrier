@@ -24,8 +24,10 @@ open-source story, and a data layer a tenant scope can partition later.
   reads it as a variable, but it is in the unique key, so partitioning later
   is a query change rather than a migration of every row (ADR-009: tenant
   ready, not tenant complete).
-- Shape validation at the write path, not the read path: a bad value stored
-  once would otherwise surface inside discovery, far from whoever set it.
+- Shape validation on both the write and the read path. Write, so a bad
+  value surfaces where it was set rather than inside discovery. Read,
+  because a row can appear without going through the write path at all: a
+  hand-edited database, a restored backup, a future migration.
 - `harrier.userconfig` accessors resolving store, then file, then empty.
   Every accessor takes an optional connection; None means "no store here",
   which is how file-based callers and every test predating this spec keep
@@ -42,11 +44,16 @@ open-source story, and a data layer a tenant scope can partition later.
   `config/linkedin_search_urls.txt`, `config/discovery.json`,
   `config/companies-hold.csv` as import sources and fallbacks.
 - Outputs: stored configuration, and what discovery reads.
-- Failure modes: a value of the wrong shape raises `ConfigError` at write
-  naming the kind and the shape expected, which the API surfaces as 422 and
-  the CLI as a non-zero exit; an unknown kind is refused by both; stored
-  JSON that no longer matches its kind raises on read rather than being
-  coerced.
+- Failure modes: a value of the wrong shape raises `ConfigError` naming
+  the kind and the shape expected, which the API surfaces as 400 and the
+  CLI as a non-zero exit; an unknown kind is 404 on the API and a non-zero
+  exit on the CLI; stored JSON that no longer matches its kind raises on
+  read rather than being coerced.
+
+  400 rather than 422 for a bad value, because FastAPI already owns 422 for
+  a malformed request body, where the detail is a list of field errors.
+  Reusing it would put two shapes behind one status and hide the automatic
+  one from the generated contract entirely.
 
 ## Resolution order, and why the file stays
 
@@ -107,6 +114,10 @@ purpose, and a user who empties it must not silently get the file back.
 - [ ] the discovery settings survive the move, including the boolean trap
       (test_discovery_settings_come_from_the_store,
       test_a_boolean_count_does_not_pass_as_an_integer)
+- [ ] a corrupted row is refused on read rather than coerced, and a
+      malformed request body stays a distinct failure from a bad value
+      (test_a_corrupted_row_is_refused_rather_than_coerced,
+      test_a_malformed_body_and_a_bad_value_are_different_failures)
 - [ ] All gates green on PR
 
 ## Proof / origin
@@ -115,10 +126,17 @@ docs/adr/ADR-009-user-configuration-and-tenancy.md; ADR-008; the spec 011
 review thread that prompted the reclassification. Proving file:
 services/api/tests/test_userconfig.py.
 
-Verified against real data: `harrier config import` against the actual
-`config/` tree round-tripped 414 feed URLs (55 Greenhouse, 340 Ashby, 19
-Lever) and the Apify scheduled count, into a scratch store, leaving the
-real database untouched.
+The reproducible proof of the round trip is
+`test_import_round_trips_the_current_files`, which builds its own config
+tree from committed inputs.
+
+Separately, and not reproducible from this repository: a manual local check
+ran `harrier config import` against the author's actual gitignored
+`config/` tree and round-tripped 414 feed URLs (55 Greenhouse, 340 Ashby,
+19 Lever) plus the Apify scheduled count into a scratch store, leaving the
+real database untouched. Those counts are environment-specific and no other
+clone can reproduce them; they are recorded as evidence the import handles
+a real watchlist at size, not as a checkable criterion.
 
 Honest limitations: the scope column exists and partitions, which is not
 the same as multi-tenancy. There is no authentication, no tenant

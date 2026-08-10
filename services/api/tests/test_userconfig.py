@@ -180,7 +180,9 @@ def test_stored_json_that_is_not_a_list_is_reported(db: sqlite3.Connection) -> N
         (FEEDS, json.dumps({"unexpected": True})),
     )
     db.commit()
-    with pytest.raises(ConfigError, match="not a list"):
+    # One validator, so the read path reports exactly what the write path
+    # would have refused.
+    with pytest.raises(ConfigError, match="must be a JSON list"):
         load_feed_urls(db)
 
 
@@ -263,8 +265,37 @@ def test_deleting_a_value_restores_the_fallback(client: TestClient) -> None:
 def test_the_api_refuses_a_bad_shape_with_the_stores_own_message(client: TestClient) -> None:
     # The shape rules live in the store, so the API cannot drift from the CLI.
     response = client.put("/config/feeds", json={"value": {"not": "a list"}})
-    assert response.status_code == 422
+    assert response.status_code == 400
     assert "must be a JSON list" in response.json()["detail"]
+
+
+def test_a_malformed_body_and_a_bad_value_are_different_failures(client: TestClient) -> None:
+    """FastAPI owns 422 for request validation, where detail is a list of
+    field errors. Store validation answers 400 with a sentence, so a client
+    can tell "you sent nonsense" from "that value is wrong for this kind"
+    (review finding on PR #20)."""
+    malformed = client.put("/config/feeds", json={"wrong_field": []})
+    assert malformed.status_code == 422
+    assert isinstance(malformed.json()["detail"], list)
+
+    bad_value = client.put("/config/feeds", json={"value": 7})
+    assert bad_value.status_code == 400
+    assert isinstance(bad_value.json()["detail"], str)
+
+
+def test_a_corrupted_row_is_refused_rather_than_coerced(
+    client: TestClient, db: sqlite3.Connection
+) -> None:
+    """A row can appear without going through set_config: a hand-edited
+    database, a restored backup, a future migration. The read path was
+    coercing [7] into ["7"] (review finding on PR #20)."""
+    db.execute(
+        "INSERT INTO user_config (scope, kind, value) VALUES ('default', ?, ?)",
+        (FEEDS, json.dumps([7])),
+    )
+    db.commit()
+    with pytest.raises(ConfigError, match="entries must be strings"):
+        load_feed_urls(db)
 
 
 def test_an_unknown_kind_is_a_404_on_every_verb(client: TestClient) -> None:

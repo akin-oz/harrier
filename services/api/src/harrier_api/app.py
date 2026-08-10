@@ -233,6 +233,29 @@ class ConfigIn(BaseModel):
     value: object
 
 
+class ConfigErrorOut(BaseModel):
+    """The body behind a 404 or a 400 on these routes.
+
+    Declared so the generated client knows these outcomes exist. Store
+    validation answers 400 rather than 422 on purpose: FastAPI already owns
+    422 for a malformed request body, where the detail is a list of field
+    errors. Reusing it would have put two different shapes behind one status
+    and hidden the automatic one from the contract entirely (review finding
+    on PR #20). A well-formed ConfigIn whose value is wrong for its kind is
+    a different failure, and says so with a different code.
+    """
+
+    detail: str
+
+
+CONFIG_ERRORS: dict[int | str, dict[str, object]] = {
+    400: {
+        "model": ConfigErrorOut,
+        "description": "The value is not the shape this kind requires.",
+    },
+    404: {"model": ConfigErrorOut, "description": "No such configuration kind."},
+}
+
 config_router = APIRouter()
 
 
@@ -276,7 +299,7 @@ def list_configuration(conn: Conn) -> list[ConfigOut]:
     return [_config_out(conn, kind) for kind in KINDS]
 
 
-@config_router.get("/config/{kind}", operation_id="getConfig")
+@config_router.get("/config/{kind}", operation_id="getConfig", responses={404: CONFIG_ERRORS[404]})
 def get_configuration(kind: str, conn: Conn) -> ConfigOut:
     from harrier.userconfig import KINDS
 
@@ -285,7 +308,7 @@ def get_configuration(kind: str, conn: Conn) -> ConfigOut:
     return _config_out(conn, kind)
 
 
-@config_router.put("/config/{kind}", operation_id="putConfig")
+@config_router.put("/config/{kind}", operation_id="putConfig", responses=CONFIG_ERRORS)
 def put_configuration(kind: str, body: ConfigIn, conn: Conn) -> ConfigOut:
     from harrier.userconfig import KINDS, ConfigError, set_config
 
@@ -296,11 +319,13 @@ def put_configuration(kind: str, body: ConfigIn, conn: Conn) -> ConfigOut:
     except ConfigError as error:
         # The shape rules live in the store, so the API cannot drift from
         # what the CLI accepts.
-        raise HTTPException(status_code=422, detail=str(error)) from error
+        raise HTTPException(status_code=400, detail=str(error)) from error
     return _config_out(conn, kind)
 
 
-@config_router.delete("/config/{kind}", operation_id="deleteConfig")
+@config_router.delete(
+    "/config/{kind}", operation_id="deleteConfig", responses={404: CONFIG_ERRORS[404]}
+)
 def delete_configuration(kind: str, conn: Conn) -> ConfigOut:
     """Remove a stored value, restoring the file fallback."""
     from harrier.userconfig import KINDS, delete_config

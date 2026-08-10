@@ -77,10 +77,18 @@ def scheduled_apify_count(
 ) -> int:
     """The scheduled-run Apify count, from the store or config/discovery.json.
 
-    Resolves the old repo's count discrepancy: 50 is what production ran
-    (a per-search ceiling under the 24h search window), 150 stays the CLI
-    default. config_path still overrides everything, for tests and for a
-    caller that means one specific file."""
+    Resolves the old repo's three-way discrepancy between 50, 150, and 200
+    (docs/parity-matrix.md, section 8). 50 is what production actually ran:
+    the old `scripts/run-all-intake.sh` invoked `--apify-count 50`, with a
+    comment calling it a per-search ceiling rather than a typical haul. 150
+    stays the CLI default for a manual run.
+
+    Precedence is store, then file, then default, pinned by
+    tests/test_discovery.py (test_scheduled_run_uses_configured_count for
+    the store, test_scheduled_count_falls_back_to_the_file for the file,
+    test_scheduled_count_defaults_when_nothing_is_configured for neither).
+    config_path still overrides everything, for a caller that means one
+    specific file."""
     if config_path is not None:
         settings = _settings_file(resolve_config_path(config_path))
     else:

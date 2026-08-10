@@ -167,7 +167,10 @@ one changed the tool:
       (test_shadow_implies_dry_run,
       test_a_shadow_run_never_reaches_the_paid_source,
       test_a_shadow_run_writes_nothing_to_the_tracker)
-- [x] All gates green on PR (PR #19)
+- [x] All gates green: `just check` (ruff, ruff-format, pyright,
+      lint-imports, pytest for the API; tsc, eslint, prettier, vitest for
+      the web app; contract regeneration; aie check), run by the CI
+      workflow's Python and TypeScript jobs. History: PR #19.
 
 ## Proof / origin
 
