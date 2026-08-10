@@ -43,9 +43,11 @@ a log every four hours.
   this is the deliberate check, not a change to discovery.
 
 - Bounded concurrency and a per-board budget, so one hung host cannot stall
-  the report: at most 8 in flight, one attempt per board (this is a probe,
-  not a fetch), a 15 second timeout, and no retry. A board that times out
-  is unreachable, never dead.
+  the report: at most 8 boards in flight, one logical probe each (this is a
+  probe, not a fetch) with no retry, and a 15 second budget covering the
+  whole probe including any redirects. At most 5 redirects are followed;
+  the sixth reports the board unreachable rather than dead, since a
+  redirect loop says nothing about whether the board exists.
 
 ## Inputs, outputs, failure modes
 
@@ -54,6 +56,11 @@ a log every four hours.
   configuration.
 - The complete status-to-verdict contract, so nothing is classified by
   accident:
+
+  The reported `status` is the final HTTP status where there is one. A
+  failure with no HTTP response reports a stable token instead, one of
+  `timeout`, `dns`, `connection`, or `invalid-body`, so the output is
+  assertable rather than implementation-defined.
 
   | Observation | Verdict |
   |---|---|
@@ -73,6 +80,12 @@ a log every four hours.
 
 ## Acceptance criteria
 
+Proving symbols are named at implementation, in
+services/api/tests/test_feed_health.py. They are deliberately not listed
+here: this spec is not built yet, and naming symbols that do not exist is
+how a spec starts lying (a mistake made and caught on PR #19).
+
+
 - [ ] every configured board is probed and classified by the table above,
       with one test per row
 - [ ] a timeout, a 429, a 5xx, a 403 and an unparseable 200 all classify as
@@ -88,12 +101,13 @@ a log every four hours.
 
 ## Proof / origin
 
-The behavior class was observed on a real watchlist, where a minority of
-Ashby entries answered 404 while the provider API itself was healthy. The
-specifics are not recorded here: a board watchlist is user configuration
-(ADR-009) and naming its entries in a public repository publishes part of
-someone's job search (ADR-008). `harrier config check-feeds` is precisely
-the tool for producing that list locally, which is the point of the spec.
+A board watchlist is user configuration (ADR-009), and both its entries and
+the shape of what it contains describe someone's job search (ADR-008), so no
+observation of a real one is recorded here. The behaviour this spec addresses
+is general: providers return 404 for boards that have closed, moved, or been
+renamed, the entry stays in the configuration, and nothing surfaces it.
+`harrier config check-feeds` is the tool for producing that list locally,
+which is the point of the spec.
 
 ## Out of scope
 

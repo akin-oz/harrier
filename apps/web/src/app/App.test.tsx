@@ -22,6 +22,6 @@ test("renders the shell and the tracker fed by /jobs", async () => {
   render(<App />);
   expect(screen.getByRole("heading", { name: "Harrier" })).toBeDefined();
   await waitFor(() => {
-    expect(screen.getByText("No jobs match.")).toBeDefined();
+    expect(screen.getByText("No jobs yet. Run discovery to find some.")).toBeDefined();
   });
 });

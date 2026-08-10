@@ -86,9 +86,14 @@ test("start subscribes to events and renders streamed lines until terminal", asy
   source.emit({ type: "progress", step: 1, total: 8, message: "step 1" });
   source.emit({ type: "log_line", line: "working on step 1 of 8" });
 
+  // Collapsed by default: the newest line is visible, the full log is not.
   await waitFor(() => {
-    expect(screen.getByLabelText("run log").textContent).toContain("progress 1/8: step 1");
+    expect(screen.getByText("working on step 1 of 8")).toBeDefined();
   });
+  expect(screen.queryByLabelText("run log")).toBeNull();
+
+  await user.click(screen.getByRole("button", { name: "Show log" }));
+  expect(screen.getByLabelText("run log").textContent).toContain("progress 1/8: step 1");
   expect(screen.getByLabelText("run log").textContent).toContain("working on step 1 of 8");
   expect(screen.getByText("running")).toBeDefined();
 
@@ -136,4 +141,123 @@ test("a broken stream refetches server truth instead of staying active", async (
     expect(screen.getByText("failed")).toBeDefined();
   });
   expect(screen.getByRole("button", { name: "Start demo run" })).toHaveProperty("disabled", false);
+});
+
+test("the log is collapsed on first paint and the toggle reports its state", async () => {
+  stubStartResponse();
+  const user = userEvent.setup();
+  renderPanel();
+
+  await user.click(screen.getByRole("button", { name: "Start demo run" }));
+  await waitFor(() => {
+    expect(FakeEventSource.instances).toHaveLength(1);
+  });
+  const source = FakeEventSource.instances[0];
+  if (source === undefined) {
+    throw new Error("no EventSource created");
+  }
+  source.emit({ type: "log_line", line: "first line" });
+
+  await waitFor(() => {
+    expect(screen.getByText("first line")).toBeDefined();
+  });
+  const toggle = screen.getByRole("button", { name: "Show log" });
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.queryByLabelText("run log")).toBeNull();
+
+  await user.click(toggle);
+  const opened = screen.getByRole("button", { name: "Hide log" });
+  expect(opened.getAttribute("aria-expanded")).toBe("true");
+  expect(screen.getByLabelText("run log")).toBeDefined();
+});
+
+test("lines arriving while collapsed update the visible last line without expanding", async () => {
+  stubStartResponse();
+  const user = userEvent.setup();
+  renderPanel();
+
+  await user.click(screen.getByRole("button", { name: "Start demo run" }));
+  await waitFor(() => {
+    expect(FakeEventSource.instances).toHaveLength(1);
+  });
+  const source = FakeEventSource.instances[0];
+  if (source === undefined) {
+    throw new Error("no EventSource created");
+  }
+  source.emit({ type: "log_line", line: "older line" });
+  source.emit({ type: "log_line", line: "newest line" });
+
+  await waitFor(() => {
+    expect(screen.getByText("newest line")).toBeDefined();
+  });
+  expect(screen.queryByText("older line")).toBeNull();
+  expect(screen.queryByLabelText("run log")).toBeNull();
+  expect(screen.getByRole("button", { name: "Show log" }).getAttribute("aria-expanded")).toBe(
+    "false",
+  );
+});
+
+test("a failed run opens the log without being asked", async () => {
+  // The one case where the log is the point (spec 026).
+  stubStartResponse();
+  const user = userEvent.setup();
+  renderPanel();
+
+  await user.click(screen.getByRole("button", { name: "Start demo run" }));
+  await waitFor(() => {
+    expect(FakeEventSource.instances).toHaveLength(1);
+  });
+  const source = FakeEventSource.instances[0];
+  if (source === undefined) {
+    throw new Error("no EventSource created");
+  }
+  source.emit({ type: "log_line", line: "traceback: boom" });
+  source.emit({ type: "state_change", state: "failed", exit_code: 1 });
+
+  await waitFor(() => {
+    expect(screen.getByLabelText("run log")).toBeDefined();
+  });
+  expect(screen.getByRole("button", { name: "Hide log" }).getAttribute("aria-expanded")).toBe(
+    "true",
+  );
+});
+
+test("a started run with no lines yet says it is waiting", async () => {
+  stubStartResponse();
+  const user = userEvent.setup();
+  renderPanel();
+
+  await user.click(screen.getByRole("button", { name: "Start demo run" }));
+  await waitFor(() => {
+    expect(FakeEventSource.instances).toHaveLength(1);
+  });
+  const source = FakeEventSource.instances[0];
+  if (source === undefined) {
+    throw new Error("no EventSource created");
+  }
+  source.emit({ type: "state_change", state: "running", exit_code: null });
+
+  await waitFor(() => {
+    expect(screen.getByText("waiting for the first line…")).toBeDefined();
+  });
+});
+
+test("a dropped stream says so instead of looking stuck", async () => {
+  stubStartResponse();
+  const user = userEvent.setup();
+  renderPanel();
+
+  await user.click(screen.getByRole("button", { name: "Start demo run" }));
+  await waitFor(() => {
+    expect(FakeEventSource.instances).toHaveLength(1);
+  });
+  const source = FakeEventSource.instances[0];
+  if (source === undefined) {
+    throw new Error("no EventSource created");
+  }
+  source.onerror?.();
+
+  await waitFor(() => {
+    expect(screen.getByRole("status").textContent).toContain("Lost the log stream");
+  });
 });

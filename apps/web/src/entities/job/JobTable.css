@@ -1,0 +1,92 @@
+.job-table-scroll {
+  overflow: auto;
+  max-height: 70vh;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-raised);
+}
+.job-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.job-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--color-bg-sunken);
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+.job-table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: middle;
+}
+.job-table tbody tr:hover {
+  background: var(--color-bg-sunken);
+}
+.job-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.job-table__company {
+  font-weight: 500;
+}
+/* Job titles have no length limit and some carry a whole advert. Left to
+   wrap they set the row height and destroy the density the table exists
+   for, so they clamp to two lines and keep the full text in a tooltip. */
+.job-table__title {
+  max-width: 320px;
+}
+.job-table__title a,
+.job-table__title span {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.job-table td {
+  overflow: hidden;
+}
+.job-table__next-action {
+  color: var(--color-text-secondary);
+  max-width: 280px;
+}
+/* The clamp goes on an inner element, never the cell: -webkit-box on a td
+   takes it out of table layout and the clipped line bleeds through. */
+.job-table__clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.job-table__location {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+}
+.job-table__muted {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+.job-table__num {
+  text-align: right;
+}
+.job-table-empty {
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--color-text-tertiary);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+}

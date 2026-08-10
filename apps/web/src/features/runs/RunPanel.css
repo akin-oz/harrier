@@ -1,0 +1,155 @@
+.run-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-raised);
+}
+.run-panel__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.run-panel__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.run-panel__status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+.run-panel__idle {
+  color: var(--color-text-tertiary);
+}
+.run-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.run-dot--idle {
+  background: var(--color-text-tertiary);
+  opacity: 0.4;
+}
+.run-dot--queued {
+  background: var(--color-text-tertiary);
+}
+.run-dot--running {
+  background: var(--color-accent);
+  animation: run-pulse 1.2s ease-in-out infinite;
+}
+.run-dot--succeeded {
+  background: var(--color-success);
+}
+.run-dot--failed {
+  background: var(--color-danger);
+}
+.run-dot--cancelled {
+  background: var(--color-text-tertiary);
+}
+@keyframes run-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .run-dot--running {
+    animation: none;
+  }
+}
+.run-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-bg-sunken);
+  overflow: hidden;
+}
+.run-progress__fill {
+  display: block;
+  height: 100%;
+  background: var(--color-accent);
+  transition: width 0.3s ease;
+}
+.run-panel__actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  align-items: center;
+}
+.run-panel__actions button {
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-bg-raised);
+  color: var(--color-text);
+}
+.run-panel__actions button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.run-panel__toggle {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--color-accent-text);
+  text-decoration: underline;
+  padding: 6px 4px;
+}
+.run-panel__error {
+  color: var(--color-danger);
+  font-size: 13px;
+  margin: 0;
+}
+
+/* Collapsed, the panel still has to answer "what is it doing right now",
+   so the newest line stays visible on one truncated row (spec 026). */
+.run-panel__last-line {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.run-panel__last-line--failed {
+  color: var(--color-danger);
+}
+.run-panel__disconnected {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  border-left: 2px solid var(--color-border-strong);
+  padding-left: var(--space-3);
+}
+.run-log {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--color-bg-sunken);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.run-log--failed {
+  border-color: var(--color-danger);
+  background: var(--color-danger-bg);
+}
