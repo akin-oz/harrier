@@ -476,3 +476,117 @@ def test_malformed_url_is_rejected_without_raising() -> None:
     assert (
         should_enrich_description_for_scoring(build_job(url="https://[", description="")) is False
     )
+
+
+def _no_sleep(seconds: float) -> None:
+    """A typed def, not a lambda: pyright strict cannot infer the parameter."""
+
+
+def test_a_404_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One request, no sleep: a 404 is the server saying no."""
+    from urllib.error import HTTPError
+
+    from harrier.screening import http as http_module
+
+    attempts: list[str] = []
+
+    def always_404(request: object, timeout: int = 0) -> object:
+        attempts.append("call")
+        raise HTTPError("https://example.test/gone", 404, "Not Found", {}, None)  # pyright: ignore[reportArgumentType]
+
+    monkeypatch.setattr(http_module, "urlopen", always_404)
+    monkeypatch.setattr(http_module.time, "sleep", _no_sleep)
+    with pytest.raises(RuntimeError, match="HTTP 404"):
+        http_module.request_text("https://example.test/gone")
+    assert len(attempts) == 1
+
+
+def test_a_503_is_still_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    from urllib.error import HTTPError
+
+    from harrier.screening import http as http_module
+
+    attempts: list[str] = []
+
+    def always_503(request: object, timeout: int = 0) -> object:
+        attempts.append("call")
+        raise HTTPError("https://example.test/busy", 503, "Busy", {}, None)  # pyright: ignore[reportArgumentType]
+
+    monkeypatch.setattr(http_module, "urlopen", always_503)
+    monkeypatch.setattr(http_module.time, "sleep", _no_sleep)
+    with pytest.raises(RuntimeError, match="failed after 3 attempts"):
+        http_module.request_text("https://example.test/busy")
+    assert len(attempts) == 3
+
+
+def test_an_unlisted_5xx_is_still_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Proxies invent 5xx codes (Cloudflare 520-527). Listing individual
+    ones would silently stop retrying whatever is not on the list, so the
+    rule is the class, not an enumeration (review finding on PR #24)."""
+    from urllib.error import HTTPError
+
+    from harrier.screening import http as http_module
+
+    attempts: list[str] = []
+
+    def always_520(request: object, timeout: int = 0) -> object:
+        attempts.append("call")
+        raise HTTPError("https://example.test/proxy", 520, "Unknown", {}, None)  # pyright: ignore[reportArgumentType]
+
+    monkeypatch.setattr(http_module, "urlopen", always_520)
+    monkeypatch.setattr(http_module.time, "sleep", _no_sleep)
+    with pytest.raises(RuntimeError, match="failed after 3 attempts"):
+        http_module.request_text("https://example.test/proxy")
+    assert len(attempts) == 3
+
+
+def test_a_429_is_still_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    from urllib.error import HTTPError
+
+    from harrier.screening import http as http_module
+
+    attempts: list[str] = []
+
+    def always_429(request: object, timeout: int = 0) -> object:
+        attempts.append("call")
+        raise HTTPError("https://example.test/slowdown", 429, "Too Many", {}, None)  # pyright: ignore[reportArgumentType]
+
+    monkeypatch.setattr(http_module, "urlopen", always_429)
+    monkeypatch.setattr(http_module.time, "sleep", _no_sleep)
+    with pytest.raises(RuntimeError):
+        http_module.request_text("https://example.test/slowdown")
+    assert len(attempts) == 3
+
+
+def test_a_403_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    from urllib.error import HTTPError
+
+    from harrier.screening import http as http_module
+
+    attempts: list[str] = []
+
+    def always_403(request: object, timeout: int = 0) -> object:
+        attempts.append("call")
+        raise HTTPError("https://example.test/denied", 403, "Forbidden", {}, None)  # pyright: ignore[reportArgumentType]
+
+    monkeypatch.setattr(http_module, "urlopen", always_403)
+    monkeypatch.setattr(http_module.time, "sleep", _no_sleep)
+    with pytest.raises(RuntimeError, match="HTTP 403"):
+        http_module.request_text("https://example.test/denied")
+    assert len(attempts) == 1
+
+
+def test_a_timeout_is_still_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    from harrier.screening import http as http_module
+
+    attempts: list[str] = []
+
+    def times_out(request: object, timeout: int = 0) -> object:
+        attempts.append("call")
+        raise TimeoutError("slow")
+
+    monkeypatch.setattr(http_module, "urlopen", times_out)
+    monkeypatch.setattr(http_module.time, "sleep", _no_sleep)
+    with pytest.raises(RuntimeError):
+        http_module.request_text("https://example.test/slow")
+    assert len(attempts) == 3

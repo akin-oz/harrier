@@ -31,6 +31,26 @@ USER_AGENT = "Mozilla/5.0 (compatible; harrier-job-discovery/1.0)"
 DEFAULT_HTTP_TIMEOUT_SECONDS = 30
 DEFAULT_HTTP_RETRIES = 3
 
+# Explicitly retryable 4xx: the server is saying "later", not "no".
+RETRYABLE_4XX = frozenset({408, 429})
+
+
+def is_retryable(error: Exception) -> bool:
+    """Whether trying again could plausibly succeed.
+
+    Any 5xx is retried, including the non-standard ones proxies invent
+    (Cloudflare's 520 through 527), because they all mean the origin failed
+    rather than refused. In 4xx only 408 and 429 are retried; the rest are
+    the server saying no, and a dead job board says it forever.
+
+    Proven by tests/test_screening.py: test_a_404_is_not_retried,
+    test_a_503_is_still_retried, test_an_unlisted_5xx_is_still_retried,
+    test_a_429_is_still_retried, test_a_timeout_is_still_retried.
+    """
+    if isinstance(error, HTTPError):
+        return error.code >= 500 or error.code in RETRYABLE_4XX
+    return True
+
 
 def _offline_body(url: str) -> str | None:
     """The fixture body for this URL, or None when fixtures are off.
@@ -121,12 +141,14 @@ def request_text(
             raise
         except (TimeoutError, URLError, HTTPError) as exc:
             last_error = exc
-            if attempt >= retries:
+            if attempt >= retries or not is_retryable(exc):
                 break
             logger.warning(
                 "HTTP request retry %d/%d for %s after error: %s", attempt, retries - 1, url, exc
             )
             time.sleep(min(2 * attempt, 5))
+    if isinstance(last_error, HTTPError) and not is_retryable(last_error):
+        raise RuntimeError(f"HTTP {last_error.code} for {url}")
     raise RuntimeError(f"HTTP request failed after {retries} attempts for {url}: {last_error}")
 
 

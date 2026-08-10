@@ -4,7 +4,7 @@ tests/test_run_job_imports.py plus the scheduled-policy and aggregate pins."""
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -380,3 +380,37 @@ def test_telegram_message_is_bounded_at_4096() -> None:
     message = build_telegram_message(items)
     assert len(message) <= TELEGRAM_MESSAGE_LIMIT
     assert message.startswith("Job imports: 8 new prospects")
+
+
+def test_board_errors_are_recorded_per_source(
+    discovery_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A board that fails is named in the run summary. Cited by spec 025 as
+    the existing reporting that its check-feeds command complements."""
+
+    def one_good_one_dead(conn: object = None, *, scope: str = "default") -> dict[str, list[str]]:
+        return {
+            "greenhouse": [
+                "https://boards.greenhouse.io/live",
+                "https://boards.greenhouse.io/gone",
+            ],
+            "ashby": [],
+            "lever": [],
+        }
+
+    def fetcher(board_url: str) -> list[NormalizedJob]:
+        if board_url.endswith("gone"):
+            raise RuntimeError("HTTP 404 for https://boards-api.greenhouse.io/v1/boards/gone/jobs")
+        return []
+
+    monkeypatch.setattr(discovery_module, "load_ats_feeds", one_good_one_dead)
+    monkeypatch.setattr(discovery_module, "fetch_greenhouse_jobs", fetcher)
+    conn = connect()
+    summary = run_discovery(
+        conn,
+        DiscoveryOptions(dry_run=True, notify=False, only_sources=frozenset({"greenhouse"})),
+    )
+    sources = cast("list[dict[str, object]]", summary["source_summaries"])
+    errors = cast("list[str]", sources[0]["board_errors"])
+    assert len(errors) == 1
+    assert "gone" in errors[0]
