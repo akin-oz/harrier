@@ -1,7 +1,7 @@
 ---
 spec: 024
 title: Cutover and archive
-status: in-progress
+status: shipped
 approved: yes
 milestone: M5
 depends: [022]
@@ -48,6 +48,11 @@ Cutover plan phases 3 and 4 (docs/cutover-plan.md), unchanged in substance:
   fallback window depends on the old system still working.
 
 ## Acceptance criteria
+
+`shipped` here means the tooling shipped. **The cutover has not happened.**
+`harrier cutover preflight` currently reports blockers and the sequence
+refuses to execute, which is the correct state until the event criteria
+below are satisfied.
 
 Criteria for the tooling, which is what this spec delivers:
 
