@@ -61,7 +61,6 @@ SOURCE_ORDER = (
     "wellfound",
     "wttj",
 )
-DISCOVERY_CONFIG_PATH = Path("config") / "discovery.json"
 ProgressFn = Callable[[str, str], None]
 
 

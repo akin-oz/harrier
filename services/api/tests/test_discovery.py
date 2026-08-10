@@ -20,6 +20,7 @@ from harrier.discovery import (
 from harrier.notify import build_telegram_message, send_telegram_message
 from harrier.screening.normalized import NormalizedJob, make_normalized_job
 from harrier.tracker import list_jobs
+from harrier.userconfig import DISCOVERY, accessors, set_config
 from harrier_cli.main import build_parser
 
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
@@ -95,12 +96,12 @@ def test_apify_count_override_passes_through(
 def test_scheduled_run_uses_configured_count(
     discovery_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # discovery.json is user configuration and never in git (ADR-009); the
-    # test supplies its own instead of reading a repo file that a fresh
-    # clone does not have.
-    config_path = tmp_path / "discovery.json"
-    config_path.write_text('{"apify_scheduled_count": 50}', encoding="utf-8")
-    monkeypatch.setattr(discovery_module, "DISCOVERY_CONFIG_PATH", config_path)
+    # The count is user configuration: the store is where it lives (spec 023)
+    # and the file is the fallback. Both paths are pinned here, because the
+    # earlier version of this test read a repo file that only exists on the
+    # author's machine, so it passed locally and failed on a fresh clone.
+    conn = connect()
+    set_config(conn, DISCOVERY, {"apify_scheduled_count": 50})
     captured: dict[str, Any] = {}
 
     def fake_apify(**kwargs: Any) -> list[NormalizedJob]:
@@ -108,7 +109,6 @@ def test_scheduled_run_uses_configured_count(
         return []
 
     monkeypatch.setattr(discovery_module, "fetch_apify_linkedin_jobs", fake_apify)
-    conn = connect()
     run_discovery(
         conn,
         DiscoveryOptions(
@@ -119,8 +119,25 @@ def test_scheduled_run_uses_configured_count(
             now=datetime(2026, 8, 10, 9, 0),  # a Monday morning
         ),
     )
-    assert captured["count"] == scheduled_apify_count()
-    assert scheduled_apify_count() == 50
+    assert captured["count"] == 50
+    assert scheduled_apify_count(conn=conn) == 50
+
+
+def test_scheduled_count_falls_back_to_the_file(
+    discovery_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_path = tmp_path / "discovery.json"
+    config_path.write_text('{"apify_scheduled_count": 50}', encoding="utf-8")
+    monkeypatch.setattr(accessors, "DISCOVERY_PATH", config_path)
+    conn = connect()
+    assert scheduled_apify_count(conn=conn) == 50
+
+
+def test_scheduled_count_defaults_when_nothing_is_configured(
+    discovery_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(accessors, "DISCOVERY_PATH", tmp_path / "absent.json")
+    assert scheduled_apify_count(conn=connect()) == 150
 
 
 def test_scheduled_count_falls_back_to_cli_default_without_config(
