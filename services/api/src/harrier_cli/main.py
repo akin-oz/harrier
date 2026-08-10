@@ -601,6 +601,40 @@ def _cmd_digest(args: argparse.Namespace) -> int:
     return rc
 
 
+def _cmd_schedule(args: argparse.Namespace) -> int:
+    import platform
+
+    from harrier.schedule import (
+        ScheduleConfigError,
+        install_schedule,
+        schedule_status,
+        uninstall_schedule,
+    )
+
+    if platform.system() != "Darwin":
+        print(
+            "launchd is unavailable on this platform; run the CLI manually or via cron (ADR-006)",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        if args.schedule_command == "install":
+            result = install_schedule(dry_run=args.dry_run)
+            for line in result.lines:
+                print(line)
+            print(f"written={len(result.written)} loaded={len(result.loaded)}")
+        elif args.schedule_command == "status":
+            for status in schedule_status():
+                print(status.line())
+        else:
+            for line in uninstall_schedule():
+                print(line)
+    except ScheduleConfigError as error:
+        print(f"schedule failed: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def _cmd_demo_run(args: argparse.Namespace) -> int:
     """Exercise the run machinery (spec 006): progress protocol plus log lines."""
     import json
@@ -834,6 +868,16 @@ def build_parser() -> argparse.ArgumentParser:
     digest.add_argument("--date", default=None, help="UTC date YYYY-MM-DD (default today)")
     digest.add_argument("--dry-run", action="store_true", help="print the digest without sending")
     digest.set_defaults(func=_cmd_digest)
+
+    schedule = sub.add_parser("schedule", help="launchd schedule lifecycle (spec 020)")
+    schedule_sub = schedule.add_subparsers(dest="schedule_command", required=True)
+    schedule_install = schedule_sub.add_parser("install", help="render, write, and load plists")
+    schedule_install.add_argument(
+        "--dry-run", action="store_true", help="render without writing or loading"
+    )
+    schedule_sub.add_parser("status", help="installed, loaded, drift, and next run")
+    schedule_sub.add_parser("uninstall", help="unload and remove the plists")
+    schedule.set_defaults(func=_cmd_schedule)
 
     demo_run = sub.add_parser("demo-run", help="exercise the run machinery (spec 006)")
     demo_run.add_argument("--steps", default="8", help="number of progress steps")
