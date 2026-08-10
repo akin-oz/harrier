@@ -93,36 +93,36 @@ Two deviations from the stub's wording:
 
 ## Acceptance criteria
 
-- [ ] demo mode reads the committed example even when the real config
+- [x] demo mode reads the committed example even when the real config
       file exists, and leaves the path untouched outside demo mode
       (test_demo_mode_reads_the_committed_example_even_when_a_real_config_exists)
-- [ ] the demo resolves its config from the repo regardless of the
+- [x] the demo resolves its config from the repo regardless of the
       working directory
       (test_demo_feeds_resolve_from_the_repo_regardless_of_working_directory)
-- [ ] a demo run writes nothing into the clone
+- [x] a demo run writes nothing into the clone
       (test_demo_writes_nothing_into_the_clone)
-- [ ] a URL with no fixture raises instead of reaching the network, and a
+- [x] a URL with no fixture raises instead of reaching the network, and a
       fixture index entry cannot escape the fixture directory
       (test_unfixtured_url_raises_instead_of_reaching_network,
       test_fixture_entry_cannot_escape_the_fixture_directory)
-- [ ] discovery runs offline over the fixture boards, screens them, and
+- [x] discovery runs offline over the fixture boards, screens them, and
       needs no environment keys; Apify is not attempted
       (test_demo_discovery_runs_offline_and_screens_the_fixture_boards,
       test_demo_discovery_needs_no_environment_keys)
-- [ ] the seeded database carries both jobs and every profile document
+- [x] the seeded database carries both jobs and every profile document
       (test_seed_demo_db_fills_jobs_and_profile_documents,
       test_profile_seeds_all_name_a_committed_example)
-- [ ] one origin serves the SPA and answers under /api, and an unbuilt SPA
+- [x] one origin serves the SPA and answers under /api, and an unbuilt SPA
       still leaves the API working
       (test_api_serves_the_spa_and_still_answers_under_the_api_prefix,
       test_api_without_a_built_spa_still_serves_the_api)
-- [ ] every committed fixture and example names only reserved or ATS
+- [x] every committed fixture and example names only reserved or ATS
       hosts, no real board slug, and no address outside the example
       domains (test_fixtures_name_only_reserved_or_ats_hosts,
       test_real_ats_hosts_carry_only_example_board_names,
       test_fixtures_contain_no_address_outside_the_example_domains)
-- [ ] clean-machine clone-to-demo works with zero keys and no decryption
-- [ ] the agent-executable part of the pre-publish checklist
+- [x] clean-machine clone-to-demo works with zero keys and no decryption
+- [x] the agent-executable part of the pre-publish checklist
       (docs/privacy-plan.md) is green, and the parts only a human can do
       are named as open
 - [ ] All gates green on PR
