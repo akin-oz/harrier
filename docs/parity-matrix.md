@@ -34,9 +34,9 @@ Legend:
 | WTTJ batch import | `scripts/import_wttj_export.py` | keep | Same. |
 | Orchestrator: priority order, single aggregated Telegram notify, run summary JSON | `scripts/run-job-imports.py` | keep | The one shared execution path; per-source summaries and `incoming/job_imports_run.json` behavior carry over. |
 | Legacy orchestrator incl. Workable support | `scripts/orchestrate_job_search.py` | drop | Superseded by `run-job-imports.py`; not called by any scheduler or wrapper. Workable gets a spec stub in the backlog instead of a blind port. |
-| feeds.txt one-URL-per-line routing by netloc | `config/feeds.txt`, `scripts/run-job-imports.py` (parse_ats_feeds) | keep | File-based config invariant. |
+| feeds.txt one-URL-per-line routing by netloc | `config/feeds.txt`, `scripts/run-job-imports.py` (parse_ats_feeds) | change | The routing keeps; the storage moves. The watchlist is user data, so it lives in the database with the file as an import source and a fallback (spec 023, ADR-009). The one-URL-per-line format stays as the import format. |
 | Per-source board files | `config/greenhouse_boards.txt`, `ashby_boards.txt`, `lever_boards.txt` | drop | Superseded by `feeds.txt` for the orchestrator path; only reachable by direct importer invocation with defaults. |
-| Company hold list | `config/companies-hold.csv` | keep | Hard-reject gate; also carries the reapply-cooldown policy (`config/reapply-hold-companies.md`). |
+| Company hold list | `config/companies-hold.csv` | change | The gate keeps; the storage moves to the database with the CSV as an import source (spec 023). The reason column is dropped on import: nothing reads it and it is personal operational commentary (ADR-008). |
 
 ## 2. Tracker
 
@@ -153,11 +153,13 @@ Legend:
 
 ## Counts
 
-Keep 60, change 20, drop 16, across 96 rows. Every change and drop above traces to a spec
+Keep 58, change 22, drop 16, across 96 rows. Every change and drop above traces to a spec
 in the backlog before implementation; nothing is dropped by accident at cutover: the parity
 checklist (`docs/parity-checklist.md`) is generated from this table by
 `harrier parity checklist`, and `test_parity.py::test_stated_counts_match_the_table` fails
 if these totals and the table disagree.
 
 These totals read 58/20/15 until spec 022, which undercounted the table by three rows. The
-checklist generator was what noticed: it parsed 96 rows out of a document claiming 93.
+checklist generator was what noticed: it parsed 96 rows out of a document claiming 93. Spec 023
+then moved the feeds watchlist and the hold list from keep to change, since their storage moved
+into the database even though their behavior did not.

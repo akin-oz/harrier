@@ -18,7 +18,7 @@ any that the matrix no longer carries. Waiver reasons are committed to a public
 repository: keep them about the capability, never about a company or a person.
 
 
-96 items: 60 keep, 20 change, 16 drop.
+96 items: 58 keep, 22 change, 16 drop.
 
 ## 1. Discovery pipeline
 
@@ -42,9 +42,9 @@ repository: keep them about the capability, never about a company or a person.
 - [ ] `wttj-batch-import` **WTTJ batch import** (keep: behavior identical, proof named) source: `scripts/import_wttj_export.py`
 - [ ] `orchestrator-priority-order-single-aggregated-telegram-notify-run-summar` **Orchestrator: priority order, single aggregated Telegram notify, run summary JSON** (keep: behavior identical, proof named) source: `scripts/run-job-imports.py`
 - [ ] `legacy-orchestrator-incl-workable-support` **Legacy orchestrator incl. Workable support** (drop: confirmed dropped on purpose) source: `scripts/orchestrate_job_search.py`
-- [ ] `feeds-txt-one-url-per-line-routing-by-netloc` **feeds.txt one-URL-per-line routing by netloc** (keep: behavior identical, proof named) source: `config/feeds.txt`, `scripts/run-job-imports.py` (parse_ats_feeds)
+- [ ] `feeds-txt-one-url-per-line-routing-by-netloc` **feeds.txt one-URL-per-line routing by netloc** (change: difference verified intentional) source: `config/feeds.txt`, `scripts/run-job-imports.py` (parse_ats_feeds)
 - [ ] `per-source-board-files` **Per-source board files** (drop: confirmed dropped on purpose) source: `config/greenhouse_boards.txt`, `ashby_boards.txt`, `lever_boards.txt`
-- [ ] `company-hold-list` **Company hold list** (keep: behavior identical, proof named) source: `config/companies-hold.csv`
+- [ ] `company-hold-list` **Company hold list** (change: difference verified intentional) source: `config/companies-hold.csv`
 
 ## 2. Tracker
 

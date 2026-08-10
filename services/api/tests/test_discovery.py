@@ -20,13 +20,14 @@ from harrier.discovery import (
 from harrier.notify import build_telegram_message, send_telegram_message
 from harrier.screening.normalized import NormalizedJob, make_normalized_job
 from harrier.tracker import list_jobs
+from harrier.userconfig import DISCOVERY, accessors, set_config
 from harrier_cli.main import build_parser
 
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
 # pyright: reportUnknownArgumentType=false
 
 
-def _fake_feeds(path: Path | None = None) -> dict[str, list[str]]:
+def _fake_feeds(conn: object = None, *, scope: str = "default") -> dict[str, list[str]]:
     return {
         "greenhouse": ["https://boards.greenhouse.io/exampleco"],
         "ashby": [],
@@ -95,12 +96,12 @@ def test_apify_count_override_passes_through(
 def test_scheduled_run_uses_configured_count(
     discovery_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # discovery.json is user configuration and never in git (ADR-009); the
-    # test supplies its own instead of reading a repo file that a fresh
-    # clone does not have.
-    config_path = tmp_path / "discovery.json"
-    config_path.write_text('{"apify_scheduled_count": 50}', encoding="utf-8")
-    monkeypatch.setattr(discovery_module, "DISCOVERY_CONFIG_PATH", config_path)
+    # The count is user configuration: the store is where it lives (spec 023)
+    # and the file is the fallback. Both paths are pinned here, because the
+    # earlier version of this test read a repo file that only exists on the
+    # author's machine, so it passed locally and failed on a fresh clone.
+    conn = connect()
+    set_config(conn, DISCOVERY, {"apify_scheduled_count": 50})
     captured: dict[str, Any] = {}
 
     def fake_apify(**kwargs: Any) -> list[NormalizedJob]:
@@ -108,7 +109,6 @@ def test_scheduled_run_uses_configured_count(
         return []
 
     monkeypatch.setattr(discovery_module, "fetch_apify_linkedin_jobs", fake_apify)
-    conn = connect()
     run_discovery(
         conn,
         DiscoveryOptions(
@@ -119,8 +119,25 @@ def test_scheduled_run_uses_configured_count(
             now=datetime(2026, 8, 10, 9, 0),  # a Monday morning
         ),
     )
-    assert captured["count"] == scheduled_apify_count()
-    assert scheduled_apify_count() == 50
+    assert captured["count"] == 50
+    assert scheduled_apify_count(conn=conn) == 50
+
+
+def test_scheduled_count_falls_back_to_the_file(
+    discovery_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_path = tmp_path / "discovery.json"
+    config_path.write_text('{"apify_scheduled_count": 50}', encoding="utf-8")
+    monkeypatch.setattr(accessors, "DISCOVERY_PATH", config_path)
+    conn = connect()
+    assert scheduled_apify_count(conn=conn) == 50
+
+
+def test_scheduled_count_defaults_when_nothing_is_configured(
+    discovery_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(accessors, "DISCOVERY_PATH", tmp_path / "absent.json")
+    assert scheduled_apify_count(conn=connect()) == 150
 
 
 def test_scheduled_count_falls_back_to_cli_default_without_config(
@@ -159,7 +176,7 @@ def test_scheduled_evening_run_skips_apify(
 def test_full_run_aggregates_and_notifies_once(
     discovery_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(discovery_module, "parse_ats_feeds", _fake_feeds)
+    monkeypatch.setattr(discovery_module, "load_ats_feeds", _fake_feeds)
     monkeypatch.setattr(discovery_module, "fetch_greenhouse_jobs", _one_greenhouse_job)
 
     def _one_remoteok() -> list[NormalizedJob]:
@@ -200,7 +217,7 @@ def test_full_run_aggregates_and_notifies_once(
 def test_dry_run_writes_nothing_and_notify_gate(
     discovery_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(discovery_module, "parse_ats_feeds", _fake_feeds)
+    monkeypatch.setattr(discovery_module, "load_ats_feeds", _fake_feeds)
     monkeypatch.setattr(discovery_module, "fetch_greenhouse_jobs", _one_greenhouse_job)
     sent: list[str] = []
 
@@ -271,7 +288,7 @@ def test_load_project_env_does_not_override(
 def test_cli_discover_dry_run_emits_progress_protocol(
     discovery_env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(discovery_module, "parse_ats_feeds", _fake_feeds)
+    monkeypatch.setattr(discovery_module, "load_ats_feeds", _fake_feeds)
     monkeypatch.setattr(discovery_module, "fetch_greenhouse_jobs", _one_greenhouse_job)
     from harrier_cli.main import main as cli_main
 
@@ -290,7 +307,7 @@ def test_cli_discover_dry_run_emits_progress_protocol(
 def test_dry_run_never_notifies_even_with_notify_on(
     discovery_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(discovery_module, "parse_ats_feeds", _fake_feeds)
+    monkeypatch.setattr(discovery_module, "load_ats_feeds", _fake_feeds)
     monkeypatch.setattr(discovery_module, "fetch_greenhouse_jobs", _one_greenhouse_job)
     sent: list[str] = []
 
@@ -322,7 +339,7 @@ def test_progress_total_counts_only_runnable_sources(
     """Batch sources without files and policy-gated Apify emit no progress,
     so they must not inflate the total (Monday-evening scheduled run: the
     four free sources are runnable, apify/wellfound/wttj are not)."""
-    monkeypatch.setattr(discovery_module, "parse_ats_feeds", _fake_feeds)
+    monkeypatch.setattr(discovery_module, "load_ats_feeds", _fake_feeds)
     monkeypatch.setattr(discovery_module, "fetch_greenhouse_jobs", _one_greenhouse_job)
 
     def _empty_remoteok() -> list[NormalizedJob]:

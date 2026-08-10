@@ -6,6 +6,7 @@ Routes speak Pydantic models only; the web app speaks generated types only.
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Annotated, Literal, cast
@@ -214,6 +215,127 @@ async def stream_run_events(run_id: str, request: Request, manager: Manager) -> 
     )
 
 
+class ConfigOut(BaseModel):
+    """One configuration kind and where its current value comes from.
+
+    `source` is the point of this endpoint: a reader has to be able to tell
+    a value someone set from a value that is still coming out of a file,
+    because unsetting the first restores the second (spec 023).
+    """
+
+    kind: str
+    value: object
+    source: Literal["store", "file"]
+    updated_at: str | None
+
+
+class ConfigIn(BaseModel):
+    value: object
+
+
+class ConfigErrorOut(BaseModel):
+    """The body behind a 404 or a 400 on these routes.
+
+    Declared so the generated client knows these outcomes exist. Store
+    validation answers 400 rather than 422 on purpose: FastAPI already owns
+    422 for a malformed request body, where the detail is a list of field
+    errors. Reusing it would have put two different shapes behind one status
+    and hidden the automatic one from the contract entirely (review finding
+    on PR #20). A well-formed ConfigIn whose value is wrong for its kind is
+    a different failure, and says so with a different code.
+    """
+
+    detail: str
+
+
+CONFIG_ERRORS: dict[int | str, dict[str, object]] = {
+    400: {
+        "model": ConfigErrorOut,
+        "description": "The value is not the shape this kind requires.",
+    },
+    404: {"model": ConfigErrorOut, "description": "No such configuration kind."},
+}
+
+config_router = APIRouter()
+
+
+def _config_out(conn: sqlite3.Connection, kind: str) -> ConfigOut:
+    from harrier.userconfig import get_config, list_config
+
+    stored = get_config(conn, kind)
+    if stored is not None:
+        rows = {row["kind"]: row["updated_at"] for row in list_config(conn)}
+        return ConfigOut(kind=kind, value=stored, source="store", updated_at=rows.get(kind))
+    return ConfigOut(kind=kind, value=_file_value(kind), source="file", updated_at=None)
+
+
+def _file_value(kind: str) -> object:
+    from harrier.userconfig import (
+        COMPANY_HOLDS,
+        DISCOVERY,
+        FEEDS,
+        LINKEDIN_SEARCHES,
+        load_discovery_settings,
+        load_feed_urls,
+        load_hold_companies,
+        load_search_urls,
+    )
+
+    if kind == FEEDS:
+        return load_feed_urls()
+    if kind == LINKEDIN_SEARCHES:
+        return load_search_urls()
+    if kind == DISCOVERY:
+        return load_discovery_settings()
+    if kind == COMPANY_HOLDS:
+        return sorted(load_hold_companies())
+    return None
+
+
+@config_router.get("/config", operation_id="listConfig")
+def list_configuration(conn: Conn) -> list[ConfigOut]:
+    from harrier.userconfig import KINDS
+
+    return [_config_out(conn, kind) for kind in KINDS]
+
+
+@config_router.get("/config/{kind}", operation_id="getConfig", responses={404: CONFIG_ERRORS[404]})
+def get_configuration(kind: str, conn: Conn) -> ConfigOut:
+    from harrier.userconfig import KINDS
+
+    if kind not in KINDS:
+        raise HTTPException(status_code=404, detail=f"unknown configuration kind {kind}")
+    return _config_out(conn, kind)
+
+
+@config_router.put("/config/{kind}", operation_id="putConfig", responses=CONFIG_ERRORS)
+def put_configuration(kind: str, body: ConfigIn, conn: Conn) -> ConfigOut:
+    from harrier.userconfig import KINDS, ConfigError, set_config
+
+    if kind not in KINDS:
+        raise HTTPException(status_code=404, detail=f"unknown configuration kind {kind}")
+    try:
+        set_config(conn, kind, body.value)
+    except ConfigError as error:
+        # The shape rules live in the store, so the API cannot drift from
+        # what the CLI accepts.
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return _config_out(conn, kind)
+
+
+@config_router.delete(
+    "/config/{kind}", operation_id="deleteConfig", responses={404: CONFIG_ERRORS[404]}
+)
+def delete_configuration(kind: str, conn: Conn) -> ConfigOut:
+    """Remove a stored value, restoring the file fallback."""
+    from harrier.userconfig import KINDS, delete_config
+
+    if kind not in KINDS:
+        raise HTTPException(status_code=404, detail=f"unknown configuration kind {kind}")
+    delete_config(conn, kind)
+    return _config_out(conn, kind)
+
+
 def spa_dist_dir() -> Path:
     return repo_root() / "apps" / "web" / "dist"
 
@@ -252,6 +374,7 @@ def create_app(run_manager: RunManager | None = None, spa_dir: Path | None = Non
     app.include_router(router)
     app.include_router(runs_router)
     app.include_router(capture_router)
+    app.include_router(config_router)
     app.add_middleware(ApiPrefixMiddleware)
     dist = spa_dir if spa_dir is not None else spa_dist_dir()
     if dist.is_dir():

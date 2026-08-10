@@ -133,4 +133,28 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
             """,
         ],
     ),
+    (
+        2,
+        [
+            # User configuration: the board watchlist, LinkedIn searches,
+            # discovery settings, and the hold list (spec 023, ADR-009).
+            # These were gitignored loose files; they are user data, and the
+            # database is where user data lives (ADR-008).
+            #
+            # scope is the tenancy seam. It is 'default' everywhere today and
+            # nothing reads it as a variable, but the unique key includes it,
+            # so partitioning later is a query change rather than a migration
+            # of every row (ADR-009: tenant-ready, not tenant-complete).
+            """
+            CREATE TABLE user_config (
+                id INTEGER PRIMARY KEY,
+                scope TEXT NOT NULL DEFAULT 'default',
+                kind TEXT NOT NULL,
+                value TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE (scope, kind)
+            )
+            """,
+        ],
+    ),
 ]

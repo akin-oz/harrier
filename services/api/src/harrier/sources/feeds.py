@@ -25,14 +25,15 @@ def read_line_config(path: Path) -> list[str]:
     return items
 
 
-def parse_ats_feeds(path: Path | None = None) -> dict[str, list[str]]:
+def route_ats_feeds(feed_urls: list[str]) -> dict[str, list[str]]:
+    """Group board URLs by importer. Split out from the file reader so the
+    same routing serves configuration read from the database (spec 023)."""
     grouped: dict[str, list[str]] = {
         "greenhouse": [],
         "ashby": [],
         "lever": [],
     }
-    feeds_path = resolve_config_path(path if path is not None else FEEDS_PATH)
-    for feed_url in read_line_config(feeds_path):
+    for feed_url in feed_urls:
         hostname = (urlparse(feed_url).hostname or "").lower()
         # Label-suffix matches, not substrings: lookalike hosts route nowhere.
         if hostname == "greenhouse.io" or hostname.endswith(".greenhouse.io"):
@@ -42,3 +43,11 @@ def parse_ats_feeds(path: Path | None = None) -> dict[str, list[str]]:
         elif hostname == "lever.co" or hostname.endswith(".lever.co"):
             grouped["lever"].append(feed_url)
     return grouped
+
+
+def parse_ats_feeds(path: Path | None = None) -> dict[str, list[str]]:
+    """The watchlist read from a file. The orchestrator goes through
+    harrier.userconfig instead; this stays for the import path and for
+    callers that genuinely mean a file."""
+    feeds_path = resolve_config_path(path if path is not None else FEEDS_PATH)
+    return route_ats_feeds(read_line_config(feeds_path))
