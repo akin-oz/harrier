@@ -1,8 +1,8 @@
 ---
 spec: 024
 title: Cutover and archive
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M5
 depends: [022]
 ---
