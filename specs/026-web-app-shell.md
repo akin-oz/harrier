@@ -1,8 +1,8 @@
 ---
 spec: 026
 title: Web app shell and styling
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M6
 depends: [005, 006, 021]
 ---
@@ -38,17 +38,60 @@ them from.
 
 ## Inputs, outputs, failure modes
 
-- Inputs: none new. This is presentation over the existing contract.
-- Outputs: a styled app at the same routes.
-- Failure modes: none new; no data path changes.
+The API contract, the routes and the data path are unchanged; every input
+below is presentational or already exists in the components.
+
+- Inputs: viewport width; `prefers-color-scheme`; the status filter
+  (already in TrackerPage); the run controls (already in RunPanel); and one
+  new control, the run log's expand/collapse, defaulting to collapsed and
+  remembered for the session only.
+- Outputs: the same data, laid out.
+- Failure modes, all of which exist today and render as nothing:
+  - jobs request fails: a stated error with a retry control
+  - jobs request returns zero rows: a stated empty message that
+    distinguishes "no jobs yet" from "no jobs match this filter"
+  - jobs request in flight: a loading state that does not shift layout when
+    it resolves
+  - run stream disconnects: the panel says so rather than appearing to hang
+  - a run ends in `failed` or `cancelled`: visible without expanding the log
+
+## The run panel disclosure contract
+
+Named because the panel is the thing most in need of it:
+
+- Collapsed by default, including on first paint, with the run id, its
+  state, and the most recent log line visible.
+- No log yet: the line reads as waiting rather than rendering an empty box.
+- Lines arriving over SSE while collapsed update the visible last line and
+  do not expand the panel or steal scroll.
+- The control is a real `button` with `aria-expanded`, operable by keyboard,
+  keeping focus on itself when toggled.
+- A run in `failed` shows its state and last line without expansion,
+  because that is the only case where the log is the point.
 
 ## Acceptance criteria
 
-- [ ] the tracker is visible without scrolling past the run log
-- [ ] light and dark both legible, verified in the browser
-- [ ] the run panel collapses and expands, and shows state when collapsed
-- [ ] empty tracker and failed fetch both render a stated message
-- [ ] existing web tests still pass and the contract is unchanged
+Each is a vitest assertion unless it says browser check, in which case it is
+verified at 1280x800 and at 720x800 in the preview browser, light and dark.
+
+- [ ] with a run holding 2000 log lines, the first tracker row is within the
+      first 900 vertical pixels (browser check at 1280x800)
+- [ ] the run panel renders collapsed on first paint, showing run id, state
+      and last line, and expands and collapses by click and by keyboard
+- [ ] the toggle is a button carrying `aria-expanded` that matches its state
+- [ ] lines arriving while collapsed update the last line and leave the
+      panel collapsed
+- [ ] a `failed` run shows its state and last line while collapsed
+- [ ] zero rows renders a message, and the no-jobs and no-matches cases
+      differ
+- [ ] a failed jobs request renders a stated error and a retry control
+- [ ] score renders with tabular numerals and right alignment, and status
+      renders with a text label rather than colour alone
+- [ ] body text meets 4.5:1 against its background in both schemes, and
+      every interactive element has a visible focus style (browser check)
+- [ ] no horizontal scroll at 720px width with the longest real-shaped
+      location string (browser check)
+- [ ] the generated contract is unchanged and existing web tests pass
 - [ ] All gates green on PR
 
 ## Proof / origin

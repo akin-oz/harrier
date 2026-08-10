@@ -31,22 +31,24 @@ USER_AGENT = "Mozilla/5.0 (compatible; harrier-job-discovery/1.0)"
 DEFAULT_HTTP_TIMEOUT_SECONDS = 30
 DEFAULT_HTTP_RETRIES = 3
 
-# 429 and 5xx are the server saying "later"; everything else in 4xx is the
-# server saying "no", and asking twice more cannot change the answer.
-RETRYABLE_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
+# Explicitly retryable 4xx: the server is saying "later", not "no".
+RETRYABLE_4XX = frozenset({408, 429})
 
 
 def is_retryable(error: Exception) -> bool:
     """Whether trying again could plausibly succeed.
 
-    A dead job board answers 404 forever. Retrying it burned two extra
-    requests and up to ten seconds of sleep per board, twice over (the API
-    then the HTML fallback), and printed eight alarming lines for something
-    that is simply gone. With a watchlist of hundreds of boards that turned
-    an ordinary run into a wall of red.
+    Any 5xx is retried, including the non-standard ones proxies invent
+    (Cloudflare's 520 through 527), because they all mean the origin failed
+    rather than refused. In 4xx only 408 and 429 are retried; the rest are
+    the server saying no, and a dead job board says it forever.
+
+    Proven by tests/test_screening.py: test_a_404_is_not_retried,
+    test_a_503_is_still_retried, test_an_unlisted_5xx_is_still_retried,
+    test_a_429_is_still_retried, test_a_timeout_is_still_retried.
     """
     if isinstance(error, HTTPError):
-        return error.code in RETRYABLE_STATUSES
+        return error.code >= 500 or error.code in RETRYABLE_4XX
     return True
 
 
