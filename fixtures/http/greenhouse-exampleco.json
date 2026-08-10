@@ -1,0 +1,41 @@
+{
+  "jobs": [
+    {
+      "id": 4101001,
+      "title": "Senior Frontend Engineer",
+      "updated_at": "2026-08-03T09:12:00-04:00",
+      "absolute_url": "https://boards.example.com/exampleco/jobs/4101001",
+      "company_name": "Example Co",
+      "location": { "name": "Remote - Europe" },
+      "content": "<p>Example Co is a fully remote company building analytics tooling for research teams across Europe. We are hiring a Senior Frontend Engineer to own the charting and query-builder surfaces of our product.</p><p><strong>What you will do</strong></p><ul><li>Ship product surfaces in TypeScript and React, from problem framing through rollout</li><li>Own the design system and the accessibility baseline across the app</li><li>Work directly with product and design, not through a ticket queue</li><li>Improve frontend performance budgets and the metrics behind them</li></ul><p><strong>What we look for</strong></p><ul><li>Several years building production frontends in TypeScript and React</li><li>Comfort with testing, CI, and owning what you ship</li><li>Written communication that works across time zones</li></ul><p><strong>Working here</strong></p><p>Remote-first, EMEA time zones. We hire employees in a handful of countries and contract with EU-registered entities everywhere else. Salary band for this role is EUR 85,000 to 110,000 depending on level.</p>"
+    },
+    {
+      "id": 4101002,
+      "title": "Product Engineer, Growth",
+      "updated_at": "2026-08-05T11:40:00-04:00",
+      "absolute_url": "https://boards.example.com/exampleco/jobs/4101002",
+      "company_name": "Example Co",
+      "location": { "name": "Remote (EMEA)" },
+      "content": "<p>Join the growth pod as a Product Engineer. You will run experiments end to end: build the surface, instrument it, read the result, and decide what happens next.</p><ul><li>TypeScript, React, and a Python backend you are welcome to touch</li><li>Own onboarding, activation, and the pricing page</li><li>Small team, direct access to the data</li></ul><p>Fully remote within EMEA. We are happy to work with contractors holding an EU-registered company. Range: EUR 80,000 to 100,000.</p>"
+    },
+    {
+      "id": 4101003,
+      "title": "Engineering Manager, Platform",
+      "updated_at": "2026-07-28T08:00:00-04:00",
+      "absolute_url": "https://boards.example.com/exampleco/jobs/4101003",
+      "company_name": "Example Co",
+      "location": { "name": "Remote - Europe" },
+      "content": "<p>We are looking for an Engineering Manager to lead the platform team of six engineers. This is a people-leadership role: hiring, growth, and delivery, with roughly a day a week of hands-on work.</p><ul><li>Line-manage six engineers across three time zones</li><li>Own the platform roadmap with the head of engineering</li><li>Run performance and compensation cycles</li></ul><p>Remote within Europe.</p>"
+    },
+    {
+      "id": 4101004,
+      "title": "Frontend Engineer",
+      "updated_at": "2026-08-06T15:20:00-04:00",
+      "absolute_url": "https://boards.example.com/exampleco/jobs/4101004",
+      "company_name": "Example Co",
+      "location": { "name": "New York, NY (Hybrid)" },
+      "content": "<p>Frontend Engineer for our New York office. This role is hybrid: three days a week on site in Manhattan, two days from home. US work authorization required; we do not sponsor visas for this position.</p><ul><li>React and TypeScript across the customer-facing app</li><li>Close collaboration with the New York design team</li></ul>"
+    }
+  ],
+  "meta": { "total": 4 }
+}

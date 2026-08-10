@@ -1,0 +1,31 @@
+[
+  {
+    "id": "3d9b7e40-0000-4000-8000-00000000c001",
+    "text": "Senior Software Engineer, Frontend",
+    "hostedUrl": "https://jobs.eu.lever.co/example-eu-co/3d9b7e40-0000-4000-8000-00000000c001",
+    "createdAt": 1785196800000,
+    "company": "Example EU Co",
+    "workplaceType": "remote",
+    "categories": {
+      "location": "Remote - European Union",
+      "team": "Engineering",
+      "commitment": "Full-time"
+    },
+    "salaryRange": { "currency": "EUR", "interval": "per-year-salary", "min": 88000, "max": 112000 },
+    "descriptionPlain": "Example EU Co builds compliance tooling for European fintechs. We are hiring a Senior Software Engineer for the frontend of our review console: dense data tables, audit trails, and a workflow engine that has to be legible under pressure. TypeScript and React, with a Python service behind it. EU residency or an EU-registered contracting entity is required for this role because of the data we handle. Remote across the European Union."
+  },
+  {
+    "id": "3d9b7e40-0000-4000-8000-00000000c002",
+    "text": "Platform Engineer",
+    "hostedUrl": "https://jobs.eu.lever.co/example-eu-co/3d9b7e40-0000-4000-8000-00000000c002",
+    "createdAt": 1785024000000,
+    "company": "Example EU Co",
+    "workplaceType": "remote",
+    "categories": {
+      "location": "Remote - European Union",
+      "team": "Platform",
+      "commitment": "Full-time"
+    },
+    "descriptionPlain": "Run the deployment platform: Kubernetes, Terraform, and the developer tooling around them. Mostly Go and Python. Remote across the European Union, EU work permit required."
+  }
+]

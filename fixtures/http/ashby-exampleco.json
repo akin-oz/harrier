@@ -1,0 +1,51 @@
+{
+  "jobs": [
+    {
+      "id": "b7c1e0a2-0000-4000-8000-00000000a001",
+      "title": "Staff Frontend Engineer, Design Systems",
+      "location": "Remote - EMEA",
+      "isRemote": true,
+      "publishedAt": "2026-08-04T10:00:00Z",
+      "jobUrl": "https://jobs.ashbyhq.com/exampleco/b7c1e0a2-0000-4000-8000-00000000a001",
+      "companyName": "Example Labs",
+      "teamName": "Design Systems",
+      "descriptionPlain": "Example Labs builds collaborative document tooling for distributed teams. We are hiring a Staff Frontend Engineer to own our design system: the component library, the theming layer, and the accessibility standard every product team builds against. You will work in TypeScript and React, define the API surface other engineers depend on, and measure adoption rather than guess at it. We are remote-first across EMEA and contract with EU-registered entities where we have no employing entity. Compensation is transparent and banded.",
+      "compensation": {
+        "summary": "EUR 95,000 - 125,000",
+        "currencyCode": "EUR",
+        "interval": "yearly",
+        "minValue": 95000,
+        "maxValue": 125000
+      }
+    },
+    {
+      "id": "b7c1e0a2-0000-4000-8000-00000000a002",
+      "title": "Senior Product Engineer",
+      "location": "Remote (Europe)",
+      "isRemote": true,
+      "publishedAt": "2026-08-07T08:30:00Z",
+      "jobUrl": "https://jobs.ashbyhq.com/exampleco/b7c1e0a2-0000-4000-8000-00000000a002",
+      "companyName": "Example Labs",
+      "teamName": "Core Product",
+      "descriptionPlain": "Own a product surface end to end: the editor, the sharing model, or the integrations catalogue, depending on where you fit best. You will write TypeScript and React on the frontend and Python on the API, talk to customers directly, and decide what ships. We are looking for someone who has carried a product area, not only tickets. Fully remote within European time zones. EU work permit or an EU-registered contracting entity is required.",
+      "compensation": {
+        "summary": "EUR 85,000 - 110,000",
+        "currencyCode": "EUR",
+        "interval": "yearly",
+        "minValue": 85000,
+        "maxValue": 110000
+      }
+    },
+    {
+      "id": "b7c1e0a2-0000-4000-8000-00000000a003",
+      "title": "Senior Data Engineer",
+      "location": "Berlin, Germany (On-site)",
+      "isRemote": false,
+      "publishedAt": "2026-08-02T08:30:00Z",
+      "jobUrl": "https://jobs.ashbyhq.com/exampleco/b7c1e0a2-0000-4000-8000-00000000a003",
+      "companyName": "Example Labs",
+      "teamName": "Data",
+      "descriptionPlain": "Build and operate our batch and streaming pipelines in Python and Spark. This role is on-site in our Berlin office five days a week; we are not able to consider remote candidates for this position. Relocation support is available."
+    }
+  ]
+}

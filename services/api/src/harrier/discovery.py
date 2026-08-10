@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import cast
 
 from harrier.db import data_dir
+from harrier.demo import is_demo_mode, resolve_config_path
 from harrier.notify import build_telegram_message, send_telegram_message
 from harrier.screening import (
     build_tracker_indexes,
@@ -73,7 +74,7 @@ def scheduled_apify_count(config_path: Path | None = None) -> int:
     Resolves the old repo's count discrepancy: 50 is what production ran
     (a per-search ceiling under the 24h search window; see the comment in
     config/discovery.json), 150 stays the CLI default."""
-    path = config_path if config_path is not None else DISCOVERY_CONFIG_PATH
+    path = resolve_config_path(config_path if config_path is not None else DISCOVERY_CONFIG_PATH)
     try:
         parsed: object = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -228,7 +229,10 @@ def run_discovery(
             )
         report("remoteok", "done")
 
-    if _source_enabled("apify_linkedin", options.only_sources):
+    if _source_enabled("apify_linkedin", options.only_sources) and not is_demo_mode():
+        # Apify is the one paid source and reaches the network outside the
+        # fixture seam, so the demo skips it rather than reporting a missing
+        # token as an error a stranger would read as a broken clone.
         apify_gate_open = not options.scheduled or apify_allowed_now(options.now)
         if apify_gate_open:
             count = scheduled_apify_count() if options.scheduled else options.apify_count
@@ -333,6 +337,7 @@ def run_discovery(
     # Dry runs have zero side effects: no writes and no notifications
     # (spec 011; stated change from the old accidental independence).
     if totals["new_prospects"] and options.notify and not options.dry_run:
+        # send_telegram_message declines in demo mode, so no branch here.
         send_telegram_message(build_telegram_message(all_items))
     if not options.dry_run:
         target = _incoming_dir() / "job_imports_run.json"

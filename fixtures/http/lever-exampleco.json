@@ -1,0 +1,42 @@
+[
+  {
+    "id": "0f2a5c11-0000-4000-8000-00000000b001",
+    "text": "Senior Frontend Engineer (Remote, EMEA)",
+    "hostedUrl": "https://jobs.lever.co/exampleco/0f2a5c11-0000-4000-8000-00000000b001",
+    "createdAt": 1785283200000,
+    "company": "Example Works",
+    "workplaceType": "remote",
+    "categories": {
+      "location": "Remote - EMEA",
+      "team": "Product Engineering",
+      "commitment": "Full-time"
+    },
+    "salaryRange": { "currency": "EUR", "interval": "per-year-salary", "min": 90000, "max": 115000 },
+    "descriptionPlain": "Example Works makes scheduling software for field teams. We are hiring a Senior Frontend Engineer for the product engineering group. You will build the planner and dispatch surfaces in TypeScript and React, own the performance budget for them, and pair with a designer who sits in the same squad. Our stack is React, TypeScript, Vite, and a Python API. We are fully remote across EMEA, asynchronous by default, with two overlap hours a day. We can employ in several European countries and otherwise contract with EU-registered companies."
+  },
+  {
+    "id": "0f2a5c11-0000-4000-8000-00000000b002",
+    "text": "Frontend Engineer, Mobile Web",
+    "hostedUrl": "https://jobs.lever.co/exampleco/0f2a5c11-0000-4000-8000-00000000b002",
+    "createdAt": 1785110400000,
+    "company": "Example Works",
+    "workplaceType": "remote",
+    "categories": {
+      "location": "Remote - Europe",
+      "team": "Product Engineering",
+      "commitment": "Full-time"
+    },
+    "salaryRange": { "currency": "EUR", "interval": "per-year-salary", "min": 70000, "max": 90000 },
+    "descriptionPlain": "Own the mobile web experience: a React and TypeScript progressive web app used by field crews on low-end Android devices in poor coverage. Offline-first, small bundles, real constraints. Remote within Europe."
+  },
+  {
+    "id": "0f2a5c11-0000-4000-8000-00000000b003",
+    "text": "Account Executive, DACH",
+    "hostedUrl": "https://jobs.lever.co/exampleco/0f2a5c11-0000-4000-8000-00000000b003",
+    "createdAt": 1784937600000,
+    "company": "Example Works",
+    "workplaceType": "hybrid",
+    "categories": { "location": "Munich, Germany", "team": "Sales", "commitment": "Full-time" },
+    "descriptionPlain": "Close new business across the DACH region. Hybrid from our Munich office, with regular travel to customer sites. Fluent German required."
+  }
+]

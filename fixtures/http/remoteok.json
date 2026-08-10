@@ -1,0 +1,44 @@
+[
+  {
+    "legal": "Synthetic fixture standing in for the RemoteOK API's leading legal/metadata stub, which importers skip."
+  },
+  {
+    "id": "9000001",
+    "slug": "example-studio-senior-frontend-engineer",
+    "company": "Example Studio",
+    "position": "Senior Frontend Engineer",
+    "location": "Europe",
+    "date": "2026-08-06T07:15:00+00:00",
+    "url": "https://remoteok.example/remote-jobs/9000001",
+    "salary_min": 90000,
+    "salary_max": 120000,
+    "tags": ["typescript", "react", "frontend", "senior"],
+    "description": "<p>Example Studio is a remote-only product studio working with European clients. We are hiring a Senior Frontend Engineer to lead the frontend on two long-running client products, both TypeScript and React. You will set the architecture, review the work, and stay hands-on. Remote within European time zones; we contract with EU-registered companies.</p>"
+  },
+  {
+    "id": "9000002",
+    "slug": "example-cloud-product-engineer",
+    "company": "Example Cloud",
+    "position": "Product Engineer",
+    "location": "Worldwide",
+    "date": "2026-08-05T12:00:00+00:00",
+    "url": "https://remoteok.example/remote-jobs/9000002",
+    "salary_min": 80000,
+    "salary_max": 105000,
+    "tags": ["react", "typescript", "python", "product"],
+    "description": "<p>Build and ship product surfaces on our developer platform. TypeScript and React on the frontend, Python on the API. Fully remote, worldwide, asynchronous by default.</p>"
+  },
+  {
+    "id": "9000003",
+    "slug": "example-metrics-android-engineer",
+    "company": "Example Metrics",
+    "position": "Senior Android Engineer",
+    "location": "Worldwide",
+    "date": "2026-08-04T09:45:00+00:00",
+    "url": "https://remoteok.example/remote-jobs/9000003",
+    "salary_min": 85000,
+    "salary_max": 110000,
+    "tags": ["android", "kotlin", "mobile"],
+    "description": "<p>Own our Android client end to end. Kotlin, Jetpack Compose, and a small team that ships weekly. Fully remote.</p>"
+  }
+]

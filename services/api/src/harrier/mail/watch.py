@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from harrier.db import data_dir
+from harrier.demo import is_demo_mode
 from harrier.tracker import list_jobs
 
 logger = logging.getLogger(__name__)
@@ -543,6 +544,10 @@ def gmail_query(lookback_days: int) -> str:
 
 
 def fetch_recent_messages() -> list[GmailMessage]:
+    if is_demo_mode():
+        # A demo must never read a real mailbox. Refusing here rather than at
+        # the caller covers every path into Gmail (review finding on PR #18).
+        raise RuntimeError("demo mode: refusing to read a real mailbox")
     config = env_config()
     validate_env(config)
     credentials = load_gmail_credentials()
