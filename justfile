@@ -14,9 +14,11 @@ dev:
     trap 'kill "$api_pid" 2>/dev/null || true' EXIT INT TERM; \
     pnpm --filter @harrier/web dev
 
-# Demo mode for strangers: synthetic fixtures, no keys, no network, and
-# nothing written into the clone (spec 021). Builds the SPA, then serves it
-# and the API from one origin against a throwaway database in a temp dir.
+# Demo mode for strangers: synthetic fixtures, no keys, and no network in
+# the demo itself (spec 021). The two lines below are the build, not the
+# demo: pnpm needs the registry on a cold store and vite writes
+# apps/web/dist (gitignored) into the checkout. Everything the demo then
+# produces goes to a temp directory, never the clone.
 demo:
     pnpm install --frozen-lockfile
     pnpm --filter @harrier/web build

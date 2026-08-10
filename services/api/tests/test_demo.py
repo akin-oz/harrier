@@ -36,6 +36,8 @@ from harrier.demo import (
     resolve_config_path,
 )
 from harrier.discovery import DiscoveryOptions, run_discovery
+from harrier.mail.watch import fetch_recent_messages
+from harrier.notify import send_telegram_message
 from harrier.screening.http import request_text
 from harrier.sources.feeds import parse_ats_feeds
 from harrier_api.app import create_app
@@ -76,6 +78,22 @@ def test_demo_feeds_resolve_from_the_repo_regardless_of_working_directory(
     assert feeds["greenhouse"] and feeds["ashby"] and feeds["lever"]
 
 
+def test_config_resolution_ignores_the_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Launching the demo from a directory that happens to hold a config tree
+    must not put that unknown configuration in front of a stranger (review
+    finding on PR #18)."""
+    decoy = tmp_path / "config"
+    decoy.mkdir()
+    (decoy / "feeds.example.txt").write_text(
+        "https://boards.greenhouse.io/decoy\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("HARRIER_DEMO", "1")
+    monkeypatch.chdir(tmp_path)
+    assert parse_ats_feeds()["greenhouse"] == ["https://boards.greenhouse.io/exampleco"]
+
+
 def test_demo_writes_nothing_into_the_clone(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HARRIER_DEMO", "1")
     monkeypatch.delenv("HARRIER_DATA_DIR", raising=False)
@@ -103,6 +121,39 @@ def test_fixture_entry_cannot_escape_the_fixture_directory(
     monkeypatch.setenv("HARRIER_HTTP_FIXTURES", str(tmp_path))
     with pytest.raises(OfflineFixtureError, match="plain filename"):
         request_text(url)
+
+
+def test_malformed_fixture_index_raises_offline_fixture_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # One exception type for every fixture configuration failure, so callers
+    # never catch two (review finding on PR #18).
+    (tmp_path / "index.json").write_text("{not json", encoding="utf-8")
+    monkeypatch.setenv("HARRIER_HTTP_FIXTURES", str(tmp_path))
+    with pytest.raises(OfflineFixtureError, match="could not be read as JSON"):
+        request_text("https://example.test/thing")
+
+
+def test_demo_never_sends_telegram_even_with_credentials_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The hazard is a present credential, not a missing one: a demo run on
+    the owner's machine must not message their real chat (review finding)."""
+    monkeypatch.setenv("HARRIER_DEMO", "1")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token-not-real")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "12345")
+
+    def explode(*args: object, **kwargs: object) -> object:
+        raise AssertionError("demo mode must not open a connection")
+
+    monkeypatch.setattr("harrier.notify.urllib.request.urlopen", explode)
+    assert send_telegram_message("hello") == 2
+
+
+def test_demo_refuses_to_read_a_real_mailbox(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HARRIER_DEMO", "1")
+    with pytest.raises(RuntimeError, match="refusing to read a real mailbox"):
+        fetch_recent_messages()
 
 
 def test_every_indexed_fixture_file_exists() -> None:

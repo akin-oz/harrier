@@ -45,7 +45,12 @@ def _offline_body(url: str) -> str | None:
     index_path = directory / FIXTURE_INDEX_NAME
     if not index_path.is_file():
         raise OfflineFixtureError(f"offline HTTP fixtures are enabled but {index_path} is missing")
-    parsed: object = json.loads(index_path.read_text(encoding="utf-8"))
+    try:
+        parsed: object = json.loads(index_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        # One exception type for every fixture configuration failure, so a
+        # caller never has to catch two (review finding on PR #18).
+        raise OfflineFixtureError(f"{index_path} could not be read as JSON: {exc}") from exc
     if not isinstance(parsed, dict):
         raise OfflineFixtureError(f"{index_path} must be a JSON object of url -> filename")
     index = cast("dict[str, object]", parsed)

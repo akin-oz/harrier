@@ -337,12 +337,8 @@ def run_discovery(
     # Dry runs have zero side effects: no writes and no notifications
     # (spec 011; stated change from the old accidental independence).
     if totals["new_prospects"] and options.notify and not options.dry_run:
-        if is_demo_mode():
-            # The demo promises it needs no keys, so a warning about a missing
-            # Telegram token would read as a broken clone (spec 021).
-            logger.info("demo mode: skipping the Telegram notification")
-        else:
-            send_telegram_message(build_telegram_message(all_items))
+        # send_telegram_message declines in demo mode, so no branch here.
+        send_telegram_message(build_telegram_message(all_items))
     if not options.dry_run:
         target = _incoming_dir() / "job_imports_run.json"
         target.parent.mkdir(parents=True, exist_ok=True)

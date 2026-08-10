@@ -11,9 +11,17 @@ SQLite underneath, one machine, no cloud.
 git clone https://github.com/akin-oz/harrier && cd harrier && just demo
 ```
 
-The demo needs no API keys, no accounts, and no network access. It builds the
-web app, seeds a throwaway database from synthetic fixtures, and serves both
-from `http://127.0.0.1:8000`. Nothing is written into your clone.
+It seeds a throwaway database from synthetic fixtures and serves the API and
+the web app from `http://127.0.0.1:8000`. No API keys, no accounts, and no
+sign-up: the running demo reaches no network at all, because every job board
+response comes from `fixtures/http/` and a URL with no fixture raises rather
+than falling through to a request.
+
+Two honest caveats. The first run builds the frontend, so it needs the npm
+registry once like any JavaScript project, and writes `apps/web/dist` inside
+the clone (gitignored). Everything the demo itself produces (the database,
+discovery state, artifacts) goes to a temp directory, so your checkout stays
+clean.
 
 ## What it actually does
 
@@ -26,7 +34,9 @@ hands off. Nothing bypasses the shared path.
 gates, title and stack matching feed a score, and each decision records the
 signals behind it. In the demo, six of the fifteen fixture postings are
 rejected on title and one for being hybrid, which is the policy visible at
-work rather than described.
+work rather than described. Those counts are asserted by
+`test_demo_discovery_runs_offline_and_screens_the_fixture_boards`, so this
+paragraph cannot drift from what the demo does.
 
 **The tracker.** One SQLite table is the source of truth for every job, from
 first sighting to offer. No spreadsheet, no second copy, no sync.
@@ -45,7 +55,7 @@ gone quiet for three weeks, and anything the inbox surfaced.
 
 ## Architecture
 
-```
+```text
 apps/web          React 19, strict TypeScript, feature-sliced, generated API types only
 services/api      FastAPI service + the harrier domain package + the CLI
 packages/contract OpenAPI document and the TS types generated from it
@@ -96,8 +106,10 @@ just demo       # the built SPA and the API on :8000, synthetic data
 
 To use it on your own search, copy the `config/*.example.*` files to their real
 names and fill them in. They are gitignored: your board watchlist, your search
-URLs, and your hold list are your data, not the project's (ADR-009). Everything
-personal lives in `data/tracker.db` and never enters git in any form (ADR-008).
+URLs, and your hold list are your data, not the project's (ADR-009). Personal
+search data lives in `data/tracker.db`, credentials in `.env` and `secrets/`,
+and backups outside the repository entirely. None of it enters git in any form
+(ADR-008, docs/privacy-plan.md).
 
 Optional and off by default: an LLM provider for drafting (Codex CLI, Claude
 CLI, or the OpenAI and Anthropic APIs, selected by `AI_PROVIDER`), Apify for

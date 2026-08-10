@@ -48,6 +48,11 @@ network, and the README describes a project that is not yet runnable.
 - Apify is skipped in demo mode. It is the one paid source and it reaches
   the network outside the fixture seam, so reporting a missing token as an
   error would read to a stranger as a broken clone.
+- outbound side effects refuse in demo mode at their choke points rather
+  than at each call site: send_telegram_message and
+  fetch_recent_messages. Without this a demo run on a machine that does
+  hold credentials would message the owner's real chat, or read their real
+  inbox, with synthetic data (review finding on PR #18).
 - serving: the API mounts the built SPA at / when apps/web/dist exists,
   and an ASGI middleware strips a leading /api so one origin serves both.
   The web app calls /api/... in every mode; in development Vite rewrites
@@ -86,10 +91,11 @@ Two deviations from the stub's wording:
   makes privacy a review step that can be skipped; authoring means no real
   company was ever in the file. Cost: the fixtures pin the shapes the
   importers parse, not whatever a live board returns today.
-- The stub said "external services stubbed". Only HTTP through the
-  screening seam is stubbed. LLM providers, Gmail, and Telegram are not:
-  they are already inert without credentials, and the demo asserts it
-  needs no keys rather than faking the presence of any.
+- The stub said "external services stubbed". HTTP through the screening
+  seam is served from fixtures; Telegram and Gmail are refused outright
+  rather than faked, because the risk they carry is not a missing key but
+  a present one. LLM providers stay untouched: they are inert without
+  credentials and no demo path calls them.
 
 ## Acceptance criteria
 
@@ -121,7 +127,19 @@ Two deviations from the stub's wording:
       domains (test_fixtures_name_only_reserved_or_ats_hosts,
       test_real_ats_hosts_carry_only_example_board_names,
       test_fixtures_contain_no_address_outside_the_example_domains)
-- [x] clean-machine clone-to-demo works with zero keys and no decryption
+- [x] clean-machine clone-to-demo works with zero keys and no decryption,
+      where "clean machine" means no config files, no database, and no
+      credentials. The frontend build still needs the npm registry once
+      and writes apps/web/dist into the clone, which the README states
+      rather than hides; the demo itself writes only to a temp directory
+      (test_demo_writes_nothing_into_the_clone)
+- [x] a demo run makes no outbound call even when credentials are present
+      (test_demo_never_sends_telegram_even_with_credentials_present,
+      test_demo_refuses_to_read_a_real_mailbox)
+- [x] the committed example wins over a config tree in the working
+      directory (test_config_resolution_ignores_the_working_directory)
+- [x] a malformed fixture index raises OfflineFixtureError, not a decode
+      error (test_malformed_fixture_index_raises_offline_fixture_error)
 - [x] the agent-executable part of the pre-publish checklist
       (docs/privacy-plan.md) is green, and the parts only a human can do
       are named as open
@@ -134,8 +152,11 @@ Proving file: services/api/tests/test_demo.py.
 
 Honest limitations: "no network" is proven for HTTP that goes through
 harrier.screening.http, which is every ATS and RemoteOK fetch. Apify
-builds its own requests and is skipped in demo mode rather than fixtured,
-so its client is not covered by that proof. The privacy pass is
+builds its own requests and is skipped in demo mode rather than served
+from fixtures, so its client is not covered by that proof. `just demo`
+builds the frontend first, which needs the npm registry on a cold store
+and writes apps/web/dist into the clone: the no-network and clean-clone
+claims are about the demo's own behavior, not its build step. The privacy pass is
 mechanical: it catches hosts, board slugs, and addresses, and cannot
 judge whether a synthetic persona resembles a real person, which stays a
 human review step.

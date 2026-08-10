@@ -12,6 +12,8 @@ import os
 import urllib.parse
 import urllib.request
 
+from harrier.demo import is_demo_mode
+
 logger = logging.getLogger(__name__)
 
 
@@ -19,6 +21,13 @@ def send_telegram_message(
     message: str, token: str | None = None, chat_id: str | None = None
 ) -> int:
     """0 sent, 1 send failure, 2 missing configuration (old CLI semantics)."""
+    if is_demo_mode():
+        # The gate belongs here rather than at each call site: on a machine
+        # that does hold Telegram credentials, a demo run would otherwise
+        # message the owner's real chat with synthetic data (review finding
+        # on PR #18).
+        logger.info("demo mode: not sending the Telegram message")
+        return 2
     token = token or os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID")
     if not token:
