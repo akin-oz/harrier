@@ -1,7 +1,7 @@
 ---
 spec: 024
 title: Cutover and archive
-status: accepted
+status: in-progress
 approved: yes
 milestone: M5
 depends: [022]
@@ -49,17 +49,65 @@ Cutover plan phases 3 and 4 (docs/cutover-plan.md), unchanged in substance:
 
 ## Acceptance criteria
 
-- [ ] every parity row checked or explicitly waived by Akin
+Criteria for the tooling, which is what this spec delivers:
+
+- [ ] preflight blocks on an undecided parity checklist, an empty tracker,
+      old jobs already gone, and a malformed old .env, naming the line
+      (test_an_undecided_checklist_blocks, test_an_empty_tracker_blocks,
+      test_jobs_already_gone_blocks,
+      test_a_malformed_env_line_blocks_and_names_the_line)
+- [ ] a dry run is the default and issues no bootout
+      (test_a_dry_run_touches_nothing)
+- [ ] execution is refused when preflight is blocked, and refused again
+      when the attestations have not been made
+      (test_executing_without_a_clear_preflight_is_refused,
+      test_executing_without_attestation_is_refused)
+- [ ] a full execution quiesces, snapshots outside the repo, verifies, and
+      installs, writing its record to data/
+      (test_a_full_execution_quiesces_snapshots_verifies_and_installs)
+- [ ] a refused unload stops before any data is copied, and an
+      already-unloaded job is not a failure
+      (test_a_refused_unload_stops_before_the_data_is_touched,
+      test_an_already_unloaded_job_is_not_a_failure)
+- [ ] All gates green on PR
+
+Criteria for the cutover event itself, which only Akin can satisfy:
+
+- [ ] every parity row checked or explicitly waived
 - [ ] one post-migration shadow diff clean over a full weekday cycle
       including an Apify morning
 - [ ] old plists unloaded, new plists live, first scheduled run observed
 - [ ] fallback window documented with its expiry date
-- [ ] old repo tagged archived, plists removed, cutover date and final row
-      counts recorded in docs/cutover-log.md
+- [ ] old repo tagged archived and its plists removed
 
 ## Proof / origin
 
-docs/cutover-plan.md phases 3 and 4.
+docs/cutover-plan.md phases 3 and 4. Proving file:
+services/api/tests/test_cutover.py.
+
+State when this shipped, from `harrier cutover preflight` against the real
+machine: two blocking checks. The parity checklist stood at 0 of 96 decided,
+and the old repo's .env has a value spanning a line break at line 20, which
+is the defect that has kept the old digest from running. The tracker check
+passed at 701 jobs and all three old jobs were loaded. So the tooling exists
+and correctly refuses; the cutover has not happened.
+
+## Stated changes from the plan
+
+- The cutover record goes to `data/cutover/<stamp>.md`, not
+  `docs/cutover-log.md`. A dated record of a real job search with row counts
+  is operational state about a person and does not belong in a public
+  repository (ADR-008). The plan is amended rather than followed.
+- The migration refresh is not automated here. Phase 2a already migrates the
+  seen-state, and the remaining refresh is `harrier migrate-legacy` against
+  the snapshot, which exists and is better run with eyes on it than buried
+  inside a sequence that has just unloaded the old scheduler.
+
+Honest limitations: launchctl is not invoked in tests, so quiesce is proven
+for the command lines it builds and its error handling, not for launchd's
+behavior. Nothing here verifies that the new system is correct, only that
+the switch is performed safely and in order; correctness is what the parity
+checklist and the dual-run period are for.
 
 ## Out of scope
 

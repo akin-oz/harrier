@@ -605,6 +605,59 @@ def _cmd_digest(args: argparse.Namespace) -> int:
     return rc
 
 
+def _cmd_cutover(args: argparse.Namespace) -> int:
+    from datetime import UTC, datetime
+
+    from harrier.cutover import CutoverError, preflight, run_cutover, utc_stamp
+
+    old_root = Path(args.old_root).expanduser()
+    if not old_root.is_dir():
+        print(f"error: no old repo at {old_root}", file=sys.stderr)
+        return 1
+
+    conn = connect()
+    try:
+        if args.cutover_command == "preflight":
+            checks = preflight(conn, old_root=old_root)
+            print(checks.report())
+            if not checks.ready:
+                print(
+                    f"\n{len(checks.blocked)} blocking check(s); cutover will refuse to run",
+                    file=sys.stderr,
+                )
+                return 1
+            print("\nevery mechanical check passes; the attestations above are yours to make")
+            return 0
+
+        def install() -> list[str]:
+            from harrier.schedule import install_schedule
+
+            outcome = install_schedule()
+            return [*outcome.lines, f"schedule install ok={outcome.ok}"]
+
+        try:
+            result = run_cutover(
+                conn,
+                old_root=old_root,
+                stamp=utc_stamp(datetime.now(UTC)),
+                execute=args.execute,
+                attested=args.attested,
+                install=install,
+            )
+        except CutoverError as error:
+            print(f"refused: {error}", file=sys.stderr)
+            return 1
+        for line in result.lines:
+            print(line)
+        for failure in result.failures:
+            print(f"failure: {failure}", file=sys.stderr)
+        if not result.executed:
+            print("\ndry run: nothing was changed. Add --execute --attested to do it for real.")
+        return 0 if result.ok else 1
+    finally:
+        conn.close()
+
+
 def _cmd_config(args: argparse.Namespace) -> int:
     from harrier.sources.feeds import FEEDS_PATH, read_line_config
     from harrier.userconfig import (
@@ -1045,6 +1098,21 @@ def build_parser() -> argparse.ArgumentParser:
     schedule_sub.add_parser("status", help="installed, loaded, drift, and next run")
     schedule_sub.add_parser("uninstall", help="unload and remove the plists")
     schedule.set_defaults(func=_cmd_schedule)
+
+    cutover = sub.add_parser("cutover", help="the cutover from the old system (spec 024)")
+    cutover.add_argument("--old-root", default="~/job-hunt-local", help="the old repo (read-only)")
+    cutover_sub = cutover.add_subparsers(dest="cutover_command", required=True)
+    cutover_sub.add_parser("preflight", help="check every precondition and refuse if unmet")
+    cutover_run = cutover_sub.add_parser("run", help="quiesce, snapshot, verify, go live")
+    cutover_run.add_argument(
+        "--execute", action="store_true", help="do it for real (default is a dry run)"
+    )
+    cutover_run.add_argument(
+        "--attested",
+        action="store_true",
+        help="confirm the checks no machine can make (see `cutover preflight`)",
+    )
+    cutover.set_defaults(func=_cmd_cutover)
 
     config = sub.add_parser("config", help="user configuration in the database (spec 023)")
     config_sub = config.add_subparsers(dest="config_command", required=True)

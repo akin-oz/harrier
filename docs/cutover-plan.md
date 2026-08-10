@@ -81,4 +81,8 @@ rather than performing it for the first time.
 - The old repo's git history contains PII (`docs/privacy-plan.md` §2); it stays
   private forever regardless of archival.
 - Remove the old plists from `~/Library/LaunchAgents/`.
-- Record cutover date and final row counts in `docs/cutover-log.md`.
+- Record cutover date and final row counts in `data/cutover/<stamp>.md`,
+  written by `harrier cutover run`. Amended by spec 024: the plan originally
+  said `docs/cutover-log.md`, and a dated record of a real job search with
+  row counts is operational state about a person, which does not go in a
+  public repository (ADR-008).
