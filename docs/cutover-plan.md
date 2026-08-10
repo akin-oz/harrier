@@ -31,6 +31,16 @@ Key clusters, from the matrix:
 
 ## Phase 2: dual-run period (minimum one full week)
 
+**Phase 2a, once, before the comparison starts.** Migrate the discovery
+seen-state into harrier. Until this happens the two systems screen different
+populations: the old one suppresses every posting it has seen before, a fresh
+harrier store suppresses none, and every downstream count differs for a reason
+that has nothing to do with screening. `harrier parity diff` detects the
+asymmetry and declines to compare rather than reporting the artifact as
+findings (spec 022). This was originally listed as a phase 3 step, which made
+the phase 2 exit criteria unreachable; phase 3 now refreshes the same state
+rather than performing it for the first time.
+
 - Old system remains the system of record: its launchd jobs run and notify as today.
 - Harrier runs the same discovery on its own schedule in shadow mode: real source
   fetches, dry-run semantics (no Telegram, own store).
@@ -49,8 +59,9 @@ Key clusters, from the matrix:
    (`com.akinoztorun.jobsearch.discovery`, `.daily-digest`, `.gmail-watch`).
 2. Snapshot the old repo's `tracker/`, `state/`, `gmail_handler.log` (dated copies).
 3. Final migration refresh: re-run the spec 004 migration against the snapshot so
-   tracker rows added during dual-run are captured; migrate discovery seen-state,
-   the description cache, and gmail seen-state.
+   tracker rows added during dual-run are captured; refresh the discovery
+   seen-state migrated in phase 2a, and migrate the description cache and gmail
+   seen-state.
 4. Verify: row counts and spot checks; `harrier schedule status` clean;
    one manual `harrier discover --dry-run` and one `harrier digest --dry-run` green.
 5. Go live: `harrier schedule install`; watch the next scheduled run end to end.

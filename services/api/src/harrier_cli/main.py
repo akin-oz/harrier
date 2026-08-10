@@ -57,8 +57,11 @@ def _cmd_discover(args: argparse.Namespace) -> int:
             return bool(args.wellfound_file)
         if name == "wttj":
             return bool(args.wttj_file)
-        if name == "apify_linkedin" and args.scheduled:
-            return apify_allowed_now()
+        if name == "apify_linkedin":
+            if args.shadow:
+                return False
+            if args.scheduled:
+                return apify_allowed_now()
         return True
 
     enabled = [name for name in SOURCE_ORDER if runnable(name)]
@@ -88,6 +91,7 @@ def _cmd_discover(args: argparse.Namespace) -> int:
             dataset_files=list(args.dataset_file),
             wellfound_files=list(args.wellfound_file),
             wttj_files=list(args.wttj_file),
+            shadow=args.shadow,
             scheduled=args.scheduled,
         ),
         progress,
@@ -601,6 +605,62 @@ def _cmd_digest(args: argparse.Namespace) -> int:
     return rc
 
 
+def _cmd_parity(args: argparse.Namespace) -> int:
+    from harrier.parity import (
+        CHECKLIST_PATH,
+        MatrixError,
+        RunSummaryError,
+        checklist_status,
+        diff_runs,
+        load_run_summary,
+        parse_matrix,
+        render_diff,
+        stated_counts,
+        verdict_counts,
+        write_checklist,
+    )
+
+    try:
+        if args.parity_command == "checklist":
+            rows = parse_matrix()
+            target = write_checklist(Path(args.out) if args.out else None)
+            counts = verdict_counts(rows)
+            print(f"{len(rows)} items written to {target}")
+            print(f"keep={counts['keep']} change={counts['change']} drop={counts['drop']}")
+            stated = stated_counts()
+            if stated is not None and stated != counts:
+                # The matrix states its own totals; a mismatch means the
+                # document and its table disagree about what exists.
+                print(
+                    f"warning: the matrix states {stated} but its table holds {counts}",
+                    file=sys.stderr,
+                )
+                return 1
+        elif args.parity_command == "status":
+            rows = parse_matrix()
+            path = Path(args.checklist) if args.checklist else CHECKLIST_PATH
+            if not path.is_file():
+                print(
+                    f"no checklist at {path}; run `harrier parity checklist` first", file=sys.stderr
+                )
+                return 1
+            status = checklist_status(path.read_text(encoding="utf-8"), rows)
+            print(f"{status.checked}/{status.total} checked ({status.waived} waived)")
+            for slug in status.open_items:
+                print(f"open: {slug}")
+            for slug in status.orphaned:
+                print(f"retired item still recorded: {slug}")
+            return 0 if status.complete else 1
+        else:
+            report = diff_runs(load_run_summary(Path(args.old)), load_run_summary(Path(args.new)))
+            print(render_diff(report), end="")
+            return 0 if report.clean else 1
+    except (MatrixError, RunSummaryError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def _cmd_schedule(args: argparse.Namespace) -> int:
     import platform
 
@@ -706,7 +766,16 @@ def build_parser() -> argparse.ArgumentParser:
     profile_list.set_defaults(func=_cmd_profile_list)
 
     discover = sub.add_parser("discover", help="run discovery over all sources (spec 011)")
-    discover.add_argument("--dry-run", action="store_true", help="evaluate without writes")
+    discover.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="evaluate without writes (still fetches every source, including paid Apify)",
+    )
+    discover.add_argument(
+        "--shadow",
+        action="store_true",
+        help="dual-run mode (spec 022): dry-run and no paid source, so it is free to repeat",
+    )
     discover.add_argument("--no-notify", action="store_true", help="skip the Telegram summary")
     discover.add_argument(
         "--only-source", action="append", default=[], help="restrict to a source (repeatable)"
@@ -885,6 +954,21 @@ def build_parser() -> argparse.ArgumentParser:
     schedule_sub.add_parser("status", help="installed, loaded, drift, and next run")
     schedule_sub.add_parser("uninstall", help="unload and remove the plists")
     schedule.set_defaults(func=_cmd_schedule)
+
+    parity = sub.add_parser("parity", help="parity verification against the old system (spec 022)")
+    parity_sub = parity.add_subparsers(dest="parity_command", required=True)
+    parity_checklist = parity_sub.add_parser(
+        "checklist", help="generate the cutover checklist from docs/parity-matrix.md"
+    )
+    parity_checklist.add_argument("--out", default=None, help="output path")
+    parity_status = parity_sub.add_parser("status", help="how much of the checklist is done")
+    parity_status.add_argument("--checklist", default=None, help="checklist path")
+    parity_diff = parity_sub.add_parser(
+        "diff", help="compare an old-system run summary with a harrier one"
+    )
+    parity_diff.add_argument("--old", required=True, help="old system run summary JSON")
+    parity_diff.add_argument("--new", required=True, help="harrier run summary JSON")
+    parity.set_defaults(func=_cmd_parity)
 
     demo_run = sub.add_parser("demo-run", help="exercise the run machinery (spec 006)")
     demo_run.add_argument("--steps", default="8", help="number of progress steps")

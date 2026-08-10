@@ -103,6 +103,18 @@ class DiscoveryOptions:
     wttj_files: list[str] = field(default_factory=list[str])
     scheduled: bool = False
     now: datetime | None = None
+    shadow: bool = False
+    """Dual-run mode (spec 022): dry-run semantics plus no paid source.
+
+    --dry-run alone still starts a billed Apify run and then discards the
+    result, which is inherited from the old orchestrator. That is tolerable
+    for a one-off preview and not for the cutover's dual-run period, which
+    runs discovery on a schedule for a week.
+    """
+
+    def __post_init__(self) -> None:
+        if self.shadow:
+            self.dry_run = True
 
 
 def _source_enabled(name: str, only_sources: frozenset[str]) -> bool:
@@ -229,10 +241,12 @@ def run_discovery(
             )
         report("remoteok", "done")
 
-    if _source_enabled("apify_linkedin", options.only_sources) and not is_demo_mode():
+    paid_allowed = not is_demo_mode() and not options.shadow
+    if _source_enabled("apify_linkedin", options.only_sources) and paid_allowed:
         # Apify is the one paid source and reaches the network outside the
-        # fixture seam, so the demo skips it rather than reporting a missing
-        # token as an error a stranger would read as a broken clone.
+        # fixture seam. The demo skips it rather than reporting a missing
+        # token as an error a stranger would read as a broken clone, and a
+        # shadow run skips it because it must be repeatable for free.
         apify_gate_open = not options.scheduled or apify_allowed_now(options.now)
         if apify_gate_open:
             count = scheduled_apify_count() if options.scheduled else options.apify_count

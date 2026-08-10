@@ -1,7 +1,7 @@
 ---
 spec: 021
 title: Demo mode, fixtures, public README
-status: in-progress
+status: shipped
 approved: yes
 milestone: M5
 depends: [005,006]
@@ -143,7 +143,7 @@ Two deviations from the stub's wording:
 - [x] the agent-executable part of the pre-publish checklist
       (docs/privacy-plan.md) is green, and the parts only a human can do
       are named as open
-- [ ] All gates green on PR
+- [x] All gates green on PR (PR #18)
 
 ## Proof / origin
 
