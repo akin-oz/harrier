@@ -12,24 +12,21 @@ depends: [011, 019]
 ## Problem
 
 Generated plists kill the wrong-path bug class; policy moves into the
-CLI (ADR-006). Two live defects in the old setup motivate this, both
-verified on this machine while drafting:
+CLI (ADR-006). Two defect classes in the old shell-and-plist setup
+motivate this:
 
-1. The committed launchd/*.plist templates point at
-   ~/Documents/projects/job-hunt-local while the repo lives at
-   ~/job-hunt-local. The installed copies were hand-corrected at some
-   point, so the committed templates and the installed reality have
-   drifted; the committed ones would silently reinstall the break.
+1. Hand-maintained plists carry absolute paths. A committed template
+   and its installed copy can drift, so the committed one reinstalls a
+   path that no longer resolves, and launchd reports only a generic
+   non-zero exit.
 2. Every scheduled job runs through a shell wrapper that sources .env
    with `set -a; . .env`. A value spanning a line break makes bash try
-   to execute the continuation as a command, which returns 127. The
-   daily digest has not logged a run since 2026-06-29 for exactly this
-   reason, while firing (and dying) at 20:30 nightly.
+   to execute the continuation as a command, which returns 127 and, with
+   `set -e`, aborts the job before it starts.
 
 Generated plists that invoke the CLI directly remove both classes: the
 path is resolved at install time, and there is no shell sourcing step
-because harrier reads .env in Python (its loader skips lines without an
-`=`, so a malformed line cannot abort a run).
+because harrier reads .env in Python.
 
 ## Scope
 
@@ -74,9 +71,11 @@ because harrier reads .env in Python (its loader skips lines without an
 
 ## Stated changes from the old code
 
-- No shell wrappers: plists invoke the CLI directly, so .env is read by
-  harrier's Python loader and a malformed line can no longer abort a
-  scheduled run.
+- No shell wrappers: plists invoke the CLI directly (proven by
+  test_rendered_plists_invoke_the_cli_without_a_shell), so .env is read
+  by harrier's Python loader, which skips a malformed line rather than
+  failing (proven by
+  test_malformed_env_line_does_not_break_the_python_loader).
 - Paths are resolved at install time from the actual repo location;
   neither the path nor the username is ever written into a committed
   file.
@@ -84,7 +83,7 @@ because harrier reads .env in Python (its loader skips lines without an
   --scheduled (already shipped in spec 011), not in shell.
 - Logs land under data/logs/ (never-in-git), not a repo-root logs/.
 - Status detects drift between the installed plist and the rendered
-  one, which is what would have caught defect 1 above.
+  one, which is what catches defect class 1 above.
 
 ## Acceptance criteria
 
@@ -101,13 +100,23 @@ because harrier reads .env in Python (its loader skips lines without an
       (test_status_detects_drift)
 - [ ] uninstall removes every plist it installed
       (test_uninstall_removes_plists)
-- [ ] a malformed cadence config fails with the job and field named
-      (test_invalid_schedule_config_is_rejected)
+- [ ] a malformed cadence config fails with the job and field named,
+      including boolean trigger values and duplicate job names
+      (test_invalid_schedule_config_is_rejected,
+      test_boolean_trigger_values_are_rejected,
+      test_duplicate_job_names_are_rejected)
+- [ ] job names and the label prefix cannot escape their directories
+      (test_identifiers_cannot_escape_their_directories)
+- [ ] a failed load or unload reaches the caller as a failure, and an
+      already-unloaded job still uninstalls cleanly
+      (test_load_failure_is_reported, test_unload_failure_keeps_the_plist)
+- [ ] a malformed .env line does not break harrier's loader
+      (test_malformed_env_line_does_not_break_the_python_loader)
 - [ ] All gates green on PR
 
 ## Proof / origin
 
-Old repo launchd/*.plist (including the stale-path defect),
+Old repo launchd/*.plist (including the stale-path defect class),
 scripts/run-all-intake.sh, run-daily-digest.sh, run-gmail-watch.sh;
 docs/adr/ADR-006-scheduling.md. Proving file:
 services/api/tests/test_schedule.py. Honest limitations: launchctl is

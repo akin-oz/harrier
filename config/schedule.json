@@ -1,5 +1,5 @@
 {
-  "_comment": "The cadence in one place (spec 020, ADR-006). Each job renders one launchd plist that invokes the harrier CLI directly: no shell wrapper, so .env is read by harrier's Python loader. Change a time here, then run `harrier schedule install`. Contains no personal data and no paths: the repo path, user, and interpreter are resolved at install time.",
+  "_comment": "The cadence in one place (spec 020, ADR-006). Each job renders one launchd plist that invokes the harrier CLI directly, with no shell wrapper (proven by test_rendered_plists_invoke_the_cli_without_a_shell). Change a time here, then run `harrier schedule install`. Contains no personal data and no paths: the repo path, user, and interpreter are resolved at install time.",
   "label_prefix": "dev.harrier",
   "jobs": [
     {

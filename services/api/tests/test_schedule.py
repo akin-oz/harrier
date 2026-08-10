@@ -187,11 +187,25 @@ def test_install_writes_three_plists_at_the_real_repo_path(env: dict[str, Any]) 
     for path in result.written:
         body = plistlib.loads(path.read_bytes())
         assert body["WorkingDirectory"] == str(env["root"])
-        # The rendered output must never carry a foreign home directory:
-        # the stale-path defect the old committed plists carried.
-        assert "/Users/akinoztorun/Documents" not in json.dumps(body, default=str)
+        # Nothing outside the resolved root leaks in: the stale-path defect
+        # class the old hand-maintained plists carried. Asserting no home
+        # directory at all keeps a real account name out of the fixture.
+        assert "/Users/" not in json.dumps(body, default=str)
     bootstraps = [call for call in launchctl.calls if call[0] == "bootstrap"]
     assert len(bootstraps) == 3
+
+
+def test_install_defaults_to_the_resolved_repo_root(tmp_path: Path) -> None:
+    # Without an override, install must resolve the real repo (spec 020);
+    # only the output directories are redirected.
+    result = install_schedule(
+        config_path=CONFIG,
+        agents_dir=tmp_path / "LaunchAgents",
+        log_directory=tmp_path / "logs",
+        launchctl=FakeLaunchctl(),
+    )
+    body = plistlib.loads(result.written[0].read_bytes())
+    assert body["WorkingDirectory"] == str(REPO_ROOT)
 
 
 def test_dry_run_writes_nothing(env: dict[str, Any]) -> None:
@@ -240,18 +254,192 @@ def test_status_reports_missing_when_not_installed(env: dict[str, Any]) -> None:
 def test_uninstall_removes_plists(env: dict[str, Any]) -> None:
     install_schedule(**env, launchctl=FakeLaunchctl())
     launchctl = FakeLaunchctl()
-    lines = uninstall_schedule(
+    result = uninstall_schedule(
         config_path=env["config_path"], agents_dir=env["agents_dir"], launchctl=launchctl
     )
-    assert len(lines) == 3
-    assert all("removed" in line for line in lines)
+    assert result.ok
+    assert len(result.removed) == 3
     assert list(env["agents_dir"].glob("*.plist")) == []
     assert all(call[0] == "bootout" for call in launchctl.calls)
     # A second uninstall is harmless.
     again = uninstall_schedule(
         config_path=env["config_path"], agents_dir=env["agents_dir"], launchctl=FakeLaunchctl()
     )
-    assert all("not installed" in line for line in again)
+    assert again.ok
+    assert all("not installed" in line for line in again.lines)
+
+
+def test_boolean_trigger_values_are_rejected(tmp_path: Path) -> None:
+    # A JSON boolean satisfies isinstance(x, int) and would render as a
+    # boolean plist value (review finding).
+    path = tmp_path / "bool.json"
+    path.write_text(
+        json.dumps(
+            {
+                "jobs": [
+                    {
+                        "name": "discovery",
+                        "command": ["discover"],
+                        "trigger": {"kind": "calendar", "times": [{"hour": True, "minute": 0}]},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ScheduleConfigError, match=r"hour must be 0-23"):
+        load_schedule(path)
+
+    interval = tmp_path / "bool-interval.json"
+    interval.write_text(
+        json.dumps(
+            {
+                "jobs": [
+                    {
+                        "name": "watch",
+                        "command": ["gmail-watch"],
+                        "trigger": {"kind": "interval", "seconds": True},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ScheduleConfigError, match=r"seconds must be"):
+        load_schedule(interval)
+
+
+def test_duplicate_job_names_are_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "dupe.json"
+    job: dict[str, Any] = {
+        "name": "discovery",
+        "command": ["discover"],
+        "trigger": {"kind": "interval", "seconds": 60},
+    }
+    path.write_text(json.dumps({"jobs": [job, dict(job)]}), encoding="utf-8")
+    with pytest.raises(ScheduleConfigError, match=r"duplicate job name"):
+        load_schedule(path)
+
+
+@pytest.mark.parametrize(
+    "bad_name",
+    ["../escape", "nested/name", "/absolute", ".", ".."],
+)
+def test_identifiers_cannot_escape_their_directories(tmp_path: Path, bad_name: str) -> None:
+    path = tmp_path / "escape.json"
+    path.write_text(
+        json.dumps(
+            {
+                "jobs": [
+                    {
+                        "name": bad_name,
+                        "command": ["discover"],
+                        "trigger": {"kind": "interval", "seconds": 60},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ScheduleConfigError, match=r"name must not"):
+        load_schedule(path)
+
+    prefix_path = tmp_path / "prefix.json"
+    prefix_path.write_text(
+        json.dumps(
+            {
+                "label_prefix": "/etc/cron.d",
+                "jobs": [
+                    {
+                        "name": "discovery",
+                        "command": ["discover"],
+                        "trigger": {"kind": "interval", "seconds": 60},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ScheduleConfigError, match=r"label_prefix must not"):
+        load_schedule(prefix_path)
+
+
+def test_rendered_paths_stay_inside_their_directories(env: dict[str, Any]) -> None:
+    result = install_schedule(**env, launchctl=FakeLaunchctl())
+    for path in result.written:
+        assert path.parent == env["agents_dir"]
+        body = plistlib.loads(path.read_bytes())
+        for key in ("StandardOutPath", "StandardErrorPath"):
+            assert Path(body[key]).parent == env["log_directory"]
+
+
+def test_malformed_env_line_does_not_break_the_python_loader(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The defect class the shell wrapper had: a value spanning a line
+    break. Harrier's loader skips the continuation instead of failing."""
+    from harrier_cli.main import load_project_env
+
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "GOOD_ONE=first",
+                "BROKEN_TOKEN=starts-here",
+                "continuation-fragment",
+                "GOOD_TWO=second",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    for name in ("GOOD_ONE", "GOOD_TWO", "BROKEN_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    load_project_env(env_file)
+    import os
+
+    assert os.environ["GOOD_ONE"] == "first"
+    # The line after the malformed one still loads: no abort.
+    assert os.environ["GOOD_TWO"] == "second"
+    assert os.environ["BROKEN_TOKEN"] == "starts-here"
+
+
+def test_unload_failure_keeps_the_plist(env: dict[str, Any]) -> None:
+    install_schedule(**env, launchctl=FakeLaunchctl())
+
+    class RefusingLaunchctl(FakeLaunchctl):
+        def __call__(self, args: list[str]) -> tuple[int, str, str]:
+            self.calls.append(args)
+            return 9, "", "Boot-out failed: 9: Bad file descriptor"
+
+    result = uninstall_schedule(
+        config_path=env["config_path"],
+        agents_dir=env["agents_dir"],
+        launchctl=RefusingLaunchctl(),
+    )
+    assert not result.ok
+    assert result.removed == []
+    # A job that will not unload keeps its plist rather than running with
+    # no on-disk definition (review finding).
+    assert len(list(env["agents_dir"].glob("*.plist"))) == 3
+    assert all("unload failed" in line for line in result.lines)
+
+
+def test_not_loaded_job_uninstalls_cleanly(env: dict[str, Any]) -> None:
+    install_schedule(**env, launchctl=FakeLaunchctl())
+
+    class NotLoadedLaunchctl(FakeLaunchctl):
+        def __call__(self, args: list[str]) -> tuple[int, str, str]:
+            self.calls.append(args)
+            return 3, "", "Boot-out failed: 3: No such process"
+
+    result = uninstall_schedule(
+        config_path=env["config_path"],
+        agents_dir=env["agents_dir"],
+        launchctl=NotLoadedLaunchctl(),
+    )
+    assert result.ok
+    assert len(result.removed) == 3
 
 
 def test_load_failure_is_reported(env: dict[str, Any]) -> None:
@@ -265,4 +453,7 @@ def test_load_failure_is_reported(env: dict[str, Any]) -> None:
     result = install_schedule(**env, launchctl=FailingLaunchctl())
     assert len(result.written) == 3
     assert result.loaded == []
+    # The failure must reach the caller, not just the printed lines.
+    assert not result.ok
+    assert len(result.failures) == 3
     assert any("load failed" in line for line in result.lines)

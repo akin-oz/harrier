@@ -10,6 +10,7 @@ sourcing .env, so a malformed .env line cannot abort a scheduled run.
 from __future__ import annotations
 
 import json
+import os
 import plistlib
 import subprocess
 import sys
@@ -30,6 +31,30 @@ Launchctl = Callable[[list[str]], tuple[int, str, str]]
 
 class ScheduleConfigError(ValueError):
     pass
+
+
+def _validate_identifier(value: str, field: str, context: str) -> str:
+    """Names and label prefixes become plist and log path components, so a
+    separator, dot segment, or absolute value could escape the target
+    directory (review finding)."""
+    text = value.strip()
+    if not text:
+        raise ScheduleConfigError(f"{context}: missing {field}")
+    if text.startswith("/") or "\\" in text:
+        raise ScheduleConfigError(f"{context}: {field} must not be an absolute path: {text!r}")
+    if "/" in text or os.sep in text:
+        raise ScheduleConfigError(f"{context}: {field} must not contain a path separator: {text!r}")
+    if text in {".", ".."} or any(part in {".", ".."} for part in text.split(".")):
+        raise ScheduleConfigError(f"{context}: {field} must not contain a dot segment: {text!r}")
+    return text
+
+
+def _require_int(value: object, field: str, context: str, *, low: int, high: int) -> int:
+    """A JSON boolean satisfies isinstance(x, int) and would render as a
+    boolean plist value, so the type is checked exactly (review finding)."""
+    if type(value) is not int or not low <= value <= high:
+        raise ScheduleConfigError(f"{context}: {field} must be {low}-{high}, got {value!r}")
+    return value
 
 
 @dataclass(frozen=True)
@@ -73,7 +98,31 @@ class JobStatus:
 class InstallResult:
     written: list[Path] = field(default_factory=list[Path])
     loaded: list[str] = field(default_factory=list[str])
+    failures: list[str] = field(default_factory=list[str])
     lines: list[str] = field(default_factory=list[str])
+
+    @property
+    def ok(self) -> bool:
+        return not self.failures
+
+
+@dataclass
+class UninstallResult:
+    removed: list[Path] = field(default_factory=list[Path])
+    failures: list[str] = field(default_factory=list[str])
+    lines: list[str] = field(default_factory=list[str])
+
+    @property
+    def ok(self) -> bool:
+        return not self.failures
+
+
+# launchctl bootout on a job that is not loaded; tolerated everywhere.
+_NOT_LOADED_CODES = {3, 113}
+
+
+def _is_not_loaded(code: int, stderr: str) -> bool:
+    return code in _NOT_LOADED_CODES or "no such process" in stderr.lower()
 
 
 def default_launchctl(args: list[str]) -> tuple[int, str, str]:
@@ -104,9 +153,7 @@ def _parse_job(raw: object, index: int) -> ScheduleJob:
     if not isinstance(raw, dict):
         raise ScheduleConfigError(f"{context}: not an object")
     job = cast("dict[str, Any]", raw)
-    name = str(job.get("name") or "").strip()
-    if not name:
-        raise ScheduleConfigError(f"{context}: missing name")
+    name = _validate_identifier(str(job.get("name") or ""), "name", context)
     command_raw = job.get("command")
     if not isinstance(command_raw, list) or not command_raw:
         raise ScheduleConfigError(f"{context} ({name}): missing command")
@@ -125,22 +172,18 @@ def _parse_job(raw: object, index: int) -> ScheduleJob:
             if not isinstance(entry, dict):
                 raise ScheduleConfigError(f"{context} ({name}): a time is not an object")
             time_entry = cast("dict[str, Any]", entry)
-            hour = time_entry.get("hour")
-            minute = time_entry.get("minute", 0)
-            if not isinstance(hour, int) or not 0 <= hour <= 23:
-                raise ScheduleConfigError(f"{context} ({name}): hour must be 0-23, got {hour!r}")
-            if not isinstance(minute, int) or not 0 <= minute <= 59:
-                raise ScheduleConfigError(
-                    f"{context} ({name}): minute must be 0-59, got {minute!r}"
-                )
+            hour = _require_int(
+                time_entry.get("hour"), "hour", f"{context} ({name})", low=0, high=23
+            )
+            minute = _require_int(
+                time_entry.get("minute", 0), "minute", f"{context} ({name})", low=0, high=59
+            )
             times.append(CalendarTime(hour=hour, minute=minute))
         return ScheduleJob(name=name, command=command, kind=kind, times=tuple(times))
     if kind == "interval":
-        seconds = trigger.get("seconds")
-        if not isinstance(seconds, int) or seconds <= 0:
-            raise ScheduleConfigError(
-                f"{context} ({name}): interval seconds must be a positive integer, got {seconds!r}"
-            )
+        seconds = _require_int(
+            trigger.get("seconds"), "seconds", f"{context} ({name})", low=1, high=86400
+        )
         return ScheduleJob(name=name, command=command, kind=kind, seconds=seconds)
     raise ScheduleConfigError(f"{context} ({name}): unknown trigger kind {kind!r}")
 
@@ -156,11 +199,20 @@ def load_schedule(path: Path | None = None) -> tuple[str, list[ScheduleJob]]:
     if not isinstance(parsed, dict):
         raise ScheduleConfigError(f"{config_path} is not an object")
     config = cast("dict[str, Any]", parsed)
-    prefix = str(config.get("label_prefix") or DEFAULT_LABEL_PREFIX)
+    prefix = _validate_identifier(
+        str(config.get("label_prefix") or DEFAULT_LABEL_PREFIX), "label_prefix", str(config_path)
+    )
     jobs_raw = config.get("jobs")
     if not isinstance(jobs_raw, list) or not jobs_raw:
         raise ScheduleConfigError(f"{config_path}: no jobs")
     jobs = [_parse_job(item, index) for index, item in enumerate(cast("list[object]", jobs_raw))]
+    # A duplicate name would overwrite one plist and make status report two
+    # jobs for one loaded service (review finding).
+    seen: set[str] = set()
+    for job in jobs:
+        if job.name in seen:
+            raise ScheduleConfigError(f"{config_path}: duplicate job name {job.name!r}")
+        seen.add(job.name)
     return prefix, jobs
 
 
@@ -270,7 +322,11 @@ def install_schedule(
         launchctl(["bootout", f"gui/{_uid()}/{label}"])
         code, _stdout, stderr = launchctl(["bootstrap", f"gui/{_uid()}", str(path)])
         if code != 0:
-            result.lines.append(f"load failed for {label}: {stderr.strip()}")
+            detail = stderr.strip() or f"exit {code}"
+            # A failed load must reach the caller's exit status, not just
+            # the printed lines (review finding).
+            result.failures.append(f"{label}: load failed: {detail}")
+            result.lines.append(f"load failed for {label}: {detail}")
         else:
             result.loaded.append(label)
             result.lines.append(f"installed and loaded {label}")
@@ -338,17 +394,26 @@ def uninstall_schedule(
     config_path: Path | None = None,
     agents_dir: Path | None = None,
     launchctl: Launchctl = default_launchctl,
-) -> list[str]:
+) -> UninstallResult:
     prefix, jobs = load_schedule(config_path)
     agents = agents_dir if agents_dir is not None else launch_agents_dir()
-    lines: list[str] = []
+    result = UninstallResult()
     for job in jobs:
         label = job.label(prefix)
-        launchctl(["bootout", f"gui/{_uid()}/{label}"])
+        code, _stdout, stderr = launchctl(["bootout", f"gui/{_uid()}/{label}"])
+        unloaded = code == 0 or _is_not_loaded(code, stderr)
+        if not unloaded:
+            # Removing the plist while the job stays loaded would leave it
+            # running with no on-disk definition (review finding).
+            detail = stderr.strip() or f"exit {code}"
+            result.failures.append(f"{label}: unload failed: {detail}")
+            result.lines.append(f"unload failed for {label}: {detail}; plist kept")
+            continue
         path = _plist_path(agents, label)
         if path.exists():
             path.unlink()
-            lines.append(f"removed {path}")
+            result.removed.append(path)
+            result.lines.append(f"removed {path}")
         else:
-            lines.append(f"not installed: {label}")
-    return lines
+            result.lines.append(f"not installed: {label}")
+    return result

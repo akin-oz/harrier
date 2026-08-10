@@ -623,12 +623,19 @@ def _cmd_schedule(args: argparse.Namespace) -> int:
             for line in result.lines:
                 print(line)
             print(f"written={len(result.written)} loaded={len(result.loaded)}")
+            if not result.ok:
+                print(f"{len(result.failures)} job(s) failed to load", file=sys.stderr)
+                return 1
         elif args.schedule_command == "status":
             for status in schedule_status():
                 print(status.line())
         else:
-            for line in uninstall_schedule():
+            uninstalled = uninstall_schedule()
+            for line in uninstalled.lines:
                 print(line)
+            if not uninstalled.ok:
+                print(f"{len(uninstalled.failures)} job(s) failed to unload", file=sys.stderr)
+                return 1
     except ScheduleConfigError as error:
         print(f"schedule failed: {error}", file=sys.stderr)
         return 1
