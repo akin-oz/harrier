@@ -42,8 +42,13 @@ either shipped or in progress; `ls specs/` and the frontmatter are the record,
 not this paragraph.
 - **M5 (added)** user configuration in the database: 023 (ADR-009; approved separately)
 
-M5 status: 020, 021, 022 and 023 shipped. 024, the cutover, is the last one
-and is the only spec awaiting approval.
+M5 status: 020, 021, 022, 023 and 024 all shipped. Every spec in the backlog
+is delivered.
+
+That does not mean the cutover happened. Spec 024 delivered the tooling for it;
+the event itself is an operational step whose criteria are listed separately in
+that spec and are Akin's to satisfy. `harrier cutover preflight` reports where
+it stands.
 
 Spec 022 was split while being drafted: verification (022) is read-only and
 repeatable, cutover (024) is one irreversible sitting. They need different gates.
