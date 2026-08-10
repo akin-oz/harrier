@@ -1,7 +1,7 @@
 ---
 spec: 026
 title: Web app shell and styling
-status: in-progress
+status: shipped
 approved: yes
 milestone: M6
 depends: [005, 006, 021]
@@ -76,47 +76,45 @@ Each names its proof. Automated ones are vitest symbols in
 apps/web/src; browser checks are verified at 1280x800 and 720x800, light and
 dark, and are recorded in the PR rather than by a test.
 
-- [ ] with a run holding thousands of log lines, the first tracker row stays
+- [x] with a run holding thousands of log lines, the first tracker row stays
       within the first 900 vertical pixels (browser check)
-- [ ] the run panel renders collapsed on first paint, showing run id, state
+- [x] the run panel renders collapsed on first paint, showing run id, state
       and last line, and expands and collapses by click and by keyboard
       (RunPanel.test.tsx::"the log is collapsed on first paint and the
       toggle reports its state")
-- [ ] the toggle is a button carrying `aria-expanded` that matches its state
+- [x] the toggle is a button carrying `aria-expanded` that matches its state
       (same test)
-- [ ] lines arriving while collapsed update the last line and leave the
+- [x] lines arriving while collapsed update the last line and leave the
       panel collapsed (RunPanel.test.tsx::"lines arriving while collapsed
       update the visible last line without expanding")
-- [ ] a `failed` run opens its log without being asked
+- [x] a `failed` run opens its log without being asked
       (RunPanel.test.tsx::"a failed run opens the log without being asked")
-- [ ] a started run with no lines yet says it is waiting
+- [x] a started run with no lines yet says it is waiting
       (RunPanel.test.tsx::"a started run with no lines yet says it is
       waiting")
-- [ ] a dropped log stream is stated rather than looking stuck
+- [x] a dropped log stream is stated rather than looking stuck
       (RunPanel.test.tsx::"a dropped stream says so instead of looking
       stuck")
-- [ ] zero rows renders a message, and the no-jobs and no-matches cases
+- [x] zero rows renders a message, and the no-jobs and no-matches cases
       differ (JobTable.test.tsx::"empty list renders the message the page
       supplied", and TrackerPage supplies which one)
-- [ ] a failed jobs request renders a stated error and a retry control
+- [x] a failed jobs request renders a stated error and a retry control
       (browser check; the error path was exercised live during this work)
-- [ ] open rows outrank closed ones, and score orders within each group
+- [x] open rows outrank closed ones, and score orders within each group
       (JobTable.test.tsx::"open rows outrank closed ones however they
       scored", ::"rows are ordered by score, highest first")
-- [ ] a blank score reads as unknown rather than zero
+- [x] a blank score reads as unknown rather than zero
       (JobTable.test.tsx::"a blank score renders as unknown rather than
       zero")
-- [ ] status carries a text label rather than colour alone
+- [x] status carries a text label rather than colour alone
       (JobTable.test.tsx::"status carries a text label, not colour alone")
-- [ ] score renders with tabular numerals and right alignment (browser check)
-- [ ] body text meets 4.5:1 against its background in both schemes, and
+- [x] score renders with tabular numerals and right alignment (browser check)
+- [x] body text meets 4.5:1 against its background in both schemes, and
       every interactive element has a visible focus style (browser check)
-- [ ] no horizontal scroll at 720px width with the longest real-shaped
+- [x] no horizontal scroll at 720px width with the longest real-shaped
       location string (browser check)
-- [ ] the generated contract is unchanged and existing web tests pass
-- [ ] All gates green on PR
-
-## Findings from running it against a populated tracker
+- [x] the generated contract is unchanged and existing web tests pass
+- [x] All gates green: `just check`, run by the CI workflow. History: PR #25.it against a populated tracker
 
 Two decisions read well against a handful of sample rows and failed against
 a tracker that has been accumulating for months. Neither observation is
