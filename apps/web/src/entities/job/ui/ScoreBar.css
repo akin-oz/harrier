@@ -1,0 +1,44 @@
+.score-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-variant-numeric: tabular-nums;
+}
+.score-bar--unknown {
+  color: var(--color-text-tertiary);
+}
+.score-bar__track {
+  position: relative;
+  width: 64px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--color-bg-sunken);
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+}
+.score-bar__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--color-text-tertiary);
+  border-radius: 3px 0 0 3px;
+}
+.score-bar--pass .score-bar__fill {
+  background: var(--color-accent);
+}
+.score-bar__cutoff {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 1px;
+  background: var(--color-border-strong);
+}
+.score-bar__value {
+  width: 26px;
+  text-align: right;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+.score-bar--pass .score-bar__value {
+  color: var(--color-text);
+  font-weight: 600;
+}

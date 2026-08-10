@@ -1,0 +1,107 @@
+:root {
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", monospace;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+
+  --color-bg: oklch(99% 0.002 90);
+  --color-bg-raised: oklch(100% 0 0);
+  --color-bg-sunken: oklch(97% 0.002 90);
+  --color-border: oklch(88% 0.004 90);
+  --color-border-strong: oklch(78% 0.004 90);
+  --color-text: oklch(22% 0.006 90);
+  --color-text-secondary: oklch(45% 0.006 90);
+  --color-text-tertiary: oklch(60% 0.006 90);
+  --color-accent: oklch(55% 0.14 250);
+  --color-accent-text: oklch(30% 0.1 250);
+  --color-focus-ring: oklch(55% 0.14 250);
+  --color-danger: oklch(50% 0.16 20);
+  --color-danger-bg: oklch(94% 0.03 20);
+  --color-success: oklch(50% 0.12 150);
+
+  --status-prospect-fg: oklch(40% 0.1 250);
+  --status-prospect-bg: oklch(94% 0.03 250);
+  --status-shortlisted-fg: oklch(40% 0.1 200);
+  --status-shortlisted-bg: oklch(94% 0.03 200);
+  --status-tailored-fg: oklch(40% 0.1 300);
+  --status-tailored-bg: oklch(94% 0.03 300);
+  --status-applied-fg: oklch(42% 0.12 55);
+  --status-applied-bg: oklch(94% 0.04 55);
+  --status-interviewing-fg: oklch(38% 0.1 155);
+  --status-interviewing-bg: oklch(94% 0.035 155);
+  --status-rejected-fg: oklch(45% 0.02 30);
+  --status-rejected-bg: oklch(95% 0.01 30);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: oklch(19% 0.006 260);
+    --color-bg-raised: oklch(23% 0.006 260);
+    --color-bg-sunken: oklch(16% 0.006 260);
+    --color-border: oklch(32% 0.008 260);
+    --color-border-strong: oklch(42% 0.008 260);
+    --color-text: oklch(93% 0.004 260);
+    --color-text-secondary: oklch(75% 0.006 260);
+    --color-text-tertiary: oklch(60% 0.006 260);
+    --color-accent: oklch(72% 0.14 250);
+    --color-accent-text: oklch(80% 0.1 250);
+    --color-focus-ring: oklch(72% 0.14 250);
+    --color-danger: oklch(68% 0.16 20);
+    --color-danger-bg: oklch(28% 0.05 20);
+    --color-success: oklch(68% 0.12 150);
+
+    --status-prospect-fg: oklch(78% 0.1 250);
+    --status-prospect-bg: oklch(28% 0.05 250);
+    --status-shortlisted-fg: oklch(78% 0.1 200);
+    --status-shortlisted-bg: oklch(28% 0.05 200);
+    --status-tailored-fg: oklch(78% 0.1 300);
+    --status-tailored-bg: oklch(28% 0.05 300);
+    --status-applied-fg: oklch(78% 0.12 55);
+    --status-applied-bg: oklch(30% 0.06 55);
+    --status-interviewing-fg: oklch(75% 0.1 155);
+    --status-interviewing-bg: oklch(27% 0.05 155);
+    --status-rejected-fg: oklch(65% 0.02 30);
+    --status-rejected-bg: oklch(26% 0.01 30);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+}
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+a {
+  color: var(--color-accent-text);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+button {
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+table {
+  font-variant-numeric: tabular-nums;
+}

@@ -13,7 +13,11 @@ from harrier_api.demo import demo_db_path, is_demo_mode
 
 
 def get_conn() -> Iterator[sqlite3.Connection]:
-    conn = connect(demo_db_path() if is_demo_mode() else None)
+    # same_thread=False: FastAPI runs this dependency and the endpoint on
+    # different threadpool threads, so sqlite3's same-thread check fires
+    # intermittently under concurrent requests even though this connection
+    # only ever serves one request and is closed below.
+    conn = connect(demo_db_path() if is_demo_mode() else None, same_thread=False)
     try:
         yield conn
     finally:

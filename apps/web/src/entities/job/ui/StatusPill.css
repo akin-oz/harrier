@@ -1,0 +1,66 @@
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px var(--space-2) 2px 6px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  line-height: 1.6;
+}
+.status-pill__mark {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  background: currentColor;
+}
+/* Each stage gets a distinct mark shape as well as a colour, so the pipeline
+   reads with a colour vision deficiency and on a black-and-white printout. */
+.status-pill--prospect {
+  color: var(--status-prospect-fg);
+  background: var(--status-prospect-bg);
+}
+.status-pill--prospect .status-pill__mark {
+  border-radius: 50%;
+  background: transparent;
+  border: 1.5px solid currentColor;
+}
+.status-pill--shortlisted {
+  color: var(--status-shortlisted-fg);
+  background: var(--status-shortlisted-bg);
+}
+.status-pill--shortlisted .status-pill__mark {
+  border-radius: 50%;
+}
+.status-pill--tailored_cv_requested {
+  color: var(--status-tailored-fg);
+  background: var(--status-tailored-bg);
+}
+.status-pill--tailored_cv_requested .status-pill__mark {
+  border-radius: 1px;
+}
+.status-pill--applied {
+  color: var(--status-applied-fg);
+  background: var(--status-applied-bg);
+}
+.status-pill--applied .status-pill__mark {
+  clip-path: polygon(50% 0, 0 100%, 100% 100%);
+}
+.status-pill--interviewing {
+  color: var(--status-interviewing-fg);
+  background: var(--status-interviewing-bg);
+}
+.status-pill--interviewing .status-pill__mark {
+  transform: rotate(45deg);
+  border-radius: 1px;
+}
+.status-pill--rejected {
+  color: var(--status-rejected-fg);
+  background: var(--status-rejected-bg);
+  font-weight: 500;
+}
+.status-pill--rejected .status-pill__mark {
+  border-radius: 1px;
+  opacity: 0.6;
+}

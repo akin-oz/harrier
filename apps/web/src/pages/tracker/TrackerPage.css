@@ -1,0 +1,107 @@
+.tracker-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.tracker-page__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.tracker-page__heading {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.tracker-page__search {
+  flex: 1;
+  max-width: 320px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-bg-raised);
+  color: var(--color-text);
+  font-size: 13px;
+}
+.tracker-page__filters {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.tracker-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-raised);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+}
+.tracker-chip--active {
+  border-color: var(--color-accent);
+  color: var(--color-text);
+  background: var(--color-bg-sunken);
+}
+.tracker-chip__count {
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.tracker-chip--active .tracker-chip__count {
+  color: var(--color-accent-text);
+}
+.tracker-page__skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.tracker-page__skeleton-row {
+  height: 36px;
+  background: linear-gradient(
+    90deg,
+    var(--color-bg-sunken) 25%,
+    var(--color-bg-raised) 37%,
+    var(--color-bg-sunken) 63%
+  );
+  background-size: 400% 100%;
+  animation: tracker-shimmer 1.4s ease infinite;
+}
+@keyframes tracker-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: 0 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tracker-page__skeleton-row {
+    animation: none;
+  }
+}
+.tracker-page__error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  color: var(--color-danger);
+  background: var(--color-danger-bg);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  margin: 0;
+}
+.tracker-page__retry {
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid currentColor;
+  background: none;
+  color: inherit;
+  font-weight: 500;
+}

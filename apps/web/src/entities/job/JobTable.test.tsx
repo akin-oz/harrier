@@ -1,8 +1,12 @@
-import { render, screen } from "@testing-library/react";
-import { expect, test } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, expect, test } from "vitest";
 
 import { JobTable } from "./JobTable";
 import type { Job } from "./types";
+
+// vitest globals are off, so RTL never auto-cleans: without this the DOM
+// accumulates rows across tests and row-order assertions read stale renders.
+afterEach(cleanup);
 
 function makeJob(overrides: Partial<Job>): Job {
   return {
@@ -45,6 +49,7 @@ test("renders one row per job with a titled link", () => {
   render(
     <JobTable
       jobs={[makeJob({}), makeJob({ id: 2, company: "Beta", title: "Product Engineer", url: "" })]}
+      emptyMessage="No jobs match."
     />,
   );
   expect(screen.getByRole("link", { name: "Senior Frontend Engineer" })).toBeDefined();
@@ -52,7 +57,37 @@ test("renders one row per job with a titled link", () => {
   expect(screen.getAllByRole("row")).toHaveLength(3);
 });
 
-test("empty list renders the empty message", () => {
-  render(<JobTable jobs={[]} />);
-  expect(screen.getByText("No jobs match.")).toBeDefined();
+test("empty list renders the message the page supplied", () => {
+  render(<JobTable jobs={[]} emptyMessage="No jobs yet. Run discovery to find some." />);
+  expect(screen.getByText("No jobs yet. Run discovery to find some.")).toBeDefined();
+});
+
+test("rows are ordered by score, highest first", () => {
+  // Answers "which of these is best" without a click; the API returns
+  // insertion order (spec 026).
+  render(
+    <JobTable
+      jobs={[
+        makeJob({ id: 1, company: "Low", score: "60" }),
+        makeJob({ id: 2, company: "High", score: "110" }),
+        makeJob({ id: 3, company: "Mid", score: "85" }),
+      ]}
+      emptyMessage="none"
+    />,
+  );
+  const companies = screen
+    .getAllByRole("row")
+    .slice(1)
+    .map((row) => row.querySelectorAll("td")[1]?.textContent);
+  expect(companies).toEqual(["High", "Mid", "Low"]);
+});
+
+test("a blank score renders as unknown rather than zero", () => {
+  render(<JobTable jobs={[makeJob({ score: "", fit_score: "" })]} emptyMessage="none" />);
+  expect(screen.getByLabelText("no score")).toBeDefined();
+});
+
+test("status carries a text label, not colour alone", () => {
+  render(<JobTable jobs={[makeJob({ status: "tailored_cv_requested" })]} emptyMessage="none" />);
+  expect(screen.getByText("CV requested")).toBeDefined();
 });

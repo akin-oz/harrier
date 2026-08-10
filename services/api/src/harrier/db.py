@@ -27,11 +27,20 @@ def default_db_path() -> Path:
     return data_dir() / DB_FILENAME
 
 
-def connect(db_path: Path | None = None) -> sqlite3.Connection:
-    """Open the database, creating the directory and schema if needed."""
+def connect(db_path: Path | None = None, *, same_thread: bool = True) -> sqlite3.Connection:
+    """Open the database, creating the directory and schema if needed.
+
+    same_thread=False relaxes sqlite3's own check that a connection is used
+    from the thread that made it. Only the API needs it, and only because
+    FastAPI runs a sync dependency and the sync endpoint it feeds on
+    different threadpool threads: the connection is handed between them, but
+    never used by two at once, since each request opens and closes its own
+    (harrier_api/deps.py, proven by test_api_jobs.py::
+    test_concurrent_requests_do_not_trip_the_sqlite_thread_check).
+    """
     path = db_path if db_path is not None else default_db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, check_same_thread=same_thread)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")

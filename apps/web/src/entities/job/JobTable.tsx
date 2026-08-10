@@ -1,45 +1,95 @@
-import type { Job } from "./types";
+import { useMemo } from "react";
 
-export function JobTable({ jobs }: { jobs: readonly Job[] }) {
-  if (jobs.length === 0) {
-    return <p>No jobs match.</p>;
+import { ScoreBar } from "./ui/ScoreBar";
+import { StatusPill } from "./ui/StatusPill";
+import type { Job } from "./types";
+import "./JobTable.css";
+
+// score and fit_score are strings in the generated contract, and either can
+// be blank on a manually added row. Parse defensively rather than trusting
+// something that merely looks like a number.
+function parseScore(job: Job): number | null {
+  const raw = job.score || job.fit_score;
+  if (raw === "") {
+    return null;
   }
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+export function JobTable({ jobs, emptyMessage }: { jobs: readonly Job[]; emptyMessage: string }) {
+  // Open rows first, then by score. Score alone looked right against sample
+  // data and was wrong against a real tracker: with 638 of 708 rows rejected,
+  // the top 40 by score were 33 rejected and 7 applied, so the first screen
+  // showed nothing that needed a decision. A rejected row is closed and
+  // should not outrank an open one however well it once scored.
+  const rows = useMemo(
+    () =>
+      [...jobs].sort((a, b) => {
+        const closedA = a.status === "rejected" ? 1 : 0;
+        const closedB = b.status === "rejected" ? 1 : 0;
+        if (closedA !== closedB) {
+          return closedA - closedB;
+        }
+        return (parseScore(b) ?? -1) - (parseScore(a) ?? -1);
+      }),
+    [jobs],
+  );
+
+  if (rows.length === 0) {
+    return <p className="job-table-empty">{emptyMessage}</p>;
+  }
+
   return (
-    <table>
-      <thead>
-        <tr>
-          <th>Company</th>
-          <th>Title</th>
-          <th>Location</th>
-          <th>Status</th>
-          <th>Score</th>
-          <th>Source</th>
-          <th>Added</th>
-          <th>Next action</th>
-        </tr>
-      </thead>
-      <tbody>
-        {jobs.map((job) => (
-          <tr key={job.id}>
-            <td>{job.company}</td>
-            <td>
-              {job.url ? (
-                <a href={job.url} target="_blank" rel="noreferrer">
-                  {job.title}
-                </a>
-              ) : (
-                job.title
-              )}
-            </td>
-            <td>{job.location}</td>
-            <td>{job.status}</td>
-            <td>{job.score || job.fit_score}</td>
-            <td>{job.source}</td>
-            <td>{job.added_at}</td>
-            <td>{job.next_action}</td>
+    <div className="job-table-scroll">
+      <table className="job-table">
+        <thead>
+          <tr>
+            <th scope="col">Status</th>
+            <th scope="col">Company</th>
+            <th scope="col">Title</th>
+            <th scope="col" className="job-table__num">
+              Score
+            </th>
+            <th scope="col">Next action</th>
+            <th scope="col">Location</th>
+            <th scope="col">Source</th>
+            <th scope="col" className="job-table__num">
+              Added
+            </th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {rows.map((job) => (
+            <tr key={job.id}>
+              <td>
+                <StatusPill status={job.status} />
+              </td>
+              <td className="job-table__company">{job.company}</td>
+              <td className="job-table__title" title={job.title}>
+                {job.url ? (
+                  <a href={job.url} target="_blank" rel="noreferrer">
+                    {job.title}
+                  </a>
+                ) : (
+                  <span>{job.title}</span>
+                )}
+              </td>
+              <td className="job-table__num">
+                <ScoreBar score={parseScore(job)} />
+              </td>
+              <td className="job-table__next-action" title={job.next_action}>
+                <span className="job-table__clamp">{job.next_action}</span>
+              </td>
+              <td className="job-table__location" title={job.location}>
+                {job.location}
+              </td>
+              <td className="job-table__muted">{job.source}</td>
+              <td className="job-table__muted job-table__num">{job.added_at}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

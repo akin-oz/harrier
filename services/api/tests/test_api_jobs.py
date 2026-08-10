@@ -103,3 +103,24 @@ def test_demo_mode_serves_fixture_rows(monkeypatch: pytest.MonkeyPatch) -> None:
         assert len(body) == len(fixture)
         assert {job["company"] for job in body} == {entry["company"] for entry in fixture}
         assert demo_client.get("/health").json()["demo"] is True
+
+
+def test_concurrent_requests_do_not_trip_the_sqlite_thread_check(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """FastAPI runs a sync dependency and its endpoint on different
+    threadpool threads, so a connection made in one is used in the other.
+    Under concurrent requests that raised sqlite3.ProgrammingError and the
+    route 500'd. It surfaced only once the web app started fetching /health
+    and /jobs at the same time (spec 026)."""
+    import concurrent.futures
+
+    _seed(tmp_path)
+
+    def hit(path: str) -> int:
+        return client.get(path).status_code
+
+    paths = ["/jobs", "/health"] * 12
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        codes = list(pool.map(hit, paths))
+    assert set(codes) == {200}, codes

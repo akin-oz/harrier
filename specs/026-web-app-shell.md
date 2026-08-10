@@ -1,7 +1,7 @@
 ---
 spec: 026
 title: Web app shell and styling
-status: accepted
+status: in-progress
 approved: yes
 milestone: M6
 depends: [005, 006, 021]
@@ -93,6 +93,24 @@ verified at 1280x800 and at 720x800 in the preview browser, light and dark.
       location string (browser check)
 - [ ] the generated contract is unchanged and existing web tests pass
 - [ ] All gates green on PR
+
+## Findings from running it against real data
+
+Both were invisible against sample data and obvious against 708 real rows:
+
+- Sorting by score alone put 33 rejected and 7 applied rows in the top 40,
+  and zero prospects, because 638 of 708 rows are rejected. The first screen
+  showed nothing that needed a decision. Rows now rank open before closed,
+  then by score.
+- Real titles reach 256 characters. Left to wrap, one row grew to four lines
+  and took the density with it. Title and next action clamp to two lines
+  with the full text in a tooltip.
+
+One defect surfaced that is not presentational and is fixed under spec 005:
+the header's health request made the app fetch twice concurrently, and
+`/jobs` began returning 500 with `sqlite3.ProgrammingError`. FastAPI runs a
+sync dependency and its endpoint on different threadpool threads, so the
+per-request connection was created in one and used in the other.
 
 ## Proof / origin
 
