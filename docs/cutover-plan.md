@@ -37,7 +37,11 @@ populations: the old one suppresses every posting it has seen before, a fresh
 harrier store suppresses none, and every downstream count differs for a reason
 that has nothing to do with screening. `harrier parity diff` detects the
 asymmetry and declines to compare rather than reporting the artifact as
-findings (spec 022). This was originally listed as a phase 3 step, which made
+findings, proven by
+`services/api/tests/test_parity.py::test_seen_state_asymmetry_blocks_the_screening_comparison`
+(specified in spec 022). Honest limitation: the diff detects that the runs
+are incomparable, which is not the same as verifying that the migration
+afterwards was correct; that is a row-count check in phase 3. This was originally listed as a phase 3 step, which made
 the phase 2 exit criteria unreachable; phase 3 now refreshes the same state
 rather than performing it for the first time.
 

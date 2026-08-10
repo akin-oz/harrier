@@ -72,6 +72,21 @@ all of them stated in the report rather than left for the reader to infer:
 The fetch counts are compared regardless, because they are the one thing
 provable before migration and they are what says the importers agree.
 
+The exact rule, so the boundary is checkable rather than implied:
+
+- Inputs agree when `abs(old_fetched - new_fetched) / max(old_fetched,
+  new_fetched) <= 0.02`, or when both are zero. Reported for every source,
+  in every state.
+- Screening is compared only when inputs agree **and** the two runs
+  suppressed a similar share as already seen:
+  `abs(old_seen/old_fetched - new_seen/new_fetched) <= 0.05`. A run with a
+  zero fetch count skips the share test, having no share to compute.
+- Failing either test sets `incomparable`, which zeroes that source's
+  decidable divergences and makes the report not clean. The two conditions
+  are reported separately, because they call for different actions: a
+  seen-state mismatch needs the phase 2a migration, a fetch mismatch needs
+  the runs taken closer together.
+
 ## Stated changes from the old code
 
 There is no old code here; the old system is the thing being compared

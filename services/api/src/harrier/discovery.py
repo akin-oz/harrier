@@ -26,7 +26,7 @@ from harrier.screening import (
     dedupe_normalized_jobs,
     screen_jobs,
 )
-from harrier.screening.config import load_candidate_config, load_hold_companies
+from harrier.screening.config import load_candidate_config
 from harrier.screening.descriptions import cache_job_descriptions
 from harrier.screening.normalized import NormalizedJob
 from harrier.screening.seen import load_seen_keys, save_seen_keys
@@ -39,11 +39,16 @@ from harrier.sources.apify_linkedin import (
 )
 from harrier.sources.ashby import fetch_ashby_jobs
 from harrier.sources.batch_exports import load_wellfound_exports, load_wttj_exports
-from harrier.sources.feeds import parse_ats_feeds
 from harrier.sources.greenhouse import fetch_greenhouse_jobs
 from harrier.sources.lever import fetch_lever_jobs
 from harrier.sources.remoteok import fetch_remoteok_jobs
 from harrier.tracker import DuplicateJobError, add_job, list_jobs
+from harrier.userconfig import (
+    load_ats_feeds,
+    load_discovery_settings,
+    load_hold_companies,
+    load_search_urls,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,22 +73,29 @@ def _incoming_dir() -> Path:
     return data_dir() / "incoming"
 
 
-def scheduled_apify_count(config_path: Path | None = None) -> int:
-    """The scheduled-run Apify count from config/discovery.json.
+def scheduled_apify_count(
+    config_path: Path | None = None, conn: sqlite3.Connection | None = None
+) -> int:
+    """The scheduled-run Apify count, from the store or config/discovery.json.
 
     Resolves the old repo's count discrepancy: 50 is what production ran
-    (a per-search ceiling under the 24h search window; see the comment in
-    config/discovery.json), 150 stays the CLI default."""
-    path = resolve_config_path(config_path if config_path is not None else DISCOVERY_CONFIG_PATH)
+    (a per-search ceiling under the 24h search window), 150 stays the CLI
+    default. config_path still overrides everything, for tests and for a
+    caller that means one specific file."""
+    if config_path is not None:
+        settings = _settings_file(resolve_config_path(config_path))
+    else:
+        settings = load_discovery_settings(conn)
+    raw = settings.get("apify_scheduled_count")
+    return raw if isinstance(raw, int) and not isinstance(raw, bool) else APIFY_DEFAULT_COUNT
+
+
+def _settings_file(path: Path) -> dict[str, object]:
     try:
         parsed: object = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return APIFY_DEFAULT_COUNT
-    if isinstance(parsed, dict):
-        raw: object = cast("dict[str, object]", parsed).get("apify_scheduled_count")
-        if isinstance(raw, int):
-            return raw
-    return APIFY_DEFAULT_COUNT
+        return {}
+    return cast("dict[str, object]", parsed) if isinstance(parsed, dict) else {}
 
 
 def apify_allowed_now(now: datetime | None = None) -> bool:
@@ -133,7 +145,7 @@ def _run_source(
     """The old run_source_import, against the new store: screen, persist,
     save seen state, write the per-source summary. Dry runs mutate nothing."""
     candidate_cfg = load_candidate_config(conn)
-    hold_companies = load_hold_companies()
+    hold_companies = load_hold_companies(conn)
     indexes = build_tracker_indexes(list_jobs(conn))
     source_seen = load_seen_keys(source_name)
     normalized_jobs = dedupe_normalized_jobs(jobs)
@@ -192,7 +204,7 @@ def run_discovery(
             progress(source, stage)
 
     summaries: list[dict[str, object]] = []
-    feeds = parse_ats_feeds()
+    feeds = load_ats_feeds(conn)
 
     ats_fetchers: dict[str, Callable[[str], list[NormalizedJob]]] = {
         "greenhouse": fetch_greenhouse_jobs,
@@ -249,11 +261,13 @@ def run_discovery(
         # shadow run skips it because it must be repeatable for free.
         apify_gate_open = not options.scheduled or apify_allowed_now(options.now)
         if apify_gate_open:
-            count = scheduled_apify_count() if options.scheduled else options.apify_count
+            count = scheduled_apify_count(conn=conn) if options.scheduled else options.apify_count
             report("apify_linkedin", "fetching")
             try:
                 apify_jobs = fetch_apify_linkedin_jobs(
-                    dataset_files=options.dataset_files, count=count
+                    dataset_files=options.dataset_files,
+                    count=count,
+                    search_urls=load_search_urls(conn),
                 )
             except Exception as exc:
                 logger.warning("Apify LinkedIn import failed: %s", exc)
