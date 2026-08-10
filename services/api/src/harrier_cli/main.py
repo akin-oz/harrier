@@ -587,6 +587,20 @@ def _cmd_gmail_migrate_state(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_digest(args: argparse.Namespace) -> int:
+    from harrier.digest import parse_target_date, run_digest
+
+    try:
+        target_date = parse_target_date(args.date)
+    except ValueError as error:
+        print(f"digest failed: invalid --date: {error}", file=sys.stderr)
+        return 2
+    conn = connect()
+    digest, rc = run_digest(conn, target_date, dry_run=args.dry_run)
+    print(digest)
+    return rc
+
+
 def _cmd_demo_run(args: argparse.Namespace) -> int:
     """Exercise the run machinery (spec 006): progress protocol plus log lines."""
     import json
@@ -815,6 +829,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     gmail_migrate.add_argument("--from-root", required=True)
     gmail_migrate.set_defaults(func=_cmd_gmail_migrate_state)
+
+    digest = sub.add_parser("digest", help="send the daily Telegram digest (spec 019)")
+    digest.add_argument("--date", default=None, help="UTC date YYYY-MM-DD (default today)")
+    digest.add_argument("--dry-run", action="store_true", help="print the digest without sending")
+    digest.set_defaults(func=_cmd_digest)
 
     demo_run = sub.add_parser("demo-run", help="exercise the run machinery (spec 006)")
     demo_run.add_argument("--steps", default="8", help="number of progress steps")
