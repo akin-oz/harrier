@@ -128,6 +128,13 @@
 .run-panel__last-line--failed {
   color: var(--color-danger);
 }
+.run-panel__disconnected {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  border-left: 2px solid var(--color-border-strong);
+  padding-left: var(--space-3);
+}
 .run-log {
   margin: 0;
   font-family: var(--font-mono);
@@ -140,7 +147,7 @@
   max-height: 260px;
   overflow: auto;
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 .run-log--failed {
   border-color: var(--color-danger);

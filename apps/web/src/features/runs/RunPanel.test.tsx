@@ -221,3 +221,43 @@ test("a failed run opens the log without being asked", async () => {
     "true",
   );
 });
+
+test("a started run with no lines yet says it is waiting", async () => {
+  stubStartResponse();
+  const user = userEvent.setup();
+  renderPanel();
+
+  await user.click(screen.getByRole("button", { name: "Start demo run" }));
+  await waitFor(() => {
+    expect(FakeEventSource.instances).toHaveLength(1);
+  });
+  const source = FakeEventSource.instances[0];
+  if (source === undefined) {
+    throw new Error("no EventSource created");
+  }
+  source.emit({ type: "state_change", state: "running", exit_code: null });
+
+  await waitFor(() => {
+    expect(screen.getByText("waiting for the first line…")).toBeDefined();
+  });
+});
+
+test("a dropped stream says so instead of looking stuck", async () => {
+  stubStartResponse();
+  const user = userEvent.setup();
+  renderPanel();
+
+  await user.click(screen.getByRole("button", { name: "Start demo run" }));
+  await waitFor(() => {
+    expect(FakeEventSource.instances).toHaveLength(1);
+  });
+  const source = FakeEventSource.instances[0];
+  if (source === undefined) {
+    throw new Error("no EventSource created");
+  }
+  source.onerror?.();
+
+  await waitFor(() => {
+    expect(screen.getByRole("status").textContent).toContain("Lost the log stream");
+  });
+});

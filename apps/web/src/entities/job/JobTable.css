@@ -39,9 +39,9 @@
 .job-table__company {
   font-weight: 500;
 }
-/* Real titles run to 256 characters. Left to wrap, one row grew to four
-   lines and destroyed the density the table exists for, so they clamp to
-   two and carry the full text in a tooltip. */
+/* Job titles have no length limit and some carry a whole advert. Left to
+   wrap they set the row height and destroy the density the table exists
+   for, so they clamp to two lines and keep the full text in a tooltip. */
 .job-table__title {
   max-width: 320px;
 }

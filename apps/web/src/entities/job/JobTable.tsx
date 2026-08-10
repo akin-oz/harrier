@@ -18,11 +18,10 @@ function parseScore(job: Job): number | null {
 }
 
 export function JobTable({ jobs, emptyMessage }: { jobs: readonly Job[]; emptyMessage: string }) {
-  // Open rows first, then by score. Score alone looked right against sample
-  // data and was wrong against a real tracker: with 638 of 708 rows rejected,
-  // the top 40 by score were 33 rejected and 7 applied, so the first screen
-  // showed nothing that needed a decision. A rejected row is closed and
-  // should not outrank an open one however well it once scored.
+  // Open rows first, then by score. Sorting on score alone reads well until
+  // most of the tracker is rejected, and then the first screen fills with
+  // closed rows that happened to score highly. A rejected row needs no
+  // decision, so it never outranks one that does.
   const rows = useMemo(
     () =>
       [...jobs].sort((a, b) => {

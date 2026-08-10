@@ -100,7 +100,7 @@
 .tracker-page__retry {
   padding: 4px 10px;
   border-radius: var(--radius-sm);
-  border: 1px solid currentColor;
+  border: 1px solid currentcolor;
   background: none;
   color: inherit;
   font-weight: 500;

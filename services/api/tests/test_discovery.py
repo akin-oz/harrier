@@ -406,10 +406,13 @@ def test_board_errors_are_recorded_per_source(
     monkeypatch.setattr(discovery_module, "load_ats_feeds", one_good_one_dead)
     monkeypatch.setattr(discovery_module, "fetch_greenhouse_jobs", fetcher)
     conn = connect()
-    summary = run_discovery(
-        conn,
-        DiscoveryOptions(dry_run=True, notify=False, only_sources=frozenset({"greenhouse"})),
-    )
+    try:
+        summary = run_discovery(
+            conn,
+            DiscoveryOptions(dry_run=True, notify=False, only_sources=frozenset({"greenhouse"})),
+        )
+    finally:
+        conn.close()
     sources = cast("list[dict[str, object]]", summary["source_summaries"])
     errors = cast("list[str]", sources[0]["board_errors"])
     assert len(errors) == 1

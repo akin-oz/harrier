@@ -66,27 +66,49 @@ Named because the panel is the thing most in need of it:
   do not expand the panel or steal scroll.
 - The control is a real `button` with `aria-expanded`, operable by keyboard,
   keeping focus on itself when toggled.
-- A run in `failed` shows its state and last line without expansion,
-  because that is the only case where the log is the point.
+- A run in `failed` opens the log automatically, because that is the only
+  case where the log is the point. Its state and last line are visible
+  either way.
 
 ## Acceptance criteria
 
-Each is a vitest assertion unless it says browser check, in which case it is
-verified at 1280x800 and at 720x800 in the preview browser, light and dark.
+Each names its proof. Automated ones are vitest symbols in
+apps/web/src; browser checks are verified at 1280x800 and 720x800, light and
+dark, and are recorded in the PR rather than by a test.
 
-- [ ] with a run holding 2000 log lines, the first tracker row is within the
-      first 900 vertical pixels (browser check at 1280x800)
+- [ ] with a run holding thousands of log lines, the first tracker row stays
+      within the first 900 vertical pixels (browser check)
 - [ ] the run panel renders collapsed on first paint, showing run id, state
       and last line, and expands and collapses by click and by keyboard
+      (RunPanel.test.tsx::"the log is collapsed on first paint and the
+      toggle reports its state")
 - [ ] the toggle is a button carrying `aria-expanded` that matches its state
+      (same test)
 - [ ] lines arriving while collapsed update the last line and leave the
-      panel collapsed
-- [ ] a `failed` run shows its state and last line while collapsed
+      panel collapsed (RunPanel.test.tsx::"lines arriving while collapsed
+      update the visible last line without expanding")
+- [ ] a `failed` run opens its log without being asked
+      (RunPanel.test.tsx::"a failed run opens the log without being asked")
+- [ ] a started run with no lines yet says it is waiting
+      (RunPanel.test.tsx::"a started run with no lines yet says it is
+      waiting")
+- [ ] a dropped log stream is stated rather than looking stuck
+      (RunPanel.test.tsx::"a dropped stream says so instead of looking
+      stuck")
 - [ ] zero rows renders a message, and the no-jobs and no-matches cases
-      differ
+      differ (JobTable.test.tsx::"empty list renders the message the page
+      supplied", and TrackerPage supplies which one)
 - [ ] a failed jobs request renders a stated error and a retry control
-- [ ] score renders with tabular numerals and right alignment, and status
-      renders with a text label rather than colour alone
+      (browser check; the error path was exercised live during this work)
+- [ ] open rows outrank closed ones, and score orders within each group
+      (JobTable.test.tsx::"open rows outrank closed ones however they
+      scored", ::"rows are ordered by score, highest first")
+- [ ] a blank score reads as unknown rather than zero
+      (JobTable.test.tsx::"a blank score renders as unknown rather than
+      zero")
+- [ ] status carries a text label rather than colour alone
+      (JobTable.test.tsx::"status carries a text label, not colour alone")
+- [ ] score renders with tabular numerals and right alignment (browser check)
 - [ ] body text meets 4.5:1 against its background in both schemes, and
       every interactive element has a visible focus style (browser check)
 - [ ] no horizontal scroll at 720px width with the longest real-shaped
@@ -94,27 +116,32 @@ verified at 1280x800 and at 720x800 in the preview browser, light and dark.
 - [ ] the generated contract is unchanged and existing web tests pass
 - [ ] All gates green on PR
 
-## Findings from running it against real data
+## Findings from running it against a populated tracker
 
-Both were invisible against sample data and obvious against 708 real rows:
+Two decisions read well against a handful of sample rows and failed against
+a tracker that has been accumulating for months. Neither observation is
+recorded here in numbers: a row count and its status distribution describe
+someone's job search (ADR-008).
 
-- Sorting by score alone put 33 rejected and 7 applied rows in the top 40,
-  and zero prospects, because 638 of 708 rows are rejected. The first screen
-  showed nothing that needed a decision. Rows now rank open before closed,
-  then by score.
-- Real titles reach 256 characters. Left to wrap, one row grew to four lines
-  and took the density with it. Title and next action clamp to two lines
-  with the full text in a tooltip.
+- Sorting on score alone fills the first screen with closed rows once most
+  of the tracker is rejected, which is the steady state of any real search.
+  Rows rank open before closed, then by score
+  (JobTable.test.tsx::"open rows outrank closed ones however they scored").
+- Job titles have no length limit and some carry a whole advert. Left to
+  wrap they set the row height and take the density with them. Title and
+  next action clamp to two lines with the full text in a tooltip.
 
 One defect surfaced that is not presentational and is fixed under spec 005:
 the header's health request made the app fetch twice concurrently, and
-`/jobs` began returning 500 with `sqlite3.ProgrammingError`. FastAPI runs a
-sync dependency and its endpoint on different threadpool threads, so the
-per-request connection was created in one and used in the other.
+`/jobs` returned 500 with `sqlite3.ProgrammingError`. FastAPI runs a sync
+dependency and its endpoint on different threadpool threads, so the
+per-request connection was created in one and used in the other. Proven by
+services/api/tests/test_api_jobs.py::
+test_concurrent_requests_do_not_trip_the_sqlite_thread_check.
 
 ## Proof / origin
 
-In the repository, which is where the claims are checkable:
+**Before this spec**, in the repository as it stood:
 
 - No stylesheet exists: `find apps/web/src -name '*.css'` returns nothing,
   and no component imports one.
@@ -127,14 +154,25 @@ In the repository, which is where the claims are checkable:
 - The table is unstyled markup: apps/web/src/entities/job/JobTable.tsx
   emits a bare `table` and renders `status` and `score` as raw text.
 
-Supporting evidence: the demo screenshot from 2026-08-10, showing serif
-defaults with the tracker below the fold.
+**After this spec**, the proving files are
+apps/web/src/shared/ui/tokens.css (the token layer, light and dark),
+apps/web/src/app/App.tsx with widgets/header/Header.tsx (the shell),
+apps/web/src/entities/job/ui/StatusPill.tsx and ScoreBar.tsx, and
+apps/web/src/features/runs/RunPanel.tsx (the disclosure contract). Behaviour
+is pinned by apps/web/src/features/runs/RunPanel.test.tsx and
+apps/web/src/entities/job/JobTable.test.tsx, 13 web tests in total.
 
-Limitations of the existing tests: App.test.tsx, JobTable.test.tsx and
-RunPanel.test.tsx assert content and behavior only. None of them asserts
-anything visual, so they will keep passing throughout this work and cannot
-be cited as evidence for any of it. That is why the criteria above name
-browser checks with viewports and numbers.
+Honest limitation, unchanged by this spec: those tests assert content and
+behaviour, never appearance. Nothing here can fail because the page looks
+wrong, which is why the visual criteria are browser checks with viewports
+and numbers rather than assertions.
+
+Second limitation, and a real one: ScoreBar hardcodes the 0-120 scale and
+the 55 cutoff. Scoring weights are user configuration (config/candidate.json,
+spec 023), so a user who edits them moves the real cutoff and the tick
+silently stops matching. Exposing the scale and cutoff through the contract
+is the correct fix and is new API surface, so it belongs to its own spec
+rather than being smuggled in here.
 
 ## Out of scope
 

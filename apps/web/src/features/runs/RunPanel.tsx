@@ -55,6 +55,7 @@ export function RunPanel({
   // to read, and it used to push the tracker off the screen entirely. It
   // opens itself on failure, the one case where the log is the point.
   const [expanded, setExpanded] = useState(false);
+  const [disconnected, setDisconnected] = useState(false);
   const sourceRef = useRef<EventSource | null>(null);
   const logRef = useRef<HTMLPreElement | null>(null);
 
@@ -105,6 +106,9 @@ export function RunPanel({
         }
       };
       source.onerror = () => {
+        // The stream dropping is not the run failing: say so, and refetch
+        // server truth rather than leaving the panel looking stuck.
+        setDisconnected(true);
         void queryClient.invalidateQueries({ queryKey: ["run", id] });
       };
       sourceRef.current = source;
@@ -124,6 +128,7 @@ export function RunPanel({
       setLines([]);
       setProgress(null);
       setExpanded(false);
+      setDisconnected(false);
       setRunId(data.id);
       queryClient.setQueryData<RunOut>(["run", data.id], data);
       subscribe(data.id);
@@ -154,6 +159,9 @@ export function RunPanel({
       ? { step: progress.step ?? 0, total: progress.total }
       : null;
   const lastLine = lines.length > 0 ? lines[lines.length - 1] : null;
+  // A started run with nothing streamed yet is waiting, not idle and not
+  // broken. Without this the panel showed a run id and then nothing.
+  const waiting = run !== null && lines.length === 0 && !TERMINAL_STATES.has(run.state);
 
   return (
     <section aria-label="runs" className="run-panel">
@@ -238,6 +246,13 @@ export function RunPanel({
           {mutationError.message}
         </p>
       )}
+      {disconnected && (
+        <p role="status" className="run-panel__disconnected">
+          Lost the log stream. The run may still be going; its state above is refreshed from the
+          server.
+        </p>
+      )}
+      {waiting && <p className="run-panel__last-line">waiting for the first line…</p>}
       {lastLine !== null && !expanded && (
         <p className={`run-panel__last-line${failed ? " run-panel__last-line--failed" : ""}`}>
           {lastLine}

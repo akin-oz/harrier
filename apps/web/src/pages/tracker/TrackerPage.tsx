@@ -17,9 +17,8 @@ const STATUS_LABEL: Record<JobStatus, string> = {
 };
 
 // The whole set is fetched once and filtered here. The contract has a status
-// query parameter but no search one, and a tracker of a few hundred rows fits
-// in memory comfortably, so one request keeps the chip counts honest without
-// a round trip per click.
+// query parameter but no search one, and the chip counts have to describe the
+// whole tracker rather than the current filter, so one request answers both.
 async function fetchAllJobs(): Promise<readonly Job[]> {
   const { data, error } = await api.GET("/jobs", { params: { query: {} } });
   if (error !== undefined) {

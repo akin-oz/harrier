@@ -13,7 +13,7 @@
   width: 7px;
   height: 7px;
   flex: none;
-  background: currentColor;
+  background: currentcolor;
 }
 /* Each stage gets a distinct mark shape as well as a colour, so the pipeline
    reads with a colour vision deficiency and on a black-and-white printout. */
@@ -24,7 +24,7 @@
 .status-pill--prospect .status-pill__mark {
   border-radius: 50%;
   background: transparent;
-  border: 1.5px solid currentColor;
+  border: 1.5px solid currentcolor;
 }
 .status-pill--shortlisted {
   color: var(--status-shortlisted-fg);

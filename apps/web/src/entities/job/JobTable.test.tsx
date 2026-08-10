@@ -62,6 +62,13 @@ test("empty list renders the message the page supplied", () => {
   expect(screen.getByText("No jobs yet. Run discovery to find some.")).toBeDefined();
 });
 
+function companyOrder(): (string | undefined)[] {
+  return screen
+    .getAllByRole("row")
+    .slice(1)
+    .map((row) => row.querySelectorAll("td")[1]?.textContent);
+}
+
 test("rows are ordered by score, highest first", () => {
   // Answers "which of these is best" without a click; the API returns
   // insertion order (spec 026).
@@ -75,11 +82,24 @@ test("rows are ordered by score, highest first", () => {
       emptyMessage="none"
     />,
   );
-  const companies = screen
-    .getAllByRole("row")
-    .slice(1)
-    .map((row) => row.querySelectorAll("td")[1]?.textContent);
-  expect(companies).toEqual(["High", "Mid", "Low"]);
+  expect(companyOrder()).toEqual(["High", "Mid", "Low"]);
+});
+
+test("open rows outrank closed ones however they scored", () => {
+  // Score alone fills the first screen with closed rows once most of the
+  // tracker is rejected, which is the steady state of a real search.
+  render(
+    <JobTable
+      jobs={[
+        makeJob({ id: 1, company: "ClosedTop", score: "120", status: "rejected" }),
+        makeJob({ id: 2, company: "OpenLow", score: "58", status: "prospect" }),
+        makeJob({ id: 3, company: "ClosedMid", score: "100", status: "rejected" }),
+        makeJob({ id: 4, company: "OpenHigh", score: "90", status: "applied" }),
+      ]}
+      emptyMessage="none"
+    />,
+  );
+  expect(companyOrder()).toEqual(["OpenHigh", "OpenLow", "ClosedTop", "ClosedMid"]);
 });
 
 test("a blank score renders as unknown rather than zero", () => {
