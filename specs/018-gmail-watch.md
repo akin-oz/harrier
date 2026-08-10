@@ -1,7 +1,7 @@
 ---
 spec: 018
 title: Gmail watch and classification
-status: in-progress
+status: shipped
 approved: yes
 milestone: M4
 depends: [004]
@@ -92,7 +92,7 @@ own Telegram channel.
 - [x] Dry-run prints per-message classification and sends nothing
       (test_dry_run_counts_and_classifies_without_sending: the send
       function raises if called)
-- [ ] All gates green on PR
+- [x] All gates green on PR (PR #15)
 
 ## Proof / origin
 
