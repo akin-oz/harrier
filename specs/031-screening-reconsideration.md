@@ -27,8 +27,9 @@ This makes every screening fix retroactively worthless, which matters
 because spec 032 is a set of screening fixes. Correcting the location gate
 changes nothing for any posting already rejected by it.
 
-Re-screening is cheap: the description cache is keyed by URL and already
-populated, so reconsidering costs CPU and no network.
+Re-opening a rejection is cheap: nothing is fetched at the point of
+reconsideration, because the postings themselves were never stored. Only
+their keys were.
 
 Found by the `principal-review` board (spec 028), screening lens, which
 marked every other screening finding void until this is fixed.
@@ -44,20 +45,30 @@ screening configuration and rule set so it cannot be forgotten: any change to
 the weights, the keyword lists, or the gate order produces a different
 version.
 
-**Reconsider on demand.** A command re-runs screening over postings rejected
-under a policy version other than the current one, and reports what changed.
-Not automatic, because re-screening after every config edit is surprising;
-the operator asks for it.
+**Reconsider on demand.** A command *clears* the recorded decision for
+postings rejected under a policy version other than the current one, and
+reports what it cleared. Clearing rather than re-screening, and the
+distinction is the whole contract: only keys are stored, not postings, so
+this layer can make a posting eligible again and the next discovery run is
+what fetches and judges it under the current rules. That also disposes of the
+posting that no longer exists, which is simply not fetched.
+
+Not automatic, because clearing after every configuration edit would surprise
+the operator with a burst of tracker rows from decisions they thought were
+settled. They ask for it.
 
 **Mark seen after the decision, with the decision.** A posting suppressed
 before it has been judged cannot be judged later.
 
 ## Inputs, outputs, failure modes
 
-- Inputs: the persisted seen state, the current screening configuration, the
-  cached descriptions.
-- Outputs: seen entries carrying a verdict and policy version; a
-  reconsideration report of what would change and what did.
+- Inputs: the persisted seen state and the current screening configuration.
+  Nothing else: reconsideration reads no postings and makes no request.
+- Outputs: seen entries carrying a verdict and policy version; a report of
+  how many decisions were examined, how many were stale, how many were
+  cleared, and how many were left alone because the operator had rejected
+  them by hand. Cleared entries are removed from the state file, which is
+  what makes the posting eligible on the next run.
 - Migration: existing entries carry no verdict and no version. They are
   treated as decided under an unknown policy, which makes them eligible for
   the first reconsideration rather than invisible to it. Read as unknown, not
@@ -79,13 +90,16 @@ Proven by services/api/tests/test_seen_policy.py:
 | Criterion | Proof |
 |---|---|
 | marked seen only after a verdict, with the verdict | `test_a_posting_is_recorded_only_after_a_verdict_exists`, `test_an_accepted_posting_records_its_acceptance`, `test_the_reason_recorded_is_the_gate_that_decided` |
-| any weight or keyword change moves the version | `test_changing_a_scoring_weight_changes_the_version`, `test_changing_a_keyword_list_changes_the_version`, `test_changing_a_rule_table_in_code_changes_the_version` |
+| any weight or keyword change moves the version | `test_changing_a_scoring_weight_changes_the_version`, `test_changing_any_deciding_key_changes_the_version` (one case per configuration path), `test_the_domain_bonus_is_part_of_the_version`, `test_changing_a_rule_table_in_code_changes_the_version`, `test_changing_the_domain_keyword_table_changes_the_version` |
+| the deciding paths describe the real configuration | `test_every_deciding_path_exists_in_the_real_configuration` |
+| a recorded reason is groupable | `test_the_recorded_reason_is_a_stable_slug` |
+| a corrupt state file is reported | `test_a_corrupt_state_file_is_reported_rather_than_silently_empty`, `test_a_state_file_that_is_not_an_object_is_reported` |
 | stale rejections reconsidered, current ones not | `test_a_rejection_under_an_older_policy_is_cleared`, `test_a_rejection_under_the_current_policy_is_left_alone` |
 | a manual rejection is never resurrected | `test_a_job_the_operator_rejected_is_never_resurrected`, `test_the_protection_matches_on_company_and_title_too` |
 | pre-change entries are unknown and eligible | `test_the_old_format_migrates_to_unknown_rather_than_being_discarded`, `test_a_migrated_entry_is_eligible_for_the_first_reconsideration`, `test_a_migrated_entry_is_never_read_as_an_acceptance` |
 | eviction is age-based | `test_eviction_keeps_the_newest_not_the_lexicographically_largest` |
-| no network on reconsideration | reconsideration clears keys and performs no fetch; the next discovery run judges them |
-| no personal data committed | the state file lives under the data directory, never in git (ADR-008) |
+| no network on reconsideration | `test_a_rejection_under_an_older_policy_is_cleared` runs with no network stubbed and no fetch reachable: `reconsider_source` imports no HTTP client and reads only the state file and the tracker |
+| no personal data committed | `services/api/tests/test_publishable.py::test_no_fixture_names_a_real_company` covers the committed fixtures; the seen state itself lives under the data directory, which `.gitignore` excludes and `config/data-classification.json` marks never-in-git (ADR-008) |
 
 One design point the spec left open and the implementation decided:
 reconsideration **clears** stale rejections rather than re-screening them.
@@ -95,6 +109,15 @@ judges them under the current rules, which is where the decision belongs.
 That also removes the question of what to do with a posting that no longer
 exists: it simply is not fetched.
 
+Review on PR #33 found the fingerprint reading flat configuration keys that
+the real file has never contained, so the filter dropped every one and the
+digest reduced to the scoring block plus the compiled tables. Changing the
+title keywords or the preferred countries moved no version and freed no
+stale rejection, and the test passed because it inserted a flat key a real
+configuration does not have. The paths are now nested and one test asserts
+every one of them exists in the real configuration, which is what turns the
+list from a guess into a claim.
+
 An acceptance is never reconsidered
 (`test_an_acceptance_is_never_reconsidered`). It already produced a tracker
 row, so re-running it would at best do nothing and at worst duplicate it.
@@ -102,7 +125,7 @@ row, so re-running it would at best do nothing and at worst duplicate it.
 - [x] a posting is marked seen only after a verdict exists, and the verdict is
       stored with it
 - [x] changing any screening weight or keyword list changes the policy version
-- [x] reconsideration re-screens rejections from an older policy version and
+- [x] reconsideration clears rejections from an older policy version and
       leaves current-version rejections untouched
 - [x] a manually rejected job is never resurrected by reconsideration
 - [x] entries written before this change are treated as unknown policy and

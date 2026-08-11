@@ -24,6 +24,7 @@ Two properties the old format did not have:
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -31,6 +32,8 @@ from typing import Any, cast
 
 from harrier.db import data_dir
 from harrier.screening.policy import UNKNOWN_POLICY
+
+logger = logging.getLogger(__name__)
 
 SEEN_CAP = 10_000
 
@@ -103,9 +106,23 @@ def load_seen(source_name: str) -> dict[str, SeenDecision]:
         return {}
     try:
         parsed: object = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError) as error:
+        # Loudly, because the consequence is invisible otherwise: the next run
+        # treats every previously rejected posting as new and re-offers all of
+        # them, and the save that follows overwrites the damaged file so the
+        # original is unrecoverable (review finding on PR #33). Refusing
+        # outright belongs with the atomic-write work in spec 040; this at
+        # least tells the operator why a source suddenly produced a flood.
+        logger.warning(
+            "seen state for %s could not be read (%s); every posting will look new",
+            source_name,
+            error,
+        )
         return {}
     if not isinstance(parsed, dict):
+        logger.warning(
+            "seen state for %s is not an object; every posting will look new", source_name
+        )
         return {}
     record = cast("dict[str, object]", parsed)
     fallback_at = str(record.get("updated_at", "")) or now_iso()

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
+from typing import Any, cast
 
 from harrier.screening import rules
 from harrier.screening.rules import CandidateConfig, scoring_config
@@ -32,24 +32,44 @@ UNKNOWN_POLICY = "unknown"
 
 VERSION_LENGTH = 12
 
-# The configuration keys that change a decision. Listed rather than hashing
-# the whole file, so that editing a comment or a display-only field does not
-# invalidate every stored decision and force a needless re-screen.
-DECIDING_KEYS = (
-    "exact_titles",
-    "title_includes",
-    "title_excludes",
-    "include_keywords",
-    "exclude_keywords",
-    "preferred_countries",
-    "preferred_signals",
-    "remote_only",
-)
+# The configuration paths that change a decision, section by section.
+#
+# Nested, because the configuration is. The first version of this listed flat
+# top-level names that the real file has never contained, so the filter
+# dropped every one and the digest reduced to `scoring` plus the compiled
+# tables: a change to the title keywords or the preferred countries did not
+# move the version, and no stale rejection became reconsiderable. The test
+# passed because it inserted a flat key a real configuration does not have
+# (review finding on PR #33).
+#
+# Listed rather than hashing the whole file, so editing a comment or a
+# display-only field does not invalidate every stored decision and force a
+# needless re-screen. Every path here is asserted to exist against the
+# example configuration by
+# tests/test_seen_policy.py::test_every_deciding_path_exists_in_the_real_configuration,
+# which is what turns this list from a guess into a claim.
+DECIDING_PATHS: dict[str, tuple[str, ...]] = {
+    "targets": ("titles", "title_keywords_include", "title_keywords_exclude"),
+    "candidate": ("preferred_regions", "preferred_countries"),
+    "preferences": ("domains_preferred", "domains_secondary"),
+}
+
+# Read directly by score_job rather than through scoring_config, so it needs
+# naming separately or a change to the domain bonus moves no version.
+DOMAIN_BONUS_KEY = "domain_bonus"
 
 
 def _config_fingerprint(candidate_cfg: CandidateConfig) -> dict[str, Any]:
-    deciding = {key: candidate_cfg.get(key) for key in DECIDING_KEYS if key in candidate_cfg}
-    deciding["scoring"] = scoring_config(candidate_cfg)
+    deciding: dict[str, Any] = {}
+    for section, keys in DECIDING_PATHS.items():
+        raw = candidate_cfg.get(section)
+        values: dict[str, Any] = cast("dict[str, Any]", raw) if isinstance(raw, dict) else {}
+        deciding[section] = {key: values.get(key) for key in keys if key in values}
+    scoring = dict(scoring_config(candidate_cfg))
+    raw_scoring = candidate_cfg.get("scoring")
+    if isinstance(raw_scoring, dict):
+        scoring[DOMAIN_BONUS_KEY] = cast("dict[str, Any]", raw_scoring).get(DOMAIN_BONUS_KEY)
+    deciding["scoring"] = scoring
     return deciding
 
 
@@ -70,6 +90,12 @@ def _rule_fingerprint() -> dict[str, Any]:
         "remote_positive_patterns": list(rules.REMOTE_POSITIVE_PATTERNS),
         "preferred_region_patterns": list(rules.PREFERRED_REGION_PATTERNS),
         "skill_signals": dict(sorted(rules.SKILL_SIGNALS.items())),
+        # score_job reads this to award the domain bonus, and that bonus moves
+        # a job across the cutoff, so a change to it changes decisions
+        # (review finding on PR #33).
+        "domain_keywords": {
+            key: sorted(value) for key, value in sorted(rules.DOMAIN_KEYWORDS.items())
+        },
         "preferred_signal_weights": dict(sorted(rules.PREFERRED_SIGNAL_WEIGHTS.items())),
         "score_cutoff": rules.SCORE_CUTOFF,
     }

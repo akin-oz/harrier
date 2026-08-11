@@ -1,11 +1,17 @@
-"""Re-run screening over rejections made under older rules (spec 031).
+"""Re-open rejections made under older rules (spec 031).
 
 The point of recording a policy version is being able to ask this question:
 which postings were rejected by a rule that has since changed? Without it a
 screening fix only affects postings nobody has seen yet, which for a mature
 watchlist is almost none of them.
 
-Not automatic. Re-screening after every configuration edit would surprise the
+This clears the recorded decision; it does not re-screen. Only keys are
+stored, never the postings, so the most this layer can do is make a posting
+eligible again. The next discovery run fetches and judges it under the
+current rules, which is where the judgement belongs, and a posting that no
+longer exists is simply not fetched.
+
+Not automatic. Clearing after every configuration edit would surprise the
 operator with a burst of tracker rows from decisions they thought were
 settled, so they ask for it.
 

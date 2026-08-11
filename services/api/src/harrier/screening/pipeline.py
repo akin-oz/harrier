@@ -31,6 +31,11 @@ from harrier.screening.rules import (
 from harrier.screening.seen import ACCEPTED, REJECTED, SeenDecision, now_iso
 from harrier.tracker.schema import NEXT_ACTION_DEFAULTS
 
+# The slug recorded when the remote or region gate rejects. Named here rather
+# than taken from the gate's message, which is prose meant for a human and
+# would silently split one cause into two if reworded.
+REMOTE_REGION_REASON = "remote_region"
+
 
 @dataclass
 class TrackerIndexes:
@@ -189,7 +194,13 @@ def screen_jobs(
 
         remote_ok, remote_reason = remote_region_allowed(job, candidate_cfg)
         if not remote_ok:
-            record(job_key, REJECTED, remote_reason)
+            # A slug, not the prose the gate returns. Every other gate records
+            # one, and a stored reason that is a sentence cannot be grouped:
+            # rewording the message in rules.py would silently split one cause
+            # into two (review finding on PR #33). The prose stays in
+            # rejected_counts, which is pre-existing behaviour that spec 032
+            # revisits along with the rules themselves.
+            record(job_key, REJECTED, REMOTE_REGION_REASON)
             result.rejected_counts[remote_reason] = result.rejected_counts.get(remote_reason, 0) + 1
             result.skipped_rejected += 1
             if write_rejected_debug:

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +19,7 @@ import pytest
 from harrier.db import connect
 from harrier.screening import rules
 from harrier.screening.config import load_candidate_config
-from harrier.screening.policy import UNKNOWN_POLICY, policy_version
+from harrier.screening.policy import DECIDING_PATHS, UNKNOWN_POLICY, policy_version
 from harrier.screening.reconsider import human_rejected_keys, reconsider_source
 from harrier.screening.seen import (
     ACCEPTED,
@@ -64,11 +65,67 @@ def test_changing_a_scoring_weight_changes_the_version(cfg: dict[str, Any]) -> N
     assert policy_version(changed) != before
 
 
-def test_changing_a_keyword_list_changes_the_version(cfg: dict[str, Any]) -> None:
+@pytest.mark.parametrize(
+    ("section", "key"),
+    [
+        ("targets", "titles"),
+        ("targets", "title_keywords_include"),
+        ("targets", "title_keywords_exclude"),
+        ("candidate", "preferred_regions"),
+        ("candidate", "preferred_countries"),
+        ("preferences", "domains_preferred"),
+        ("preferences", "domains_secondary"),
+    ],
+)
+def test_changing_any_deciding_key_changes_the_version(
+    cfg: dict[str, Any], section: str, key: str
+) -> None:
+    """Against the real nested shape, one case per path.
+
+    The first version of this test set a flat top-level key that no real
+    configuration has, so it passed while the fingerprint captured nothing at
+    all: changing the title keywords or the preferred countries moved no
+    version and freed no stale rejection (review finding on PR #33).
+    """
     before = policy_version(cfg)
-    changed = dict(cfg)
-    changed["include_keywords"] = ["something-else"]
+    changed = deepcopy(cfg)
+    changed[section][key] = ["something-the-config-never-said"]
     assert policy_version(changed) != before
+
+
+def test_every_deciding_path_exists_in_the_real_configuration(cfg: dict[str, Any]) -> None:
+    """The guard that would have caught it.
+
+    A list of key names is a guess until something checks it against the
+    configuration those names are supposed to describe. Renaming a key in the
+    example config now fails here rather than silently emptying the digest.
+    """
+    missing: list[str] = []
+    for section, keys in DECIDING_PATHS.items():
+        values = cfg.get(section)
+        assert isinstance(values, dict), f"{section} is not a section in the real configuration"
+        missing.extend(f"{section}.{key}" for key in keys if key not in values)
+    assert not missing, f"deciding paths absent from the real configuration: {missing}"
+
+
+def test_the_domain_bonus_is_part_of_the_version(cfg: dict[str, Any]) -> None:
+    """score_job reads it directly rather than through scoring_config, so it
+    needs naming separately or a change to it moves no version."""
+    before = policy_version(cfg)
+    changed = deepcopy(cfg)
+    changed["scoring"]["domain_bonus"] = {"primary": 99, "secondary": 98}
+    assert policy_version(changed) != before
+
+
+def test_changing_the_domain_keyword_table_changes_the_version(
+    cfg: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """That table decides a bonus that moves a job across the cutoff."""
+    before = policy_version(cfg)
+    monkeypatch.setattr(
+        rules, "DOMAIN_KEYWORDS", {**rules.DOMAIN_KEYWORDS, "invented": ["something"]}
+    )
+    assert policy_version(cfg) != before
 
 
 def test_changing_a_rule_table_in_code_changes_the_version(
@@ -327,3 +384,65 @@ def test_the_protection_matches_on_company_and_title_too(
     )
     set_status(db, job_id, "rejected")
     assert "northwind labs|senior frontend engineer" in human_rejected_keys(db)
+
+
+def test_the_recorded_reason_is_a_stable_slug(env: Path, cfg: dict[str, Any]) -> None:
+    """Every gate records a slug. The remote gate used to record the prose the
+    rule returns, so rewording that message would silently split one cause
+    into two and a stored reason could not be grouped at all (review finding
+    on PR #33)."""
+    from test_screening import build_job
+
+    from harrier.screening.pipeline import REMOTE_REGION_REASON, TrackerIndexes, screen_jobs
+
+    seen: dict[str, SeenDecision] = {}
+    screen_jobs(
+        [build_job(location="Hybrid - Berlin")],
+        candidate_cfg=cfg,
+        hold_companies=set(),
+        indexes=TrackerIndexes(),
+        source_seen=seen,
+        cache_descriptions=False,
+    )
+    reason = next(iter(seen.values())).reason
+    assert reason == REMOTE_REGION_REASON
+    assert " " not in reason, "a recorded reason must be groupable, not a sentence"
+
+
+def test_a_corrupt_state_file_is_reported_rather_than_silently_empty(
+    env: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Returning an empty set quietly makes every previously rejected posting
+    look new, and the save that follows overwrites the damaged file."""
+    path = env / "data" / "discovery"
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "greenhouse_seen.json").write_text("{not json at all", encoding="utf-8")
+    with caplog.at_level("WARNING"):
+        assert load_seen("greenhouse") == {}
+    assert any("could not be read" in record.message for record in caplog.records)
+
+
+def test_a_state_file_that_is_not_an_object_is_reported(
+    env: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    path = env / "data" / "discovery"
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "greenhouse_seen.json").write_text("[1, 2, 3]", encoding="utf-8")
+    with caplog.at_level("WARNING"):
+        assert load_seen("greenhouse") == {}
+    assert any("not an object" in record.message for record in caplog.records)
+
+
+def test_nothing_eligible_is_not_reported_as_everything_current(
+    db: sqlite3.Connection, cfg: dict[str, Any], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Zero cleared is also what a watchlist of protected manual rejections
+    produces, and saying the wrong one of those is a claim about the
+    operator's own decisions (review finding on PR #33)."""
+    from harrier_cli.main import main
+
+    save_seen("greenhouse", {"k1": decision(policy=policy_version(cfg))})
+    assert main(["reconsider", "--source", "greenhouse"]) == 0
+    out = capsys.readouterr().out
+    assert "nothing is eligible to clear" in out
+    assert "current rules" not in out

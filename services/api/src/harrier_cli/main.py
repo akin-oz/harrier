@@ -937,7 +937,11 @@ def _cmd_reconsider(args: argparse.Namespace) -> int:
                 print(report.describe())
             total_cleared += report.changed
         if not total_cleared:
-            print("nothing to reconsider; every rejection was made under the current rules")
+            # Not "everything used the current rules": zero is also what a
+            # watchlist of protected manual rejections produces, and saying
+            # the wrong one of those is a claim about the operator's own
+            # decisions (review finding on PR #33).
+            print("nothing is eligible to clear")
             return 0
         if args.apply:
             print(f"{total_cleared} cleared; the next discovery run will judge them again")
