@@ -1,4 +1,4 @@
-# open-source-readiness — seed tasks
+# open-source-readiness: seed tasks
 
 Opening assignments per investigator. Follow what you find; these are the
 places this repository has already failed.

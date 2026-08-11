@@ -3,7 +3,7 @@ name: readiness-test-integrity
 description: >
   Would this suite fail if the code were wrong? Exists because it stayed green through a
   defect it should have caught, and because several guards reported success while doing
-  nothing. Read-only.
+  nothing.
 model: opus
 tools:
   - Read
@@ -39,4 +39,13 @@ Method, in order:
 
 Pay attention to anything whose failure mode is silence, and to any test
 whose passing depends on the environment rather than the code. Report
-`file:line — what the test does not actually prove — fix`.
+`file:line: what the test does not prove. Fix:`.
+
+## Execution limits
+
+You run commands to inspect, so you are not read-only and must not behave as
+though the distinction does not matter. Do all of it without changing
+anything: clone or copy to a temporary directory and work there, never write
+to the checkout you were launched from, never commit, push, or amend, never
+install into the machine's global environment, and never read `.env` or any
+file the classification table marks never-in-git.

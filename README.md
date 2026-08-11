@@ -108,8 +108,24 @@ choose:
   lenses exists because this repository has already failed that way, which
   is written down next to each of them.
 
-Both are read-only, and running them needs
-`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`.
+The design is [specs/028-agent-teams.md](specs/028-agent-teams.md), and
+`services/api/tests/test_governance.py` holds the boards to it: membership
+resolves in both directions
+(`test_every_member_named_in_a_launch_document_exists`,
+`test_every_team_agent_is_claimed_by_exactly_one_team`), the `.claude/`
+mirror cannot drift (`test_the_compiled_copy_matches_the_source`), and the
+tool grants match what each board claims
+(`test_review_board_members_cannot_execute_anything`,
+`test_no_team_member_can_write`).
+
+The five `principal-review` reviewers are read-only in the enforceable
+sense: they hold `Read, Glob, Grep` and no `Bash`. The five
+`open-source-readiness` investigators do hold `Bash`, because cloning,
+running the suite and running the demo is their lens; they are instructed to
+work in a temporary copy, which is an instruction and not a sandbox.
+
+Running either board needs `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`. Nothing
+tests that flag: it belongs to the runtime, not to this repository.
 
 ## Running it for real
 

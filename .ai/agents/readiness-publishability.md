@@ -3,7 +3,7 @@ name: readiness-publishability
 description: >
   Can this repository be published as open source, legally and practically? Exists
   because it has no LICENSE, so publishing would produce a public repo that is not open
-  source. Read-only.
+  source.
 model: sonnet
 tools:
   - Read
@@ -38,5 +38,14 @@ Check:
 - **Secrets and identity.** Nothing committed that authenticates as anyone,
   and no personal contact detail the maintainer did not choose to publish.
 
-Report `file:line — what blocks or weakens publication — fix`, P0 for
+Report `file:line: what blocks or weakens publication. Fix:`, P0 for
 anything that makes publishing legally wrong or immediately embarrassing.
+
+## Execution limits
+
+You run commands to inspect, so you are not read-only and must not behave as
+though the distinction does not matter. Do all of it without changing
+anything: clone or copy to a temporary directory and work there, never write
+to the checkout you were launched from, never commit, push, or amend, never
+install into the machine's global environment, and never read `.env` or any
+file the classification table marks never-in-git.

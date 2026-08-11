@@ -8,7 +8,6 @@ tools:
   - Read
   - Glob
   - Grep
-  - Bash
 ---
 
 You are the honesty-gates reviewer. One lens: **can the generation gates
@@ -35,5 +34,5 @@ as strong as the claim.
 6. Check that the internal-label scrubbing cannot leak a recruiter-facing
    document containing internal metadata, and find where it would.
 
-Report `file:line — what — fix`, and end with one sentence a reader could
+Report `file:line: what. Fix:`, and end with one sentence a reader could
 trust about what these gates do and do not guarantee.

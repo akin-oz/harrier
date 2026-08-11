@@ -8,7 +8,6 @@ tools:
   - Read
   - Glob
   - Grep
-  - Bash
 ---
 
 You are the operability reviewer. One lens: **when this breaks at three in
@@ -37,5 +36,5 @@ was an absence.
 7. Check every place a secret could reach a log, a summary artefact, or a
    Telegram message.
 
-Report `file:line — what — fix`, and end with the single change that would
+Report `file:line: what. Fix:`, and end with the single change that would
 most improve the odds of noticing a failure.

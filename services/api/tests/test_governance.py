@@ -10,6 +10,7 @@ and half of it fails to spawn.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 
@@ -19,6 +20,7 @@ ROOT = repo_root()
 SOURCE_TEAMS = ROOT / ".ai" / "agent-teams"
 COMPILED_TEAMS = ROOT / ".claude" / "agent-teams"
 AGENTS = ROOT / ".ai" / "agents"
+COMPILED_AGENTS = ROOT / ".claude" / "agents"
 
 MEMBER_RE = re.compile(r"`((?:review|readiness)-[a-z-]+)`")
 TEAM_PREFIX = {"principal-review": "review-", "open-source-readiness": "readiness-"}
@@ -48,7 +50,7 @@ def agent_files() -> set[str]:
     return {path.stem for path in AGENTS.glob("*.md")}
 
 
-def test_both_teams_exist_with_a_launch_and_seed_tasks() -> None:
+def test_every_team_has_a_launch_and_a_tasks_document() -> None:
     assert team_names() == ["open-source-readiness", "principal-review"]
     for team in team_names():
         assert (SOURCE_TEAMS / team / "launch.md").is_file()
@@ -89,14 +91,62 @@ def test_each_team_fields_five_members(team: str) -> None:
     assert len(members_of(team)) == 5
 
 
-def test_every_member_is_read_only() -> None:
-    """A board that can write is not a review board."""
+def frontmatter_of(directory: Path, member: str) -> str:
+    return (directory / f"{member}.md").read_text(encoding="utf-8").split("---")[1]
+
+
+@pytest.mark.parametrize("directory", [AGENTS, COMPILED_AGENTS], ids=["source", "compiled"])
+def test_no_team_member_can_write(directory: Path) -> None:
+    """A board that can write is not a review board.
+
+    Checked against the compiled copy as well as the source, because
+    `.claude/agents/` is what Claude Code loads: an earlier version of this
+    test read only `.ai/`, so a compiled file that gained `Write` would have
+    passed it (review finding on PR #29).
+    """
     for team in team_names():
         for member in sorted(members_of(team)):
-            text = (AGENTS / f"{member}.md").read_text(encoding="utf-8")
-            frontmatter = text.split("---")[1]
-            assert "Write" not in frontmatter, f"{member} is not read-only"
-            assert "Edit" not in frontmatter, f"{member} is not read-only"
+            frontmatter = frontmatter_of(directory, member)
+            assert "Write" not in frontmatter, f"{member} in {directory.name} can write"
+            assert "Edit" not in frontmatter, f"{member} in {directory.name} can edit"
+
+
+@pytest.mark.parametrize("directory", [AGENTS, COMPILED_AGENTS], ids=["source", "compiled"])
+def test_review_board_members_cannot_execute_anything(directory: Path) -> None:
+    """`Bash` is not read-only, so the board that claims to be does not get it.
+
+    The first version of spec 028 gave all ten members `Bash` and called them
+    all read-only. A shell writes, installs and reaches the network, so the
+    claim was false for every one of them. The five investigators on
+    `open-source-readiness` genuinely need it (they clone, build and run the
+    suite) and their launch document now says they are not read-only. The
+    five reviewers here execute nothing, so the grant is simply removed and
+    the property becomes enforceable.
+    """
+    for member in sorted(members_of("principal-review")):
+        assert "Bash" not in frontmatter_of(directory, member), (
+            f"{member} holds Bash, so principal-review's read-only claim is false"
+        )
+
+
+def test_every_team_member_compiles_into_the_claude_directory() -> None:
+    """`.ai/agents/` is the source; the board spawns from `.claude/agents/`."""
+    for team in team_names():
+        for member in sorted(members_of(team)):
+            assert (COMPILED_AGENTS / f"{member}.md").is_file(), (
+                f"{member} has no compiled agent; run `aie sync`"
+            )
+
+
+def test_the_investigators_are_told_they_are_not_read_only() -> None:
+    """The honest half of the tool split, in the file the agent actually reads.
+
+    Without this the correction lives only in a launch document, and an agent
+    that holds `Bash` reads nothing telling it to leave the checkout alone.
+    """
+    for member in sorted(members_of("open-source-readiness")):
+        body = (AGENTS / f"{member}.md").read_text(encoding="utf-8")
+        assert "## Execution limits" in body, f"{member} holds Bash but states no limits"
 
 
 def test_the_compiled_copy_matches_the_source() -> None:

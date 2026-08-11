@@ -1,7 +1,7 @@
-# principal-review — seed tasks
+# principal-review: seed tasks
 
 Opening assignments per reviewer. These are the questions worth asking first,
-not the whole review — follow what you find. Each is a place where the design
+not the whole review. Follow what you find. Each is a place where the design
 made a real choice that deserves to be defended or overturned.
 
 ## review-principal-architect
@@ -87,4 +87,6 @@ made a real choice that deserves to be defended or overturned.
 6. The cutover rollback re-loads what it unloaded. Say what state the operator
    is in if the rollback itself fails partway.
 7. Find every place a secret could reach a log, a summary artefact, or a
-   Telegram message.
+   Telegram message. Report the sink and the kind of secret, never the value:
+   the finding is "provider key reaches the run summary", and a report that
+   proves it by quoting the key has moved the key somewhere new.

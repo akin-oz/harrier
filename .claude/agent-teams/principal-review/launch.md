@@ -29,14 +29,20 @@ currently allowed to say so.
 
 | Reviewer            | Subagent                     | Model  | Lens |
 | ------------------- | ---------------------------- | ------ | ---- |
-| Principal architect | `review-principal-architect` | opus   | Do the abstractions earn their keep, and is twenty-seven specs of governance proportionate to a one-user tool? |
+| Principal architect | `review-principal-architect` | opus   | Do the abstractions earn their keep, and is this much governance proportionate to a one-user tool? |
 | Domain model        | `review-domain-model`        | sonnet | Every column is a string and statuses have no transitions. What can the model not express? |
 | Screening           | `review-screening`           | opus   | Is the score discriminating, or has the cutoff stopped doing work? |
 | Honesty gates       | `review-honesty-gates`       | opus   | The validator catches contradiction. Does it catch invention? |
 | Operability         | `review-operability`         | opus   | A scheduled job failed silently for two months. Would this one? |
 
-All five are read-only (`Read, Glob, Grep, Bash`) and report findings as
-`file:line — what — fix` at P0, P1, or P2. Four run on `opus` because each
+All five are read-only in the enforceable sense: `Read, Glob, Grep` and no
+`Bash`, so nothing they can invoke writes, installs, or reaches the network.
+They read and judge, which is all this board does. The investigators on
+`open-source-readiness` do need to execute, and that team's launch document
+says so rather than claiming otherwise.
+
+They report findings as
+`file:line: what. Fix:` at P0, P1, or P2. Four run on `opus` because each
 is judgement about what is absent or what could happen, which is harder than
 reading what is there.
 
@@ -79,28 +85,34 @@ export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
 > an approved spec under `specs/`, and the repository is public while the
 > data is a real person's job search.
 >
-> - **`review-principal-architect`** — is this the right design? Delete each
->   abstraction and see what breaks. Judge whether twenty-seven specs, four
+> - **`review-principal-architect`**: is this the right design? Delete each
+>   abstraction and see what breaks. Count `specs/*.md`, then judge whether
+>   that many specs, four
 >   guardians and a trailer gate are proportionate to one user, given that
 >   several approved specs were corrected by their own implementation and
 >   that nine CLI verbs went missing between two specs that each assumed the
 >   other owned them.
-> - **`review-domain-model`** — read the tracker schema and `JobOut` cold and
+> - **`review-domain-model`**: read the tracker schema and `JobOut` cold and
 >   say what the model cannot express. Every column is text, statuses have no
 >   transitions, and the notes key=value store was promoted to columns that
 >   may now disagree with it.
-> - **`review-screening`** — work out from the scoring rules what a typical
+> - **`review-screening`**: work out from the scoring rules what a typical
 >   in-scope posting scores, and whether the cutoff sits anywhere near it.
 >   Judge the gate order, the location parsing against real phrasings, and
 >   the seen-state layer that makes a rule change unable to reconsider
 >   anything already rejected.
-> - **`review-honesty-gates`** — find the exact point a generated line is
+> - **`review-honesty-gates`**: find the exact point a generated line is
 >   accepted and state what property is verified. Then write the invented
 >   line that passes: plausible, unsupported, uncontradicted.
-> - **`review-operability`** — start from the job in the old system that
+> - **`review-operability`**: start from the job in the old system that
 >   failed silently for two months. For every scheduled job here, say how a
 >   silent failure would be noticed, and what an attacker on the same machine
 >   reaches through an unauthenticated `POST /runs`.
+>
+> Findings name the file, the line, and what is wrong. They do not quote
+> secret values, message contents, tokens, or anyone's identity: this
+> repository is public and a report gets pasted into places the code never
+> reaches.
 >
 > Have each return its own P0/P1/P2 report. Then merge into one list ordered
 > by severity and blast radius, deduplicated across lenses, ending with the

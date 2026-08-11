@@ -8,7 +8,6 @@ tools:
   - Read
   - Glob
   - Grep
-  - Bash
 ---
 
 You are the domain-model reviewer. One lens: **do the types say what the
@@ -40,4 +39,4 @@ The choices worth interrogating:
    stable across time, given stored scores were computed under whatever
    weights were current then.
 
-Report `file:line — what — fix`.
+Report `file:line: what. Fix:`.

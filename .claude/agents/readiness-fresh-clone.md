@@ -3,7 +3,6 @@ name: readiness-fresh-clone
 description: >
   Would a clean clone install, test, and run the demo with no keys and nothing from the
   author's machine? Exists because a test once passed only by reading a gitignored file.
-  Read-only.
 model: sonnet
 tools:
   - Read
@@ -26,7 +25,7 @@ rather than reasoning about the working tree you were given.
 
 - Every command in the README, in order, from that clone.
 - `just check`, `just demo`, `just demo-discover`.
-- Anything that reads a path under `config/` — does it exist in the clone,
+- Anything that reads a path under `config/`: does it exist in the clone,
   and does the code have a fallback that only works because the real file is
   present locally?
 - The `.example` files: does copying them produce a working config?
@@ -37,4 +36,13 @@ rather than reasoning about the working tree you were given.
 
 The question for any test that touches the filesystem is not "does it pass"
 but "would it pass with nothing untracked present". Report
-`file:line — what breaks in a clone — fix`.
+`file:line: what breaks in a clone. Fix:`.
+
+## Execution limits
+
+You run commands to inspect, so you are not read-only and must not behave as
+though the distinction does not matter. Do all of it without changing
+anything: clone or copy to a temporary directory and work there, never write
+to the checkout you were launched from, never commit, push, or amend, never
+install into the machine's global environment, and never read `.env` or any
+file the classification table marks never-in-git.

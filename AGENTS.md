@@ -367,24 +367,33 @@ after the change landed.
 
 Work document by document and resolve each claim against the code:
 
-- **`specs/**`** — for every acceptance criterion, find the named test and
+- **`specs/**`**: for every acceptance criterion, find the named test and
   run it in your head. A criterion naming no test is a finding. A criterion
   naming a test that does not exist is a P0. A shipped spec whose behaviour
   the code contradicts is a P0.
-- **`docs/parity-matrix.md`** — spot-check keep rows against the code that
+- **`docs/parity-matrix.md`**: spot-check keep rows against the code that
   should implement them. The matrix has already been found missing a
   capability entirely.
-- **`README.md`** — every command, claim, and limitation. Run the commands
+- **`README.md`**: every command, claim, and limitation. Run the commands
   if they are cheap.
-- **ADRs** — is each decision still what the code does?
-- **Module docstrings** — they make behavioural claims here and are the
+- **ADRs**: is each decision still what the code does?
+- **Module docstrings**: they make behavioural claims here and are the
   least-reviewed prose in the repository.
 
 Two failure shapes worth naming specifically. A document that describes the
 state *before* a change as though it were current. And a claim that was true
 when written and quietly stopped being true.
 
-Report `file:line — the claim — what the code actually does — fix`.
+Report `file:line: the claim. What the code does. Fix:`.
+
+## Execution limits
+
+You run commands to inspect, so you are not read-only and must not behave as
+though the distinction does not matter. Do all of it without changing
+anything: clone or copy to a temporary directory and work there, never write
+to the checkout you were launched from, never commit, push, or amend, never
+install into the machine's global environment, and never read `.env` or any
+file the classification table marks never-in-git.
 
 ---
 
@@ -404,7 +413,7 @@ rather than reasoning about the working tree you were given.
 
 - Every command in the README, in order, from that clone.
 - `just check`, `just demo`, `just demo-discover`.
-- Anything that reads a path under `config/` — does it exist in the clone,
+- Anything that reads a path under `config/`: does it exist in the clone,
   and does the code have a fallback that only works because the real file is
   present locally?
 - The `.example` files: does copying them produce a working config?
@@ -415,7 +424,16 @@ rather than reasoning about the working tree you were given.
 
 The question for any test that touches the filesystem is not "does it pass"
 but "would it pass with nothing untracked present". Report
-`file:line — what breaks in a clone — fix`.
+`file:line: what breaks in a clone. Fix:`.
+
+## Execution limits
+
+You run commands to inspect, so you are not read-only and must not behave as
+though the distinction does not matter. Do all of it without changing
+anything: clone or copy to a temporary directory and work there, never write
+to the checkout you were launched from, never commit, push, or amend, never
+install into the machine's global environment, and never read `.env` or any
+file the classification table marks never-in-git.
 
 ---
 
@@ -445,7 +463,7 @@ happened here:
 
 Where to look, not only in the obvious place:
 
-- `specs/**`, `docs/**`, `README.md` — prose is where it recurs
+- `specs/**`, `docs/**`, `README.md`: prose is where it recurs
 - source comments, docstrings, and **test names and docstrings**
 - fixtures under `fixtures/**` and every `config/*.example.*`
 - commit messages and PR descriptions on the current branch
@@ -456,9 +474,26 @@ threshold) or an observation (something measured about this person's data)?
 Specifications are fine. Observations are the finding.
 
 Check that `config/data-classification.json` still covers every tracked
-path, and that nothing never-in-git is tracked. Report `file:line — what —
-fix` at P0 for anything published, P1 for anything committed but not yet
+path, and that nothing never-in-git is tracked. Report `file:line: what.
+Fix:` at P0 for anything published, P1 for anything committed but not yet
 public, P2 for a pattern that will leak next time.
+
+## Execution limits
+
+You run commands to inspect, so you are not read-only and must not behave as
+though the distinction does not matter. Do all of it without changing
+anything: clone or copy to a temporary directory and work there, never write
+to the checkout you were launched from, never commit, push, or amend, never
+install into the machine's global environment, and never read `.env` or any
+file the classification table marks never-in-git.
+
+## What a finding may contain
+
+Report the file, the line, and the *class* of data. Never the value. A
+finding that quotes the leaked name, count, date, path, handle, or token
+republishes it into a report that will itself be pasted somewhere, which is
+how the same leak recurs one level up. "Row count in a docstring" is the
+finding; the number is not.
 
 ---
 
@@ -490,8 +525,17 @@ Check:
 - **Secrets and identity.** Nothing committed that authenticates as anyone,
   and no personal contact detail the maintainer did not choose to publish.
 
-Report `file:line — what blocks or weakens publication — fix`, P0 for
+Report `file:line: what blocks or weakens publication. Fix:`, P0 for
 anything that makes publishing legally wrong or immediately embarrassing.
+
+## Execution limits
+
+You run commands to inspect, so you are not read-only and must not behave as
+though the distinction does not matter. Do all of it without changing
+anything: clone or copy to a temporary directory and work there, never write
+to the checkout you were launched from, never commit, push, or amend, never
+install into the machine's global environment, and never read `.env` or any
+file the classification table marks never-in-git.
 
 ---
 
@@ -524,7 +568,16 @@ Method, in order:
 
 Pay attention to anything whose failure mode is silence, and to any test
 whose passing depends on the environment rather than the code. Report
-`file:line — what the test does not actually prove — fix`.
+`file:line: what the test does not prove. Fix:`.
+
+## Execution limits
+
+You run commands to inspect, so you are not read-only and must not behave as
+though the distinction does not matter. Do all of it without changing
+anything: clone or copy to a temporary directory and work there, never write
+to the checkout you were launched from, never commit, push, or amend, never
+install into the machine's global environment, and never read `.env` or any
+file the classification table marks never-in-git.
 
 ---
 
@@ -559,7 +612,7 @@ The choices worth interrogating:
    stable across time, given stored scores were computed under whatever
    weights were current then.
 
-Report `file:line — what — fix`.
+Report `file:line: what. Fix:`.
 
 ---
 
@@ -589,7 +642,7 @@ as strong as the claim.
 6. Check that the internal-label scrubbing cannot leak a recruiter-facing
    document containing internal metadata, and find where it would.
 
-Report `file:line — what — fix`, and end with one sentence a reader could
+Report `file:line: what. Fix:`, and end with one sentence a reader could
 trust about what these gates do and do not guarantee.
 
 ---
@@ -622,7 +675,7 @@ was an absence.
 7. Check every place a secret could reach a log, a summary artefact, or a
    Telegram message.
 
-Report `file:line — what — fix`, and end with the single change that would
+Report `file:line: what. Fix:`, and end with the single change that would
 most improve the odds of noticing a failure.
 
 ---
@@ -634,7 +687,8 @@ right design, and would you build it this way?**
 
 The question this repository most needs asked, and the one no standing
 guardian is allowed to ask, is whether its governance is proportionate.
-Twenty-seven specs, four guardians, a commit-trailer gate, CI trailer
+Count `specs/*.md` before you start (twenty-eight at the time of
+writing). That many specs, four guardians, a commit-trailer gate, CI trailer
 resolution, generated agent artefacts, a parity matrix and a cutover
 tooling suite, for a job tracker with exactly one user.
 
@@ -658,10 +712,10 @@ Do not answer that from taste. Answer it from evidence in the repository:
    risk, or a preference?
 5. Ask what a second user, a hosted deployment, or a second job board
    provider would force. Which extends cleanly and which forces a rewrite?
-6. Judge whether the domain / API / CLI layering survived twenty-seven
+6. Judge whether the domain / API / CLI layering survived twenty-eight
    specs or whether seams were added where convenient.
 
-Report `file:line — what — fix` at P0/P1/P2, and end with the single change
+Report `file:line: what. Fix:` at P0/P1/P2, and end with the single change
 you would make first and the strongest thing about the design.
 
 ---
@@ -695,7 +749,7 @@ postings into a handful worth reading. Judge whether it does.
    posting that was rejected once can never be reconsidered after the rules
    change. Decide whether that is right.
 
-Report `file:line — what — fix`, and end with whether you would trust this
+Report `file:line: what. Fix:`, and end with whether you would trust this
 pipeline's rejections. are replaced with the rules and agents listed in .ai/manifest.yaml. -->
 # Project instructions
 
@@ -1068,24 +1122,33 @@ after the change landed.
 
 Work document by document and resolve each claim against the code:
 
-- **`specs/**`** — for every acceptance criterion, find the named test and
+- **`specs/**`**: for every acceptance criterion, find the named test and
   run it in your head. A criterion naming no test is a finding. A criterion
   naming a test that does not exist is a P0. A shipped spec whose behaviour
   the code contradicts is a P0.
-- **`docs/parity-matrix.md`** — spot-check keep rows against the code that
+- **`docs/parity-matrix.md`**: spot-check keep rows against the code that
   should implement them. The matrix has already been found missing a
   capability entirely.
-- **`README.md`** — every command, claim, and limitation. Run the commands
+- **`README.md`**: every command, claim, and limitation. Run the commands
   if they are cheap.
-- **ADRs** — is each decision still what the code does?
-- **Module docstrings** — they make behavioural claims here and are the
+- **ADRs**: is each decision still what the code does?
+- **Module docstrings**: they make behavioural claims here and are the
   least-reviewed prose in the repository.
 
 Two failure shapes worth naming specifically. A document that describes the
 state *before* a change as though it were current. And a claim that was true
 when written and quietly stopped being true.
 
-Report `file:line — the claim — what the code actually does — fix`.
+Report `file:line: the claim. What the code does. Fix:`.
+
+## Execution limits
+
+You run commands to inspect, so you are not read-only and must not behave as
+though the distinction does not matter. Do all of it without changing
+anything: clone or copy to a temporary directory and work there, never write
+to the checkout you were launched from, never commit, push, or amend, never
+install into the machine's global environment, and never read `.env` or any
+file the classification table marks never-in-git.
 
 ---
 
@@ -1105,7 +1168,7 @@ rather than reasoning about the working tree you were given.
 
 - Every command in the README, in order, from that clone.
 - `just check`, `just demo`, `just demo-discover`.
-- Anything that reads a path under `config/` — does it exist in the clone,
+- Anything that reads a path under `config/`: does it exist in the clone,
   and does the code have a fallback that only works because the real file is
   present locally?
 - The `.example` files: does copying them produce a working config?
@@ -1116,7 +1179,16 @@ rather than reasoning about the working tree you were given.
 
 The question for any test that touches the filesystem is not "does it pass"
 but "would it pass with nothing untracked present". Report
-`file:line — what breaks in a clone — fix`.
+`file:line: what breaks in a clone. Fix:`.
+
+## Execution limits
+
+You run commands to inspect, so you are not read-only and must not behave as
+though the distinction does not matter. Do all of it without changing
+anything: clone or copy to a temporary directory and work there, never write
+to the checkout you were launched from, never commit, push, or amend, never
+install into the machine's global environment, and never read `.env` or any
+file the classification table marks never-in-git.
 
 ---
 
@@ -1146,7 +1218,7 @@ happened here:
 
 Where to look, not only in the obvious place:
 
-- `specs/**`, `docs/**`, `README.md` — prose is where it recurs
+- `specs/**`, `docs/**`, `README.md`: prose is where it recurs
 - source comments, docstrings, and **test names and docstrings**
 - fixtures under `fixtures/**` and every `config/*.example.*`
 - commit messages and PR descriptions on the current branch
@@ -1157,9 +1229,26 @@ threshold) or an observation (something measured about this person's data)?
 Specifications are fine. Observations are the finding.
 
 Check that `config/data-classification.json` still covers every tracked
-path, and that nothing never-in-git is tracked. Report `file:line — what —
-fix` at P0 for anything published, P1 for anything committed but not yet
+path, and that nothing never-in-git is tracked. Report `file:line: what.
+Fix:` at P0 for anything published, P1 for anything committed but not yet
 public, P2 for a pattern that will leak next time.
+
+## Execution limits
+
+You run commands to inspect, so you are not read-only and must not behave as
+though the distinction does not matter. Do all of it without changing
+anything: clone or copy to a temporary directory and work there, never write
+to the checkout you were launched from, never commit, push, or amend, never
+install into the machine's global environment, and never read `.env` or any
+file the classification table marks never-in-git.
+
+## What a finding may contain
+
+Report the file, the line, and the *class* of data. Never the value. A
+finding that quotes the leaked name, count, date, path, handle, or token
+republishes it into a report that will itself be pasted somewhere, which is
+how the same leak recurs one level up. "Row count in a docstring" is the
+finding; the number is not.
 
 ---
 
@@ -1191,8 +1280,17 @@ Check:
 - **Secrets and identity.** Nothing committed that authenticates as anyone,
   and no personal contact detail the maintainer did not choose to publish.
 
-Report `file:line — what blocks or weakens publication — fix`, P0 for
+Report `file:line: what blocks or weakens publication. Fix:`, P0 for
 anything that makes publishing legally wrong or immediately embarrassing.
+
+## Execution limits
+
+You run commands to inspect, so you are not read-only and must not behave as
+though the distinction does not matter. Do all of it without changing
+anything: clone or copy to a temporary directory and work there, never write
+to the checkout you were launched from, never commit, push, or amend, never
+install into the machine's global environment, and never read `.env` or any
+file the classification table marks never-in-git.
 
 ---
 
@@ -1225,7 +1323,16 @@ Method, in order:
 
 Pay attention to anything whose failure mode is silence, and to any test
 whose passing depends on the environment rather than the code. Report
-`file:line — what the test does not actually prove — fix`.
+`file:line: what the test does not prove. Fix:`.
+
+## Execution limits
+
+You run commands to inspect, so you are not read-only and must not behave as
+though the distinction does not matter. Do all of it without changing
+anything: clone or copy to a temporary directory and work there, never write
+to the checkout you were launched from, never commit, push, or amend, never
+install into the machine's global environment, and never read `.env` or any
+file the classification table marks never-in-git.
 
 ---
 
@@ -1260,7 +1367,7 @@ The choices worth interrogating:
    stable across time, given stored scores were computed under whatever
    weights were current then.
 
-Report `file:line — what — fix`.
+Report `file:line: what. Fix:`.
 
 ---
 
@@ -1290,7 +1397,7 @@ as strong as the claim.
 6. Check that the internal-label scrubbing cannot leak a recruiter-facing
    document containing internal metadata, and find where it would.
 
-Report `file:line — what — fix`, and end with one sentence a reader could
+Report `file:line: what. Fix:`, and end with one sentence a reader could
 trust about what these gates do and do not guarantee.
 
 ---
@@ -1323,7 +1430,7 @@ was an absence.
 7. Check every place a secret could reach a log, a summary artefact, or a
    Telegram message.
 
-Report `file:line — what — fix`, and end with the single change that would
+Report `file:line: what. Fix:`, and end with the single change that would
 most improve the odds of noticing a failure.
 
 ---
@@ -1335,7 +1442,8 @@ right design, and would you build it this way?**
 
 The question this repository most needs asked, and the one no standing
 guardian is allowed to ask, is whether its governance is proportionate.
-Twenty-seven specs, four guardians, a commit-trailer gate, CI trailer
+Count `specs/*.md` before you start (twenty-eight at the time of
+writing). That many specs, four guardians, a commit-trailer gate, CI trailer
 resolution, generated agent artefacts, a parity matrix and a cutover
 tooling suite, for a job tracker with exactly one user.
 
@@ -1359,10 +1467,10 @@ Do not answer that from taste. Answer it from evidence in the repository:
    risk, or a preference?
 5. Ask what a second user, a hosted deployment, or a second job board
    provider would force. Which extends cleanly and which forces a rewrite?
-6. Judge whether the domain / API / CLI layering survived twenty-seven
+6. Judge whether the domain / API / CLI layering survived twenty-eight
    specs or whether seams were added where convenient.
 
-Report `file:line — what — fix` at P0/P1/P2, and end with the single change
+Report `file:line: what. Fix:` at P0/P1/P2, and end with the single change
 you would make first and the strongest thing about the design.
 
 ---
@@ -1396,5 +1504,5 @@ postings into a handful worth reading. Judge whether it does.
    posting that was rejected once can never be reconsidered after the rules
    change. Decide whether that is right.
 
-Report `file:line — what — fix`, and end with whether you would trust this
+Report `file:line: what. Fix:`, and end with whether you would trust this
 pipeline's rejections.
