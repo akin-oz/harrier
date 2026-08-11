@@ -131,6 +131,31 @@ def _cmd_migrate_legacy(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_check(args: argparse.Namespace) -> int:
+    """Report rows that break an invariant. Changes nothing.
+
+    Rows written before spec 036 may already be in states it forbids, and a
+    migration that silently edited somebody's job search to satisfy a rule
+    invented afterwards would destroy the record of what they actually did.
+    So this reports and exits non-zero, and the operator decides.
+    """
+    from harrier.tracker.invariants import check_rows
+    from harrier.tracker.store import list_jobs
+
+    conn = connect()
+    try:
+        problems = check_rows(list_jobs(conn))
+    finally:
+        conn.close()
+    if not problems:
+        print("no tracker rows break a status invariant")
+        return 0
+    for job_id, breach in problems:
+        print(f"job {job_id}: {breach}", file=sys.stderr)
+    print(f"{len(problems)} row(s) need attention; nothing was changed", file=sys.stderr)
+    return 1
+
+
 def _cmd_export(args: argparse.Namespace) -> int:
     conn = connect()
     jobs_path, contacts_path = export_csv(conn, Path(args.dest))
@@ -1270,6 +1295,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--replace", action="store_true", help="drop and reimport tracker tables"
     )
     migrate_parser.set_defaults(func=_cmd_migrate_legacy)
+
+    check_parser = sub.add_parser(
+        "check", help="report tracker rows that break a status invariant (spec 036)"
+    )
+    check_parser.set_defaults(func=_cmd_check)
 
     export_parser = sub.add_parser("export", help="export tracker to legacy-shape CSVs")
     export_parser.add_argument("--dest", default="tracker", help="destination directory")
