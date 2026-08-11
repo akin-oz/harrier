@@ -75,6 +75,49 @@ REGION_NEGATIVE_HINTS: frozenset[str] = frozenset(
 # NOT in any hard-rejection list. The candidate can contract through an EU legal
 # entity, so these requirements are satisfiable via B2B, never blockers. See
 # PREFERRED_SIGNAL_WEIGHTS: those phrases are POSITIVE signals.
+#
+# Naming the class here rather than trusting the negative lists not to contain
+# it. "must be based" sits in REMOTE_NEGATIVE_HINTS and was matched against the
+# location field, so `Remote (must be based in the EU)` was rejected as hybrid:
+# the exact phrasing an EU-permit posting uses, and the one the invariant
+# singles out (spec 032). These are stripped from a location before any
+# negative hint sees it, so a hint added later cannot reintroduce the defect.
+EU_PERMIT_PATTERNS: tuple[str, ...] = (
+    r"must be (?:based|located|resident)\s+(?:in|within)\s+(?:the\s+)?(?:eu|eea|europe)\b",
+    r"must reside\s+(?:in|within)\s+(?:the\s+)?(?:eu|eea|europe)\b",
+    r"(?:eu|eea|european)\s+(?:work\s+)?(?:permit|visa|citizenship|residency)",
+    r"right to work\s+(?:in|within)\s+(?:the\s+)?(?:eu|eea|europe)\b",
+    r"(?:eu|eea)[- ]based\s+(?:contractor|entity|company)",
+    r"eu residents only",
+)
+
+# Matched against a single location segment. A bare `us` is safe here because
+# word boundaries stop it inside Siracusa and Jerusalem, both of which the
+# unanchored version rejected as non-EMEA.
+NON_EMEA_LOCATION_PATTERNS: tuple[str, ...] = (
+    r"\bus\b",
+    r"\bu\.s\.?\b",
+    r"\busa\b",
+    r"\bunited states\b",
+    r"\bcanada\b",
+    r"\bnorth america\b",
+    r"\bamericas\b",
+    r"\blatam\b",
+    r"\bapac\b",
+    r"\bnew york\b",
+    r"\bsan francisco\b",
+    r"\bboston\b",
+    r"\baustin\b",
+    r"\bseattle\b",
+    r"\btoronto\b",
+)
+
+# Where one location field holds several *alternative* places. Ashby joins with
+# " | ". Deliberately not "-", which appears inside on-site and remote-first,
+# and deliberately not ",": a comma qualifies a location rather than offering
+# an alternative, so splitting on it evaluated "On-site" and "Madrid"
+# separately and each passed on its own.
+LOCATION_SEPARATORS = r"\s*(?:\||;|/| or )\s*"
 
 REMOTE_POSITIVE_PATTERNS: tuple[str, ...] = (
     r"\bremote\b",
@@ -206,17 +249,19 @@ def _str_list(container: dict[str, Any], key: str) -> list[str]:
 
 def title_allowed(title: str, candidate_cfg: CandidateConfig) -> bool:
     title_norm = normalize(title)
-    if any(token in title_norm for token in EXCLUDED_TITLE_HINTS):
+    # Word-matched, not substring: "ios" and "qa" matched inside ordinary
+    # words and rejected titles that were never mobile or QA roles (spec 032).
+    if any(contains_word(title_norm, token) for token in EXCLUDED_TITLE_HINTS):
         return False
     targets = _cfg_dict(candidate_cfg, "targets")
     exact_titles = [normalize(item) for item in _str_list(targets, "titles")]
     include = [normalize(item) for item in _str_list(targets, "title_keywords_include")]
     exclude = [normalize(item) for item in _str_list(targets, "title_keywords_exclude")]
-    if any(token in title_norm for token in exclude):
+    if any(contains_word(title_norm, token) for token in exclude):
         return False
     if any(exact == title_norm for exact in exact_titles):
         return True
-    return sum(1 for token in include if token and token in title_norm) >= 1
+    return sum(1 for token in include if token and contains_word(title_norm, token)) >= 1
 
 
 def is_target_title_variant(title: str, exact_titles: list[str]) -> bool:
@@ -233,6 +278,55 @@ def is_target_title_variant(title: str, exact_titles: list[str]) -> bool:
     return False
 
 
+def contains_word(text: str, token: str) -> bool:
+    """Word-boundary containment, never bare substring.
+
+    The unanchored version matched `usa` inside Siracusa and Jerusalem and
+    rejected both as non-EMEA. Every keyword list goes through here now.
+    """
+    return re.search(rf"(?<!\w){re.escape(token)}(?!\w)", text) is not None
+
+
+def strip_eu_permit_phrases(text: str) -> str:
+    """Remove the EU-permit phrase class before any negative hint sees it."""
+    cleaned = text
+    for pattern in EU_PERMIT_PATTERNS:
+        cleaned = re.sub(pattern, " ", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def split_locations(location: str) -> list[str]:
+    """One location field, one entry per alternative place it names.
+
+    Providers join several locations into one string, and matching the whole
+    field meant a single out-of-scope office rejected the entire posting.
+    """
+    parts = [part.strip() for part in re.split(LOCATION_SEPARATORS, location)]
+    return [part for part in parts if part] or ([location.strip()] if location.strip() else [])
+
+
+def location_is_remote(segment: str) -> bool:
+    cleaned = strip_eu_permit_phrases(segment)
+    return not any(contains_word(cleaned, token) for token in REMOTE_NEGATIVE_HINTS)
+
+
+def location_is_in_region(segment: str) -> bool:
+    cleaned = strip_eu_permit_phrases(segment)
+    return not text_matches_any_pattern(cleaned, NON_EMEA_LOCATION_PATTERNS)
+
+
+# The gate order, and the field each rule may read. Stated here because the
+# defect this spec fixes was a rule reading a field its own comment said it
+# must not. Asserted by
+# tests/test_screening_location.py::test_the_gate_order_is_what_the_module_declares.
+GATE_ORDER: tuple[tuple[str, str], ...] = (
+    ("not remote", "location"),
+    ("region looks non-EMEA", "location and title"),
+    ("remote signal missing", "title, location and description"),
+    ("preferred region missing", "title, location and description"),
+)
+
+
 def remote_region_allowed(job: NormalizedJob, candidate_cfg: CandidateConfig) -> tuple[bool, str]:
     title = normalize(job["title"])
     location = normalize(job["location"])
@@ -241,35 +335,49 @@ def remote_region_allowed(job: NormalizedJob, candidate_cfg: CandidateConfig) ->
 
     # DELIBERATE: negative hints check the location field only, never the
     # description. Descriptions routinely contain the words in comparisons
-    # ("unlike hybrid roles, we are fully remote") and, critically,
-    # "must be based" appears in "must be based in EU", which is a POSITIVE
-    # signal per the product invariants. Widening this check to descriptions
-    # would reject valid remote-EMEA roles. Pinned by
+    # ("unlike hybrid roles, we are fully remote"). Pinned by
     # test_hybrid_wording_in_description_does_not_reject and
     # test_must_be_based_in_eu_description_stays_accepted.
-    if any(token in location for token in REMOTE_NEGATIVE_HINTS):
-        return False, "location says hybrid/on-site"
+    #
+    # Evaluated per location, and a posting qualifies when any one of its
+    # locations does. Permit phrases are stripped first, so the phrasing the
+    # invariant calls a positive signal cannot read as a hybrid marker.
+    segments = split_locations(location)
+    if segments:
+        remote_segments = [segment for segment in segments if location_is_remote(segment)]
+        if not remote_segments:
+            return False, "location says hybrid/on-site"
+        if not any(location_is_in_region(segment) for segment in remote_segments):
+            return False, "region looks non-EMEA"
 
-    # Only check non-EMEA region signals in title+location, not description.
-    # A job description may mention US offices while the role is EMEA-remote.
-    title_location = f"{title} {location}".strip()
-    if any(token in title_location for token in REGION_NEGATIVE_HINTS):
+    # The title carries the unambiguous names only. A bare "us" is not among
+    # them: it is a word that appears in ordinary titles, and the location
+    # check above already covers the real shapes.
+    if any(contains_word(title, token) for token in REGION_NEGATIVE_HINTS):
         return False, "region looks non-EMEA"
+
+    # An explicit signal from the source outranks text matching. Only one
+    # source's signal used to be consulted, so a posting from a board that
+    # publishes nothing but remote roles was rejected for a missing remote
+    # signal (spec 032).
+    signal = job["remote_signal"]
+    if signal and signal != "unknown":
+        if signal == "linkedin_search":
+            # LinkedIn jobs come from EMEA-scoped search URLs; the region
+            # filter is applied at query level, so "Remote" without a region
+            # tag is valid.
+            return True, "linkedin remote-filtered search result"
+        return True, f"source declares {signal}"
 
     if not text_matches_any_pattern(combined, REMOTE_POSITIVE_PATTERNS):
         return False, "remote signal missing"
-
-    # LinkedIn jobs come from EMEA-scoped search URLs; the region filter is
-    # applied at query level, so "Remote" without a region tag is valid.
-    if job["remote_signal"] == "linkedin_search":
-        return True, "linkedin remote-filtered search result"
 
     candidate = _cfg_dict(candidate_cfg, "candidate")
     preferred_regions = [normalize(item) for item in _str_list(candidate, "preferred_regions")]
     preferred_countries = [normalize(item) for item in _str_list(candidate, "preferred_countries")]
     allowed_tokens = [token for token in preferred_regions + preferred_countries if token]
     has_preferred_region_signal = any(
-        token in combined for token in allowed_tokens
+        contains_word(combined, token) for token in allowed_tokens
     ) or text_matches_any_pattern(combined, PREFERRED_REGION_PATTERNS)
     if allowed_tokens and not has_preferred_region_signal:
         return False, "preferred region missing"
