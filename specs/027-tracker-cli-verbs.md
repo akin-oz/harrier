@@ -1,8 +1,8 @@
 ---
 spec: 027
 title: Tracker CLI verb parity
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M6
 depends: [004, 013, 015]
 ---
