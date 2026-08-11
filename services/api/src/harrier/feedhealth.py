@@ -28,10 +28,13 @@ from __future__ import annotations
 import json
 import socket
 import sqlite3
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any, cast
+from email.message import Message
+from http.client import HTTPResponse
+from typing import IO, Any, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -39,17 +42,25 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 from harrier.demo import http_fixtures_dir
 from harrier.screening.http import USER_AGENT, fixture_body
 from harrier.sources.ashby import extract_ashby_board
+from harrier.sources.feeds import route_ats_feeds
 from harrier.sources.greenhouse import extract_greenhouse_token
 from harrier.sources.lever import extract_lever_api_base, extract_lever_company
-from harrier.userconfig import DEFAULT_SCOPE, FEEDS, load_ats_feeds, set_config
+from harrier.userconfig import DEFAULT_SCOPE, FEEDS, load_feed_urls, set_config
 
 # One hung host must not stall the report, and eight in flight is enough to
 # make a watchlist of any realistic size finish while staying polite.
 MAX_IN_FLIGHT = 8
 
-# Covers the whole probe including any redirects, not each hop: a chain of
-# slow hops is exactly the case a per-hop timeout fails to bound.
+# The budget for the whole probe including redirects. urllib applies its
+# `timeout` per connection, so a redirect chain would otherwise restart the
+# clock on every hop and this value would bound nothing. The handler below
+# shrinks the remaining budget on each redirect to make it a real total
+# (review finding on PR #30).
 PROBE_TIMEOUT_SECONDS = 15
+
+# A hop still needs long enough to be worth attempting; below this the probe
+# gives up rather than making a request that cannot finish.
+MIN_HOP_SECONDS = 1
 
 # The sixth redirect reports unreachable rather than dead, because a redirect
 # loop says nothing about whether the board exists.
@@ -70,6 +81,7 @@ DNS = "dns"
 CONNECTION = "connection"
 INVALID_BODY = "invalid-body"
 INVALID_URL = "invalid-url"
+UNSUPPORTED_HOST = "unsupported-host"
 
 
 class FeedHealthError(RuntimeError):
@@ -113,8 +125,35 @@ class FeedHealthReport:
         return counts
 
 
-class _CappedRedirectHandler(HTTPRedirectHandler):
+class BudgetedRedirectHandler(HTTPRedirectHandler):
+    """Caps the redirect count and keeps the timeout a whole-probe budget.
+
+    urllib passes `timeout=req.timeout` from the *original* request to each
+    following hop, so shrinking it here is what makes the budget cover the
+    chain rather than restart on every redirect.
+    """
+
     max_redirections = MAX_REDIRECTS
+
+    def __init__(self, deadline: float) -> None:
+        super().__init__()
+        self._deadline = deadline
+
+    def redirect_request(
+        self,
+        req: Request,
+        fp: IO[bytes] | HTTPResponse,
+        code: int,
+        msg: str,
+        headers: Message,
+        newurl: str,
+    ) -> Request | None:
+        remaining = self._deadline - time.monotonic()
+        if remaining < MIN_HOP_SECONDS:
+            raise TimeoutError("probe budget spent following redirects")
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)  # pyright: ignore[reportArgumentType]
+        req.timeout = remaining  # pyright: ignore[reportAttributeAccessIssue]
+        return new
 
 
 def probe_url_for(source: str, board_url: str) -> str:
@@ -212,7 +251,7 @@ def probe_board(
         verdict, status = _classify_response(source, endpoint, endpoint, body or "")
         return BoardHealth(board_url, source, verdict, status)
 
-    opener = build_opener(_CappedRedirectHandler())
+    opener = build_opener(BudgetedRedirectHandler(time.monotonic() + timeout))
     request = Request(endpoint, headers={"User-Agent": USER_AGENT})
     try:
         with opener.open(request, timeout=timeout) as response:
@@ -237,23 +276,40 @@ def probe_board(
 
 
 def check_feeds(
-    feeds: dict[str, list[str]],
+    urls: list[str],
     *,
     probe: Callable[[str, str], BoardHealth] | None = None,
     max_in_flight: int = MAX_IN_FLIGHT,
 ) -> FeedHealthReport:
-    """Probe every configured board, at most `max_in_flight` at a time.
+    """Probe every configured entry, at most `max_in_flight` at a time.
+
+    Takes the watchlist as configured rather than the routed grouping, and
+    that is load-bearing rather than a convenience. `route_ats_feeds` keeps
+    only the three providers it knows and drops the rest, so a report built
+    from the grouping would omit an entry on any other host, and pruning
+    would then rebuild the watchlist without it: one dead Greenhouse board
+    would silently delete every unrecognized entry the operator had
+    (review finding on PR #30, proven by
+    tests/test_feed_health.py::test_pruning_keeps_entries_on_hosts_the_router_does_not_know).
+
+    An unrecognized entry therefore gets a row saying so instead of
+    vanishing, and like every other non-fatal verdict it is never prunable.
 
     Ordered by source then by the operator's own ordering within it, so two
     runs over an unchanged watchlist print the same thing and a diff between
     them is about the boards.
     """
     run_probe = probe if probe is not None else probe_board
+    grouped = route_ats_feeds(urls)
+    source_of = {url: source for source in grouped for url in grouped[source]}
     entries: list[tuple[str, str]] = [
-        (url, source) for source in sorted(feeds) for url in feeds[source]
+        (url, source) for source in sorted(grouped) for url in grouped[source]
     ]
+    unsupported = tuple(
+        BoardHealth(url, "", UNREACHABLE, UNSUPPORTED_HOST) for url in urls if url not in source_of
+    )
     if not entries:
-        return FeedHealthReport(())
+        return FeedHealthReport(unsupported)
     workers = max(1, min(max_in_flight, len(entries)))
     with ThreadPoolExecutor(max_workers=workers) as pool:
         # Submitted together, read in submission order: every board is in
@@ -261,7 +317,7 @@ def check_feeds(
         # host delays its own row and nothing else.
         futures = [pool.submit(run_probe, url, source) for url, source in entries]
         results = [future.result() for future in futures]
-    return FeedHealthReport(tuple(results))
+    return FeedHealthReport(tuple(results) + unsupported)
 
 
 def prune_dead(
@@ -289,6 +345,11 @@ def prune_dead(
 
 def load_feeds_for_check(
     conn: sqlite3.Connection | None = None, *, scope: str = DEFAULT_SCOPE
-) -> dict[str, list[str]]:
-    """The watchlist as discovery sees it, grouped by provider."""
-    return load_ats_feeds(conn, scope=scope)
+) -> list[str]:
+    """The watchlist exactly as configured, ungrouped.
+
+    Ungrouped on purpose: what is written back after a prune has to be built
+    from the entries the operator actually has, not from the subset the
+    router recognises.
+    """
+    return load_feed_urls(conn, scope=scope)

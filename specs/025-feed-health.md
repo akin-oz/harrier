@@ -49,6 +49,22 @@ a log every four hours.
   the sixth reports the board unreachable rather than dead, since a
   redirect loop says nothing about whether the board exists.
 
+  urllib applies its timeout per connection, so passing the budget to it
+  bounds one hop and restarts on every redirect. The budget is a real total
+  only because the redirect handler shrinks the remaining time on each hop
+  and refuses to follow one it cannot finish (implementation note added on
+  PR #30, proven by `test_a_redirect_shrinks_the_remaining_budget` and
+  `test_a_redirect_chain_that_spends_the_budget_times_out`).
+
+- The report covers every configured entry, not only the ones the router
+  recognises. `route_ats_feeds` keeps three providers and drops the rest, and
+  a report built from that grouping would omit the others while pruning
+  rebuilt the watchlist without them: one dead Greenhouse board would delete
+  every unrecognized entry. An unrecognized entry gets a row reading
+  `unsupported-host`, and like every other non-fatal verdict it is never
+  prunable (found on PR #30, proven by
+  `test_pruning_keeps_entries_on_hosts_the_router_does_not_know`).
+
 ## Inputs, outputs, failure modes
 
 - Inputs: the configured feeds (store, then file, per spec 023).
@@ -119,6 +135,10 @@ cover, each with its own test rather than being decided silently:
 - **An empty board is live.** A company with no open roles still has a board,
   and reading `{"jobs": []}` as absence would prune every quiet employer:
   `test_a_board_with_no_open_roles_is_live_not_dead`.
+- **An entry on a host no provider claims** is reported as
+  `unsupported-host` rather than dropped. This one was a data-loss defect,
+  not a gap: pruning rebuilds the watchlist from the report, so anything the
+  report omitted was deleted by a prune triggered elsewhere.
 - **An entry naming no board at all** (a provider host with an empty path) is
   neither a network state nor prunable. It reports `invalid-url`, a token the
   spec's closed list does not contain, because folding it into `invalid-body`

@@ -13,10 +13,13 @@ import json
 import socket
 import sqlite3
 import threading
+import time
+from email.message import Message
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
+from urllib.request import Request
 
 import pytest
 
@@ -32,6 +35,7 @@ from harrier.feedhealth import (
     LIVE,
     TIMEOUT,
     UNREACHABLE,
+    UNSUPPORTED_HOST,
     BoardHealth,
     FeedHealthReport,
     check_feeds,
@@ -275,7 +279,7 @@ def test_at_most_eight_probes_run_concurrently() -> None:
             live -= 1
         return BoardHealth(url, source, LIVE, "200")
 
-    feeds = {"greenhouse": [f"https://boards.greenhouse.io/c{index}" for index in range(30)]}
+    feeds = [f"https://boards.greenhouse.io/c{index}" for index in range(30)]
     report = check_feeds(feeds, probe=probe)
     assert len(report.results) == 30
     assert peak <= feedhealth.MAX_IN_FLIGHT
@@ -296,13 +300,11 @@ def test_one_hung_host_does_not_prevent_the_others_being_classified() -> None:
         finished.wait()
         return BoardHealth(url, source, LIVE, "200")
 
-    feeds = {
-        "greenhouse": [
-            "https://boards.greenhouse.io/hung",
-            "https://boards.greenhouse.io/one",
-            "https://boards.greenhouse.io/two",
-        ]
-    }
+    feeds = [
+        "https://boards.greenhouse.io/hung",
+        "https://boards.greenhouse.io/one",
+        "https://boards.greenhouse.io/two",
+    ]
 
     def release_when_others_are_done() -> None:
         finished.wait()
@@ -320,16 +322,17 @@ def test_one_hung_host_does_not_prevent_the_others_being_classified() -> None:
 
 
 def test_an_empty_watchlist_probes_nothing() -> None:
-    assert check_feeds({"greenhouse": [], "ashby": [], "lever": []}).results == ()
+    assert check_feeds([]).results == ()
 
 
 def test_the_report_is_ordered_the_same_way_twice() -> None:
     """Two runs over an unchanged watchlist print the same thing, so a diff
     between them is about the boards rather than about thread scheduling."""
-    feeds = {
-        "lever": ["https://jobs.lever.co/b", "https://jobs.lever.co/a"],
-        "greenhouse": ["https://boards.greenhouse.io/z"],
-    }
+    feeds = [
+        "https://jobs.lever.co/b",
+        "https://jobs.lever.co/a",
+        "https://boards.greenhouse.io/z",
+    ]
 
     def probe(url: str, source: str) -> BoardHealth:
         return BoardHealth(url, source, LIVE, "200")
@@ -414,7 +417,7 @@ def test_counts_cover_every_verdict() -> None:
 def test_the_report_names_only_boards_the_operator_configured() -> None:
     """The report is a projection of the watchlist, so it cannot introduce a
     board the operator does not already have (ADR-009)."""
-    feeds = {"greenhouse": ["https://boards.greenhouse.io/only"]}
+    feeds = ["https://boards.greenhouse.io/only"]
 
     def probe(url: str, source: str) -> BoardHealth:
         return BoardHealth(url, source, LIVE, "200")
@@ -541,3 +544,84 @@ def test_prune_names_every_board_it_removed(
     out = capsys.readouterr().out
     assert f"removed {GREENHOUSE} (404)" in out
     assert f"removed {ASHBY} (410)" in out
+
+
+# --- the watchlist is never rebuilt from a subset of itself -----------------
+
+
+UNKNOWN = "https://apply.workable.com/other"
+
+
+def test_an_entry_on_an_unknown_host_is_reported_rather_than_dropped() -> None:
+    """route_ats_feeds keeps only the three providers it knows. A report
+    built from that grouping would omit everything else, and the operator
+    would read a complete-looking table that silently covered less than the
+    watchlist."""
+
+    def probe(url: str, source: str) -> BoardHealth:
+        return BoardHealth(url, source, LIVE, "200")
+
+    report = check_feeds([GREENHOUSE, UNKNOWN], probe=probe)
+    by_url = {item.url: item for item in report.results}
+    assert set(by_url) == {GREENHOUSE, UNKNOWN}
+    assert (by_url[UNKNOWN].verdict, by_url[UNKNOWN].status) == (UNREACHABLE, UNSUPPORTED_HOST)
+    assert not by_url[UNKNOWN].prunable
+
+
+def test_pruning_keeps_entries_on_hosts_the_router_does_not_know(
+    conn: sqlite3.Connection,
+) -> None:
+    """The data-loss case. Pruning rebuilds the watchlist, so anything the
+    report did not cover would be deleted by a prune triggered by an entirely
+    different board (review finding on PR #30)."""
+    set_config(conn, FEEDS, [GREENHOUSE, UNKNOWN, ASHBY])
+
+    def probe(url: str, source: str) -> BoardHealth:
+        return BoardHealth(url, source, DEAD if url == GREENHOUSE else LIVE, "404")
+
+    report = check_feeds([GREENHOUSE, UNKNOWN, ASHBY], probe=probe)
+    removed = prune_dead(conn, report)
+
+    assert [item.url for item in removed] == [GREENHOUSE]
+    remaining = get_config(conn, FEEDS)
+    assert isinstance(remaining, list)
+    assert set(cast("list[str]", remaining)) == {UNKNOWN, ASHBY}
+
+
+def test_an_unknown_host_alone_still_produces_a_report(conn: sqlite3.Connection) -> None:
+    """No routable board is not the same as no configuration, and a run that
+    reported nothing would read as an empty watchlist."""
+    report = check_feeds([UNKNOWN])
+    assert len(report.results) == 1
+    assert report.results[0].status == UNSUPPORTED_HOST
+
+
+# --- the timeout is a budget for the whole probe ----------------------------
+
+
+def test_a_redirect_shrinks_the_remaining_budget() -> None:
+    """urllib passes the *original* request's timeout to each following hop,
+    so without this every redirect restarts the clock and the 15 second
+    budget bounds nothing (review finding on PR #30)."""
+    handler = feedhealth.BudgetedRedirectHandler(time.monotonic() + 10)
+    request = Request(GREENHOUSE)
+    request.timeout = 10
+    with patch.object(feedhealth.HTTPRedirectHandler, "redirect_request", return_value=None):
+        handler.redirect_request(request, io.BytesIO(b""), 302, "Found", Message(), ASHBY)
+    assert request.timeout < 10
+
+
+def test_a_redirect_chain_that_spends_the_budget_times_out() -> None:
+    """The bound the spec asks for: a chain of slow hops cannot outlast the
+    budget by taking them one at a time."""
+    handler = feedhealth.BudgetedRedirectHandler(time.monotonic() - 1)
+    with pytest.raises(TimeoutError):
+        handler.redirect_request(
+            Request(GREENHOUSE), io.BytesIO(b""), 302, "Found", Message(), ASHBY
+        )
+
+
+def test_a_spent_budget_reports_the_board_unreachable_not_dead() -> None:
+    """A redirect loop says nothing about whether the board exists."""
+    result = probe_with(TimeoutError("probe budget spent following redirects"))
+    assert (result.verdict, result.status) == (UNREACHABLE, TIMEOUT)
