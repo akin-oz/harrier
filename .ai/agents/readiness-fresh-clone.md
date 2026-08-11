@@ -46,3 +46,10 @@ anything: clone or copy to a temporary directory and work there, never write
 to the checkout you were launched from, never commit, push, or amend, never
 install into the machine's global environment, and never read `.env` or any
 file the classification table marks never-in-git.
+
+## Where the failures above come from
+
+They are this project's own review history, recorded in the pull requests
+that fixed them rather than in any file you can open. Treat them as the
+reason this lens exists, not as findings: verify the current state yourself
+and report what you find now. If one of them reads as already fixed, say so.

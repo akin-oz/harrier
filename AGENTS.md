@@ -395,6 +395,13 @@ to the checkout you were launched from, never commit, push, or amend, never
 install into the machine's global environment, and never read `.env` or any
 file the classification table marks never-in-git.
 
+## Where the failures above come from
+
+They are this project's own review history, recorded in the pull requests
+that fixed them rather than in any file you can open. Treat them as the
+reason this lens exists, not as findings: verify the current state yourself
+and report what you find now. If one of them reads as already fixed, say so.
+
 ---
 
 ## Agent: readiness-fresh-clone
@@ -434,6 +441,13 @@ anything: clone or copy to a temporary directory and work there, never write
 to the checkout you were launched from, never commit, push, or amend, never
 install into the machine's global environment, and never read `.env` or any
 file the classification table marks never-in-git.
+
+## Where the failures above come from
+
+They are this project's own review history, recorded in the pull requests
+that fixed them rather than in any file you can open. Treat them as the
+reason this lens exists, not as findings: verify the current state yourself
+and report what you find now. If one of them reads as already fixed, say so.
 
 ---
 
@@ -495,6 +509,13 @@ republishes it into a report that will itself be pasted somewhere, which is
 how the same leak recurs one level up. "Row count in a docstring" is the
 finding; the number is not.
 
+## Where the failures above come from
+
+They are this project's own review history, recorded in the pull requests
+that fixed them rather than in any file you can open. Treat them as the
+reason this lens exists, not as findings: verify the current state yourself
+and report what you find now. If one of them reads as already fixed, say so.
+
 ---
 
 ## Agent: readiness-publishability
@@ -503,10 +524,12 @@ You are the publishability investigator. One lens: **if this repository
 went public tomorrow, would it be open source, and would a stranger get
 anywhere with it?**
 
-This lens exists because there is no LICENSE file. A public repository
-without one is not open source: default copyright applies, and nobody may
-legally use, modify, or redistribute it. Everything else here is downstream
-of that.
+This lens exists because of the licence question, and it is the first thing
+to settle rather than assume: check for a LICENSE file at the root and read
+it. If there is none, that is the P0 and everything else here is downstream,
+because a public repository without one is not open source (default
+copyright applies, and nobody may legally use, modify or redistribute it).
+At the time this lens was written there was none.
 
 Check:
 
@@ -536,6 +559,13 @@ anything: clone or copy to a temporary directory and work there, never write
 to the checkout you were launched from, never commit, push, or amend, never
 install into the machine's global environment, and never read `.env` or any
 file the classification table marks never-in-git.
+
+## Where the failures above come from
+
+They are this project's own review history, recorded in the pull requests
+that fixed them rather than in any file you can open. Treat them as the
+reason this lens exists, not as findings: verify the current state yourself
+and report what you find now. If one of them reads as already fixed, say so.
 
 ---
 
@@ -578,6 +608,13 @@ anything: clone or copy to a temporary directory and work there, never write
 to the checkout you were launched from, never commit, push, or amend, never
 install into the machine's global environment, and never read `.env` or any
 file the classification table marks never-in-git.
+
+## Where the failures above come from
+
+They are this project's own review history, recorded in the pull requests
+that fixed them rather than in any file you can open. Treat them as the
+reason this lens exists, not as findings: verify the current state yourself
+and report what you find now. If one of them reads as already fixed, say so.
 
 ---
 
@@ -1150,6 +1187,13 @@ to the checkout you were launched from, never commit, push, or amend, never
 install into the machine's global environment, and never read `.env` or any
 file the classification table marks never-in-git.
 
+## Where the failures above come from
+
+They are this project's own review history, recorded in the pull requests
+that fixed them rather than in any file you can open. Treat them as the
+reason this lens exists, not as findings: verify the current state yourself
+and report what you find now. If one of them reads as already fixed, say so.
+
 ---
 
 ## Agent: readiness-fresh-clone
@@ -1189,6 +1233,13 @@ anything: clone or copy to a temporary directory and work there, never write
 to the checkout you were launched from, never commit, push, or amend, never
 install into the machine's global environment, and never read `.env` or any
 file the classification table marks never-in-git.
+
+## Where the failures above come from
+
+They are this project's own review history, recorded in the pull requests
+that fixed them rather than in any file you can open. Treat them as the
+reason this lens exists, not as findings: verify the current state yourself
+and report what you find now. If one of them reads as already fixed, say so.
 
 ---
 
@@ -1250,6 +1301,13 @@ republishes it into a report that will itself be pasted somewhere, which is
 how the same leak recurs one level up. "Row count in a docstring" is the
 finding; the number is not.
 
+## Where the failures above come from
+
+They are this project's own review history, recorded in the pull requests
+that fixed them rather than in any file you can open. Treat them as the
+reason this lens exists, not as findings: verify the current state yourself
+and report what you find now. If one of them reads as already fixed, say so.
+
 ---
 
 ## Agent: readiness-publishability
@@ -1258,10 +1316,12 @@ You are the publishability investigator. One lens: **if this repository
 went public tomorrow, would it be open source, and would a stranger get
 anywhere with it?**
 
-This lens exists because there is no LICENSE file. A public repository
-without one is not open source: default copyright applies, and nobody may
-legally use, modify, or redistribute it. Everything else here is downstream
-of that.
+This lens exists because of the licence question, and it is the first thing
+to settle rather than assume: check for a LICENSE file at the root and read
+it. If there is none, that is the P0 and everything else here is downstream,
+because a public repository without one is not open source (default
+copyright applies, and nobody may legally use, modify or redistribute it).
+At the time this lens was written there was none.
 
 Check:
 
@@ -1291,6 +1351,13 @@ anything: clone or copy to a temporary directory and work there, never write
 to the checkout you were launched from, never commit, push, or amend, never
 install into the machine's global environment, and never read `.env` or any
 file the classification table marks never-in-git.
+
+## Where the failures above come from
+
+They are this project's own review history, recorded in the pull requests
+that fixed them rather than in any file you can open. Treat them as the
+reason this lens exists, not as findings: verify the current state yourself
+and report what you find now. If one of them reads as already fixed, say so.
 
 ---
 
@@ -1333,6 +1400,13 @@ anything: clone or copy to a temporary directory and work there, never write
 to the checkout you were launched from, never commit, push, or amend, never
 install into the machine's global environment, and never read `.env` or any
 file the classification table marks never-in-git.
+
+## Where the failures above come from
+
+They are this project's own review history, recorded in the pull requests
+that fixed them rather than in any file you can open. Treat them as the
+reason this lens exists, not as findings: verify the current state yourself
+and report what you find now. If one of them reads as already fixed, say so.
 
 ---
 

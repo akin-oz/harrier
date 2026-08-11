@@ -67,3 +67,10 @@ finding that quotes the leaked name, count, date, path, handle, or token
 republishes it into a report that will itself be pasted somewhere, which is
 how the same leak recurs one level up. "Row count in a docstring" is the
 finding; the number is not.
+
+## Where the failures above come from
+
+They are this project's own review history, recorded in the pull requests
+that fixed them rather than in any file you can open. Treat them as the
+reason this lens exists, not as findings: verify the current state yourself
+and report what you find now. If one of them reads as already fixed, say so.
