@@ -1,6 +1,72 @@
 {
   "components": {
     "schemas": {
+      "AddJobIn": {
+        "properties": {
+          "company": {
+            "title": "Company",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "location": {
+            "default": "",
+            "title": "Location",
+            "type": "string"
+          },
+          "source": {
+            "default": "manual",
+            "title": "Source",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "url": {
+            "default": "",
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "company",
+          "title"
+        ],
+        "title": "AddJobIn",
+        "type": "object"
+      },
+      "AddJobOut": {
+        "properties": {
+          "job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "message"
+        ],
+        "title": "AddJobOut",
+        "type": "object"
+      },
       "Body_captureJobFromForm": {
         "properties": {
           "company": {
@@ -373,6 +439,28 @@
         "title": "JobOut",
         "type": "object"
       },
+      "RescoreOut": {
+        "properties": {
+          "current": {
+            "title": "Current",
+            "type": "integer"
+          },
+          "job": {
+            "$ref": "#/components/schemas/JobOut"
+          },
+          "previous": {
+            "title": "Previous",
+            "type": "string"
+          }
+        },
+        "required": [
+          "previous",
+          "current",
+          "job"
+        ],
+        "title": "RescoreOut",
+        "type": "object"
+      },
       "RunEventOut": {
         "description": "The JSON payload of one SSE message on /runs/{id}/events.\n\nDeclared on the route's response documentation so it lands in the OpenAPI\ncomponents and the web app consumes the generated type (spec 006). The\nstream itself is text/event-stream; each message's data field is one of\nthese, flattened per event type: log_line carries line, progress carries\nstep/total/message, state_change carries state/exit_code.",
         "properties": {
@@ -561,6 +649,30 @@
           "kind"
         ],
         "title": "StartRunIn",
+        "type": "object"
+      },
+      "StatusChangeIn": {
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "verb": {
+            "title": "Verb",
+            "type": "string"
+          }
+        },
+        "required": [
+          "verb"
+        ],
+        "title": "StatusChangeIn",
         "type": "object"
       },
       "ValidationError": {
@@ -1303,6 +1415,239 @@
           }
         },
         "summary": "Get Session"
+      }
+    },
+    "/tracker": {
+      "post": {
+        "operationId": "addJob",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddJobIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddJobOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Job By Hand"
+      }
+    },
+    "/tracker/counts": {
+      "get": {
+        "operationId": "trackerCounts",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "integer"
+                  },
+                  "title": "Response Trackercounts",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Tracker Counts"
+      }
+    },
+    "/tracker/queue": {
+      "get": {
+        "description": "`next` and `review`, which are the same ranking over different\nstatuses: `next` is everything active, `review` narrows to what still\nneeds a decision from the operator.",
+        "operationId": "listQueue",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "undecided",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Undecided",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 500,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/JobOut"
+                  },
+                  "title": "Response Listqueue",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Queue"
+      }
+    },
+    "/tracker/{selector}/rescore": {
+      "post": {
+        "operationId": "rescoreJob",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RescoreOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "description": "no job matched the selector"
+          },
+          "409": {
+            "description": "the tracker refused the change"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rescore Job"
+      }
+    },
+    "/tracker/{selector}/status": {
+      "post": {
+        "description": "The same function the CLI's shortlist, track, applied, interviewing\nand reject verbs call (spec 042).",
+        "operationId": "changeJobStatus",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StatusChangeIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "description": "no job matched the selector"
+          },
+          "409": {
+            "description": "the tracker refused the change"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Change Job Status"
       }
     }
   }

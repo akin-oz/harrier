@@ -221,10 +221,139 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tracker": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add Job By Hand */
+        post: operations["addJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tracker/counts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Tracker Counts */
+        get: operations["trackerCounts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tracker/queue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Queue
+         * @description `next` and `review`, which are the same ranking over different
+         *     statuses: `next` is everything active, `review` narrows to what still
+         *     needs a decision from the operator.
+         */
+        get: operations["listQueue"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tracker/{selector}/rescore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rescore Job */
+        post: operations["rescoreJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tracker/{selector}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Change Job Status
+         * @description The same function the CLI's shortlist, track, applied, interviewing
+         *     and reject verbs call (spec 042).
+         */
+        post: operations["changeJobStatus"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AddJobIn */
+        AddJobIn: {
+            /** Company */
+            company: string;
+            /**
+             * Description
+             * @default
+             */
+            description?: string;
+            /**
+             * Location
+             * @default
+             */
+            location?: string;
+            /**
+             * Source
+             * @default manual
+             */
+            source?: string;
+            /** Title */
+            title: string;
+            /**
+             * Url
+             * @default
+             */
+            url?: string;
+        };
+        /** AddJobOut */
+        AddJobOut: {
+            job?: components["schemas"]["JobOut"] | null;
+            /** Message */
+            message: string;
+            /** Status */
+            status: string;
+        };
         /** Body_captureJobFromForm */
         Body_captureJobFromForm: {
             /**
@@ -429,6 +558,14 @@ export interface components {
             /** Url */
             url: string;
         };
+        /** RescoreOut */
+        RescoreOut: {
+            /** Current */
+            current: number;
+            job: components["schemas"]["JobOut"];
+            /** Previous */
+            previous: string;
+        };
         /**
          * RunEventOut
          * @description The JSON payload of one SSE message on /runs/{id}/events.
@@ -487,6 +624,13 @@ export interface components {
              * @enum {string}
              */
             kind: "demo" | "discovery";
+        };
+        /** StatusChangeIn */
+        StatusChangeIn: {
+            /** Reason */
+            reason?: string | null;
+            /** Verb */
+            verb: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -1066,6 +1210,208 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SessionOut"];
+                };
+            };
+        };
+    };
+    addJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddJobIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddJobOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    trackerCounts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: number;
+                    };
+                };
+            };
+        };
+    };
+    listQueue: {
+        parameters: {
+            query?: {
+                undecided?: boolean;
+                limit?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rescoreJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                selector: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RescoreOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no job matched the selector */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the tracker refused the change */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    changeJobStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                selector: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StatusChangeIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no job matched the selector */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the tracker refused the change */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

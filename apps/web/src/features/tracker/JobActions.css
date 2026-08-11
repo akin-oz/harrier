@@ -1,0 +1,71 @@
+/* Six controls per row would be a very wide column and a very tall row, so
+   they sit in a fixed three-across grid: two tidy lines rather than a ragged
+   wrap that changes shape with the button labels. */
+.job-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.2rem;
+  min-width: 16rem;
+}
+
+.job-actions button {
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 0.25rem 0.4rem;
+  white-space: nowrap;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-raised);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.job-actions button:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.job-actions button:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+.job-actions button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.job-actions__reject:hover:not(:disabled) {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+/* Asking for the reason takes over the whole block: the row is mid-decision
+   and the other verbs are not what to do next. */
+.job-actions__reason {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0.2rem;
+  align-items: center;
+}
+
+.job-actions__reason input {
+  font: inherit;
+  font-size: 0.82rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  min-width: 0;
+}
+
+/* A refusal is a normal outcome, so it reads as information rather than as
+   an error the operator has to clear. */
+.job-actions__failure {
+  grid-column: 1 / -1;
+  margin: 0.2rem 0 0;
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+}

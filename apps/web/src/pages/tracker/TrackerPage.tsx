@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import { JOB_STATUSES, JobTable } from "../../entities/job";
 import type { Job, JobStatus } from "../../entities/job";
 import { RunPanel } from "../../features/runs/RunPanel";
+import { AddJob } from "../../features/tracker/AddJob";
+import { JobActions } from "../../features/tracker/JobActions";
 import { api } from "../../shared/api/client";
 import "./TrackerPage.css";
 
@@ -16,6 +18,18 @@ const STATUS_LABEL: Record<JobStatus, string> = {
   rejected: "Rejected",
 };
 
+// `next` and `review` are the CLI's two orderings and they answer different
+// questions: what to work on, and what still needs a decision. They are a
+// separate control from the status chips because the ordering is the answer,
+// and a chip that also reordered the table would hide that (spec 042).
+const VIEWS = [
+  { id: "all", label: "All" },
+  { id: "next", label: "Next up" },
+  { id: "review", label: "Needs a decision" },
+] as const;
+
+type View = (typeof VIEWS)[number]["id"];
+
 // The whole set is fetched once and filtered here. The contract has a status
 // query parameter but no search one, and the chip counts have to describe the
 // whole tracker rather than the current filter, so one request answers both.
@@ -27,18 +41,39 @@ async function fetchAllJobs(): Promise<readonly Job[]> {
   return data;
 }
 
+// The queue ordering is computed by the domain, not re-derived here: ranking
+// the rows in the browser would be the second implementation this spec exists
+// to prevent.
+async function fetchQueue(undecided: boolean): Promise<readonly Job[]> {
+  const { data, error } = await api.GET("/tracker/queue", {
+    params: { query: { undecided } },
+  });
+  if (error !== undefined) {
+    throw new Error(`queue failed: ${JSON.stringify(error)}`);
+  }
+  return data;
+}
+
 export function TrackerPage() {
   const [status, setStatus] = useState<JobStatus | "">("");
   const [search, setSearch] = useState("");
-  const query = useQuery({ queryKey: ["jobs"], queryFn: fetchAllJobs });
+  const [view, setView] = useState<View>("all");
+
+  const all = useQuery({ queryKey: ["jobs"], queryFn: fetchAllJobs });
+  const queue = useQuery({
+    queryKey: ["jobs", "queue", view],
+    queryFn: () => fetchQueue(view === "review"),
+    enabled: view !== "all",
+  });
+  const query = view === "all" ? all : queue;
 
   const counts = useMemo(() => {
     const byStatus = new Map<JobStatus, number>();
-    for (const job of query.data ?? []) {
+    for (const job of all.data ?? []) {
       byStatus.set(job.status, (byStatus.get(job.status) ?? 0) + 1);
     }
     return byStatus;
-  }, [query.data]);
+  }, [all.data]);
 
   const filtered = useMemo(() => {
     const jobs = query.data ?? [];
@@ -59,7 +94,9 @@ export function TrackerPage() {
   const isFiltered = status !== "" || search.trim() !== "";
   const emptyMessage =
     (query.data?.length ?? 0) === 0
-      ? "No jobs yet. Run discovery to find some."
+      ? view === "all"
+        ? "No jobs yet. Run discovery to find some."
+        : "Nothing in this queue."
       : isFiltered
         ? "No jobs match this filter."
         : "No jobs to show.";
@@ -79,6 +116,22 @@ export function TrackerPage() {
             setSearch(event.target.value);
           }}
         />
+        <AddJob />
+      </div>
+      <div className="tracker-page__filters" role="group" aria-label="Queue">
+        {VIEWS.map((entry) => (
+          <button
+            key={entry.id}
+            type="button"
+            className={`tracker-chip${view === entry.id ? " tracker-chip--active" : ""}`}
+            aria-pressed={view === entry.id}
+            onClick={() => {
+              setView(entry.id);
+            }}
+          >
+            {entry.label}
+          </button>
+        ))}
       </div>
       <div className="tracker-page__filters" role="group" aria-label="Filter by status">
         <button
@@ -89,7 +142,7 @@ export function TrackerPage() {
             setStatus("");
           }}
         >
-          All <span className="tracker-chip__count">{query.data?.length ?? 0}</span>
+          All <span className="tracker-chip__count">{all.data?.length ?? 0}</span>
         </button>
         {JOB_STATUSES.map((value) => (
           <button
@@ -127,7 +180,14 @@ export function TrackerPage() {
           </button>
         </p>
       )}
-      {query.isSuccess && <JobTable jobs={filtered} emptyMessage={emptyMessage} />}
+      {query.isSuccess && (
+        <JobTable
+          jobs={filtered}
+          emptyMessage={emptyMessage}
+          keepOrder={view !== "all"}
+          renderActions={(job) => <JobActions job={job} />}
+        />
+      )}
     </section>
   );
 }

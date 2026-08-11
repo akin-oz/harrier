@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 import { useMemo } from "react";
 
 import { ScoreBar } from "./ui/ScoreBar";
@@ -17,22 +19,42 @@ function parseScore(job: Job): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
-export function JobTable({ jobs, emptyMessage }: { jobs: readonly Job[]; emptyMessage: string }) {
+// `renderActions` is passed in rather than imported, because JobTable is an
+// entity and the actions are a feature: an entity importing a feature is the
+// layering violation `fsd-reviewer` exists to catch. The page owns the wiring
+// (spec 042).
+export function JobTable({
+  jobs,
+  emptyMessage,
+  renderActions,
+  keepOrder = false,
+}: {
+  jobs: readonly Job[];
+  emptyMessage: string;
+  renderActions?: (job: Job) => ReactNode;
+  keepOrder?: boolean;
+}) {
   // Open rows first, then by score. Sorting on score alone reads well until
   // most of the tracker is rejected, and then the first screen fills with
   // closed rows that happened to score highly. A rejected row needs no
   // decision, so it never outranks one that does.
+  //
+  // `keepOrder` turns that off, because the queue routes answer with the
+  // domain's own ranking and re-sorting it here would be this table quietly
+  // deciding the question the CLI's `next` already answered (spec 042).
   const rows = useMemo(
     () =>
-      [...jobs].sort((a, b) => {
-        const closedA = a.status === "rejected" ? 1 : 0;
-        const closedB = b.status === "rejected" ? 1 : 0;
-        if (closedA !== closedB) {
-          return closedA - closedB;
-        }
-        return (parseScore(b) ?? -1) - (parseScore(a) ?? -1);
-      }),
-    [jobs],
+      keepOrder
+        ? [...jobs]
+        : [...jobs].sort((a, b) => {
+            const closedA = a.status === "rejected" ? 1 : 0;
+            const closedB = b.status === "rejected" ? 1 : 0;
+            if (closedA !== closedB) {
+              return closedA - closedB;
+            }
+            return (parseScore(b) ?? -1) - (parseScore(a) ?? -1);
+          }),
+    [jobs, keepOrder],
   );
 
   if (rows.length === 0) {
@@ -56,6 +78,7 @@ export function JobTable({ jobs, emptyMessage }: { jobs: readonly Job[]; emptyMe
             <th scope="col" className="job-table__num">
               Added
             </th>
+            {renderActions !== undefined && <th scope="col">Actions</th>}
           </tr>
         </thead>
         <tbody>
@@ -85,6 +108,7 @@ export function JobTable({ jobs, emptyMessage }: { jobs: readonly Job[]; emptyMe
               </td>
               <td className="job-table__muted">{job.source}</td>
               <td className="job-table__muted job-table__num">{job.added_at}</td>
+              {renderActions !== undefined && <td>{renderActions(job)}</td>}
             </tr>
           ))}
         </tbody>
