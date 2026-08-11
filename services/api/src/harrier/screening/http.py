@@ -89,6 +89,16 @@ def _offline_body(url: str) -> str | None:
     return body_path.read_text(encoding="utf-8")
 
 
+def fixture_body(url: str) -> str | None:
+    """The offline fixture for this URL, or None when fixtures are off.
+
+    Public because feed health probes without going through request_text
+    (a probe reads the status, not the body) and must stay offline in demo
+    mode all the same.
+    """
+    return _offline_body(url)
+
+
 class DisallowedUrlError(RuntimeError):
     pass
 

@@ -142,7 +142,15 @@ endpoints without touching a checkout. The files keep working as a fallback if
 you would rather not import them (all of it proven by
 `services/api/tests/test_userconfig.py`). Either way they are gitignored: your board
 watchlist, your search URLs, and your hold list are your data, not the
-project's (ADR-009). Personal
+project's (ADR-009).
+
+A watchlist goes stale: companies close a board, move provider, or rename it,
+and the entry answers 404 forever while every run pays for it.
+`harrier config check-feeds` probes each configured board once and reports it
+as live, dead, or unreachable, and `--prune` removes the dead ones. Only a 404
+or a 410 counts as dead: a 403, a 500, a timeout and an unparseable response
+are all unreachable and are never pruned, because an outage must not delete
+your watchlist (`services/api/tests/test_feed_health.py`, spec 025). Personal
 search data lives in `data/tracker.db`, credentials in `.env` and `secrets/`,
 and backups outside the repository entirely. None of it enters git in any form
 (ADR-008, docs/privacy-plan.md).

@@ -881,6 +881,46 @@ def _cmd_config(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_check_feeds(args: argparse.Namespace) -> int:
+    from harrier.feedhealth import (
+        DEAD,
+        LIVE,
+        UNREACHABLE,
+        check_feeds,
+        load_feeds_for_check,
+        prune_dead,
+    )
+
+    conn = connect()
+    try:
+        feeds = load_feeds_for_check(conn)
+        report = check_feeds(feeds)
+        if not report.results:
+            print("no boards configured", file=sys.stderr)
+            return 1
+        width = max(len(item.url) for item in report.results)
+        for item in report.results:
+            print(f"{item.url:{width}s}  {item.source:10s}  {item.verdict:11s}  {item.status}")
+        counts = report.counts()
+        print(f"\n{counts[LIVE]} live, {counts[DEAD]} dead, {counts[UNREACHABLE]} unreachable")
+        if not args.prune:
+            if counts[DEAD]:
+                print("re-run with --prune to remove the dead entries")
+            return 0
+        removed = prune_dead(conn, report)
+        if not removed:
+            # Deliberately not an error: a watchlist with nothing dead in it
+            # is the outcome --prune exists to produce.
+            print("nothing pruned; no board answered as dead")
+            return 0
+        for item in removed:
+            print(f"removed {item.url} ({item.status})")
+        print(f"{len(removed)} removed; the remaining boards are now stored configuration")
+    finally:
+        conn.close()
+    return 0
+
+
 def _settings_from_file(path: Path) -> dict[str, object]:
     from typing import cast
 
@@ -1316,6 +1356,15 @@ def build_parser() -> argparse.ArgumentParser:
     config_unset = config_sub.add_parser("unset", help="remove one value, restoring the fallback")
     config_unset.add_argument("kind")
     config_sub.add_parser("import", help="import the config/ files into the store, once")
+    check_feeds_cmd = config_sub.add_parser(
+        "check-feeds", help="probe every configured board and report live/dead (spec 025)"
+    )
+    check_feeds_cmd.add_argument(
+        "--prune",
+        action="store_true",
+        help="remove the boards this run probed as dead; never removes unreachable ones",
+    )
+    check_feeds_cmd.set_defaults(func=_cmd_check_feeds)
     config.set_defaults(func=_cmd_config)
 
     parity = sub.add_parser("parity", help="parity verification against the old system (spec 022)")
