@@ -1,7 +1,7 @@
 ---
 spec: 027
 title: Tracker CLI verb parity
-status: in-progress
+status: shipped
 approved: yes
 milestone: M6
 depends: [004, 013, 015]
@@ -100,7 +100,7 @@ applied to something cannot replace the one that can.
 - [x] `review` queues only undecided rows while counting all of them
 - [x] a malformed `--applied-date` or a non-positive `--limit` is refused
       by the parser rather than reaching the domain
-- [ ] All gates green on PR
+- [x] All gates green: `just check`, run by the CI workflow. History: PR #27.
 
 Proven by services/api/tests/test_tracker_cli.py, 26 tests. By criterion:
 
