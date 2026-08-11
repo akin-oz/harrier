@@ -667,6 +667,29 @@ def _cmd_cutover(args: argparse.Namespace) -> int:
         conn.close()
 
 
+def _iso_date(value: str) -> str:
+    """argparse validator: a bad date used to reach date.fromisoformat and
+    escape as an uncaught ValueError traceback (review finding on PR #27)."""
+    from datetime import date
+
+    try:
+        return date.fromisoformat(value).isoformat()
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"not a YYYY-MM-DD date: {value}") from error
+
+
+def _positive_int(value: str) -> int:
+    """argparse validator: a negative limit silently became a slice like
+    ranked[:-1], which is not a row limit (review finding on PR #27)."""
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"not a whole number: {value}") from error
+    if parsed < 1:
+        raise argparse.ArgumentTypeError(f"must be 1 or more, got {parsed}")
+    return parsed
+
+
 def _print_job(job: dict[str, str]) -> None:
     from harrier.tracker import describe
 
@@ -682,6 +705,7 @@ def _cmd_tracker_verb(args: argparse.Namespace) -> int:
     from harrier.screening.normalized import make_normalized_job
     from harrier.screening.rules import score_job
     from harrier.tracker import (
+        UNDECIDED_STATUSES,
         SelectorError,
         describe,
         list_jobs,
@@ -697,15 +721,22 @@ def _cmd_tracker_verb(args: argparse.Namespace) -> int:
         if args.command in {"next", "review"}:
             jobs = list_jobs(conn)
             if args.command == "review":
+                # Counts cover everything; the queue below is only what still
+                # needs a decision from you, which is what review is for.
                 counts = status_counts(jobs)
                 active = sum(count for name, count in counts.items() if name != "rejected")
                 print(f"total {len(jobs)}, active {active}")
                 print(", ".join(f"{name} {count}" for name, count in counts.items() if count))
                 print()
-            ranked = rank_active(jobs, int(args.limit))
-            if not ranked:
-                print("nothing active")
-                return 0
+                ranked = rank_active(jobs, args.limit, statuses=UNDECIDED_STATUSES)
+                if not ranked:
+                    print("nothing awaiting a decision")
+                    return 0
+            else:
+                ranked = rank_active(jobs, args.limit)
+                if not ranked:
+                    print("nothing active")
+                    return 0
             for job in ranked:
                 _print_job(job)
             return 0
@@ -1247,7 +1278,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     applied_cmd = sub.add_parser("applied", help="mark a job applied (spec 027)")
     applied_cmd.add_argument("selector", help="job id, or a unique substring")
-    applied_cmd.add_argument("--applied-date", default=None, help="YYYY-MM-DD (default today)")
+    applied_cmd.add_argument(
+        "--applied-date", type=_iso_date, default=None, help="YYYY-MM-DD (default today)"
+    )
     applied_cmd.set_defaults(func=_cmd_tracker_verb)
 
     reject_cmd = sub.add_parser("reject", help="reject a job with a reason (spec 027)")
@@ -1269,7 +1302,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("review", "tracker counts plus the top of the queue"),
     ):
         verb = sub.add_parser(name, help=f"{help_text} (spec 027)")
-        verb.add_argument("--limit", default="10", help="rows to show")
+        verb.add_argument("--limit", type=_positive_int, default=10, help="rows to show")
         verb.set_defaults(func=_cmd_tracker_verb)
 
     config = sub.add_parser("config", help="user configuration in the database (spec 023)")

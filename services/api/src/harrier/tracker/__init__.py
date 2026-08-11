@@ -4,7 +4,12 @@ All mutation goes through harrier.tracker.store; nothing else opens the
 database for writing.
 """
 
-from harrier.tracker.queue import ACTIVE_STATUSES, rank_active, status_counts
+from harrier.tracker.queue import (
+    ACTIVE_STATUSES,
+    UNDECIDED_STATUSES,
+    rank_active,
+    status_counts,
+)
 from harrier.tracker.schema import (
     CONTACT_FIELDS,
     NEXT_ACTION_DEFAULTS,
@@ -36,6 +41,7 @@ __all__ = [
     "NOTE_KEYS",
     "STATUSES",
     "TRACKER_FIELDS",
+    "UNDECIDED_STATUSES",
     "DuplicateJobError",
     "JobNotFoundError",
     "SelectorError",

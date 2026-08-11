@@ -17,6 +17,10 @@ from harrier.tracker.schema import STATUSES
 
 ACTIVE_STATUSES = frozenset(STATUSES) - {"rejected"}
 
+# Rows still awaiting a decision from the operator. `applied` and
+# `interviewing` are decided: the next move belongs to someone else.
+UNDECIDED_STATUSES = frozenset({"prospect", "shortlisted", "tailored_cv_requested"})
+
 # Lower sorts first. Closest-to-sending first; interviewing sits above
 # applied because a live conversation outranks a sent application.
 STAGE_PRIORITY = {
@@ -28,6 +32,11 @@ STAGE_PRIORITY = {
 }
 
 
+def _reverse(text: str) -> tuple[int, ...]:
+    """A sort key that orders strings descending."""
+    return tuple(-ord(character) for character in text)
+
+
 def parse_score(job: dict[str, str]) -> int:
     raw = (job.get("score") or job.get("fit_score") or "").strip()
     try:
@@ -36,23 +45,40 @@ def parse_score(job: dict[str, str]) -> int:
         return 0
 
 
-def _added_key(job: dict[str, str]) -> str:
-    # ISO dates sort lexically; a blank sorts oldest, which is what we want
-    # for a row that never recorded when it arrived.
-    return job.get("added_at", "") or ""
+def _added_key(job: dict[str, str]) -> tuple[int, str]:
+    """Newest first, with undated rows last.
+
+    Negating an ISO string is not possible, so the sort reverses the whole
+    key below instead. The leading flag keeps a blank `added_at` at the
+    back: an empty string compares before every dated one, which put rows
+    that never recorded their arrival at the front of the queue (review
+    finding on PR #27).
+    """
+    added = job.get("added_at", "") or ""
+    return (0 if added else 1, added)
 
 
-def rank_active(jobs: list[dict[str, str]], limit: int | None = None) -> list[dict[str, str]]:
-    """Active rows, most actionable first. Rejected rows never appear."""
-    active = [job for job in jobs if job["status"] in ACTIVE_STATUSES]
+def rank_active(
+    jobs: list[dict[str, str]],
+    limit: int | None = None,
+    *,
+    statuses: frozenset[str] = ACTIVE_STATUSES,
+) -> list[dict[str, str]]:
+    """Rows in the given statuses, most actionable first.
+
+    `next` ranks everything active; `review` narrows to the undecided ones,
+    because it exists to answer what still needs a decision from you.
+    """
+    active = [job for job in jobs if job["status"] in statuses]
     ranked = sorted(
         active,
         key=lambda job: (
             STAGE_PRIORITY.get(job["status"], 99),
             -parse_score(job),
             # Newest first within a stage and score: a fresh posting is more
-            # likely to still be open.
-            tuple(-ord(character) for character in _added_key(job)),
+            # likely to still be open. Undated rows sort last either way.
+            _added_key(job)[0],
+            _reverse(_added_key(job)[1]),
             int(job["id"]),
         ),
     )

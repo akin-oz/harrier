@@ -35,8 +35,11 @@ applied to something cannot replace the one that can.
 - `add`: manual entry through the same scoring and dedupe path the capture
   endpoint uses, so a hand-added row is indistinguishable from a discovered
   one.
-- `next`: what to do now, ordered, with a limit.
-- `review`: the queue of undecided rows.
+- `next`: what to do now, ordered, with a limit. Every active row,
+  including applications waiting on a reply.
+- `review`: counts across every status, then the queue of rows still
+  awaiting a decision from you. `applied` and `interviewing` are decided,
+  so they are counted but not queued.
 - `reevaluate`: rescore an existing row against current config.
 - Selector semantics, shared by every verb that names a row: a numeric id,
   or a substring that must match exactly one row. Ambiguity aborts and
@@ -72,6 +75,12 @@ applied to something cannot replace the one that can.
   ranking for no gain.
 - `reject` records a reason where the old one accepted free text; the
   column already exists (`rejection_reason`).
+- No `--external-key` argument. This spec first required `add` to refuse a
+  duplicate by external key, which overreached: the old `add` had no such
+  argument, and an external key is what a source importer assigns, not
+  something a person types. `find_duplicate` still checks it, so a manual
+  add colliding with an imported row is caught by URL or by company and
+  title, which are the reachable paths (review finding on PR #27).
 
 ## Acceptance criteria
 
@@ -84,13 +93,38 @@ applied to something cannot replace the one that can.
 - [x] a selector matching nothing exits non-zero and changes nothing
 - [x] `applied` seeds the outreach block and the follow-up date
 - [x] `add` routes through the shared scoring path and refuses a duplicate
-      by URL and by external key, naming the existing row
+      by URL and by company and title
 - [x] `next` orders by pipeline stage then score, closest-to-sending
-      first, and never shows a rejected row
+      first, never shows a rejected row, and puts a row with no recorded
+      arrival date behind dated ones
+- [x] `review` queues only undecided rows while counting all of them
+- [x] a malformed `--applied-date` or a non-positive `--limit` is refused
+      by the parser rather than reaching the domain
 - [ ] All gates green on PR
 
-Proven by services/api/tests/test_tracker_cli.py, 20 tests, the largest
-group of them on the selector.
+Proven by services/api/tests/test_tracker_cli.py, 26 tests. By criterion:
+
+- the verbs: `test_each_verb_sets_its_status`,
+  `test_applied_seeds_the_outreach_block_and_the_follow_up`,
+  `test_reject_records_the_reason`, `test_reject_without_a_reason_still_works`
+- the selector: `test_a_numeric_selector_is_the_job_id`,
+  `test_a_unique_substring_matches_one_row`, `test_the_url_is_searchable_too`,
+  `test_an_ambiguous_selector_aborts_and_lists_the_candidates`,
+  `test_a_selector_matching_nothing_is_an_error`,
+  `test_an_ambiguous_selector_changes_nothing`
+- add: `test_add_routes_through_the_shared_scoring_path`,
+  `test_add_refuses_a_duplicate_url`,
+  `test_add_refuses_a_duplicate_company_and_title`,
+  `test_add_without_a_company_is_refused`
+- the queue: `test_rank_puts_the_nearest_to_sending_first`,
+  `test_score_breaks_ties_within_a_stage`,
+  `test_rejected_rows_never_appear_in_the_queue`,
+  `test_an_undated_row_sorts_behind_a_dated_one`,
+  `test_review_lists_only_rows_awaiting_a_decision`,
+  `test_next_still_shows_decided_but_active_rows`
+- the parser: `test_a_malformed_applied_date_is_refused_by_the_parser`,
+  `test_a_bad_limit_is_refused_by_the_parser`
+- reevaluate: `test_reevaluate_rescores_against_the_current_config`
 
 ## Proof / origin
 

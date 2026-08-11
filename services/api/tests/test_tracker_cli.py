@@ -13,6 +13,7 @@ import pytest
 
 from harrier.db import connect
 from harrier.tracker import (
+    UNDECIDED_STATUSES,
     SelectorError,
     add_job,
     get_job,
@@ -226,3 +227,54 @@ def test_reevaluate_rescores_against_the_current_config(db: sqlite3.Connection) 
     # the signals that produced it.
     assert rescored["score"] != ""
     assert rescored["signals"] != ""
+
+
+# --- review, validators, and dedupe (review findings on PR #27) --------------
+
+
+def test_review_lists_only_rows_awaiting_a_decision(db: sqlite3.Connection) -> None:
+    """applied and interviewing are decided: the next move is someone
+    else's. review passed everything to the ranker and listed them."""
+    set_status(db, 1, "applied")
+    set_status(db, 2, "interviewing")
+    queued = rank_active(list_jobs(db), statuses=UNDECIDED_STATUSES)
+    assert [job["id"] for job in queued] == ["3"]
+
+
+def test_next_still_shows_decided_but_active_rows(db: sqlite3.Connection) -> None:
+    # next answers "what am I working on", which includes a sent
+    # application waiting on a reply.
+    set_status(db, 1, "applied")
+    assert "1" in [job["id"] for job in rank_active(list_jobs(db))]
+
+
+def test_an_undated_row_sorts_behind_a_dated_one(db: sqlite3.Connection) -> None:
+    """An empty added_at compares before every date, so undated rows led
+    the queue (review finding on PR #27)."""
+    from harrier.tracker import update_fields
+
+    update_fields(db, 1, {"added_at": "", "fit_score": "70"})
+    update_fields(db, 2, {"added_at": "2026-08-01", "fit_score": "70"})
+    ranked = [job["id"] for job in rank_active(list_jobs(db)) if job["id"] in {"1", "2"}]
+    assert ranked == ["2", "1"]
+
+
+def test_a_malformed_applied_date_is_refused_by_the_parser(db: sqlite3.Connection) -> None:
+    # Reached date.fromisoformat and escaped as a traceback before.
+    with pytest.raises(SystemExit):
+        main(["applied", "1", "--applied-date", "not-a-date"])
+    assert get_job(db, 1)["status"] == "prospect"
+
+
+def test_a_bad_limit_is_refused_by_the_parser(db: sqlite3.Connection) -> None:
+    for bad in ("zero", "-1", "0"):
+        with pytest.raises(SystemExit):
+            main(["next", "--limit", bad])
+
+
+def test_add_refuses_a_duplicate_company_and_title(db: sqlite3.Connection) -> None:
+    """The reachable third dedupe path for a manual add: no URL, same
+    company and title as a tracked row."""
+    before = len(list_jobs(db))
+    assert main(["add", "--company", "Example Co", "--title", "Senior Frontend Engineer"]) == 1
+    assert len(list_jobs(db)) == before
