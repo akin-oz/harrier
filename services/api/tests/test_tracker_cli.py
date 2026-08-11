@@ -323,3 +323,19 @@ def test_add_refuses_a_duplicate_company_and_title(db: sqlite3.Connection) -> No
     before = len(list_jobs(db))
     assert main(["add", "--company", "Example Co", "--title", "Senior Frontend Engineer"]) == 1
     assert len(list_jobs(db)) == before
+
+
+def test_reevaluate_reports_a_previous_score_of_zero_as_zero(
+    db: sqlite3.Connection, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`previous or "-"` printed a stored 0 as "no previous score", which is a
+    different statement about the row (review finding on PR #42). Only a blank
+    column means unscored."""
+    from harrier.screening.descriptions import save_description_cache
+    from harrier.tracker.store import update_fields
+
+    job = get_job(db, 1)
+    update_fields(db, 1, {"fit_score": "0", "score": "0"})
+    save_description_cache(job["url"], "Remote across Europe. TypeScript and React.")
+    assert main(["reevaluate", "1"]) == 0
+    assert "rescored 0 ->" in capsys.readouterr().out

@@ -797,11 +797,14 @@ def _cmd_tracker_verb(args: argparse.Namespace) -> int:
             )
             candidate_cfg = load_candidate_config(conn)
             score, reasons = score_job(normalized, candidate_cfg)
-            previous = stored_score(job)
+            # A stored score of 0 is a score, and `previous or "-"` printed it
+            # as "no previous score" (review finding on PR #42). The blank
+            # column is the only thing that means unscored.
+            previous = str(stored_score(job)) if job.get("fit_score", "").strip() else "-"
             updated = update_fields(
                 conn, job_id, score_fields(score, reasons, policy_version(candidate_cfg))
             )
-            print(f"rescored {previous or '-'} -> {score}")
+            print(f"rescored {previous} -> {score}")
             _print_job(updated)
             return 0
 

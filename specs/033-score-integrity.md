@@ -1,13 +1,13 @@
 ---
 spec: 033
-title: The score means one thing, and the cutoff can reject
+title: The score means one thing, and says which policy produced it
 status: accepted
 approved: yes
 milestone: M6
 depends: [007, 027]
 ---
 
-# Spec 033: The score means one thing, and the cutoff can reject
+# Spec 033: The score means one thing, and says which policy produced it
 
 ## Problem
 

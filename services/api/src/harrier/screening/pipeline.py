@@ -223,8 +223,11 @@ def screen_jobs(
             continue
 
         scored_job = enrich_job_description_for_scoring(job)
-        # Cache before the cutoff: an enrichment fetch must never be repeated
-        # for a job that then scores low (PR #4 review finding).
+        # Cached as soon as it is fetched, before anything downstream can
+        # skip the job, so an enrichment fetch is never repeated for the same
+        # URL (PR #4 review finding). This used to say "before the cutoff";
+        # there is no cutoff now (spec 033) and the invariant is about the
+        # fetch, not about what the score then does.
         if cache_descriptions:
             scored_url = scored_job["url"].strip()
             scored_desc = scored_job["description"].strip()

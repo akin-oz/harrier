@@ -283,10 +283,12 @@ def run_discovery(
             )
         report("remoteok", "done")
 
-    # What the actor was actually asked for, as opposed to what the caller
+    # What the actor was actually given, as opposed to what the caller
     # requested. On a scheduled run the count comes from the stored discovery
-    # settings, so the two already differed, and the summary reported the one
-    # that had no effect (spec 033). None means Apify did not run.
+    # settings, so the two can differ, and the summary reported the one that
+    # had no effect (spec 033). None means the actor was never reached: the
+    # source was skipped, or the fetch failed before it ran, and in that case
+    # the source summary carries the error instead.
     apify_count_used: int | None = None
 
     paid_allowed = not is_demo_mode() and not options.shadow
@@ -298,7 +300,6 @@ def run_discovery(
         apify_gate_open = not options.scheduled or apify_allowed_now(options.now)
         if apify_gate_open:
             count = scheduled_apify_count(conn=conn) if options.scheduled else options.apify_count
-            apify_count_used = count
             report("apify_linkedin", "fetching")
             try:
                 apify_jobs = fetch_apify_linkedin_jobs(
@@ -317,6 +318,7 @@ def run_discovery(
                     }
                 )
             else:
+                apify_count_used = count
                 if not options.dry_run:
                     cached = cache_job_descriptions(apify_jobs)
                     if cached:
@@ -396,10 +398,14 @@ def run_discovery(
         "new_prospects": totals["new_prospects"],
         "rejected_counts": dict(rejected_counts),
         # The count the actor was given, not the one the caller asked for.
-        # These differ on every scheduled run, and after spec 035 they also
-        # differ whenever an out-of-range value is clamped. A number in a
-        # summary that does not describe the run it summarises is the same
-        # defect as a score field nobody updated (spec 033).
+        # A scheduled run takes its count from the stored discovery settings,
+        # which can differ from the caller's value and after spec 035 also
+        # differs whenever an out-of-range value is clamped. They can also
+        # coincide, and then both fields agree. A number in a summary that
+        # does not describe the run it summarises is the same defect as a
+        # score field nobody updated (spec 033). Proved by
+        # `tests/test_discovery.py::test_the_summary_reports_the_count_the_actor_was_given`
+        # and `::test_a_run_without_apify_claims_no_count`.
         "apify_count": apify_count_used,
         "apify_count_requested": options.apify_count,
         "source_summaries": summaries,

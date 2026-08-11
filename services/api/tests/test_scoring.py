@@ -17,6 +17,7 @@ configuration fails when the arithmetic moves, which is the point.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 from typing import cast
@@ -25,6 +26,7 @@ import pytest
 
 from harrier.db import connect
 from harrier.screening import rules
+from harrier.screening.config import load_candidate_config
 from harrier.screening.normalized import make_normalized_job
 from harrier.screening.policy import policy_version
 from harrier.tracker.schema import MIGRATIONS, NOTE_KEYS, TRACKER_FIELDS
@@ -158,24 +160,28 @@ def test_the_score_fields_are_all_real_tracker_columns() -> None:
 def test_no_reader_takes_a_field_the_writer_does_not_fill() -> None:
     """Enumerated from the tree rather than from memory.
 
-    Every module that reads a score field out of a tracker row is listed here
-    with the field it takes. If a reader starts taking a field `score_fields`
-    does not write, this fails, which is the drift that produced two numbers
-    for one job.
+    The first version of this searched only for the four names already in
+    SCORE_FIELDS, so the set it built was a subset by construction and the
+    assertion could not fail: a guard shaped like a check (review finding on
+    PR #42). It now matches any score-shaped field read off a row, so a
+    reader of a fifth field is something it can actually find.
     """
+    # Score-shaped fields only. A bare `\w*version` also matched the cover
+    # letter's short_version and full_version, which are letter variants and
+    # have nothing to do with a tracker row.
+    pattern = re.compile(r"""\.get\(\s*["'](\w*score\w*|signals|scoring_\w+)["']""")
     source = Path(__file__).resolve().parents[1] / "src" / "harrier"
-    readers: dict[str, set[str]] = {}
+    found: set[str] = set()
     for path in source.rglob("*.py"):
         if "outreach" in path.parts:
             # Contacts carry their own fit_score, about a person's relevance
             # rather than a job's fit. Same word, different quantity.
             continue
-        text = path.read_text(encoding="utf-8")
-        for field in ("fit_score", "score", "signals", "scoring_version"):
-            if f'get("{field}"' in text or f"get('{field}'" in text:
-                readers.setdefault(field, set()).add(path.name)
-    assert readers, "no readers found: this test stopped looking rather than passing"
-    assert set(readers) <= set(SCORE_FIELDS)
+        found.update(pattern.findall(path.read_text(encoding="utf-8")))
+    assert found, "the search found nothing: it stopped looking rather than passing"
+    assert found <= set(SCORE_FIELDS), (
+        f"a reader takes a field score_fields does not write: {found - set(SCORE_FIELDS)}"
+    )
 
 
 def test_the_queue_and_the_digest_rank_by_the_same_field() -> None:
@@ -196,6 +202,38 @@ def test_a_stored_score_carries_the_policy_that_produced_it(
 ) -> None:
     written = score_fields(72, [], policy_version(cfg))
     assert written["scoring_version"] == policy_version(cfg)
+
+
+def test_a_row_written_before_versions_reads_as_unknown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real pre-migration row, not a constructed one.
+
+    Migration 3 defaults the column to the empty string, and `score_fields`
+    only substitutes `unknown` on write, so a row that predates this change
+    read as blank. The spec promises those rows say `unknown`, and testing
+    the writer alone could not see that they did not (review finding on
+    PR #42).
+    """
+    from harrier.tracker.score import stored_version
+    from harrier.tracker.store import add_job, get_job
+
+    monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("HARRIER_DEMO", raising=False)
+    conn = connect()
+    job_id = add_job(
+        conn,
+        {
+            "company": "Example Labs",
+            "title": "Senior Frontend Engineer",
+            "url": "https://boards.example.com/example/9",
+            "fit_score": "70",
+        },
+    )
+    row = get_job(conn, job_id)
+    assert row["scoring_version"] == "", "the column no longer defaults blank"
+    assert stored_version(row) == UNKNOWN_VERSION
+    conn.close()
 
 
 def test_a_score_written_without_a_version_reads_as_unknown() -> None:
@@ -314,6 +352,10 @@ def test_a_manually_added_ats_url_is_enriched_before_scoring(
     # comparison that matters is that enrichment moved the number, not merely
     # that something was stored. A second capture cannot serve here: the
     # duplicate check is on company and title, not the URL.
+    # The same configuration the capture loaded. Scoring the baseline against
+    # `{}` compared two things at once, so the assertion could have passed on
+    # a configuration difference rather than on the enrichment (review finding
+    # on PR #42).
     bare = rules.score_job(
         make_normalized_job(
             source="manual",
@@ -323,7 +365,7 @@ def test_a_manually_added_ats_url_is_enriched_before_scoring(
             url=url,
             description="",
         ),
-        {},
+        load_candidate_config(conn),
     )[0]
     assert int(row["fit_score"]) > bare
 

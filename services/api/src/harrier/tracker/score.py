@@ -50,6 +50,21 @@ def score_fields(score: int, reasons: list[str], version: str) -> dict[str, str]
     }
 
 
+def stored_version(job: dict[str, str]) -> str:
+    """The policy version a stored row was scored under.
+
+    Normalizing on read, not only on write. `score_fields` substitutes
+    `unknown` for a blank version, but a row written before this change was
+    never passed through it: migration 3 defaults the column to the empty
+    string, so those rows read as blank and the promise that history says
+    `unknown` was kept only for rows that never needed it (review finding on
+    PR #42).
+
+    Proved by `tests/test_scoring.py::test_a_row_written_before_versions_reads_as_unknown`.
+    """
+    return (job.get("scoring_version") or "").strip() or UNKNOWN_VERSION
+
+
 def stored_score(job: dict[str, str]) -> int:
     """The score of a stored row, from the field that is authoritative.
 
