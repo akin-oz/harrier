@@ -181,5 +181,11 @@ PDF rendering. None of them is required to run the pipeline.
 
 ## License
 
-Not yet chosen, which means default copyright applies until one is added.
-A license lands before the repository goes public.
+MIT. See [LICENSE](LICENSE).
+
+The previous text here said a license would land before the repository went
+public. The repository was already public, so for its whole life until this
+change nobody could legally use, modify, or redistribute any of it. Found by
+the `open-source-readiness` board (spec 028), fixed under spec 038, and
+recorded rather than quietly corrected because the sentence being wrong is
+more instructive than the gap itself.

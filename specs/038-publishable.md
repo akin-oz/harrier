@@ -72,20 +72,49 @@ scheduler and the demo cannot disagree about where the repository is.
 
 ## Acceptance criteria
 
-Proving symbols are named at implementation, in
-services/api/tests/test_publishable.py and the existing governance test.
+Proven by services/api/tests/test_publishable.py:
 
-- [ ] a LICENSE file exists at the root and is MIT
-- [ ] the README's licence statement and the package metadata name the same
+| Criterion | Proof |
+|---|---|
+| a LICENSE exists and is MIT | `test_a_license_file_exists`, `test_the_license_is_mit`, `test_the_license_names_a_copyright_holder_and_year` |
+| README and metadata agree with the file | `test_the_readme_and_the_package_metadata_name_the_same_license`, `test_the_readme_no_longer_says_a_license_is_coming` |
+| the licence reaches anyone who clones | `test_the_license_file_is_tracked_by_git` |
+| dependency licences permit redistribution | `test_every_runtime_dependency_permits_redistribution` |
+| fixture provenance is documented and true | `test_every_fixture_is_listed_with_its_provenance`, `test_no_fixture_names_a_real_company` |
+| the guardians cannot write | `test_a_guardian_cannot_write`, over `.ai/` and `.claude/` both |
+| a guardian holding Bash states its limits | `test_a_guardian_holding_bash_states_its_execution_limits` |
+| no agent claims read-only while holding Bash | `test_no_agent_claims_to_be_read_only_while_holding_bash` |
+| contract-guardian does not regenerate | `test_the_contract_guardian_does_not_regenerate_what_it_audits` |
+| one `repo_root` | `test_repo_root_has_exactly_one_definition`, `test_repo_root_resolves_to_a_directory_holding_the_repository` |
+
+Two corrections to the board's finding, both recorded rather than quietly
+absorbed. Only one of the four guardians actually claimed to be read-only in
+its prose; the other three held `Bash` without making the claim. All four
+were given execution limits anyway, because an auditing agent that can write
+should say what it will not do.
+
+And the fixture check was wrong on its first pass: it flagged
+`jobs.ashbyhq.com` as evidence of a recording. The importers route on
+hostname, so a real host is what makes a fixture exercise the real path and
+is a protocol fact rather than provider content. What would reveal a
+recording is the board slug after it, which names an actual company. The
+check now reads the slug and ignores the API path segments.
+
+Honest limitation on the dependency check: it reads each installed
+distribution's declared metadata. A package that declares its licence
+incorrectly is not caught, and no automated check would catch it.
+
+- [x] a LICENSE file exists at the root and is MIT
+- [x] the README's licence statement and the package metadata name the same
       licence as the file, asserted by a test
-- [ ] every runtime dependency's licence permits redistribution under MIT,
+- [x] every runtime dependency's licence permits redistribution under MIT,
       with the check runnable rather than a one-time note
-- [ ] no committed fixture was recorded from a third-party service, or each
+- [x] no committed fixture was recorded from a third-party service, or each
       one that was is documented with its provenance
-- [ ] all fourteen agents are covered by the read-only and execution-limits
+- [x] all fourteen agents are covered by the read-only and execution-limits
       tests, not only the ten from spec 028
-- [ ] `contract-guardian` has no instruction that writes a generated artifact
-- [ ] `repo_root` has one definition, asserted by a test that fails if a
+- [x] `contract-guardian` has no instruction that writes a generated artifact
+- [x] `repo_root` has one definition, asserted by a test that fails if a
       second appears
 - [ ] All gates green on PR
 
