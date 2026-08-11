@@ -96,6 +96,21 @@ record where each behavior came from and, where the port changed it, what
 changed and why. The governance chain itself is compiled from [.ai/](.ai/)
 sources by [@akinlabs/ai-engineering](https://www.npmjs.com/package/@akinlabs/ai-engineering).
 
+Four standing guardians check that the rules were followed. Two review
+boards under [.ai/agent-teams/](.ai/agent-teams/) ask the questions the
+guardians cannot, because compliance and judgement are different things and
+a repository can be perfectly consistent with a design that was wrong to
+choose:
+
+- **principal-review** interrogates the design, starting with whether this
+  much governance is proportionate to a tool with one user.
+- **open-source-readiness** sweeps before publication. Every one of its five
+  lenses exists because this repository has already failed that way, which
+  is written down next to each of them.
+
+Both are read-only, and running them needs
+`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`.
+
 ## Running it for real
 
 ```bash
