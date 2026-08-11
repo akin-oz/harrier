@@ -1304,8 +1304,19 @@ def _cmd_schedule(args: argparse.Namespace) -> int:
                 print(f"{len(result.failures)} job(s) failed to load", file=sys.stderr)
                 return 1
         elif args.schedule_command == "status":
-            for status in schedule_status():
+            statuses = schedule_status()
+            for status in statuses:
                 print(status.line())
+            # The exit code has to be able to say no (spec 040). A status
+            # command that always succeeds is a status command nothing can be
+            # scripted against, and the failure it is meant to surface is a
+            # job that quietly stopped running.
+            problems = [f"{status.name}: {status.problem}" for status in statuses if status.problem]
+            if problems:
+                print("", file=sys.stderr)
+                for problem in problems:
+                    print(f"problem: {problem}", file=sys.stderr)
+                return 1
         else:
             uninstalled = uninstall_schedule()
             for line in uninstalled.lines:

@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from harrier.atomicio import DamagedStateError
 from harrier.db import connect
 from harrier.screening import rules
 from harrier.screening.config import load_candidate_config
@@ -413,28 +414,27 @@ def test_the_recorded_reason_is_a_stable_slug(env: Path, cfg: dict[str, Any]) ->
     assert " " not in reason, "a recorded reason must be groupable, not a sentence"
 
 
-def test_a_corrupt_state_file_is_reported_rather_than_silently_empty(
-    env: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    """Returning an empty set quietly makes every previously rejected posting
-    look new, and the save that follows overwrites the damaged file."""
+def test_a_corrupt_state_file_is_refused_rather_than_read_as_empty(env: Path) -> None:
+    """Changed by spec 040, which is where this was promised on PR #33.
+
+    Spec 031 logged and returned empty, which still made every previously
+    rejected posting look new and still let the save that followed overwrite
+    the damaged file. Raising is what actually stops that, and it is the same
+    treatment the mail watch state gets, so one failure has one behaviour.
+    """
     path = env / "data" / "discovery"
     path.mkdir(parents=True, exist_ok=True)
     (path / "greenhouse_seen.json").write_text("{not json at all", encoding="utf-8")
-    with caplog.at_level("WARNING"):
-        assert load_seen("greenhouse") == {}
-    assert any("could not be read" in record.message for record in caplog.records)
+    with pytest.raises(DamagedStateError):
+        load_seen("greenhouse")
 
 
-def test_a_state_file_that_is_not_an_object_is_reported(
-    env: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_a_state_file_that_is_not_an_object_is_refused(env: Path) -> None:
     path = env / "data" / "discovery"
     path.mkdir(parents=True, exist_ok=True)
     (path / "greenhouse_seen.json").write_text("[1, 2, 3]", encoding="utf-8")
-    with caplog.at_level("WARNING"):
-        assert load_seen("greenhouse") == {}
-    assert any("not an object" in record.message for record in caplog.records)
+    with pytest.raises(DamagedStateError):
+        load_seen("greenhouse")
 
 
 def test_nothing_eligible_is_not_reported_as_everything_current(
