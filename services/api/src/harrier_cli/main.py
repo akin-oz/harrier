@@ -1137,11 +1137,11 @@ def _cmd_review_followup(args: argparse.Namespace) -> int:
         print(decision.describe(number))
         if decision.action == WAIT and args.wait:
             time.sleep(decision.wait_minutes * 60)
-            request_review(number, run_gh)
+            request_review(number, run_gh, owner=args.owner, repo=args.repo)
             counts[str(number)] = record_request(number)
             print(f"PR #{number}: review requested")
         elif decision.action == REQUEST and not args.dry_run:
-            request_review(number, run_gh)
+            request_review(number, run_gh, owner=args.owner, repo=args.repo)
             counts[str(number)] = record_request(number)
             print(f"PR #{number}: review requested")
 

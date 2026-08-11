@@ -215,8 +215,23 @@ def gather(number: int, run: GitHubRunner, *, owner: str, repo: str) -> PullRequ
         bodies_raw = run(
             ["api", f"repos/{owner}/{repo}/issues/{number}/comments", "--jq", ".[].body"]
         )
+        # --repo explicitly. `gh pr` resolves the repository from the working
+        # directory, so without it this works when run from a checkout and
+        # fails with "not a git repository" anywhere else, including from a
+        # scheduled job. Found by running it from a temporary directory, which
+        # is exactly where a scheduled job would run it.
         head = run(
-            ["pr", "view", str(number), "--json", "headRefOid", "--jq", ".headRefOid"]
+            [
+                "pr",
+                "view",
+                str(number),
+                "--repo",
+                f"{owner}/{repo}",
+                "--json",
+                "headRefOid",
+                "--jq",
+                ".headRefOid",
+            ]
         ).strip()
         threads_raw = run(
             [
@@ -245,8 +260,9 @@ def gather(number: int, run: GitHubRunner, *, owner: str, repo: str) -> PullRequ
     )
 
 
-def request_review(number: int, run: GitHubRunner) -> None:
-    run(["pr", "comment", str(number), "--body", REQUEST_COMMENT])
+def request_review(number: int, run: GitHubRunner, *, owner: str, repo: str) -> None:
+    """Ask for another review. `--repo` for the same reason as above."""
+    run(["pr", "comment", str(number), "--repo", f"{owner}/{repo}", "--body", REQUEST_COMMENT])
 
 
 def unresolved_threads(number: int, run: GitHubRunner, *, owner: str, repo: str) -> int:

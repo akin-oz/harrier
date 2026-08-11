@@ -30,6 +30,7 @@ from harrier.reviewfollowup import (
     parse_wait_minutes,
     record_request,
     report,
+    request_review,
     state_path,
 )
 
@@ -278,3 +279,28 @@ def test_gh_failing_is_reported_not_swallowed() -> None:
 def test_an_unreadable_thread_count_is_reported() -> None:
     with pytest.raises(FollowUpError, match="unexpected thread count"):
         gather(39, stub_gh("", "abc\n", "not a number\n"), owner="o", repo="r")
+
+
+def test_every_gh_call_names_the_repository() -> None:
+    """`gh pr` resolves the repository from the working directory, so a call
+    without `--repo` works from a checkout and fails everywhere else,
+    including from the scheduled job this is meant to run in. Found by
+    running it from a temporary directory (PR #40)."""
+    calls: list[list[str]] = []
+
+    def record(argv: list[str]) -> str:
+        calls.append(argv)
+        if argv[0] == "pr":
+            return "abc1234\n"
+        if "graphql" in argv:
+            return "0\n"
+        return ""
+
+    gather(39, record, owner="o", repo="r")
+    request_review(39, record, owner="o", repo="r")
+
+    pr_calls = [argv for argv in calls if argv and argv[0] == "pr"]
+    assert pr_calls, "no gh pr call was made; this test is looking at the wrong place"
+    for argv in pr_calls:
+        assert "--repo" in argv, f"gh pr call depends on the working directory: {argv}"
+        assert argv[argv.index("--repo") + 1] == "o/r"
