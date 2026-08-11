@@ -16,14 +16,26 @@ things are non-negotiable and each is a function below.
 
 **Snapshot through SQLite.** `VACUUM INTO` takes a consistent copy of a live
 database including everything in the write-ahead log. No exclusion list, no
-torn pages, no coordination with running writers.
+torn pages, no coordination with running writers. Proved by
+`tests/test_backup.py::test_a_backup_taken_during_an_open_write_holds_the_committed_rows`.
 
 **Verify what was written.** Every archive is opened afterwards and asked a
 question only a working database can answer. An archive that fails is a
-failed run and does not replace the previous one.
+failed run and does not replace the previous one. Proved by
+`tests/test_backup.py::test_a_corrupted_archive_is_rejected` and
+`::test_a_failed_archive_is_not_left_behind`.
 
 **A restore that is a command.** The recovery path was a paragraph in an ADR
 and had never been executed. A path nobody runs is a path that does not work.
+Proved by `tests/test_backup.py::test_a_verified_archive_restores_to_a_readable_tracker`,
+`::test_restore_of_a_broken_archive_leaves_the_target_alone` and
+`::test_a_failed_replacement_puts_the_old_data_directory_back`.
+
+Limits worth knowing. The archive is not encrypted and not written off the
+machine, so it survives a bad write and not a lost laptop. Retention is by
+count and by week, so an archive older than the oldest weekly is gone. And
+`HARRIER_DATA_DIR` is read at call time: a backup and a restore run under
+different environments address different directories.
 """
 
 from __future__ import annotations
@@ -118,17 +130,60 @@ def verify_database(path: Path) -> int:
         conn.close()
 
 
+def _week_of(archive: Path) -> str | None:
+    """The ISO year and week an archive was taken in, from its name.
+
+    Returns None for a name that does not parse, and the caller then treats it
+    as having no week rather than guessing one. A stray file is not a reason to
+    delete a good archive.
+    """
+    stamp = archive.name[len(ARCHIVE_PREFIX) : -len(ARCHIVE_SUFFIX)]
+    try:
+        taken = datetime.strptime(stamp, "%Y-%m-%d-%H%M%S").replace(tzinfo=UTC)
+    except ValueError:
+        return None
+    year, week, _ = taken.isocalendar()
+    return f"{year}-{week:02d}"
+
+
 def prune(destination: Path, keep: int) -> tuple[Path, ...]:
-    """Drop the oldest archives beyond `keep`, newest always retained."""
+    """Drop the oldest archives beyond `keep`, plus the newest of each week.
+
+    The spec's retention is "the most recent N and the most recent weekly",
+    and only the first half was implemented: fourteen nightly archives cover
+    fourteen days, so a corruption that went unnoticed for a fortnight had
+    nothing behind it. Keeping one archive per week means the last good copy
+    can be months old rather than at most N runs old.
+
+    `keep` below one is refused rather than floored. Flooring it meant a
+    caller that asked to keep nothing silently kept one, and a rule stated in
+    two places is a rule that eventually disagrees with itself.
+
+    Proved by `tests/test_backup.py::test_the_newest_of_each_week_survives_pruning`
+    and `::test_pruning_refuses_to_keep_nothing`.
+    """
+    if keep < 1:
+        raise BackupError(f"keep must be 1 or more, got {keep}")
     archives = sorted(
         (path for path in destination.glob(f"{ARCHIVE_PREFIX}*{ARCHIVE_SUFFIX}") if path.is_file()),
         key=lambda path: path.name,
         reverse=True,
     )
-    doomed = archives[max(1, keep) :]
+    spared = set(archives[:keep])
+    # Newest first, so the first archive seen in a week is that week's newest.
+    weeks_held: set[str] = set()
+    for path in archives:
+        week = _week_of(path)
+        if week is None:
+            spared.add(path)
+            continue
+        if week not in weeks_held:
+            weeks_held.add(week)
+            spared.add(path)
+    doomed = tuple(path for path in archives if path not in spared)
     for path in doomed:
         path.unlink()
-    return tuple(doomed)
+    return doomed
 
 
 def create_backup(
@@ -168,18 +223,26 @@ def create_backup(
             else:
                 shutil.copy2(item, staging / item.name)
 
-        with tarfile.open(archive, "w:gz") as tar:
-            tar.add(staging, arcname=PAYLOAD_DIR)
+        # Any failure from here on removes the partial archive. Leaving it
+        # behind meant the next prune() counted a file that would not open,
+        # and deleted a verified archive to stay within `keep`: a failed
+        # backup destroying a good one.
+        try:
+            with tarfile.open(archive, "w:gz") as tar:
+                tar.add(staging, arcname=PAYLOAD_DIR)
 
-        # Verified from the archive, not from the staging copy. Verifying the
-        # thing you did not write is how a check ends up proving nothing.
-        found = verify_archive(archive)
-        if found != expected:
+            # Verified from the archive, not from the staging copy. Verifying
+            # the thing you did not write is how a check ends up proving
+            # nothing.
+            found = verify_archive(archive)
+            if found != expected:
+                raise BackupError(
+                    "archive verification disagreed with the snapshot: "
+                    f"{found} rows, expected {expected}"
+                )
+        except BaseException:
             archive.unlink(missing_ok=True)
-            raise BackupError(
-                "archive verification disagreed with the snapshot: "
-                f"{found} rows, expected {expected}"
-            )
+            raise
 
     return BackupResult(
         archive=archive,
@@ -226,20 +289,59 @@ def restore_backup(archive: Path, target: Path | None = None, *, force: bool = F
     other.
     """
     into = target if target is not None else data_dir()
-    if into.exists() and any(into.iterdir()) and not force:
+    # An existing file here used to reach `into.iterdir()` and raise
+    # NotADirectoryError, which the CLI does not catch, so a mistyped path
+    # produced a traceback instead of an answer.
+    if into.exists() and not into.is_dir():
+        raise BackupError(f"{into} exists and is not a directory; restore needs a directory")
+    if into.is_dir() and any(into.iterdir()) and not force:
         raise BackupError(
             f"{into} is not empty; restoring over it would merge two datasets. "
             "Move it aside, or pass force to overwrite."
         )
-    restored = verify_archive(archive)
 
-    with tempfile.TemporaryDirectory() as workspace:
-        staging = Path(workspace)
+    into.parent.mkdir(parents=True, exist_ok=True)
+    # Staged beside the target, not in the system temp directory, so the final
+    # step is a rename within one filesystem. shutil.move across filesystems
+    # is a copy, and the old code had already deleted the target before
+    # starting it: a copy that failed halfway left nothing at all, which is
+    # the loss this spec exists to prevent.
+    workspace = Path(tempfile.mkdtemp(dir=into.parent, prefix=".harrier-restore-"))
+    replaced = into.with_name(f"{into.name}.replaced-{_timestamp()}")
+    try:
         with tarfile.open(archive, "r:gz") as tar:
-            _safe_extract(tar, staging)
-        payload = staging / PAYLOAD_DIR
+            _safe_extract(tar, workspace)
+        payload = workspace / PAYLOAD_DIR
+        if not payload.is_dir():
+            raise BackupError(f"{archive} has no {PAYLOAD_DIR}/ payload")
+        # The payload that will be installed is the payload that is verified.
+        # Verifying the archive and then extracting it again read the file
+        # twice, and only the first read was checked.
+        restored = verify_database(payload / SNAPSHOT_NAME)
+
         if into.exists():
-            shutil.rmtree(into)
-        into.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(payload), str(into))
+            into.rename(replaced)
+        try:
+            payload.rename(into)
+        except OSError as error:
+            # Put the operator's data back rather than leaving them with none.
+            if not replaced.exists():
+                raise
+            try:
+                replaced.rename(into)
+            except OSError as rollback_error:
+                # The one case where the directory is genuinely not where it
+                # was. Saying nothing would leave the operator hunting for it.
+                raise BackupError(
+                    f"restore failed and the previous data directory could not be "
+                    f"put back: it is at {replaced} ({rollback_error})"
+                ) from error
+            raise
+    except tarfile.TarError as error:
+        raise BackupError(f"{archive} is not a readable archive: {error}") from error
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+
+    # Only once the replacement is in place.
+    shutil.rmtree(replaced, ignore_errors=True)
     return restored

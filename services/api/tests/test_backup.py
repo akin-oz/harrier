@@ -13,9 +13,12 @@ import sqlite3
 import tarfile
 import tempfile
 from pathlib import Path
+from typing import cast
+from unittest import mock
 
 import pytest
 
+import harrier.backup as backup_module
 from harrier.backup import (
     ARCHIVE_PREFIX,
     ARCHIVE_SUFFIX,
@@ -239,53 +242,220 @@ def test_restore_overwrites_when_forced(data: Path, tmp_path: Path) -> None:
 
 def test_restore_of_a_broken_archive_leaves_the_target_alone(data: Path, tmp_path: Path) -> None:
     """Verification happens before anything is moved, so a bad archive cannot
-    destroy the directory it was going to replace."""
+    destroy the directory it was going to replace.
+
+    The sentinel is the point. Asserting only that the target is a directory
+    passes just as well when the restore deleted everything in it and left an
+    empty one behind, which is the failure worth catching (review finding on
+    PR #34).
+    """
     broken = tmp_path / f"{ARCHIVE_PREFIX}broken{ARCHIVE_SUFFIX}"
     broken.write_bytes(b"nonsense")
     target = tmp_path / "target"
     target.mkdir()
+    sentinel = target / "keep-me.txt"
+    sentinel.write_text("the operator's data")
     with pytest.raises(BackupError):
         restore_backup(broken, target, force=True)
     assert target.is_dir()
+    assert sentinel.read_text() == "the operator's data"
+
+
+def test_restore_into_an_existing_file_is_refused(tmp_path: Path) -> None:
+    """A mistyped path used to reach iterdir() on a file and raise
+    NotADirectoryError, which the CLI does not catch, so the operator got a
+    traceback instead of an answer (review finding on PR #34)."""
+    archive = tmp_path / f"{ARCHIVE_PREFIX}x{ARCHIVE_SUFFIX}"
+    archive.write_bytes(b"nonsense")
+    occupied = tmp_path / "not-a-directory"
+    occupied.write_text("a file")
+    with pytest.raises(BackupError, match="not a directory"):
+        restore_backup(archive, occupied, force=True)
+    assert occupied.read_text() == "a file"
+
+
+def test_a_failed_replacement_puts_the_old_data_directory_back(
+    data: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The restore removed the target before the replacement was in place, so
+    a failure partway through left the operator with nothing. That is the loss
+    this whole spec exists to prevent (review finding on PR #34)."""
+    archive = create_backup(tmp_path / "backups").archive
+    target = tmp_path / "target"
+    target.mkdir()
+    sentinel = target / "keep-me.txt"
+    sentinel.write_text("the operator's data")
+
+    real_rename = Path.rename
+
+    def fail_installing_the_payload(self: Path, other: object) -> Path:
+        # Only the install, not the rollback that follows it: keying on the
+        # destination would fail both and prove nothing about the recovery.
+        if self.name == PAYLOAD_DIR:
+            raise OSError("no space left on device")
+        return real_rename(self, other)  # pyright: ignore[reportArgumentType]
+
+    monkeypatch.setattr(Path, "rename", fail_installing_the_payload)
+    with pytest.raises(OSError):
+        restore_backup(archive, target, force=True)
+    assert sentinel.read_text() == "the operator's data"
+
+
+def test_a_failed_rollback_says_where_the_data_directory_went(
+    data: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The one case where the directory really is not where it was. Failing
+    silently would leave the operator hunting the filesystem for it."""
+    archive = create_backup(tmp_path / "backups").archive
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "keep-me.txt").write_text("the operator's data")
+
+    moved_aside = None
+    real_rename = Path.rename
+
+    def fail_after_moving_aside(self: Path, other: object) -> Path:
+        nonlocal moved_aside
+        if self == target:
+            moved_aside = Path(str(other))
+            return real_rename(self, other)  # pyright: ignore[reportArgumentType]
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(Path, "rename", fail_after_moving_aside)
+    with pytest.raises(BackupError, match="could not be put back") as raised:
+        restore_backup(archive, target, force=True)
+    assert moved_aside is not None
+    assert str(moved_aside) in str(raised.value)
+    monkeypatch.setattr(Path, "rename", real_rename)
+    assert (moved_aside / "keep-me.txt").read_text() == "the operator's data"
+
+
+def test_the_restored_payload_is_the_payload_that_was_verified(data: Path, tmp_path: Path) -> None:
+    """One extraction, one verification, one install. Opening the archive to
+    verify it and then opening it again to install it read the file twice and
+    checked only the first read (review finding on PR #34)."""
+    archive = create_backup(tmp_path / "backups").archive
+    opened: list[str] = []
+    real_open = tarfile.open
+
+    def counting_open(*args: object, **kwargs: object) -> tarfile.TarFile:
+        opened.append(str(args[0]) if args else "")
+        return cast("tarfile.TarFile", real_open(*args, **kwargs))  # pyright: ignore[reportCallIssue, reportArgumentType]
+
+    with mock.patch.object(tarfile, "open", counting_open):
+        restore_backup(archive, tmp_path / "target")
+    assert [name for name in opened if name == str(archive)] == [str(archive)]
 
 
 # --- retention --------------------------------------------------------------
 
 
+# All within ISO week 32 of 2026, so these exercise the count half of the
+# policy without the weekly half sparing anything.
+ONE_WEEK = ("2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07")
+
+
+def _archives(directory: Path, days: tuple[str, ...]) -> None:
+    for day in days:
+        (directory / f"{ARCHIVE_PREFIX}{day}-000000{ARCHIVE_SUFFIX}").write_text("x")
+
+
 def test_retention_keeps_the_configured_number(tmp_path: Path) -> None:
-    for day in range(5):
-        (tmp_path / f"{ARCHIVE_PREFIX}2026-08-0{day}-000000{ARCHIVE_SUFFIX}").write_text("x")
+    _archives(tmp_path, ONE_WEEK)
     pruned = prune(tmp_path, keep=3)
     remaining = sorted(path.name for path in tmp_path.glob(f"{ARCHIVE_PREFIX}*"))
     assert len(remaining) == 3
     assert len(pruned) == 2
 
 
-def test_retention_never_deletes_the_newest(tmp_path: Path) -> None:
-    """Even a keep of zero. A repeating failure must not be able to leave the
-    operator with nothing."""
-    for day in range(3):
-        (tmp_path / f"{ARCHIVE_PREFIX}2026-08-0{day}-000000{ARCHIVE_SUFFIX}").write_text("x")
-    prune(tmp_path, keep=0)
-    remaining = sorted(path.name for path in tmp_path.glob(f"{ARCHIVE_PREFIX}*"))
-    assert remaining == [f"{ARCHIVE_PREFIX}2026-08-02-000000{ARCHIVE_SUFFIX}"]
+def test_pruning_refuses_to_keep_nothing(tmp_path: Path) -> None:
+    """A repeating failure must not be able to leave the operator with nothing.
+
+    The floor used to be silent: `max(1, keep)` turned a request to keep zero
+    into a request to keep one, so a caller asking for something impossible
+    got something else without being told (review finding on PR #34). The CLI
+    already refuses it, and now so does the function it calls.
+    """
+    _archives(tmp_path, ONE_WEEK[:3])
+    with pytest.raises(BackupError, match="1 or more"):
+        prune(tmp_path, keep=0)
+    assert len(list(tmp_path.glob(f"{ARCHIVE_PREFIX}*"))) == 3
 
 
 def test_retention_drops_the_oldest_first(tmp_path: Path) -> None:
-    for day in range(4):
-        (tmp_path / f"{ARCHIVE_PREFIX}2026-08-0{day}-000000{ARCHIVE_SUFFIX}").write_text("x")
+    _archives(tmp_path, ONE_WEEK[:4])
     pruned = prune(tmp_path, keep=2)
     assert sorted(path.name for path in pruned) == [
-        f"{ARCHIVE_PREFIX}2026-08-00-000000{ARCHIVE_SUFFIX}",
-        f"{ARCHIVE_PREFIX}2026-08-01-000000{ARCHIVE_SUFFIX}",
+        f"{ARCHIVE_PREFIX}2026-08-03-000000{ARCHIVE_SUFFIX}",
+        f"{ARCHIVE_PREFIX}2026-08-04-000000{ARCHIVE_SUFFIX}",
     ]
+
+
+def test_the_newest_of_each_week_survives_pruning(tmp_path: Path) -> None:
+    """The spec's retention is "the most recent N and the most recent weekly",
+    and only the count half was implemented (review finding on PR #34).
+
+    With fourteen nightly archives and no weekly rule, a corruption noticed a
+    fortnight late has nothing behind it. Here `keep=2` would have deleted
+    every archive from the three earlier weeks.
+    """
+    _archives(
+        tmp_path,
+        (
+            "2026-07-17",  # week 29
+            "2026-07-24",  # week 30
+            "2026-07-30",  # week 31
+            "2026-07-31",  # week 31, newer
+            "2026-08-06",  # week 32
+            "2026-08-07",  # week 32, newer
+        ),
+    )
+    prune(tmp_path, keep=2)
+    remaining = sorted(path.name for path in tmp_path.glob(f"{ARCHIVE_PREFIX}*"))
+    assert remaining == [
+        f"{ARCHIVE_PREFIX}2026-07-17-000000{ARCHIVE_SUFFIX}",
+        f"{ARCHIVE_PREFIX}2026-07-24-000000{ARCHIVE_SUFFIX}",
+        f"{ARCHIVE_PREFIX}2026-07-31-000000{ARCHIVE_SUFFIX}",
+        f"{ARCHIVE_PREFIX}2026-08-06-000000{ARCHIVE_SUFFIX}",
+        f"{ARCHIVE_PREFIX}2026-08-07-000000{ARCHIVE_SUFFIX}",
+    ]
+    # The older of week 31 goes; its week is already represented.
+    assert not (tmp_path / f"{ARCHIVE_PREFIX}2026-07-30-000000{ARCHIVE_SUFFIX}").exists()
+
+
+def test_an_unparseable_archive_name_is_never_deleted(tmp_path: Path) -> None:
+    """A file this module cannot date is a file it cannot judge, and deleting
+    the operator's only good copy on a guess is not a trade worth making."""
+    _archives(tmp_path, ONE_WEEK)
+    # Sorts oldest, so only the cannot-date branch can spare it. Named
+    # "handmade" it sorted newest and the count rule kept it, which made this
+    # test pass whatever the branch did.
+    stray = tmp_path / f"{ARCHIVE_PREFIX}0000-handmade{ARCHIVE_SUFFIX}"
+    stray.write_text("x")
+    prune(tmp_path, keep=1)
+    assert stray.exists()
+
+
+def test_a_failed_archive_is_not_left_behind(data: Path, tmp_path: Path) -> None:
+    """A partial archive counted towards `keep`, so the next prune could
+    delete a verified archive to make room for one that would not open: a
+    failed backup destroying a good one (review finding on PR #34)."""
+    destination = tmp_path / "backups"
+    destination.mkdir()
+    unreadable = mock.patch.object(
+        backup_module, "verify_archive", side_effect=BackupError("unreadable")
+    )
+    with unreadable, pytest.raises(BackupError):
+        create_backup(destination)
+    assert list(destination.glob(f"{ARCHIVE_PREFIX}*")) == []
 
 
 def test_a_backup_run_prunes(data: Path, tmp_path: Path) -> None:
     destination = tmp_path / "backups"
     destination.mkdir()
-    for day in range(3):
-        (destination / f"{ARCHIVE_PREFIX}2020-01-0{day}-000000{ARCHIVE_SUFFIX}").write_text("x")
+    # One week, so the weekly half of the policy spares nothing here.
+    for day in ("2020-01-07", "2020-01-08", "2020-01-09"):
+        (destination / f"{ARCHIVE_PREFIX}{day}-000000{ARCHIVE_SUFFIX}").write_text("x")
     result = create_backup(destination, keep=2)
     assert len(result.pruned) == 2
     assert result.archive.is_file()

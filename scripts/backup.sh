@@ -9,6 +9,12 @@
 # It also resolved the data directory by its own rule while the application
 # honours HARRIER_DATA_DIR, so with the override set it archived nothing and
 # reported success.
+#
+# Both are proved where the work now lives:
+# services/api/tests/test_backup.py::test_a_backup_taken_during_an_open_write_holds_the_committed_rows
+# and ::test_the_backup_follows_the_data_directory_override. This file holds
+# no logic to test: it changes directory and execs, and everything it passes
+# through is argument parsing in the command.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

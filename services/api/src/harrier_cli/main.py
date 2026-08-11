@@ -1441,7 +1441,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     backup = sub.add_parser("backup", help="verified snapshot of the data directory (spec 030)")
     backup.add_argument("--dest", default=None, help="destination directory")
-    backup.add_argument("--keep", default="14", type=_positive_int, help="archives to retain")
+    # Imported here rather than at module scope to match how every other
+    # command in this file reaches the domain: the CLI stays importable
+    # without pulling the whole domain in.
+    from harrier.backup import DEFAULT_KEEP
+
+    backup.add_argument(
+        "--keep",
+        default=str(DEFAULT_KEEP),
+        type=_positive_int,
+        help="archives to retain, on top of the newest of each week",
+    )
     backup.set_defaults(func=_cmd_backup)
 
     restore = sub.add_parser("restore", help="restore a verified archive (spec 030)")

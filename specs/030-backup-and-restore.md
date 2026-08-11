@@ -28,7 +28,7 @@ archives an empty directory and reports success.
 After cutover this is the only copy of a real person's job search.
 
 Found by the `principal-review` board (spec 028), operability lens, rated its
-second most severe finding on the grounds that it is the most total loss.
+second most severe finding because it is the most total loss available.
 
 ## Scope
 
@@ -75,22 +75,52 @@ Proven by services/api/tests/test_backup.py:
 
 | Criterion | Proof |
 |---|---|
-| a backup during an open write holds every committed row | `test_a_backup_taken_during_an_open_write_holds_the_committed_rows` |
-| the data directory override is honoured | `test_the_backup_follows_the_data_directory_override` |
-| an unopenable archive fails and evicts nothing | `test_a_corrupted_archive_is_rejected`, `test_a_truncated_database_inside_an_archive_is_rejected` |
-| verification asks a question a torn database fails | `test_verification_asks_a_question_about_content` |
-| restore refuses a non-empty target without the flag | `test_restore_refuses_a_non_empty_directory`, `test_restore_overwrites_when_forced` |
-| a verified archive restores to a readable tracker | `test_a_verified_archive_restores_to_a_readable_tracker` |
-| retention keeps the configured number, never the newest | `test_retention_keeps_the_configured_number`, `test_retention_never_deletes_the_newest`, `test_retention_drops_the_oldest_first` |
+| a backup during an open write holds every committed row | `tests/test_backup.py::test_a_backup_taken_during_an_open_write_holds_the_committed_rows` |
+| the data directory override is honoured | `tests/test_backup.py::test_the_backup_follows_the_data_directory_override` |
+| an unopenable archive fails and evicts nothing | `tests/test_backup.py::test_a_corrupted_archive_is_rejected`, `tests/test_backup.py::test_a_truncated_database_inside_an_archive_is_rejected` |
+| verification asks a question a torn database fails | `tests/test_backup.py::test_verification_asks_a_question_about_content` |
+| restore refuses a non-empty target without the flag | `tests/test_backup.py::test_restore_refuses_a_non_empty_directory`, `tests/test_backup.py::test_restore_overwrites_when_forced` |
+| a verified archive restores to a readable tracker | `tests/test_backup.py::test_a_verified_archive_restores_to_a_readable_tracker` |
+| retention keeps the configured number and the newest of each week | `tests/test_backup.py::test_retention_keeps_the_configured_number`, `tests/test_backup.py::test_the_newest_of_each_week_survives_pruning`, `tests/test_backup.py::test_retention_drops_the_oldest_first`, `tests/test_backup.py::test_pruning_refuses_to_keep_nothing` |
 | nothing about a machine or an account is committed | the archive is written outside the repository, and nothing here writes to a tracked file (ADR-008) |
 
 Beyond the criteria, two behaviours were found while implementing and are
 tested rather than left implicit: a broken archive leaves the target
 directory untouched, because verification runs before anything is moved
-(`test_restore_of_a_broken_archive_leaves_the_target_alone`); and an archive
+(`tests/test_backup.py::test_restore_of_a_broken_archive_leaves_the_target_alone`); and an archive
 member that would escape the target is refused, because a restore is exactly
 the moment somebody points the command at a file they were sent
-(`test_an_archive_escaping_its_target_is_refused`).
+(`tests/test_backup.py::test_an_archive_escaping_its_target_is_refused`).
+
+A later review of this branch found five defects in the restore and
+retention paths, and they are recorded here because each is a way the command
+could have lost the data it exists to protect.
+
+Retention implemented only half of the policy above: the count, not the
+weekly. Fourteen nightly archives cover fourteen days, so a corruption
+noticed a fortnight late had nothing behind it
+(`tests/test_backup.py::test_the_newest_of_each_week_survives_pruning`).
+
+The restore deleted the target before the replacement was in place, and moved
+the payload from the system temp directory, which is often another
+filesystem. A cross-filesystem move is a copy, and a copy that failed partway
+left no usable directory at all. The payload is now staged beside the target
+so the install is a rename, and the previous directory is kept until that
+rename succeeds
+(`tests/test_backup.py::test_a_failed_replacement_puts_the_old_data_directory_back`,
+`tests/test_backup.py::test_a_failed_rollback_says_where_the_data_directory_went`).
+
+The archive was opened twice: once to verify it, once to install it. Only the
+first read was checked. One extraction is now verified and installed
+(`tests/test_backup.py::test_the_restored_payload_is_the_payload_that_was_verified`).
+
+A failed archive was left on disk, where the next prune counted it towards
+`keep` and could delete a verified archive to make room for one that would
+not open (`tests/test_backup.py::test_a_failed_archive_is_not_left_behind`).
+
+A restore into a path that was an existing file raised `NotADirectoryError`,
+which the command does not catch, so a mistyped path produced a traceback
+(`tests/test_backup.py::test_restore_into_an_existing_file_is_refused`).
 
 One test in the first version of this suite could not fail, and it is
 recorded because the failure mode is the one this spec exists to close. It
