@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 from harrier.db import data_dir
+from harrier.sources import scrub_secrets
 
 PROTOCOL_PREFIX = "::harrier::"
 RunState = Literal["queued", "running", "succeeded", "failed", "cancelled"]
@@ -42,6 +43,31 @@ KIND_COMMANDS: dict[str, list[str]] = {
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def scrub_event_data(data: dict[str, object]) -> dict[str, object]:
+    """Every string a structured event carries, scrubbed.
+
+    The log-line branches were scrubbed and this one was not, so a subprocess
+    emitting a well-formed protocol object whose message or URL held a token
+    put it straight onto the unauthenticated stream. Scrubbing only what I
+    had just changed is the mistake; the property is that nothing reaches the
+    stream unscrubbed (review finding on PR #39).
+    """
+    scrubbed: dict[str, object] = {}
+    for key, value in data.items():
+        if isinstance(value, str):
+            scrubbed[key] = scrub_secrets(value)
+        elif isinstance(value, dict):
+            scrubbed[key] = scrub_event_data(cast("dict[str, object]", value))
+        elif isinstance(value, list):
+            scrubbed[key] = [
+                scrub_secrets(item) if isinstance(item, str) else item
+                for item in cast("list[object]", value)
+            ]
+        else:
+            scrubbed[key] = value
+    return scrubbed
 
 
 @dataclass
@@ -192,8 +218,18 @@ class RunManager:
     # -- events -------------------------------------------------------------
 
     async def _append(self, run: Run, event_type: str, data: dict[str, object]) -> None:
+        """The one place an event reaches the stream, so the one place to scrub.
+
+        Scrubbing at each call site meant scrubbing the sites I had just
+        changed: the log-line branches were covered and the structured-event
+        branch was not, and the test I wrote looked only at the branches I had
+        covered (review finding on PR #39). Doing it here makes the property
+        hold for every future caller without anyone remembering.
+        """
         async with self._condition:
-            run.events.append(RunEvent(id=len(run.events) + 1, type=event_type, data=data))
+            run.events.append(
+                RunEvent(id=len(run.events) + 1, type=event_type, data=scrub_event_data(data))
+            )
             self._condition.notify_all()
 
     async def _set_state(self, run: Run, state: RunState) -> None:

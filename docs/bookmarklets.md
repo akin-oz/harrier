@@ -5,7 +5,10 @@ LinkedIn, Wellfound, Welcome to the Jungle, or HiringCafe. No extension required
 
 > **How it avoids browser mixed-content blocking:** instead of `fetch()` (which Chrome
 > blocks on HTTPS→HTTP even for localhost), the bookmarklet uses `window.open()` to
-> navigate a new tab to `http://localhost:8000/capture/add?...`. The server handles the GET,
+> navigate a new tab to `http://localhost:8000/capture/add?...`. The server answers that
+> GET with a confirmation page showing what it captured, and one click adds it. The GET
+> itself changes nothing (spec 035): it used to add the row, which meant any page could
+> do the same with an image tag. The server handles the GET,
 > adds the job, and shows a result page. Plain navigation is never blocked.
 
 ---

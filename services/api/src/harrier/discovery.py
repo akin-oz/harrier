@@ -30,7 +30,7 @@ from harrier.screening.config import load_candidate_config
 from harrier.screening.descriptions import cache_job_descriptions
 from harrier.screening.normalized import NormalizedJob
 from harrier.screening.seen import load_seen, save_seen
-from harrier.sources import fetch_many
+from harrier.sources import fetch_many, scrub_secrets
 from harrier.sources.apify_linkedin import (
     DEFAULT_COUNT as APIFY_DEFAULT_COUNT,
 )
@@ -72,16 +72,28 @@ def _incoming_dir() -> Path:
     return data_dir() / "incoming"
 
 
+# The most a single scheduled run may ask a paid actor for. An unbounded
+# count is unbounded spend, and the value reaching this point may have come
+# from an HTTP request rather than from the operator (spec 035).
+APIFY_MAX_COUNT = 500
+
+
 def scheduled_apify_count(
     config_path: Path | None = None, conn: sqlite3.Connection | None = None
 ) -> int:
     """The scheduled-run Apify count, from the store or config/discovery.json.
 
     Resolves the old repo's three-way discrepancy between 50, 150, and 200
-    (docs/parity-matrix.md, section 8). 50 is what production actually ran:
-    the old `scripts/run-all-intake.sh` invoked `--apify-count 50`, with a
+    (docs/parity-matrix.md, section 8). The scheduled default is 50 because
+    the old `scripts/run-all-intake.sh` passed `--apify-count 50`, with a
     comment calling it a per-search ceiling rather than a typical haul. 150
     stays the CLI default for a manual run.
+
+    The numbers are values from the old repository's own scripts, not
+    measurements of anyone's search, so they are design rationale rather than
+    the observation class ADR-008 excludes. The phrase this replaced said
+    what production "actually ran", which reads as an operational claim about
+    a live install and is the reason it was queried on review (PR #39).
 
     Precedence is store, then file, then default, pinned by
     tests/test_discovery.py (test_scheduled_run_uses_configured_count for
@@ -94,7 +106,13 @@ def scheduled_apify_count(
     else:
         settings = load_discovery_settings(conn)
     raw = settings.get("apify_scheduled_count")
-    return raw if isinstance(raw, int) and not isinstance(raw, bool) else APIFY_DEFAULT_COUNT
+    if not isinstance(raw, int) or isinstance(raw, bool):
+        return APIFY_DEFAULT_COUNT
+    # Clamped where it is read, not only where it is written (spec 035).
+    # This value is stored, so a count written before the validation existed,
+    # or written directly into the database, is still executed by the next
+    # scheduled run. Validating the write alone leaves that path open.
+    return max(1, min(raw, APIFY_MAX_COUNT))
 
 
 def _settings_file(path: Path) -> dict[str, object]:
@@ -243,9 +261,14 @@ def run_discovery(
         try:
             remoteok_jobs = fetch_remoteok_jobs()
         except Exception as exc:
-            logger.warning("RemoteOK import failed: %s", exc)
+            logger.warning("RemoteOK import failed: %s", scrub_secrets(str(exc)))
             summaries.append(
-                {"source": "remoteok", "fetched_count": 0, "new_prospects": 0, "errors": [str(exc)]}
+                {
+                    "source": "remoteok",
+                    "fetched_count": 0,
+                    "new_prospects": 0,
+                    "errors": [scrub_secrets(str(exc))],
+                }
             )
         else:
             summaries.append(
@@ -277,13 +300,13 @@ def run_discovery(
                     search_urls=load_search_urls(conn),
                 )
             except Exception as exc:
-                logger.warning("Apify LinkedIn import failed: %s", exc)
+                logger.warning("Apify LinkedIn import failed: %s", scrub_secrets(str(exc)))
                 summaries.append(
                     {
                         "source": "apify_linkedin",
                         "fetched_count": 0,
                         "new_prospects": 0,
-                        "errors": [str(exc)],
+                        "errors": [scrub_secrets(str(exc))],
                     }
                 )
             else:
