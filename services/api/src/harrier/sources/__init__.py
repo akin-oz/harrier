@@ -72,7 +72,10 @@ def fetch_many(
         try:
             jobs.extend(fetch(board_url))
         except Exception as exc:
-            message = f"{redact_url(board_url)}: {exc}"
+            # redact_url covers the board URL; the exception text is a
+            # separate channel and can carry a provider URL of its own
+            # (review finding on PR #39).
+            message = scrub_secrets(f"{redact_url(board_url)}: {exc}")
             errors.append(message)
             logger.warning("%s board import failed: %s", source_name, message)
     return jobs, errors

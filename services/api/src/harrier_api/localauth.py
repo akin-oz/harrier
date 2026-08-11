@@ -38,6 +38,14 @@ from fastapi import HTTPException, Request
 from harrier.db import data_dir
 
 TOKEN_HEADER = "X-Harrier-Token"
+
+# Declared so the generated client knows the header exists and that 403 is a
+# real outcome. A dependency taking only `Request` is invisible to OpenAPI,
+# so the contract described routes that could refuse without saying so
+# (review finding on PR #39).
+TOKEN_RESPONSES: dict[int | str, dict[str, str]] = {
+    403: {"description": "missing or wrong local API token"}
+}
 TOKEN_FILENAME = "api-token"
 TOKEN_ENV = "HARRIER_API_TOKEN"
 
@@ -65,10 +73,20 @@ def load_or_create_token() -> str:
         existing = path.read_text(encoding="utf-8").strip()
         if existing:
             return existing
-    token = secrets.token_urlsafe(32)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(token, encoding="utf-8")
-    path.chmod(0o600)
+    token = secrets.token_urlsafe(32)
+    try:
+        # Created with the mode, not created and then chmodded. Writing first
+        # and narrowing after leaves a window in which the file exists at the
+        # process default mode, and O_EXCL means two first requests cannot
+        # each write a different token and invalidate the one already handed
+        # out (review finding on PR #39).
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        # Another request won. Its token is the one in circulation.
+        return path.read_text(encoding="utf-8").strip()
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(token)
     return token
 
 

@@ -26,6 +26,7 @@ from fastapi.testclient import TestClient
 
 from harrier.db import connect
 from harrier.discovery import APIFY_MAX_COUNT, scheduled_apify_count
+from harrier.screening.normalized import NormalizedJob
 from harrier.sources import scrub_secrets
 from harrier.tracker.store import list_jobs
 from harrier_api.app import create_app
@@ -110,6 +111,43 @@ def test_the_app_can_read_its_own_token(client: TestClient) -> None:
     assert token_matches(body["token"])
 
 
+def test_the_token_file_is_created_readable_only_by_its_owner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Created with the mode rather than chmodded afterwards.
+
+    Writing first and narrowing after leaves a window in which the file
+    exists at the process default mode, and on a machine with other local
+    users that window is enough (review finding on PR #39). No test covered
+    this, which is why the first mutation of it passed.
+    """
+    import stat
+
+    from harrier_api.localauth import load_or_create_token, token_path
+
+    monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("HARRIER_API_TOKEN", raising=False)
+
+    token = load_or_create_token()
+    assert token
+
+    mode = stat.S_IMODE(token_path().stat().st_mode)
+    assert mode == 0o600, f"token file is {oct(mode)}, expected 0o600"
+
+
+def test_a_second_call_returns_the_token_already_in_circulation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two first requests must not each write a different token: the second
+    would invalidate one already handed to the app."""
+    from harrier_api.localauth import load_or_create_token
+
+    monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("HARRIER_API_TOKEN", raising=False)
+
+    assert load_or_create_token() == load_or_create_token()
+
+
 # --- the capture route no longer writes on GET -------------------------------
 
 
@@ -124,11 +162,20 @@ def test_a_get_to_capture_changes_nothing(client: TestClient) -> None:
     conn.close()
 
 
-def test_the_capture_form_requires_the_token(client: TestClient) -> None:
-    response = client.post(
-        "/capture/add-form", data={"company": "Acme", "title": "Engineer", "token": "wrong"}
-    )
-    assert response.status_code == 403
+@pytest.mark.parametrize(
+    ("data", "case"),
+    [
+        ({"company": "Acme", "title": "Engineer", "token": "wrong"}, "wrong token"),
+        ({"company": "Acme", "title": "Engineer"}, "no token field at all"),
+    ],
+)
+def test_the_capture_form_requires_the_token(
+    client: TestClient, data: dict[str, str], case: str
+) -> None:
+    """Both shapes: a forged token and none. A cross-origin form post carries
+    neither, so the absent case is the realistic one."""
+    response = client.post("/capture/add-form", data=data)
+    assert response.status_code == 403, case
 
     conn = connect()
     assert list_jobs(conn) == []
@@ -145,7 +192,7 @@ def test_a_stored_count_above_the_bound_is_clamped(env: Path) -> None:
     from harrier.userconfig import DISCOVERY, set_config
 
     conn = connect()
-    set_config(conn, DISCOVERY, {"apify_scheduled_count": 10_000_000})
+    set_config(conn, DISCOVERY, {"apify_scheduled_count": APIFY_MAX_COUNT + 1})
     assert scheduled_apify_count(conn=conn) == APIFY_MAX_COUNT
     conn.close()
 
@@ -154,8 +201,9 @@ def test_a_reasonable_stored_count_is_untouched(env: Path) -> None:
     from harrier.userconfig import DISCOVERY, set_config
 
     conn = connect()
-    set_config(conn, DISCOVERY, {"apify_scheduled_count": 75})
-    assert scheduled_apify_count(conn=conn) == 75
+    inside = APIFY_MAX_COUNT - 1
+    set_config(conn, DISCOVERY, {"apify_scheduled_count": inside})
+    assert scheduled_apify_count(conn=conn) == inside
     conn.close()
 
 
@@ -205,28 +253,92 @@ def test_scrubbing_leaves_ordinary_text_alone() -> None:
     assert scrub_secrets(message) == message
 
 
-def test_the_run_stream_scrubs_what_it_relays(env: Path) -> None:
-    """The event stream is unauthenticated by design, so anything a
-    subprocess prints reaches a reader who presented nothing."""
-    import harrier_api.runs as runs_module
+def test_a_structured_event_is_scrubbed(env: Path) -> None:
+    """The branch my first pass missed. A subprocess emitting a well-formed
+    protocol object whose message or URL holds a token put it straight onto
+    the unauthenticated stream, because only the log-line branches were
+    scrubbed (review finding on PR #39)."""
+    from harrier_api.runs import scrub_event_data
 
-    source = Path(runs_module.__file__).read_text(encoding="utf-8")
-    relayed = [line for line in source.splitlines() if '"log_line"' in line]
-    assert relayed, "no log_line relay found; this test is looking at the wrong place"
-    unscrubbed = [line for line in relayed if "scrub_secrets" not in line]
-    assert not unscrubbed, f"a log line reaches the stream unscrubbed: {unscrubbed}"
+    scrubbed = scrub_event_data(
+        {
+            "event": "progress",
+            "message": "fetching https://api.apify.com/v2/acts/x/runs?token=SECRETVALUE",
+            "nested": {"url": "https://x/y?api_key=INNERSECRET"},
+            "items": ["https://x/y?token=LISTSECRET", 7],
+            "count": 3,
+        }
+    )
+    flat = repr(scrubbed)
+    assert "SECRETVALUE" not in flat
+    assert "INNERSECRET" not in flat
+    assert "LISTSECRET" not in flat
+    assert scrubbed["count"] == 3, "scrubbing must not alter non-string values"
 
 
-def test_the_discovery_summary_scrubs_its_errors(env: Path) -> None:
-    """The other sink: a bare `except Exception` writes str(exc) into a
-    summary file that is also printed."""
+async def _collect(manager: object, run: object, event_type: str, data: dict[str, object]):
+    await manager._append(run, event_type, data)  # pyright: ignore[reportAttributeAccessIssue]
+
+
+def test_every_event_is_scrubbed_at_the_choke_point(env: Path) -> None:
+    """Behavioural, not a source scan.
+
+    My first version of this test read the module text and matched literal
+    `"log_line"` call sites, which is exactly the set I had just fixed, so it
+    could not have caught the structured-event branch. Scrubbing now happens
+    in `_append`, the single place an event reaches the stream, and this
+    calls it.
+    """
+    import asyncio
+
+    from harrier_api.runs import Run, RunManager
+
+    manager = RunManager()
+    run = Run(id="r1", kind="demo", command=["true"])
+    asyncio.run(
+        _collect(
+            manager,
+            run,
+            "progress",
+            {"message": "https://api.apify.com/v2/x?token=SECRETVALUE", "step": 2},
+        )
+    )
+    stored = repr(run.events[-1].data)
+    assert "SECRETVALUE" not in stored
+    assert "REDACTED" in stored
+    assert run.events[-1].data["step"] == 2
+
+
+def test_every_exception_sink_in_discovery_is_scrubbed(env: Path) -> None:
+    """Also broadened. The first version matched only lines containing
+    `"errors": [`, so it passed while two logger.warning calls handed the raw
+    exception straight to the log."""
     import harrier.discovery as discovery_module
 
     source = Path(discovery_module.__file__).read_text(encoding="utf-8")
-    error_sinks = [line for line in source.splitlines() if '"errors": [' in line]
-    assert error_sinks
-    unscrubbed = [line for line in error_sinks if "scrub_secrets" not in line]
-    assert not unscrubbed, f"an error reaches the summary unscrubbed: {unscrubbed}"
+    sinks = [
+        line.strip()
+        for line in source.splitlines()
+        if ("exc" in line and ("logger." in line or '"errors"' in line))
+    ]
+    assert sinks, "this test is looking at the wrong place"
+    unscrubbed = [line for line in sinks if "scrub_secrets" not in line]
+    assert not unscrubbed, f"an exception reaches a sink unscrubbed: {unscrubbed}"
+
+
+def test_a_board_error_carries_no_credential(env: Path) -> None:
+    """redact_url covers the board URL. The exception text is a separate
+    channel and can carry a provider URL of its own, which is how a token
+    reached the per-source summary (review finding on PR #39)."""
+    from harrier.sources import fetch_many
+
+    def explode(board_url: str) -> list[NormalizedJob]:
+        raise RuntimeError("upstream said no: https://api.apify.com/v2/x?token=SECRETVALUE")
+
+    _jobs, errors = fetch_many(["https://boards.greenhouse.io/exampleco"], explode, "greenhouse")
+    assert errors
+    assert "SECRETVALUE" not in " ".join(errors)
+    assert "REDACTED" in " ".join(errors)
 
 
 # --- the daily path still works ----------------------------------------------

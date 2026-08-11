@@ -255,7 +255,7 @@ def run_discovery(
         try:
             remoteok_jobs = fetch_remoteok_jobs()
         except Exception as exc:
-            logger.warning("RemoteOK import failed: %s", exc)
+            logger.warning("RemoteOK import failed: %s", scrub_secrets(str(exc)))
             summaries.append(
                 {
                     "source": "remoteok",
@@ -294,7 +294,7 @@ def run_discovery(
                     search_urls=load_search_urls(conn),
                 )
             except Exception as exc:
-                logger.warning("Apify LinkedIn import failed: %s", exc)
+                logger.warning("Apify LinkedIn import failed: %s", scrub_secrets(str(exc)))
                 summaries.append(
                     {
                         "source": "apify_linkedin",

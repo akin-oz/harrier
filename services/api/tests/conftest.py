@@ -2,8 +2,11 @@
 
 The API token (spec 035) is fixed here rather than generated per test, so a
 test that means to present it can, and a test that means to omit it still
-exercises the refusal. Setting it in the environment also keeps the tests
-from writing a token file into a real data directory.
+exercises the refusal.
+
+Setting it in the environment also keeps the tests from writing a token file
+into a real data directory: `harrier_api.localauth.load_or_create_token`
+returns the override before it touches the filesystem.
 """
 
 from __future__ import annotations

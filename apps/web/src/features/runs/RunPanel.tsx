@@ -122,6 +122,12 @@ export function RunPanel({
       if (error !== undefined) {
         throw new Error(`start failed: ${JSON.stringify(error)}`);
       }
+      // The contract now declares 403, so a refusal is a shape the caller has
+      // to handle rather than one it can assume away (spec 035). A missing
+      // body here means the API refused without an error payload.
+      if (data === undefined) {
+        throw new Error("start refused: the local API token was not accepted");
+      }
       return data;
     },
     onSuccess: (data) => {
@@ -142,6 +148,9 @@ export function RunPanel({
       });
       if (error !== undefined) {
         throw new Error(`cancel failed: ${JSON.stringify(error)}`);
+      }
+      if (data === undefined) {
+        throw new Error("cancel refused: the local API token was not accepted");
       }
       return data;
     },

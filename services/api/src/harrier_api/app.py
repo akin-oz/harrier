@@ -24,7 +24,12 @@ from harrier.tracker import list_jobs
 from harrier_api.capture_routes import capture_router
 from harrier_api.demo import demo_db_path, is_demo_mode, seed_demo_db
 from harrier_api.deps import Conn
-from harrier_api.localauth import TRUSTED_HOSTS, load_or_create_token, require_token
+from harrier_api.localauth import (
+    TOKEN_RESPONSES,
+    TRUSTED_HOSTS,
+    load_or_create_token,
+    require_token,
+)
 from harrier_api.runs import Run, RunManager, RunState, format_sse
 
 API_VERSION = "0.1.0"
@@ -178,7 +183,12 @@ Manager = Annotated[RunManager, Depends(get_manager)]
 runs_router = APIRouter()
 
 
-@runs_router.post("/runs", operation_id="startRun", dependencies=[Depends(require_token)])
+@runs_router.post(
+    "/runs",
+    operation_id="startRun",
+    dependencies=[Depends(require_token)],
+    responses=TOKEN_RESPONSES,
+)
 async def start_run(body: StartRunIn, manager: Manager) -> RunOut:
     return _run_out(await manager.start(body.kind))
 
@@ -197,7 +207,10 @@ def get_run(run_id: str, manager: Manager) -> RunOut:
 
 
 @runs_router.post(
-    "/runs/{run_id}/cancel", operation_id="cancelRun", dependencies=[Depends(require_token)]
+    "/runs/{run_id}/cancel",
+    operation_id="cancelRun",
+    dependencies=[Depends(require_token)],
+    responses=TOKEN_RESPONSES,
 )
 async def cancel_run(run_id: str, manager: Manager) -> RunOut:
     run = await manager.cancel(run_id)
@@ -332,7 +345,7 @@ def get_configuration(kind: str, conn: Conn) -> ConfigOut:
 @config_router.put(
     "/config/{kind}",
     operation_id="putConfig",
-    responses=CONFIG_ERRORS,
+    responses={**CONFIG_ERRORS, **TOKEN_RESPONSES},
     dependencies=[Depends(require_token)],
 )
 def put_configuration(kind: str, body: ConfigIn, conn: Conn) -> ConfigOut:
@@ -352,7 +365,7 @@ def put_configuration(kind: str, body: ConfigIn, conn: Conn) -> ConfigOut:
 @config_router.delete(
     "/config/{kind}",
     operation_id="deleteConfig",
-    responses={404: CONFIG_ERRORS[404]},
+    responses={404: CONFIG_ERRORS[404], **TOKEN_RESPONSES},
     dependencies=[Depends(require_token)],
 )
 def delete_configuration(kind: str, conn: Conn) -> ConfigOut:

@@ -26,7 +26,12 @@ from pydantic import BaseModel
 
 from harrier.capture import CaptureResult, add_captured_job
 from harrier_api.deps import Conn
-from harrier_api.localauth import load_or_create_token, require_token, token_matches
+from harrier_api.localauth import (
+    TOKEN_RESPONSES,
+    load_or_create_token,
+    require_token,
+    token_matches,
+)
 
 capture_router = APIRouter()
 
@@ -194,6 +199,7 @@ def capture_from_form(
     operation_id="captureJob",
     dependencies=[Depends(require_token)],
     responses={
+        **TOKEN_RESPONSES,
         400: {"model": CaptureOut, "description": "company and title are required"},
         409: {"model": CaptureOut, "description": "already in tracker"},
         500: {"description": "unexpected error"},

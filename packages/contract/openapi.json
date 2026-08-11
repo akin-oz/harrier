@@ -738,6 +738,9 @@
             },
             "description": "company and title are required"
           },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
           "409": {
             "content": {
               "application/json": {
@@ -869,6 +872,9 @@
             },
             "description": "Successful Response"
           },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -982,6 +988,9 @@
               }
             },
             "description": "The value is not the shape this kind requires."
+          },
+          "403": {
+            "description": "missing or wrong local API token"
           },
           "404": {
             "content": {
@@ -1143,6 +1152,9 @@
             },
             "description": "Successful Response"
           },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -1220,6 +1232,9 @@
               }
             },
             "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
           },
           "422": {
             "content": {

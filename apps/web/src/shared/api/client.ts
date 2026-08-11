@@ -26,7 +26,12 @@ async function localToken(): Promise<string> {
     .then((response) => (response.ok ? response.json() : { token: "" }))
     .then((body: { token?: string }) => body.token ?? "")
     .catch(() => "");
-  return tokenRequest;
+  const token = await tokenRequest;
+  // A failed fetch must not poison the cache. Holding onto "" meant the API
+  // refused every state-changing request from then on, and a reload was the
+  // only cure (review finding on PR #39).
+  if (!token) tokenRequest = undefined;
+  return token;
 }
 
 export const api = createClient<paths>({

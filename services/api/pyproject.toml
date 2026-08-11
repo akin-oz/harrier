@@ -8,8 +8,10 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn>=0.34",
-    # The capture confirmation page submits a real form, which is the only
-    # way a bookmarklet can carry the local token (spec 035).
+    # Form parsing for the capture confirmation page. The bookmarklet itself
+    # carries no token: the page the GET renders holds it in a hidden field
+    # and posts it (spec 035, proven by
+    # tests/test_batch_and_capture.py::test_the_confirmation_page_carries_the_fields_and_the_token).
     "python-multipart>=0.0.9",
 ]
 
