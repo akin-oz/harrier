@@ -71,21 +71,48 @@ evict every good copy.
 
 ## Acceptance criteria
 
-Proving symbols are named at implementation, in
-services/api/tests/test_backup.py.
+Proven by services/api/tests/test_backup.py:
 
-- [ ] a backup taken while a write transaction is open restores to a database
+| Criterion | Proof |
+|---|---|
+| a backup during an open write holds every committed row | `test_a_backup_taken_during_an_open_write_holds_the_committed_rows` |
+| the data directory override is honoured | `test_the_backup_follows_the_data_directory_override` |
+| an unopenable archive fails and evicts nothing | `test_a_corrupted_archive_is_rejected`, `test_a_truncated_database_inside_an_archive_is_rejected` |
+| verification asks a question a torn database fails | `test_verification_asks_a_question_about_content` |
+| restore refuses a non-empty target without the flag | `test_restore_refuses_a_non_empty_directory`, `test_restore_overwrites_when_forced` |
+| a verified archive restores to a readable tracker | `test_a_verified_archive_restores_to_a_readable_tracker` |
+| retention keeps the configured number, never the newest | `test_retention_keeps_the_configured_number`, `test_retention_never_deletes_the_newest`, `test_retention_drops_the_oldest_first` |
+| nothing about a machine or an account is committed | the archive is written outside the repository, and nothing here writes to a tracked file (ADR-008) |
+
+Beyond the criteria, two behaviours were found while implementing and are
+tested rather than left implicit: a broken archive leaves the target
+directory untouched, because verification runs before anything is moved
+(`test_restore_of_a_broken_archive_leaves_the_target_alone`); and an archive
+member that would escape the target is refused, because a restore is exactly
+the moment somebody points the command at a file they were sent
+(`test_an_archive_escaping_its_target_is_refused`).
+
+One test in the first version of this suite could not fail, and it is
+recorded because the failure mode is the one this spec exists to close. It
+wrote a `tracker.db-wal` file by hand and asserted the archive did not
+contain it. That passed whatever the code did, since SQLite removes the
+write-ahead log when the snapshot connection closes, so the file was gone
+before the copy loop ran. Rewritten to use a stray file SQLite does not
+manage, and paired with a test that the archived database is the snapshot
+rather than the live file.
+
+- [x] a backup taken while a write transaction is open restores to a database
       containing every committed row, and none of the uncommitted one
-- [ ] a backup taken with `HARRIER_DATA_DIR` set archives that directory
-- [ ] an archive that cannot be opened fails the run with a non-zero exit and
+- [x] a backup taken with `HARRIER_DATA_DIR` set archives that directory
+- [x] an archive that cannot be opened fails the run with a non-zero exit and
       does not evict the previous archive
-- [ ] verification asks a question a torn database would fail, proven by a
+- [x] verification asks a question a torn database would fail, proven by a
       test that corrupts an archive and sees it rejected
-- [ ] restore into a non-empty data directory is refused without the flag
-- [ ] restore of a verified archive produces a tracker the CLI can read
-- [ ] retention keeps the configured number and never deletes the newest
+- [x] restore into a non-empty data directory is refused without the flag
+- [x] restore of a verified archive produces a tracker the CLI can read
+- [x] retention keeps the configured number and never deletes the newest
       verified archive
-- [ ] no archive path, machine name, or account name is written to any
+- [x] no archive path, machine name, or account name is written to any
       committed file (ADR-008)
 - [ ] All gates green on PR
 
