@@ -84,10 +84,16 @@ def scheduled_apify_count(
     """The scheduled-run Apify count, from the store or config/discovery.json.
 
     Resolves the old repo's three-way discrepancy between 50, 150, and 200
-    (docs/parity-matrix.md, section 8). 50 is what production actually ran:
-    the old `scripts/run-all-intake.sh` invoked `--apify-count 50`, with a
+    (docs/parity-matrix.md, section 8). The scheduled default is 50 because
+    the old `scripts/run-all-intake.sh` passed `--apify-count 50`, with a
     comment calling it a per-search ceiling rather than a typical haul. 150
     stays the CLI default for a manual run.
+
+    The numbers are values from the old repository's own scripts, not
+    measurements of anyone's search, so they are design rationale rather than
+    the observation class ADR-008 excludes. The phrase this replaced said
+    what production "actually ran", which reads as an operational claim about
+    a live install and is the reason it was queried on review (PR #39).
 
     Precedence is store, then file, then default, pinned by
     tests/test_discovery.py (test_scheduled_run_uses_configured_count for
