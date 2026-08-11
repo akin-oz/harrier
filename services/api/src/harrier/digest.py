@@ -18,6 +18,14 @@ from typing import cast
 
 from harrier.mail.watch import events_path
 from harrier.notify import send_telegram_message
+from harrier.runoutcome import (
+    DIGEST_JOB,
+    DISCOVERY_JOB,
+    MAIL_WATCH_JOB,
+    all_last_success,
+    describe_age,
+    record_success,
+)
 from harrier.tracker import list_jobs
 
 DIGEST_ACTIONABLE_KINDS = {
@@ -187,8 +195,16 @@ def render_digest(
     outreach_groups: dict[str, list[str]],
     ghosted: list[str],
     updates: list[dict[str, object]],
+    schedule_health: list[str] | None = None,
 ) -> str:
     lines = [f"Daily job digest — {target_date.isoformat()}", ""]
+
+    # The schedule leads (spec 029). "New prospects today: 0" reads the same
+    # on a quiet Tuesday and in the second month of a silent failure, so the
+    # first thing the reader sees is when each job last actually worked.
+    if schedule_health:
+        lines.extend(schedule_health)
+        lines.append("")
 
     lines.append(f"New prospects today: {len(new_rows)}")
     if new_rows:
@@ -250,6 +266,19 @@ def render_digest(
     return "\n".join(lines)
 
 
+SCHEDULED_JOBS = (DISCOVERY_JOB, DIGEST_JOB, MAIL_WATCH_JOB)
+
+
+def schedule_health_lines(conn: sqlite3.Connection) -> list[str]:
+    """One line per scheduled job, whether or not it has ever succeeded.
+
+    Every job is named even when it has no row, because a job missing from
+    this list is exactly the job nobody notices has stopped (spec 029).
+    """
+    recorded = all_last_success(conn)
+    return [describe_age(job, recorded.get(job)) for job in SCHEDULED_JOBS]
+
+
 def build_digest(conn: sqlite3.Connection, target_date: date) -> str:
     rows = list_jobs(conn)
     return render_digest(
@@ -259,6 +288,7 @@ def build_digest(conn: sqlite3.Connection, target_date: date) -> str:
         outreach_actions_due(rows),
         ghosted_applications(rows, target_date),
         actionable_updates(target_date),
+        schedule_health_lines(conn),
     )
 
 
@@ -273,4 +303,9 @@ def run_digest(
     digest = build_digest(conn, target_date)
     if dry_run:
         return digest, 0
-    return digest, send(digest)
+    rc = send(digest)
+    if rc == 0:
+        # Only on the success path. A digest that failed to send must not
+        # report itself as healthy tomorrow (spec 029).
+        record_success(conn, DIGEST_JOB)
+    return digest, rc

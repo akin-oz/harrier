@@ -21,6 +21,7 @@ from typing import cast
 from harrier.db import data_dir
 from harrier.demo import is_demo_mode, resolve_config_path
 from harrier.notify import build_telegram_message, send_telegram_message
+from harrier.runoutcome import DISCOVERY_JOB, classify_run, record_success
 from harrier.screening import (
     build_tracker_indexes,
     dedupe_normalized_jobs,
@@ -229,6 +230,7 @@ def run_discovery(
             progress(source, stage)
 
     summaries: list[dict[str, object]] = []
+    skipped_sources: list[dict[str, object]] = []
     feeds = load_ats_feeds(conn)
 
     ats_fetchers: dict[str, Callable[[str], list[NormalizedJob]]] = {
@@ -335,7 +337,16 @@ def run_discovery(
                 )
             report("apify_linkedin", "done")
         else:
-            logger.info("Apify skipped by scheduled policy (weekday mornings only)")
+            # Recorded, not just logged. A paid source silently not running is
+            # the case that motivated spec 029, and a skip that exists only in
+            # a discarded log line is indistinguishable from a crash.
+            skipped_sources.append(
+                {
+                    "source": "apify_linkedin",
+                    "reason": "scheduled policy allows Apify on weekday mornings only",
+                }
+            )
+            logger.warning("Apify skipped by scheduled policy (weekday mornings only)")
 
     if _source_enabled("wellfound", options.only_sources) and options.wellfound_files:
         report("wellfound", "fetching")
@@ -408,15 +419,33 @@ def run_discovery(
         # and `::test_a_run_without_apify_claims_no_count`.
         "apify_count": apify_count_used,
         "apify_count_requested": options.apify_count,
+        # Which sources did not run, so a quiet summary is distinguishable
+        # from a complete one (spec 029).
+        "skipped_sources": skipped_sources,
         "source_summaries": summaries,
+    }
+    outcome = classify_run(aggregate)
+    aggregate["outcome"] = {
+        "attempted": list(outcome.attempted),
+        "failed": list(outcome.failed),
+        "skipped": list(outcome.skipped),
+        "ok": not outcome.total_failure,
+        "summary": outcome.describe(),
     }
 
     # Dry runs have zero side effects: no writes and no notifications
     # (spec 011; stated change from the old accidental independence).
-    if totals["new_prospects"] and options.notify and not options.dry_run:
+    #
+    # Sent whether or not anything was found (spec 029). Gating on
+    # new_prospects meant the run that found nothing was the run that said
+    # nothing, and that is the shape both a quiet week and a total outage
+    # take. Silence is now the only thing that means the job did not run.
+    if options.notify and not options.dry_run:
         # send_telegram_message declines in demo mode, so no branch here.
-        send_telegram_message(build_telegram_message(all_items))
+        send_telegram_message(build_telegram_message(all_items, outcome=outcome))
     if not options.dry_run:
+        if not outcome.total_failure:
+            record_success(conn, DISCOVERY_JOB)
         target = _incoming_dir() / "job_imports_run.json"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(aggregate, indent=2, ensure_ascii=False), encoding="utf-8")

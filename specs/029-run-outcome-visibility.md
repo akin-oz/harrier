@@ -103,25 +103,47 @@ decision that changes what a run did move to a level that is emitted.
 
 ## Acceptance criteria
 
-Proving symbols are named at implementation, in
-services/api/tests/test_run_outcome.py. They are not listed here, because
-this spec is not built and naming symbols that do not exist is how a spec
-starts lying (spec 025 records the same rule, after the mistake on PR #19).
+Proven by services/api/tests/test_run_outcome.py and
+services/api/tests/test_discovery.py:
 
-- [ ] every row of the exit-status table has a test, including the two that
+| Criterion | Proof |
+|---|---|
+| every exit-status row, the two zeros included | `test_a_run_that_found_things_exits_zero`, `test_a_partial_failure_exits_zero`, `test_a_run_where_every_source_failed_exits_non_zero`, `test_a_run_that_attempted_nothing_exits_non_zero`, `test_a_run_where_everything_was_skipped_exits_non_zero` |
+| total failure exits non-zero and says so | `test_the_command_exits_non_zero_when_every_source_failed` |
+| the notification is sent with zero prospects | `test_a_run_that_found_nothing_still_notifies` |
+| a dry run sends and writes nothing | `test_a_dry_run_still_notifies_nobody`, `test_a_dry_run_records_no_last_success` |
+| last success only on success | `test_a_successful_run_records_its_last_success`, `test_a_failing_run_leaves_the_previous_last_success_alone` |
+| the digest names every job and its age | `test_the_digest_leads_with_every_scheduled_job`, `test_a_two_month_outage_is_legible_in_the_digest`, `test_a_job_with_no_history_is_named_in_the_digest` |
+| logging emits level and timestamp | `test_logging_emits_a_level_and_a_timestamp`, `test_an_info_line_is_emitted_rather_than_discarded` |
+| no personal data in the new surfaces | the `job_runs` table holds job names and timestamps only, and the digest section renders only those |
+
+A skip is neither an attempt nor a failure
+(`test_a_skip_is_neither_an_attempt_nor_a_failure`), and one dead board among
+several is not a failed source
+(`test_one_dead_board_among_several_is_not_a_failed_source`), which keeps this
+exit status from firing on the watchlist problem spec 025 handles.
+
+Two mutations escaped the first version of this suite and are recorded because
+they are the same mistake: a test that exercised a helper rather than the
+decision. Re-adding the `new_prospects` gate passed, because the only
+notification test called the message builder directly; and recording
+last-success unconditionally passed, because nothing asserted the failure
+path. Both now fail.
+
+- [x] every row of the exit-status table has a test, including the two that
       must stay zero
-- [ ] a run in which every board 404s and every source raises exits non-zero
+- [x] a run in which every board 404s and every source raises exits non-zero
       and sends a notification saying so
-- [ ] the notification is sent when zero new prospects were found
-- [ ] a dry run still sends nothing and writes nothing, including no
+- [x] the notification is sent when zero new prospects were found
+- [x] a dry run still sends nothing and writes nothing, including no
       last-success row
-- [ ] each scheduled job writes a last-success timestamp only on success, and
+- [x] each scheduled job writes a last-success timestamp only on success, and
       a failing run leaves the previous value untouched
-- [ ] the digest names every scheduled job and the age of its last success,
+- [x] the digest names every scheduled job and the age of its last success,
       including a job that has never succeeded
-- [ ] logging is configured once, emits a timestamp and a level, and the
+- [x] logging is configured once, emits a timestamp and a level, and the
       cost-gate skip appears in it
-- [ ] no personal data enters the log configuration, the `job_runs` table, or
+- [x] no personal data enters the log configuration, the `job_runs` table, or
       the digest schedule section: job names and timestamps only (ADR-008)
 - [ ] All gates green on PR
 

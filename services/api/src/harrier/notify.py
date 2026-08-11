@@ -13,6 +13,7 @@ import urllib.parse
 import urllib.request
 
 from harrier.demo import is_demo_mode
+from harrier.runoutcome import RunOutcome
 
 logger = logging.getLogger(__name__)
 
@@ -61,11 +62,28 @@ def send_telegram_message(
 TELEGRAM_MESSAGE_LIMIT = 4096
 
 
-def build_telegram_message(new_jobs: list[dict[str, object]]) -> str:
+def build_telegram_message(
+    new_jobs: list[dict[str, object]], *, outcome: RunOutcome | None = None
+) -> str:
     """The 8-item prospect summary (spec 011 port), bounded to Telegram's
     4096-character sendMessage limit: entries stop before the limit and the
-    result is hard-capped as a last resort."""
-    lines = [f"Job imports: {len(new_jobs)} new prospects", ""]
+    result is hard-capped as a last resort.
+
+    The outcome line leads, because this message is now sent whether or not
+    anything was found (spec 029) and "0 new prospects" alone is what a
+    two-month outage looks like.
+    """
+    lines: list[str] = []
+    if outcome is not None:
+        if outcome.total_failure:
+            lines.append(f"DISCOVERY FAILED: {outcome.describe()}")
+        elif outcome.failed:
+            lines.append(f"Discovery ran with failures: {outcome.describe()}")
+        else:
+            lines.append(f"Discovery ok: {outcome.describe()}")
+        lines.append("")
+    lines.append(f"Job imports: {len(new_jobs)} new prospects")
+    lines.append("")
     for index, job in enumerate(new_jobs[:8], start=1):
         entry = [
             f"{index}. {job.get('company', 'Unknown')}: {job.get('title', 'Unknown')}",
