@@ -5,6 +5,7 @@ config/resume-content.example.json (which these tests thereby prove valid).
 
 import copy
 import json
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from typing import cast
@@ -32,7 +33,11 @@ from harrier.resume import (
     slugify,
     validate_content_plan,
 )
-from harrier.resume.markdown import resolve_bullets
+from harrier.resume.markdown import (
+    UnverifiedClaimError,
+    resolve_bullets,
+    validate_rendered_markdown,
+)
 from harrier.resume.ranking import rank_bullet_ids
 from harrier.resume.tailor import run_tailor
 from harrier.tracker import add_job, get_job
@@ -112,6 +117,49 @@ def test_markdown_header_uses_grounded_title_not_requested_identity(
     assert lines[2] == "Exampleland | deniz@example.com | linkedin.com/in/deniz-ornek"
     assert "Tailored for" not in markdown
     assert "reedsy — Senior Software Engineer" not in markdown
+
+
+def test_a_forbidden_phrase_refuses_the_rendered_resume(
+    bundle: ResumeBundle, sources: TruthSources
+) -> None:
+    """Tested against the validator rather than the helper (spec 034).
+
+    An earlier version of this suite only exercised `forbidden_hits`
+    directly, so removing the call from `validate_rendered_markdown` changed
+    nothing and the suite still passed: a test of the helper instead of the
+    decision, which is the same mistake this project keeps making.
+    """
+    plan = build_content_plan(bundle, "", REQUESTED_ROLE, AS_OF)
+    markdown = build_markdown(bundle, sources, plan)
+    # A phrase the rendered document definitely contains, declared forbidden.
+    banned = replace(bundle, forbidden_phrases=("Senior Frontend Engineer",))
+    errors = validate_rendered_markdown(markdown, plan, banned)
+    assert any("forbidden" in error for error in errors)
+
+
+def test_a_clean_resume_reports_no_forbidden_phrases(
+    bundle: ResumeBundle, sources: TruthSources
+) -> None:
+    plan = build_content_plan(bundle, "", REQUESTED_ROLE, AS_OF)
+    markdown = build_markdown(bundle, sources, plan)
+    clean = replace(bundle, forbidden_phrases=("world-class expert",))
+    assert not [
+        error for error in validate_rendered_markdown(markdown, plan, clean) if "forbidden" in error
+    ]
+
+
+def test_an_empty_required_section_refuses_the_rendered_resume(
+    bundle: ResumeBundle, sources: TruthSources
+) -> None:
+    """An empty or drifted truth document produced a resume with both
+    required sections blank, a passing one-page check, and a tracker status
+    advance."""
+    plan = build_content_plan(bundle, "", REQUESTED_ROLE, AS_OF)
+    markdown = build_markdown(bundle, sources, plan)
+    emptied = markdown.replace("## EXPERIENCE", "## EXPERIENCE\n").split("## EXPERIENCE")[0]
+    emptied += "## EXPERIENCE\n\n## SKILLS\n\nTypeScript\n"
+    errors = validate_rendered_markdown(emptied, plan, bundle)
+    assert any("empty" in error and "EXPERIENCE" in error for error in errors)
 
 
 def test_html_header_uses_grounded_markdown_title(
@@ -233,11 +281,15 @@ def test_ai_order_cannot_add_evidence(bundle: ResumeBundle) -> None:
     assert validate_content_plan(reordered, bundle) == []
 
 
-def test_bullet_failing_truth_check_is_omitted(bundle: ResumeBundle) -> None:
+def test_bullet_failing_truth_check_refuses_rather_than_omitting(bundle: ResumeBundle) -> None:
+    """Changed behaviour (spec 034). This used to drop the line and render a
+    shorter document, which is how an empty truth document produced a clean
+    PDF with empty sections: the strictest possible truth failure looked
+    exactly like success."""
     partial_sources = TruthSources(truth_text=bundle.bullet_pool["r1_b1"], achievements_text="")
-    texts, omitted = resolve_bullets(bundle, partial_sources, ["r1_b1", "r1_b2"])
-    assert texts == [bundle.bullet_pool["r1_b1"]]
-    assert omitted == ["r1_b2"]
+    with pytest.raises(UnverifiedClaimError) as raised:
+        resolve_bullets(bundle, partial_sources, ["r1_b1", "r1_b2"])
+    assert raised.value.bullet_id == "r1_b2"
 
 
 def test_bundle_validation_rejects_invalid_bullet_count() -> None:
