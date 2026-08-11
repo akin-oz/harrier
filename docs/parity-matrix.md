@@ -36,6 +36,7 @@ Legend:
 | Legacy orchestrator incl. Workable support | `scripts/orchestrate_job_search.py` | drop | Superseded by `run-job-imports.py`; not called by any scheduler or wrapper. Workable gets a spec stub in the backlog instead of a blind port. |
 | feeds.txt one-URL-per-line routing by netloc | `config/feeds.txt`, `scripts/run-job-imports.py` (parse_ats_feeds) | change | The routing keeps; the storage moves. The watchlist is user data, so it lives in the database with the file as an import source and a fallback (spec 023, ADR-009). The one-URL-per-line format stays as the import format. |
 | Per-source board files | `config/greenhouse_boards.txt`, `ashby_boards.txt`, `lever_boards.txt` | drop | Superseded by `feeds.txt` for the orchestrator path; only reachable by direct importer invocation with defaults. |
+| Vacancy liveness check: probe prospect URLs, classify open/closed/unknown, opt-in auto-reject of closed | `scripts/check_vacancy_status.py` | keep | Missed by the first sweep of this matrix and found by a feature audit on 2026-08-11. Per-source liveness signals (LinkedIn guest endpoint, the Ashby posting API as the canonical open list, Greenhouse 404/410); only `closed` is auto-rejected and only under `--apply`. Same shape as spec 025's board probe, one level down. |
 | Company hold list | `config/companies-hold.csv` | change | The gate keeps; the storage moves to the database with the CSV as an import source (spec 023). The reason column is dropped on import: nothing reads it and it is personal operational commentary (ADR-008). |
 
 ## 2. Tracker
@@ -153,7 +154,7 @@ Legend:
 
 ## Counts
 
-Keep 58, change 22, drop 16, across 96 rows. Every change and drop above traces to a spec
+Keep 59, change 22, drop 16, across 97 rows. Every change and drop above traces to a spec
 in the backlog before implementation; nothing is dropped by accident at cutover: the parity
 checklist (`docs/parity-checklist.md`) is generated from this table by
 `harrier parity checklist`, and `test_parity.py::test_stated_counts_match_the_table` fails
@@ -162,4 +163,7 @@ if these totals and the table disagree.
 These totals read 58/20/15 until spec 022, which undercounted the table by three rows. The
 checklist generator was what noticed: it parsed 96 rows out of a document claiming 93. Spec 023
 then moved the feeds watchlist and the hold list from keep to change, since their storage moved
-into the database even though their behavior did not.
+into the database even though their behavior did not. A feature audit on 2026-08-11 added the
+vacancy liveness check, which the original sweep missed entirely: the checklist would have been
+signed off with that capability silently dropped, which is the exact failure this table exists to
+prevent.
