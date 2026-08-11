@@ -18,7 +18,7 @@ any that the matrix no longer carries. Waiver reasons are committed to a public
 repository: keep them about the capability, never about a company or a person.
 
 
-96 items: 58 keep, 22 change, 16 drop.
+97 items: 59 keep, 22 change, 16 drop.
 
 ## 1. Discovery pipeline
 
@@ -44,6 +44,7 @@ repository: keep them about the capability, never about a company or a person.
 - [ ] `legacy-orchestrator-incl-workable-support` **Legacy orchestrator incl. Workable support** (drop: confirmed dropped on purpose) source: `scripts/orchestrate_job_search.py`
 - [ ] `feeds-txt-one-url-per-line-routing-by-netloc` **feeds.txt one-URL-per-line routing by netloc** (change: difference verified intentional) source: `config/feeds.txt`, `scripts/run-job-imports.py` (parse_ats_feeds)
 - [ ] `per-source-board-files` **Per-source board files** (drop: confirmed dropped on purpose) source: `config/greenhouse_boards.txt`, `ashby_boards.txt`, `lever_boards.txt`
+- [ ] `vacancy-liveness-check-probe-prospect-urls-classify-open-closed-unknown-` **Vacancy liveness check: probe prospect URLs, classify open/closed/unknown, opt-in auto-reject of closed** (keep: behavior identical, proof named) source: `scripts/check_vacancy_status.py`
 - [ ] `company-hold-list` **Company hold list** (change: difference verified intentional) source: `config/companies-hold.csv`
 
 ## 2. Tracker

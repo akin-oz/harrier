@@ -37,7 +37,13 @@ Body sections: Problem, Scope, Acceptance criteria (checkboxes), Proof / origin
 
 Stubs sequence the backlog; they do not define final scope. Refine a stub into a
 real spec before asking for approval, and expect the scope to narrow or split at
-that point. Awaiting approval today: none. 025 (feed health) is approved and not yet built. Everything else is approved and
+that point. Awaiting approval today: 027 (tracker CLI verb parity). 025 (feed health) is
+approved and not yet built.
+
+A feature audit against the old system on 2026-08-11 found four gaps. 027
+covers the largest; the other three are unwritten: the vacancy liveness check
+(newly added to the parity matrix, which had missed it), bulk contact search
+over applied rows, and the GUI surfaces beyond the tracker table. Everything else is approved and
 either shipped or in progress; `ls specs/` and the frontmatter are the record,
 not this paragraph.
 - **M5 (added)** user configuration in the database: 023 (ADR-009; approved separately)
