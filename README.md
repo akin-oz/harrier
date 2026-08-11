@@ -96,6 +96,37 @@ record where each behavior came from and, where the port changed it, what
 changed and why. The governance chain itself is compiled from [.ai/](.ai/)
 sources by [@akinlabs/ai-engineering](https://www.npmjs.com/package/@akinlabs/ai-engineering).
 
+Four standing guardians check that the rules were followed. Two review
+boards under [.ai/agent-teams/](.ai/agent-teams/) ask the questions the
+guardians cannot, because compliance and judgement are different things and
+a repository can be perfectly consistent with a design that was wrong to
+choose:
+
+- **principal-review** interrogates the design, starting with whether this
+  much governance is proportionate to a tool with one user.
+- **open-source-readiness** sweeps before publication. Every one of its five
+  lenses exists because this repository has already failed that way, which
+  is written down next to each of them.
+
+The design is [specs/028-agent-teams.md](specs/028-agent-teams.md), and
+`services/api/tests/test_governance.py` holds the boards to it: membership
+resolves in both directions
+(`test_every_member_named_in_a_launch_document_exists`,
+`test_every_team_agent_is_claimed_by_exactly_one_team`), the `.claude/`
+mirror cannot drift (`test_the_compiled_copy_matches_the_source`), and the
+tool grants match what each board claims
+(`test_review_board_members_cannot_execute_anything`,
+`test_no_team_member_can_write`).
+
+The five `principal-review` reviewers are read-only in the enforceable
+sense: they hold `Read, Glob, Grep` and no `Bash`. The five
+`open-source-readiness` investigators do hold `Bash`, because cloning,
+running the suite and running the demo is their lens; they are instructed to
+work in a temporary copy, which is an instruction and not a sandbox.
+
+Running either board needs `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`. Nothing
+tests that flag: it belongs to the runtime, not to this repository.
+
 ## Running it for real
 
 ```bash
