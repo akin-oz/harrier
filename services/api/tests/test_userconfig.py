@@ -15,6 +15,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from conftest import auth
 from fastapi.testclient import TestClient
 
 from harrier.db import connect
@@ -247,7 +248,7 @@ def test_the_api_lists_every_kind_with_its_source(client: TestClient) -> None:
 
 
 def test_putting_a_value_makes_it_the_stored_source(client: TestClient) -> None:
-    response = client.put("/config/feeds", json={"value": EXAMPLE_FEEDS})
+    response = client.put("/config/feeds", json={"value": EXAMPLE_FEEDS}, headers=auth())
     assert response.status_code == 200
     body = response.json()
     assert body["source"] == "store"
@@ -256,15 +257,15 @@ def test_putting_a_value_makes_it_the_stored_source(client: TestClient) -> None:
 
 
 def test_deleting_a_value_restores_the_fallback(client: TestClient) -> None:
-    client.put("/config/feeds", json={"value": EXAMPLE_FEEDS})
-    body = client.delete("/config/feeds").json()
+    client.put("/config/feeds", json={"value": EXAMPLE_FEEDS}, headers=auth())
+    body = client.delete("/config/feeds", headers=auth()).json()
     assert body["source"] == "file"
     assert body["value"] == []
 
 
 def test_the_api_refuses_a_bad_shape_with_the_stores_own_message(client: TestClient) -> None:
     # The shape rules live in the store, so the API cannot drift from the CLI.
-    response = client.put("/config/feeds", json={"value": {"not": "a list"}})
+    response = client.put("/config/feeds", json={"value": {"not": "a list"}}, headers=auth())
     assert response.status_code == 400
     assert "must be a JSON list" in response.json()["detail"]
 
@@ -274,11 +275,11 @@ def test_a_malformed_body_and_a_bad_value_are_different_failures(client: TestCli
     field errors. Store validation answers 400 with a sentence, so a client
     can tell "you sent nonsense" from "that value is wrong for this kind"
     (review finding on PR #20)."""
-    malformed = client.put("/config/feeds", json={"wrong_field": []})
+    malformed = client.put("/config/feeds", json={"wrong_field": []}, headers=auth())
     assert malformed.status_code == 422
     assert isinstance(malformed.json()["detail"], list)
 
-    bad_value = client.put("/config/feeds", json={"value": 7})
+    bad_value = client.put("/config/feeds", json={"value": 7}, headers=auth())
     assert bad_value.status_code == 400
     assert isinstance(bad_value.json()["detail"], str)
 
@@ -300,5 +301,5 @@ def test_a_corrupted_row_is_refused_rather_than_coerced(
 
 def test_an_unknown_kind_is_a_404_on_every_verb(client: TestClient) -> None:
     assert client.get("/config/nonsense").status_code == 404
-    assert client.put("/config/nonsense", json={"value": []}).status_code == 404
-    assert client.delete("/config/nonsense").status_code == 404
+    assert client.put("/config/nonsense", json={"value": []}, headers=auth()).status_code == 404
+    assert client.delete("/config/nonsense", headers=auth()).status_code == 404

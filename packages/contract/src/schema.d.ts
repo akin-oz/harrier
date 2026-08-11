@@ -11,11 +11,42 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Capture Via Get */
-        get: operations["captureJobViaGet"];
+        /**
+         * Capture Confirm
+         * @description Renders. Changes nothing.
+         *
+         *     This used to add the row, which meant `<img src="http://localhost:8000/
+         *     capture/add?company=x&title=y">` on any page the operator visited wrote to
+         *     the tracker with no interaction at all (spec 035).
+         */
+        get: operations["captureJobConfirm"];
         put?: never;
         /** Capture Via Post */
         post: operations["captureJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/capture/add-form": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Capture From Form
+         * @description The confirmation page's submit target.
+         *
+         *     A form post cannot set a header, so the token travels as a field. A
+         *     cross-origin page can post a form here, but it cannot read the token, so
+         *     it cannot fill that field.
+         */
+        post: operations["captureJobFromForm"];
         delete?: never;
         options?: never;
         head?: never;
@@ -164,10 +195,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Session
+         * @description The local API token, for the app this API serves.
+         *
+         *     A cross-origin page may issue this request but cannot read the response:
+         *     no CORS headers are sent, so the browser withholds the body. A page that
+         *     made itself same-origin by DNS rebinding could read it, which is what the
+         *     trusted-host middleware exists to prevent, and why that middleware is the
+         *     load-bearing half of this pair rather than the token.
+         */
+        get: operations["getSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** Body_captureJobFromForm */
+        Body_captureJobFromForm: {
+            /**
+             * Company
+             * @default
+             */
+            company?: string;
+            /**
+             * Description
+             * @default
+             */
+            description?: string;
+            /**
+             * Location
+             * @default
+             */
+            location?: string;
+            /**
+             * Source
+             * @default manual
+             */
+            source?: string;
+            /**
+             * Title
+             * @default
+             */
+            title?: string;
+            /**
+             * Token
+             * @default
+             */
+            token?: string;
+            /**
+             * Url
+             * @default
+             */
+            url?: string;
+        };
         /** CaptureIn */
         CaptureIn: {
             /**
@@ -382,6 +477,11 @@ export interface components {
              */
             state: "queued" | "running" | "succeeded" | "failed" | "cancelled";
         };
+        /** SessionOut */
+        SessionOut: {
+            /** Token */
+            token: string;
+        };
         /** StartRunIn */
         StartRunIn: {
             /**
@@ -412,7 +512,7 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    captureJobViaGet: {
+    captureJobConfirm: {
         parameters: {
             query?: {
                 company?: string;
@@ -428,31 +528,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Successful Response */
+            /** @description confirmation page */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "text/html": string;
-                };
-            };
-            /** @description company and title are required */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/html": unknown;
-                };
-            };
-            /** @description already in tracker */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/html": unknown;
                 };
             };
             /** @description Validation Error */
@@ -463,13 +545,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
-            };
-            /** @description unexpected error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
         };
     };
@@ -528,6 +603,66 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    captureJobFromForm: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/x-www-form-urlencoded": components["schemas"]["Body_captureJobFromForm"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description company and title are required */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": unknown;
+                };
+            };
+            /** @description missing or wrong local token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": unknown;
+                };
+            };
+            /** @description already in tracker */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
             };
         };
     };
@@ -878,6 +1013,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    getSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionOut"];
                 };
             };
         };

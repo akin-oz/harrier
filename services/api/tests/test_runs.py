@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 import pytest
+from conftest import auth
 from fastapi.testclient import TestClient
 
 from harrier_api.app import create_app
@@ -149,14 +150,14 @@ def test_endpoints_start_poll_cancel(tmp_path: Path, monkeypatch: pytest.MonkeyP
     # Context manager keeps one portal (and so the background run task) alive
     # across requests; without it every request gets its own event loop.
     with TestClient(create_app(run_manager=manager)) as client:
-        started = client.post("/runs", json={"kind": "demo"})
+        started = client.post("/runs", json={"kind": "demo"}, headers=auth())
         assert started.status_code == 200
         run_id = started.json()["id"]
 
         listed = client.get("/runs").json()
         assert [run["id"] for run in listed] == [run_id]
 
-        cancelled = client.post(f"/runs/{run_id}/cancel")
+        cancelled = client.post(f"/runs/{run_id}/cancel", headers=auth())
         assert cancelled.status_code == 200
         deadline = time.monotonic() + 5
         state = ""

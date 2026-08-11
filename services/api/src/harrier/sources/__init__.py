@@ -10,12 +10,37 @@ modules stays a review and test concern.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 from urllib.parse import urlparse, urlunparse
 
 from harrier.screening.normalized import NormalizedJob
 
 logger = logging.getLogger(__name__)
+
+
+# Query parameters and path segments whose value is a credential. A new
+# exception type is the way these escape: the retry loops catch the errors
+# they expect, and anything else carries its message, with the URL in it,
+# out to a summary file, stdout, and the unauthenticated event stream
+# (spec 035).
+_SECRET_PARAM = re.compile(
+    r"(?i)\b(token|api[_-]?key|apikey|access[_-]?token|secret|password|auth)=([^&\s\"']+)"
+)
+_SECRET_PATH = re.compile(r"(?i)/bot(\d+:[A-Za-z0-9_-]+)")
+
+
+def scrub_secrets(text: str) -> str:
+    """Remove credential-shaped values from arbitrary text.
+
+    Applied at the boundary rather than at each call site, because the call
+    sites that leak are the ones nobody thought of: `http.client.InvalidURL`,
+    raised by a token pasted with a stray character, is not caught by a retry
+    loop expecting TimeoutError, URLError and HTTPError, and its message
+    embeds the request path.
+    """
+    scrubbed = _SECRET_PARAM.sub(lambda match: f"{match.group(1)}=REDACTED", text)
+    return _SECRET_PATH.sub("/botREDACTED", scrubbed)
 
 
 def redact_url(url: str) -> str:

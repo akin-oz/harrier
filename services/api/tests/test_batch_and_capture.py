@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+from conftest import TEST_TOKEN, auth
 from fastapi.testclient import TestClient
 
 from harrier.capture import add_captured_job
@@ -102,50 +103,137 @@ def test_add_captured_job_scores_and_marks_manual(capture_env: Path) -> None:
 
 
 def test_capture_endpoints_status_contract(capture_env: Path) -> None:
+    """The POST contract, unchanged. The GET contract changed with spec 035
+    and is covered by the tests below."""
     with TestClient(create_app()) as client:
-        # 400: missing required fields (GET and POST).
-        assert client.get("/capture/add", params={"company": "", "title": ""}).status_code == 400
-        assert client.post("/capture/add", json={"company": "", "title": ""}).status_code == 400
+        assert (
+            client.post(
+                "/capture/add", json={"company": "", "title": ""}, headers=auth()
+            ).status_code
+            == 400
+        )
 
-        # 200: added via GET (HTML result page).
-        response = client.get(
+        response = client.post(
             "/capture/add",
-            params={
+            json={
                 "company": "Acme",
                 "title": "Senior Frontend Engineer",
                 "url": "https://example.com/jobs/1",
                 "description": "x" * 5000,
             },
+            headers=auth(),
         )
         assert response.status_code == 200
-        assert "Added: Acme" in response.text
-        assert "back to job posting" in response.text
 
-        # Description cache written by the GET route, truncated to 4000 chars.
         from harrier.screening.descriptions import load_cached_description
 
         conn = connect()
-        stored = list_jobs(conn)
-        assert len(stored) == 1
+        assert len(list_jobs(conn)) == 1
         conn.close()
         assert len(load_cached_description("https://example.com/jobs/1")) == 4000
 
-        # 409: duplicate via POST, source defaults to manual.
+        # 409: duplicate, source defaults to manual.
         response = client.post(
-            "/capture/add", json={"company": "Acme", "title": "Senior Frontend Engineer"}
+            "/capture/add",
+            json={"company": "Acme", "title": "Senior Frontend Engineer"},
+            headers=auth(),
         )
         assert response.status_code == 409
         assert response.json()["ok"] is False
 
-        # 200 via POST for a new job with default source.
         response = client.post(
-            "/capture/add", json={"company": "Beta", "title": "Product Engineer"}
+            "/capture/add", json={"company": "Beta", "title": "Product Engineer"}, headers=auth()
         )
         assert response.status_code == 200
         conn = connect()
         beta = next(job for job in list_jobs(conn) if job["company"] == "Beta")
         assert beta["source"] == "manual"
         conn.close()
+
+
+def test_the_capture_get_changes_nothing(capture_env: Path) -> None:
+    """The defect spec 035 closes. This route used to add the row, so
+    `<img src="http://localhost:8000/capture/add?company=x&title=y">` on any
+    page the operator visited wrote to the tracker with no interaction."""
+    with TestClient(create_app()) as client:
+        response = client.get(
+            "/capture/add",
+            params={"company": "Acme", "title": "Senior Frontend Engineer"},
+        )
+        assert response.status_code == 200
+        assert "Add this posting to the tracker?" in response.text
+
+    conn = connect()
+    assert list_jobs(conn) == []
+    conn.close()
+
+
+def test_the_confirmation_page_carries_the_fields_and_the_token(capture_env: Path) -> None:
+    with TestClient(create_app()) as client:
+        response = client.get(
+            "/capture/add",
+            params={"company": "Acme", "title": "Senior Frontend Engineer"},
+        )
+    assert "Senior Frontend Engineer" in response.text
+    assert 'name="token"' in response.text
+    assert TEST_TOKEN in response.text
+
+
+def test_the_confirmation_page_escapes_what_it_was_given(capture_env: Path) -> None:
+    """The values arrive in a query string from whatever page the operator
+    was reading, so they are attacker-influenced text by definition."""
+    with TestClient(create_app()) as client:
+        response = client.get(
+            "/capture/add",
+            params={"company": "<script>alert(1)</script>", "title": "T"},
+        )
+    assert "<script>alert(1)</script>" not in response.text
+    assert "&lt;script&gt;" in response.text
+
+
+def test_submitting_the_confirmation_form_adds_the_job(capture_env: Path) -> None:
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/capture/add-form",
+            data={
+                "company": "Acme",
+                "title": "Senior Frontend Engineer",
+                "url": "https://example.com/jobs/1",
+                "token": TEST_TOKEN,
+            },
+        )
+        assert response.status_code == 200
+        assert "Added: Acme" in response.text
+        assert "back to job posting" in response.text
+
+    conn = connect()
+    assert len(list_jobs(conn)) == 1
+    conn.close()
+
+
+def test_the_form_without_the_token_is_refused(capture_env: Path) -> None:
+    """A cross-origin page can post a form here. It cannot read the token, so
+    it cannot fill that field."""
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/capture/add-form",
+            data={"company": "Acme", "title": "Senior Frontend Engineer", "token": "wrong"},
+        )
+        assert response.status_code == 403
+
+    conn = connect()
+    assert list_jobs(conn) == []
+    conn.close()
+
+
+def test_the_json_post_without_the_token_is_refused(capture_env: Path) -> None:
+    with TestClient(create_app()) as client:
+        response = client.post("/capture/add", json={"company": "Acme", "title": "T"})
+        assert response.status_code == 403
+
+    conn = connect()
+    assert list_jobs(conn) == []
+    conn.close()
 
 
 def test_capture_endpoint_unexpected_error_is_500(
@@ -158,7 +246,7 @@ def test_capture_endpoint_unexpected_error_is_500(
 
     monkeypatch.setattr(routes, "add_captured_job", boom)
     with TestClient(create_app(), raise_server_exceptions=False) as client:
-        response = client.post("/capture/add", json={"company": "A", "title": "T"})
+        response = client.post("/capture/add", json={"company": "A", "title": "T"}, headers=auth())
         assert response.status_code == 500
 
 

@@ -1,7 +1,7 @@
 ---
 spec: 035
 title: The local API is not an open door
-status: accepted
+status: in-progress
 approved: yes
 milestone: M6
 depends: [006, 023]
@@ -77,21 +77,54 @@ type cannot become a new leak.
 
 ## Acceptance criteria
 
-Proving symbols are named at implementation, in
-services/api/tests/test_api_exposure.py.
+Proven by services/api/tests/test_api_exposure.py:
 
-- [ ] a cross-origin page cannot trigger a run, a capture, or a config write
-- [ ] a request presenting a foreign Host header is refused
-- [ ] a config write whose shape its reader cannot use is rejected with a
+| Criterion | Proof |
+|---|---|
+| a cross-origin page cannot trigger a run, capture, or config write | `test_a_state_changing_request_without_the_token_is_refused` (five routes), `test_a_wrong_token_is_refused` |
+| a foreign Host header is refused | `test_a_request_with_a_foreign_host_is_refused`, `test_the_rebinding_check_applies_to_writes_too`, `test_a_local_host_is_allowed` |
+| a stored count above the bound is clamped at use | `test_a_stored_count_above_the_bound_is_clamped`, written directly to the store |
+| a credential is redacted in every sink | `test_a_credential_is_scrubbed_from_text` (five shapes), `test_the_run_stream_scrubs_what_it_relays`, `test_the_discovery_summary_scrubs_its_errors` |
+| an unexpected exception cannot carry a credential across | the scrub is at the boundary rather than the call site, asserted by the two sink tests above, which fail if a new relay is added without it |
+| the bookmarklet capture path still works | `test_the_bookmarklet_path_still_reaches_the_tracker`, `test_the_ui_can_still_start_a_run` |
+| nothing identifying is committed | the token lives in the data directory at 0600, never in git (ADR-008) |
+
+The capture route needed a design rather than a rule, and the shape is worth
+recording. A bookmarklet can only navigate a top-level GET: a plain
+navigation from an HTTPS page to localhost is never blocked by
+mixed-content policy, unlike fetch. That is why the route answered GET, and
+also why any page could fire it with an image tag and write a tracker row
+with no interaction.
+
+So the GET now renders a confirmation page holding the captured fields and
+the token, and a click posts them. The bookmarklet still works and takes one
+visible step; an image tag renders a page nobody asked for and changes
+nothing. A form post cannot set a header, so the token travels as a field: a
+cross-origin page can post that form but cannot read the token, so it cannot
+fill it.
+
+The trusted-host middleware is the load-bearing half of the pair, not the
+token. A page that rebinds its own hostname to 127.0.0.1 becomes same-origin
+and can then read the token from `/session` like the app does. Rejecting the
+Host header is what stops it reaching a route at all.
+
+Honest limitation: none of this defends against a process already running as
+the operator. It reads the token file the same way the app does. The threat
+this closes is a web page in the operator's browser, which is the one the
+board identified and the one that needs no compromise to reach.
+
+- [x] a cross-origin page cannot trigger a run, a capture, or a config write
+- [x] a request presenting a foreign Host header is refused
+- [x] a config write whose shape its reader cannot use is rejected with a
       message naming the field
-- [ ] a stored discovery count above the bound is clamped at use, proven by a
+- [x] a stored discovery count above the bound is clamped at use, proven by a
       test that writes the value directly to the store
-- [ ] a provider URL containing a credential is redacted in logs, summaries,
+- [x] a provider URL containing a credential is redacted in logs, summaries,
       exception messages, and the event stream, with one test per sink
-- [ ] `InvalidURL` and any other exception raised by a malformed credential
+- [x] `InvalidURL` and any other exception raised by a malformed credential
       does not carry the credential across the boundary
-- [ ] the bookmarklet capture path still works, proven end to end
-- [ ] no credential, host name, or account identifier is written to a
+- [x] the bookmarklet capture path still works, proven end to end
+- [x] no credential, host name, or account identifier is written to a
       committed file (ADR-008)
 - [ ] All gates green on PR
 

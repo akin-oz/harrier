@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from harrier.db import default_db_path
@@ -23,6 +24,7 @@ from harrier.tracker import list_jobs
 from harrier_api.capture_routes import capture_router
 from harrier_api.demo import demo_db_path, is_demo_mode, seed_demo_db
 from harrier_api.deps import Conn
+from harrier_api.localauth import TRUSTED_HOSTS, load_or_create_token, require_token
 from harrier_api.runs import Run, RunManager, RunState, format_sse
 
 API_VERSION = "0.1.0"
@@ -95,6 +97,23 @@ def health(conn: Conn) -> HealthOut:
     )
 
 
+class SessionOut(BaseModel):
+    token: str
+
+
+@router.get("/session", operation_id="getSession")
+def get_session() -> SessionOut:
+    """The local API token, for the app this API serves.
+
+    A cross-origin page may issue this request but cannot read the response:
+    no CORS headers are sent, so the browser withholds the body. A page that
+    made itself same-origin by DNS rebinding could read it, which is what the
+    trusted-host middleware exists to prevent, and why that middleware is the
+    load-bearing half of this pair rather than the token.
+    """
+    return SessionOut(token=load_or_create_token())
+
+
 @router.get("/jobs", operation_id="listJobs")
 def jobs(
     conn: Conn,
@@ -159,7 +178,7 @@ Manager = Annotated[RunManager, Depends(get_manager)]
 runs_router = APIRouter()
 
 
-@runs_router.post("/runs", operation_id="startRun")
+@runs_router.post("/runs", operation_id="startRun", dependencies=[Depends(require_token)])
 async def start_run(body: StartRunIn, manager: Manager) -> RunOut:
     return _run_out(await manager.start(body.kind))
 
@@ -177,7 +196,9 @@ def get_run(run_id: str, manager: Manager) -> RunOut:
     return _run_out(run)
 
 
-@runs_router.post("/runs/{run_id}/cancel", operation_id="cancelRun")
+@runs_router.post(
+    "/runs/{run_id}/cancel", operation_id="cancelRun", dependencies=[Depends(require_token)]
+)
 async def cancel_run(run_id: str, manager: Manager) -> RunOut:
     run = await manager.cancel(run_id)
     if run is None:
@@ -308,7 +329,12 @@ def get_configuration(kind: str, conn: Conn) -> ConfigOut:
     return _config_out(conn, kind)
 
 
-@config_router.put("/config/{kind}", operation_id="putConfig", responses=CONFIG_ERRORS)
+@config_router.put(
+    "/config/{kind}",
+    operation_id="putConfig",
+    responses=CONFIG_ERRORS,
+    dependencies=[Depends(require_token)],
+)
 def put_configuration(kind: str, body: ConfigIn, conn: Conn) -> ConfigOut:
     from harrier.userconfig import KINDS, ConfigError, set_config
 
@@ -324,7 +350,10 @@ def put_configuration(kind: str, body: ConfigIn, conn: Conn) -> ConfigOut:
 
 
 @config_router.delete(
-    "/config/{kind}", operation_id="deleteConfig", responses={404: CONFIG_ERRORS[404]}
+    "/config/{kind}",
+    operation_id="deleteConfig",
+    responses={404: CONFIG_ERRORS[404]},
+    dependencies=[Depends(require_token)],
 )
 def delete_configuration(kind: str, conn: Conn) -> ConfigOut:
     """Remove a stored value, restoring the file fallback."""
@@ -376,6 +405,12 @@ def create_app(run_manager: RunManager | None = None, spa_dir: Path | None = Non
     app.include_router(capture_router)
     app.include_router(config_router)
     app.add_middleware(ApiPrefixMiddleware)
+    # Closes DNS rebinding, which is what made every other protection here
+    # bypassable: a page the operator visits resolves its own hostname to
+    # 127.0.0.1 and then speaks to this API as same-origin. A rebound request
+    # carries the attacker's hostname in Host, so it never reaches a route
+    # (spec 035).
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(TRUSTED_HOSTS))
     dist = spa_dir if spa_dir is not None else spa_dist_dir()
     if dist.is_dir():
         # Mounted last so every API route still wins; html=True serves

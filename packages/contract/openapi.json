@@ -1,6 +1,47 @@
 {
   "components": {
     "schemas": {
+      "Body_captureJobFromForm": {
+        "properties": {
+          "company": {
+            "default": "",
+            "title": "Company",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "location": {
+            "default": "",
+            "title": "Location",
+            "type": "string"
+          },
+          "source": {
+            "default": "manual",
+            "title": "Source",
+            "type": "string"
+          },
+          "title": {
+            "default": "",
+            "title": "Title",
+            "type": "string"
+          },
+          "token": {
+            "default": "",
+            "title": "Token",
+            "type": "string"
+          },
+          "url": {
+            "default": "",
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "title": "Body_captureJobFromForm",
+        "type": "object"
+      },
       "CaptureIn": {
         "properties": {
           "company": {
@@ -495,6 +536,19 @@
         "title": "RunOut",
         "type": "object"
       },
+      "SessionOut": {
+        "properties": {
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "SessionOut",
+        "type": "object"
+      },
       "StartRunIn": {
         "properties": {
           "kind": {
@@ -563,7 +617,8 @@
   "paths": {
     "/capture/add": {
       "get": {
-        "operationId": "captureJobViaGet",
+        "description": "Renders. Changes nothing.\n\nThis used to add the row, which meant `<img src=\"http://localhost:8000/\ncapture/add?company=x&title=y\">` on any page the operator visited wrote to\nthe tracker with no interaction at all (spec 035).",
+        "operationId": "captureJobConfirm",
         "parameters": [
           {
             "in": "query",
@@ -635,19 +690,7 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "text/html": {}
-            },
-            "description": "company and title are required"
-          },
-          "409": {
-            "content": {
-              "text/html": {}
-            },
-            "description": "already in tracker"
+            "description": "confirmation page"
           },
           "422": {
             "content": {
@@ -658,12 +701,9 @@
               }
             },
             "description": "Validation Error"
-          },
-          "500": {
-            "description": "unexpected error"
           }
         },
-        "summary": "Capture Via Get"
+        "summary": "Capture Confirm"
       },
       "post": {
         "operationId": "captureJob",
@@ -723,6 +763,62 @@
           }
         },
         "summary": "Capture Via Post"
+      }
+    },
+    "/capture/add-form": {
+      "post": {
+        "description": "The confirmation page's submit target.\n\nA form post cannot set a header, so the token travels as a field. A\ncross-origin page can post a form here, but it cannot read the token, so\nit cannot fill that field.",
+        "operationId": "captureJobFromForm",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_captureJobFromForm"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "text/html": {}
+            },
+            "description": "company and title are required"
+          },
+          "403": {
+            "content": {
+              "text/html": {}
+            },
+            "description": "missing or wrong local token"
+          },
+          "409": {
+            "content": {
+              "text/html": {}
+            },
+            "description": "already in tracker"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Capture From Form"
       }
     },
     "/config": {
@@ -1176,6 +1272,25 @@
           }
         },
         "summary": "Stream Run Events"
+      }
+    },
+    "/session": {
+      "get": {
+        "description": "The local API token, for the app this API serves.\n\nA cross-origin page may issue this request but cannot read the response:\nno CORS headers are sent, so the browser withholds the body. A page that\nmade itself same-origin by DNS rebinding could read it, which is what the\ntrusted-host middleware exists to prevent, and why that middleware is the\nload-bearing half of this pair rather than the token.",
+        "operationId": "getSession",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Session"
       }
     }
   }

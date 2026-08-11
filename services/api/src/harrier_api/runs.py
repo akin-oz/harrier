@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 from harrier.db import data_dir
+from harrier.sources import scrub_secrets
 
 PROTOCOL_PREFIX = "::harrier::"
 RunState = Literal["queued", "running", "succeeded", "failed", "cancelled"]
@@ -155,7 +156,9 @@ class RunManager:
                 stderr=asyncio.subprocess.STDOUT,
             )
         except OSError as error:
-            await self._append(run, "log_line", {"line": f"failed to spawn: {error}"})
+            await self._append(
+                run, "log_line", {"line": scrub_secrets(f"failed to spawn: {error}")}
+            )
             await self._set_state(run, "failed")
             run.ended_at = _now()
             return
@@ -169,7 +172,7 @@ class RunManager:
                 try:
                     parsed_raw: object = json.loads(payload)
                 except json.JSONDecodeError:
-                    await self._append(run, "log_line", {"line": line})
+                    await self._append(run, "log_line", {"line": scrub_secrets(line)})
                     continue
                 if isinstance(parsed_raw, dict):
                     # JSON object keys are always strings; the cast states that.
@@ -177,9 +180,9 @@ class RunManager:
                     event_type = str(data.pop("event", "progress"))
                     await self._append(run, event_type, data)
                 else:
-                    await self._append(run, "log_line", {"line": line})
+                    await self._append(run, "log_line", {"line": scrub_secrets(line)})
             else:
-                await self._append(run, "log_line", {"line": line})
+                await self._append(run, "log_line", {"line": scrub_secrets(line)})
         run.exit_code = await process.wait()
         run.ended_at = _now()
         if run.cancel_requested:
