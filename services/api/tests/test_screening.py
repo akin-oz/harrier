@@ -102,7 +102,7 @@ def _screen(jobs: list[NormalizedJob], cfg: dict[str, Any], **kwargs: object):
         "candidate_cfg": cfg,
         "hold_companies": set(),
         "indexes": TrackerIndexes(),
-        "source_seen": set(),
+        "source_seen": {},
         "cache_descriptions": False,
     }
     defaults.update(kwargs)

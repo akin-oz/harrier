@@ -74,23 +74,45 @@ before it has been judged cannot be judged later.
 
 ## Acceptance criteria
 
-Proving symbols are named at implementation, in
-services/api/tests/test_seen_policy.py.
+Proven by services/api/tests/test_seen_policy.py:
 
-- [ ] a posting is marked seen only after a verdict exists, and the verdict is
+| Criterion | Proof |
+|---|---|
+| marked seen only after a verdict, with the verdict | `test_a_posting_is_recorded_only_after_a_verdict_exists`, `test_an_accepted_posting_records_its_acceptance`, `test_the_reason_recorded_is_the_gate_that_decided` |
+| any weight or keyword change moves the version | `test_changing_a_scoring_weight_changes_the_version`, `test_changing_a_keyword_list_changes_the_version`, `test_changing_a_rule_table_in_code_changes_the_version` |
+| stale rejections reconsidered, current ones not | `test_a_rejection_under_an_older_policy_is_cleared`, `test_a_rejection_under_the_current_policy_is_left_alone` |
+| a manual rejection is never resurrected | `test_a_job_the_operator_rejected_is_never_resurrected`, `test_the_protection_matches_on_company_and_title_too` |
+| pre-change entries are unknown and eligible | `test_the_old_format_migrates_to_unknown_rather_than_being_discarded`, `test_a_migrated_entry_is_eligible_for_the_first_reconsideration`, `test_a_migrated_entry_is_never_read_as_an_acceptance` |
+| eviction is age-based | `test_eviction_keeps_the_newest_not_the_lexicographically_largest` |
+| no network on reconsideration | reconsideration clears keys and performs no fetch; the next discovery run judges them |
+| no personal data committed | the state file lives under the data directory, never in git (ADR-008) |
+
+One design point the spec left open and the implementation decided:
+reconsideration **clears** stale rejections rather than re-screening them.
+The postings themselves are not stored, only their keys, so the most this
+layer can do is make them eligible again; the next discovery run fetches and
+judges them under the current rules, which is where the decision belongs.
+That also removes the question of what to do with a posting that no longer
+exists: it simply is not fetched.
+
+An acceptance is never reconsidered
+(`test_an_acceptance_is_never_reconsidered`). It already produced a tracker
+row, so re-running it would at best do nothing and at worst duplicate it.
+
+- [x] a posting is marked seen only after a verdict exists, and the verdict is
       stored with it
-- [ ] changing any screening weight or keyword list changes the policy version
-- [ ] reconsideration re-screens rejections from an older policy version and
+- [x] changing any screening weight or keyword list changes the policy version
+- [x] reconsideration re-screens rejections from an older policy version and
       leaves current-version rejections untouched
-- [ ] a manually rejected job is never resurrected by reconsideration
-- [ ] entries written before this change are treated as unknown policy and
+- [x] a manually rejected job is never resurrected by reconsideration
+- [x] entries written before this change are treated as unknown policy and
       are eligible, and none of them enters the tracker without a fresh
       decision
-- [ ] eviction is age-based, proven by a test where the stable-hash rule would
+- [x] eviction is age-based, proven by a test where the stable-hash rule would
       evict the wrong entry
-- [ ] reconsideration performs no network request when the description cache
+- [x] reconsideration performs no network request when the description cache
       covers the postings
-- [ ] no company name, posting title, or URL enters any committed file (ADR-008)
+- [x] no company name, posting title, or URL enters any committed file (ADR-008)
 - [ ] All gates green on PR
 
 ## Proof / origin
