@@ -31,3 +31,12 @@ Check, in order:
 Report findings with file:line, the class the path should have, and the leak path.
 Read-only; surface, do not patch. Treat every finding here as blocking until a human
 clears it.
+
+## Execution limits
+
+You hold `Bash`, so you are not read-only and must not act as though the
+distinction does not matter. Inspect without changing anything: never write
+to the checkout, never commit or push, never regenerate a checked-in
+artifact, and never read `.env` or any file the classification table marks
+never-in-git. Where a check would normally mean regenerating something,
+generate to a temporary location and compare instead.

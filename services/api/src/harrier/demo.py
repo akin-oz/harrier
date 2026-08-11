@@ -37,6 +37,8 @@ import os
 import tempfile
 from pathlib import Path
 
+from harrier.paths import repo_root
+
 DEMO_ENV = "HARRIER_DEMO"
 HTTP_FIXTURES_ENV = "HARRIER_HTTP_FIXTURES"
 FIXTURE_INDEX_NAME = "index.json"
@@ -49,11 +51,6 @@ class OfflineFixtureError(RuntimeError):
 
 def is_demo_mode() -> bool:
     return os.environ.get(DEMO_ENV, "") == "1"
-
-
-def repo_root() -> Path:
-    # services/api/src/harrier/demo.py -> the repo root is four parents up.
-    return Path(__file__).resolve().parents[4]
 
 
 def fixtures_dir() -> Path:

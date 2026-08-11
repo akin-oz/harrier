@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from harrier.db import data_dir
+from harrier.paths import repo_root
 
 SCHEDULE_CONFIG_PATH = Path("config") / "schedule.json"
 DEFAULT_LABEL_PREFIX = "dev.harrier"
@@ -132,11 +133,6 @@ def default_launchctl(args: list[str]) -> tuple[int, str, str]:
 
 def launch_agents_dir() -> Path:
     return Path.home() / "Library" / "LaunchAgents"
-
-
-def repo_root() -> Path:
-    """The repo root resolved from this module, never hardcoded."""
-    return Path(__file__).resolve().parents[4]
 
 
 def logs_dir() -> Path:
