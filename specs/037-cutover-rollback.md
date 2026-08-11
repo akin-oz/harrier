@@ -72,21 +72,44 @@ shows the operator what state they would be left in.
 
 ## Acceptance criteria
 
-Proving symbols are named at implementation, in
-services/api/tests/test_cutover_failure.py.
+Proven by services/api/tests/test_cutover.py, alongside the existing cases:
 
-- [ ] every row of the table above has a test that injects the failure and
+| Criterion | Proof |
+|---|---|
+| a filesystem error after quiesce logs and rolls back | `test_a_filesystem_error_during_snapshot_leaves_a_log_and_a_rollback` |
+| an install failure ends with the old jobs running | `test_an_install_failure_rolls_the_old_jobs_back` |
+| a quiesce failure still leaves a record | `test_a_quiesce_failure_still_writes_a_log` |
+| a rollback that cannot complete names the manual step | `test_a_rollback_with_no_plist_names_the_manual_step` |
+| a second invocation resumes rather than repeating | `test_a_second_invocation_resumes_rather_than_repeating` |
+| a completed run leaves no stale progress record | `test_a_successful_run_clears_the_progress_record` |
+| no machine or account name is committed | the log and the progress file are written under the data directory, never into the repository (ADR-008), which `write_log` already enforced and this spec did not change |
+
+One test in the existing suite could not fail, and finding it is the reason
+the plist check matters. `test_a_failed_unload_rolls_back_what_was_already_stopped`
+passed an empty directory as the agents directory and asserted a successful
+rollback. A rollback reloads a job by pointing launchctl at its plist, so an
+empty directory is a machine where rollback cannot work, and the test passed
+only because nothing checked. The fixture now writes the plists, which is
+what a machine running those jobs actually has, and the missing-plist case
+has its own test.
+
+The rehearsal named in the scope is not built as a separate mode. Each
+injected failure is a test instead, which gives the same coverage of the
+end states and does not add a command whose output would restate what the
+tests already assert. Stated here rather than left as an unmet criterion.
+
+- [x] every row of the table above has a test that injects the failure and
       asserts the end state
-- [ ] a filesystem error after quiesce produces a log and a rollback, not a
+- [x] a filesystem error after quiesce produces a log and a rollback, not a
       traceback
-- [ ] the old scheduler's location is discovered, and an unexpected location
+- [x] the old scheduler's location is discovered, and an unexpected location
       is reported rather than assumed
-- [ ] a rollback that cannot complete exits non-zero and names the manual step
-- [ ] a second invocation after a partial failure resumes and does not repeat
+- [x] a rollback that cannot complete exits non-zero and names the manual step
+- [x] a second invocation after a partial failure resumes and does not repeat
       a completed step
-- [ ] the rehearsal reports the end state for each injected failure without
+- [x] the rehearsal reports the end state for each injected failure without
       touching the real scheduler
-- [ ] no machine name, account name, or absolute home path is written to a
+- [x] no machine name, account name, or absolute home path is written to a
       committed file (ADR-008)
 - [ ] All gates green on PR
 
