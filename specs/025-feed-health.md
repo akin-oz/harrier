@@ -1,7 +1,7 @@
 ---
 spec: 025
 title: Feed health: report and prune dead boards
-status: accepted
+status: in-progress
 approved: yes
 milestone: M6
 depends: [023]
@@ -80,24 +80,59 @@ a log every four hours.
 
 ## Acceptance criteria
 
-Proving symbols are named at implementation, in
-services/api/tests/test_feed_health.py. They are deliberately not listed
-here: this spec is not built yet, and naming symbols that do not exist is
-how a spec starts lying (a mistake made and caught on PR #19).
+Every symbol below is in services/api/tests/test_feed_health.py.
 
-
-- [ ] every configured board is probed and classified by the table above,
-      with one test per row
-- [ ] a timeout, a 429, a 5xx, a 403 and an unparseable 200 all classify as
-      unreachable, and none of them is prunable
-- [ ] at most 8 probes run concurrently, and one hung host does not prevent
-      the other boards being classified
-- [ ] --prune removes only entries this invocation probed as dead, and
-      reports each one
-- [ ] --prune with no probe in the same invocation is refused
-- [ ] the report names no board that is not already in the operator's own
-      configuration, and nothing is written to a committed file
+- [x] every configured board is probed and classified by the table above,
+      with one test per row: `test_a_2xx_with_a_parseable_body_is_live`,
+      `test_a_redirect_within_the_provider_is_live`,
+      `test_a_redirect_off_the_provider_is_unreachable`,
+      `test_a_gone_status_is_dead`,
+      `test_an_auth_refusal_is_unreachable_because_the_board_may_exist`,
+      `test_a_transient_status_is_unreachable`, `test_a_timeout_is_unreachable`,
+      `test_a_dns_failure_is_unreachable_and_says_so`,
+      `test_a_connection_failure_is_unreachable`,
+      `test_a_2xx_that_is_not_a_board_is_unreachable_not_dead`
+- [x] a timeout, a 429, a 5xx, a 403 and an unparseable 200 all classify as
+      unreachable, and none of them is prunable:
+      `test_no_refusal_other_than_gone_is_prunable`, parametrized over all five
+- [x] at most 8 probes run concurrently, and one hung host does not prevent
+      the other boards being classified:
+      `test_at_most_eight_probes_run_concurrently`,
+      `test_one_hung_host_does_not_prevent_the_others_being_classified`
+- [x] --prune removes only entries this invocation probed as dead, and
+      reports each one: `test_prune_removes_only_the_dead_entries`,
+      `test_prune_names_every_board_it_removed`,
+      `test_prune_does_not_resurrect_an_entry_that_was_never_probed`
+- [x] --prune with no probe in the same invocation is refused:
+      `test_prune_always_probes_in_the_same_invocation`. `prune_dead` takes a
+      `FeedHealthReport`, which only `check_feeds` produces, so a prune with
+      no probe is unrepresentable rather than rejected at runtime
+- [x] the report names no board that is not already in the operator's own
+      configuration, and nothing is written to a committed file:
+      `test_the_report_names_only_boards_the_operator_configured`. Pruning
+      writes to the config store, never to `config/feeds.txt`
 - [ ] All gates green on PR
+
+Three behaviours were found during implementation that the spec did not
+cover, each with its own test rather than being decided silently:
+
+- **An empty board is live.** A company with no open roles still has a board,
+  and reading `{"jobs": []}` as absence would prune every quiet employer:
+  `test_a_board_with_no_open_roles_is_live_not_dead`.
+- **An entry naming no board at all** (a provider host with an empty path) is
+  neither a network state nor prunable. It reports `invalid-url`, a token the
+  spec's closed list does not contain, because folding it into `invalid-body`
+  or `connection` would misdescribe a typo as an outage:
+  `test_an_entry_naming_no_board_is_unreachable_and_never_prunable`.
+- **Pruning writes nothing when nothing is dead.** The watchlist may still be
+  coming from the file, and storing a copy that removed nothing would shadow
+  it from then on, freezing a configuration the operator still edits by hand:
+  `test_prune_writes_nothing_when_nothing_is_dead`.
+
+The probe honours demo mode's offline fixtures rather than opening a socket,
+so `check-feeds` is not the one command that quietly dials out:
+`test_demo_mode_probes_the_fixtures_and_never_the_network` and
+`test_demo_mode_refuses_a_url_the_fixtures_do_not_cover`.
 
 ## Proof / origin
 
