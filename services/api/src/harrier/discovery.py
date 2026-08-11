@@ -283,6 +283,12 @@ def run_discovery(
             )
         report("remoteok", "done")
 
+    # What the actor was actually asked for, as opposed to what the caller
+    # requested. On a scheduled run the count comes from the stored discovery
+    # settings, so the two already differed, and the summary reported the one
+    # that had no effect (spec 033). None means Apify did not run.
+    apify_count_used: int | None = None
+
     paid_allowed = not is_demo_mode() and not options.shadow
     if _source_enabled("apify_linkedin", options.only_sources) and paid_allowed:
         # Apify is the one paid source and reaches the network outside the
@@ -292,6 +298,7 @@ def run_discovery(
         apify_gate_open = not options.scheduled or apify_allowed_now(options.now)
         if apify_gate_open:
             count = scheduled_apify_count(conn=conn) if options.scheduled else options.apify_count
+            apify_count_used = count
             report("apify_linkedin", "fetching")
             try:
                 apify_jobs = fetch_apify_linkedin_jobs(
@@ -388,7 +395,13 @@ def run_discovery(
         "tracker_duplicates": totals["tracker_duplicates"],
         "new_prospects": totals["new_prospects"],
         "rejected_counts": dict(rejected_counts),
-        "apify_count": options.apify_count,
+        # The count the actor was given, not the one the caller asked for.
+        # These differ on every scheduled run, and after spec 035 they also
+        # differ whenever an out-of-range value is clamped. A number in a
+        # summary that does not describe the run it summarises is the same
+        # defect as a score field nobody updated (spec 033).
+        "apify_count": apify_count_used,
+        "apify_count_requested": options.apify_count,
         "source_summaries": summaries,
     }
 

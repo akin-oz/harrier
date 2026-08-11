@@ -135,7 +135,11 @@ def test_changing_a_rule_table_in_code_changes_the_version(
     does: spec 032 corrects two of them. Reading them at call time rather
     than binding at import is what makes this hold."""
     before = policy_version(cfg)
-    monkeypatch.setattr(rules, "SCORE_CUTOFF", rules.SCORE_CUTOFF + 5)
+    # This used to move SCORE_CUTOFF, which no longer exists (spec 033). The
+    # scoring numbers took its place in the fingerprint, and they are the
+    # better subject: the cutoff decided nothing, while a bonus decides every
+    # ranking.
+    monkeypatch.setattr(rules, "DEFAULT_SCORING", {**rules.DEFAULT_SCORING, "remote_bonus": 99})
     assert policy_version(cfg) != before
 
 

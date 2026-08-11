@@ -220,13 +220,58 @@ def test_next_on_an_empty_tracker_says_so(tmp_path: Path, monkeypatch: pytest.Mo
 # --- reevaluate --------------------------------------------------------------
 
 
-def test_reevaluate_rescores_against_the_current_config(db: sqlite3.Connection) -> None:
+def test_reevaluate_without_a_stored_description_is_skipped(
+    db: sqlite3.Connection, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A job whose description was never captured cannot be rescored honestly.
+
+    It used to be rescored anyway, with `description=""` against a scorer that
+    reads the description in three places, and the lower number then replaced
+    the real one. Reporting it as skipped is the only answer that does not
+    quietly destroy the score it claims to refresh (spec 033).
+    """
+    before = get_job(db, 1)
+    assert main(["reevaluate", "1"]) == 2
+    assert "no stored description" in capsys.readouterr().err
+    assert get_job(db, 1)["fit_score"] == before["fit_score"]
+
+
+def test_reevaluate_rescores_against_the_current_config(
+    db: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With the description it was imported with, rescoring reproduces the
+    number the import produced. Asserting only that the fields are non-empty
+    would pass against a constant."""
+    from harrier.screening.config import load_candidate_config
+    from harrier.screening.descriptions import save_description_cache
+    from harrier.screening.normalized import make_normalized_job
+    from harrier.screening.rules import score_job
+
+    job = get_job(db, 1)
+    description = (
+        "We are hiring a senior frontend engineer for a fully remote role across "
+        "Europe. You will work in TypeScript and React, own delivery end to end, "
+        "and care about testing and performance."
+    )
+    save_description_cache(job["url"], description)
+    expected, _ = score_job(
+        make_normalized_job(
+            source=job["source"] or "manual",
+            company=job["company"],
+            title=job["title"],
+            location=job["location"],
+            url=job["url"],
+            description=description,
+        ),
+        load_candidate_config(db),
+    )
+
     assert main(["reevaluate", "1"]) == 0
     rescored = get_job(db, 1)
-    # A senior frontend title clears the bar, so the row carries a score and
-    # the signals that produced it.
-    assert rescored["score"] != ""
+    assert rescored["fit_score"] == str(expected)
+    assert rescored["score"] == rescored["fit_score"]
     assert rescored["signals"] != ""
+    assert rescored["scoring_version"] != ""
 
 
 # --- review, validators, and dedupe (review findings on PR #27) --------------

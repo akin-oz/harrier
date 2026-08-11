@@ -97,7 +97,18 @@ def _rule_fingerprint() -> dict[str, Any]:
             key: sorted(value) for key, value in sorted(rules.DOMAIN_KEYWORDS.items())
         },
         "preferred_signal_weights": dict(sorted(rules.PREFERRED_SIGNAL_WEIGHTS.items())),
-        "score_cutoff": rules.SCORE_CUTOFF,
+        # The score cutoff used to be fingerprinted here. It is gone (spec
+        # 033): it decided nothing on the ATS path and decided the wrong
+        # thing on the LinkedIn one, so there is no longer a threshold whose
+        # movement could change a decision.
+        # The scoring numbers themselves, which the cutoff's presence used
+        # to stand in for. Changing a bonus changes every stored score's
+        # comparability, and that is exactly what a version is for.
+        "default_scoring": {
+            key: value
+            for key, value in sorted(rules.DEFAULT_SCORING.items())
+            if not isinstance(value, dict)
+        },
     }
 
 

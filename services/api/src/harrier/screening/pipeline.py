@@ -22,7 +22,6 @@ from harrier.screening.descriptions import (
 from harrier.screening.normalized import NormalizedJob, normalize
 from harrier.screening.policy import policy_version
 from harrier.screening.rules import (
-    SCORE_CUTOFF,
     CandidateConfig,
     remote_region_allowed,
     score_job,
@@ -30,6 +29,7 @@ from harrier.screening.rules import (
 )
 from harrier.screening.seen import ACCEPTED, REJECTED, SeenDecision, now_iso
 from harrier.tracker.schema import NEXT_ACTION_DEFAULTS
+from harrier.tracker.score import score_fields
 
 # The slug recorded when the remote or region gate rejects. Named here rather
 # than taken from the gate's message, which is prose meant for a human and
@@ -80,7 +80,9 @@ class ScreenResult:
     skipped_rejected: int = 0
 
 
-def build_tracker_row(job: NormalizedJob, score: int, reasons: list[str]) -> dict[str, str]:
+def build_tracker_row(
+    job: NormalizedJob, score: int, reasons: list[str], scoring_version: str = ""
+) -> dict[str, str]:
     """Tracker-ready fields. The notes key=value string is built exactly as
     the old repo did; harrier.tracker.add_job promotes the keys to columns."""
     added_at = datetime.now(UTC).date().isoformat()
@@ -103,7 +105,7 @@ def build_tracker_row(job: NormalizedJob, score: int, reasons: list[str]) -> dic
         "url": job["url"],
         "source": job["source"],
         "added_at": added_at,
-        "fit_score": str(score),
+        **score_fields(score, reasons, scoring_version),
         "status": "prospect",
         "next_action": NEXT_ACTION_DEFAULTS["prospect"],
         "contacts_found": "0",
@@ -229,19 +231,14 @@ def screen_jobs(
             if scored_url and scored_desc:
                 save_description_cache(scored_url, scored_desc)
         score, reasons = score_job(scored_job, candidate_cfg)
-        if score < SCORE_CUTOFF:
-            reject_reason = "low_score"
-            record(job_key, REJECTED, reject_reason)
-            result.rejected_counts[reject_reason] = result.rejected_counts.get(reject_reason, 0) + 1
-            result.skipped_rejected += 1
-            if write_rejected_debug:
-                result.rejected_debug_rows.append(
-                    _build_rejected_debug_row(scored_job, reject_reason)
-                )
-            continue
+        # No cutoff. It could not reject an ATS posting and rejected LinkedIn
+        # ones for being region-filtered at query level; the derivation is in
+        # rules.py (spec 033).
 
         record(job_key, ACCEPTED, "passed every gate")
-        result.new_tracker_rows.append(build_tracker_row(scored_job, score, reasons))
+        result.new_tracker_rows.append(
+            build_tracker_row(scored_job, score, reasons, current_policy)
+        )
         result.latest_items.append(_build_latest_item(scored_job, score, reasons, remote_reason))
         if url_norm:
             indexes.urls.add(url_norm)

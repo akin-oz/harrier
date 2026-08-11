@@ -163,7 +163,29 @@ DOMAIN_KEYWORDS: dict[str, list[str]] = {
     "health tech": ["healthtech", "health tech", "healthcare", "medical", "biotech"],
 }
 
-SCORE_CUTOFF = 55
+# There is no score cutoff. The gates are the filter and the score only ranks
+# (spec 033), and the reason is arithmetic rather than taste.
+#
+# Anything that reaches scoring has already passed `title_allowed`, so it
+# matched at least one include keyword, and passed `remote_region_allowed`,
+# which requires the same REMOTE_POSITIVE_PATTERNS over the same text that
+# the remote bonus rewards. So base 30 plus the smallest include bonus plus
+# the remote bonus is unavoidable, and for an ATS posting the region gate
+# forces the region bonus too. The floor is 59 against a cutoff of 55: it
+# could not reject.
+#
+# Except on one path, and that was worse. A LinkedIn result returns early
+# from the region gate, because those searches are already region-filtered at
+# query level, so it never earns the region bonus and its floor is 51. The
+# only postings the cutoff ever rejected were LinkedIn ones, and it rejected
+# them for the mechanism that makes them valid. A filter that fires on one
+# source as a side effect of that source being correct is worse than no
+# filter.
+#
+# `tests/test_scoring.py::test_the_arithmetic_floor_is_derived_from_the_rules`
+# derives both floors from the configuration rather than restating them, so a
+# weight change that moves them fails rather than quietly re-tuning this note.
+SCORE_FLOOR_NOTE = "the gates filter; the score ranks. See the derivation in rules.py (spec 033)."
 
 
 def text_matches_any_pattern(text: str, patterns: tuple[str, ...]) -> bool:
@@ -356,4 +378,15 @@ def score_job(job: NormalizedJob, candidate_cfg: CandidateConfig) -> tuple[int, 
         score += best_domain_bonus
         reasons.append(f"domain={matched_domain}")
 
-    return min(score, 120), reasons
+    # No saturation cap. It was `min(score, 120)`, and a strong realistic
+    # posting reaches 120 exactly: developer tools, remote across Europe,
+    # TypeScript, React, testing, CI/CD, observability, EU contractor. A
+    # strictly better one scored the same, so the cap destroyed ordering at
+    # the top of the ranking, which is the only place the ranking is read.
+    #
+    # It had a purpose while a cutoff existed, as a bound on how far a good
+    # posting could sit above the threshold. There is no threshold now (spec
+    # 033) and the score is purely ordinal, so a bound on it buys nothing and
+    # costs the distinction between the best two rows.
+    # Proved by `tests/test_scoring.py::test_two_strong_postings_are_not_tied_by_a_cap`.
+    return score, reasons
