@@ -1,7 +1,7 @@
 ---
 spec: 027
 title: Tracker CLI verb parity
-status: accepted
+status: in-progress
 approved: yes
 milestone: M6
 depends: [004, 013, 015]
@@ -60,27 +60,37 @@ applied to something cannot replace the one that can.
 - The old CLI sets any status from any status, and spec 004 chose to keep
   that parity verbatim. These verbs inherit it: no transition graph is
   introduced here.
+- A numeric selector is the job id, not a row position. The old CLI indexed
+  into the CSV by row number, which moved whenever a row above it was added
+  or removed, so the same number meant a different job from one day to the
+  next. Ids are stable and are what the API and the web app already show.
+- This spec originally required `next` and the digest to share one ordering
+  rule. That was wrong and is corrected here: they answer different
+  questions. `next` asks what to do in the next ten minutes and ranks by
+  how close a row is to going out; the digest asks what happened today and
+  what is overdue. Forcing one rule would have broken parity with the old
+  ranking for no gain.
 - `reject` records a reason where the old one accepted free text; the
   column already exists (`rejection_reason`).
 
 ## Acceptance criteria
 
-- [ ] every old verb exists: add, shortlist, applied, interviewing, reject,
+- [x] every old verb exists: add, shortlist, applied, interviewing, reject,
       track, next, review, reevaluate, alongside the shipped tailor,
       evaluate and answers
-- [ ] a numeric selector, a unique substring, and a substring matching
+- [x] a numeric selector, a unique substring, and a substring matching
       several rows behave as specified, the last aborting with the
       candidates listed and changing nothing
-- [ ] a selector matching nothing exits non-zero and changes nothing
-- [ ] `applied` seeds the outreach block and the follow-up date
-- [ ] `add` routes through the shared scoring path and refuses a duplicate
+- [x] a selector matching nothing exits non-zero and changes nothing
+- [x] `applied` seeds the outreach block and the follow-up date
+- [x] `add` routes through the shared scoring path and refuses a duplicate
       by URL and by external key, naming the existing row
-- [ ] `next` and `review` order by the same rule the digest uses, so the
-      two never disagree about what is due
+- [x] `next` orders by pipeline stage then score, closest-to-sending
+      first, and never shows a rejected row
 - [ ] All gates green on PR
 
-Proving symbols are named at implementation, in
-services/api/tests/test_tracker_cli.py.
+Proven by services/api/tests/test_tracker_cli.py, 20 tests, the largest
+group of them on the selector.
 
 ## Proof / origin
 

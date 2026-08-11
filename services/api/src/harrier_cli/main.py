@@ -667,6 +667,116 @@ def _cmd_cutover(args: argparse.Namespace) -> int:
         conn.close()
 
 
+def _print_job(job: dict[str, str]) -> None:
+    from harrier.tracker import describe
+
+    print(describe(job))
+    if job["next_action"]:
+        print(f"   next: {job['next_action']}")
+
+
+def _cmd_tracker_verb(args: argparse.Namespace) -> int:
+    """The status transitions, add, and the two read verbs (spec 027)."""
+    from harrier.capture import add_captured_job
+    from harrier.screening.config import load_candidate_config
+    from harrier.screening.normalized import make_normalized_job
+    from harrier.screening.rules import score_job
+    from harrier.tracker import (
+        SelectorError,
+        describe,
+        list_jobs,
+        rank_active,
+        resolve_selector,
+        set_status,
+        status_counts,
+        update_fields,
+    )
+
+    conn = connect()
+    try:
+        if args.command in {"next", "review"}:
+            jobs = list_jobs(conn)
+            if args.command == "review":
+                counts = status_counts(jobs)
+                active = sum(count for name, count in counts.items() if name != "rejected")
+                print(f"total {len(jobs)}, active {active}")
+                print(", ".join(f"{name} {count}" for name, count in counts.items() if count))
+                print()
+            ranked = rank_active(jobs, int(args.limit))
+            if not ranked:
+                print("nothing active")
+                return 0
+            for job in ranked:
+                _print_job(job)
+            return 0
+
+        if args.command == "add":
+            result = add_captured_job(
+                conn,
+                company=args.company,
+                title=args.title,
+                location=args.location,
+                url=args.url,
+                source=args.source,
+                description=args.description,
+            )
+            print(result.message)
+            # CaptureResult carries no row, so the added or clashing job is
+            # looked up by what identifies it, which is also the check the
+            # duplicate path just ran.
+            if args.url:
+                for candidate in list_jobs(conn):
+                    if candidate["url"] == args.url.strip():
+                        print(describe(candidate))
+                        break
+            # duplicate and invalid are refusals, not crashes: the caller
+            # asked to add something already tracked, or gave too little.
+            return 0 if result.status == "added" else 1
+
+        job = resolve_selector(conn, args.selector)
+        job_id = int(job["id"])
+
+        if args.command == "reevaluate":
+            normalized = make_normalized_job(
+                source=job["source"] or "manual",
+                company=job["company"],
+                title=job["title"],
+                location=job["location"],
+                url=job["url"],
+                description="",
+            )
+            score, reasons = score_job(normalized, load_candidate_config(conn))
+            updated = update_fields(
+                conn, job_id, {"score": str(score), "signals": "|".join(reasons)}
+            )
+            print(f"rescored {job['score'] or '-'} -> {score}")
+            _print_job(updated)
+            return 0
+
+        target = {
+            "shortlist": "shortlisted",
+            "track": "tailored_cv_requested",
+            "applied": "applied",
+            "interviewing": "interviewing",
+            "reject": "rejected",
+        }[args.command]
+        reason = " ".join(getattr(args, "reason", []) or []).strip() or None
+        updated = set_status(
+            conn,
+            job_id,
+            target,
+            applied_date=getattr(args, "applied_date", None),
+            rejection_reason=reason if target == "rejected" else None,
+        )
+        _print_job(updated)
+        return 0
+    except SelectorError as error:
+        print(str(error), file=sys.stderr)
+        return 1
+    finally:
+        conn.close()
+
+
 def _cmd_config(args: argparse.Namespace) -> int:
     from harrier.sources.feeds import FEEDS_PATH, read_line_config
     from harrier.userconfig import (
@@ -1122,6 +1232,45 @@ def build_parser() -> argparse.ArgumentParser:
         help="confirm the checks no machine can make (see `cutover preflight`)",
     )
     cutover.set_defaults(func=_cmd_cutover)
+
+    # Tracker verbs (spec 027): the daily driver, ported from the old
+    # scripts/jobs.py. Every mutating verb takes a selector.
+    for name, help_text in (
+        ("shortlist", "mark a job shortlisted"),
+        ("track", "mark a job as having a tailored CV requested"),
+        ("interviewing", "mark a job as interviewing"),
+        ("reevaluate", "rescore a job against the current candidate config"),
+    ):
+        verb = sub.add_parser(name, help=f"{help_text} (spec 027)")
+        verb.add_argument("selector", help="job id, or a unique substring")
+        verb.set_defaults(func=_cmd_tracker_verb)
+
+    applied_cmd = sub.add_parser("applied", help="mark a job applied (spec 027)")
+    applied_cmd.add_argument("selector", help="job id, or a unique substring")
+    applied_cmd.add_argument("--applied-date", default=None, help="YYYY-MM-DD (default today)")
+    applied_cmd.set_defaults(func=_cmd_tracker_verb)
+
+    reject_cmd = sub.add_parser("reject", help="reject a job with a reason (spec 027)")
+    reject_cmd.add_argument("selector", help="job id, or a unique substring")
+    reject_cmd.add_argument("reason", nargs="*", help="why (recorded on the row)")
+    reject_cmd.set_defaults(func=_cmd_tracker_verb)
+
+    add_cmd = sub.add_parser("add", help="add a job by hand, scored and deduped (spec 027)")
+    add_cmd.add_argument("--company", required=True)
+    add_cmd.add_argument("--title", required=True)
+    add_cmd.add_argument("--url", default="")
+    add_cmd.add_argument("--location", default="")
+    add_cmd.add_argument("--source", default="manual")
+    add_cmd.add_argument("--description", default="")
+    add_cmd.set_defaults(func=_cmd_tracker_verb)
+
+    for name, help_text in (
+        ("next", "what to work on now"),
+        ("review", "tracker counts plus the top of the queue"),
+    ):
+        verb = sub.add_parser(name, help=f"{help_text} (spec 027)")
+        verb.add_argument("--limit", default="10", help="rows to show")
+        verb.set_defaults(func=_cmd_tracker_verb)
 
     config = sub.add_parser("config", help="user configuration in the database (spec 023)")
     config_sub = config.add_subparsers(dest="config_command", required=True)
