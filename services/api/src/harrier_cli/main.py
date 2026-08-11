@@ -952,6 +952,69 @@ def _cmd_reconsider(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_review_followup(args: argparse.Namespace) -> int:
+    import subprocess
+    import time
+
+    from harrier.reviewfollowup import (
+        DEFAULT_DAILY_LIMIT,
+        REQUEST,
+        WAIT,
+        FollowUpError,
+        decide,
+        gather,
+        load_counts,
+        record_request,
+        report,
+        request_review,
+    )
+
+    def run_gh(argv: list[str]) -> str:
+        result = subprocess.run(["gh", *argv], capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or f"gh exited {result.returncode}")
+        return result.stdout
+
+    from harrier.reviewfollowup import PullRequestState
+
+    numbers = [int(value) for value in args.pull_requests]
+    counts = load_counts()
+    states: list[PullRequestState] = []
+    exit_code = 0
+    for number in numbers:
+        try:
+            state = gather(number, run_gh, owner=args.owner, repo=args.repo)
+        except FollowUpError as error:
+            print(f"error: {error}", file=sys.stderr)
+            exit_code = 1
+            continue
+        states.append(state)
+        decision = decide(
+            state,
+            requests_today=counts.get(str(number), 0),
+            daily_limit=int(args.daily_limit or DEFAULT_DAILY_LIMIT),
+        )
+        print(decision.describe(number))
+        if decision.action == WAIT and args.wait:
+            time.sleep(decision.wait_minutes * 60)
+            request_review(number, run_gh)
+            counts[str(number)] = record_request(number)
+            print(f"PR #{number}: review requested")
+        elif decision.action == REQUEST and not args.dry_run:
+            request_review(number, run_gh)
+            counts[str(number)] = record_request(number)
+            print(f"PR #{number}: review requested")
+
+    print()
+    for line in report(states):
+        print(line)
+    # A pull request nothing has reviewed is not a reviewed pull request,
+    # which is the distinction the service's own check does not draw.
+    if any(not state.reviewed for state in states):
+        exit_code = exit_code or 2
+    return exit_code
+
+
 def _settings_from_file(path: Path) -> dict[str, object]:
     from typing import cast
 
@@ -1407,6 +1470,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--apply", action="store_true", help="clear them; without this it only reports"
     )
     reconsider.set_defaults(func=_cmd_reconsider)
+
+    followup = sub.add_parser(
+        "review-followup",
+        help="wait out a rate-limited review and ask again (spec 043)",
+    )
+    followup.add_argument("pull_requests", nargs="+", help="pull request numbers")
+    followup.add_argument("--owner", default="akin-oz")
+    followup.add_argument("--repo", default="harrier")
+    followup.add_argument("--daily-limit", default=None, type=_positive_int)
+    followup.add_argument(
+        "--wait", action="store_true", help="sleep out the rate limit rather than reporting it"
+    )
+    followup.add_argument(
+        "--dry-run", action="store_true", help="report what it would do and comment nothing"
+    )
+    followup.set_defaults(func=_cmd_review_followup)
 
     parity = sub.add_parser("parity", help="parity verification against the old system (spec 022)")
     parity_sub = parity.add_subparsers(dest="parity_command", required=True)

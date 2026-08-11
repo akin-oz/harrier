@@ -1,7 +1,7 @@
 ---
 spec: 043
 title: The review loop closes itself
-status: accepted
+status: in-progress
 approved: yes
 milestone: M7
 depends: [028]
@@ -114,22 +114,47 @@ reading consistent, which is as far as honesty allows.
 
 ## Acceptance criteria
 
-Proving symbols are named at implementation, in
-services/api/tests/test_review_followup.py.
+Proven by services/api/tests/test_review_followup.py:
 
-- [ ] the wait is parsed from minutes, hours, and the combined form, with one
+| Criterion | Proof |
+|---|---|
+| the wait parses in every shape the notice uses | `test_the_wait_is_parsed` (six cases), `test_a_notice_with_no_readable_wait_returns_none`, `test_a_zero_wait_reads_as_no_wait` |
+| the newest notice wins | `test_the_newest_notice_is_the_one_used`, `test_a_notice_inside_a_longer_comment_is_found` |
+| no notice means nothing is posted | `test_no_notice_means_none`, `test_a_notice_without_a_wait_is_reported_not_guessed` |
+| an unchanged head is not re-requested | `test_a_reviewed_pull_request_at_the_same_head_is_left_alone`, `test_a_moved_head_is_asked_again` |
+| the daily bound stops the loop | `test_the_daily_bound_stops_the_loop`, `test_the_bound_wins_over_everything_else` |
+| rate limited is distinguishable from reviewed | `test_a_rate_limited_pull_request_reports_as_not_reviewed`, `test_a_reviewed_pull_request_reports_as_reviewed`, `test_a_pull_request_with_neither_is_still_not_reviewed` |
+| `gh` failing is reported | `test_gh_failing_is_reported_not_swallowed`, `test_an_unreadable_thread_count_is_reported` |
+| the rule compiles into both instruction files | `aie check` clean, and the rule text appears in `CLAUDE.md` and `AGENTS.md` |
+| nothing about a pull request is committed | no test touches the network; the `gh` seam is injected, so no title or branch name reaches a fixture (ADR-008) |
+
+The problem statement understated the scale, and the correction is worth
+recording. It said two pull requests had reported a pass while rate limited.
+Checking properly found **six of seven open pull requests with zero review
+threads between them**, every check green. The monitoring that reported them
+as clean asked whether any thread was unresolved, which is trivially true of
+zero threads, so it was the same guard-reporting-success defect one level up
+in the tooling rather than the code.
+
+One dependency was deliberately not taken. The request counter uses a plain
+read and write rather than the durable-state module spec 040 adds, because it
+is a counter and not the tracker: losing it costs a few extra requests,
+bounded by the daily limit. Spec 040 is unmerged, and duplicating it here to
+protect a counter would have been the wrong trade.
+
+- [x] the wait is parsed from minutes, hours, and the combined form, with one
       test per shape and one for a notice that carries no wait
-- [ ] the newest notice wins when a pull request carries several
-- [ ] a pull request with no notice reports that and posts nothing
-- [ ] a re-request is not sent when the head commit has not moved since the
+- [x] the newest notice wins when a pull request carries several
+- [x] a pull request with no notice reports that and posts nothing
+- [x] a re-request is not sent when the head commit has not moved since the
       last completed review
-- [ ] the daily bound stops the loop, proven by a test that exceeds it
-- [ ] a rate-limited pull request is reported as not yet reviewed, so it is
+- [x] the daily bound stops the loop, proven by a test that exceeds it
+- [x] a rate-limited pull request is reported as not yet reviewed, so it is
       distinguishable from a reviewed one
-- [ ] `gh` failing is reported, not swallowed
-- [ ] the rule compiles into `CLAUDE.md` and `AGENTS.md`, and `aie check` is
+- [x] `gh` failing is reported, not swallowed
+- [x] the rule compiles into `CLAUDE.md` and `AGENTS.md`, and `aie check` is
       clean
-- [ ] no pull request title, branch name, or comment body is written to a
+- [x] no pull request title, branch name, or comment body is written to a
       committed file (ADR-008)
 - [ ] All gates green on PR
 
