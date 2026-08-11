@@ -2,6 +2,8 @@
 name = "harrier-api"
 version = "0.1.0"
 description = "Harrier domain, API service, and CLI"
+license = "MIT"
+license-files = ["../../LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",

@@ -20,6 +20,7 @@ from harrier.screening.descriptions import (
     save_description_cache,
 )
 from harrier.screening.normalized import NormalizedJob, normalize
+from harrier.screening.policy import policy_version
 from harrier.screening.rules import (
     SCORE_CUTOFF,
     CandidateConfig,
@@ -27,7 +28,13 @@ from harrier.screening.rules import (
     score_job,
     title_allowed,
 )
+from harrier.screening.seen import ACCEPTED, REJECTED, SeenDecision, now_iso
 from harrier.tracker.schema import NEXT_ACTION_DEFAULTS
+
+# The slug recorded when the remote or region gate rejects. Named here rather
+# than taken from the gate's message, which is prose meant for a human and
+# would silently split one cause into two if reworded.
+REMOTE_REGION_REASON = "remote_region"
 
 
 @dataclass
@@ -138,11 +145,22 @@ def screen_jobs(
     candidate_cfg: CandidateConfig,
     hold_companies: set[str],
     indexes: TrackerIndexes,
-    source_seen: set[str],
+    source_seen: dict[str, SeenDecision],
     write_rejected_debug: bool = False,
     cache_descriptions: bool = True,
+    policy: str | None = None,
 ) -> ScreenResult:
     result = ScreenResult()
+    current_policy = policy if policy is not None else policy_version(candidate_cfg)
+
+    def record(key: str, verdict: str, reason: str) -> None:
+        """Recorded after the decision, never before it (spec 031).
+
+        The old code added the key on sight, so a posting suppressed before
+        any gate ran could never be judged later and no rule change could
+        ever reach it.
+        """
+        source_seen[key] = SeenDecision(verdict, reason, current_policy, now_iso())
 
     for job in jobs:
         job_key = job["job_key"].strip()
@@ -150,7 +168,6 @@ def screen_jobs(
             result.skipped_seen += 1
             continue
 
-        source_seen.add(job_key)
         company_norm = normalize(job["company"])
         title_norm = normalize(job["title"])
         url_norm = normalize(job["url"])
@@ -159,6 +176,7 @@ def screen_jobs(
 
         if company_norm in hold_companies:
             reject_reason = "hold"
+            record(job_key, REJECTED, reject_reason)
             result.rejected_counts[reject_reason] = result.rejected_counts.get(reject_reason, 0) + 1
             result.skipped_hold += 1
             if write_rejected_debug:
@@ -167,6 +185,7 @@ def screen_jobs(
 
         if not title_allowed(job["title"], candidate_cfg):
             reject_reason = "title"
+            record(job_key, REJECTED, reject_reason)
             result.rejected_counts[reject_reason] = result.rejected_counts.get(reject_reason, 0) + 1
             result.skipped_rejected += 1
             if write_rejected_debug:
@@ -175,6 +194,13 @@ def screen_jobs(
 
         remote_ok, remote_reason = remote_region_allowed(job, candidate_cfg)
         if not remote_ok:
+            # A slug, not the prose the gate returns. Every other gate records
+            # one, and a stored reason that is a sentence cannot be grouped:
+            # rewording the message in rules.py would silently split one cause
+            # into two (review finding on PR #33). The prose stays in
+            # rejected_counts, which is pre-existing behaviour that spec 032
+            # revisits along with the rules themselves.
+            record(job_key, REJECTED, REMOTE_REGION_REASON)
             result.rejected_counts[remote_reason] = result.rejected_counts.get(remote_reason, 0) + 1
             result.skipped_rejected += 1
             if write_rejected_debug:
@@ -187,6 +213,7 @@ def screen_jobs(
             or (external_key and external_key in indexes.external_keys)
         ):
             reject_reason = "tracker_duplicate"
+            record(job_key, REJECTED, reject_reason)
             result.rejected_counts[reject_reason] = result.rejected_counts.get(reject_reason, 0) + 1
             result.skipped_tracker_duplicate += 1
             if write_rejected_debug:
@@ -204,6 +231,7 @@ def screen_jobs(
         score, reasons = score_job(scored_job, candidate_cfg)
         if score < SCORE_CUTOFF:
             reject_reason = "low_score"
+            record(job_key, REJECTED, reject_reason)
             result.rejected_counts[reject_reason] = result.rejected_counts.get(reject_reason, 0) + 1
             result.skipped_rejected += 1
             if write_rejected_debug:
@@ -212,6 +240,7 @@ def screen_jobs(
                 )
             continue
 
+        record(job_key, ACCEPTED, "passed every gate")
         result.new_tracker_rows.append(build_tracker_row(scored_job, score, reasons))
         result.latest_items.append(_build_latest_item(scored_job, score, reasons, remote_reason))
         if url_norm:

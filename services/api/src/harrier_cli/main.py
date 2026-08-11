@@ -962,6 +962,37 @@ def _cmd_verify_backup(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_reconsider(args: argparse.Namespace) -> int:
+    from harrier.discovery import SOURCE_ORDER
+    from harrier.screening.config import load_candidate_config
+    from harrier.screening.reconsider import reconsider_source
+
+    conn = connect()
+    try:
+        candidate_cfg = load_candidate_config(conn)
+        sources = [args.source] if args.source else list(SOURCE_ORDER)
+        total_cleared = 0
+        for source in sources:
+            report = reconsider_source(conn, source, candidate_cfg, dry_run=not args.apply)
+            if report.examined:
+                print(report.describe())
+            total_cleared += report.changed
+        if not total_cleared:
+            # Not "everything used the current rules": zero is also what a
+            # watchlist of protected manual rejections produces, and saying
+            # the wrong one of those is a claim about the operator's own
+            # decisions (review finding on PR #33).
+            print("nothing is eligible to clear")
+            return 0
+        if args.apply:
+            print(f"{total_cleared} cleared; the next discovery run will judge them again")
+        else:
+            print(f"{total_cleared} would be cleared; re-run with --apply")
+    finally:
+        conn.close()
+    return 0
+
+
 def _settings_from_file(path: Path) -> dict[str, object]:
     from typing import cast
 
@@ -1424,6 +1455,16 @@ def build_parser() -> argparse.ArgumentParser:
     verify_backup = sub.add_parser("verify-backup", help="open an archive and query it")
     verify_backup.add_argument("archive")
     verify_backup.set_defaults(func=_cmd_verify_backup)
+
+    reconsider = sub.add_parser(
+        "reconsider",
+        help="re-open rejections made under screening rules that have since changed (spec 031)",
+    )
+    reconsider.add_argument("--source", default=None, help="one source (default: all)")
+    reconsider.add_argument(
+        "--apply", action="store_true", help="clear them; without this it only reports"
+    )
+    reconsider.set_defaults(func=_cmd_reconsider)
 
     parity = sub.add_parser("parity", help="parity verification against the old system (spec 022)")
     parity_sub = parity.add_subparsers(dest="parity_command", required=True)

@@ -29,7 +29,7 @@ from harrier.screening import (
 from harrier.screening.config import load_candidate_config
 from harrier.screening.descriptions import cache_job_descriptions
 from harrier.screening.normalized import NormalizedJob
-from harrier.screening.seen import load_seen_keys, save_seen_keys
+from harrier.screening.seen import load_seen, save_seen
 from harrier.sources import fetch_many
 from harrier.sources.apify_linkedin import (
     DEFAULT_COUNT as APIFY_DEFAULT_COUNT,
@@ -154,7 +154,7 @@ def _run_source(
     candidate_cfg = load_candidate_config(conn)
     hold_companies = load_hold_companies(conn)
     indexes = build_tracker_indexes(list_jobs(conn))
-    source_seen = load_seen_keys(source_name)
+    source_seen = load_seen(source_name)
     normalized_jobs = dedupe_normalized_jobs(jobs)
 
     result = screen_jobs(
@@ -176,7 +176,7 @@ def _run_source(
                 # The screen already deduped; a race with a concurrent add is
                 # the only path here. Count it as a tracker duplicate.
                 result.skipped_tracker_duplicate += 1
-        save_seen_keys(source_name, source_seen)
+        save_seen(source_name, source_seen)
 
     summary: dict[str, object] = {
         "generated_at": _now_iso(),
