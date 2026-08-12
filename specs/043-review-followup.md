@@ -113,10 +113,27 @@ anything is outstanding, and exits non-zero. What it must not do is decide
 that a finding has been dealt with: reading and answering stay judgement,
 and what has been read is recorded only when a person says so.
 
-Related, and found while fixing the above: `last_reviewed_sha` was never
-populated by `gather`, so "already reviewed at the current head" could not
-fire and the loop re-requested every cycle. Its tests passed because they
-built the state by hand rather than through `gather`.
+Two more, found by running the command against the pull requests it was
+written for rather than against its own fixtures.
+
+`last_reviewed_sha` was never populated by `gather`, so "already reviewed at
+the current head" could not fire and the loop re-requested every cycle. Its
+tests passed because they built the state by hand rather than through
+`gather`.
+
+And the mechanical half, the entire point of this spec, did nothing.
+`gather` asked `gh` for `.[].body` and split the output by line, calling each
+line a comment body. A comment body is multi-line, so every notice arrived in
+pieces, and the last piece carrying the marker was the closing
+`<!-- end of auto-generated comment: rate limited ... -->`, which holds no
+wait. Every genuinely rate-limited pull request reported "a rate-limit notice
+carried no readable wait" and was skipped. Six of them did, on the day this
+was written, while the tests passed: they handed the parser one whole notice
+directly, which is the shape production never produces. Comments are now
+parsed as JSON, one body per element, and
+`tests/test_review_followup.py::test_a_real_notice_survives_the_trip_through_gather`
+drives a real multi-line notice through `gather` because that is the only
+shape that can tell the two apart.
 
 ## Inputs, outputs, failure modes
 

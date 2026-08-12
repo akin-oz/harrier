@@ -18,6 +18,7 @@ import pytest
 
 from harrier.reviewfollowup import (
     DEFAULT_DAILY_LIMIT,
+    GRACE_MINUTES,
     REQUEST,
     RESPOND,
     SKIP,
@@ -303,6 +304,17 @@ def review(
     }
 
 
+def comment_payload(*bodies: str) -> str:
+    """Comments in the shape the API returns them: a JSON array of objects.
+
+    The stub used to hand back raw text, which let `gather` split it by line
+    and still look right. Production returns one body per element and the
+    bodies are multi-line, so a fixture that flattens them cannot show the
+    defect that flattening causes.
+    """
+    return json.dumps([{"body": body} for body in bodies])
+
+
 def stub_gh(comments: str, head: str, detail: str):
     """Answer by which call it is, graphql first.
 
@@ -328,7 +340,7 @@ def test_gather_reads_what_the_decision_needs(handled_env: Path) -> None:
     state = gather(
         39,
         stub_gh(
-            NOTICE.format(wait="8 minutes"),
+            comment_payload(NOTICE.format(wait="8 minutes")),
             "abc1234\n",
             payload(threads=[thread(f"t{n}") for n in range(17)]),
         ),
@@ -354,7 +366,7 @@ def test_gh_failing_is_reported_not_swallowed() -> None:
 
 def test_an_unreadable_payload_is_reported(handled_env: Path) -> None:
     with pytest.raises(FollowUpError, match="unexpected review payload"):
-        gather(39, stub_gh("", "abc\n", "not json"), owner="o", repo="r")
+        gather(39, stub_gh(comment_payload(), "abc\n", "not json"), owner="o", repo="r")
 
 
 def test_every_gh_call_names_the_repository() -> None:
@@ -370,7 +382,7 @@ def test_every_gh_call_names_the_repository() -> None:
             return "abc1234\n"
         if "graphql" in argv:
             return payload()
-        return ""
+        return comment_payload()
 
     gather(39, record, owner="o", repo="r")
     request_review(39, record, owner="o", repo="r")
@@ -394,7 +406,9 @@ def test_a_reply_in_a_resolved_thread_still_needs_an_answer(handled_env: Path) -
     """
     state = gather(
         39,
-        stub_gh("", "abc\n", payload(threads=[thread("t1", resolved=True, comment="c9")])),
+        stub_gh(
+            comment_payload(), "abc\n", payload(threads=[thread("t1", resolved=True, comment="c9")])
+        ),
         owner="o",
         repo="r",
     )
@@ -405,7 +419,7 @@ def test_a_reply_in_a_resolved_thread_still_needs_an_answer(handled_env: Path) -
 def test_a_thread_we_answered_last_is_not_outstanding(handled_env: Path) -> None:
     state = gather(
         39,
-        stub_gh("", "abc\n", payload(threads=[thread("t1", author="akin-oz")])),
+        stub_gh(comment_payload(), "abc\n", payload(threads=[thread("t1", author="akin-oz")])),
         owner="o",
         repo="r",
     )
@@ -423,7 +437,10 @@ def test_a_finding_outside_the_diff_is_found(handled_env: Path) -> None:
         "inline due to platform limitations."
     )
     state = gather(
-        39, stub_gh("", "abc\n", payload(reviews=[review("r1", body=body)])), owner="o", repo="r"
+        39,
+        stub_gh(comment_payload(), "abc\n", payload(reviews=[review("r1", body=body)])),
+        owner="o",
+        repo="r",
     )
     assert state.outstanding
     assert state.unread_reviews[0].actionable_count == 4
@@ -436,7 +453,9 @@ def test_a_summary_review_is_not_treated_as_a_finding(handled_env: Path) -> None
     state = gather(
         39,
         stub_gh(
-            "", "abc\n", payload(reviews=[review("r1", body="Walkthrough: this adds a thing")])
+            comment_payload(),
+            "abc\n",
+            payload(reviews=[review("r1", body="Walkthrough: this adds a thing")]),
         ),
         owner="o",
         repo="r",
@@ -446,11 +465,11 @@ def test_a_summary_review_is_not_treated_as_a_finding(handled_env: Path) -> None
 
 def test_answering_is_remembered_so_it_does_not_resurface(handled_env: Path) -> None:
     detail = payload(threads=[thread("t1", comment="c9")])
-    first = gather(39, stub_gh("", "abc\n", detail), owner="o", repo="r")
+    first = gather(39, stub_gh(comment_payload(), "abc\n", detail), owner="o", repo="r")
     assert first.outstanding
 
     record_handled(outstanding_identifiers(first))
-    second = gather(39, stub_gh("", "abc\n", detail), owner="o", repo="r")
+    second = gather(39, stub_gh(comment_payload(), "abc\n", detail), owner="o", repo="r")
     assert not second.outstanding
 
 
@@ -458,12 +477,15 @@ def test_a_further_reply_comes_back_after_being_answered(handled_env: Path) -> N
     """Keyed on the comment, not the thread: a thread already answered can
     gain another reply, and that reply is a new thing to read."""
     first = gather(
-        39, stub_gh("", "abc\n", payload(threads=[thread("t1", comment="c9")])), owner="o", repo="r"
+        39,
+        stub_gh(comment_payload(), "abc\n", payload(threads=[thread("t1", comment="c9")])),
+        owner="o",
+        repo="r",
     )
     record_handled(outstanding_identifiers(first))
     again = gather(
         39,
-        stub_gh("", "abc\n", payload(threads=[thread("t1", comment="c10")])),
+        stub_gh(comment_payload(), "abc\n", payload(threads=[thread("t1", comment="c10")])),
         owner="o",
         repo="r",
     )
@@ -491,7 +513,7 @@ def test_the_reviewed_sha_is_read_from_the_reviews(handled_env: Path) -> None:
     passed because they built the state by hand rather than through gather."""
     state = gather(
         39,
-        stub_gh("", "abc1234\n", payload(reviews=[review("r1", commit="abc1234")])),
+        stub_gh(comment_payload(), "abc1234\n", payload(reviews=[review("r1", commit="abc1234")])),
         owner="o",
         repo="r",
     )
@@ -505,9 +527,56 @@ def test_a_review_with_no_threads_still_counts_as_reviewed(handled_env: Path) ->
     unreviewed and be asked again."""
     state = gather(
         39,
-        stub_gh("", "abc\n", payload(reviews=[review("r1", body="Walkthrough")])),
+        stub_gh(comment_payload(), "abc\n", payload(reviews=[review("r1", body="Walkthrough")])),
         owner="o",
         repo="r",
     )
     assert state.review_threads == 0
     assert state.reviewed
+
+
+def test_a_real_notice_survives_the_trip_through_gather(handled_env: Path) -> None:
+    """The wait is read from a comment as the API actually returns it.
+
+    Everything else here proved `newest_notice` and `parse_wait_minutes`
+    against one whole notice handed in directly. `gather` split the API output
+    by line and called each line a comment body, so the notice arrived in
+    pieces and the last piece carrying the marker was the closing
+    `<!-- end of auto-generated comment: rate limited ... -->`, which has no
+    wait in it. Every genuinely rate-limited pull request reported "a
+    rate-limit notice carried no readable wait", and the whole feature did
+    nothing, while these tests passed.
+
+    So this one goes through `gather` with a multi-line notice, which is the
+    only shape that can tell the two apart.
+    """
+    state = gather(
+        39,
+        stub_gh(comment_payload(NOTICE.format(wait="52 minutes")), "abc\n", payload()),
+        owner="o",
+        repo="r",
+    )
+    decision = decide(state, requests_today=0, daily_limit=6)
+    assert decision.action == WAIT
+    assert decision.wait_minutes == 52 + GRACE_MINUTES
+
+
+def test_a_notice_among_other_comments_is_still_found(handled_env: Path) -> None:
+    """Bodies are separate elements, so an ordinary comment between two
+    notices cannot merge with either."""
+    state = gather(
+        39,
+        stub_gh(
+            comment_payload(
+                NOTICE.format(wait="8 minutes"),
+                "Looks good to me\nwith a second line",
+                NOTICE.format(wait="30 minutes"),
+            ),
+            "abc\n",
+            payload(),
+        ),
+        owner="o",
+        repo="r",
+    )
+    # The newest notice wins, which is the whole reason newest_notice exists.
+    assert decide(state, requests_today=0, daily_limit=6).wait_minutes == 30 + GRACE_MINUTES

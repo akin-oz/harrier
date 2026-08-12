@@ -387,9 +387,16 @@ def gather(number: int, run: GitHubRunner, *, owner: str, repo: str) -> PullRequ
     (ADR-008).
     """
     try:
-        bodies_raw = run(
-            ["api", f"repos/{owner}/{repo}/issues/{number}/comments", "--jq", ".[].body"]
-        )
+        # The whole JSON, parsed here. `--jq .[].body` emits the bodies
+        # newline-separated and a comment body is itself multi-line, so there
+        # is no way to tell one body from the next in that output. Splitting
+        # it by line shredded every notice: `newest_notice` then matched the
+        # closing `<!-- end of auto-generated comment: rate limited ... -->`
+        # marker, which carries no wait, and the whole feature reported "a
+        # rate-limit notice carried no readable wait" against every genuinely
+        # rate-limited pull request. The tests passed because they handed the
+        # parser one whole notice as a single element.
+        comments_raw = run(["api", f"repos/{owner}/{repo}/issues/{number}/comments"])
         # --repo explicitly. `gh pr` resolves the repository from the working
         # directory, so without it this works when run from a checkout and
         # fails with "not a git repository" anywhere else, including from a
@@ -429,6 +436,12 @@ def gather(number: int, run: GitHubRunner, *, owner: str, repo: str) -> PullRequ
         )
     except Exception as error:
         raise FollowUpError(f"could not read pull request {number}: {error}") from error
+
+    try:
+        comment_payload: object = json.loads(comments_raw)
+    except json.JSONDecodeError as error:
+        raise FollowUpError(f"unexpected comment payload for {number}: {error}") from error
+    comment_bodies = [str(_as_dict(entry).get("body") or "") for entry in _as_list(comment_payload)]
 
     try:
         payload: object = json.loads(detail_raw)
@@ -479,7 +492,7 @@ def gather(number: int, run: GitHubRunner, *, owner: str, repo: str) -> PullRequ
         number=number,
         head_sha=head,
         review_threads=len(threads),
-        comment_bodies=[line for line in bodies_raw.split("\n") if line] or [bodies_raw],
+        comment_bodies=comment_bodies,
         last_reviewed_sha=reviewed_sha,
         reviews_seen=sum(1 for review in reviews if review.from_reviewer),
         awaiting=tuple(threads_awaiting_reply(threads, handled)),
