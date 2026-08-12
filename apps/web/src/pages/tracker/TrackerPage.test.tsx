@@ -336,5 +336,8 @@ test("the other verbs are out of reach while a rejection reason is being typed",
   expect(within(row).queryByRole("button", { name: "Rescore" })).toBeNull();
 
   await user.click(within(row).getByRole("button", { name: "Cancel" }));
+  // Both, not just one. Asserting only Shortlist let a regression that kept
+  // Rescore hidden after cancelling pass (review finding on PR #41).
   expect(within(row).getByRole("button", { name: "Shortlist" })).toBeDefined();
+  expect(within(row).getByRole("button", { name: "Rescore" })).toBeDefined();
 });

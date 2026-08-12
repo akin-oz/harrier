@@ -104,7 +104,8 @@ def add_manually(
     otherwise by company and title, which is how `find_duplicate` matches. The
     lookup used to run only when a URL was given, so a URL-less duplicate was
     correctly refused and then reported with nothing attached, which is the
-    one case where the message needed the row most (review finding on PR #41).
+    one case where the message needed the row most. Proved by
+    `tests/test_ui_tracker.py::test_a_duplicate_without_a_url_still_carries_the_row_it_clashed_with`.
     """
     result = add_captured_job(
         conn,
