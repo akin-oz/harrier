@@ -78,28 +78,35 @@ export function JobActions({ job }: Props) {
 
   return (
     <div className="job-actions">
-      {VERBS.filter((entry) => entry.verb !== "reject").map((entry) => (
+      {/* While a rejection reason is being typed, the row is mid-decision and
+          the other verbs are not what to do next. They used to stay live, so
+          a click landed a status change on a row the operator was in the
+          middle of rejecting (review finding on PR #41). */}
+      {!asking &&
+        VERBS.filter((entry) => entry.verb !== "reject").map((entry) => (
+          <button
+            key={entry.verb}
+            type="button"
+            disabled={busy || job.status === "rejected"}
+            onClick={() => {
+              change.mutate({ verb: entry.verb });
+            }}
+          >
+            {entry.label}
+          </button>
+        ))}
+
+      {!asking && (
         <button
-          key={entry.verb}
           type="button"
-          disabled={busy || job.status === "rejected"}
+          disabled={busy}
           onClick={() => {
-            change.mutate({ verb: entry.verb });
+            rescore.mutate();
           }}
         >
-          {entry.label}
+          Rescore
         </button>
-      ))}
-
-      <button
-        type="button"
-        disabled={busy}
-        onClick={() => {
-          rescore.mutate();
-        }}
-      >
-        Rescore
-      </button>
+      )}
 
       {asking ? (
         <span className="job-actions__reason">

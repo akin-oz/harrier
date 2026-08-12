@@ -261,19 +261,31 @@ test("a successful add clears the form and refetches the tracker", async () => {
 test("every tracker write carries the token and no read does", async () => {
   // Spec 042 declares spec 035 a hard dependency: these buttons reach
   // destructive writes from any page open in the browser.
-  const seen: { url: string; token: string | null }[] = [];
+  //
+  // All three writes, not one. This used to send only the status change while
+  // claiming to cover every write, so a token regression in the manual add or
+  // the rescore would have passed it (review finding on PR #41).
+  const seen: { url: string; method: string; token: string | null }[] = [];
   vi.stubGlobal(
     "fetch",
     vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(String(input), init);
       const url = new URL(request.url);
-      seen.push({ url: url.pathname, token: request.headers.get("X-Harrier-Token") });
+      seen.push({
+        url: url.pathname,
+        method: request.method,
+        token: request.headers.get("X-Harrier-Token"),
+      });
       const body =
         url.pathname === "/api/session"
           ? { token: "test-token" }
           : url.pathname === "/api/jobs"
             ? [job(1, "Northwind", "80")]
-            : job(1, "Northwind", "80");
+            : url.pathname === "/api/tracker"
+              ? { status: "added", message: "added", job: job(9, "Northwind", "70") }
+              : url.pathname.endsWith("/rescore")
+                ? { previous: "80", current: 81, job: job(1, "Northwind", "81") }
+                : job(1, "Northwind", "80");
       return Promise.resolve(
         new Response(JSON.stringify(body), {
           status: 200,
@@ -287,10 +299,42 @@ test("every tracker write carries the token and no read does", async () => {
 
   const row = await rowFor("Northwind");
   await user.click(within(row).getByRole("button", { name: "Shortlist" }));
+  await user.click(within(row).getByRole("button", { name: "Rescore" }));
+  await user.click(screen.getByRole("button", { name: "Add a job by hand" }));
+  await user.type(screen.getByLabelText("Company"), "Alder");
+  await user.type(screen.getByLabelText("Title"), "Senior Frontend Engineer");
+  await user.click(screen.getByRole("button", { name: "Add" }));
 
-  await waitFor(() => {
-    expect(seen.some((call) => call.url === "/api/tracker/1/status")).toBe(true);
-  });
-  expect(seen.find((call) => call.url === "/api/tracker/1/status")?.token).toBe("test-token");
-  expect(seen.find((call) => call.url === "/api/jobs")?.token).toBeNull();
+  const writes = ["/api/tracker/1/status", "/api/tracker/1/rescore", "/api/tracker"];
+  for (const path of writes) {
+    await waitFor(() => {
+      expect(seen.some((call) => call.url === path && call.method === "POST")).toBe(true);
+    });
+    const call = seen.find((entry) => entry.url === path && entry.method === "POST");
+    expect(call?.token, `${path} did not carry the token`).toBe("test-token");
+  }
+  // And no read carries it: sending it to every GET would gain nothing and
+  // make it that much easier to leak.
+  expect(seen.filter((call) => call.method === "GET").every((call) => call.token === null)).toBe(
+    true,
+  );
+});
+
+test("the other verbs are out of reach while a rejection reason is being typed", async () => {
+  // The row is mid-decision. They used to stay live, so a click could land a
+  // status change on a row the operator was in the middle of rejecting
+  // (review finding on PR #41).
+  stubApi({ jobs: [job(1, "Northwind", "80")] });
+  const user = userEvent.setup();
+  renderPage();
+
+  const row = await rowFor("Northwind");
+  expect(within(row).getByRole("button", { name: "Shortlist" })).toBeDefined();
+
+  await user.click(within(row).getByRole("button", { name: "Reject" }));
+  expect(within(row).queryByRole("button", { name: "Shortlist" })).toBeNull();
+  expect(within(row).queryByRole("button", { name: "Rescore" })).toBeNull();
+
+  await user.click(within(row).getByRole("button", { name: "Cancel" }));
+  expect(within(row).getByRole("button", { name: "Shortlist" })).toBeDefined();
 });

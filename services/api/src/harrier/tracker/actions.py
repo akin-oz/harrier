@@ -99,6 +99,12 @@ def add_manually(
     carries no row and both callers want to show what happened. A duplicate
     returns the existing row rather than nothing: "already tracked" is more
     useful with the tracked thing attached.
+
+    The row is found the way the duplicate was: by URL when there is one, and
+    otherwise by company and title, which is how `find_duplicate` matches. The
+    lookup used to run only when a URL was given, so a URL-less duplicate was
+    correctly refused and then reported with nothing attached, which is the
+    one case where the message needed the row most (review finding on PR #41).
     """
     result = add_captured_job(
         conn,
@@ -110,10 +116,16 @@ def add_manually(
         description=description,
     )
     wanted = url.strip()
-    if wanted:
-        for candidate in list_jobs(conn):
-            if candidate["url"] == wanted:
-                return result, candidate
+    wanted_company = company.strip().casefold()
+    wanted_title = title.strip().casefold()
+    for candidate in list_jobs(conn):
+        if wanted and candidate["url"] == wanted:
+            return result, candidate
+        if not wanted and (
+            candidate["company"].casefold() == wanted_company
+            and candidate["title"].casefold() == wanted_title
+        ):
+            return result, candidate
     return result, None
 
 

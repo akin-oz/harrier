@@ -303,8 +303,28 @@ def test_a_change_over_http_is_visible_to_the_cli(
 ) -> None:
     """One tracker, not two. The browser and the command line are looking at
     the same rows."""
-    client.post(f"/tracker/{job_id}/status", json={"verb": "shortlisted"}, headers=auth())
+    # `shortlisted` is a status, not a verb, so this is refused and changes
+    # nothing. It used to sit here unasserted, which meant the assertion below
+    # passed on the next line alone (review finding on PR #41). Kept as a
+    # refusal worth covering rather than deleted.
+    refused = client.post(f"/tracker/{job_id}/status", json={"verb": "shortlisted"}, headers=auth())
+    assert refused.status_code == 409
     client.post(f"/tracker/{job_id}/status", json={"verb": "shortlist"}, headers=auth())
     conn: sqlite3.Connection = connect()
     assert get_job(conn, job_id)["status"] == "shortlisted"
     conn.close()
+
+
+def test_a_duplicate_without_a_url_still_carries_the_row_it_clashed_with(
+    env: Path, client: TestClient
+) -> None:
+    """Duplicates are matched by company and title as well as by URL, so the
+    answer has to find the row the same way (review finding on PR #41)."""
+    payload = {"company": "Alder Works", "title": "Senior Frontend Engineer"}
+    first = client.post("/tracker", json=payload, headers=auth())
+    assert first.json()["status"] == "added"
+
+    second = client.post("/tracker", json=payload, headers=auth())
+    assert second.json()["status"] == "duplicate"
+    assert second.json()["job"] is not None
+    assert second.json()["job"]["company"] == "Alder Works"
