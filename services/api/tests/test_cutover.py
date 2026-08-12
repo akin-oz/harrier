@@ -16,6 +16,7 @@ import pytest
 import harrier.cutover as cutover_module
 from harrier.cutover import (
     OLD_LABELS,
+    STEP_INSTALL,
     CutoverError,
     CutoverResult,
     env_check,
@@ -589,3 +590,148 @@ def test_a_quiesce_failure_still_writes_a_log(
         agents_dir=agents_dir_with_plists(tmp_path),
     )
     assert (tmp_path / "data" / "cutover" / "2026-08-10-1200.md").is_file()
+
+
+# --- review findings on PR #37 -----------------------------------------------
+
+
+def test_a_refused_execution_still_writes_a_log(
+    db: sqlite3.Connection, old_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec 037 requires a record for refusals, and these two paths raised
+    before reaching the log, so the attempts that never started were the only
+    ones that left no trace of having been attempted."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    with pytest.raises(CutoverError, match="preflight is blocked"):
+        run_cutover(
+            db,
+            old_root=old_repo,
+            stamp="2026-08-10-1300",
+            execute=True,
+            attested=True,
+            launchctl=loaded,
+        )
+    log = tmp_path / "data" / "cutover" / "2026-08-10-1300.md"
+    assert log.is_file()
+    assert "refused" in log.read_text(encoding="utf-8")
+
+
+def test_a_refused_attestation_still_writes_a_log(
+    db: sqlite3.Connection,
+    old_repo: Path,
+    ready_checklist: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    with pytest.raises(CutoverError, match="attestations have not been made"):
+        run_cutover(
+            db,
+            old_root=old_repo,
+            stamp="2026-08-10-1400",
+            execute=True,
+            attested=False,
+            checklist_path=ready_checklist,
+            launchctl=loaded,
+        )
+    assert (tmp_path / "data" / "cutover" / "2026-08-10-1400.md").is_file()
+
+
+def test_an_unreadable_progress_record_stops_rather_than_restarting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A truncated record used to read as "nothing has happened yet".
+
+    Cutover is neither idempotent nor repeatable, so restarting from zero
+    would take a second snapshot over a system that is already half moved.
+    """
+    monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
+    path = cutover_module.progress_path("2026-08-10-1500")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("", encoding="utf-8")
+    with pytest.raises(CutoverError, match="cannot be read"):
+        cutover_module.resume_from("2026-08-10-1500")
+
+
+def test_a_progress_record_of_the_wrong_shape_stops_too(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
+    path = cutover_module.progress_path("2026-08-10-1600")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('["not", "a", "record"]', encoding="utf-8")
+    with pytest.raises(CutoverError, match="not a cutover record"):
+        cutover_module.resume_from("2026-08-10-1600")
+
+
+def test_progress_is_written_through_a_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`write_text` truncates first, so an interruption between the truncate
+    and the write left the empty file the test above is about. Nothing ever
+    observes the target mid-write now."""
+    monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
+    result = CutoverResult(executed=True)
+    result.completed.append("quiesce")
+    with patch("harrier.cutover.os.replace") as replace:
+        cutover_module._record_progress("2026-08-10-1700", result, execute=True)  # pyright: ignore[reportPrivateUsage]
+    assert replace.call_count == 1
+    # The target was never opened for writing directly.
+    assert not cutover_module.progress_path("2026-08-10-1700").exists()
+
+
+def test_a_failed_schedule_install_fails_the_cutover(
+    db: sqlite3.Connection,
+    old_repo: Path,
+    ready_checklist: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The install step is the one that makes anything run at all.
+
+    The CLI wrapper returned the installer's lines whether or not it worked,
+    and a return reads as success here, so the cutover marked the step
+    complete and cleared its progress: it reported success while the old jobs
+    were stopped and the new schedule was never installed.
+    """
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+
+    def failing_install() -> list[str]:
+        raise RuntimeError("launchctl bootstrap refused")
+
+    result = run_cutover(
+        db,
+        old_root=old_repo,
+        stamp="2026-08-10-1800",
+        execute=True,
+        attested=True,
+        checklist_path=ready_checklist,
+        launchctl=lambda args: (0, "", ""),
+        install=failing_install,
+    )
+    assert not result.ok
+    assert any("schedule install failed" in line for line in result.failures)
+    assert STEP_INSTALL not in result.completed
+
+
+def test_the_cli_wrapper_raises_when_the_installer_reports_failure() -> None:
+    """The defect was in the wrapper, so the wrapper is what this exercises.
+
+    Asserting on `run_cutover` alone would have passed throughout: it never
+    saw a failure, because the wrapper swallowed it into a line of text.
+    """
+    from harrier.schedule import InstallResult
+    from harrier_cli.main import cutover_installer
+
+    failed = InstallResult()
+    failed.failures.append("bootstrap refused")
+    with (
+        patch("harrier.schedule.install_schedule", return_value=failed),
+        pytest.raises(RuntimeError, match="bootstrap refused"),
+    ):
+        cutover_installer()
+
+    worked = InstallResult()
+    worked.lines.append("installed 3 plists")
+    with patch("harrier.schedule.install_schedule", return_value=worked):
+        assert "installed 3 plists" in cutover_installer()

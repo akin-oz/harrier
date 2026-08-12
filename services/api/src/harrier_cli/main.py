@@ -605,6 +605,30 @@ def _cmd_digest(args: argparse.Namespace) -> int:
     return rc
 
 
+def cutover_installer() -> list[str]:
+    """Install the new schedule during cutover, raising if it does not.
+
+    Module level rather than a closure inside the cutover command, because
+    the defect this carries was in the wrapper and a closure cannot be tested
+    without running a whole cutover.
+    `tests/test_cutover.py::test_the_cli_wrapper_raises_when_the_installer_reports_failure`
+    calls it directly.
+
+    A failed install has to raise. This used to return the installer's lines
+    with `ok=False` appended, and `run_cutover` reads a return as success: it
+    marked the install step complete and cleared the progress record, so a
+    cutover reported success while the old jobs were stopped and the new
+    schedule was never installed. Nothing runs at all without this step
+    (review finding on PR #37).
+    """
+    from harrier.schedule import install_schedule
+
+    outcome = install_schedule()
+    if not outcome.ok:
+        raise RuntimeError("; ".join(outcome.failures) or "the schedule did not install")
+    return [*outcome.lines, "schedule install ok=True"]
+
+
 def _cmd_cutover(args: argparse.Namespace) -> int:
     from datetime import UTC, datetime
 
@@ -629,11 +653,7 @@ def _cmd_cutover(args: argparse.Namespace) -> int:
             print("\nevery mechanical check passes; the attestations above are yours to make")
             return 0
 
-        def install() -> list[str]:
-            from harrier.schedule import install_schedule
-
-            outcome = install_schedule()
-            return [*outcome.lines, f"schedule install ok={outcome.ok}"]
+        install = cutover_installer
 
         try:
             result = run_cutover(

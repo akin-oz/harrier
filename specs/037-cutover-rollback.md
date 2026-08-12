@@ -35,8 +35,14 @@ frame, not the innermost, so any exception leaves a log and a rollback
 attempt rather than a traceback.
 
 **The log is written on every path.** Success, refusal, failure, and rollback
-each produce a record, written before the step that could fail rather than
-after the one that did.
+each produce a record. The timing is after, not before: `_finish` in
+`services/api/src/harrier/cutover.py` writes the log once the run has
+resolved, and `_record_progress` records a step once it has completed, so
+what is written is what happened rather than what was about to be attempted.
+The honest limitation is that a process killed mid-step leaves the progress
+record naming the last completed step and no final log at all; the progress
+record is what makes the next invocation resumable, and an unreadable one
+stops rather than restarting.
 
 **Rollback verifies its assumptions.** The old scheduler's location is
 discovered rather than assumed, and a rollback that cannot restore says so
@@ -46,9 +52,15 @@ loudly instead of reporting success.
 second invocation after a partial failure continues rather than repeating
 steps that already ran.
 
-**A dry run that exercises the failure paths.** The current dry run proves
-the preflight; this adds a rehearsal that injects a failure at each step and
-shows the operator what state they would be left in.
+**Failure paths that are exercised.** The current dry run proves the
+preflight only. Every row of the end-state table below is covered by a test
+that injects that failure and asserts the state it leaves behind.
+
+A separate operator-facing rehearsal mode is **out of scope**. It was in an
+earlier draft of this spec and is not built: the tests give the same coverage
+of the end states, and a command whose output restated what they already
+assert would be a second description of the same behaviour to keep in step.
+Recorded here rather than left as a criterion nothing satisfies.
 
 ## Inputs, outputs, failure modes
 
@@ -62,13 +74,21 @@ shows the operator what state they would be left in.
   | during quiesce | old scheduler running, nothing installed |
   | after quiesce, during copy | old scheduler running, log written |
   | after copy, during install | old scheduler running or new installed, never neither, log written |
-  | during rollback itself | log names the exact manual step needed |
+  | during rollback itself | incomplete rollback: log names the exact manual step needed |
 
+- A third end state exists and is deliberate: **incomplete rollback**. If the
+  rollback itself cannot finish, the machine is neither cut over nor restored,
+  and the log names the manual step that would finish it
+  (`services/api/tests/test_cutover.py::test_a_rollback_with_no_plist_names_the_manual_step`).
+  Pretending only two states exist would mean the one that needs a human is
+  the one nobody wrote down.
 - Failure mode this must not introduce: a rollback that runs on a machine
   already successfully cut over, undoing a good outcome.
 - The honest limitation: a machine that loses power mid-copy cannot be
   rescued by code in that process. Resume from the recorded step is what
-  covers it, which is why the record is written before each step.
+  covers it, which is why each completed step is recorded as it completes,
+  through an atomic replacement so a half-written record cannot be mistaken
+  for an empty one.
 
 ## Acceptance criteria
 
@@ -82,7 +102,7 @@ Proven by services/api/tests/test_cutover.py, alongside the existing cases:
 | a rollback that cannot complete names the manual step | `test_a_rollback_with_no_plist_names_the_manual_step` |
 | a second invocation resumes rather than repeating | `test_a_second_invocation_resumes_rather_than_repeating` |
 | a completed run leaves no stale progress record | `test_a_successful_run_clears_the_progress_record` |
-| no machine or account name is committed | the log and the progress file are written under the data directory, never into the repository (ADR-008), which `write_log` already enforced and this spec did not change |
+| the log and the progress record are written under the data directory, never into the repository | `services/api/tests/test_cutover.py::test_a_full_execution_quiesces_snapshots_verifies_and_installs` asserts the log path resolves under `data/`. Limitation: this proves where the files are written, not that nobody can commit them. Nothing under `data/` is tracked and it is gitignored, but that is a repository property enforced by `.gitignore` and the secret scan, not by this code (ADR-008) |
 
 One test in the existing suite could not fail, and finding it is the reason
 the plist check matters. `test_a_failed_unload_rolls_back_what_was_already_stopped`
@@ -93,10 +113,10 @@ only because nothing checked. The fixture now writes the plists, which is
 what a machine running those jobs actually has, and the missing-plist case
 has its own test.
 
-The rehearsal named in the scope is not built as a separate mode. Each
-injected failure is a test instead, which gives the same coverage of the
-end states and does not add a command whose output would restate what the
-tests already assert. Stated here rather than left as an unmet criterion.
+The rehearsal is out of scope rather than pending: see the scope section. It
+was previously described here as an unbuilt scope item while the criteria
+still ticked it, which is the shape of dishonest gate this repository exists
+to avoid (review finding on PR #37).
 
 - [x] every row of the table above has a test that injects the failure and
       asserts the end state
@@ -107,8 +127,8 @@ tests already assert. Stated here rather than left as an unmet criterion.
 - [x] a rollback that cannot complete exits non-zero and names the manual step
 - [x] a second invocation after a partial failure resumes and does not repeat
       a completed step
-- [x] the rehearsal reports the end state for each injected failure without
-      touching the real scheduler
+- [x] every injected failure asserts its end state without touching the real
+      scheduler (a separate rehearsal command is out of scope, above)
 - [x] no machine name, account name, or absolute home path is written to a
       committed file (ADR-008)
 - [ ] All gates green on PR

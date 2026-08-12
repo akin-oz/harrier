@@ -24,6 +24,7 @@ phase 0 rule that the old repo is read-only as a codebase.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sqlite3
 from collections.abc import Callable
@@ -345,10 +346,23 @@ def resume_from(stamp: str) -> tuple[str, ...]:
         return ()
     try:
         parsed: object = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return ()
+    except (OSError, json.JSONDecodeError) as error:
+        # Not "no record". A record that exists and cannot be read means a
+        # previous invocation got far enough to write one, and cutover is
+        # neither idempotent nor repeatable, so restarting from zero would
+        # take a second snapshot over a system that is already half moved.
+        # Refusing and naming the file is the only safe answer (review
+        # finding on PR #37).
+        raise CutoverError(
+            f"the progress record at {path} exists but cannot be read ({error}). "
+            "A previous cutover wrote it, so this is not a fresh start. "
+            "Inspect it, and delete it only if you are certain no step ran."
+        ) from error
     if not isinstance(parsed, dict):
-        return ()
+        raise CutoverError(
+            f"the progress record at {path} is not a cutover record. "
+            "Inspect it, and delete it only if you are certain no step ran."
+        )
     steps = cast("dict[str, object]", parsed).get("completed")
     if not isinstance(steps, list):
         return ()
@@ -360,7 +374,13 @@ def _record_progress(stamp: str, result: CutoverResult, *, execute: bool) -> Non
         return
     path = progress_path(stamp)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"completed": result.completed}, indent=2), encoding="utf-8")
+    # Written through a replacement rather than in place. `write_text`
+    # truncates first, so an interruption between the truncate and the write
+    # left an empty file, and an empty file used to read as "nothing has
+    # happened yet" (review finding on PR #37).
+    scratch = path.with_name(f"{path.name}.partial")
+    scratch.write_text(json.dumps({"completed": result.completed}, indent=2), encoding="utf-8")
+    os.replace(scratch, path)
 
 
 def _finish(stamp: str, result: CutoverResult, *, execute: bool) -> None:
@@ -369,6 +389,20 @@ def _finish(stamp: str, result: CutoverResult, *, execute: bool) -> None:
     result.lines.append(f"{'wrote' if execute else 'would write'} the cutover log to {log_path}")
     if execute and result.ok:
         progress_path(stamp).unlink(missing_ok=True)
+
+
+def _refuse(stamp: str, result: CutoverResult, *, execute: bool, reason: str) -> None:
+    """Log the refusal, then raise it.
+
+    Spec 037 requires a record for refusals, and these two paths raised
+    before reaching `_finish`, so the executions that never started were the
+    only ones that left no trace of having been attempted (review finding on
+    PR #37).
+    """
+    result.failures.append(reason)
+    result.lines.append(f"refused: {reason}")
+    _finish(stamp, result, execute=execute)
+    raise CutoverError(reason)
 
 
 def run_cutover(
@@ -403,14 +437,24 @@ def run_cutover(
         # only the execution is refused.
         result.blocked = [check.line() for check in checks.blocked]
         if execute:
-            raise CutoverError(
-                "preflight is blocked; run `harrier cutover preflight` and clear it first:\n"
-                + "\n".join(result.blocked)
+            _refuse(
+                stamp,
+                result,
+                execute=execute,
+                reason=(
+                    "preflight is blocked; run `harrier cutover preflight` and clear it "
+                    "first:\n" + "\n".join(result.blocked)
+                ),
             )
     if execute and not attested:
-        raise CutoverError(
-            "the attestations have not been made; re-run with --attested once every "
-            "line under `harrier cutover preflight` is true"
+        _refuse(
+            stamp,
+            result,
+            execute=execute,
+            reason=(
+                "the attestations have not been made; re-run with --attested once every "
+                "line under `harrier cutover preflight` is true"
+            ),
         )
 
     directory = agents_dir if agents_dir is not None else launch_agents_dir()
