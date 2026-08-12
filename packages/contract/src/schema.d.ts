@@ -395,8 +395,6 @@ export interface components {
             location: string;
             /** Manual Added */
             manual_added: string;
-            /** Manual Reject */
-            manual_reject: string;
             /** Next Action */
             next_action: string;
             /** Next Outreach Action */

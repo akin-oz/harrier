@@ -12,6 +12,7 @@ import sqlite3
 from collections.abc import Mapping
 from datetime import date, timedelta
 
+from harrier.tracker.invariants import all_breaches
 from harrier.tracker.schema import (
     CONTACT_FIELDS,
     NEXT_ACTION_DEFAULTS,
@@ -19,6 +20,7 @@ from harrier.tracker.schema import (
     STATUSES,
     TRACKER_FIELDS,
 )
+from harrier.tracker.transitions import check_transition, fields_a_move_clears
 
 
 class TrackerError(Exception):
@@ -149,12 +151,21 @@ def set_status(
     applied_date: str | None = None,
     rejection_reason: str | None = None,
 ) -> dict[str, str]:
-    """The only status setter. Validates the target and stamps per-status defaults."""
+    """The only status setter. Enforces the transition and stamps what it drags.
+
+    Membership in STATUSES used to be the whole check, so a job could go from
+    prospect straight to interviewing, and three illegal states were reachable
+    through this path (spec 036). The permitted moves are derived in
+    `harrier.tracker.transitions`, and what a move must clear comes from the
+    same place, so a new status cannot gain a rule in one and not the other.
+    """
     if status not in STATUSES:
         raise UnknownStatusError(f"unknown status {status!r}; legal: {', '.join(STATUSES)}")
     job = get_job(conn, job_id)
+    check_transition(job["status"], status)
 
     updates: dict[str, str] = {"status": status}
+    updates.update(fields_a_move_clears(job["status"], status))
     if status == "applied":
         applied = applied_date or date.today().isoformat()
         follow_up = (date.fromisoformat(applied) + timedelta(days=7)).isoformat()
@@ -185,7 +196,14 @@ def set_status(
 def update_fields(
     conn: sqlite3.Connection, job_id: int, fields: Mapping[str, str]
 ) -> dict[str, str]:
-    """Update non-status columns. Status changes must go through set_status."""
+    """Update non-status columns, refusing writes that break a status invariant.
+
+    Blocking the status column here was not enough. `applied_date` could be
+    cleared independently, leaving `status=applied` with no date, which is one
+    of the illegal states spec 036 exists to close. The invariant belongs to
+    the row rather than to the verb that happened to write it, so it is
+    checked on every path into the row and not only on the status move.
+    """
     allowed = set(TRACKER_FIELDS) | set(NOTE_KEYS)
     allowed.discard("status")
     unknown = [name for name in fields if name not in allowed]
@@ -196,7 +214,16 @@ def update_fields(
         )
     if not fields:
         return get_job(conn, job_id)
-    get_job(conn, job_id)
+    current = get_job(conn, job_id)
+    # Only a breach this write introduces. Refusing every write to a row that
+    # already breaks a rule would make rows written before these rules
+    # unrepairable, and the spec is explicit that they are reported and left
+    # alone rather than rewritten. `harrier check` is how they are found.
+    before = set(all_breaches(current))
+    after = all_breaches({**current, **{k: str(v) for k, v in fields.items()}})
+    introduced = [breach for breach in after if breach not in before]
+    if introduced:
+        raise TrackerError(introduced[0])
     assignments = ", ".join(f"{name} = ?" for name in fields)
     with conn:
         conn.execute(

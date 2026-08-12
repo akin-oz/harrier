@@ -52,8 +52,20 @@ all call it. Nothing else opens the database for writing.
 CSV keeps two roles it is genuinely good at:
 
 1. **Export**: `harrier export` writes `tracker/jobs.csv` and `tracker/contacts.csv` in
-   the current 20-column and 17-column shapes, and every mutating CLI command touches
-   the export afterward, so grep, diff, and backup workflows survive.
+   the current 20-column and 17-column shapes, on demand. An earlier version of this
+   ADR said every mutating CLI command refreshed the export afterwards. Nothing ever
+   did: `export_csv` is reached only from the export command, and the claim was
+   corrected rather than implemented (spec 036).
+
+   Implementing it would rewrite both files on every status change, which is a whole
+   tracker written to disk to record one decision, and it would put a second copy of
+   the truth back beside the database this ADR chose. The export is a view taken when
+   you want one. `services/api/tests/test_tracker_invariants.py::test_a_status_change_does_not_write_the_csv_export`
+   holds the code to what this now says.
+
+   The cost is real and is the point of naming it: a `tracker/jobs.csv` on disk can be
+   arbitrarily stale, so it is a snapshot rather than a mirror, and anything comparing
+   it against the database has to re-export first.
 2. **Import**: the one-shot migration reads the old repo's CSVs, expands the notes
    key=value pairs into columns, and preserves the original `notes` free text.
 

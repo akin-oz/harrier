@@ -42,7 +42,12 @@ NOTE_KEYS: tuple[str, ...] = (
     # cannot say whether it is comparable with the row above it.
     "scoring_version",
     "remote_filter",
-    "manual_reject",
+    # `manual_reject` was here. Nothing ever wrote it: not the CLI, not the
+    # API, not an importer. It was a column, a response field and a published
+    # contract field describing a decision the product does not record, and a
+    # reader who trusted it would have concluded no rejection was ever manual
+    # (spec 036). Removed rather than given a writer, because a rejection
+    # reason already says who decided and why.
     "manual_added",
 )
 
@@ -206,6 +211,22 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
                 last_success_at TEXT NOT NULL
             )
             """,
+        ],
+    ),
+    (
+        5,
+        [
+            # Numbered 5, not 4: migration 4 is spec 029's `job_runs`, already
+            # on main. The runner skips any version at or below the recorded
+            # one, so two migrations sharing a number, or a later one with a
+            # lower number, means one silently never runs.
+            #
+            # `manual_reject` had no writer anywhere (spec 036). Dropping the
+            # column is safe precisely because of that: there is nothing in
+            # it to lose. It stays in `_ORIGINAL_NOTE_KEYS` above, because
+            # migration 1 records the table as it was first created and
+            # rewriting history would break a database replaying from empty.
+            "ALTER TABLE jobs DROP COLUMN manual_reject",
         ],
     ),
 ]

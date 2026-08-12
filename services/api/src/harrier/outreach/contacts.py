@@ -75,8 +75,15 @@ def infer_relevance(role_title: str) -> str:
     return "other"
 
 
-def normalize_job_link(company: str, role: str, job_url: str) -> dict[str, str]:
+def normalize_job_link(company: str, role: str, job_url: str, job_id: str = "") -> dict[str, str]:
+    """One link from a contact to a job.
+
+    `job_id` is the authoritative half (spec 036): the text is what a reader
+    sees and what an unresolved link falls back to, and it goes stale the
+    moment somebody edits the job's title.
+    """
     return {
+        "job_id": (job_id or "").strip(),
         "company": (company or "").strip(),
         "job_title": (role or "").strip(),
         "job_url": (job_url or "").strip(),
@@ -103,6 +110,7 @@ def parse_linked_jobs(value: str) -> list[dict[str, str]]:
                 str(entry.get("company", "")),
                 str(entry.get("job_title", "")),
                 str(entry.get("job_url", "")),
+                str(entry.get("job_id", "")),
             )
         )
     return normalized
@@ -112,29 +120,41 @@ def serialize_linked_jobs(items: list[dict[str, str]]) -> str:
     return json.dumps(items, ensure_ascii=False)
 
 
-def merge_contact_link(contact: dict[str, str], company: str, role: str, job_url: str) -> None:
+def _text_key(link: dict[str, str]) -> tuple[str, str, str]:
+    return (
+        normalize(link.get("company", "")),
+        normalize(link.get("job_title", "")),
+        normalize(link.get("job_url", "")),
+    )
+
+
+def merge_contact_link(
+    contact: dict[str, str], company: str, role: str, job_url: str, job_id: str = ""
+) -> None:
     """Merge a job link into the contact, keeping the newest as the direct
     fields and every distinct link in linked_jobs."""
-    new_link = normalize_job_link(company, role, job_url)
+    new_link = normalize_job_link(company, role, job_url, job_id)
     links = parse_linked_jobs(contact.get("linked_jobs", ""))
     if not links and (
         contact.get("company") or contact.get("applied_job_title") or contact.get("job_url")
     ):
-        links.append(
-            normalize_job_link(
-                contact.get("company", ""),
-                contact.get("applied_job_title", ""),
-                contact.get("job_url", ""),
-            )
+        seeded = normalize_job_link(
+            contact.get("company", ""),
+            contact.get("applied_job_title", ""),
+            contact.get("job_url", ""),
         )
+        # Only when it describes a different job. The direct fields are the
+        # newest link, so on a contact that has never had a `linked_jobs`
+        # list they are the link being merged, and seeding it here produced a
+        # second copy carrying no `job_id`: the text-keyed seed and the
+        # id-keyed new link do not dedupe against each other (spec 036).
+        if _text_key(seeded) != _text_key(new_link):
+            links.append(seeded)
     seen: set[tuple[str, str, str]] = set()
     merged: list[dict[str, str]] = []
     for item in [*links, new_link]:
-        key = (
-            normalize(item.get("company", "")),
-            normalize(item.get("job_title", "")),
-            normalize(item.get("job_url", "")),
-        )
+        identifier = (item.get("job_id") or "").strip()
+        key = (identifier, "", "") if identifier else _text_key(item)
         if key in seen:
             continue
         seen.add(key)
@@ -184,7 +204,13 @@ def upsert_contact(
 ) -> dict[str, str]:
     """The single write path for contacts (spec 016): merges by normalized
     linkedin_url (or person_name) and merges linked_jobs across jobs."""
+    from harrier.outreach.joblink import resolve_job_id
+
     relevance = relevance or infer_relevance(person_title)
+    # Resolved once, here, where the connection is. A link made without an id
+    # is a text match waiting to go stale (spec 036); one made with an id
+    # survives an edit to the job's title.
+    job_id = resolve_job_id(conn, normalize_job_link(company, role, job_url))
     key = normalize(linkedin_url or person_name)
     if not key:
         raise ValueError("contact needs a linkedin_url or person_name identity")
@@ -207,7 +233,7 @@ def upsert_contact(
             existing_notes = (existing.get("notes") or "").strip()
             updates["notes"] = f"{existing_notes}; {notes}".strip("; ") if existing_notes else notes
         merged = {**existing, **updates}
-        merge_contact_link(merged, company, role, job_url)
+        merge_contact_link(merged, company, role, job_url, job_id)
         updates["linked_jobs"] = merged["linked_jobs"]
         updates["company"] = merged["company"]
         updates["applied_job_title"] = merged["applied_job_title"]
@@ -235,7 +261,7 @@ def upsert_contact(
         "last_contacted_at": "",
         "notes": notes,
     }
-    merge_contact_link(contact, company, role, job_url)
+    merge_contact_link(contact, company, role, job_url, job_id)
     contact_id = add_contact(conn, contact)
     contact["id"] = str(contact_id)
     return contact
