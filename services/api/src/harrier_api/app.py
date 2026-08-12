@@ -73,7 +73,6 @@ class JobOut(BaseModel):
     external_key: str
     signals: str
     remote_filter: str
-    manual_reject: str
     manual_added: str
     created_at: str
     updated_at: str

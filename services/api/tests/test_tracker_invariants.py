@@ -192,3 +192,171 @@ def test_check_is_quiet_and_succeeds_on_a_clean_tracker(
 ) -> None:
     assert main(["check"]) == 0
     assert "no tracker rows break" in capsys.readouterr().out
+
+
+# --- contacts reference jobs by identity --------------------------------------
+
+
+def _a_contact(
+    conn: sqlite3.Connection,
+    url: str,
+    *,
+    company: str = "Example Labs",
+    role: str = "Senior Frontend Engineer",
+) -> dict[str, str]:
+    from harrier.outreach.contacts import upsert_contact
+
+    return upsert_contact(
+        conn,
+        company=company,
+        role=role,
+        job_url=url,
+        person_name="A Person",
+        person_title="Engineering Manager",
+        linkedin_url="https://www.linkedin.com/in/example-person",
+        source="test",
+    )
+
+
+def test_a_contact_stays_linked_to_its_job_after_the_title_is_edited(
+    db: sqlite3.Connection,
+) -> None:
+    """The defect this closes. The link was a text comparison, so renaming a
+    job silently detached every contact about it: nothing errors, the outreach
+    note simply stops belonging to anything."""
+    from harrier.outreach.contacts import parse_linked_jobs
+    from harrier.outreach.joblink import job_for_link
+    from harrier.tracker.store import list_contacts
+
+    job = get_job(db, 1)
+    _a_contact(db, job["url"])
+
+    update_fields(db, 1, {"title": "Staff Frontend Engineer"})
+
+    contact = list_contacts(db)[0]
+    link = parse_linked_jobs(contact["linked_jobs"])[0]
+    assert link["job_id"] == "1"
+    followed = job_for_link(db, link)
+    assert followed is not None
+    assert followed["title"] == "Staff Frontend Engineer"
+    # The text in the link is the old title, and that is fine: it is what a
+    # reader sees when the row is gone, not how the row is found.
+    assert link["job_title"] == "Senior Frontend Engineer"
+
+
+def test_a_link_to_an_untracked_job_is_kept_and_reported(db: sqlite3.Connection) -> None:
+    """A contact can be about a job that was never tracked. Dropping the link
+    would lose the record of who was spoken to, so it is kept and named.
+
+    A different company as well as a different URL: `resolve_job_id` falls
+    back to company and title, deliberately, so the same role posted at a
+    second URL still resolves. Only a job that matches on neither is
+    genuinely untracked.
+    """
+    from harrier.outreach.joblink import unresolved_links
+
+    _a_contact(db, "https://boards.example.com/elsewhere/999", company="Someone Else Ltd")
+    problems = unresolved_links(db)
+    assert len(problems) == 1
+    assert "matches no tracked job" in problems[0][1]
+
+
+def test_the_backfill_links_old_records_and_drops_none(db: sqlite3.Connection) -> None:
+    """Links written before the id existed. The count of unmatched ones is
+    reported rather than swallowed, and nothing is deleted either way."""
+    from harrier.outreach.contacts import parse_linked_jobs, serialize_linked_jobs
+    from harrier.outreach.joblink import backfill_job_ids
+    from harrier.tracker.store import list_contacts, update_contact_fields
+
+    job = get_job(db, 1)
+    _a_contact(db, job["url"])
+    contact = list_contacts(db)[0]
+    # Strip the ids, as a record written before this change would have been,
+    # and add one that never matched anything.
+    old = [
+        {"company": job["company"], "job_title": job["title"], "job_url": job["url"]},
+        {"company": "Gone Ltd", "job_title": "Engineer", "job_url": ""},
+    ]
+    update_contact_fields(db, int(contact["id"]), {"linked_jobs": serialize_linked_jobs(old)})
+
+    resolved, unmatched = backfill_job_ids(db)
+    assert (resolved, unmatched) == (1, 1)
+
+    links = parse_linked_jobs(list_contacts(db)[0]["linked_jobs"])
+    assert len(links) == 2, "the backfill dropped a link it could not match"
+    assert [link["job_id"] for link in links] == ["1", ""]
+
+
+def test_check_reports_an_unresolved_contact_link(
+    db: sqlite3.Connection, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _a_contact(db, "https://boards.example.com/elsewhere/999", company="Someone Else Ltd")
+    assert main(["check"]) == 1
+    assert "matches no tracked job" in capsys.readouterr().err
+
+
+# --- the dead surface ----------------------------------------------------------
+
+
+def test_manual_reject_is_gone_from_every_surface_together() -> None:
+    """It was a column, a response field and a published contract field
+    describing a decision nothing recorded. A reader who trusted it would
+    have concluded no rejection was ever manual (spec 036)."""
+    from pathlib import Path as _Path
+
+    from harrier.tracker.schema import NOTE_KEYS, TRACKER_FIELDS
+
+    assert "manual_reject" not in set(NOTE_KEYS) | set(TRACKER_FIELDS)
+
+    contract = _Path(__file__).resolve().parents[3] / "packages" / "contract" / "openapi.json"
+    assert "manual_reject" not in contract.read_text(encoding="utf-8")
+
+    api = _Path(__file__).resolve().parents[1] / "src" / "harrier_api" / "app.py"
+    assert "manual_reject" not in api.read_text(encoding="utf-8")
+
+
+def test_a_database_at_the_previous_version_loses_the_dead_column(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Removal reaches databases that already exist, not only fresh ones."""
+    from harrier.db import connect as open_db
+    from harrier.tracker.schema import MIGRATIONS
+
+    monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("HARRIER_DEMO", raising=False)
+    path = tmp_path / "data"
+    path.mkdir(parents=True, exist_ok=True)
+    old = sqlite3.connect(path / "tracker.db")
+    old.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY)")
+    for version, statements in MIGRATIONS:
+        if version > 3:
+            continue
+        for statement in statements:
+            old.execute(statement)
+        old.execute("INSERT INTO schema_version (version) VALUES (?)", (version,))
+    old.commit()
+    assert "manual_reject" in {row[1] for row in old.execute("PRAGMA table_info(jobs)")}
+    old.close()
+
+    conn = open_db()
+    assert "manual_reject" not in {row[1] for row in conn.execute("PRAGMA table_info(jobs)")}
+    conn.close()
+
+
+# --- the export is on demand ---------------------------------------------------
+
+
+def test_a_status_change_does_not_write_the_csv_export(
+    db: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR-003 said every mutating CLI command refreshed the export. Nothing
+    ever did, and implementing it would rewrite the whole tracker to record
+    one decision and put a second copy of the truth beside the database the
+    ADR chose. The claim was corrected; this holds the code to it (spec 036).
+    """
+    monkeypatch.chdir(tmp_path)
+    assert main(["shortlist", "1"]) == 0
+    assert not (tmp_path / "tracker" / "jobs.csv").exists()
+
+    assert main(["export", "--dest", str(tmp_path / "tracker")]) == 0
+    assert (tmp_path / "tracker" / "jobs.csv").is_file()

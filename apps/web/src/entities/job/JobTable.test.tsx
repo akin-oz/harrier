@@ -37,7 +37,6 @@ function makeJob(overrides: Partial<Job>): Job {
     external_key: "",
     signals: "",
     remote_filter: "",
-    manual_reject: "",
     manual_added: "",
     created_at: "",
     updated_at: "",

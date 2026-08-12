@@ -139,20 +139,32 @@ def _cmd_check(args: argparse.Namespace) -> int:
     invented afterwards would destroy the record of what they actually did.
     So this reports and exits non-zero, and the operator decides.
     """
+    from harrier.outreach.joblink import backfill_job_ids, unresolved_links
     from harrier.tracker.invariants import check_rows
     from harrier.tracker.store import list_jobs
 
     conn = connect()
     try:
+        if args.link_contacts:
+            # The one thing this command changes, and only when asked. It
+            # gives existing contact links the job id they were written
+            # without; it never drops a link it cannot match (spec 036).
+            resolved, unmatched = backfill_job_ids(conn)
+            print(f"linked {resolved} contact link(s) to jobs; {unmatched} left unmatched")
         problems = check_rows(list_jobs(conn))
+        link_problems = unresolved_links(conn)
     finally:
         conn.close()
-    if not problems:
-        print("no tracker rows break a status invariant")
+
+    if not problems and not link_problems:
+        print("no tracker rows break a status invariant, and every contact link resolves")
         return 0
     for job_id, breach in problems:
         print(f"job {job_id}: {breach}", file=sys.stderr)
-    print(f"{len(problems)} row(s) need attention; nothing was changed", file=sys.stderr)
+    for who, breach in link_problems:
+        print(f"contact {who}: {breach}", file=sys.stderr)
+    total = len(problems) + len(link_problems)
+    print(f"{total} item(s) need attention; nothing was changed", file=sys.stderr)
     return 1
 
 
@@ -1298,6 +1310,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     check_parser = sub.add_parser(
         "check", help="report tracker rows that break a status invariant (spec 036)"
+    )
+    check_parser.add_argument(
+        "--link-contacts",
+        action="store_true",
+        help="give existing contact links their job id, dropping nothing (spec 036)",
     )
     check_parser.set_defaults(func=_cmd_check)
 

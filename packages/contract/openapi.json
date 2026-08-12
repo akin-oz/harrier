@@ -269,10 +269,6 @@
             "title": "Manual Added",
             "type": "string"
           },
-          "manual_reject": {
-            "title": "Manual Reject",
-            "type": "string"
-          },
           "next_action": {
             "title": "Next Action",
             "type": "string"
@@ -370,7 +366,6 @@
           "external_key",
           "signals",
           "remote_filter",
-          "manual_reject",
           "manual_added",
           "created_at",
           "updated_at"
