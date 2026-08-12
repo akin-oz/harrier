@@ -921,6 +921,47 @@ def _cmd_check_feeds(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_backup(args: argparse.Namespace) -> int:
+    from harrier.backup import BackupError, create_backup
+
+    try:
+        result = create_backup(Path(args.dest) if args.dest else None, keep=int(args.keep))
+    except BackupError as error:
+        print(f"backup failed: {error}", file=sys.stderr)
+        return 1
+    size_mb = result.bytes_written / (1024 * 1024)
+    print(f"{result.archive} ({size_mb:.1f} MiB, {result.jobs} tracker rows, verified)")
+    for path in result.pruned:
+        print(f"pruned {path.name}")
+    return 0
+
+
+def _cmd_restore(args: argparse.Namespace) -> int:
+    from harrier.backup import BackupError, restore_backup
+
+    try:
+        restored = restore_backup(
+            Path(args.archive), Path(args.into) if args.into else None, force=args.force
+        )
+    except BackupError as error:
+        print(f"restore failed: {error}", file=sys.stderr)
+        return 1
+    print(f"restored {restored} tracker rows")
+    return 0
+
+
+def _cmd_verify_backup(args: argparse.Namespace) -> int:
+    from harrier.backup import BackupError, verify_archive
+
+    try:
+        rows = verify_archive(Path(args.archive))
+    except BackupError as error:
+        print(f"archive is not usable: {error}", file=sys.stderr)
+        return 1
+    print(f"{args.archive} opens and holds {rows} tracker rows")
+    return 0
+
+
 def _cmd_reconsider(args: argparse.Namespace) -> int:
     from harrier.discovery import SOURCE_ORDER
     from harrier.screening.config import load_candidate_config
@@ -1460,6 +1501,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
     check_feeds_cmd.set_defaults(func=_cmd_check_feeds)
     config.set_defaults(func=_cmd_config)
+
+    backup = sub.add_parser("backup", help="verified snapshot of the data directory (spec 030)")
+    backup.add_argument("--dest", default=None, help="destination directory")
+    # Imported here rather than at module scope to match how every other
+    # command in this file reaches the domain: the CLI stays importable
+    # without pulling the whole domain in.
+    from harrier.backup import DEFAULT_KEEP
+
+    backup.add_argument(
+        "--keep",
+        default=str(DEFAULT_KEEP),
+        type=_positive_int,
+        help="archives to retain, on top of the newest of each week",
+    )
+    backup.set_defaults(func=_cmd_backup)
+
+    restore = sub.add_parser("restore", help="restore a verified archive (spec 030)")
+    restore.add_argument("archive")
+    restore.add_argument("--into", default=None, help="data directory to restore into")
+    restore.add_argument(
+        "--force", action="store_true", help="overwrite a non-empty data directory"
+    )
+    restore.set_defaults(func=_cmd_restore)
+
+    verify_backup = sub.add_parser("verify-backup", help="open an archive and query it")
+    verify_backup.add_argument("archive")
+    verify_backup.set_defaults(func=_cmd_verify_backup)
 
     reconsider = sub.add_parser(
         "reconsider",
