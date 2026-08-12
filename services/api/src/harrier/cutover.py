@@ -23,12 +23,15 @@ phase 0 rule that the old repo is read-only as a codebase.
 
 from __future__ import annotations
 
+import json
+import os
 import shutil
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 
 from harrier.db import data_dir
 from harrier.parity import checklist_status, parse_matrix
@@ -164,6 +167,15 @@ def preflight(
     )
 
 
+# The steps after quiesce, in order. Named so the record of what completed
+# is a list of these rather than prose, which is what makes resuming a
+# second invocation possible rather than a guess (spec 037).
+STEP_SNAPSHOT = "snapshot"
+STEP_VERIFY = "verify"
+STEP_INSTALL = "install"
+STEPS = (STEP_SNAPSHOT, STEP_VERIFY, STEP_INSTALL)
+
+
 @dataclass
 class CutoverResult:
     executed: bool
@@ -171,6 +183,11 @@ class CutoverResult:
     failures: list[str] = field(default_factory=list[str])
     blocked: list[str] = field(default_factory=list[str])
     snapshot: Path | None = None
+    # What quiesce stopped. Held on the result rather than locally, because a
+    # failure three steps later still has to put these back and the old code
+    # had already forgotten them (spec 037).
+    unloaded: list[str] = field(default_factory=list[str])
+    completed: list[str] = field(default_factory=list[str])
 
     @property
     def ok(self) -> bool:
@@ -200,7 +217,7 @@ def quiesce(
     that the loop contradicted this comment by continuing).
     """
     directory = agents_dir if agents_dir is not None else launch_agents_dir()
-    unloaded: list[str] = []
+    unloaded = result.unloaded
     for label in labels:
         if not execute:
             result.lines.append(f"would unload {label}")
@@ -231,6 +248,17 @@ def _rollback(
         return
     for label in reversed(unloaded):
         plist = agents_dir / f"{label}.plist"
+        if not plist.is_file():
+            # The old arrangement is the one the README describes as the
+            # defect being fixed, so assuming the standard directory is
+            # exactly the assumption most likely to be wrong here. Say what
+            # the operator has to do by hand rather than reporting a
+            # rollback that did not happen (spec 037).
+            result.failures.append(
+                f"{label}: cannot roll back, no plist at {plist}. "
+                f"Start it by hand: launchctl bootstrap gui/{_uid()} <path to {label}.plist>"
+            )
+            continue
         code, _out, err = launchctl(["bootstrap", f"gui/{_uid()}", str(plist)])
         if code == 0:
             result.lines.append(f"rolled back: reloaded {label}")
@@ -292,6 +320,113 @@ def write_log(stamp: str, result: CutoverResult, *, execute: bool) -> Path:
     return path
 
 
+class _StepFailed(RuntimeError):
+    """A step reported a failure through the result rather than raising."""
+
+    def __init__(self, step: str) -> None:
+        self.step = step
+        super().__init__(step)
+
+
+def progress_path(stamp: str) -> Path:
+    """Beside the log, so a resumed run reads what the failed one wrote."""
+    return data_dir() / "cutover" / f"{stamp}.progress.json"
+
+
+def resume_from(stamp: str) -> tuple[str, ...]:
+    """The steps a previous invocation completed, if any.
+
+    Cutover is the one operation here that is neither idempotent nor
+    repeatable, so a partial failure has to be continuable. Written after
+    each step rather than at the end, because the failure this protects
+    against is the process not reaching the end.
+    """
+    path = progress_path(stamp)
+    if not path.is_file():
+        return ()
+    try:
+        parsed: object = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        # Not "no record". A record that exists and cannot be read means a
+        # previous invocation got far enough to write one, and cutover is
+        # neither idempotent nor repeatable, so restarting from zero would
+        # take a second snapshot over a system that is already half moved.
+        # Refusing and naming the file is the only safe answer.
+        # Proved by
+        # `tests/test_cutover.py::test_an_unreadable_progress_record_stops_rather_than_restarting`.
+        # The limit: this covers a record that survives to be read. A machine
+        # that loses power with no record written at all is indistinguishable
+        # from one that never started, and no code in this process can tell
+        # them apart.
+        raise CutoverError(
+            f"the progress record at {path} exists but cannot be read ({error}). "
+            "A previous cutover wrote it, so this is not a fresh start. "
+            "Inspect it, and delete it only if you are certain no step ran."
+        ) from error
+    if not isinstance(parsed, dict):
+        raise CutoverError(
+            f"the progress record at {path} is not a cutover record. "
+            "Inspect it, and delete it only if you are certain no step ran."
+        )
+    record = cast("dict[str, object]", parsed)
+    if "completed" not in record or not isinstance(record["completed"], list):
+        # The same danger as an unreadable file, and the same answer. Returning
+        # () here meant a record whose `completed` was missing, null, or a bare
+        # string read as "nothing has happened yet", and a cutover that must
+        # not restart restarted. My first fix covered the non-dict case only,
+        # which is the branch I happened to think of (review finding on PR
+        # #37, second pass).
+        raise CutoverError(
+            f"the progress record at {path} has no usable list of completed steps. "
+            "A previous cutover wrote it, so this is not a fresh start. "
+            "Inspect it, and delete it only if you are certain no step ran."
+        )
+    steps = cast("list[object]", record["completed"])
+    return tuple(str(step) for step in steps if str(step) in STEPS)
+
+
+def _record_progress(stamp: str, result: CutoverResult, *, execute: bool) -> None:
+    if not execute:
+        return
+    path = progress_path(stamp)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Written through a replacement rather than in place. `write_text`
+    # truncates first, so an interruption between the truncate and the write
+    # left an empty file, and an empty file used to read as "nothing has
+    # happened yet". Proved by
+    # `tests/test_cutover.py::test_progress_is_written_through_a_replacement`.
+    # The limit: a replacement makes the file never half-written, not the
+    # sequence atomic. A process killed between two steps records the earlier
+    # one, which is what resuming is for.
+    scratch = path.with_name(f"{path.name}.partial")
+    scratch.write_text(json.dumps({"completed": result.completed}, indent=2), encoding="utf-8")
+    os.replace(scratch, path)
+
+
+def _finish(stamp: str, result: CutoverResult, *, execute: bool) -> None:
+    """Write the log on every path out, including the failing ones."""
+    log_path = write_log(stamp, result, execute=execute)
+    result.lines.append(f"{'wrote' if execute else 'would write'} the cutover log to {log_path}")
+    if execute and result.ok:
+        progress_path(stamp).unlink(missing_ok=True)
+
+
+def _refuse(stamp: str, result: CutoverResult, *, execute: bool, reason: str) -> None:
+    """Log the refusal, then raise it.
+
+    Spec 037 requires a record for refusals, and these paths raised before
+    reaching `_finish`, so the executions that never started were the only
+    ones that left no trace of having been attempted. Proved by
+    `tests/test_cutover.py::test_a_refused_execution_still_writes_a_log`,
+    `::test_a_refused_attestation_still_writes_a_log` and
+    `::test_a_cutover_refused_by_a_bad_progress_record_still_writes_a_log`.
+    """
+    result.failures.append(reason)
+    result.lines.append(f"refused: {reason}")
+    _finish(stamp, result, execute=execute)
+    raise CutoverError(reason)
+
+
 def run_cutover(
     conn: sqlite3.Connection,
     *,
@@ -324,46 +459,97 @@ def run_cutover(
         # only the execution is refused.
         result.blocked = [check.line() for check in checks.blocked]
         if execute:
-            raise CutoverError(
-                "preflight is blocked; run `harrier cutover preflight` and clear it first:\n"
-                + "\n".join(result.blocked)
+            _refuse(
+                stamp,
+                result,
+                execute=execute,
+                reason=(
+                    "preflight is blocked; run `harrier cutover preflight` and clear it "
+                    "first:\n" + "\n".join(result.blocked)
+                ),
             )
     if execute and not attested:
-        raise CutoverError(
-            "the attestations have not been made; re-run with --attested once every "
-            "line under `harrier cutover preflight` is true"
+        _refuse(
+            stamp,
+            result,
+            execute=execute,
+            reason=(
+                "the attestations have not been made; re-run with --attested once every "
+                "line under `harrier cutover preflight` is true"
+            ),
         )
+
+    directory = agents_dir if agents_dir is not None else launch_agents_dir()
+    try:
+        done = set(resume_from(stamp) if execute else ())
+    except CutoverError as error:
+        # The refusal I had just routed through the log, reintroduced by the
+        # fix that made this raise at all: `resume_from` is called before
+        # `_finish`, so an unreadable record produced no record of the attempt
+        # (review finding on PR #37, second pass).
+        result.failures.append(str(error))
+        result.lines.append(f"refused: {error}")
+        _finish(stamp, result, execute=execute)
+        raise
+    if done:
+        result.lines.append(f"resuming: already completed {', '.join(sorted(done))}")
+        result.completed.extend(sorted(done))
 
     quiesce(labels, runner, execute=execute, result=result, agents_dir=agents_dir)
     if result.failures:
         # Stop before touching data: a half-quiesced system with a snapshot
         # taken mid-write is worse than one that never started.
         result.lines.append("stopped after quiesce because a job would not unload")
+        _finish(stamp, result, execute=execute)
         return result
 
-    snapshot(old_root, snapshot_dir(stamp), execute=execute, result=result)
-    if result.failures:
-        return result
+    # Everything past this point is covered. The old jobs are down, so any
+    # exception here, not only the ones anticipated, must still leave a log
+    # and an attempt to put the old system back. Previously an OSError from
+    # copytree escaped run_cutover entirely: the log was never written, the
+    # rollback never ran, and the operator was left with the old scheduler
+    # stopped, nothing installed, no record, and a traceback (spec 037).
+    try:
+        if STEP_SNAPSHOT not in done:
+            snapshot(old_root, snapshot_dir(stamp), execute=execute, result=result)
+            if result.failures:
+                raise _StepFailed(STEP_SNAPSHOT)
+            result.completed.append(STEP_SNAPSHOT)
+            _record_progress(stamp, result, execute=execute)
 
-    verify(conn, result=result)
-    if result.failures:
-        return result
+        if STEP_VERIFY not in done:
+            verify(conn, result=result)
+            if result.failures:
+                raise _StepFailed(STEP_VERIFY)
+            result.completed.append(STEP_VERIFY)
+            _record_progress(stamp, result, execute=execute)
 
-    if install is not None:
-        if not execute:
-            result.lines.append("would install the harrier schedule")
-        else:
-            try:
-                result.lines.extend(install())
-            except Exception as error:
-                # The old jobs are down and the snapshot is taken. Whatever
-                # went wrong, the operator needs the record of what already
-                # happened during the one irreversible step (review finding
-                # on PR #22).
-                result.failures.append(f"schedule install failed: {error}")
-                result.lines.append(f"schedule install FAILED: {error}")
-    log_path = write_log(stamp, result, execute=execute)
-    result.lines.append(f"{'wrote' if execute else 'would write'} the cutover log to {log_path}")
+        if install is not None and STEP_INSTALL not in done:
+            if not execute:
+                result.lines.append("would install the harrier schedule")
+            else:
+                try:
+                    result.lines.extend(install())
+                except Exception as error:
+                    # Named specifically rather than left to the general
+                    # handler below: "schedule install failed" tells the
+                    # operator which of the irreversible steps did not
+                    # happen, and "RuntimeError after quiesce" does not
+                    # (review finding on PR #22, kept through spec 037).
+                    result.failures.append(f"schedule install failed: {error}")
+                    result.lines.append(f"schedule install FAILED: {error}")
+                    raise _StepFailed(STEP_INSTALL) from error
+                result.completed.append(STEP_INSTALL)
+                _record_progress(stamp, result, execute=execute)
+    except _StepFailed as failed:
+        result.lines.append(f"stopped at {failed.step}")
+        _rollback(result.unloaded, runner, directory, result)
+    except Exception as error:
+        result.failures.append(f"{type(error).__name__} after quiesce: {error}")
+        result.lines.append(f"FAILED after quiesce: {type(error).__name__}: {error}")
+        _rollback(result.unloaded, runner, directory, result)
+
+    _finish(stamp, result, execute=execute)
     return result
 
 

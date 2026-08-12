@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
+import harrier.cutover as cutover_module
 from harrier.cutover import (
     OLD_LABELS,
+    STEP_INSTALL,
     CutoverError,
     CutoverResult,
     env_check,
@@ -240,6 +243,21 @@ def test_a_clear_dry_run_is_ok(
     assert result.blocked == []
 
 
+def agents_dir_with_plists(tmp_path: Path) -> Path:
+    """An agents directory as a machine running the old jobs would have it.
+
+    The rollback reloads a job by pointing launchctl at its plist, so a
+    directory without them is a machine where rollback cannot work. The
+    tests used to pass an empty directory and assert a successful rollback,
+    which only held because nothing checked (spec 037).
+    """
+    directory = tmp_path / "agents"
+    directory.mkdir(parents=True, exist_ok=True)
+    for label in OLD_LABELS:
+        (directory / f"{label}.plist").write_text("<plist/>", encoding="utf-8")
+    return directory
+
+
 def test_a_failed_unload_rolls_back_what_was_already_stopped(
     db: sqlite3.Connection, old_repo: Path, ready_checklist: Path, tmp_path: Path
 ) -> None:
@@ -261,7 +279,7 @@ def test_a_failed_unload_rolls_back_what_was_already_stopped(
         attested=True,
         checklist_path=ready_checklist,
         launchctl=fails_on_the_second,
-        agents_dir=tmp_path / "agents",
+        agents_dir=agents_dir_with_plists(tmp_path),
     )
     assert not result.ok
     # The third was never attempted, and the first was put back.
@@ -286,7 +304,7 @@ def test_a_rollback_that_itself_fails_is_reported(tmp_path: Path) -> None:
         everything_fails,
         execute=True,
         result=result,
-        agents_dir=tmp_path / "agents",
+        agents_dir=agents_dir_with_plists(tmp_path),
     )
     assert any("rollback failed" in failure for failure in result.failures)
     assert any(OLD_LABELS[0] in failure for failure in result.failures)
@@ -316,7 +334,7 @@ def test_a_failing_install_still_writes_the_record(
         checklist_path=ready_checklist,
         launchctl=loaded,
         install=explode,
-        agents_dir=tmp_path / "agents",
+        agents_dir=agents_dir_with_plists(tmp_path),
     )
     assert not result.ok
     assert any("launchctl refused" in failure for failure in result.failures)
@@ -386,3 +404,379 @@ def test_the_stamp_is_sortable() -> None:
     from datetime import UTC, datetime
 
     assert utc_stamp(datetime(2026, 8, 10, 9, 5, tzinfo=UTC)) == "2026-08-10-0905"
+
+
+# --- a failure at every step leaves a known state (spec 037) -----------------
+
+
+def loaded_ok(args: list[str]) -> tuple[int, str, str]:
+    return (0, "", "")
+
+
+def test_a_filesystem_error_during_snapshot_leaves_a_log_and_a_rollback(
+    db: sqlite3.Connection, old_repo: Path, ready_checklist: Path, tmp_path: Path
+) -> None:
+    """The defect this spec fixes. copytree raising OSError escaped
+    run_cutover entirely: the log was never written, the rollback never ran,
+    and the operator was left with the old scheduler stopped, nothing
+    installed, no record, and a traceback."""
+    agents = agents_dir_with_plists(tmp_path)
+
+    def explode(*_args: object, **_kwargs: object) -> None:
+        raise OSError("No space left on device")
+
+    with patch.object(cutover_module.shutil, "copytree", explode):
+        result = run_cutover(
+            db,
+            old_root=old_repo,
+            stamp="2026-08-10-1200",
+            execute=True,
+            attested=True,
+            checklist_path=ready_checklist,
+            launchctl=loaded_ok,
+            agents_dir=agents,
+        )
+
+    assert not result.ok
+    assert any("OSError after quiesce" in failure for failure in result.failures)
+    assert any("rolled back: reloaded" in line for line in result.lines)
+    log = tmp_path / "data" / "cutover" / "2026-08-10-1200.md"
+    assert log.is_file(), "the log must be written on the failing path too"
+    assert "FAILED after quiesce" in log.read_text(encoding="utf-8")
+
+
+def test_an_install_failure_rolls_the_old_jobs_back(
+    db: sqlite3.Connection, old_repo: Path, ready_checklist: Path, tmp_path: Path
+) -> None:
+    """Old down and new not installed is the one end state that is never
+    acceptable, so the old jobs go back up."""
+
+    def explode() -> list[str]:
+        raise RuntimeError("launchctl refused")
+
+    result = run_cutover(
+        db,
+        old_root=old_repo,
+        stamp="2026-08-10-1200",
+        execute=True,
+        attested=True,
+        checklist_path=ready_checklist,
+        launchctl=loaded_ok,
+        install=explode,
+        agents_dir=agents_dir_with_plists(tmp_path),
+    )
+    assert not result.ok
+    assert any("rolled back: reloaded" in line for line in result.lines)
+
+
+def test_a_rollback_with_no_plist_names_the_manual_step(
+    db: sqlite3.Connection, old_repo: Path, ready_checklist: Path, tmp_path: Path
+) -> None:
+    """The old arrangement is the one the README calls the defect being
+    fixed, so assuming the standard directory is exactly the assumption most
+    likely to be wrong. A rollback that cannot happen says so."""
+    empty = tmp_path / "agents-without-plists"
+    empty.mkdir()
+
+    def explode(*_args: object, **_kwargs: object) -> None:
+        raise OSError("No space left on device")
+
+    with patch.object(cutover_module.shutil, "copytree", explode):
+        result = run_cutover(
+            db,
+            old_root=old_repo,
+            stamp="2026-08-10-1200",
+            execute=True,
+            attested=True,
+            checklist_path=ready_checklist,
+            launchctl=loaded_ok,
+            agents_dir=empty,
+        )
+
+    assert any("cannot roll back" in failure for failure in result.failures)
+    assert any("launchctl bootstrap" in failure for failure in result.failures)
+
+
+def test_a_second_invocation_resumes_rather_than_repeating(
+    db: sqlite3.Connection, old_repo: Path, ready_checklist: Path, tmp_path: Path
+) -> None:
+    """Cutover is neither idempotent nor repeatable, so a partial failure has
+    to be continuable rather than restarted."""
+    agents = agents_dir_with_plists(tmp_path)
+    attempts: list[str] = []
+
+    def failing_install() -> list[str]:
+        attempts.append("install")
+        raise RuntimeError("launchctl refused")
+
+    first = run_cutover(
+        db,
+        old_root=old_repo,
+        stamp="2026-08-10-1200",
+        execute=True,
+        attested=True,
+        checklist_path=ready_checklist,
+        launchctl=loaded_ok,
+        install=failing_install,
+        agents_dir=agents,
+    )
+    assert not first.ok
+    assert cutover_module.progress_path("2026-08-10-1200").is_file()
+
+    snapshots: list[str] = []
+
+    def counting_install() -> list[str]:
+        attempts.append("install")
+        return ["installed the harrier schedule"]
+
+    def record_copy(*_args: object, **_kwargs: object) -> None:
+        snapshots.append("copied")
+
+    with patch.object(cutover_module.shutil, "copytree", record_copy):
+        second = run_cutover(
+            db,
+            old_root=old_repo,
+            stamp="2026-08-10-1200",
+            execute=True,
+            attested=True,
+            checklist_path=ready_checklist,
+            launchctl=loaded_ok,
+            install=counting_install,
+            agents_dir=agents,
+        )
+
+    assert second.ok, second.failures
+    assert snapshots == [], "the completed snapshot step was repeated"
+    assert attempts == ["install", "install"]
+
+
+def test_a_successful_run_clears_the_progress_record(
+    db: sqlite3.Connection, old_repo: Path, ready_checklist: Path, tmp_path: Path
+) -> None:
+    """Otherwise the next cutover with the same stamp would skip everything."""
+    result = run_cutover(
+        db,
+        old_root=old_repo,
+        stamp="2026-08-10-1200",
+        execute=True,
+        attested=True,
+        checklist_path=ready_checklist,
+        launchctl=loaded_ok,
+        install=lambda: ["installed"],
+        agents_dir=agents_dir_with_plists(tmp_path),
+    )
+    assert result.ok, result.failures
+    assert not cutover_module.progress_path("2026-08-10-1200").is_file()
+
+
+def test_a_quiesce_failure_still_writes_a_log(
+    db: sqlite3.Connection, old_repo: Path, ready_checklist: Path, tmp_path: Path
+) -> None:
+    """Every path out leaves a record, including the earliest one."""
+
+    def refuses(args: list[str]) -> tuple[int, str, str]:
+        if args[0] == "bootout":
+            return (1, "", "Operation not permitted")
+        return (0, "", "")
+
+    run_cutover(
+        db,
+        old_root=old_repo,
+        stamp="2026-08-10-1200",
+        execute=True,
+        attested=True,
+        checklist_path=ready_checklist,
+        launchctl=refuses,
+        agents_dir=agents_dir_with_plists(tmp_path),
+    )
+    assert (tmp_path / "data" / "cutover" / "2026-08-10-1200.md").is_file()
+
+
+# --- review findings on PR #37 -----------------------------------------------
+
+
+def test_a_refused_execution_still_writes_a_log(
+    db: sqlite3.Connection, old_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec 037 requires a record for refusals, and these two paths raised
+    before reaching the log, so the attempts that never started were the only
+    ones that left no trace of having been attempted."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    with pytest.raises(CutoverError, match="preflight is blocked"):
+        run_cutover(
+            db,
+            old_root=old_repo,
+            stamp="2026-08-10-1300",
+            execute=True,
+            attested=True,
+            launchctl=loaded,
+        )
+    log = tmp_path / "data" / "cutover" / "2026-08-10-1300.md"
+    assert log.is_file()
+    assert "refused" in log.read_text(encoding="utf-8")
+
+
+def test_a_refused_attestation_still_writes_a_log(
+    db: sqlite3.Connection,
+    old_repo: Path,
+    ready_checklist: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    with pytest.raises(CutoverError, match="attestations have not been made"):
+        run_cutover(
+            db,
+            old_root=old_repo,
+            stamp="2026-08-10-1400",
+            execute=True,
+            attested=False,
+            checklist_path=ready_checklist,
+            launchctl=loaded,
+        )
+    assert (tmp_path / "data" / "cutover" / "2026-08-10-1400.md").is_file()
+
+
+def test_an_unreadable_progress_record_stops_rather_than_restarting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A truncated record used to read as "nothing has happened yet".
+
+    Cutover is neither idempotent nor repeatable, so restarting from zero
+    would take a second snapshot over a system that is already half moved.
+    """
+    monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
+    path = cutover_module.progress_path("2026-08-10-1500")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("", encoding="utf-8")
+    with pytest.raises(CutoverError, match="cannot be read"):
+        cutover_module.resume_from("2026-08-10-1500")
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ('["not", "a", "record"]', "not a cutover record"),
+        ("{}", "no usable list"),
+        ('{"completed": null}', "no usable list"),
+        ('{"completed": "snapshot"}', "no usable list"),
+    ],
+)
+def test_a_progress_record_of_the_wrong_shape_stops_too(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str, expected: str
+) -> None:
+    """Every shape that is not a list of completed steps.
+
+    The first version of this covered a non-dict record only, which is the
+    branch I happened to think of. A dict whose `completed` was missing, null,
+    or a bare string still returned () and restarted a cutover that must not
+    restart (review finding on PR #37, second pass).
+    """
+    monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
+    path = cutover_module.progress_path("2026-08-10-1600")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    with pytest.raises(CutoverError, match=expected):
+        cutover_module.resume_from("2026-08-10-1600")
+
+
+def test_a_cutover_refused_by_a_bad_progress_record_still_writes_a_log(
+    db: sqlite3.Connection,
+    old_repo: Path,
+    ready_checklist: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`resume_from` is called before `_finish`, so making it raise removed
+    the log from a path that had one: the fix for the other refusals
+    reintroduced the defect one line earlier (review finding on PR #37)."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
+    path = cutover_module.progress_path("2026-08-10-1900")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("", encoding="utf-8")
+
+    with pytest.raises(CutoverError, match="cannot be read"):
+        run_cutover(
+            db,
+            old_root=old_repo,
+            stamp="2026-08-10-1900",
+            execute=True,
+            attested=True,
+            checklist_path=ready_checklist,
+            launchctl=lambda args: (0, "", ""),
+        )
+    assert (tmp_path / "data" / "cutover" / "2026-08-10-1900.md").is_file()
+
+
+def test_progress_is_written_through_a_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`write_text` truncates first, so an interruption between the truncate
+    and the write left the empty file the test above is about. Nothing ever
+    observes the target mid-write now."""
+    monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
+    result = CutoverResult(executed=True)
+    result.completed.append("quiesce")
+    with patch("harrier.cutover.os.replace") as replace:
+        cutover_module._record_progress("2026-08-10-1700", result, execute=True)  # pyright: ignore[reportPrivateUsage]
+    assert replace.call_count == 1
+    # The target was never opened for writing directly.
+    assert not cutover_module.progress_path("2026-08-10-1700").exists()
+
+
+def test_a_failed_schedule_install_fails_the_cutover(
+    db: sqlite3.Connection,
+    old_repo: Path,
+    ready_checklist: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The install step is the one that makes anything run at all.
+
+    The CLI wrapper returned the installer's lines whether or not it worked,
+    and a return reads as success here, so the cutover marked the step
+    complete and cleared its progress: it reported success while the old jobs
+    were stopped and the new schedule was never installed.
+    """
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+
+    def failing_install() -> list[str]:
+        raise RuntimeError("launchctl bootstrap refused")
+
+    result = run_cutover(
+        db,
+        old_root=old_repo,
+        stamp="2026-08-10-1800",
+        execute=True,
+        attested=True,
+        checklist_path=ready_checklist,
+        launchctl=lambda args: (0, "", ""),
+        install=failing_install,
+    )
+    assert not result.ok
+    assert any("schedule install failed" in line for line in result.failures)
+    assert STEP_INSTALL not in result.completed
+
+
+def test_the_cli_wrapper_raises_when_the_installer_reports_failure() -> None:
+    """The defect was in the wrapper, so the wrapper is what this exercises.
+
+    Asserting on `run_cutover` alone would have passed throughout: it never
+    saw a failure, because the wrapper swallowed it into a line of text.
+    """
+    from harrier.schedule import InstallResult
+    from harrier_cli.main import cutover_installer
+
+    failed = InstallResult()
+    failed.failures.append("bootstrap refused")
+    with (
+        patch("harrier.schedule.install_schedule", return_value=failed),
+        pytest.raises(RuntimeError, match="bootstrap refused"),
+    ):
+        cutover_installer()
+
+    worked = InstallResult()
+    worked.lines.append("installed 3 plists")
+    with patch("harrier.schedule.install_schedule", return_value=worked):
+        assert "installed 3 plists" in cutover_installer()
