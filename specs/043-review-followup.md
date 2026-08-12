@@ -82,11 +82,58 @@ and otherwise reports that there is nothing new.
 - Findings out of the current spec's scope are recorded in the spec that owns
   them rather than absorbed silently or dropped.
 - Every thread is answered and resolved, including the declined ones.
+- Resolving a thread does not close it: a reply can arrive afterwards, and
+  the review body is read every time because a finding can live there with
+  no thread to make it visible.
 
 **A check that can fail.** `CodeRabbit: pass` with the reason "Review rate
 limited" is the defect that motivated this. The command reports a pull
 request in that state as not yet reviewed, so "reviewed" and "rate limited"
 stop looking identical.
+
+**The reply is part of the loop.** Added after using this on the pull
+requests it was written for, where it missed findings three separate ways.
+A review is a conversation, and asking again is only half of taking part.
+
+- **A reply inside a thread we resolved.** Resolving hides it from every
+  query filtering on `isResolved`, and a reply is exactly where a reviewer
+  says a fix does not do what it claimed. So the question is who spoke last,
+  not what the thread says about itself.
+- **A review whose findings never became threads.** A review can report
+  "Actionable comments posted: 4" and then note that some are outside the
+  diff and could not be posted inline. Those exist only in the review body,
+  and no query over `reviewThreads` returns them however it filters. A Major
+  finding on PR #37 arrived this way and this loop did not see it.
+- **A review arriving after our own push.** Answering findings moves the
+  head, which earns a fresh review whose findings a count taken beforehand
+  cannot contain.
+
+The command reports all three, refuses to ask for a new review while
+anything is outstanding, and exits non-zero. What it must not do is decide
+that a finding has been dealt with: reading and answering stay judgement,
+and what has been read is recorded only when a person says so.
+
+Two more, found by running the command against the pull requests it was
+written for rather than against its own fixtures.
+
+`last_reviewed_sha` was never populated by `gather`, so "already reviewed at
+the current head" could not fire and the loop re-requested every cycle. Its
+tests passed because they built the state by hand rather than through
+`gather`.
+
+And the mechanical half, the entire point of this spec, did nothing.
+`gather` asked `gh` for `.[].body` and split the output by line, calling each
+line a comment body. A comment body is multi-line, so every notice arrived in
+pieces, and the last piece carrying the marker was the closing
+`<!-- end of auto-generated comment: rate limited ... -->`, which holds no
+wait. Every genuinely rate-limited pull request reported "a rate-limit notice
+carried no readable wait" and was skipped. Six of them did, on the day this
+was written, while the tests passed: they handed the parser one whole notice
+directly, which is the shape production never produces. Comments are now
+parsed as JSON, one body per element, and
+`tests/test_review_followup.py::test_a_real_notice_survives_the_trip_through_gather`
+drives a real multi-line notice through `gather` because that is the only
+shape that can tell the two apart.
 
 ## Inputs, outputs, failure modes
 

@@ -18,18 +18,24 @@ import pytest
 
 from harrier.reviewfollowup import (
     DEFAULT_DAILY_LIMIT,
+    GRACE_MINUTES,
     REQUEST,
+    RESPOND,
     SKIP,
     WAIT,
     FollowUpError,
     PullRequestState,
+    ThreadState,
     decide,
     gather,
     load_counts,
     newest_notice,
+    outstanding_identifiers,
     parse_wait_minutes,
+    record_handled,
     record_request,
     report,
+    request_review,
     state_path,
 )
 
@@ -241,22 +247,105 @@ def test_a_pull_request_with_neither_is_still_not_reviewed() -> None:
 # --- the gh seam --------------------------------------------------------------
 
 
-def stub_gh(comments: str, head: str, threads: str):
+@pytest.fixture
+def handled_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A data directory of its own, so the handled record starts empty.
+
+    Without it, `gather` reads whatever this machine has already answered and
+    the assertions depend on the developer's own history.
+    """
+    monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("HARRIER_DEMO", raising=False)
+    return tmp_path
+
+
+def payload(
+    *,
+    threads: list[dict[str, object]] | None = None,
+    reviews: list[dict[str, object]] | None = None,
+) -> str:
+    """A GraphQL answer in the shape gather parses.
+
+    Built here rather than pasted, so a test says which threads and reviews it
+    means instead of carrying an opaque blob.
+    """
+    return json.dumps(
+        {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "reviewThreads": {"nodes": threads or []},
+                        "reviews": {"nodes": reviews or []},
+                    }
+                }
+            }
+        }
+    )
+
+
+def thread(
+    identifier: str, *, author: str = "coderabbitai", comment: str = "c1", resolved: bool = False
+) -> dict[str, object]:
+    return {
+        "id": identifier,
+        "isResolved": resolved,
+        "comments": {"nodes": [{"id": comment, "author": {"login": author}}]},
+    }
+
+
+def review(
+    identifier: str, *, author: str = "coderabbitai", body: str = "", commit: str = ""
+) -> dict[str, object]:
+    return {
+        "id": identifier,
+        "author": {"login": author},
+        "body": body,
+        "commit": {"oid": commit},
+    }
+
+
+def comment_payload(*bodies: str) -> str:
+    """Comments in the shape the API returns them: a JSON array of objects.
+
+    The stub used to hand back raw text, which let `gather` split it by line
+    and still look right. Production returns one body per element and the
+    bodies are multi-line, so a fixture that flattens them cannot show the
+    defect that flattening causes.
+    """
+    return json.dumps([{"body": body} for body in bodies])
+
+
+def stub_gh(comments: str, head: str, detail: str):
+    """Answer by which call it is, graphql first.
+
+    The issue-comments branch used to match on the word "comments" anywhere
+    in the arguments, and the graphql query now contains `comments(last:1)`,
+    so it swallowed the graphql call and returned the wrong string. Matching
+    the most specific thing first is the fix.
+    """
+
     def run(argv: list[str]) -> str:
-        if argv[0] == "api" and "comments" in " ".join(argv):
-            return comments
+        if "graphql" in argv:
+            return detail
         if argv[0] == "pr" and "headRefOid" in " ".join(argv):
             return head
-        if argv[0] == "api" and "graphql" in argv:
-            return threads
+        if argv[0] == "api" and "issues/" in " ".join(argv):
+            return comments
         raise AssertionError(f"unexpected gh call: {argv}")
 
     return run
 
 
-def test_gather_reads_what_the_decision_needs() -> None:
+def test_gather_reads_what_the_decision_needs(handled_env: Path) -> None:
     state = gather(
-        39, stub_gh(NOTICE.format(wait="8 minutes"), "abc1234\n", "17\n"), owner="o", repo="r"
+        39,
+        stub_gh(
+            comment_payload(NOTICE.format(wait="8 minutes")),
+            "abc1234\n",
+            payload(threads=[thread(f"t{n}") for n in range(17)]),
+        ),
+        owner="o",
+        repo="r",
     )
     assert state.number == 39
     assert state.head_sha == "abc1234"
@@ -275,6 +364,219 @@ def test_gh_failing_is_reported_not_swallowed() -> None:
         gather(39, explode, owner="o", repo="r")
 
 
-def test_an_unreadable_thread_count_is_reported() -> None:
-    with pytest.raises(FollowUpError, match="unexpected thread count"):
-        gather(39, stub_gh("", "abc\n", "not a number\n"), owner="o", repo="r")
+def test_an_unreadable_payload_is_reported(handled_env: Path) -> None:
+    with pytest.raises(FollowUpError, match="unexpected review payload"):
+        gather(39, stub_gh(comment_payload(), "abc\n", "not json"), owner="o", repo="r")
+
+
+def test_every_gh_call_names_the_repository() -> None:
+    """`gh pr` resolves the repository from the working directory, so a call
+    without `--repo` works from a checkout and fails everywhere else,
+    including from the scheduled job this is meant to run in. Found by
+    running it from a temporary directory (PR #40)."""
+    calls: list[list[str]] = []
+
+    def record(argv: list[str]) -> str:
+        calls.append(argv)
+        if argv[0] == "pr":
+            return "abc1234\n"
+        if "graphql" in argv:
+            return payload()
+        return comment_payload()
+
+    gather(39, record, owner="o", repo="r")
+    request_review(39, record, owner="o", repo="r")
+
+    pr_calls = [argv for argv in calls if argv and argv[0] == "pr"]
+    assert pr_calls, "no gh pr call was made; this test is looking at the wrong place"
+    for argv in pr_calls:
+        assert "--repo" in argv, f"gh pr call depends on the working directory: {argv}"
+        assert argv[argv.index("--repo") + 1] == "o/r"
+
+
+# --- follow-ups: what a count of unresolved threads cannot see ----------------
+
+
+def test_a_reply_in_a_resolved_thread_still_needs_an_answer(handled_env: Path) -> None:
+    """The blind spot that cost a missed finding.
+
+    Resolving a thread is what hides the reply that arrives after it, so a
+    check that filters on `isResolved` is blind to exactly the disagreement
+    worth reading. The question is who spoke last.
+    """
+    state = gather(
+        39,
+        stub_gh(
+            comment_payload(), "abc\n", payload(threads=[thread("t1", resolved=True, comment="c9")])
+        ),
+        owner="o",
+        repo="r",
+    )
+    assert state.outstanding
+    assert [t.identifier for t in state.awaiting] == ["t1"]
+
+
+def test_a_thread_we_answered_last_is_not_outstanding(handled_env: Path) -> None:
+    state = gather(
+        39,
+        stub_gh(comment_payload(), "abc\n", payload(threads=[thread("t1", author="akin-oz")])),
+        owner="o",
+        repo="r",
+    )
+    assert not state.outstanding
+
+
+def test_a_finding_outside_the_diff_is_found(handled_env: Path) -> None:
+    """A review can post findings it could not attach to a line. They exist
+    only in the review body, so no thread carries them and no query over
+    `reviewThreads` can return them however it filters. One Major finding
+    arrived this way on PR #37 and this loop missed it."""
+    body = (
+        "Actionable comments posted: 4\n"
+        "Caution: Some comments are outside the diff and can't be posted "
+        "inline due to platform limitations."
+    )
+    state = gather(
+        39,
+        stub_gh(comment_payload(), "abc\n", payload(reviews=[review("r1", body=body)])),
+        owner="o",
+        repo="r",
+    )
+    assert state.outstanding
+    assert state.unread_reviews[0].actionable_count == 4
+    assert state.unread_reviews[0].has_findings_outside_the_diff
+    assert any("OUTSIDE THE DIFF" in line for line in report([state]))
+
+
+def test_a_summary_review_is_not_treated_as_a_finding(handled_env: Path) -> None:
+    """Otherwise every cycle re-surfaces the walkthrough and never settles."""
+    state = gather(
+        39,
+        stub_gh(
+            comment_payload(),
+            "abc\n",
+            payload(reviews=[review("r1", body="Walkthrough: this adds a thing")]),
+        ),
+        owner="o",
+        repo="r",
+    )
+    assert not state.outstanding
+
+
+def test_answering_is_remembered_so_it_does_not_resurface(handled_env: Path) -> None:
+    detail = payload(threads=[thread("t1", comment="c9")])
+    first = gather(39, stub_gh(comment_payload(), "abc\n", detail), owner="o", repo="r")
+    assert first.outstanding
+
+    record_handled(outstanding_identifiers(first))
+    second = gather(39, stub_gh(comment_payload(), "abc\n", detail), owner="o", repo="r")
+    assert not second.outstanding
+
+
+def test_a_further_reply_comes_back_after_being_answered(handled_env: Path) -> None:
+    """Keyed on the comment, not the thread: a thread already answered can
+    gain another reply, and that reply is a new thing to read."""
+    first = gather(
+        39,
+        stub_gh(comment_payload(), "abc\n", payload(threads=[thread("t1", comment="c9")])),
+        owner="o",
+        repo="r",
+    )
+    record_handled(outstanding_identifiers(first))
+    again = gather(
+        39,
+        stub_gh(comment_payload(), "abc\n", payload(threads=[thread("t1", comment="c10")])),
+        owner="o",
+        repo="r",
+    )
+    assert again.outstanding
+
+
+def test_answering_comes_before_asking_for_more() -> None:
+    """A rate-limited request spent while a finding sits unanswered buys
+    nothing: the answer is the part that changes the code."""
+    state = PullRequestState(
+        number=39,
+        head_sha="abc",
+        review_threads=1,
+        comment_bodies=[],
+        awaiting=(ThreadState("t1", False, "coderabbitai", "c1"),),
+    )
+    assert decide(state, requests_today=0, daily_limit=6).action == RESPOND
+    # And it outranks the daily bound, which would otherwise hide it.
+    assert decide(state, requests_today=99, daily_limit=6).action == RESPOND
+
+
+def test_the_reviewed_sha_is_read_from_the_reviews(handled_env: Path) -> None:
+    """This was never populated, so the "already reviewed at this head"
+    branch could not fire and the loop asked again every cycle. Its tests
+    passed because they built the state by hand rather than through gather."""
+    state = gather(
+        39,
+        stub_gh(comment_payload(), "abc1234\n", payload(reviews=[review("r1", commit="abc1234")])),
+        owner="o",
+        repo="r",
+    )
+    assert state.last_reviewed_sha == "abc1234"
+    assert decide(state, requests_today=0, daily_limit=6).action == SKIP
+
+
+def test_a_review_with_no_threads_still_counts_as_reviewed(handled_env: Path) -> None:
+    """A review that posted only findings outside the diff creates no
+    threads, and a pull request that has been reviewed must not read as
+    unreviewed and be asked again."""
+    state = gather(
+        39,
+        stub_gh(comment_payload(), "abc\n", payload(reviews=[review("r1", body="Walkthrough")])),
+        owner="o",
+        repo="r",
+    )
+    assert state.review_threads == 0
+    assert state.reviewed
+
+
+def test_a_real_notice_survives_the_trip_through_gather(handled_env: Path) -> None:
+    """The wait is read from a comment as the API actually returns it.
+
+    Everything else here proved `newest_notice` and `parse_wait_minutes`
+    against one whole notice handed in directly. `gather` split the API output
+    by line and called each line a comment body, so the notice arrived in
+    pieces and the last piece carrying the marker was the closing
+    `<!-- end of auto-generated comment: rate limited ... -->`, which has no
+    wait in it. Every genuinely rate-limited pull request reported "a
+    rate-limit notice carried no readable wait", and the whole feature did
+    nothing, while these tests passed.
+
+    So this one goes through `gather` with a multi-line notice, which is the
+    only shape that can tell the two apart.
+    """
+    state = gather(
+        39,
+        stub_gh(comment_payload(NOTICE.format(wait="52 minutes")), "abc\n", payload()),
+        owner="o",
+        repo="r",
+    )
+    decision = decide(state, requests_today=0, daily_limit=6)
+    assert decision.action == WAIT
+    assert decision.wait_minutes == 52 + GRACE_MINUTES
+
+
+def test_a_notice_among_other_comments_is_still_found(handled_env: Path) -> None:
+    """Bodies are separate elements, so an ordinary comment between two
+    notices cannot merge with either."""
+    state = gather(
+        39,
+        stub_gh(
+            comment_payload(
+                NOTICE.format(wait="8 minutes"),
+                "Looks good to me\nwith a second line",
+                NOTICE.format(wait="30 minutes"),
+            ),
+            "abc\n",
+            payload(),
+        ),
+        owner="o",
+        repo="r",
+    )
+    # The newest notice wins, which is the whole reason newest_notice exists.
+    assert decide(state, requests_today=0, daily_limit=6).wait_minutes == 30 + GRACE_MINUTES
