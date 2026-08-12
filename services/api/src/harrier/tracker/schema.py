@@ -229,4 +229,36 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
             "ALTER TABLE jobs DROP COLUMN manual_reject",
         ],
     ),
+    (
+        6,
+        [
+            # `scope` never held anything but 'default'. It was threaded
+            # through eight signatures and guarded the one table that holds
+            # no personal data, while the tables that do hold it had no
+            # equivalent, so it did not buy the tenancy it was there for
+            # (spec 041). Removed rather than extended: adding an unused
+            # column to every personal-data table is more speculative
+            # generality, not less. Re-adding it later is a migration, and
+            # ADR-009 now says so.
+            #
+            # A rebuild rather than DROP COLUMN, because the unique index
+            # names the column.
+            """
+            CREATE TABLE user_config_new (
+                id INTEGER PRIMARY KEY,
+                kind TEXT NOT NULL,
+                value TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE (kind)
+            )
+            """,
+            """
+            INSERT INTO user_config_new (id, kind, value, updated_at)
+            SELECT id, kind, value, updated_at FROM user_config
+            WHERE scope = 'default'
+            """,
+            "DROP TABLE user_config",
+            "ALTER TABLE user_config_new RENAME TO user_config",
+        ],
+    ),
 ]

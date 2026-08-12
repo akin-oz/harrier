@@ -11,6 +11,19 @@ depends: [005]
 
 Refined from the stub before implementation; scope below is the real scope.
 
+## Problem
+
+Long-running work needs start, progress, logs and cancel (ADR-004), and the
+skeleton has to cross that seam with one real run class rather than a
+sketch.
+
+This section was lost when the spec was rewritten before implementation, and
+both of its claims went with it: that ADR-004 is what requires the four
+operations, and that the seam is proved by a real run rather than a mock.
+Nothing noticed, because neither the spec gate nor the generated-artifact
+check reads a spec's structure. `scripts/check_spec_structure.py` reads it
+now (spec 041).
+
 ## Amendment (stated, not silent)
 
 The stub's acceptance said "a dry-run import streams log lines". Importers do

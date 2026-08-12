@@ -31,10 +31,24 @@ and an empty system, not Akin's watchlist.
    not this milestone: authentication, per-tenant isolation, and hosting
    are out of scope for the parity rewrite (M0 to M5 target cutover of a
    single-user tool). What changes now is that nothing new may *block*
-   tenancy: configuration and personal data live in the database keyed so
-   a tenant scope can partition them later, code reads configuration
-   through accessors rather than module-level file paths, and "the
-   candidate" stays a data record, never a constant.
+   tenancy: configuration and personal data live in the database, code
+   reads configuration through accessors rather than module-level file
+   paths, and "the candidate" stays a data record, never a constant.
+
+   **Amended (spec 041).** This originally said the data was "keyed so a
+   tenant scope can partition them later", and a `scope` column was added
+   to `user_config` to do that. It was removed. It never held anything but
+   `default`, it was threaded through eight signatures that only ever
+   passed the default, and it guarded the one table holding no personal
+   data while `jobs` and `contacts`, which hold all of it, had no
+   equivalent. It was not the seam this ADR wanted; it was the appearance
+   of one, on the wrong table.
+
+   Re-adding it is a migration, and that is the accepted cost. The rest of
+   this point stands and is the part that actually keeps tenancy open:
+   configuration in the database, read through accessors, with no
+   module-level paths and no candidate constant. A column that is always
+   `default` blocks nothing and proves nothing.
 
 ## Consequences
 

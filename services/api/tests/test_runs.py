@@ -117,10 +117,39 @@ def test_journal_survives_restart(tmp_path: Path) -> None:
     assert runs[0].state == "succeeded"
 
 
-def test_journal_marks_orphaned_run_failed(tmp_path: Path) -> None:
+def test_journal_marks_an_orphaned_run_interrupted_not_failed(tmp_path: Path) -> None:
+    """A run whose process is gone did not fail: nobody knows how it ended.
+
+    Calling it failed was a guess dressed as a fact, and a reloading
+    development server produced one on every reload, so the journal filled
+    with failures that were only restarts (spec 041).
+    """
     journal = tmp_path / "journal.jsonl"
     journal.write_text(
         json.dumps({"id": "abc", "kind": "demo", "state": "running", "created_at": "x"}) + "\n",
+        encoding="utf-8",
+    )
+    reloaded = RunManager(journal_path=journal, kind_commands={})
+    assert reloaded.list_runs()[0].state == "interrupted"
+
+
+def test_an_interrupted_run_does_not_block_the_next_one(tmp_path: Path) -> None:
+    """Interrupted is terminal. If it were not, the orphan left by a reload
+    would be the active run forever and every start would return it."""
+    journal = tmp_path / "journal.jsonl"
+    journal.write_text(
+        json.dumps({"id": "abc", "kind": "demo", "state": "running", "created_at": "x"}) + "\n",
+        encoding="utf-8",
+    )
+    reloaded = RunManager(journal_path=journal, kind_commands={})
+    assert reloaded.active_run("demo") is None
+
+
+def test_a_real_failure_is_still_recorded_as_failed(tmp_path: Path) -> None:
+    """The distinction only means something if failed still happens."""
+    journal = tmp_path / "journal.jsonl"
+    journal.write_text(
+        json.dumps({"id": "abc", "kind": "demo", "state": "failed", "created_at": "x"}) + "\n",
         encoding="utf-8",
     )
     reloaded = RunManager(journal_path=journal, kind_commands={})

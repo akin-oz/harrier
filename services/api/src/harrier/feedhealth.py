@@ -42,10 +42,10 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 from harrier.demo import http_fixtures_dir
 from harrier.screening.http import USER_AGENT, fixture_body
 from harrier.sources.ashby import extract_ashby_board
-from harrier.sources.feeds import route_ats_feeds
+from harrier.sources.feeds import IMPORTER_KEYS, route_ats_feeds
 from harrier.sources.greenhouse import extract_greenhouse_token
 from harrier.sources.lever import extract_lever_api_base, extract_lever_company
-from harrier.userconfig import DEFAULT_SCOPE, FEEDS, load_feed_urls, set_config
+from harrier.userconfig import FEEDS, load_feed_urls, set_config
 
 # One hung host must not stall the report, and eight in flight is enough to
 # make a watchlist of any realistic size finish while staying polite.
@@ -301,9 +301,13 @@ def check_feeds(
     """
     run_probe = probe if probe is not None else probe_board
     grouped = route_ats_feeds(urls)
-    source_of = {url: source for source in grouped for url in grouped[source]}
+    # Importer keys only. `route_ats_feeds` now also returns the entries that
+    # route nowhere, under UNROUTED, and probing those as though they were a
+    # provider would report an unsupported host as live (spec 041).
+    routed = {key: grouped.get(key, []) for key in IMPORTER_KEYS}
+    source_of = {url: source for source in routed for url in routed[source]}
     entries: list[tuple[str, str]] = [
-        (url, source) for source in sorted(grouped) for url in grouped[source]
+        (url, source) for source in sorted(routed) for url in routed[source]
     ]
     unsupported = tuple(
         BoardHealth(url, "", UNREACHABLE, UNSUPPORTED_HOST) for url in urls if url not in source_of
@@ -323,8 +327,6 @@ def check_feeds(
 def prune_dead(
     conn: sqlite3.Connection,
     report: FeedHealthReport,
-    *,
-    scope: str = DEFAULT_SCOPE,
 ) -> tuple[BoardHealth, ...]:
     """Remove the boards this report probed as dead. Returns what went.
 
@@ -339,17 +341,15 @@ def prune_dead(
         return ()
     removed = {item.url for item in dead}
     remaining = [item.url for item in report.results if item.url not in removed]
-    set_config(conn, FEEDS, remaining, scope=scope)
+    set_config(conn, FEEDS, remaining)
     return dead
 
 
-def load_feeds_for_check(
-    conn: sqlite3.Connection | None = None, *, scope: str = DEFAULT_SCOPE
-) -> list[str]:
+def load_feeds_for_check(conn: sqlite3.Connection | None = None) -> list[str]:
     """The watchlist exactly as configured, ungrouped.
 
     Ungrouped on purpose: what is written back after a prune has to be built
     from the entries the operator actually has, not from the subset the
     router recognises.
     """
-    return load_feed_urls(conn, scope=scope)
+    return load_feed_urls(conn)

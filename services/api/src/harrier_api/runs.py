@@ -22,8 +22,12 @@ from harrier.db import data_dir
 from harrier.sources import scrub_secrets
 
 PROTOCOL_PREFIX = "::harrier::"
-RunState = Literal["queued", "running", "succeeded", "failed", "cancelled"]
-TERMINAL_STATES: frozenset[str] = frozenset({"succeeded", "failed", "cancelled"})
+# `interrupted` is not a failure. A run whose process disappeared, which is
+# what a reloading development server does to every child it started, did not
+# fail: nobody knows how it ended, and calling that failed is a claim the
+# server cannot support (spec 041).
+RunState = Literal["queued", "running", "succeeded", "failed", "cancelled", "interrupted"]
+TERMINAL_STATES: frozenset[str] = frozenset({"succeeded", "failed", "cancelled", "interrupted"})
 
 # Run kinds and their commands.
 KIND_COMMANDS: dict[str, list[str]] = {
@@ -92,6 +96,20 @@ class Run:
 
 
 class RunManager:
+    """One active run per kind, per process.
+
+    Per process is the honest scope and it used to be stated more strongly
+    than it was enforced: the registry is in memory, so two workers hold two
+    registries and the invariant holds within each rather than across the
+    machine (spec 041).
+
+    The deployment this is for runs a single uvicorn worker on the operator's
+    own laptop, where per process and per machine are the same thing. Moving
+    the registry into SQLite would make the stronger claim true and is not
+    done here, because it would buy nothing for that deployment and the
+    claim is now accurate as written. A second worker would need it.
+    """
+
     def __init__(
         self,
         journal_path: Path | None = None,
@@ -285,11 +303,14 @@ class RunManager:
             run_id = str(record.get("id", ""))
             if not run_id:
                 continue
-            # Last record per id wins; a run left non-terminal by a dead
-            # server is reported failed rather than forever running.
-            resolved: RunState = "failed"
+            # Last record per id wins. A run left non-terminal belonged to a
+            # process that is gone, and this one cannot know how it ended, so
+            # it is `interrupted` rather than `failed`. Reporting it failed
+            # was a guess dressed as a fact, and a reloading development
+            # server produced one on every reload (spec 041).
+            resolved: RunState = "interrupted"
             if state in TERMINAL_STATES:
-                assert state in ("succeeded", "failed", "cancelled")
+                assert state in ("succeeded", "failed", "cancelled", "interrupted")
                 resolved = state
             exit_code_raw = record.get("exit_code")
             self._runs[run_id] = Run(

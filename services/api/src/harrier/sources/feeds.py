@@ -25,14 +25,27 @@ def read_line_config(path: Path) -> list[str]:
     return items
 
 
+# Where an entry that matches no importer is collected. Not an importer, and
+# never iterated as one: `IMPORTER_KEYS` is what callers loop over.
+UNROUTED = "unrouted"
+IMPORTER_KEYS: tuple[str, ...] = ("greenhouse", "ashby", "lever")
+
+
 def route_ats_feeds(feed_urls: list[str]) -> dict[str, list[str]]:
-    """Group board URLs by importer. Split out from the file reader so the
-    same routing serves configuration read from the database (spec 023)."""
-    grouped: dict[str, list[str]] = {
-        "greenhouse": [],
-        "ashby": [],
-        "lever": [],
-    }
+    """Group board URLs by importer, keeping the ones that match none.
+
+    The loop had a branch per provider and no final branch, so a watchlist
+    entry for anything else produced no error and no jobs, forever. For a
+    single-user tool whose watchlist is edited by hand, that is the most
+    likely real failure in the system: you paste a URL, nothing happens, and
+    nothing says why (spec 041).
+
+    They come back under `UNROUTED` rather than raising, because one
+    unsupported entry must not stop the other sources running. Reporting is
+    the caller's job, and `harrier.discovery` does it per run.
+    """
+    grouped: dict[str, list[str]] = {key: [] for key in IMPORTER_KEYS}
+    grouped[UNROUTED] = []
     for feed_url in feed_urls:
         hostname = (urlparse(feed_url).hostname or "").lower()
         # Label-suffix matches, not substrings: lookalike hosts route nowhere.
@@ -42,6 +55,8 @@ def route_ats_feeds(feed_urls: list[str]) -> dict[str, list[str]]:
             grouped["ashby"].append(feed_url)
         elif hostname == "lever.co" or hostname.endswith(".lever.co"):
             grouped["lever"].append(feed_url)
+        else:
+            grouped[UNROUTED].append(feed_url)
     return grouped
 
 
