@@ -19,31 +19,8 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          fail=0
-          commits=$(git rev-list --no-merges "$BASE..$HEAD")
-          if [ -z "$commits" ]; then echo "No commits to check."; exit 0; fi
-          for c in $commits; do
-            subject=$(git log -1 --format=%s "$c")
-            spec=$(git log -1 --format=%B "$c" | grep -oiE 'Spec:[[:space:]]*[0-9]{3}' | head -1 | grep -oE '[0-9]{3}' || true)
-            if [ -z "$spec" ]; then
-              echo "::error::Commit ${c:0:9} (\"$subject\") is missing a 'Spec: NNN' trailer."
-              fail=1; continue
-            fi
-            file=$(ls "specs/${spec}-"*.md 2>/dev/null | head -1 || true)
-            if [ -z "$file" ]; then
-              echo "::error::Commit ${c:0:9} references Spec: $spec, but specs/${spec}-*.md does not exist."
-              fail=1
-            elif ! grep -qiE '^approved:[[:space:]]*yes' "$file"; then
-              echo "::error::Commit ${c:0:9} references Spec: $spec, but $file is not 'approved: yes'."
-              fail=1
-            else
-              echo "ok: ${c:0:9} \"$subject\" -> $file"
-            fi
-          done
-          if [ "$fail" -ne 0 ]; then
-            echo ""
-            echo "Every commit must reference an approved spec. See specs/README.md."
-            exit 1
-          fi
+        # The logic lives in scripts/spec_gate.py so it can be tested against
+        # real repositories rather than only observed in CI (spec 039). It
+        # resolves approval from the BASE tree, because reading it from the
+        # checked-out pull request let a branch approve its own spec.
+        run: python3 scripts/spec_gate.py . "$BASE" "$HEAD"
