@@ -25,7 +25,13 @@ operator cannot correct a mistake". A table that refuses the recruiter case
 is that failure, and it would be discovered by someone whose interview is
 already booked.
 
-So no transition is refused. What the spec was reaching for is enforced
+So no transition is refused, which
+`tests/test_tracker_invariants.py::test_every_status_is_reachable_from_every_wrong_one`
+holds. Its limit: it covers which moves are allowed, not what a move clears.
+That is `::test_walking_back_past_applied_resets_the_outreach_axis` and
+`::test_leaving_rejected_clears_the_rejection_reason`.
+
+What the spec was reaching for is enforced
 instead as a property of the row, in `harrier.tracker.invariants`, which is
 where all three of its named defects actually live: they are illegal *states*
 reachable through a generic field write, not illegal *moves*. A predecessor
@@ -110,7 +116,14 @@ def fields_a_move_clears(current: str, target: str) -> dict[str, str]:
     # it here is the choice this spec makes; the alternative was deleting the
     # orthogonality claim, and the claim is the one worth keeping because the
     # two axes really do move independently within a stage.
-    if target != TERMINAL and _stage(target) < OUTREACH_FROM <= _stage(current):
+    # `current` may be TERMINAL, which has no stage. A row rejected while it
+    # was applied still carries the outreach it earned there, so moving it to
+    # an earlier stage has to clear it: applied, rejected, prospect used to
+    # leave a prospect claiming contact had been sent, which is the illegal
+    # state this spec closes, reached in two steps instead of one (review
+    # finding on PR #44).
+    carries_outreach = current == TERMINAL or _stage(current) >= OUTREACH_FROM
+    if target != TERMINAL and _stage(target) < OUTREACH_FROM and carries_outreach:
         cleared["outreach_status"] = ""
         cleared["next_outreach_action"] = ""
         cleared["outreach_priority"] = ""

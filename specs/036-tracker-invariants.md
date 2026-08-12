@@ -44,10 +44,22 @@ lenses.
 
 ## Scope
 
-**A transition table.** Statuses gain legal predecessors, `set_status`
-enforces them, and the table is the single statement of what the pipeline
-permits. Backward moves stay legal where the operator needs them and become
-explicit rather than accidental.
+**One transition contract, stated here rather than in two places.** This
+originally asked for legal predecessors that `set_status` enforces. That was
+built, run, and rejected during implementation, and the reasoning is under
+"What the implementation decided" below. The contract as approved and built:
+
+- An unknown status is refused, by `set_status`, as it always was.
+- Every pair of known statuses is a legal move. The pipeline describes an
+  intention and the world does not follow it, so a forward jump is a real
+  event rather than an error.
+- A move is not free: it clears what it invalidates, which is the next
+  paragraph, and that is where the enforcement this spec wanted actually
+  lives.
+
+Amended after review pointed out that requiring a predecessor table here
+while the implementation section said every pair is legal left the approved
+behaviour ambiguous (review finding on PR #44).
 
 **Fields that belong to a status move with it.** Entering applied requires an
 applied date. Leaving rejected clears the rejection reason. Walking backward

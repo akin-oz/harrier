@@ -12,7 +12,7 @@ import sqlite3
 from collections.abc import Mapping
 from datetime import date, timedelta
 
-from harrier.tracker.invariants import invariant_breach
+from harrier.tracker.invariants import all_breaches
 from harrier.tracker.schema import (
     CONTACT_FIELDS,
     NEXT_ACTION_DEFAULTS,
@@ -219,10 +219,11 @@ def update_fields(
     # already breaks a rule would make rows written before these rules
     # unrepairable, and the spec is explicit that they are reported and left
     # alone rather than rewritten. `harrier check` is how they are found.
-    before = invariant_breach(current)
-    after = invariant_breach({**current, **{k: str(v) for k, v in fields.items()}})
-    if after and after != before:
-        raise TrackerError(after)
+    before = set(all_breaches(current))
+    after = all_breaches({**current, **{k: str(v) for k, v in fields.items()}})
+    introduced = [breach for breach in after if breach not in before]
+    if introduced:
+        raise TrackerError(introduced[0])
     assignments = ", ".join(f"{name} = ?" for name in fields)
     with conn:
         conn.execute(

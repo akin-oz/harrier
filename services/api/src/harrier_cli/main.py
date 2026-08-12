@@ -138,11 +138,16 @@ def _cmd_check(args: argparse.Namespace) -> int:
     migration that silently edited somebody's job search to satisfy a rule
     invented afterwards would destroy the record of what they actually did.
     So this reports and exits non-zero, and the operator decides.
+
+    `--link-contacts` is the one thing it writes, and only when asked. The
+    summary line says so when it wrote, rather than claiming nothing changed
+    (review finding on PR #44).
     """
     from harrier.outreach.joblink import backfill_job_ids, unresolved_links
     from harrier.tracker.invariants import check_rows
     from harrier.tracker.store import list_jobs
 
+    wrote = 0
     conn = connect()
     try:
         if args.link_contacts:
@@ -150,6 +155,7 @@ def _cmd_check(args: argparse.Namespace) -> int:
             # gives existing contact links the job id they were written
             # without; it never drops a link it cannot match (spec 036).
             resolved, unmatched = backfill_job_ids(conn)
+            wrote = resolved
             print(f"linked {resolved} contact link(s) to jobs; {unmatched} left unmatched")
         problems = check_rows(list_jobs(conn))
         link_problems = unresolved_links(conn)
@@ -164,7 +170,8 @@ def _cmd_check(args: argparse.Namespace) -> int:
     for who, breach in link_problems:
         print(f"contact {who}: {breach}", file=sys.stderr)
     total = len(problems) + len(link_problems)
-    print(f"{total} item(s) need attention; nothing was changed", file=sys.stderr)
+    changed = f"{wrote} contact link(s) were written" if wrote else "nothing was changed"
+    print(f"{total} item(s) need attention; {changed}", file=sys.stderr)
     return 1
 
 

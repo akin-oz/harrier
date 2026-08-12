@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from harrier.db import connect
-from harrier.tracker.invariants import check_rows, invariant_breach
+from harrier.tracker.invariants import all_breaches, check_rows, invariant_breach
 from harrier.tracker.schema import STATUSES
 from harrier.tracker.store import TrackerError, add_job, get_job, set_status, update_fields
 from harrier.tracker.transitions import transition_allowed
@@ -360,3 +360,102 @@ def test_a_status_change_does_not_write_the_csv_export(
 
     assert main(["export", "--dest", str(tmp_path / "tracker")]) == 0
     assert (tmp_path / "tracker" / "jobs.csv").is_file()
+
+
+# --- the two the first pass left open -----------------------------------------
+
+
+def test_a_second_breach_cannot_ride_in_behind_the_first(db: sqlite3.Connection) -> None:
+    """The write comparison used to look at one message.
+
+    A row already failing the applied-date rule reported that same message
+    before and after a write that added a rejection reason, so the second
+    breach looked like nothing new and was written (review finding on PR #44).
+    """
+    set_status(db, 1, "applied")
+    db.execute("UPDATE jobs SET applied_date = '' WHERE id = 1")
+    db.commit()
+    assert len(all_breaches(get_job(db, 1))) == 1
+
+    with pytest.raises(TrackerError, match="must not carry a rejection reason"):
+        update_fields(db, 1, {"rejection_reason": "added anyway"})
+    assert get_job(db, 1)["rejection_reason"] == ""
+
+
+def test_the_pre_existing_breach_still_does_not_block_repair(db: sqlite3.Connection) -> None:
+    """The other half of the same rule: refusing a new breach must not refuse
+    a write that leaves the old one alone."""
+    set_status(db, 1, "applied")
+    db.execute("UPDATE jobs SET applied_date = '' WHERE id = 1")
+    db.commit()
+    update_fields(db, 1, {"next_action": "chase the recruiter"})
+    assert get_job(db, 1)["next_action"] == "chase the recruiter"
+
+
+def test_rejecting_then_reviving_to_an_earlier_stage_clears_outreach(
+    db: sqlite3.Connection,
+) -> None:
+    """The illegal state, reached in two steps instead of one.
+
+    `rejected` has no stage, so the clearing rule never fired when leaving it,
+    and applied then rejected then prospect left a prospect claiming contact
+    had been sent (review finding on PR #44).
+    """
+    set_status(db, 1, "applied")
+    update_fields(db, 1, {"outreach_status": "sent", "last_outreach_at": "2026-08-01"})
+    set_status(db, 1, "rejected", rejection_reason="wrong stack")
+    set_status(db, 1, "prospect")
+
+    row = get_job(db, 1)
+    assert row["outreach_status"] == ""
+    assert row["last_outreach_at"] == ""
+    assert row["rejection_reason"] == ""
+    assert all_breaches(row) == []
+
+
+def test_reviving_to_applied_keeps_the_outreach_it_earned(db: sqlite3.Connection) -> None:
+    """Only a move below applied loses it. Un-rejecting back to applied is
+    not a reason to forget who was contacted."""
+    set_status(db, 1, "applied")
+    update_fields(db, 1, {"outreach_status": "sent"})
+    set_status(db, 1, "rejected", rejection_reason="wrong stack")
+    set_status(db, 1, "applied")
+    assert get_job(db, 1)["outreach_status"] == "sent"
+
+
+def test_check_reports_every_breach_on_a_row(db: sqlite3.Connection) -> None:
+    """A row with two problems that reported one would send the operator
+    round the loop again for the second."""
+    set_status(db, 1, "applied")
+    db.execute("UPDATE jobs SET applied_date = '', rejection_reason = 'stale' WHERE id = 1")
+    db.commit()
+    reported = [why for _, why in check_rows([get_job(db, 1)])]
+    assert len(reported) == 2
+
+
+def test_the_link_report_says_when_it_wrote(
+    db: sqlite3.Connection, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--link-contacts` writes, and the summary used to say nothing changed
+    whatever it did (review finding on PR #44)."""
+    from harrier.outreach.contacts import serialize_linked_jobs
+    from harrier.tracker.store import list_contacts, update_contact_fields
+
+    job = get_job(db, 1)
+    _a_contact(db, job["url"])
+    contact = list_contacts(db)[0]
+    update_contact_fields(
+        db,
+        int(contact["id"]),
+        {
+            "linked_jobs": serialize_linked_jobs(
+                [{"company": job["company"], "job_title": job["title"], "job_url": job["url"]}]
+            )
+        },
+    )
+    # A breach so the command reaches its summary line.
+    db.execute("UPDATE jobs SET status = 'applied', applied_date = '' WHERE id = 1")
+    db.commit()
+
+    assert main(["check", "--link-contacts"]) == 1
+    assert "1 contact link(s) were written" in capsys.readouterr().err
