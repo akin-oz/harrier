@@ -42,10 +42,21 @@ paragraph cannot drift from what the demo does.
 first sighting to offer. No spreadsheet, no second copy, no sync.
 
 **Application artifacts.** Resume tailoring reorders and selects real evidence
-against the job description; it never invents any. A truth validator checks
-every generated line against a source-of-truth document and refuses to emit a
-PDF when a claim cannot be traced. Cover letters and application answers work
-the same way.
+against the job description; it never invents any. Every resume bullet is
+checked against a source-of-truth document, and an unverifiable line refuses
+the artifact rather than being dropped from it
+(`services/api/tests/test_honesty.py`, spec 034). The check understands
+document structure and negation, so a section headed "claims I must not make"
+does not verify the claims it lists and "I did not own X" does not verify
+"own X". The candidate's own forbidden-phrase list refuses an artifact that
+contains one.
+
+Cover letters get the same PDF validation and phrase scrubbing as the resume.
+They do not get the line-by-line truth check: a letter is prose rather than a
+list of claims, and nothing here verifies it sentence by sentence. Application
+answers are in the same position. That limitation is stated because the
+previous version of this paragraph said all three worked the same way, and
+they did not.
 
 **Outreach and replies.** Contacts are discovered, staged for approval, and
 never messaged automatically. A Gmail watch classifies incoming mail into

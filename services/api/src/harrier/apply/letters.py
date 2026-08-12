@@ -25,8 +25,8 @@ from harrier.apply.profile import (
 from harrier.db import data_dir
 from harrier.llm import LLMClientError, generate_text
 from harrier.resume.content import load_truth_sources
-from harrier.resume.markdown import normalize_visible_url_text
-from harrier.resume.pdf import render_pdf
+from harrier.resume.markdown import normalize_visible_role_title, normalize_visible_url_text
+from harrier.resume.pdf import render_pdf, validate_rendered_pdf
 
 logger = logging.getLogger(__name__)
 
@@ -351,7 +351,10 @@ def render_cover_letter_html(
     )
     replacements = {
         "name": html.escape(contact["name"]),
-        "headline": html.escape(role),
+        # Scrubbed and normalized like the resume header. The raw tracker
+        # title was going straight into the letter, so an internal label or a
+        # "Tailored for" prefix reached the recruiter (spec 034).
+        "headline": html.escape(strip_banned_phrases(normalize_visible_role_title(company, role))),
         "location": html.escape(contact["location"]),
         "email": html.escape(contact["email"]),
         "linkedin_url": html.escape(contact["linkedin_url"]),
@@ -380,6 +383,7 @@ def write_cover_letter_artifacts(
     output_dir: Path | None = None,
     template_dir: Path | None = None,
     render: Callable[[str, Path], None] | None = None,
+    validate: Callable[[Path, str], list[str]] | None = None,
 ) -> dict[str, Path]:
     directory = output_dir if output_dir is not None else cover_letters_dir()
     directory.mkdir(parents=True, exist_ok=True)
@@ -394,6 +398,11 @@ def write_cover_letter_artifacts(
     html_path.write_text(html_text, encoding="utf-8")
     render_fn = render if render is not None else _default_render
     render_fn(html_text, pdf_path)
-    if not pdf_path.exists():
-        raise RuntimeError("PDF not created")
+    # The resume path validated its PDF; this one only checked the file
+    # existed, so a zero-byte or four-page letter passed. It is the one
+    # recruiter-facing artifact that had neither gate (spec 034).
+    validate_fn = validate if validate is not None else validate_rendered_pdf
+    pdf_errors = validate_fn(pdf_path, html_text)
+    if pdf_errors:
+        raise RuntimeError("invalid cover letter PDF: " + "; ".join(pdf_errors))
     return {"markdown": markdown_path, "html": html_path, "pdf": pdf_path}

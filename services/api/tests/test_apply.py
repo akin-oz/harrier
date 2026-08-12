@@ -327,6 +327,9 @@ def test_write_cover_letter_artifacts_creates_md_html_pdf(
     def fake_render(html_text: str, pdf_path: Path) -> None:
         pdf_path.write_bytes(b"%PDF-1.4\n")
 
+    def passing_validate(pdf_path: Path, html_text: str) -> list[str]:
+        return []
+
     artifacts = write_cover_letter_artifacts(
         db,
         "peec",
@@ -337,6 +340,7 @@ def test_write_cover_letter_artifacts_creates_md_html_pdf(
         output_dir=tmp_path / "letters",
         template_dir=REPO_ROOT / "templates",
         render=fake_render,
+        validate=passing_validate,
     )
     assert artifacts["markdown"].exists()
     assert artifacts["html"].exists()
@@ -355,7 +359,7 @@ def test_write_cover_letter_artifacts_fails_when_pdf_not_created(
     def no_render(html_text: str, pdf_path: Path) -> None:
         return None
 
-    with pytest.raises(RuntimeError, match="PDF not created"):
+    with pytest.raises(RuntimeError, match="PDF was not created or is empty"):
         write_cover_letter_artifacts(
             db,
             "peec",

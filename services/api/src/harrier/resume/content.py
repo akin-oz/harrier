@@ -274,20 +274,129 @@ def parse_bundle(raw: object) -> ResumeBundle:
     return bundle
 
 
+# Headings under which a truth document lists things that are NOT true: the
+# candidate's own record of claims never to make. Substring containment
+# validated every line under such a heading, so the document defeated itself
+# (spec 034).
+DISCLAIMER_HEADINGS = (
+    "must not",
+    "do not claim",
+    "do not say",
+    "never claim",
+    "cannot claim",
+    "forbidden",
+    "not true",
+    "untrue",
+    "avoid claiming",
+    "claims to avoid",
+)
+
+# Sentence openings that assert the opposite of what follows. A truth
+# document saying a responsibility was not held validated the substring
+# naming that responsibility.
+NEGATIONS = (
+    " did not ",
+    " never ",
+    " have not ",
+    " has not ",
+    " was not ",
+    " were not ",
+    " no longer ",
+    " rather than ",
+    " instead of ",
+    " without ",
+)
+
+
+def _is_disclaimer_heading(line: str) -> bool:
+    stripped = line.strip().lower().lstrip("#").strip()
+    if not stripped:
+        return False
+    return any(marker in stripped for marker in DISCLAIMER_HEADINGS)
+
+
+def _is_heading(line: str) -> bool:
+    stripped = line.strip()
+    return stripped.startswith("#") or (stripped.endswith(":") and len(stripped) < 80)
+
+
+def asserting_lines(document: str) -> list[str]:
+    """The lines of a truth document that assert something true.
+
+    Everything under a disclaimer heading is dropped, until the next heading.
+    Without this a section headed "claims I must not make" verifies every
+    claim listed under it, which is the opposite of what the document says.
+    """
+    kept: list[str] = []
+    skipping = False
+    for line in document.splitlines():
+        if _is_heading(line):
+            skipping = _is_disclaimer_heading(line)
+            if skipping:
+                continue
+        if not skipping:
+            kept.append(line)
+    return kept
+
+
+def _is_negated(line: str) -> bool:
+    padded = f" {line.strip().lower()} "
+    return any(marker in padded for marker in NEGATIONS)
+
+
 @dataclass(frozen=True)
 class TruthSources:
     truth_text: str
     achievements_text: str
 
+    def _supporting(self) -> list[str]:
+        """Every line that can verify a claim, from both documents.
+
+        Computed per call rather than cached because the dataclass is frozen
+        and the documents are small; correctness here matters more than the
+        microseconds.
+        """
+        lines: list[str] = []
+        for document in (self.truth_text, self.achievements_text):
+            lines.extend(line for line in asserting_lines(document) if not _is_negated(line))
+        return lines
+
     def contains(self, fragment: str) -> bool:
-        check = fragment.rstrip(".")
-        return check in self.truth_text or check in self.achievements_text
+        """Whether the truth documents actually assert this.
+
+        Three properties the previous `str.__contains__` did not have, each
+        one a way a carefully written truth document defeated itself
+        (spec 034):
+
+        - **Structure.** Lines under a "claims I must not make" heading do not
+          verify the claims they list.
+        - **Polarity.** "I did not own the incident response rota" does not
+          verify "own the incident response rota".
+        - **Case.** A claim differing only in capitalisation is the same
+          claim, and failing it silently dropped real evidence.
+        """
+        check = fragment.strip().rstrip(".").lower()
+        if not check:
+            return False
+        return any(check in line.lower() for line in self._supporting())
 
 
 def require_truth(sources: TruthSources, fragment: str) -> str:
     if not sources.contains(fragment):
         raise ResumeBundleError(f"missing verified fragment in truth sources: {fragment[:80]}")
     return fragment
+
+
+def forbidden_hits(phrases: tuple[str, ...], text: str) -> list[str]:
+    """Which of the candidate's own never-claim phrases appear in the text.
+
+    This list was parsed, stored, exported and read by no validator. It is
+    the candidate's own record of claims never to make, which makes it the
+    highest-value check available and precisely the invention class a
+    containment predicate cannot catch.
+    """
+    haystack = text.lower()
+    return [phrase for phrase in phrases if phrase.strip() and phrase.strip().lower() in haystack]
 
 
 def _document_by_kind(conn: sqlite3.Connection, kind: str) -> str | None:

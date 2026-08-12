@@ -10,7 +10,7 @@ import re
 from dataclasses import dataclass
 from datetime import date
 
-from harrier.resume.content import ResumeBundle, TruthSources
+from harrier.resume.content import ResumeBundle, TruthSources, forbidden_hits
 from harrier.resume.facts import role_period_label
 from harrier.resume.plan import ContentPlan, validate_content_plan
 
@@ -58,6 +58,20 @@ class RenderedResume:
     plan: ContentPlan
 
 
+class UnverifiedClaimError(ValueError):
+    """A generated line is not supported by the truth documents.
+
+    Raised rather than returned, because every caller that could return it
+    would have to remember to check, and the previous behaviour was exactly
+    a caller that did not.
+    """
+
+    def __init__(self, bullet_id: str, text: str) -> None:
+        self.bullet_id = bullet_id
+        self.text = text
+        super().__init__(f"unverifiable claim {bullet_id}: {text[:120]}")
+
+
 def resolve_bullets(
     bundle: ResumeBundle, sources: TruthSources, ids: list[str]
 ) -> tuple[list[str], list[str]]:
@@ -73,7 +87,11 @@ def resolve_bullets(
         if sources.contains(text):
             texts.append(text)
         else:
-            omitted.append(bullet_id)
+            # An unverifiable line is not silently dropped (spec 034). Being
+            # quietly shorter is how an empty or drifted truth document
+            # produced a clean PDF with empty sections: the strictest possible
+            # truth failure looked like success.
+            raise UnverifiedClaimError(bullet_id, text)
     return texts, omitted
 
 
@@ -156,9 +174,38 @@ def build_markdown(
     return markdown
 
 
+# The markdown headings that must never render empty. An empty or drifted
+# truth document produced a resume with both of these blank, a passing
+# one-page check, and a tracker status advance (spec 034).
+REQUIRED_SECTIONS = ("## SELECTED ACHIEVEMENTS", "## EXPERIENCE")
+
+
+def _section_is_populated(markdown: str, heading: str) -> bool:
+    """Whether anything renders between this heading and the next one."""
+    lines = markdown.splitlines()
+    try:
+        start = next(index for index, line in enumerate(lines) if line.strip() == heading)
+    except StopIteration:
+        return True  # absent sections are validate_content_plan's business
+    for line in lines[start + 1 :]:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # The first non-blank line decides: another section heading means
+        # this one rendered nothing.
+        return not stripped.startswith("## ")
+    return False
+
+
 def validate_rendered_markdown(markdown: str, plan: ContentPlan, bundle: ResumeBundle) -> list[str]:
     """Heuristic final-content checks after markdown assembly."""
     errors = validate_content_plan(plan, bundle)
+    for heading in REQUIRED_SECTIONS:
+        if heading in markdown and not _section_is_populated(markdown, heading):
+            errors.append(f"rendered resume has an empty {heading} section")
+    forbidden = forbidden_hits(bundle.forbidden_phrases, markdown)
+    if forbidden:
+        errors.append(f"rendered resume contains forbidden phrases: {', '.join(forbidden)}")
     if "�" in markdown:
         errors.append("rendered resume contains replacement characters")
     if markdown.splitlines()[1] != plan.title:
