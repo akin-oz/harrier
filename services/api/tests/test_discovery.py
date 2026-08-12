@@ -2,6 +2,7 @@
 tests/test_run_job_imports.py plus the scheduled-policy and aggregate pins."""
 
 import json
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
@@ -37,6 +38,18 @@ def _fake_feeds(conn: object = None, *, scope: str = "default") -> dict[str, lis
 
 def _one_greenhouse_job(url: str) -> list[NormalizedJob]:
     return [_job("greenhouse", 1)]
+
+
+def _no_jobs(url: str) -> list[NormalizedJob]:
+    return []
+
+
+def _capture(sink: list[str]) -> Callable[[str], int]:
+    def send(message: str) -> int:
+        sink.append(message)
+        return 0
+
+    return send
 
 
 @pytest.fixture()
@@ -171,6 +184,88 @@ def test_scheduled_evening_run_skips_apify(
         ),
     )
     assert aggregate["sources_run"] == []
+
+
+def test_a_run_that_found_nothing_still_notifies(
+    discovery_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec 029. The notification used to be gated on new_prospects, so the
+    run that found nothing was the run that said nothing, and that is the
+    shape both a quiet week and a total outage take.
+
+    Tested here rather than against the message builder alone: an earlier
+    version of this suite only checked that the builder could render a
+    zero-prospect message, which a re-added gate on new_prospects passes
+    unchanged.
+    """
+    monkeypatch.setattr(discovery_module, "load_ats_feeds", _fake_feeds)
+    monkeypatch.setattr(discovery_module, "fetch_greenhouse_jobs", _no_jobs)
+    sent: list[str] = []
+    monkeypatch.setattr(discovery_module, "send_telegram_message", _capture(sent))
+
+    conn = connect()
+    aggregate = run_discovery(conn, DiscoveryOptions(only_sources=frozenset({"greenhouse"})))
+
+    assert aggregate["new_prospects"] == 0
+    assert len(sent) == 1
+    assert "0 new prospects" in sent[0]
+
+
+def test_a_dry_run_still_notifies_nobody(
+    discovery_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The zero-side-effect rule survives the change above."""
+    monkeypatch.setattr(discovery_module, "load_ats_feeds", _fake_feeds)
+    monkeypatch.setattr(discovery_module, "fetch_greenhouse_jobs", _no_jobs)
+    sent: list[str] = []
+    monkeypatch.setattr(discovery_module, "send_telegram_message", _capture(sent))
+
+    conn = connect()
+    run_discovery(conn, DiscoveryOptions(dry_run=True, only_sources=frozenset({"greenhouse"})))
+    assert sent == []
+
+
+def test_a_dry_run_records_no_last_success(
+    discovery_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from harrier.runoutcome import DISCOVERY_JOB, last_success
+
+    monkeypatch.setattr(discovery_module, "load_ats_feeds", _fake_feeds)
+    monkeypatch.setattr(discovery_module, "fetch_greenhouse_jobs", _one_greenhouse_job)
+    conn = connect()
+    run_discovery(
+        conn,
+        DiscoveryOptions(dry_run=True, notify=False, only_sources=frozenset({"greenhouse"})),
+    )
+    assert last_success(conn, DISCOVERY_JOB) is None
+
+
+def test_a_successful_run_records_its_last_success(
+    discovery_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from harrier.runoutcome import DISCOVERY_JOB, last_success
+
+    monkeypatch.setattr(discovery_module, "load_ats_feeds", _fake_feeds)
+    monkeypatch.setattr(discovery_module, "fetch_greenhouse_jobs", _one_greenhouse_job)
+    conn = connect()
+    run_discovery(conn, DiscoveryOptions(notify=False, only_sources=frozenset({"greenhouse"})))
+    assert last_success(conn, DISCOVERY_JOB) is not None
+
+
+def test_a_failing_run_leaves_the_previous_last_success_alone(
+    discovery_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A job broken for a month must not look fresh because it ran today."""
+    from harrier.runoutcome import DISCOVERY_JOB, last_success, record_success
+
+    def _raise() -> list[NormalizedJob]:
+        raise RuntimeError("remoteok is down")
+
+    monkeypatch.setattr(discovery_module, "fetch_remoteok_jobs", _raise)
+    conn = connect()
+    record_success(conn, DISCOVERY_JOB, at="2026-06-01T09:00:00Z")
+    run_discovery(conn, DiscoveryOptions(notify=False, only_sources=frozenset({"remoteok"})))
+    assert last_success(conn, DISCOVERY_JOB) == "2026-06-01T09:00:00Z"
 
 
 def test_full_run_aggregates_and_notifies_once(

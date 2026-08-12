@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -176,3 +177,47 @@ def test_run_event_payload_is_in_the_contract() -> None:
     assert "RunEventOut" in schema["components"]["schemas"]
     properties = schema["components"]["schemas"]["RunEventOut"]["properties"]
     assert set(properties) >= {"type", "line", "step", "total", "message", "state", "exit_code"}
+
+
+def test_a_database_already_at_the_previous_version_gains_the_job_runs_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`job_runs` is its own migration, not an addition to the last one.
+
+    Spec 033's migration 3 has already shipped, and the runner skips any
+    version at or below the recorded one. Appending this table to migration 3
+    would mean every database that had already applied it never received the
+    table, and the failure would be a missing-table error at the first
+    scheduled run rather than anything visible here (conflict resolution
+    between specs 029 and 033).
+    """
+    from harrier.db import connect
+    from harrier.tracker.schema import MIGRATIONS
+
+    monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("HARRIER_DEMO", raising=False)
+
+    # A database built up to version 3 and stopped there, as a real one would
+    # have been before this branch.
+    path = tmp_path / "data"
+    path.mkdir(parents=True, exist_ok=True)
+    old = sqlite3.connect(path / "tracker.db")
+    old.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY)")
+    for version, statements in MIGRATIONS:
+        if version > 3:
+            continue
+        for statement in statements:
+            old.execute(statement)
+        old.execute("INSERT INTO schema_version (version) VALUES (?)", (version,))
+    old.commit()
+    # Read directly: `schema_version` expects the application's row factory.
+    assert old.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 3
+    tables = {row[0] for row in old.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "job_runs" not in tables
+    old.close()
+
+    # Opening it through the application brings it forward.
+    conn = connect()
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "job_runs" in tables
+    conn.close()

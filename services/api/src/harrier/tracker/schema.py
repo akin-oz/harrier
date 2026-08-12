@@ -189,4 +189,23 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
             "ALTER TABLE jobs ADD COLUMN scoring_version TEXT NOT NULL DEFAULT ''",
         ],
     ),
+    (
+        4,
+        [
+            # When each scheduled job last completed successfully (spec 029).
+            # A job that fails loudly is visible in its exit status; a job
+            # that hangs, or that the scheduler stopped starting, produces no
+            # status at all, and the only evidence is the absence of a recent
+            # success.
+            #
+            # Job names and timestamps only. Nothing here describes what a run
+            # found, so the table carries no personal data (ADR-008).
+            """
+            CREATE TABLE job_runs (
+                job TEXT PRIMARY KEY,
+                last_success_at TEXT NOT NULL
+            )
+            """,
+        ],
+    ),
 ]

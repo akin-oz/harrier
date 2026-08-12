@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from harrier.db import connect, default_db_path
+from harrier.logsetup import configure_logging
 from harrier.profile import export_to, import_from, list_documents
 from harrier.tracker.export import export_csv
 from harrier.tracker.migrate_legacy import MigrationError, migrate
@@ -39,6 +40,7 @@ def _cmd_discover(args: argparse.Namespace) -> int:
         apify_allowed_now,
         run_discovery,
     )
+    from harrier.runoutcome import classify_run
 
     only = frozenset(item.strip() for item in args.only_source if item.strip())
     unknown = sorted(only - set(SOURCE_ORDER))
@@ -97,6 +99,18 @@ def _cmd_discover(args: argparse.Namespace) -> int:
         progress,
     )
     print(json.dumps(aggregate, indent=2, ensure_ascii=False))
+
+    # The exit status is the whole point of spec 029. Partial failure stays
+    # zero: a day where one board is down and four are fine is a normal day,
+    # and a status that fails a run the operator would call fine gets ignored
+    # within a week. Total failure, and a run that attempted nothing, are the
+    # only shapes that are never normal.
+    outcome = classify_run(aggregate)
+    if outcome.total_failure:
+        print(f"discovery failed: {outcome.describe()}", file=sys.stderr)
+        return outcome.exit_code
+    if outcome.failed:
+        print(f"discovery: {outcome.describe()}", file=sys.stderr)
     return 0
 
 
@@ -1621,6 +1635,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     load_project_env()
+    configure_logging()
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
