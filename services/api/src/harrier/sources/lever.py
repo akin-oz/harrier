@@ -40,7 +40,13 @@ def extract_lever_api_base(value: str) -> str:
 def normalize_lever_job(item: dict[str, Any], company: str) -> NormalizedJob:
     categories_raw: object = item.get("categories") or {}
     categories = cast("dict[str, Any]", categories_raw) if isinstance(categories_raw, dict) else {}
-    location = str(categories.get("location") or item.get("workplaceType") or "").strip()
+    # Both, not one or the other. The workplace type is the provider's own
+    # statement about remoteness and is the most reliable evidence available;
+    # taking it only when the city is missing threw it away exactly when a
+    # remote role also named a city (spec 032).
+    city = str(categories.get("location") or "").strip()
+    workplace = str(item.get("workplaceType") or "").strip()
+    location = ", ".join(part for part in (workplace, city) if part)
     compensation = ""
     salary_range: object = item.get("salaryRange") or {}
     if isinstance(salary_range, dict):

@@ -1,9 +1,11 @@
 {
   "_comment": "Structure and default weights only. The real candidate config is personal and lives in the profile database (ADR-008); import it with 'harrier profile import'. This example doubles as the demo-mode config.",
   "candidate": {
-    "preferred_regions": ["europe", "emea"],
-    "preferred_countries": [],
-    "remote_only": true
+    "preferred_regions": [
+      "europe",
+      "emea"
+    ],
+    "preferred_countries": []
   },
   "targets": {
     "titles": [
@@ -34,10 +36,19 @@
     "include_keyword_bonus_cap": 18,
     "remote_bonus": 10,
     "preferred_region_bonus": 8,
-    "domain_bonus": { "primary": 5, "secondary": 3 }
+    "domain_bonus": {
+      "primary": 5,
+      "secondary": 3
+    }
   },
   "preferences": {
-    "domains_preferred": ["devtools", "productivity"],
-    "domains_secondary": ["fintech", "ai platform"]
+    "domains_preferred": [
+      "devtools",
+      "productivity"
+    ],
+    "domains_secondary": [
+      "fintech",
+      "ai platform"
+    ]
   }
 }
