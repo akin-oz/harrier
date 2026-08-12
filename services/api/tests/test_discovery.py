@@ -417,3 +417,58 @@ def test_board_errors_are_recorded_per_source(
     errors = cast("list[str]", sources[0]["board_errors"])
     assert len(errors) == 1
     assert "gone" in errors[0]
+
+
+def test_the_summary_reports_the_count_the_actor_was_given(
+    discovery_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A scheduled run takes its count from the stored discovery settings, so
+    the summary's `apify_count` described a value with no effect on the run
+    (spec 033). It now records what the actor was given, and the caller's ask
+    keeps its own field so nothing is lost.
+    """
+    asked_for: list[int] = []
+
+    def capture_count(**kwargs: Any) -> list[NormalizedJob]:
+        asked_for.append(int(kwargs["count"]))
+        return []
+
+    monkeypatch.setattr(discovery_module, "fetch_apify_linkedin_jobs", capture_count)
+
+    def stored_count(**kwargs: Any) -> int:
+        return 40
+
+    monkeypatch.setattr(discovery_module, "scheduled_apify_count", stored_count)
+    conn = connect()
+    aggregate = run_discovery(
+        conn,
+        DiscoveryOptions(
+            dry_run=True,
+            notify=False,
+            only_sources=frozenset({"apify_linkedin"}),
+            scheduled=True,
+            apify_count=150,
+            now=datetime(2026, 8, 10, 9, 0),
+        ),
+    )
+    assert asked_for == [40]
+    assert aggregate["apify_count"] == 40
+    assert aggregate["apify_count_requested"] == 150
+
+
+def test_a_run_without_apify_claims_no_count(
+    discovery_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reporting the requested number for a run that never called the actor
+    reads as though it did."""
+    monkeypatch.setattr(discovery_module, "load_ats_feeds", _fake_feeds)
+    monkeypatch.setattr(discovery_module, "fetch_greenhouse_jobs", _one_greenhouse_job)
+    conn = connect()
+    aggregate = run_discovery(
+        conn,
+        DiscoveryOptions(
+            dry_run=True, notify=False, only_sources=frozenset({"greenhouse"}), apify_count=150
+        ),
+    )
+    assert aggregate["apify_count"] is None
+    assert aggregate["apify_count_requested"] == 150

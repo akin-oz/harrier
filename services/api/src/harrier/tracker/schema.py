@@ -38,6 +38,9 @@ NOTE_KEYS: tuple[str, ...] = (
     "source_label",
     "external_key",
     "signals",
+    # The policy version that produced the score (spec 033). A bare number
+    # cannot say whether it is comparable with the row above it.
+    "scoring_version",
     "remote_filter",
     "manual_reject",
     "manual_added",
@@ -87,7 +90,25 @@ _STATUS_LIST = ", ".join(f"'{s}'" for s in STATUSES)
 _JOB_TEXT_COLUMNS = ", ".join(
     f"{name} TEXT NOT NULL DEFAULT ''" for name in TRACKER_FIELDS if name != "status"
 )
-_PROMOTED_COLUMNS = ", ".join(f"{name} TEXT NOT NULL DEFAULT ''" for name in NOTE_KEYS)
+# Migration 1 is history and must describe the table as it was first created.
+# Deriving its column list from the live NOTE_KEYS meant that adding a key
+# both changed what a fresh database got at migration 1 and left the later
+# ALTER to run against a column that already existed, so a fresh install
+# failed on "duplicate column name" while an existing one worked. The live
+# list stays the description of the table; this is the record of its first
+# version. `tests/test_scoring.py::test_a_migrated_database_matches_a_fresh_one`
+# holds the two paths together.
+_ORIGINAL_NOTE_KEYS: tuple[str, ...] = (
+    "score",
+    "archetype",
+    "source_label",
+    "external_key",
+    "signals",
+    "remote_filter",
+    "manual_reject",
+    "manual_added",
+)
+_PROMOTED_COLUMNS = ", ".join(f"{name} TEXT NOT NULL DEFAULT ''" for name in _ORIGINAL_NOTE_KEYS)
 _CONTACT_COLUMNS = ", ".join(f"{name} TEXT NOT NULL DEFAULT ''" for name in CONTACT_FIELDS)
 
 MIGRATIONS: list[tuple[int, list[str]]] = [
@@ -155,6 +176,17 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
                 UNIQUE (scope, kind)
             )
             """,
+        ],
+    ),
+    (
+        3,
+        [
+            # The scoring version, promoted alongside the score (spec 033).
+            # A fresh database gets this column from NOTE_KEYS at migration 1;
+            # this is the same column for a database that already exists.
+            # `tests/test_scoring.py::test_a_migrated_database_matches_a_fresh_one`
+            # holds the two paths together.
+            "ALTER TABLE jobs ADD COLUMN scoring_version TEXT NOT NULL DEFAULT ''",
         ],
     ),
 ]

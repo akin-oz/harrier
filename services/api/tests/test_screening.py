@@ -396,11 +396,19 @@ def test_request_text_refuses_disallowed_initial_url() -> None:
         )
 
 
-def test_low_score_enrichment_is_cached_and_not_refetched(
+def test_an_enrichment_fetch_is_never_repeated_for_the_same_url(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """One fetch per posting, however the screening then goes.
+
+    This used to manufacture a low-score rejection by zeroing five
+    configuration values and emptying both weight dictionaries, because that
+    was the only way to make the cutoff fire. The cutoff is gone (spec 033)
+    and the manufactured configuration went with it; what the test was
+    actually about, that the fetch is cached rather than repeated, is
+    unchanged and no longer needs a rigged config to observe.
+    """
     monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path))
-    # A thin job whose enriched description still scores below the cutoff.
     thin_job = build_job(
         title="Senior Frontend Engineer",
         location="Remote, Europe",
@@ -409,17 +417,10 @@ def test_low_score_enrichment_is_cached_and_not_refetched(
     )
     html = "<html><body><p>Remote Europe role. Nothing else relevant here.</p></body></html>"
     cfg = candidate_cfg()
-    cfg["scoring"]["base_score"] = 0
-    cfg["scoring"]["exact_title_bonus"] = 0
-    cfg["scoring"]["include_keyword_bonus"] = 0
-    cfg["scoring"]["remote_bonus"] = 0
-    cfg["scoring"]["preferred_region_bonus"] = 0
-    cfg["scoring"]["skill_signals"] = {}
-    cfg["scoring"]["preferred_signal_weights"] = {}
 
     with patch.object(screening_http, "request_text", return_value=html) as fetch:
         first = _screen([thin_job], cfg, cache_descriptions=True)
-        assert first.rejected_counts.get("low_score") == 1
+        assert len(first.new_tracker_rows) == 1
         assert fetch.call_count == 1
 
         # Same URL screened again (fresh seen-state): served from the cache.
@@ -430,7 +431,7 @@ def test_low_score_enrichment_is_cached_and_not_refetched(
             description="",
         )
         second = _screen([again], cfg, cache_descriptions=True)
-        assert second.rejected_counts.get("low_score") == 1
+        assert len(second.new_tracker_rows) == 1
         assert fetch.call_count == 1
 
 

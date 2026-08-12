@@ -14,6 +14,7 @@ both, which would have broken parity with the old ranking for no gain.
 from __future__ import annotations
 
 from harrier.tracker.schema import STATUSES
+from harrier.tracker.score import stored_score
 
 ACTIVE_STATUSES = frozenset(STATUSES) - {"rejected"}
 
@@ -38,11 +39,14 @@ def _reverse(text: str) -> tuple[int, ...]:
 
 
 def parse_score(job: dict[str, str]) -> int:
-    raw = (job.get("score") or job.get("fit_score") or "").strip()
-    try:
-        return int(float(raw))
-    except ValueError:
-        return 0
+    """The row's score, from the one field that is authoritative (spec 033).
+
+    This used to read `score or fit_score`, which meant the queue preferred
+    whichever field had been written most recently while every other reader
+    took `fit_score`. Import wrote one, rescoring wrote the other, and the
+    two disagreed with nothing to say which was current.
+    """
+    return stored_score(job)
 
 
 def _added_key(job: dict[str, str]) -> tuple[int, str]:

@@ -20,7 +20,6 @@ from harrier.screening.pipeline import (
     screen_jobs,
 )
 from harrier.screening.rules import (
-    SCORE_CUTOFF,
     CandidateConfig,
     remote_region_allowed,
     score_job,
@@ -29,7 +28,6 @@ from harrier.screening.rules import (
 )
 
 __all__ = [
-    "SCORE_CUTOFF",
     "CandidateConfig",
     "NormalizedJob",
     "ScreenResult",

@@ -785,19 +785,43 @@ def _cmd_tracker_verb(args: argparse.Namespace) -> int:
         job_id = int(job["id"])
 
         if args.command == "reevaluate":
+            from harrier.screening.descriptions import load_cached_description
+            from harrier.screening.policy import policy_version
+            from harrier.tracker.score import score_fields, stored_score
+
+            # The description, from where it was stored at import. This used
+            # to pass description="" while score_job reads the description in
+            # three places, so the verb whose purpose is rescoring scored
+            # against strictly less input than the first pass had, and then
+            # overwrote the real number with the result (spec 033).
+            description = load_cached_description(job["url"])
+            if not description:
+                print(
+                    f"skipped {job['company']}: {job['title']}\n"
+                    "  no stored description, so rescoring would score it against less "
+                    "than the first pass had.\n"
+                    "  Run discovery again to capture one.",
+                    file=sys.stderr,
+                )
+                return 2
             normalized = make_normalized_job(
                 source=job["source"] or "manual",
                 company=job["company"],
                 title=job["title"],
                 location=job["location"],
                 url=job["url"],
-                description="",
+                description=description,
             )
-            score, reasons = score_job(normalized, load_candidate_config(conn))
+            candidate_cfg = load_candidate_config(conn)
+            score, reasons = score_job(normalized, candidate_cfg)
+            # A stored score of 0 is a score, and `previous or "-"` printed it
+            # as "no previous score" (review finding on PR #42). The blank
+            # column is the only thing that means unscored.
+            previous = str(stored_score(job)) if job.get("fit_score", "").strip() else "-"
             updated = update_fields(
-                conn, job_id, {"score": str(score), "signals": "|".join(reasons)}
+                conn, job_id, score_fields(score, reasons, policy_version(candidate_cfg))
             )
-            print(f"rescored {job['score'] or '-'} -> {score}")
+            print(f"rescored {previous} -> {score}")
             _print_job(updated)
             return 0
 
