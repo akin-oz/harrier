@@ -15,7 +15,7 @@ is the only property it has.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from harrier.parity.matrix import MatrixRow, parse_matrix, verdict_counts
@@ -68,6 +68,12 @@ class ChecklistStatus:
     waived: int
     open_items: list[str]
     orphaned: list[str]
+    # The three populations, kept apart because a single incomplete number
+    # over ninety-seven items carries no information (spec 039).
+    verified: list[str] = field(default_factory=list[str])
+    failing: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
+    waived_items: list[str] = field(default_factory=list[str])
+    manual: list[str] = field(default_factory=list[str])
 
     @property
     def complete(self) -> bool:
@@ -169,24 +175,77 @@ def write_checklist(path: Path | None = None, rows: list[MatrixRow] | None = Non
     return target
 
 
-def checklist_status(text: str, rows: list[MatrixRow]) -> ChecklistStatus:
+def checklist_status(
+    text: str, rows: list[MatrixRow], *, run_checks: bool = True
+) -> ChecklistStatus:
+    """The three populations, classified rather than counted (spec 039).
+
+    An item is verified when a registered check examines the tree and says
+    yes; waived when a human ticked it with a reason; manual otherwise. The
+    classification is derived from the check registry and the checklist's own
+    waivers, so it cannot be hand-maintained into disagreeing with reality.
+
+    `run_checks=False` is for callers that want the shape without executing
+    anything, and it deliberately leaves `verified` empty rather than
+    guessing, because an unrun check has not said yes.
+    """
+    from harrier.parity.checks import CHECKS
+
     decisions = parse_decisions(text)
     slugs = [row.slug for row in rows]
     checked = 0
     waived = 0
     open_items: list[str] = []
+    verified: list[str] = []
+    failing: list[tuple[str, str]] = []
+    waived_items: list[str] = []
+    manual: list[str] = []
+
     for row in rows:
         decision = decisions.get(row.slug)
+        check = CHECKS.get(row.slug)
+        if check is not None:
+            if not run_checks:
+                manual.append(row.slug)
+            else:
+                result = check.run()
+                if result.ok:
+                    verified.append(row.slug)
+                else:
+                    failing.append((row.slug, f"{check.name}: {result.evidence}"))
+        elif decision is not None and decision.checked and decision.waiver:
+            waived_items.append(row.slug)
+        else:
+            manual.append(row.slug)
+
         if decision is None or not decision.checked:
             open_items.append(row.slug)
             continue
         checked += 1
         if decision.waiver:
             waived += 1
+
     return ChecklistStatus(
         total=len(rows),
         checked=checked,
         waived=waived,
         open_items=open_items,
         orphaned=sorted(set(decisions) - set(slugs)),
+        verified=verified,
+        failing=failing,
+        waived_items=waived_items,
+        manual=manual,
+    )
+
+
+def waiver_problems(text: str) -> list[str]:
+    """Ticked items that give no reason.
+
+    A tick with no reason is the shape this spec exists to prevent: it looks
+    like a decision and records none. Refused rather than counted.
+    """
+    return sorted(
+        slug
+        for slug, decision in parse_decisions(text).items()
+        if decision.checked and not decision.waiver.strip()
     )

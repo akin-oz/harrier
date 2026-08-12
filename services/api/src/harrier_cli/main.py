@@ -1185,8 +1185,10 @@ def _cmd_parity(args: argparse.Namespace) -> int:
         render_diff,
         stated_counts,
         verdict_counts,
+        waiver_problems,
         write_checklist,
     )
+    from harrier.parity.checks import CHECKS
 
     try:
         if args.parity_command == "checklist":
@@ -1212,13 +1214,37 @@ def _cmd_parity(args: argparse.Namespace) -> int:
                     f"no checklist at {path}; run `harrier parity checklist` first", file=sys.stderr
                 )
                 return 1
-            status = checklist_status(path.read_text(encoding="utf-8"), rows)
-            print(f"{status.checked}/{status.total} checked ({status.waived} waived)")
-            for slug in status.open_items:
-                print(f"open: {slug}")
+            text = path.read_text(encoding="utf-8")
+            status = checklist_status(text, rows)
+            # Three populations, kept apart. One incomplete number over
+            # ninety-seven items reads the same whether the work has moved or
+            # not, which is why the old count carried no information
+            # (spec 039).
+            print(
+                f"{status.total} items: {len(status.verified)} verified by a check, "
+                f"{len(status.waived_items)} waived, {len(status.manual)} manual, "
+                f"{len(status.failing)} failing"
+            )
+            for slug in status.verified:
+                print(f"verified: {slug} ({CHECKS[slug].name})")
+            for slug, why in status.failing:
+                print(f"FAILING: {slug} ({why})", file=sys.stderr)
             for slug in status.orphaned:
                 print(f"retired item still recorded: {slug}")
-            return 0 if status.complete else 1
+
+            # A tick with no reason looks like a decision and records none.
+            unreasoned = waiver_problems(text)
+            for slug in unreasoned:
+                print(f"ticked with no reason: {slug}", file=sys.stderr)
+
+            # Non-zero only for something that can actually be wrong: a check
+            # that failed, a waiver with no reason, or a decision recorded
+            # against an item the matrix no longer carries. A manual item is
+            # a note, and exiting non-zero for the rest of time because
+            # ninety-two notes are unread is the noise this replaces.
+            if status.failing or unreasoned or status.orphaned:
+                return 1
+            return 0
         else:
             report = diff_runs(load_run_summary(Path(args.old)), load_run_summary(Path(args.new)))
             print(render_diff(report), end="")

@@ -10,6 +10,7 @@ from harrier.parity.checklist import (
     ChecklistStatus,
     checklist_status,
     render_checklist,
+    waiver_problems,
     write_checklist,
 )
 from harrier.parity.diff import (
@@ -44,5 +45,6 @@ __all__ = [
     "render_diff",
     "stated_counts",
     "verdict_counts",
+    "waiver_problems",
     "write_checklist",
 ]
