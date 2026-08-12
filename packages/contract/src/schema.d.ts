@@ -447,7 +447,7 @@ export interface components {
             /** Message */
             message?: string | null;
             /** State */
-            state?: ("queued" | "running" | "succeeded" | "failed" | "cancelled") | null;
+            state?: ("queued" | "running" | "succeeded" | "failed" | "cancelled" | "interrupted") | null;
             /** Step */
             step?: number | null;
             /** Total */
@@ -473,7 +473,7 @@ export interface components {
              * State
              * @enum {string}
              */
-            state: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+            state: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "interrupted";
         };
         /** SessionOut */
         SessionOut: {

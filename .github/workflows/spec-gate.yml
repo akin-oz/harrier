@@ -24,3 +24,12 @@ jobs:
         # resolves approval from the BASE tree, because reading it from the
         # checked-out pull request let a branch approve its own spec.
         run: python3 scripts/spec_gate.py . "$BASE" "$HEAD"
+
+  spec-structure:
+    name: Specs carry their required headings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # A spec that loses a section loses the findings it held, and neither
+      # the trailer gate nor the artifact check reads structure (spec 041).
+      - run: python3 scripts/check_spec_structure.py specs

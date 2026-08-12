@@ -11,7 +11,7 @@ from harrier.sources import ashby as ashby_module
 from harrier.sources import fetch_many
 from harrier.sources import lever as lever_module
 from harrier.sources.ashby import fetch_ashby_jobs
-from harrier.sources.feeds import parse_ats_feeds
+from harrier.sources.feeds import UNROUTED, parse_ats_feeds
 from harrier.sources.greenhouse import normalize_greenhouse_job
 from harrier.sources.lever import fetch_lever_jobs
 
@@ -131,7 +131,13 @@ def test_lookalike_hosts_are_rejected_everywhere(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     grouped = parse_ats_feeds(feeds)
-    assert grouped == {"greenhouse": [], "ashby": [], "lever": []}
+    # Every lookalike now appears under `unrouted` rather than vanishing.
+    # Routing nowhere is still the right answer; saying nothing about it was
+    # the defect (spec 041).
+    assert grouped["greenhouse"] == []
+    assert grouped["ashby"] == []
+    assert grouped["lever"] == []
+    assert len(grouped[UNROUTED]) == 3
 
 
 def test_ashby_job_id_string_is_used_for_identity() -> None:
@@ -164,3 +170,28 @@ def test_redact_url_strips_userinfo_and_query() -> None:
         == "https://boards.greenhouse.io/acme"
     )
     assert redact_url("https://[") == "<unparseable url>"
+
+
+def test_an_unroutable_entry_is_kept_rather_than_dropped() -> None:
+    """The most likely real failure in the system, for a watchlist edited by
+    hand: you paste a URL, nothing happens, and nothing says why. The router
+    had a branch per provider and no final branch (spec 041)."""
+    from harrier.sources.feeds import UNROUTED, route_ats_feeds
+
+    grouped = route_ats_feeds(
+        [
+            "https://boards.greenhouse.io/example",
+            "https://jobs.workable.com/example",
+        ]
+    )
+    assert grouped["greenhouse"] == ["https://boards.greenhouse.io/example"]
+    assert grouped[UNROUTED] == ["https://jobs.workable.com/example"]
+
+
+def test_the_unrouted_key_is_never_treated_as_an_importer() -> None:
+    """`IMPORTER_KEYS` is what callers loop over. Iterating the whole dict
+    would probe an unsupported host as though a provider owned it, which is
+    how the feed health report first read one as live."""
+    from harrier.sources.feeds import IMPORTER_KEYS, UNROUTED
+
+    assert UNROUTED not in IMPORTER_KEYS

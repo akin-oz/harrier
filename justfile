@@ -31,7 +31,7 @@ demo-discover:
     HARRIER_DEMO=1 uv run --project {{api_dir}} harrier discover
 
 # Full local gate, identical to CI.
-check: check-python check-ts contract aie-check
+check: check-python check-ts contract aie-check spec-structure
 
 check-python:
     cd {{api_dir}} && uv sync --quiet
@@ -72,3 +72,6 @@ export:
 # archive OUTSIDE the repo (ADR-008: backup is entirely local).
 backup:
     ./scripts/backup.sh
+
+spec-structure:
+    python3 scripts/check_spec_structure.py specs

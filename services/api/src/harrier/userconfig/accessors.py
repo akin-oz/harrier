@@ -18,7 +18,6 @@ from harrier.screening.normalized import normalize
 from harrier.sources.feeds import FEEDS_PATH, read_line_config, route_ats_feeds
 from harrier.userconfig.store import (
     COMPANY_HOLDS,
-    DEFAULT_SCOPE,
     DISCOVERY,
     FEEDS,
     LINKEDIN_SEARCHES,
@@ -32,36 +31,28 @@ DISCOVERY_PATH = Path("config") / "discovery.json"
 HOLDS_PATH = Path("config") / "companies-hold.csv"
 
 
-def load_feed_urls(
-    conn: sqlite3.Connection | None = None, *, scope: str = DEFAULT_SCOPE
-) -> list[str]:
-    stored = stored_list(conn, FEEDS, scope=scope)
+def load_feed_urls(conn: sqlite3.Connection | None = None) -> list[str]:
+    stored = stored_list(conn, FEEDS)
     if stored is not None:
         return stored
     return read_line_config(resolve_config_path(FEEDS_PATH))
 
 
-def load_ats_feeds(
-    conn: sqlite3.Connection | None = None, *, scope: str = DEFAULT_SCOPE
-) -> dict[str, list[str]]:
+def load_ats_feeds(conn: sqlite3.Connection | None = None) -> dict[str, list[str]]:
     """The board watchlist grouped by importer, from wherever it lives."""
-    return route_ats_feeds(load_feed_urls(conn, scope=scope))
+    return route_ats_feeds(load_feed_urls(conn))
 
 
-def load_search_urls(
-    conn: sqlite3.Connection | None = None, *, scope: str = DEFAULT_SCOPE
-) -> list[str]:
-    stored = stored_list(conn, LINKEDIN_SEARCHES, scope=scope)
+def load_search_urls(conn: sqlite3.Connection | None = None) -> list[str]:
+    stored = stored_list(conn, LINKEDIN_SEARCHES)
     if stored is not None:
         return stored
     return read_line_config(resolve_config_path(SEARCH_URLS_PATH))
 
 
-def load_discovery_settings(
-    conn: sqlite3.Connection | None = None, *, scope: str = DEFAULT_SCOPE
-) -> dict[str, object]:
+def load_discovery_settings(conn: sqlite3.Connection | None = None) -> dict[str, object]:
     if conn is not None:
-        value = get_config(conn, DISCOVERY, scope=scope)
+        value = get_config(conn, DISCOVERY)
         if value is not None:
             if not isinstance(value, dict):
                 raise ConfigError("stored discovery configuration is not an object")
@@ -74,13 +65,11 @@ def load_discovery_settings(
     return cast("dict[str, object]", parsed) if isinstance(parsed, dict) else {}
 
 
-def load_hold_companies(
-    conn: sqlite3.Connection | None = None, *, scope: str = DEFAULT_SCOPE
-) -> set[str]:
+def load_hold_companies(conn: sqlite3.Connection | None = None) -> set[str]:
     """Normalized company names on hold. The stored form drops the reason
     column the CSV carries: the reason is personal operational commentary
     and nothing reads it (ADR-008)."""
-    stored = stored_list(conn, COMPANY_HOLDS, scope=scope)
+    stored = stored_list(conn, COMPANY_HOLDS)
     if stored is not None:
         return {name for name in (normalize(item) for item in stored) if name}
     return read_hold_file(resolve_config_path(HOLDS_PATH))

@@ -567,3 +567,34 @@ def test_a_run_without_apify_claims_no_count(
     )
     assert aggregate["apify_count"] is None
     assert aggregate["apify_count_requested"] == 150
+
+
+def test_an_unroutable_watchlist_entry_is_reported_and_the_run_continues(
+    discovery_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reported, and the rest of discovery proceeds. Refusing to run because
+    one entry is unsupported would be a worse failure than the silence it
+    replaces (spec 041)."""
+    monkeypatch.setattr(discovery_module, "load_ats_feeds", _feeds_with_an_unroutable_entry)
+    monkeypatch.setattr(discovery_module, "fetch_greenhouse_jobs", _one_greenhouse_job)
+    conn = connect()
+    aggregate = run_discovery(
+        conn,
+        DiscoveryOptions(dry_run=True, notify=False, only_sources=frozenset({"greenhouse"})),
+    )
+    summaries = aggregate["source_summaries"]
+    assert isinstance(summaries, list)
+    unrouted = [item for item in summaries if item.get("source") == "unrouted"]
+    assert len(unrouted) == 1
+    assert "no importer handles" in unrouted[0]["errors"][0]
+    # And greenhouse still ran.
+    assert any(item.get("source") == "greenhouse" for item in summaries)
+
+
+def _feeds_with_an_unroutable_entry(*_: object, **__: object) -> dict[str, list[str]]:
+    return {
+        "greenhouse": ["https://boards.greenhouse.io/example"],
+        "ashby": [],
+        "lever": [],
+        "unrouted": ["https://jobs.workable.com/example"],
+    }

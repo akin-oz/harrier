@@ -14,7 +14,6 @@ from harrier.userconfig.accessors import (
 )
 from harrier.userconfig.store import (
     COMPANY_HOLDS,
-    DEFAULT_SCOPE,
     DISCOVERY,
     FEEDS,
     KINDS,
@@ -29,7 +28,6 @@ from harrier.userconfig.store import (
 
 __all__ = [
     "COMPANY_HOLDS",
-    "DEFAULT_SCOPE",
     "DISCOVERY",
     "DISCOVERY_PATH",
     "FEEDS",

@@ -40,6 +40,7 @@ from harrier.sources.apify_linkedin import (
 )
 from harrier.sources.ashby import fetch_ashby_jobs
 from harrier.sources.batch_exports import load_wellfound_exports, load_wttj_exports
+from harrier.sources.feeds import UNROUTED
 from harrier.sources.greenhouse import fetch_greenhouse_jobs
 from harrier.sources.lever import fetch_lever_jobs
 from harrier.sources.remoteok import fetch_remoteok_jobs
@@ -238,6 +239,27 @@ def run_discovery(
         "ashby": fetch_ashby_jobs,
         "lever": fetch_lever_jobs,
     }
+    # An entry the router could not place used to be dropped in silence: no
+    # error, no jobs, forever. For a watchlist edited by hand that is the most
+    # likely real failure in the system, so it is named once per run and the
+    # rest of discovery carries on (spec 041).
+    unrouted = feeds.get(UNROUTED, [])
+    if unrouted:
+        logger.warning(
+            "%d watchlist entr%s match no importer and were skipped: %s",
+            len(unrouted),
+            "y" if len(unrouted) == 1 else "ies",
+            ", ".join(unrouted),
+        )
+        summaries.append(
+            {
+                "source": "unrouted",
+                "fetched_count": 0,
+                "new_prospects": 0,
+                "errors": [f"no importer handles {url}" for url in unrouted],
+            }
+        )
+
     for source_name, fetcher in ats_fetchers.items():
         if not _source_enabled(source_name, options.only_sources):
             continue

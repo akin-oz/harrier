@@ -61,16 +61,27 @@ def test_a_stored_value_round_trips(db: sqlite3.Connection) -> None:
     assert load_feed_urls(db) == EXAMPLE_FEEDS
 
 
-def test_the_schema_carries_a_scope_column_for_later_tenancy(db: sqlite3.Connection) -> None:
-    """ADR-009 is tenant-ready, not tenant-complete: nothing reads scope as a
-    variable yet, but the unique key includes it, so partitioning later is a
-    query change rather than a migration of every row."""
+def test_the_schema_carries_no_scope_column(db: sqlite3.Connection) -> None:
+    """`scope` is gone (spec 041).
+
+    It never held anything but 'default', it was threaded through eight
+    signatures, and it guarded the one table with no personal data while the
+    tables that hold it had no equivalent. ADR-009 wanted a tenancy seam and
+    this was not one; it now records that re-adding it is a migration.
+    """
     columns = {row[1] for row in db.execute("PRAGMA table_info(user_config)")}
-    assert {"scope", "kind", "value", "updated_at"} <= columns
-    set_config(db, FEEDS, EXAMPLE_FEEDS)
-    set_config(db, FEEDS, ["https://boards.greenhouse.io/tenant-two"], scope="tenant-two")
-    assert load_feed_urls(db) == EXAMPLE_FEEDS
-    assert load_feed_urls(db, scope="tenant-two") == ["https://boards.greenhouse.io/tenant-two"]
+    assert "scope" not in columns
+    assert {"kind", "value", "updated_at"} <= columns
+
+
+def test_a_kind_is_unique_on_its_own(db: sqlite3.Connection) -> None:
+    """The uniqueness that used to be (scope, kind). Setting a kind twice
+    updates rather than adding a second row."""
+    set_config(db, FEEDS, ["https://boards.greenhouse.io/one"])
+    set_config(db, FEEDS, ["https://boards.greenhouse.io/two"])
+    rows = list(db.execute("SELECT COUNT(*) FROM user_config WHERE kind = ?", (FEEDS,)))
+    assert rows[0][0] == 1
+    assert load_feed_urls(db) == ["https://boards.greenhouse.io/two"]
 
 
 def test_setting_the_same_kind_twice_updates_rather_than_duplicates(
@@ -126,7 +137,7 @@ def test_a_fresh_install_with_no_store_and_no_files_runs_with_no_sources(
     assert load_search_urls(db) == []
     assert load_hold_companies(db) == set()
     assert load_discovery_settings(db) == {}
-    assert load_ats_feeds(db) == {"greenhouse": [], "ashby": [], "lever": []}
+    assert load_ats_feeds(db) == {"greenhouse": [], "ashby": [], "lever": [], "unrouted": []}
 
 
 def test_the_file_is_used_until_something_is_stored(db: sqlite3.Connection, tmp_path: Path) -> None:
@@ -177,7 +188,7 @@ def test_accessors_work_without_a_connection(db: sqlite3.Connection) -> None:
 
 def test_stored_json_that_is_not_a_list_is_reported(db: sqlite3.Connection) -> None:
     db.execute(
-        "INSERT INTO user_config (scope, kind, value) VALUES ('default', ?, ?)",
+        "INSERT INTO user_config (kind, value) VALUES (?, ?)",
         (FEEDS, json.dumps({"unexpected": True})),
     )
     db.commit()
@@ -291,7 +302,7 @@ def test_a_corrupted_row_is_refused_rather_than_coerced(
     database, a restored backup, a future migration. The read path was
     coercing [7] into ["7"] (review finding on PR #20)."""
     db.execute(
-        "INSERT INTO user_config (scope, kind, value) VALUES ('default', ?, ?)",
+        "INSERT INTO user_config (kind, value) VALUES (?, ?)",
         (FEEDS, json.dumps([7])),
     )
     db.commit()
@@ -303,3 +314,20 @@ def test_an_unknown_kind_is_a_404_on_every_verb(client: TestClient) -> None:
     assert client.get("/config/nonsense").status_code == 404
     assert client.put("/config/nonsense", json={"value": []}, headers=auth()).status_code == 404
     assert client.delete("/config/nonsense", headers=auth()).status_code == 404
+
+
+def test_every_migration_version_is_unique_and_ordered() -> None:
+    """Two migrations numbered the same means one never runs.
+
+    The runner skips any version at or below the recorded one, so a
+    duplicate is not an error, it is a silent omission that shows up later
+    as a missing column. Three open branches each added a migration 4 at
+    once, which is how this was found; the branch numbers are now 4, 5 and 6
+    and this stops the next collision being discovered in production.
+    """
+    from harrier.tracker.schema import MIGRATIONS
+
+    versions = [version for version, _ in MIGRATIONS]
+    assert versions == sorted(versions), f"migrations are out of order: {versions}"
+    assert len(versions) == len(set(versions)), f"duplicate migration version in {versions}"
+    assert versions[0] == 1, "migrations start at 1"

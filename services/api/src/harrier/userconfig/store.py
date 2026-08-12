@@ -13,7 +13,7 @@ nothing yet needs.
 
 Resolution order for every accessor:
 
-1. the store, when a row exists for the scope
+1. the store, when a row exists
 2. the committed or local file, which is how an existing install keeps
    working before `harrier config import` runs, and how demo mode gets its
    synthetic values (harrier.demo.resolve_config_path)
@@ -29,8 +29,6 @@ from __future__ import annotations
 import json
 import sqlite3
 from typing import cast
-
-DEFAULT_SCOPE = "default"
 
 FEEDS = "feeds"
 LINKEDIN_SEARCHES = "linkedin_searches"
@@ -69,32 +67,28 @@ def _validate(kind: str, value: object) -> object:
     return [item.strip() for item in cast("list[str]", items) if item.strip()]
 
 
-def set_config(
-    conn: sqlite3.Connection, kind: str, value: object, *, scope: str = DEFAULT_SCOPE
-) -> None:
+def set_config(conn: sqlite3.Connection, kind: str, value: object) -> None:
     stored = _validate(kind, value)
     with conn:
         conn.execute(
             """
-            INSERT INTO user_config (scope, kind, value, updated_at)
-            VALUES (?, ?, ?, datetime('now'))
-            ON CONFLICT (scope, kind) DO UPDATE SET
+            INSERT INTO user_config (kind, value, updated_at)
+            VALUES (?, ?, datetime('now'))
+            ON CONFLICT (kind) DO UPDATE SET
                 value = excluded.value,
                 updated_at = datetime('now')
             """,
-            (scope, kind, json.dumps(stored, ensure_ascii=False)),
+            (kind, json.dumps(stored, ensure_ascii=False)),
         )
 
 
-def get_config(conn: sqlite3.Connection, kind: str, *, scope: str = DEFAULT_SCOPE) -> object | None:
-    """The stored value, or None when this scope has no row for the kind.
+def get_config(conn: sqlite3.Connection, kind: str) -> object | None:
+    """The stored value, or None when there is no row for the kind.
 
     None and an empty list are different answers: no row means fall back to
     the file, an empty list means the user cleared the watchlist on purpose.
     """
-    row = conn.execute(
-        "SELECT value FROM user_config WHERE scope = ? AND kind = ?", (scope, kind)
-    ).fetchone()
+    row = conn.execute("SELECT value FROM user_config WHERE kind = ?", (kind,)).fetchone()
     if row is None:
         return None
     try:
@@ -109,27 +103,23 @@ def get_config(conn: sqlite3.Connection, kind: str, *, scope: str = DEFAULT_SCOP
     return _validate(kind, parsed)
 
 
-def delete_config(conn: sqlite3.Connection, kind: str, *, scope: str = DEFAULT_SCOPE) -> bool:
+def delete_config(conn: sqlite3.Connection, kind: str) -> bool:
     with conn:
-        cursor = conn.execute("DELETE FROM user_config WHERE scope = ? AND kind = ?", (scope, kind))
+        cursor = conn.execute("DELETE FROM user_config WHERE kind = ?", (kind,))
     return cursor.rowcount > 0
 
 
-def list_config(conn: sqlite3.Connection, *, scope: str = DEFAULT_SCOPE) -> list[dict[str, str]]:
+def list_config(conn: sqlite3.Connection) -> list[dict[str, str]]:
     columns = ("kind", "value", "updated_at")
-    rows = conn.execute(
-        f"SELECT {', '.join(columns)} FROM user_config WHERE scope = ? ORDER BY kind", (scope,)
-    ).fetchall()
+    rows = conn.execute(f"SELECT {', '.join(columns)} FROM user_config ORDER BY kind").fetchall()
     return [dict(zip(columns, (str(value) for value in row), strict=True)) for row in rows]
 
 
-def stored_list(
-    conn: sqlite3.Connection | None, kind: str, *, scope: str = DEFAULT_SCOPE
-) -> list[str] | None:
+def stored_list(conn: sqlite3.Connection | None, kind: str) -> list[str] | None:
     """A stored list value, or None to mean "fall back to the file"."""
     if conn is None:
         return None
-    value = get_config(conn, kind, scope=scope)
+    value = get_config(conn, kind)
     if value is None:
         return None
     # get_config validates, so a list of strings is the only thing that can
