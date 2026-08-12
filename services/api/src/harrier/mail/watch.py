@@ -25,6 +25,7 @@ from email.utils import getaddresses, parsedate_to_datetime
 from pathlib import Path
 from typing import Any, cast
 
+from harrier.atomicio import read_json_mapping, write_json_atomic
 from harrier.db import data_dir
 from harrier.demo import is_demo_mode
 from harrier.tracker import list_jobs
@@ -444,29 +445,79 @@ def format_telegram_message(event: dict[str, object]) -> str:
 
 
 def load_state() -> dict[str, object]:
-    path = state_path()
-    if not path.exists():
-        return {"seen_message_ids": []}
-    try:
-        parsed: object = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {"seen_message_ids": []}
-    return (
-        cast("dict[str, object]", parsed) if isinstance(parsed, dict) else {"seen_message_ids": []}
-    )
+    """The watch's record of what it has already processed.
+
+    A damaged file raises rather than reading as empty (spec 040): empty
+    means every message looks unprocessed, and the save that follows
+    overwrites the damage so the original is unrecoverable.
+    """
+    record = read_json_mapping(state_path())
+    return record if record is not None else {"seen_message_ids": []}
 
 
 def save_state(state: dict[str, object]) -> None:
-    path = state_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    write_json_atomic(state_path(), state)
+
+
+# What the archive keeps. Everything else about a message is dropped on the
+# way to disk (spec 040).
+#
+# The events file was an unbounded, unrotated archive of third-party
+# correspondence: sender address, subject line, and the first sentence of the
+# body, for every message the watch ever saw. That is the personal data of
+# people who are not the user, retained forever for no feature that needs it.
+# The in-memory event is unchanged, so the notification and the digest still
+# say what they always said; only what is written down is reduced.
+ARCHIVED_FIELDS = (
+    "kind",
+    "priority",
+    "company",
+    "role",
+    "tracker_row",
+    "next_action",
+    "timestamp",
+    "messageId",
+    "actionable",
+    "ignore_reason",
+)
+
+# Bounded, so an unattended machine cannot accumulate years of it.
+EVENTS_MAX_LINES = 5_000
+
+
+def redact_event(event: dict[str, object]) -> dict[str, object]:
+    """The archivable form: what the feature needs, and nothing about a person.
+
+    The sender is reduced to its domain, which is what makes an event
+    recognisable as coming from a given employer without recording who wrote
+    it. The subject and the body summary are dropped entirely: they are the
+    other party's words.
+    """
+    archived = {key: event[key] for key in ARCHIVED_FIELDS if key in event}
+    sender = str(event.get("from", ""))
+    if "@" in sender:
+        archived["from_domain"] = sender.rsplit("@", 1)[-1].strip("> ").lower()
+    return archived
+
+
+def _rotate_events(path: Path) -> None:
+    """Keep the most recent EVENTS_MAX_LINES, once the file exceeds them."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return
+    if len(lines) <= EVENTS_MAX_LINES:
+        return
+    kept = lines[-EVENTS_MAX_LINES:]
+    path.write_text("\n".join(kept) + "\n", encoding="utf-8")
 
 
 def append_event(event: dict[str, object]) -> None:
     path = events_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+        handle.write(json.dumps(redact_event(event), ensure_ascii=False) + "\n")
+    _rotate_events(path)
 
 
 def tracker_rows(conn: sqlite3.Connection) -> list[dict[str, str]]:

@@ -92,7 +92,27 @@ class JobStatus:
         drift = " DRIFTED" if self.drifted else ""
         exit_text = f" last_exit={self.last_exit_status}" if self.last_exit_status else ""
         next_text = f" next={self.next_run}" if self.next_run else ""
-        return f"{self.name}: {state}, {loaded}{drift}{exit_text}{next_text}"
+        problem = " PROBLEM" if self.problem else ""
+        return f"{self.name}: {state}, {loaded}{drift}{exit_text}{next_text}{problem}"
+
+    @property
+    def problem(self) -> str:
+        """Why this job is not healthy, or "" when it is.
+
+        The status command printed its table and returned zero regardless of
+        what the table said, so a missing, unloaded, drifted or failing job
+        was reported in prose nobody had to read and in an exit code that
+        never changed (spec 040).
+        """
+        if not self.installed:
+            return "not installed"
+        if not self.loaded:
+            return "installed but not loaded"
+        if self.drifted:
+            return "drifted from the generated definition"
+        if self.last_exit_status and self.last_exit_status not in ("0", ""):
+            return f"last run exited {self.last_exit_status}"
+        return ""
 
 
 @dataclass

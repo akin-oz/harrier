@@ -23,13 +23,13 @@ Two properties the old format did not have:
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
+from harrier.atomicio import DamagedStateError, read_json_mapping, write_json_atomic
 from harrier.db import data_dir
 from harrier.screening.policy import UNKNOWN_POLICY
 
@@ -102,29 +102,19 @@ def load_seen(source_name: str) -> dict[str, SeenDecision]:
     reconsideration, which is the one that matters.
     """
     path = _state_path(source_name)
-    if not path.is_file():
-        return {}
     try:
-        parsed: object = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        # Loudly, because the consequence is invisible otherwise: the next run
-        # treats every previously rejected posting as new and re-offers all of
-        # them, and the save that follows overwrites the damaged file so the
-        # original is unrecoverable (review finding on PR #33). Refusing
-        # outright belongs with the atomic-write work in spec 040; this at
-        # least tells the operator why a source suddenly produced a flood.
-        logger.warning(
-            "seen state for %s could not be read (%s); every posting will look new",
-            source_name,
-            error,
-        )
+        record = read_json_mapping(path)
+    except DamagedStateError as error:
+        # Raised, not swallowed (spec 040). Returning an empty set made every
+        # previously rejected posting look new, the run that followed
+        # overwrote the damaged file so the original was unrecoverable, and a
+        # burst of duplicate notifications was the first sign anything was
+        # wrong. The operator decides whether to start over; the code does
+        # not decide it for them silently.
+        logger.error("seen state for %s is damaged: %s", source_name, error)
+        raise
+    if record is None:
         return {}
-    if not isinstance(parsed, dict):
-        logger.warning(
-            "seen state for %s is not an object; every posting will look new", source_name
-        )
-        return {}
-    record = cast("dict[str, object]", parsed)
     fallback_at = str(record.get("updated_at", "")) or now_iso()
 
     decisions_raw = record.get("decisions")
@@ -153,14 +143,14 @@ def save_seen(source_name: str, decisions: dict[str, SeenDecision]) -> None:
     is stable across runs, so once the cap was reached the same entries were
     dropped every time while older ones sat there permanently.
     """
-    path = _state_path(source_name)
-    path.parent.mkdir(parents=True, exist_ok=True)
     newest = sorted(decisions.items(), key=lambda item: item[1].at, reverse=True)[:SEEN_CAP]
-    payload = {
-        "decisions": {key: decision.as_json() for key, decision in newest},
-        "updated_at": now_iso(),
-    }
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    write_json_atomic(
+        _state_path(source_name),
+        {
+            "decisions": {key: decision.as_json() for key, decision in newest},
+            "updated_at": now_iso(),
+        },
+    )
 
 
 def load_seen_keys(source_name: str) -> set[str]:
