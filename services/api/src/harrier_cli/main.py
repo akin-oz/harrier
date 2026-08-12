@@ -776,20 +776,19 @@ def _print_job(job: dict[str, str]) -> None:
 def _cmd_tracker_verb(args: argparse.Namespace) -> int:
     """The status transitions, add, and the two read verbs (spec 027)."""
     from harrier.capture import add_captured_job
-    from harrier.screening.config import load_candidate_config
-    from harrier.screening.normalized import make_normalized_job
-    from harrier.screening.rules import score_job
     from harrier.tracker import (
         UNDECIDED_STATUSES,
         SelectorError,
         describe,
         list_jobs,
         rank_active,
-        resolve_selector,
-        set_status,
         status_counts,
-        update_fields,
     )
+
+    # The shared operations. The API routes call these same functions, so a
+    # difference between the command line and the browser is a bug in one of
+    # them rather than a design decision nobody wrote down (spec 042).
+    from harrier.tracker.actions import TrackerActionError, change_status, rescore
 
     conn = connect()
     try:
@@ -839,64 +838,35 @@ def _cmd_tracker_verb(args: argparse.Namespace) -> int:
             # asked to add something already tracked, or gave too little.
             return 0 if result.status == "added" else 1
 
-        job = resolve_selector(conn, args.selector)
-        job_id = int(job["id"])
-
         if args.command == "reevaluate":
-            from harrier.screening.descriptions import load_cached_description
-            from harrier.screening.policy import policy_version
-            from harrier.tracker.score import score_fields, stored_score
-
-            # The description, from where it was stored at import. This used
-            # to pass description="" while score_job reads the description in
-            # three places, so the verb whose purpose is rescoring scored
-            # against strictly less input than the first pass had, and then
-            # overwrote the real number with the result (spec 033).
-            description = load_cached_description(job["url"])
-            if not description:
-                print(
-                    f"skipped {job['company']}: {job['title']}\n"
-                    "  no stored description, so rescoring would score it against less "
-                    "than the first pass had.\n"
-                    "  Run discovery again to capture one.",
-                    file=sys.stderr,
-                )
+            # The same function the API route calls (spec 042). Neither side
+            # reimplements the other, and a test drives both through it.
+            #
+            # Spec 033's behaviour lives inside that function now rather than
+            # here: rescoring uses the description stored at import, and a job
+            # with none is refused instead of scored against less input than
+            # the first pass had. Moving it rather than keeping a copy is the
+            # whole point of the shared action.
+            try:
+                outcome = rescore(conn, args.selector)
+            except TrackerActionError as error:
+                # Named by what the operator typed. The row itself is not
+                # resolved on this path any more, because the shared action
+                # resolves it.
+                print(f"skipped {args.selector}: {error}", file=sys.stderr)
                 return 2
-            normalized = make_normalized_job(
-                source=job["source"] or "manual",
-                company=job["company"],
-                title=job["title"],
-                location=job["location"],
-                url=job["url"],
-                description=description,
-            )
-            candidate_cfg = load_candidate_config(conn)
-            score, reasons = score_job(normalized, candidate_cfg)
-            # A stored score of 0 is a score, and `previous or "-"` printed it
-            # as "no previous score" (review finding on PR #42). The blank
-            # column is the only thing that means unscored.
-            previous = str(stored_score(job)) if job.get("fit_score", "").strip() else "-"
-            updated = update_fields(
-                conn, job_id, score_fields(score, reasons, policy_version(candidate_cfg))
-            )
-            print(f"rescored {previous} -> {score}")
-            _print_job(updated)
+            print(f"rescored {outcome.previous} -> {outcome.current}")
+            _print_job(outcome.job)
             return 0
 
-        target = {
-            "shortlist": "shortlisted",
-            "track": "tailored_cv_requested",
-            "applied": "applied",
-            "interviewing": "interviewing",
-            "reject": "rejected",
-        }[args.command]
         reason = " ".join(getattr(args, "reason", []) or []).strip() or None
-        updated = set_status(
+        # The same function the API route calls (spec 042).
+        updated = change_status(
             conn,
-            job_id,
-            target,
+            args.selector,
+            args.command,
+            reason=reason,
             applied_date=getattr(args, "applied_date", None),
-            rejection_reason=reason if target == "rejected" else None,
         )
         _print_job(updated)
         return 0

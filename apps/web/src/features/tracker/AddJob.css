@@ -1,0 +1,81 @@
+.add-job-slot {
+  position: relative;
+  justify-self: end;
+}
+
+.add-job__open {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-raised);
+  color: var(--color-text);
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+}
+
+.add-job__open:focus-visible,
+.add-job button:focus-visible,
+.add-job input:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+.add-job {
+  position: absolute;
+  right: 0;
+  top: calc(100% + var(--space-1));
+  z-index: 5;
+  width: min(22rem, 80vw);
+  display: grid;
+  gap: var(--space-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-raised);
+  padding: var(--space-2);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
+}
+
+.add-job label {
+  display: grid;
+  gap: 2px;
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+}
+
+.add-job input {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  padding: var(--space-1);
+  font: inherit;
+}
+
+.add-job__buttons {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.add-job__buttons button {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+}
+
+.add-job__buttons button[type="submit"]:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.add-job__buttons button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.add-job__outcome {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+}

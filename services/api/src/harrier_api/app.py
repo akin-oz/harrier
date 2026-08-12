@@ -21,6 +21,8 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from harrier.db import default_db_path
 from harrier.demo import repo_root
 from harrier.tracker import list_jobs
+from harrier.tracker.selector import SelectorError
+from harrier.tracker.store import TrackerError
 from harrier_api.capture_routes import capture_router
 from harrier_api.demo import demo_db_path, is_demo_mode, seed_demo_db
 from harrier_api.deps import Conn
@@ -178,6 +180,138 @@ def get_manager(request: Request) -> RunManager:
 
 
 Manager = Annotated[RunManager, Depends(get_manager)]
+
+tracker_router = APIRouter()
+
+
+class StatusChangeIn(BaseModel):
+    verb: str
+    reason: str | None = None
+
+
+class AddJobIn(BaseModel):
+    company: str
+    title: str
+    location: str = ""
+    url: str = ""
+    source: str = "manual"
+    description: str = ""
+
+
+class AddJobOut(BaseModel):
+    status: str
+    message: str
+    job: JobOut | None = None
+
+
+class RescoreOut(BaseModel):
+    previous: str
+    current: int
+    job: JobOut
+
+
+TRACKER_ERRORS: dict[int | str, dict[str, str]] = {
+    404: {"description": "no job matched the selector"},
+    409: {"description": "the tracker refused the change"},
+    **TOKEN_RESPONSES,
+}
+
+
+def _as_job_out(job: dict[str, str]) -> JobOut:
+    """The same conversion `/jobs` uses, so one row shape reaches the client."""
+    return JobOut.model_validate({**job, "id": int(job["id"])})
+
+
+@tracker_router.post(
+    "/tracker/{selector}/status",
+    operation_id="changeJobStatus",
+    dependencies=[Depends(require_token)],
+    responses=TRACKER_ERRORS,
+)
+def change_job_status(selector: str, body: StatusChangeIn, conn: Conn) -> JobOut:
+    """The same function the CLI's shortlist, track, applied, interviewing
+    and reject verbs call (spec 042)."""
+    from harrier.tracker.actions import TrackerActionError, change_status
+
+    try:
+        return _as_job_out(change_status(conn, selector, body.verb, reason=body.reason))
+    except SelectorError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except (TrackerActionError, TrackerError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@tracker_router.post(
+    "/tracker",
+    operation_id="addJob",
+    dependencies=[Depends(require_token)],
+    responses=TOKEN_RESPONSES,
+)
+def add_job_by_hand(body: AddJobIn, conn: Conn) -> AddJobOut:
+    from harrier.tracker.actions import add_manually
+
+    result, job = add_manually(
+        conn,
+        company=body.company,
+        title=body.title,
+        location=body.location,
+        url=body.url,
+        source=body.source,
+        description=body.description,
+    )
+    # A duplicate and a rejection are refusals the operator asked for, not
+    # server errors, so they carry the reason rather than a status code the
+    # UI would have to translate back into words.
+    return AddJobOut(
+        status=result.status,
+        message=result.message,
+        job=_as_job_out(job) if job else None,
+    )
+
+
+@tracker_router.post(
+    "/tracker/{selector}/rescore",
+    operation_id="rescoreJob",
+    dependencies=[Depends(require_token)],
+    responses=TRACKER_ERRORS,
+)
+def rescore_job(selector: str, conn: Conn) -> RescoreOut:
+    from harrier.tracker.actions import TrackerActionError, rescore
+
+    try:
+        result = rescore(conn, selector)
+    except SelectorError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except TrackerActionError as error:
+        # A refusal, not a fault. Rescoring a job whose description was never
+        # captured would score it against less input than the import had
+        # (spec 033), and the operator gets the domain's own words rather
+        # than a 500.
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return RescoreOut(previous=result.previous, current=result.current, job=_as_job_out(result.job))
+
+
+@tracker_router.get("/tracker/queue", operation_id="listQueue")
+def list_queue(
+    conn: Conn,
+    undecided: bool = False,
+    limit: int | None = Query(default=None, ge=1, le=500),
+) -> list[JobOut]:
+    """`next` and `review`, which are the same ranking over different
+    statuses: `next` is everything active, `review` narrows to what still
+    needs a decision from the operator."""
+    from harrier.tracker.actions import next_up, review_queue
+
+    rows = review_queue(conn, limit) if undecided else next_up(conn, limit)
+    return [_as_job_out(row) for row in rows]
+
+
+@tracker_router.get("/tracker/counts", operation_id="trackerCounts")
+def tracker_counts(conn: Conn) -> dict[str, int]:
+    from harrier.tracker.actions import counts
+
+    return counts(conn)
+
 
 runs_router = APIRouter()
 
@@ -416,6 +550,7 @@ def create_app(run_manager: RunManager | None = None, spa_dir: Path | None = Non
     app.include_router(runs_router)
     app.include_router(capture_router)
     app.include_router(config_router)
+    app.include_router(tracker_router)
     app.add_middleware(ApiPrefixMiddleware)
     # Closes DNS rebinding, which is what made every other protection here
     # bypassable: a page the operator visits resolves its own hostname to
