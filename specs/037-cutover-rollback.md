@@ -53,7 +53,10 @@ second invocation after a partial failure continues rather than repeating
 steps that already ran.
 
 **Failure paths that are exercised.** The current dry run proves the
-preflight only. Every row of the end-state table below is covered by a test
+preflight only: `services/api/tests/test_cutover.py::test_a_dry_run_touches_nothing`
+asserts it writes nothing and unloads nothing, and
+`::test_a_blocked_dry_run_reports_the_blockers_and_is_not_ok` asserts it
+reports the blockers, which together are the whole of what it covers. Every row of the end-state table below is covered by a test
 that injects that failure and asserts the state it leaves behind.
 
 A separate operator-facing rehearsal mode is **out of scope**. It was in an

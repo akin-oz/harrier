@@ -653,15 +653,60 @@ def test_an_unreadable_progress_record_stops_rather_than_restarting(
         cutover_module.resume_from("2026-08-10-1500")
 
 
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ('["not", "a", "record"]', "not a cutover record"),
+        ("{}", "no usable list"),
+        ('{"completed": null}', "no usable list"),
+        ('{"completed": "snapshot"}', "no usable list"),
+    ],
+)
 def test_a_progress_record_of_the_wrong_shape_stops_too(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str, expected: str
 ) -> None:
+    """Every shape that is not a list of completed steps.
+
+    The first version of this covered a non-dict record only, which is the
+    branch I happened to think of. A dict whose `completed` was missing, null,
+    or a bare string still returned () and restarted a cutover that must not
+    restart (review finding on PR #37, second pass).
+    """
     monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
     path = cutover_module.progress_path("2026-08-10-1600")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text('["not", "a", "record"]', encoding="utf-8")
-    with pytest.raises(CutoverError, match="not a cutover record"):
+    path.write_text(body, encoding="utf-8")
+    with pytest.raises(CutoverError, match=expected):
         cutover_module.resume_from("2026-08-10-1600")
+
+
+def test_a_cutover_refused_by_a_bad_progress_record_still_writes_a_log(
+    db: sqlite3.Connection,
+    old_repo: Path,
+    ready_checklist: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`resume_from` is called before `_finish`, so making it raise removed
+    the log from a path that had one: the fix for the other refusals
+    reintroduced the defect one line earlier (review finding on PR #37)."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
+    path = cutover_module.progress_path("2026-08-10-1900")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("", encoding="utf-8")
+
+    with pytest.raises(CutoverError, match="cannot be read"):
+        run_cutover(
+            db,
+            old_root=old_repo,
+            stamp="2026-08-10-1900",
+            execute=True,
+            attested=True,
+            checklist_path=ready_checklist,
+            launchctl=lambda args: (0, "", ""),
+        )
+    assert (tmp_path / "data" / "cutover" / "2026-08-10-1900.md").is_file()
 
 
 def test_progress_is_written_through_a_replacement(

@@ -351,8 +351,13 @@ def resume_from(stamp: str) -> tuple[str, ...]:
         # previous invocation got far enough to write one, and cutover is
         # neither idempotent nor repeatable, so restarting from zero would
         # take a second snapshot over a system that is already half moved.
-        # Refusing and naming the file is the only safe answer (review
-        # finding on PR #37).
+        # Refusing and naming the file is the only safe answer.
+        # Proved by
+        # `tests/test_cutover.py::test_an_unreadable_progress_record_stops_rather_than_restarting`.
+        # The limit: this covers a record that survives to be read. A machine
+        # that loses power with no record written at all is indistinguishable
+        # from one that never started, and no code in this process can tell
+        # them apart.
         raise CutoverError(
             f"the progress record at {path} exists but cannot be read ({error}). "
             "A previous cutover wrote it, so this is not a fresh start. "
@@ -363,10 +368,21 @@ def resume_from(stamp: str) -> tuple[str, ...]:
             f"the progress record at {path} is not a cutover record. "
             "Inspect it, and delete it only if you are certain no step ran."
         )
-    steps = cast("dict[str, object]", parsed).get("completed")
-    if not isinstance(steps, list):
-        return ()
-    return tuple(str(step) for step in cast("list[object]", steps) if str(step) in STEPS)
+    record = cast("dict[str, object]", parsed)
+    if "completed" not in record or not isinstance(record["completed"], list):
+        # The same danger as an unreadable file, and the same answer. Returning
+        # () here meant a record whose `completed` was missing, null, or a bare
+        # string read as "nothing has happened yet", and a cutover that must
+        # not restart restarted. My first fix covered the non-dict case only,
+        # which is the branch I happened to think of (review finding on PR
+        # #37, second pass).
+        raise CutoverError(
+            f"the progress record at {path} has no usable list of completed steps. "
+            "A previous cutover wrote it, so this is not a fresh start. "
+            "Inspect it, and delete it only if you are certain no step ran."
+        )
+    steps = cast("list[object]", record["completed"])
+    return tuple(str(step) for step in steps if str(step) in STEPS)
 
 
 def _record_progress(stamp: str, result: CutoverResult, *, execute: bool) -> None:
@@ -377,7 +393,11 @@ def _record_progress(stamp: str, result: CutoverResult, *, execute: bool) -> Non
     # Written through a replacement rather than in place. `write_text`
     # truncates first, so an interruption between the truncate and the write
     # left an empty file, and an empty file used to read as "nothing has
-    # happened yet" (review finding on PR #37).
+    # happened yet". Proved by
+    # `tests/test_cutover.py::test_progress_is_written_through_a_replacement`.
+    # The limit: a replacement makes the file never half-written, not the
+    # sequence atomic. A process killed between two steps records the earlier
+    # one, which is what resuming is for.
     scratch = path.with_name(f"{path.name}.partial")
     scratch.write_text(json.dumps({"completed": result.completed}, indent=2), encoding="utf-8")
     os.replace(scratch, path)
@@ -394,10 +414,12 @@ def _finish(stamp: str, result: CutoverResult, *, execute: bool) -> None:
 def _refuse(stamp: str, result: CutoverResult, *, execute: bool, reason: str) -> None:
     """Log the refusal, then raise it.
 
-    Spec 037 requires a record for refusals, and these two paths raised
-    before reaching `_finish`, so the executions that never started were the
-    only ones that left no trace of having been attempted (review finding on
-    PR #37).
+    Spec 037 requires a record for refusals, and these paths raised before
+    reaching `_finish`, so the executions that never started were the only
+    ones that left no trace of having been attempted. Proved by
+    `tests/test_cutover.py::test_a_refused_execution_still_writes_a_log`,
+    `::test_a_refused_attestation_still_writes_a_log` and
+    `::test_a_cutover_refused_by_a_bad_progress_record_still_writes_a_log`.
     """
     result.failures.append(reason)
     result.lines.append(f"refused: {reason}")
@@ -458,7 +480,17 @@ def run_cutover(
         )
 
     directory = agents_dir if agents_dir is not None else launch_agents_dir()
-    done = set(resume_from(stamp) if execute else ())
+    try:
+        done = set(resume_from(stamp) if execute else ())
+    except CutoverError as error:
+        # The refusal I had just routed through the log, reintroduced by the
+        # fix that made this raise at all: `resume_from` is called before
+        # `_finish`, so an unreadable record produced no record of the attempt
+        # (review finding on PR #37, second pass).
+        result.failures.append(str(error))
+        result.lines.append(f"refused: {error}")
+        _finish(stamp, result, execute=execute)
+        raise
     if done:
         result.lines.append(f"resuming: already completed {', '.join(sorted(done))}")
         result.completed.extend(sorted(done))

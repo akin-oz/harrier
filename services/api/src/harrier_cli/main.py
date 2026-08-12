@@ -608,18 +608,15 @@ def _cmd_digest(args: argparse.Namespace) -> int:
 def cutover_installer() -> list[str]:
     """Install the new schedule during cutover, raising if it does not.
 
-    Module level rather than a closure inside the cutover command, because
-    the defect this carries was in the wrapper and a closure cannot be tested
-    without running a whole cutover.
-    `tests/test_cutover.py::test_the_cli_wrapper_raises_when_the_installer_reports_failure`
-    calls it directly.
+    A failed install raises rather than returning, because `run_cutover`
+    reads a return as success. Proved by
+    `tests/test_cutover.py::test_the_cli_wrapper_raises_when_the_installer_reports_failure`,
+    which calls this directly, and the consequence for a whole run is proved
+    separately by `::test_a_failed_schedule_install_fails_the_cutover`.
 
-    A failed install has to raise. This used to return the installer's lines
-    with `ok=False` appended, and `run_cutover` reads a return as success: it
-    marked the install step complete and cleared the progress record, so a
-    cutover reported success while the old jobs were stopped and the new
-    schedule was never installed. Nothing runs at all without this step
-    (review finding on PR #37).
+    Module level rather than a closure inside the cutover command: the defect
+    lived in the wrapper, and a closure cannot be reached without running an
+    entire cutover, which is why no test caught it.
     """
     from harrier.schedule import install_schedule
 
