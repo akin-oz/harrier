@@ -1099,6 +1099,7 @@ def _cmd_review_followup(args: argparse.Namespace) -> int:
     from harrier.reviewfollowup import (
         DEFAULT_DAILY_LIMIT,
         REQUEST,
+        RESPOND,
         WAIT,
         FollowUpError,
         decide,
@@ -1135,6 +1136,22 @@ def _cmd_review_followup(args: argparse.Namespace) -> int:
             daily_limit=int(args.daily_limit or DEFAULT_DAILY_LIMIT),
         )
         print(decision.describe(number))
+        if decision.action == RESPOND:
+            # Never asks for a new review here, and never marks anything read.
+            # Reading a finding and answering it is the judgement half of this
+            # spec, and it belongs to whoever is at the keyboard. All this can
+            # do honestly is refuse to move on while the reviewer is waiting
+            # on an answer.
+            for thread in state.awaiting:
+                print(f"  thread {thread.identifier} (resolved={thread.resolved})")
+            for review in state.unread_reviews:
+                where = (
+                    " INCLUDING FINDINGS OUTSIDE THE DIFF"
+                    if review.has_findings_outside_the_diff
+                    else ""
+                )
+                print(f"  review {review.identifier}: {review.actionable_count} actionable{where}")
+            continue
         if decision.action == WAIT and args.wait:
             time.sleep(decision.wait_minutes * 60)
             request_review(number, run_gh, owner=args.owner, repo=args.repo)
@@ -1152,6 +1169,12 @@ def _cmd_review_followup(args: argparse.Namespace) -> int:
     # which is the distinction the service's own check does not draw.
     if any(not state.reviewed for state in states):
         exit_code = exit_code or 2
+    # And a reviewed pull request with an unanswered finding is not a settled
+    # one. Exiting zero here is what let a Major finding sit unread: the loop
+    # counted unresolved threads, and the finding was in a review body that
+    # creates none (review finding on PR #37).
+    if any(state.outstanding for state in states):
+        exit_code = exit_code or 3
     return exit_code
 
 
