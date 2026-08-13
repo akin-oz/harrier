@@ -65,8 +65,8 @@ PUBLISHER_TITLE_KEYS = (
 
 
 def linkedin_job_id(url: str) -> str:
-    """Job id from either URL shape: /jobs/view/4436595657 or the slugged
-    /jobs/view/senior-frontend-engineer-at-x-4436595657, plus currentJobId."""
+    """Job id from either URL shape: /jobs/view/1234567890 or the slugged
+    /jobs/view/senior-frontend-engineer-at-x-1234567890, plus currentJobId."""
     if not url:
         return ""
     match = re.search(r"/jobs/view/(?:[^/?#]*?-)?(\d+)", url)

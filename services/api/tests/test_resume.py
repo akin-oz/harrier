@@ -68,22 +68,24 @@ def sources(bundle: ResumeBundle) -> TruthSources:
 
 def test_normalize_visible_role_title_removes_internal_tailored_label() -> None:
     title = normalize_visible_role_title(
-        "reedsy",
-        "Tailored for reedsy — Senior Software Engineer (Node/Vue/TypeScript) - Remote Europe",
+        "exampleco",
+        "Tailored for exampleco — Senior Frontend Engineer (Node/Vue/TypeScript) - Remote Europe",
     )
-    assert title == "Senior Software Engineer (Node/Vue/TypeScript) — Remote Europe"
+    assert title == "Senior Frontend Engineer (Node/Vue/TypeScript) — Remote Europe"
 
 
 def test_normalize_visible_role_title_removes_company_prefix_and_remote_suffix() -> None:
     assert (
-        normalize_visible_role_title("peec", "peec — Senior Frontend Engineer (Remote)")
+        normalize_visible_role_title(
+            "examplesoft", "examplesoft — Senior Frontend Engineer (Remote)"
+        )
         == "Senior Frontend Engineer"
     )
 
 
 def test_slug_still_keeps_company_for_output_filename() -> None:
-    slug = slugify("reedsy-Senior Software Engineer (Node/Vue/TypeScript) - Remote Europe")
-    assert slug.startswith("reedsy-")
+    slug = slugify("exampleco-Senior Frontend Engineer (Node/Vue/TypeScript) - Remote Europe")
+    assert slug.startswith("exampleco-")
 
 
 def test_slugify_transliterates_turkish_characters() -> None:
@@ -102,7 +104,7 @@ def test_normalize_visible_url_text_strips_scheme_for_contact_line() -> None:
 # ---------------------------------------------------------------------------
 
 REQUESTED_ROLE = (
-    "Tailored for reedsy — Senior Software Engineer (Node/Vue/TypeScript) - Remote Europe"
+    "Tailored for exampleco — Senior Frontend Engineer (Node/Vue/TypeScript) - Remote Europe"
 )
 
 
@@ -116,7 +118,7 @@ def test_markdown_header_uses_grounded_title_not_requested_identity(
     assert lines[1] == "Senior Frontend Engineer — TypeScript & Vue 3"
     assert lines[2] == "Exampleland | deniz@example.com | linkedin.com/in/deniz-ornek"
     assert "Tailored for" not in markdown
-    assert "reedsy — Senior Software Engineer" not in markdown
+    assert "exampleco — Senior Software Engineer" not in markdown
 
 
 def test_a_forbidden_phrase_refuses_the_rendered_resume(
@@ -181,9 +183,9 @@ def test_html_header_uses_grounded_markdown_title(
 
 
 def test_experience_years_use_completed_anniversaries(bundle: ResumeBundle) -> None:
-    assert professional_experience_years(bundle, date(2026, 5, 31)) == 9
-    assert professional_experience_years(bundle, date(2026, 6, 1)) == 10
-    assert professional_experience_label(bundle, date(2026, 7, 21)) == "10+ years"
+    assert professional_experience_years(bundle, date(2025, 12, 31)) == 11
+    assert professional_experience_years(bundle, date(2026, 1, 1)) == 12
+    assert professional_experience_label(bundle, date(2026, 7, 21)) == "12+ years"
 
 
 def test_frontend_evidence_is_not_promoted_to_full_stack_from_jd(
@@ -230,7 +232,7 @@ def test_vue_target_prioritizes_vue_and_nuxt_over_react(bundle: ResumeBundle) ->
 
 def test_ended_client_engagement_never_renders_as_present(bundle: ResumeBundle) -> None:
     plan = build_content_plan(bundle, "React TypeScript", "Senior Frontend Engineer", AS_OF)
-    assert plan.role_periods["r1"] == "Nov 2025 – Jun 2026"  # noqa: RUF001
+    assert plan.role_periods["r1"] == "Oct 2023 – Mar 2025"  # noqa: RUF001
     assert "Present" not in plan.role_periods["r1"]
     assert validate_content_plan(plan, bundle) == []
 

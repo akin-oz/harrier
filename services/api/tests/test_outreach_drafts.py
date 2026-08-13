@@ -57,7 +57,7 @@ def request_fixture() -> OutreachRequest:
     return OutreachRequest.from_dict(
         {
             "job_post_url": "https://example.com/job",
-            "company_name": "DataCamp",
+            "company_name": "Exampledata",
             "role_title": "Senior Frontend Platform Engineer",
             "target_person_name": "Jane Recruiter",
             "audience": "recruiter",
@@ -124,7 +124,7 @@ def test_save_target_upserts_by_identity(
     warm = OutreachRequest.from_dict(
         {
             "job_post_url": "https://example.com/job",
-            "company_name": "DataCamp",
+            "company_name": "Exampledata",
             "role_title": "Senior Frontend Platform Engineer",
             "target_person_name": "Jane Recruiter",
             "audience": "recruiter",
@@ -272,7 +272,7 @@ def ai_kind(texts: list[str]) -> list[dict[str, str]]:
     return [{"variant_id": f"v{i + 1}", "text": text} for i, text in enumerate(texts)]
 
 
-def full_ai_response(short_text: str = "Short note about DataCamp frontend work.") -> str:
+def full_ai_response(short_text: str = "Short note about Exampledata frontend work.") -> str:
     return json.dumps(
         {
             "connection_note_short": ai_kind([short_text, "b", "c"]),

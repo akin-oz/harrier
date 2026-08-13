@@ -44,7 +44,7 @@ def an_event() -> dict[str, object]:
         "tracker_row": "12",
         "next_action": "Reply with availability.",
         "summary": "We would love to speak with you about the role next Tuesday.",
-        "from": "Dana Recruiter <dana@exampleco.com>",
+        "from": "Dana Recruiter <dana@exampleco.example>",
         "timestamp": "2026-08-10T09:00:00Z",
         "messageId": "abc123",
         "subject": "Interview with Example Co",
@@ -137,7 +137,7 @@ def test_the_archive_keeps_the_sender_domain_only(env: Path) -> None:
     recording who wrote it."""
     append_event(an_event())
     written = json.loads(events_path().read_text(encoding="utf-8").strip())
-    assert written["from_domain"] == "exampleco.com"
+    assert written["from_domain"] == "exampleco.example"
     assert "dana" not in json.dumps(written)
 
 

@@ -41,7 +41,8 @@ PROFILE_JSON_PATH = REPO_ROOT / "config" / "application-profile.example.json"
 PROFILE_MD_PATH = REPO_ROOT / "config" / "application-profile.example.md"
 
 FULL_LETTER = (
-    "I'm interested in Peec because the work looks product-facing and close to the product.\n\n"
+    "I'm interested in Examplesoft because the work looks product-facing and close "
+    "to the product.\n\n"
     "My strongest fit is TypeScript-first frontend and product engineering with concrete "
     "delivery in production.\n\n"
     "If that match holds in the process, I'd be glad to discuss the role further."
@@ -80,7 +81,7 @@ def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
                     "email": "deniz@example.com",
                     "linkedin": "https://linkedin.com/in/deniz-ornek",
                 },
-                "compensation": {"salary_min_eur": 70000, "salary_target_eur": 85000},
+                "compensation": {"salary_min_eur": 50000, "salary_target_eur": 60000},
             }
         ),
     )
@@ -132,15 +133,15 @@ def test_safe_framing_includes_do_not_claims() -> None:
 def test_build_answers_payload_includes_context(db: sqlite3.Connection) -> None:
     payload = build_answers_payload(
         db,
-        "reedsy",
-        "Senior Software Engineer (Node/Vue/TypeScript) - Remote Europe",
-        ["Why are you interested in Reedsy and this role?"],
-        job_url="https://jobs.ashbyhq.com/reedsy/123",
+        "exampleco",
+        "Senior Frontend Engineer (Node/Vue/TypeScript) - Remote Europe",
+        ["Why are you interested in Exampleco and this role?"],
+        job_url="https://jobs.ashbyhq.com/exampleco/123",
         tracker_row={"fit_score": "92", "status": "shortlisted", "notes": "strong fit"},
         jd_text="We need Vue, TypeScript, and product-minded engineering.",
     )
-    assert payload["company"] == "reedsy"
-    assert payload["job_url"] == "https://jobs.ashbyhq.com/reedsy/123"
+    assert payload["company"] == "exampleco"
+    assert payload["job_url"] == "https://jobs.ashbyhq.com/exampleco/123"
     truth_sources = cast("dict[str, object]", payload["truth_sources"])
     assert "resume_truth_source_md" in truth_sources
     assert "application_profile_md" in truth_sources
@@ -151,7 +152,7 @@ def test_build_answers_payload_includes_context(db: sqlite3.Connection) -> None:
     guidance_entries = cast(
         "list[dict[str, object]]", payload["application_profile_question_guidance"]
     )
-    assert guidance_entries[0]["question"] == "Why are you interested in Reedsy and this role?"
+    assert guidance_entries[0]["question"] == "Why are you interested in Exampleco and this role?"
 
 
 def test_parse_answers_response_reads_json_payload() -> None:
@@ -180,7 +181,7 @@ def test_generate_answers_propagates_ai_error(
 
     monkeypatch.setattr(answers_module, "generate_text", boom)
     with pytest.raises(RuntimeError, match="AI request failed"):
-        generate_answer_set(db, "reedsy", "Senior Software Engineer", ["Why?"])
+        generate_answer_set(db, "exampleco", "Senior Software Engineer", ["Why?"])
 
 
 def test_generated_answers_avoid_banned_phrases(
@@ -205,7 +206,7 @@ def test_generated_answers_avoid_banned_phrases(
         )
 
     monkeypatch.setattr(answers_module, "generate_text", fake_generate)
-    drafts = generate_answer_set(db, "reedsy", "Senior Software Engineer", DEFAULT_QUESTIONS)
+    drafts = generate_answer_set(db, "exampleco", "Senior Software Engineer", DEFAULT_QUESTIONS)
     joined = "\n".join(draft.short_answer + "\n" + draft.medium_answer for draft in drafts).lower()
     for phrase in ("i am thrilled", "i am passionate about", "amazing opportunity", "cutting-edge"):
         assert phrase not in joined
@@ -225,7 +226,7 @@ def test_parse_questions_file_mode_strips_bullets_and_numbers(tmp_path: Path) ->
 
 def test_render_markdown_has_draft_sections() -> None:
     content = render_markdown(
-        "reedsy",
+        "exampleco",
         "Senior Software Engineer",
         "https://example.test/job",
         {"fit_score": "92", "status": "shortlisted"},
@@ -250,12 +251,12 @@ def test_deterministic_salary_answer_uses_candidate_compensation(
 
     draft = build_deterministic_draft(
         "What are your salary expectations?",
-        "reedsy",
+        "exampleco",
         load_profile_json(db),
         load_candidate_document(db),
     )
-    assert "85,000" in draft.short_answer
-    assert "70,000" in draft.medium_answer
+    assert "60,000" in draft.short_answer
+    assert "50,000" in draft.medium_answer
 
 
 def test_deterministic_interest_answer_fills_company_and_product_signal(
@@ -265,12 +266,12 @@ def test_deterministic_interest_answer_fills_company_and_product_signal(
 
     draft = build_deterministic_draft(
         "Why are you interested in this company and this role?",
-        "reedsy",
+        "exampleco",
         load_profile_json(db),
         load_candidate_document(db),
-        jd_text="A marketplace for authors and readers.",
+        jd_text="A synthetic product used only to exercise the JD signal path.",
     )
-    assert draft.medium_answer.startswith("I'm interested in Reedsy because")
+    assert draft.medium_answer.startswith("I'm interested in Exampleco because")
     assert "the product is useful and the users are real" in draft.medium_answer
 
 
@@ -282,14 +283,14 @@ def test_deterministic_interest_answer_fills_company_and_product_signal(
 def test_build_cover_letter_payload_includes_context(db: sqlite3.Connection) -> None:
     payload = build_cover_letter_payload(
         db,
-        "peec",
+        "examplesoft",
         "Senior Product Engineer (Remote)",
-        job_url="https://jobs.ashbyhq.com/peec/123",
+        job_url="https://jobs.ashbyhq.com/examplesoft/123",
         tracker_row={"fit_score": "80", "status": "shortlisted", "notes": "strong fit"},
         jd_text="Product-facing engineering with TypeScript.",
         extra_notes="Keep it compact and recruiter-facing.",
     )
-    assert payload["company"] == "peec"
+    assert payload["company"] == "examplesoft"
     assert payload["extra_notes"] == "Keep it compact and recruiter-facing."
     tracker_metadata = cast("dict[str, str]", payload["tracker_metadata"])
     assert tracker_metadata["fit_score"] == "80"
@@ -300,12 +301,12 @@ def test_build_cover_letter_payload_includes_context(db: sqlite3.Connection) -> 
 def test_parse_cover_letter_response_reads_json_payload() -> None:
     text = json.dumps({"short_version": SHORT_LETTER, "full_version": FULL_LETTER})
     parsed = parse_cover_letter_response(text)
-    assert "Peec" in parsed["full_version"]
+    assert "Examplesoft" in parsed["full_version"]
 
 
 def test_normalize_cover_letter_text_removes_internal_dump_language() -> None:
     text = (
-        "Fit:\n- Tailored for Peec\n- I can send those on request.\n\n"
+        "Fit:\n- Tailored for Examplesoft\n- I can send those on request.\n\n"
         "Most relevant to this role: I am thrilled about this amazing opportunity.\n\n"
         "Practically, I would be honored."
     )
@@ -332,9 +333,9 @@ def test_write_cover_letter_artifacts_creates_md_html_pdf(
 
     artifacts = write_cover_letter_artifacts(
         db,
-        "peec",
+        "examplesoft",
         "Senior Product Engineer (Remote)",
-        "https://jobs.ashbyhq.com/peec/123",
+        "https://jobs.ashbyhq.com/examplesoft/123",
         SHORT_LETTER,
         FULL_LETTER,
         output_dir=tmp_path / "letters",
@@ -362,9 +363,9 @@ def test_write_cover_letter_artifacts_fails_when_pdf_not_created(
     with pytest.raises(RuntimeError, match="PDF was not created or is empty"):
         write_cover_letter_artifacts(
             db,
-            "peec",
+            "examplesoft",
             "Senior Product Engineer (Remote)",
-            "https://jobs.ashbyhq.com/peec/123",
+            "https://jobs.ashbyhq.com/examplesoft/123",
             SHORT_LETTER,
             FULL_LETTER,
             output_dir=tmp_path / "letters",
@@ -376,14 +377,14 @@ def test_write_cover_letter_artifacts_fails_when_pdf_not_created(
 def test_render_cover_letter_html_contains_only_full_letter(db: sqlite3.Connection) -> None:
     html = render_cover_letter_html(
         db,
-        "peec",
+        "examplesoft",
         "Senior Product Engineer (Remote)",
         FULL_LETTER,
         template_dir=REPO_ROOT / "templates",
     )
     assert "Short Version" not in html
     assert "Cover Letter" not in html
-    assert "peec — senior product engineer" not in html.lower()
+    assert "examplesoft — senior product engineer" not in html.lower()
     assert "linkedin.com/in/deniz-ornek" in html
 
 
@@ -395,7 +396,7 @@ def test_generate_cover_letter_propagates_ai_error(
 
     monkeypatch.setattr(letters_module, "generate_text", boom)
     with pytest.raises(RuntimeError, match="AI request failed"):
-        generate_cover_letter(db, "reedsy", "Senior Software Engineer")
+        generate_cover_letter(db, "exampleco", "Senior Software Engineer")
 
 
 def test_generate_cover_letter_validates_three_paragraphs(
@@ -406,7 +407,7 @@ def test_generate_cover_letter_validates_three_paragraphs(
             {
                 "short_version": SHORT_LETTER,
                 "full_version": (
-                    "I'm interested in Peec because the work looks product-facing today.\n\n"
+                    "I'm interested in Examplesoft because the work looks product-facing today.\n\n"
                     "My strongest fit is TypeScript-first frontend engineering in production."
                 ),
             }
@@ -414,4 +415,4 @@ def test_generate_cover_letter_validates_three_paragraphs(
 
     monkeypatch.setattr(letters_module, "generate_text", two_paragraph_response)
     with pytest.raises(ValueError, match="three short paragraphs"):
-        generate_cover_letter(db, "peec", "Senior Product Engineer")
+        generate_cover_letter(db, "examplesoft", "Senior Product Engineer")
