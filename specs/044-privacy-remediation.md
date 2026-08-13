@@ -91,7 +91,7 @@ most-recent end date disclosed when the current search began.
   aggregate phrased in words, and it will flag a specification phrased without
   one of the exempting qualifiers. It is a floor, not a proof.
 - Second honest limitation: no tree-level change reaches git history. The
-  blobs and the commit bodies are spec 045's problem, and until that lands the
+  blobs and the commit bodies are spec 046's problem, and until that lands the
   history still holds what the tree no longer does.
 
 ## Acceptance criteria
@@ -136,6 +136,6 @@ that pins it.
 
 ## Out of scope
 
-Git history and the published pull request bodies (spec 045). The absent log
-redaction filter, the guards that fail open, the untested decisions, and the
-false claims in the documents (spec 046).
+The absent log redaction filter, the guards that fail open, the untested
+decisions, and the false claims in the documents (spec 045). Git history and
+the published pull request bodies (spec 046).
