@@ -211,3 +211,52 @@ def test_a_truncated_page_of_findings_still_exits_three(monkeypatch: pytest.Monk
         ),
     )
     assert main(_argv([5])) == 3
+
+
+# --- portability ------------------------------------------------------------
+
+
+def test_a_missing_launchctl_is_reported_rather_than_raised(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """launchctl exists only on macOS, and subprocess.run raises rather than
+    returning a code when it is absent. Every caller expected a code, so the
+    README's "the scheduler is not portable, and reports as much on other
+    systems" was false: it did not report, it crashed with FileNotFoundError.
+
+    Found when the cutover preflight test above first ran on Linux CI. Tested
+    by simulating the absence, because this suite's own CI runs on Linux and
+    the maintainer's machine is macOS: neither alone exercises both sides.
+    """
+    from harrier.schedule import LAUNCHCTL_ABSENT, default_launchctl
+
+    def absent(*_a: object, **_k: object) -> object:
+        raise FileNotFoundError(2, "No such file or directory", "launchctl")
+
+    monkeypatch.setattr("harrier.schedule.subprocess.run", absent)
+
+    code, stdout, stderr = default_launchctl(["print", "gui/501/example"])
+
+    assert code == LAUNCHCTL_ABSENT
+    assert stdout == ""
+    assert "macOS" in stderr
+
+
+def test_cutover_preflight_survives_a_machine_without_launchctl(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The failure exactly as CI hit it: preflight reached launchctl on a
+    machine that has none and the FileNotFoundError escaped the command."""
+    monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
+    old_root = tmp_path / "old"
+    old_root.mkdir()
+
+    def absent(*_a: object, **_k: object) -> object:
+        raise FileNotFoundError(2, "No such file or directory", "launchctl")
+
+    monkeypatch.setattr("harrier.schedule.subprocess.run", absent)
+
+    code = main(["cutover", "--old-root", str(old_root), "preflight"])
+
+    assert code == 1, "preflight should block, not crash"
+    assert "blocking check" in capsys.readouterr().err
