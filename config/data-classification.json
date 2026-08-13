@@ -18,7 +18,13 @@
       "config/companies-hold.csv",
       "config/feeds.txt",
       "config/linkedin_search_urls.txt",
-      "config/discovery.json"
+      "config/discovery.json",
+      "config/candidate.json",
+      "config/resume-content.json",
+      "config/application-profile.json",
+      "config/application-profile.md",
+      "config/story-seeds.json",
+      "config/outreach-defaults.json"
     ]
   }
 }

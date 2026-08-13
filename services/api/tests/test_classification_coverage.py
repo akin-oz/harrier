@@ -10,6 +10,10 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
+from harrier.db import data_dir
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -49,6 +53,54 @@ def test_never_in_git_paths_are_gitignored() -> None:
         assert result.returncode == 0, (
             f"probe {probe!r} for never-in-git pattern {pattern!r} is not gitignored"
         )
+
+
+def test_every_example_config_has_its_real_name_classified() -> None:
+    """The README tells a user to copy every config/*.example.* to its real
+    name and says "either way they are gitignored". Six of the ten were not:
+    the candidate profile, the resume content, the application narrative in
+    both formats, the interview story seeds, and the outreach defaults all
+    staged cleanly under `git add -A`.
+
+    Derived from the tree rather than listed, so adding an example file with
+    no classification entry fails here instead of leaking.
+    """
+    patterns = _never_in_git_patterns()
+    missing: list[str] = []
+    for example in sorted((REPO_ROOT / "config").rglob("*.example.*")):
+        real = example.with_name(example.name.replace(".example.", ".", 1))
+        rel = real.relative_to(REPO_ROOT).as_posix()
+        if not _matches(rel, patterns):
+            missing.append(rel)
+    assert not missing, f"example configs whose real name is unclassified: {missing}"
+
+
+def test_data_dir_is_inside_the_repository_whatever_the_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`data_dir()` returned Path("data"), resolved against the process's
+    working directory. `just export` cd's into services/api, so it opened a
+    second database and wrote a header-only CSV, exit code 0 both times:
+    two databases where ADR-003 says one, and a never-in-git directory sitting
+    outside the root-anchored .gitignore patterns.
+
+    Runs from a directory that is not the repository root, which is the
+    condition the defect needed and which no existing test created.
+    """
+    monkeypatch.delenv("HARRIER_DATA_DIR", raising=False)
+    monkeypatch.delenv("HARRIER_DEMO", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    resolved = data_dir().resolve()
+
+    assert resolved == (REPO_ROOT / "data").resolve(), (
+        f"data_dir() followed the working directory to {resolved}"
+    )
+    probe = resolved.relative_to(REPO_ROOT).as_posix() + "/probe"
+    result = subprocess.run(
+        ["git", "check-ignore", "-q", probe], cwd=REPO_ROOT, capture_output=True
+    )
+    assert result.returncode == 0, f"{probe} is where data lands and it is not gitignored"
 
 
 def test_no_encrypted_layer_remains() -> None:

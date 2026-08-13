@@ -41,3 +41,16 @@ dist/
 /config/feeds.txt
 /config/linkedin_search_urls.txt
 /config/discovery.json
+
+# Every config/*.example.* documents a real name the README tells you to
+# create, and each real name holds personal data: the candidate profile, the
+# resume truth source, the application narrative, the interview stories.
+# Six of these were absent and staged cleanly under `git add -A`. The set is
+# derived from the tree by test_classification_coverage.py, so a new example
+# file with no entry here fails rather than leaking.
+/config/candidate.json
+/config/resume-content.json
+/config/application-profile.json
+/config/application-profile.md
+/config/story-seeds.json
+/config/outreach-defaults.json
