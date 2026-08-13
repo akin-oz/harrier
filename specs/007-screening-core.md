@@ -43,7 +43,8 @@ run_source_import, belongs to spec 011):
   the last 10,000 keys.
 - `pipeline.py`: screen_jobs with the exact gate order: seen-state, hold
   list, title rules, remote/EMEA policy, tracker dedupe (url, company+title,
-  external_key), enrichment, scoring with the hard cutoff at 55. Accepted
+  external_key), enrichment, scoring with the hard cutoff at 55 (removed by
+  spec 033; see the amendment below). Accepted
   jobs produce tracker-ready field dicts (the notes key=value string is
   built exactly as before; harrier.tracker.add_job promotes the keys to
   columns) and their descriptions are cached.
@@ -81,6 +82,29 @@ Deliberate changes from the old code, stated:
 Old repo: scripts/job_sources.py (constants, screen_jobs, score_job,
 remote_region_allowed); tests/test_job_sources.py; CLAUDE.md "Candidate EU
 status".
+
+## What later specs changed
+
+Recorded here because this was the one shipped spec carrying no amendment
+note, so a reader arriving at it had no way to know three of its statements
+had been superseded (spec 045).
+
+- **The cutoff is gone.** Spec 033 removed `SCORE_CUTOFF`. Anything reaching
+  the scorer has already matched an include keyword and passed a remote gate
+  over the same text the remote bonus rewards, so on the ATS path the floor
+  was 59 against a cutoff of 55 and it could not reject. A LinkedIn result
+  returns early from the region gate and never earns that bonus, so its floor
+  was 51: every posting the cutoff ever rejected was a LinkedIn one, rejected
+  for the mechanism that makes it valid. The gates filter; the score ranks.
+- **The saturation cap is gone.** Also spec 033. A strong realistic posting
+  reached the cap exactly, so it tied postings that differ in quality where
+  ranking matters most.
+- **Matching is token-aware.** Spec 032 replaced containment matching in every
+  keyword list, and made EU-permit phrasing a scoring signal rather than a
+  filter, because the candidate can contract through an EU legal entity.
+- **Seen-state eviction is age-based.** Spec 031 replaced the lexicographic
+  rule, which evicted the same entries forever while keeping genuinely stale
+  ones. The 10,000-key cap itself carries over.
 
 ## Out of scope
 

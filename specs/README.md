@@ -9,9 +9,9 @@ Spec-gated execution: nothing changes observable behavior without an approved sp
 ```yaml
 spec: NNN
 title: short imperative title
-status: proposed | in-progress | shipped
+status: proposed | accepted | in-progress | shipped
 approved: no
-milestone: M0..M5
+milestone: M0..M7
 depends: [NNN, ...]
 ```
 
@@ -34,11 +34,15 @@ Body sections: Problem, Scope, Acceptance criteria (checkboxes), Proof / origin
 - **M3** artifact generation: 012, 013, 014, 015
 - **M4** outreach, Gmail, digest: 016, 017, 018, 019
 - **M5** scheduling, demo, parity, cutover: 020, 021, 022, 024
+- **M6** review findings, gates that can fail, the UI that drives the tool:
+  025 and 027 through 043
+- **M7** open-source readiness: 044, 045, 046
 
 Stubs sequence the backlog; they do not define final scope. Refine a stub into a
 real spec before asking for approval, and expect the scope to narrow or split at
-that point. Awaiting approval today: none. 025 (feed health) is approved and not yet
-built.
+that point. `ls specs/` and the frontmatter are the record of what is approved
+and what is built; a sentence here goes stale the moment one lands, which is
+why this paragraph no longer names any.
 
 A feature audit against the old system on 2026-08-11 found four gaps. 027
 closed the largest, the tracker CLI verbs, which had left harrier unable to
@@ -50,8 +54,10 @@ either shipped or in progress; `ls specs/` and the frontmatter are the record,
 not this paragraph.
 - **M5 (added)** user configuration in the database: 023 (ADR-009; approved separately)
 
-M5 status: 020, 021, 022, 023 and 024 all shipped. Every spec in the backlog
-is delivered.
+M5 shipped in full: 020, 021, 022, 023 and 024. The backlog is not empty,
+though this file used to say it was: six specs are in progress at any reading,
+and `grep -l '^status: in-progress' specs/*.md` is the answer rather than a
+number written here (spec 045).
 
 That does not mean the cutover happened. Spec 024 delivered the tooling for it;
 the event itself is an operational step whose criteria are listed separately in

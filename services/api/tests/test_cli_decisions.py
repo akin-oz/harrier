@@ -192,3 +192,22 @@ def test_a_settled_pull_request_exits_zero(monkeypatch: pytest.MonkeyPatch) -> N
         ),
     )
     assert main(_argv([4])) == 0
+
+
+def test_a_truncated_page_of_findings_still_exits_three(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both GitHub connections are bounded and neither hasNextPage was read,
+    so past the bound the unread findings were simply absent and the tool
+    exited 0 on exactly the pull request most likely to have something
+    outstanding: the one with the most review traffic."""
+    _install(
+        monkeypatch,
+        PullRequestState(
+            number=5,
+            head_sha="abc",
+            review_threads=100,
+            comment_bodies=[],
+            reviews_seen=20,
+            truncated=True,
+        ),
+    )
+    assert main(_argv([5])) == 3

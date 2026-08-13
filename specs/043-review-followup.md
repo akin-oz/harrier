@@ -171,7 +171,7 @@ Proven by services/api/tests/test_review_followup.py:
 | an unchanged head is not re-requested | `test_a_reviewed_pull_request_at_the_same_head_is_left_alone`, `test_a_moved_head_is_asked_again` |
 | the daily bound stops the loop | `test_the_daily_bound_stops_the_loop`, `test_the_bound_wins_over_everything_else` |
 | rate limited is distinguishable from reviewed | `test_a_rate_limited_pull_request_reports_as_not_reviewed`, `test_a_reviewed_pull_request_reports_as_reviewed`, `test_a_pull_request_with_neither_is_still_not_reviewed` |
-| `gh` failing is reported | `test_gh_failing_is_reported_not_swallowed`, `test_an_unreadable_thread_count_is_reported` |
+| `gh` failing is reported | `test_gh_failing_is_reported_not_swallowed`, `test_an_unreadable_payload_is_reported` |
 | the rule compiles into both instruction files | `aie check` clean, and the rule text appears in `CLAUDE.md` and `AGENTS.md` |
 | nothing about a pull request is committed | no test touches the network; the `gh` seam is injected, so no title or branch name reaches a fixture (ADR-008) |
 

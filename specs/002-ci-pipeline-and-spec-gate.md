@@ -29,7 +29,7 @@ No CI exists. The governance chain needs its authoritative half: gates that make
 
 ## Proof / origin
 
-/Users/akinoztorun/Documents/projects/sorrel/.github/workflows/spec-gate.yml
+the Sorrel spec-gate workflow (a private sibling project of the author's)
 
 ## Out of scope
 

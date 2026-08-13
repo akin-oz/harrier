@@ -515,3 +515,19 @@ def test_no_committed_prose_states_an_aggregate_of_the_real_search() -> None:
     assert not offenders, "an aggregate measured from the real search is committed: " + "; ".join(
         offenders
     )
+
+
+def test_no_committed_file_names_an_absolute_home_directory() -> None:
+    """An absolute /Users/<name> path publishes the maintainer's account name,
+    and two of them pointed a stranger at a private sibling project. The repo
+    already tests this class in rendered artifacts; committed prose was not
+    covered (spec 045)."""
+    pattern = re.compile(r"/(?:Users|home)/[a-z][a-z0-9._-]{2,}", re.IGNORECASE)
+    offenders: list[str] = []
+    for path in [*prose_files(), ROOT / "README.md"]:
+        for number, line in enumerate(
+            path.read_text(encoding="utf-8", errors="replace").splitlines(), 1
+        ):
+            if pattern.search(line):
+                offenders.append(f"{path.relative_to(ROOT)}:{number}")
+    assert not offenders, "an absolute home path is committed: " + "; ".join(offenders)

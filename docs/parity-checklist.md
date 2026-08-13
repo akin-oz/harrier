@@ -18,19 +18,19 @@ any that the matrix no longer carries. Waiver reasons are committed to a public
 repository: keep them about the capability, never about a company or a person.
 
 
-97 items: 59 keep, 22 change, 16 drop.
+97 items: 54 keep, 27 change, 16 drop.
 
 ## 1. Discovery pipeline
 
 - [ ] `shared-normalized-job-schema` **Shared normalized job schema** (keep: behavior identical, proof named) source: `scripts/job_sources.py` (make_normalized_job)
-- [ ] `screening-gate-order-seen-state-hold-list-title-remote-emea-dedupe-score` **Screening gate order: seen-state, hold list, title, remote/EMEA, dedupe, score cutoff 55** (keep: behavior identical, proof named) source: `scripts/job_sources.py` (screen_jobs)
-- [ ] `remote-only-and-emea-enforcement-incl-location-only-negative-hints-and-t` **Remote-only and EMEA enforcement, incl. location-only negative hints and the linkedin_search bypass** (keep: behavior identical, proof named) source: `scripts/job_sources.py` (remote_region_allowed)
+- [ ] `screening-gate-order-seen-state-hold-list-title-remote-emea-dedupe-score` **Screening gate order: seen-state, hold list, title, remote/EMEA, dedupe, score cutoff 55** (change: difference verified intentional) source: `scripts/job_sources.py` (screen_jobs)
+- [ ] `remote-only-and-emea-enforcement-incl-location-only-negative-hints-and-t` **Remote-only and EMEA enforcement, incl. location-only negative hints and the linkedin_search bypass** (change: difference verified intentional) source: `scripts/job_sources.py` (remote_region_allowed)
 - [ ] `eu-permit-and-eu-entity-phrases-as-positive-signals-never-filters` **EU-permit and EU-entity phrases as positive signals, never filters** (keep: behavior identical, proof named) source: `scripts/job_sources.py` (PREFERRED_SIGNAL_WEIGHTS), `CLAUDE.md` "Candidate EU status"
-- [ ] `scoring-model-base-30-title-keywords-skill-signals-region-domain-bonus-c` **Scoring model (base 30, title, keywords, skill signals, region, domain bonus, cap 120)** (keep: behavior identical, proof named) source: `scripts/job_sources.py` (score_job, DEFAULT_SCORING)
+- [ ] `scoring-model-base-30-title-keywords-skill-signals-region-domain-bonus-c` **Scoring model (base 30, title, keywords, skill signals, region, domain bonus, cap 120)** (change: difference verified intentional) source: `scripts/job_sources.py` (score_job, DEFAULT_SCORING)
 - [ ] `archetype-detection` **Archetype detection** (change: difference verified intentional) source: `scripts/job_sources.py` (detect_archetype) + two more copies
 - [ ] `description-cache-keyed-by-url-hash` **Description cache keyed by URL hash** (keep: behavior identical, proof named) source: `state/job-descriptions/` (one file per description)
 - [ ] `jd-enrichment-fetch-for-short-descriptions-on-ats-hosts` **JD enrichment fetch for short descriptions on ATS hosts** (keep: behavior identical, proof named) source: `scripts/job_sources.py` (enrich_job_description_for_scoring)
-- [ ] `per-source-seen-state-capped-at-10-000-keys` **Per-source seen-state, capped at 10,000 keys** (keep: behavior identical, proof named) source: `state/job-discovery/*_seen.json`
+- [ ] `per-source-seen-state-capped-at-10-000-keys` **Per-source seen-state, capped at 10,000 keys** (change: difference verified intentional) source: `state/job-discovery/*_seen.json`
 - [ ] `notes-column-as-key-value-store-score-signals-external-key` **notes column as key=value store (score=, signals=, external_key=, ...)** (change: difference verified intentional) source: `scripts/job_sources.py` (extract_note_value)
 - [ ] `greenhouse-importer` **Greenhouse importer** (keep: behavior identical, proof named) source: `scripts/import_greenhouse_jobs.py`
 - [ ] `ashby-importer-incl-html-fallback-on-api-404` **Ashby importer incl. HTML fallback on API 404** (keep: behavior identical, proof named) source: `scripts/import_ashby_jobs.py`
@@ -64,7 +64,7 @@ repository: keep them about the capability, never about a company or a person.
 ## 3. Artifact generation
 
 - [ ] `tailored-resume-md-html-pdf-metadata-sidecar` **Tailored resume: md, html, pdf, metadata sidecar** (keep: behavior identical, proof named) source: `scripts/tailor_resume.py`
-- [ ] `verified-content-only-rule-ai-selects-and-orders-bullet-ids-never-invent` **Verified-content-only rule: AI selects and orders bullet IDs, never invents** (keep: behavior identical, proof named) source: `scripts/tailor_resume.py` (require_truth, validate_content_plan)
+- [ ] `verified-content-only-rule-ai-selects-and-orders-bullet-ids-never-invent` **Verified-content-only rule: AI selects and orders bullet IDs, never invents** (change: difference verified intentional) source: `scripts/tailor_resume.py` (require_truth, validate_content_plan)
 - [ ] `bullet-pool-embedded-in-script-source` **Bullet pool embedded in script source** (change: difference verified intentional) source: `scripts/tailor_resume.py` (BULLET_POOL)
 - [ ] `pdf-validation-non-empty-no-replacement-chars-no-unresolved-placeholders` **PDF validation: non-empty, no replacement chars, no unresolved placeholders, page count 1** (keep: behavior identical, proof named) source: `scripts/tailor_resume.py` (validate_rendered_pdf)
 - [ ] `internal-label-scrubbing-from-recruiter-facing-output` **Internal-label scrubbing from recruiter-facing output** (keep: behavior identical, proof named) source: `scripts/tailor_resume.py` (normalize_visible_role_title, build_internal_metadata)

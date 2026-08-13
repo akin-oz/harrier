@@ -90,7 +90,7 @@ Proven by services/api/tests/test_api_exposure.py:
 | a cross-origin page cannot trigger a run, capture, or config write | `test_a_state_changing_request_without_the_token_is_refused` (five routes), `test_a_wrong_token_is_refused` |
 | a foreign Host header is refused | `test_a_request_with_a_foreign_host_is_refused`, `test_the_rebinding_check_applies_to_writes_too`, `test_a_local_host_is_allowed` |
 | a stored count above the bound is clamped at use | `test_a_stored_count_above_the_bound_is_clamped`, written directly to the store |
-| a credential is redacted in every sink | `test_a_credential_is_scrubbed_from_text` (five shapes), `test_the_run_stream_scrubs_what_it_relays`, `test_the_discovery_summary_scrubs_its_errors` |
+| a credential is redacted in every sink | `test_a_credential_is_scrubbed_from_text` (five shapes), `test_every_event_is_scrubbed_at_the_choke_point`, `test_every_exception_sink_in_discovery_is_scrubbed` |
 | an unexpected exception cannot carry a credential across | the scrub is at the boundary rather than the call site, asserted by the two sink tests above, which fail if a new relay is added without it |
 | the bookmarklet capture path still works | `test_the_bookmarklet_path_still_reaches_the_tracker`, `test_the_ui_can_still_start_a_run` |
 | nothing identifying is committed | `test_the_token_file_is_created_readable_only_by_its_owner` asserts the 0600 mode, `test_a_second_call_returns_the_token_already_in_circulation` the exclusive create, and `tests/test_classification_coverage.py::test_never_in_git_paths_are_gitignored` keeps the data directory out of git (ADR-008) |

@@ -194,6 +194,10 @@ class PullRequestState:
     # count of unresolved threads.
     awaiting: tuple[ThreadState, ...] = ()
     unread_reviews: tuple[ReviewBody, ...] = ()
+    # The GitHub connections this is gathered from are bounded. If either had
+    # another page, what we did not read may hold the finding, so the honest
+    # answer is "something may be waiting" rather than "nothing is".
+    truncated: bool = False
 
     @property
     def reviewed(self) -> bool:
@@ -209,8 +213,14 @@ class PullRequestState:
 
     @property
     def outstanding(self) -> bool:
-        """Whether anything is waiting on us."""
-        return bool(self.awaiting) or bool(self.unread_reviews)
+        """Whether anything is waiting on us.
+
+        Truncation counts. A bounded query that had another page cannot show
+        that nothing is outstanding; it can only show that nothing it read
+        was. Failing closed here is what stops the tool exiting 0 on the
+        busiest pull request (spec 045).
+        """
+        return bool(self.awaiting) or bool(self.unread_reviews) or self.truncated
 
 
 @dataclass(frozen=True)
@@ -428,9 +438,10 @@ def gather(number: int, run: GitHubRunner, *, owner: str, repo: str) -> PullRequ
                 "-f",
                 f'query={{repository(owner:"{owner}",name:"{repo}")'
                 f"{{pullRequest(number:{number}){{"
-                f"reviewThreads(first:100){{nodes{{id isResolved "
+                f"reviewThreads(first:100){{pageInfo{{hasNextPage}} nodes{{id isResolved "
                 f"comments(last:1){{nodes{{id author{{login}}}}}}}}}} "
-                f"reviews(last:20){{nodes{{id author{{login}} body commit{{oid}}}}}}"
+                f"reviews(last:20){{pageInfo{{hasNextPage}} "
+                f"nodes{{id author{{login}} body commit{{oid}}}}}}"
                 f"}}}}}}",
             ]
         )
@@ -448,8 +459,18 @@ def gather(number: int, run: GitHubRunner, *, owner: str, repo: str) -> PullRequ
         pull = _as_dict(
             _as_dict(_as_dict(_as_dict(payload).get("data")).get("repository")).get("pullRequest")
         )
-        thread_nodes = _as_list(_as_dict(pull.get("reviewThreads")).get("nodes"))
-        review_nodes = _as_list(_as_dict(pull.get("reviews")).get("nodes"))
+        threads_conn = _as_dict(pull.get("reviewThreads"))
+        reviews_conn = _as_dict(pull.get("reviews"))
+        thread_nodes = _as_list(threads_conn.get("nodes"))
+        review_nodes = _as_list(reviews_conn.get("nodes"))
+        # Both connections are bounded. Past the bound the unread findings are
+        # simply absent from the payload, so the tool exited 0 on exactly the
+        # pull request most likely to have something outstanding: the one with
+        # the most review traffic. Reading hasNextPage makes truncation
+        # visible, and `outstanding` below makes it fail closed (spec 045).
+        truncated = bool(_as_dict(threads_conn.get("pageInfo")).get("hasNextPage")) or bool(
+            _as_dict(reviews_conn.get("pageInfo")).get("hasNextPage")
+        )
     except json.JSONDecodeError as error:
         raise FollowUpError(f"unexpected review payload for {number}: {error}") from error
 
@@ -497,28 +518,13 @@ def gather(number: int, run: GitHubRunner, *, owner: str, repo: str) -> PullRequ
         reviews_seen=sum(1 for review in reviews if review.from_reviewer),
         awaiting=tuple(threads_awaiting_reply(threads, handled)),
         unread_reviews=tuple(reviews_needing_a_read(reviews, handled)),
+        truncated=truncated,
     )
 
 
 def request_review(number: int, run: GitHubRunner, *, owner: str, repo: str) -> None:
     """Ask for another review. `--repo` for the same reason as above."""
     run(["pr", "comment", str(number), "--repo", f"{owner}/{repo}", "--body", REQUEST_COMMENT])
-
-
-def unresolved_threads(number: int, run: GitHubRunner, *, owner: str, repo: str) -> int:
-    raw = run(
-        [
-            "api",
-            "graphql",
-            "-f",
-            f'query={{repository(owner:"{owner}",name:"{repo}")'
-            f"{{pullRequest(number:{number}){{reviewThreads(first:100)"
-            f"{{nodes{{isResolved}}}}}}}}}}",
-            "--jq",
-            "[.data.repository.pullRequest.reviewThreads.nodes[]|select(.isResolved==false)]|length",
-        ]
-    )
-    return int(raw.strip() or 0)
 
 
 def report(states: list[PullRequestState]) -> list[str]:

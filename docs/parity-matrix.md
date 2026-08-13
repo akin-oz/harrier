@@ -15,14 +15,14 @@ Legend:
 | Capability | Source | Verdict | Rationale |
 |---|---|---|---|
 | Shared normalized job schema | `scripts/job_sources.py` (make_normalized_job) | keep | The ingestion-only invariant depends on one shared shape; carries over as a typed model. |
-| Screening gate order: seen-state, hold list, title, remote/EMEA, dedupe, score cutoff 55 | `scripts/job_sources.py` (screen_jobs) | keep | The order is load-bearing (enrichment cost, Apify billing); tests pin it (`tests/test_job_sources.py`). |
-| Remote-only and EMEA enforcement, incl. location-only negative hints and the linkedin_search bypass | `scripts/job_sources.py` (remote_region_allowed) | keep | Policy invariant. The hard-won false-positive exclusions ("office", "flex") documented in code comments carry over as tests. |
+| Screening gate order: seen-state, hold list, title, remote/EMEA, dedupe, score cutoff 55 | `scripts/job_sources.py` (screen_jobs) | change | The order is load-bearing (enrichment cost, Apify billing) and carries over. The cutoff does not: spec 033 removed it, having found it fired only against LinkedIn results, whose floor is a bonus lower than the ATS path's. The gates filter and the score ranks. |
+| Remote-only and EMEA enforcement, incl. location-only negative hints and the linkedin_search bypass | `scripts/job_sources.py` (remote_region_allowed) | change | The policy invariant holds, the matching does not: spec 032 made every keyword list token-aware, so `usa` no longer matches inside a city name, and made EU-permit phrasing a scoring signal rather than a filter. |
 | EU-permit and EU-entity phrases as positive signals, never filters | `scripts/job_sources.py` (PREFERRED_SIGNAL_WEIGHTS), `CLAUDE.md` "Candidate EU status" | keep | EU-entity contracting context; a requirement, not a heuristic. |
-| Scoring model (base 30, title, keywords, skill signals, region, domain bonus, cap 120) | `scripts/job_sources.py` (score_job, DEFAULT_SCORING) | keep | Overridable from candidate config; behavior preserved, weights stay config-driven. |
+| Scoring model (base 30, title, keywords, skill signals, region, domain bonus, cap 120) | `scripts/job_sources.py` (score_job, DEFAULT_SCORING) | change | Weights stay config-driven, but spec 033 removed the saturation cap: a strong realistic posting reached 120 exactly, so the cap tied postings that differ in quality. |
 | Archetype detection | `scripts/job_sources.py` (detect_archetype) + two more copies | change | Keep the capability, collapse the three copies (also in `evaluate_offer.py` and `tailor_resume.py`) into one domain function. |
 | Description cache keyed by URL hash | `state/job-descriptions/` (one file per description) | keep | Saves Apify re-billing and re-fetches; port as is, migrate existing cache. |
 | JD enrichment fetch for short descriptions on ATS hosts | `scripts/job_sources.py` (enrich_job_description_for_scoring) | keep | Prevents false low-score rejections; pinned by tests. |
-| Per-source seen-state, capped at 10,000 keys | `state/job-discovery/*_seen.json` | keep | Cross-run dedupe layer; migrate existing state at cutover. |
+| Per-source seen-state, capped at 10,000 keys | `state/job-discovery/*_seen.json` | change | The cap carries over; the eviction rule does not. Spec 031 made eviction age-based, because the lexicographic rule evicted the same entries forever while keeping genuinely stale ones. |
 | notes column as key=value store (score=, signals=, external_key=, ...) | `scripts/job_sources.py` (extract_note_value) | change | The hidden schema becomes real columns in the new store (ADR-003). external_key dedupe becomes a first-class indexed field. |
 | Greenhouse importer | `scripts/import_greenhouse_jobs.py` | keep | Free, priority 1. |
 | Ashby importer incl. HTML fallback on API 404 | `scripts/import_ashby_jobs.py` | keep | Fallback is tested behavior (`tests/test_feed_importers.py`). |
@@ -60,7 +60,7 @@ Legend:
 | Capability | Source | Verdict | Rationale |
 |---|---|---|---|
 | Tailored resume: md, html, pdf, metadata sidecar | `scripts/tailor_resume.py` | keep | Core capability. |
-| Verified-content-only rule: AI selects and orders bullet IDs, never invents | `scripts/tailor_resume.py` (require_truth, validate_content_plan) | keep | The honesty invariant; carries over with its validators. |
+| Verified-content-only rule: AI selects and orders bullet IDs, never invents | `scripts/tailor_resume.py` (require_truth, validate_content_plan) | change | The honesty invariant carries over; its failure mode does not. Spec 034 made an unverifiable line refuse the artifact rather than be dropped from it, because silently shipping a shorter document is what lets an empty truth document through. |
 | Bullet pool embedded in script source | `scripts/tailor_resume.py` (BULLET_POOL) | change | Content moves out of code into the encrypted data layer (ADR-002); code keeps only the mechanism. |
 | PDF validation: non-empty, no replacement chars, no unresolved placeholders, page count 1 | `scripts/tailor_resume.py` (validate_rendered_pdf) | keep | The gate behind "success only if the PDF exists". |
 | Internal-label scrubbing from recruiter-facing output | `scripts/tailor_resume.py` (normalize_visible_role_title, build_internal_metadata) | keep | Stated rule in OPERATIONS.md; internal metadata stays in sidecar files only. |
@@ -154,7 +154,7 @@ Legend:
 
 ## Counts
 
-Keep 59, change 22, drop 16, across 97 matrix rows. Every change and drop above traces to a spec
+Keep 54, change 27, drop 16, across 97 matrix rows. Every change and drop above traces to a spec
 in the backlog before implementation; nothing is dropped by accident at cutover: the parity
 checklist (`docs/parity-checklist.md`) is generated from this table by
 `harrier parity checklist`, and `test_parity.py::test_stated_counts_match_the_table` fails
