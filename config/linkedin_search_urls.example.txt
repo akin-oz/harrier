@@ -2,6 +2,5 @@
 # geoId=91000007 = Europe, f_WT=2 = Remote, f_TPR=r86400 = posted in last 24h
 # f_TPR=r86400 is the key cost-saver: keeps Apify from re-scraping the same
 # stale top-N relevance results every run. Daily cron + 24h filter = no gaps.
-# Primary roles (Europe, remote)
-# Stack-specific (Europe, remote) — keep; high shortlist conversion
+# Stack-specific (Europe, remote)
 https://www.linkedin.com/jobs/search/?geoId=91000007&keywords=senior%20frontend%20engineer&f_WT=2&f_TPR=r86400
