@@ -79,31 +79,52 @@ Out of scope by deliberate split: anything requiring a history rewrite.
   workflow it protects and blocks ordinary work. Each guard change is
   exercised against both the bypass it now denies and a normal invocation it
   must still allow.
-- Honest limitation on redaction: it matches literal values loaded once at
-  startup. A paraphrase, a different spelling, or a contact added later in the
-  same process is not caught, and values under four characters are ignored on
-  purpose. Logs are never-in-git regardless; this defends the log that leaves
-  the machine by hand.
+- **Redaction covers late contacts and short identities**, both of which an
+  earlier draft of this spec accepted as limitations. Neither is acceptable:
+  the compiled privacy rule says logs redact candidate and contact identity
+  values, with no exemption for a two-letter name or for a contact added five
+  minutes after the process started, and the API is a long-running process
+  where "added later" is the normal case rather than the edge.
+  - The identity set is refreshed from the one tracker write path (ADR-003)
+    rather than read once at startup, so a contact is redactable from the
+    moment it exists. Refreshing there rather than per log record keeps the
+    database off the logging path, where a query that failed would log and
+    recurse.
+  - Short values are matched on word boundaries instead of being skipped, so a
+    two-letter name is redacted where it stands alone and does not shred every
+    unrelated line that happens to contain those letters. That was the real
+    reason for the length floor, and a boundary match answers it without
+    giving up the redaction.
+- Honest limitation that remains: redaction matches literal values. A
+  paraphrase or a different spelling of the same name is not caught, and no
+  value-matching filter would catch it. Logs are never-in-git regardless; this
+  defends the log that leaves the machine by hand.
 - Honest limitation on the untested decisions: a test proves the decision runs
   and returns what it should. It does not prove the surrounding command is
   correct, and 26 CLI handlers still have no executed lines.
 
 ## Acceptance criteria
 
+Unticked for the same reason as spec 044: this is proposed alone so the gate
+has an approved spec on the base, and the implementation with its proofs lands
+in the stacked pull request, where the boxes are ticked.
+
 | Criterion | Proof |
 |---|---|
-| identity values are read from candidate and contacts | `test_logging.py::test_identity_values_reads_candidate_and_contacts` |
-| a missing profile store degrades rather than raises | `test_identity_values_survives_a_database_without_the_tables` |
-| short values are never redacted | `test_short_values_are_not_redactable` |
-| the candidate name does not reach a log line | `test_the_candidate_name_does_not_reach_a_log_line` |
-| a contact address does not reach a log line | `test_a_contact_address_does_not_reach_a_log_line` |
-| an unrelated line is untouched | `test_an_unrelated_line_is_left_alone` |
-| the longest value is redacted first | `test_the_longest_value_is_redacted_first` |
-| the API configures logging | `test_the_api_configures_logging_when_the_app_is_created` |
+| identity values are read from candidate and contacts | `services/api/tests/test_logging.py::test_identity_values_reads_candidate_and_contacts` |
+| a missing profile store degrades rather than raises | `services/api/tests/test_logging.py::test_identity_values_survives_a_database_without_the_tables` |
+| a short identity is redacted on a word boundary | `services/api/tests/test_logging.py::test_a_short_identity_is_redacted_on_a_word_boundary` |
+| a short value inside another word is left alone | `services/api/tests/test_logging.py::test_a_short_value_inside_another_word_is_left_alone` |
+| a contact added after startup is redacted | `services/api/tests/test_logging.py::test_a_contact_added_after_startup_is_redacted` |
+| the candidate name does not reach a log line | `services/api/tests/test_logging.py::test_the_candidate_name_does_not_reach_a_log_line` |
+| a contact address does not reach a log line | `services/api/tests/test_logging.py::test_a_contact_address_does_not_reach_a_log_line` |
+| an unrelated line is untouched | `services/api/tests/test_logging.py::test_an_unrelated_line_is_left_alone` |
+| the longest value is redacted first | `services/api/tests/test_logging.py::test_the_longest_value_is_redacted_first` |
+| the API configures logging | `services/api/tests/test_logging.py::test_the_api_configures_logging_when_the_app_is_created` |
 
-- [x] the redaction filter exists, is installed by `configure_logging`, and
+- [ ] the redaction filter exists, is installed by `configure_logging`, and
       the privacy plan names the test that proves it
-- [x] `create_app` configures logging, and a test fails if the call is removed
+- [ ] `create_app` configures logging, and a test fails if the call is removed
 - [ ] each guard denies the bypass its proof used and still allows normal use
 - [ ] the spec gate runs on push to `main`, not only on pull requests
 - [ ] each mutation-proven decision has a test that fails when it is mutated

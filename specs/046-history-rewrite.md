@@ -17,8 +17,9 @@ depends: [044]
 
 ## Problem
 
-Spec 044 took the maintainer's real job search out of the working tree. None
-of it reached git history, and history is what a clone gets.
+Spec 044 took the maintainer's real job search out of the working tree. It
+did not touch git history, and history is what a clone gets: everything it
+removed stays reachable until this spec is executed.
 
 Two config files were untracked in a single commit and their blobs remain
 reachable: `config/feeds.txt`, which held the complete real target-employer
@@ -56,8 +57,15 @@ one rewrite covers both classes and there is no second force push.
 GitHub's database, not in git, so no rewrite touches them.
 
 **The checklist stops asserting something false**, and gains the one line it
-was missing: that a rewrite is only complete when the remote no longer serves
-the old objects.
+was missing: that a rewrite is only complete when the objects are gone from
+every ref this repository publishes.
+
+**Completion is defined at that boundary and no further.** "The remote no
+longer serves the old objects" is not a bar this spec can meet: GitHub may
+serve an unreachable commit by SHA until it garbage-collects, and a fork is a
+separate repository. Those sit outside the boundary, they are named in the
+limitations below, and the residual risk is the maintainer's to accept or act
+on. A criterion nobody can verify is worse than one with a stated edge.
 
 ## Inputs, outputs, failure modes
 
@@ -66,9 +74,12 @@ the old objects.
   tracker aggregate in a commit body; edited pull request descriptions; a
   corrected checklist.
 - **This is irreversible and it is a force push to a public repository.** A
-  mirror clone is taken outside the repository first, and its path is recorded
-  in the pull request so the previous history is recoverable by the maintainer
-  even though it is gone from the remote.
+  mirror clone is taken outside the repository first, so the previous history
+  stays recoverable by the maintainer even though it is gone from the remote.
+  Its existence and its verification status are public; its location is not,
+  and is held in the maintainer's own release record. A local filesystem path
+  in a public file discloses the workspace layout of the machine that holds
+  every unencrypted copy of this person's data.
 - Failure mode that must not happen: a rewrite that reports success while the
   blob is still reachable. Verification greps the whole rewritten object graph
   by path and by content, not just the tip.
@@ -106,8 +117,8 @@ Why it stopped:
    remove an object from history: it only adds a commit on top. So this route
    closes none of P0-5.
 
-The mirror backup of the pre-rewrite history is at
-`~/harrier-history-backup-20260813-191905.git`, outside the repository.
+A mirror backup of the pre-rewrite history was taken outside the repository
+and verified to open. Its location is deliberately not written here.
 
 What remains open, stated plainly: anyone who clones this repository today
 gets `config/feeds.txt` and `config/linkedin_search_urls.txt` in full, holding
@@ -121,7 +132,8 @@ and they are done.
 ## Acceptance criteria
 
 - [ ] neither `config/feeds.txt` nor `config/linkedin_search_urls.txt` is
-      reachable from any ref, verified over the full object graph
+      reachable from any ref published by this repository, verified over the
+      full object graph after the push
 - [ ] no commit body states a count measured from the real tracker
 - [ ] the working tree after the rewrite is byte-identical to the working tree
       before it, so the rewrite changed history and nothing else
@@ -131,7 +143,8 @@ and they are done.
       the search and were left)
 - [x] the checklist no longer claims the only privately-classed file ever
       committed was an encrypted placeholder
-- [x] the mirror backup path is recorded in this spec and the pull request
+- [x] a mirror backup exists and its existence is recorded, with its location
+      kept out of this repository
 - [ ] All gates green on PR
 
 ## Proof / origin

@@ -85,6 +85,19 @@ most-recent end date disclosed when the current search began.
 - Failure mode this must not introduce: a check that reports success because
   its file set is empty. Both new scopes assert a non-empty file set first,
   the same guard the existing pass already carries.
+- **The detector's input set is defined rather than assumed.** It reads every
+  tracked Markdown file and every tracked Python file under the service source
+  and test trees, which is where prose in this repository lives. Generated
+  files are read like any other, because `docs/parity-checklist.md` is
+  generated and carried an aggregate. The exempting qualifiers are enumerated
+  in the test next to the pattern rather than described here, so the two
+  cannot drift.
+- The set is derived from `git ls-files` rather than listed, and a test fails
+  when a tracked prose file is outside it. The earlier version hand-listed
+  three directories, which silently excluded `README.md`, `CONTRIBUTING.md`,
+  `SECURITY.md` and everything under `apps/`: the non-empty-file guard passes
+  happily on an input set that is simply too small, which is the same
+  "reports success while doing nothing" shape this work exists to remove.
 - Honest limitation: the aggregate detector is a regular expression over
   prose. It reads the shape "number followed by a tracker noun" and cannot
   judge whether a number is an observation or a coincidence. It will miss an
@@ -96,28 +109,31 @@ most-recent end date disclosed when the current search began.
 
 ## Acceptance criteria
 
-Proven by `services/api/tests/test_classification_coverage.py` and the privacy
-pass at the bottom of `services/api/tests/test_demo.py`:
+Unticked on purpose. This spec is proposed on its own so that the gate has an
+approved spec on the base to resolve against, and a pull request cannot approve
+the spec it implements. The tree changes and their proofs land in the stacked
+pull request, and the boxes are ticked there, where a reviewer can see the code
+that earns each one.
 
 | Criterion | Proof |
 |---|---|
-| every example config's real name is classified | `test_every_example_config_has_its_real_name_classified` |
-| data lands inside the repository from any cwd | `test_data_dir_is_inside_the_repository_whatever_the_working_directory` |
-| the test tree is actually scanned | `test_the_test_tree_is_actually_scanned` |
-| the suite names only synthetic employers | `test_the_test_suite_names_only_synthetic_employers` |
-| the suite addresses only reserved domains | `test_the_test_suite_addresses_only_reserved_domains` |
-| no committed prose states a real aggregate | `test_no_committed_prose_states_an_aggregate_of_the_real_search` |
+| every example config's real name is classified | `services/api/tests/test_classification_coverage.py::test_every_example_config_has_its_real_name_classified` |
+| data lands inside the repository from any cwd | `services/api/tests/test_classification_coverage.py::test_data_dir_is_inside_the_repository_whatever_the_working_directory` |
+| the test tree is actually scanned | `services/api/tests/test_demo.py::test_the_test_tree_is_actually_scanned` |
+| the suite names only synthetic employers | `services/api/tests/test_demo.py::test_the_test_suite_names_only_synthetic_employers` |
+| the suite addresses only reserved domains | `services/api/tests/test_demo.py::test_the_test_suite_addresses_only_reserved_domains` |
+| no committed prose states a real aggregate | `services/api/tests/test_demo.py::test_no_committed_prose_states_an_aggregate_of_the_real_search` |
 
-- [x] the six unclassified personal config paths are gitignored and classified,
+- [ ] the six unclassified personal config paths are gitignored and classified,
       from a list derived from the tree rather than maintained by hand
-- [x] `data_dir()` resolves against the repository root, and the never-in-git
+- [ ] `data_dir()` resolves against the repository root, and the never-in-git
       probe for it is gitignored
-- [x] no real employer, recruiting mailbox, posting title, or posting id
+- [ ] no real employer, recruiting mailbox, posting title, or posting id
       remains in the test suite
-- [x] the resume timeline and the compensation figures are synthetic
-- [x] the aggregates are removed from the ADRs, the specs, the parity matrix,
+- [ ] the resume timeline and the compensation figures are synthetic
+- [ ] the aggregates are removed from the ADRs, the specs, the parity matrix,
       and its regenerated checklist
-- [x] each new check fails against the state that preceded it, executed rather
+- [ ] each new check fails against the state that preceded it, executed rather
       than asserted
 - [ ] All gates green on PR
 
