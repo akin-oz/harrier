@@ -6,6 +6,12 @@ name: Spec gate
 on:
   pull_request:
     branches: [main]
+  # A direct push to main ran the full CI but skipped trailer resolution and
+  # spec structure entirely, and the local guards that would have caught it are
+  # bypassable. The gate has to run where the commit lands, not only where it
+  # is proposed (spec 045).
+  push:
+    branches: [main]
 
 jobs:
   spec-trailer:
@@ -17,8 +23,11 @@ jobs:
           fetch-depth: 0
       - name: Resolve trailers
         env:
-          BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
+          # On a pull request the range is base..head. On a push it is
+          # before..sha, and `before` is all zeroes for a branch's first push,
+          # so that case falls back to the merge base with origin/main.
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         # The logic lives in scripts/spec_gate.py so it can be tested against
         # real repositories rather than only observed in CI (spec 039). It
         # resolves approval from the BASE tree, because reading it from the

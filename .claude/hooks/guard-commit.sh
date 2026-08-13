@@ -17,14 +17,27 @@ if printf '%s' "$CMD" | grep -qE '(^|[^[:alnum:]_])git[[:space:]]+(add|commit)';
   fi
 fi
 
+# Checked BEFORE the "is this a commit" gate below, because that gate requires
+# `git` and `commit` to be adjacent and these bypasses sit between them:
+# `git -c core.hooksPath=... commit` reads as neither a commit nor a bypass.
+if printf '%s' "$CMD" | grep -qE 'core\.hooksPath|GIT_DIR=|--git-dir'; then
+  deny "BLOCKED: redirecting hooksPath or the git dir disables the hook chain. The verification hooks ARE the definition of done."
+fi
+
 # Only inspect git commit commands from here on.
 if ! printf '%s' "$CMD" | grep -qE '(^|[^[:alnum:]_])git[[:space:]]+commit'; then
   exit 0
 fi
 
 # No bypassing the hooks.
-if printf '%s' "$CMD" | grep -qE '(--no-verify|(^|[[:space:]])-n([[:space:]]|$))'; then
-  deny "BLOCKED: 'git commit --no-verify' is not allowed. The verification hooks ARE the definition of done."
+#
+# The short form has to match a CLUSTER, not a lone -n. git accepts -nm "msg",
+# and the previous pattern required whitespace or end-of-string straight after
+# the n, so `git commit -nm "..."` skipped every hook and passed this guard
+# (spec 045). The cluster pattern below requires a single leading dash, so the
+# long options that legitimately contain an n (--no-edit, --amend) are not hit.
+if printf '%s' "$CMD" | grep -qE -- '--no-verify|(^|[[:space:]])-[A-Za-z]*n[A-Za-z]*([[:space:]]|=|$)'; then
+  deny "BLOCKED: 'git commit --no-verify' (or -n, including bundled forms like -nm) is not allowed. The verification hooks ARE the definition of done."
 fi
 
 # Amend without editing reuses an already-trailered message.

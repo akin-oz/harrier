@@ -130,11 +130,41 @@ def check(repo: str, base: str, head: str) -> list[Verdict]:
     return verdicts
 
 
+NULL_SHA = "0" * 40
+
+
+def resolve_base(repo: str, base: str, head: str) -> str:
+    """The base to diff from, when the event did not supply a usable one.
+
+    Added with the push trigger (spec 045). On a pull request the base is
+    always a real commit. On a push it is `github.event.before`, which is the
+    all-zeroes SHA for a branch's first push and a commit that no longer
+    exists after a force push, and the history rewrite this project has
+    planned makes the second case certain rather than theoretical.
+
+    Falling back to the head's first parent checks the pushed commit itself
+    rather than skipping the gate, which is the direction a gate should fail.
+    """
+    if base and base != NULL_SHA:
+        try:
+            _git(repo, "cat-file", "-e", f"{base}^{{commit}}")
+        except GateError:
+            pass
+        else:
+            return base
+    try:
+        return _git(repo, "rev-parse", f"{head}^").strip()
+    except GateError:
+        # A root commit has no parent: check it against the empty tree.
+        return _git(repo, "hash-object", "-t", "tree", "/dev/null").strip()
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 3:
         print("usage: spec_gate.py <repo> <base-sha> <head-sha>", file=sys.stderr)
         return 2
     repo, base, head = argv
+    base = resolve_base(repo, base, head)
     try:
         verdicts = check(repo, base, head)
     except GateError as error:

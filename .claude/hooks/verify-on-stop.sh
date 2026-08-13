@@ -13,7 +13,17 @@ fi
 cd "${CLAUDE_PROJECT_DIR:-$(pwd)}" || exit 0
 
 # Only gate when source actually changed vs HEAD.
-CHANGED=$(git diff --name-only HEAD 2>/dev/null | grep -E '\.(py|ts|tsx|json|toml|yaml|yml)$' | grep -vE '^\.ai/|^docs/|^specs/' || true)
+#
+# Untracked files count. `git diff --name-only HEAD` lists tracked changes only,
+# so a turn that only ADDED files (a new module, a new test) reported nothing
+# changed and ran no gate at all: the gate was blindest exactly when the most
+# new code had arrived (spec 045).
+CHANGED=$(
+  {
+    git diff --name-only HEAD 2>/dev/null
+    git ls-files --others --exclude-standard 2>/dev/null
+  } | grep -E '\.(py|ts|tsx|json|toml|yaml|yml)$' | grep -vE '^\.ai/|^docs/|^specs/' || true
+)
 if [ -z "$CHANGED" ]; then
   exit 0
 fi
