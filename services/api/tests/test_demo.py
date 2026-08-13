@@ -362,3 +362,156 @@ def test_fixtures_contain_no_address_outside_the_example_domains() -> None:
             if not is_reserved(domain):
                 offenders.append(f"{path.relative_to(ROOT)}: {address}")
     assert not offenders, "non-example address in a public fixture: " + "; ".join(offenders)
+
+
+# ---------------------------------------------------------------------------
+# The privacy pass over the test tree and the aggregate class (spec 044).
+#
+# The pass above reads fixtures/ and config/*.example.* only. That scope is why
+# a real employer survived in services/api/tests/: a real board slug, its
+# recruiting mailbox, and the subject and body of a real acknowledgement email
+# sat in three test files through every green run. Nothing scanned them.
+#
+# And every check here matched a named entity, which is the class that stopped
+# recurring. The class that kept recurring is the aggregate: a count measured
+# from the real tracker, which names nobody and describes the search exactly.
+# It had no check anywhere until this one.
+# ---------------------------------------------------------------------------
+
+BOARD_HOSTS = ATS_HOSTS - {"linkedin.com", "www.linkedin.com"}
+
+# Declared rather than inferred. A real employer entering the suite fails here
+# until someone adds the slug, which makes it a reviewable act instead of a
+# silent omission. Every name below is invented.
+SYNTHETIC_BOARD_SLUGS = frozenset(
+    {
+        "a",
+        "acme",
+        "added-later",
+        "also-gone",
+        "b",
+        "badco",
+        "badco:",
+        "c",
+        "c{index}",
+        "d",
+        "decoy",
+        "down",
+        "euco",
+        "example",
+        "example-eu-co",
+        "exampleco",
+        "examplesoft",
+        "from-file",
+        "gone",
+        "goodco",
+        "hung",
+        "live",
+        "one",
+        "only",
+        "private-watchlist",
+        "real-company",
+        "two",
+        "z",
+    }
+)
+
+_API_PREFIXES = ("v1", "boards", "jobs", "posting-api", "job-board", "v0", "postings")
+
+# Senders that are protocol facts rather than correspondents: the mail watch has
+# to recognise Google's own security notices in order to ignore them.
+INFRASTRUCTURE_SENDERS = frozenset({"accounts.google.com"})
+
+# Documents that count their own rows are describing themselves, not a search.
+_SELF_DESCRIBING = re.compile(r"matrix|checklist|table|document", re.IGNORECASE)
+
+# A count paired with a tracker entity is an observation of one person's real
+# search. A cap or a page size is a specification, so the qualifiers that mark
+# one are exempt.
+_AGGREGATE_RE = re.compile(
+    r"(?<!spec )\b\d[\d,]{1,}\s+(?:rows|records|jobs|prospects|applications|contacts|"
+    r"evaluation reports|reports|descriptions)\b",
+    re.IGNORECASE,
+)
+_SPECIFICATION_QUALIFIER = re.compile(
+    r"(?:capped at|cap of|up to|at most|no more than|max(?:imum)? of|per page|"
+    r"page size|limit of|bounded to)\s*$",
+    re.IGNORECASE,
+)
+
+
+def suite_files() -> list[Path]:
+    return sorted((ROOT / "services" / "api" / "tests").rglob("*.py"))
+
+
+def prose_files() -> list[Path]:
+    files = sorted((ROOT / "docs").rglob("*.md"))
+    files += sorted((ROOT / "specs").rglob("*.md"))
+    files += sorted((ROOT / "services" / "api" / "src").rglob("*.py"))
+    return files
+
+
+def board_slug(url: str) -> str | None:
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return None
+    if (parsed.hostname or "").lower() not in BOARD_HOSTS:
+        return None
+    segments = [part for part in parsed.path.split("/") if part]
+    while segments and segments[0] in _API_PREFIXES:
+        segments = segments[1:]
+    return segments[0].lower() if segments else None
+
+
+def test_the_test_tree_is_actually_scanned() -> None:
+    # The scope gap this pass exists to close: an empty file set would restore it.
+    assert len(suite_files()) >= 20
+
+
+def test_the_test_suite_names_only_synthetic_employers() -> None:
+    offenders: list[str] = []
+    for path in suite_files():
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for match in cast("list[str]", URL_RE.findall(text)):
+            slug = board_slug(match)
+            if slug is not None and slug not in SYNTHETIC_BOARD_SLUGS:
+                offenders.append(f"{path.relative_to(ROOT)}: {slug}")
+    assert not offenders, (
+        "board slug in the test suite that is not a declared synthetic name: "
+        + "; ".join(sorted(set(offenders)))
+    )
+
+
+def test_the_test_suite_addresses_only_reserved_domains() -> None:
+    offenders: list[str] = []
+    for path in suite_files():
+        # Userinfo inside a URL is not an address: https://user:pass@host trips
+        # the address pattern and names no correspondent.
+        text = URL_RE.sub(" ", path.read_text(encoding="utf-8", errors="replace"))
+        for address in cast("list[str]", EMAIL_RE.findall(text)):
+            domain = address.rsplit("@", 1)[1].lower()
+            if not is_reserved(domain) and domain not in INFRASTRUCTURE_SENDERS:
+                offenders.append(f"{path.relative_to(ROOT)}: {address}")
+    assert not offenders, "non-reserved address in the test suite: " + "; ".join(offenders)
+
+
+def test_no_committed_prose_states_an_aggregate_of_the_real_search() -> None:
+    """A count of rows, reports, or cached descriptions is a measurement of the
+    maintainer's own job search, not a rule the code must satisfy. Caps and page
+    sizes are specifications and are exempt by their qualifier."""
+    offenders: list[str] = []
+    for path in prose_files():
+        for number, line in enumerate(
+            path.read_text(encoding="utf-8", errors="replace").splitlines(), 1
+        ):
+            if _SELF_DESCRIBING.search(line):
+                continue
+            for match in _AGGREGATE_RE.finditer(line):
+                before = line[: match.start()]
+                if _SPECIFICATION_QUALIFIER.search(before.rstrip()):
+                    continue
+                offenders.append(f"{path.relative_to(ROOT)}:{number}: {match.group().strip()}")
+    assert not offenders, "an aggregate measured from the real search is committed: " + "; ".join(
+        offenders
+    )
