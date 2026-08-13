@@ -251,12 +251,18 @@ def test_cutover_preflight_survives_a_machine_without_launchctl(
     old_root = tmp_path / "old"
     old_root.mkdir()
 
+    calls: list[object] = []
+
     def absent(*_a: object, **_k: object) -> object:
+        calls.append(_a)
         raise FileNotFoundError(2, "No such file or directory", "launchctl")
 
     monkeypatch.setattr("harrier.schedule.subprocess.run", absent)
 
     code = main(["cutover", "--old-root", str(old_root), "preflight"])
 
+    # An empty old_root already blocks, so exit 1 alone does not prove the
+    # launchctl path was reached at all (review of PR #50).
+    assert calls, "preflight never reached launchctl, so this proved nothing"
     assert code == 1, "preflight should block, not crash"
     assert "blocking check" in capsys.readouterr().err

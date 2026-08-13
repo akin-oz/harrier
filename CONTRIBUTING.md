@@ -41,8 +41,12 @@ just check
 ```
 
 That is the full local gate and it is the same set of recipes CI runs. `just
-gate` is the faster subset. `just demo` runs the whole thing offline against
-synthetic fixtures, with no API keys.
+gate` is the faster subset.
+
+`just demo` needs no API keys and no accounts, and the running demo reaches no
+job board: every response comes from `fixtures/http/`. That is not the same as
+offline. A cold package cache still fetches from the npm registry to build the
+frontend, and the build writes `apps/web/dist` into the clone.
 
 ## What a good change looks like
 

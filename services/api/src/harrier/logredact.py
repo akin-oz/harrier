@@ -29,6 +29,7 @@ from __future__ import annotations
 import logging
 import re
 import sqlite3
+import traceback
 from typing import cast
 
 # A one-character value is not identifying and matches everywhere. Everything
@@ -134,16 +135,33 @@ class IdentityRedactionFilter(logging.Filter):
             message = record.getMessage()
         except (TypeError, ValueError):
             return True
-        redacted = message
-        for value, bounded in self._patterns:
-            if bounded is not None:
-                redacted = bounded.sub(REDACTION, redacted)
-            elif value in redacted:
-                redacted = redacted.replace(value, REDACTION)
+        redacted = self._redact(message)
         if redacted != message:
             record.msg = redacted
             record.args = ()
+
+        # An exception's text is not in getMessage(), so logger.exception()
+        # carried identity values straight past this filter (review of #50).
+        #
+        # Formatting exc_info here rather than leaving it to the formatter is
+        # deliberate: logging.Formatter only derives exc_text when it is unset,
+        # so filling it with a redacted string is what stops the raw traceback
+        # being rendered downstream.
+        if record.exc_info and not record.exc_text:
+            record.exc_text = "".join(traceback.format_exception(*record.exc_info))
+        if record.exc_text:
+            record.exc_text = self._redact(record.exc_text)
+        if record.stack_info:
+            record.stack_info = self._redact(record.stack_info)
         return True
+
+    def _redact(self, text: str) -> str:
+        for value, bounded in self._patterns:
+            if bounded is not None:
+                text = bounded.sub(REDACTION, text)
+            elif value in text:
+                text = text.replace(value, REDACTION)
+        return text
 
 
 # Every filter configure_logging installed, so a refresh reaches all of them.

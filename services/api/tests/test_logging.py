@@ -189,3 +189,30 @@ def test_the_api_configures_logging_when_the_app_is_created(
 
     create_app()
     assert calls, "create_app did not configure logging"
+
+
+def test_an_exception_traceback_does_not_carry_an_identity(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`record.getMessage()` excludes the exception, so logger.exception()
+    carried identity values straight past the filter. Demonstrated on the
+    review of PR #50 with the value intact in `exc_text`."""
+    written = _capture(monkeypatch)
+    try:
+        raise ValueError(f"could not draft for {CANDIDATE['name']}")
+    except ValueError:
+        logging.getLogger("harrier.apply").exception("draft failed")
+
+    assert written, "nothing was logged"
+    combined = written[0]
+    assert CANDIDATE["name"] not in combined
+    assert REDACTION in combined
+
+
+def test_a_cached_exception_text_is_redacted() -> None:
+    """The second handler reuses `exc_text` the first formatter cached, so an
+    unredacted cache leaks to every sink after the first."""
+    record = logging.LogRecord("t", logging.ERROR, "f.py", 1, "failed", None, None)
+    record.exc_text = f"Traceback: contact {CANDIDATE['name']} unreachable"
+    IdentityRedactionFilter({CANDIDATE["name"]}).filter(record)
+    assert CANDIDATE["name"] not in (record.exc_text or "")

@@ -18,7 +18,7 @@ launchd (schedule)          browser (GUI)              terminal
       |                          |                        |
       +---------> harrier domain package <----------------+
                   (tracker, screening, scoring,        (types only)
-                   artifacts, outreach, mail)
+                   resume, apply, offers, outreach, mail)
                          |
                   SQLite (data/tracker.db)  +  file stores (state/, runtime/)
 ```

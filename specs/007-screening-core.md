@@ -32,7 +32,8 @@ run_source_import, belongs to spec 011):
   title+location only; EU-permit phrases as positive weights, never filters),
   title_allowed, title-variant matching, remote_region_allowed with the
   linkedin_search bypass, scoring_config overrides, and score_job with the
-  non-stacking domain bonus and the 120 cap.
+  non-stacking domain bonus and the 120 cap (the cap was removed by spec 033;
+  see the amendment below).
 - `archetypes.py`: detect_archetype, the single implementation (the old
   repo's two other copies die with their hosts in specs 013 and 015).
 - `http.py`: request_text with retry/backoff, request_json, strip_html.
@@ -86,7 +87,7 @@ status".
 ## What later specs changed
 
 Recorded here because this was the one shipped spec carrying no amendment
-note, so a reader arriving at it had no way to know three of its statements
+note, so a reader arriving at it had no way to know four of its statements
 had been superseded (spec 045).
 
 - **The cutoff is gone.** Spec 033 removed `SCORE_CUTOFF`. Anything reaching

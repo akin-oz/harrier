@@ -365,8 +365,8 @@ def test_fixtures_contain_no_address_outside_the_example_domains() -> None:
     assert not offenders, "non-example address in a public fixture: " + "; ".join(offenders)
 
 
-# ---------------------------------------------------------------------------
-# The privacy pass over the test tree and the aggregate class (spec 044).
+# --- the privacy pass over the test tree and the aggregate class (spec 044) ---
+#
 #
 # The pass above reads fixtures/ and config/*.example.* only. That scope is why
 # a real employer survived in services/api/tests/: a real board slug, its
@@ -377,7 +377,6 @@ def test_fixtures_contain_no_address_outside_the_example_domains() -> None:
 # recurring. The class that kept recurring is the aggregate: a count measured
 # from the real tracker, which names nobody and describes the search exactly.
 # It had no check anywhere until this one.
-# ---------------------------------------------------------------------------
 
 BOARD_HOSTS = ATS_HOSTS - {"linkedin.com", "www.linkedin.com"}
 

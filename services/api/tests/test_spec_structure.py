@@ -156,7 +156,7 @@ def test_every_test_a_spec_names_actually_exists() -> None:
     reference = re.compile(r"`(?:(?P<path>[A-Za-z0-9_./-]+\.py)::)?(?P<symbol>test_[A-Za-z0-9_]+)`")
 
     missing: list[str] = []
-    for spec in sorted((REPO_ROOT / "specs").glob("*.md")):
+    for spec in sorted((REPO_ROOT / "specs").rglob("*.md")):
         seen: set[tuple[str, str]] = set()
         for match in reference.finditer(spec.read_text(encoding="utf-8")):
             seen.add((match.group("path") or "", match.group("symbol")))

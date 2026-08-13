@@ -68,11 +68,23 @@ because a public repository that claims a privacy control it never built is
 worse than one that admits the gap, and the record of having done it once is
 the cheapest defence against doing it again.
 
-What redaction does not do: it matches literal values read once at startup, so
-a paraphrase, a different spelling, or a contact added later in the same
-process is not caught, and values shorter than four characters are ignored
-deliberately. Logs are never-in-git regardless, so this defends the log that
-gets pasted into an issue or shared on a call, not the repository.
+What redaction covers, and what it does not. The value set is refreshed from
+the tracker write path, so a contact added after startup is redacted from the
+moment it exists
+(`services/api/tests/test_logging.py::test_a_contact_added_after_startup_is_redacted`).
+Values of two characters and up are redacted, on word boundaries below four so
+a short name does not shred unrelated text
+(`::test_a_short_identity_is_redacted_on_a_word_boundary`,
+`::test_a_short_value_inside_another_word_is_left_alone`); only single
+characters are excluded. Exception and stack text are redacted too, because
+`record.getMessage()` excludes them and `logger.exception()` carried identity
+values past an earlier version of the filter
+(`::test_an_exception_traceback_does_not_carry_an_identity`).
+
+It still matches literal values, so a paraphrase or a different spelling of the
+same name is not caught, and no value-matching filter would catch it. Logs are
+never-in-git regardless, so this defends the log that gets pasted into an issue
+or shared on a call, not the repository.
 
 ## 6. Fixture policy
 

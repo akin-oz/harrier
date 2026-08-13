@@ -22,7 +22,7 @@ CHANGED=$(
   {
     git diff --name-only HEAD 2>/dev/null
     git ls-files --others --exclude-standard 2>/dev/null
-  } | grep -E '\.(py|ts|tsx|json|toml|yaml|yml)$' | grep -vE '^\.ai/|^docs/|^specs/' || true
+  } | grep -E '\.(py|ts|tsx|json|toml|yaml|yml|sh)$' | grep -vE '^\.ai/|^docs/|^specs/' || true
 )
 if [ -z "$CHANGED" ]; then
   exit 0

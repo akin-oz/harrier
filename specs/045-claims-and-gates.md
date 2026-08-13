@@ -126,9 +126,22 @@ spec 044.
       the privacy plan names the test that proves it
 - [x] `create_app` configures logging, and a test fails if the call is removed
 - [x] each guard denies the bypass its proof used and still allows normal use
-- [x] the spec gate runs on push to `main`, not only on pull requests
+      (`services/api/tests/test_guards.py::test_the_commit_guard_denies_every_proven_bypass`,
+      `services/api/tests/test_guards.py::test_the_commit_guard_allows_ordinary_work`,
+      `services/api/tests/test_guards.py::test_the_turn_gate_gates_a_shell_guard_change`)
+- [x] the spec gate runs on push to `main`, not only on pull requests, and
+      refuses a base it cannot resolve rather than checking the tip alone
+      (`services/api/tests/test_guards.py::test_the_spec_gate_refuses_a_base_it_cannot_resolve`,
+      `services/api/tests/test_guards.py::test_a_null_base_checks_every_commit_not_on_main`)
 - [x] each mutation-proven decision has a test that fails when it is mutated
+      (`services/api/tests/test_cli_decisions.py::test_a_corrupt_archive_is_reported_as_a_failure`,
+      `services/api/tests/test_cli_decisions.py::test_cutover_refuses_when_the_old_repo_is_absent`,
+      `services/api/tests/test_cli_decisions.py::test_an_unreviewed_pull_request_exits_two`,
+      `services/api/tests/test_cli_decisions.py::test_an_unanswered_finding_exits_three`)
 - [x] every corrected claim names the file or test that now proves it
+      (`services/api/tests/test_spec_structure.py::test_every_test_a_spec_names_actually_exists`, which also
+      verifies the named file defines the named symbol, and
+      `services/api/tests/test_demo.py::test_no_committed_file_names_an_absolute_home_directory`)
 - [ ] All gates green on PR
 
 ## Proof / origin

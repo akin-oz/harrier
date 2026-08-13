@@ -14,6 +14,7 @@ out by name.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -89,18 +90,54 @@ def test_the_commit_guard_still_refuses_to_stage_an_env_file() -> None:
     assert run_guard("guard-commit.sh", "git add .env.example") == ALLOW
 
 
-def test_the_turn_gate_sees_a_file_that_is_only_added() -> None:
+def test_the_turn_gate_sees_a_file_that_is_only_added(tmp_path: Path) -> None:
     """`git diff --name-only HEAD` lists tracked changes only, so a turn that
     added a new module and nothing else reported no change and ran no gate:
     blindest exactly when the most new code had arrived.
 
-    Asserted on the command the script uses, because running the real gate
-    here would take minutes and recurse into this suite.
+    Runs the hook for real against a throwaway repository holding one
+    untracked Python file, with a stub `just` on PATH so the assertion is that
+    the gate was invoked rather than that the real suite passed. The first
+    version grepped the script's source, which the review-response rule calls
+    a last resort: it breaks on a wrapped line and passes for the wrong reason
+    (review of PR #50).
     """
-    source = (HOOKS / "verify-on-stop.sh").read_text(encoding="utf-8")
-    assert "ls-files --others --exclude-standard" in source, (
-        "verify-on-stop.sh no longer looks at untracked files"
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "base"], cwd=repo, check=True)
+    (repo / "added.py").write_text("x = 1\n", encoding="utf-8")
+
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    marker = tmp_path / "invoked"
+    stub = bindir / "just"
+    stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [ "$1" = "--summary" ]; then echo gate; exit 0; fi\n'
+        f'printf "%s" "$*" >> {marker}\n'
+        "exit 0\n",
+        encoding="utf-8",
     )
+    stub.chmod(0o755)
+
+    result = subprocess.run(
+        ["bash", str(HOOKS / "verify-on-stop.sh")],
+        input=json.dumps({"stop_hook_active": False}),
+        capture_output=True,
+        text=True,
+        cwd=repo,
+        env={
+            **os.environ,
+            "PATH": f"{bindir}:{os.environ['PATH']}",
+            "CLAUDE_PROJECT_DIR": str(repo),
+        },
+    )
+
+    assert marker.exists(), (
+        f"the gate never ran for a turn that only added a file (exit {result.returncode})"
+    )
+    assert "gate" in marker.read_text(encoding="utf-8")
 
 
 def test_the_spec_structure_check_refuses_an_empty_directory(tmp_path: Path) -> None:
@@ -131,25 +168,41 @@ def test_the_spec_structure_check_reads_subdirectories(tmp_path: Path) -> None:
     assert "099-incomplete.md" in result.stdout
 
 
-def test_the_spec_gate_survives_a_base_that_no_longer_exists() -> None:
-    """github.event.before names a commit that a force push has removed, and
-    a history rewrite makes that certain rather than theoretical. Falling back
-    to the head's parent checks the pushed commit instead of skipping."""
+def test_the_turn_gate_gates_a_shell_guard_change() -> None:
+    """The extension filter excluded .sh, so a turn that changed only a guard
+    script ran no gate: the gate was blindest on the files that are the gate
+    (review of PR #50)."""
+    source = (HOOKS / "verify-on-stop.sh").read_text(encoding="utf-8")
+    assert "|sh)$" in source, "a shell guard change runs no gate"
+
+
+def test_the_spec_gate_refuses_a_base_it_cannot_resolve() -> None:
+    """Falling back to head^ checked the tip commit only, so a force push
+    could land earlier commits with no approved-spec trailer and the gate
+    reported success on the one commit it looked at (review of PR #50)."""
     head = subprocess.run(
         ["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=ROOT, check=True
     ).stdout.strip()
+    result = subprocess.run(
+        ["python3", str(ROOT / "scripts" / "spec_gate.py"), str(ROOT), "deadbeef" * 5, head],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    )
+    assert result.returncode == 2, "an unresolvable base did not fail the gate"
+    assert "does not resolve" in result.stderr
 
-    # Run the script the way CI runs it, rather than importing a helper out of
-    # it: the gate's behaviour is what matters, and an import would keep
-    # passing if the workflow stopped calling it.
-    for unusable in ("0" * 40, "deadbeef" * 5):
-        result = subprocess.run(
-            ["python3", str(ROOT / "scripts" / "spec_gate.py"), str(ROOT), unusable, head],
-            capture_output=True,
-            text=True,
-            cwd=ROOT,
-        )
-        assert "could not run" not in result.stderr, (
-            f"the gate died on an unusable base {unusable[:8]}: {result.stderr.strip()}"
-        )
-        assert result.stdout.strip(), "the gate checked nothing and said nothing"
+
+def test_a_null_base_checks_every_commit_not_on_main() -> None:
+    """A branch's first push has no previous tip. Checking one commit there
+    would skip the rest of the branch."""
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=ROOT, check=True
+    ).stdout.strip()
+    result = subprocess.run(
+        ["python3", str(ROOT / "scripts" / "spec_gate.py"), str(ROOT), "0" * 40, head],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    )
+    assert result.stdout.count("ok:") > 1, "a null base checked only the tip"

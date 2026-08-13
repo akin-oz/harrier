@@ -9,7 +9,9 @@ LinkedIn, Wellfound, Welcome to the Jungle, or HiringCafe. No extension required
 > GET with a confirmation page showing what it captured, and one click adds it. The GET
 > itself changes nothing (spec 035): it used to add the row, which meant any page could
 > do the same with an image tag. The server answers the GET with a confirmation page;
-> the row is added by the POST behind the button on it. Plain navigation is never blocked.
+> the row is added by the POST to `/capture/add-form` behind the button on it. Plain
+> navigation is never blocked. Proven by
+> `services/api/tests/test_batch_and_capture.py::test_the_bookmarklet_path_still_reaches_the_tracker`.
 
 ---
 
@@ -136,7 +138,7 @@ harrier API (localhost:8000)
        │  a GET that wrote could be fired by any page's image tag (spec 035)
        ▼
  Confirmation tab: "Add this job?" showing title, company, location
-       │  one click → POST /capture/add (local token required)
+       │  one click → POST /capture/add-form (local token required)
        ▼
 harrier.capture.add_captured_job
        ▼

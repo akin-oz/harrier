@@ -20,7 +20,11 @@ fi
 # Checked BEFORE the "is this a commit" gate below, because that gate requires
 # `git` and `commit` to be adjacent and these bypasses sit between them:
 # `git -c core.hooksPath=... commit` reads as neither a commit nor a bypass.
-if printf '%s' "$CMD" | grep -qE 'core\.hooksPath|GIT_DIR=|--git-dir'; then
+# Matched as command tokens rather than anywhere in the string. The first
+# version matched a bare substring, so it blocked any command whose text merely
+# mentioned these, including the commit message describing this very guard
+# (review of PR #50).
+if printf '%s' "$CMD" | grep -qE '(^|[[:space:]])(-c[[:space:]]+core\.hooksPath|--git-dir|GIT_DIR)=?'; then
   deny "BLOCKED: redirecting hooksPath or the git dir disables the hook chain. The verification hooks ARE the definition of done."
 fi
 

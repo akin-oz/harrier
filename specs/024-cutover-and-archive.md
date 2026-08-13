@@ -100,12 +100,12 @@ Criteria for the cutover event itself, which only Akin can satisfy:
 docs/cutover-plan.md phases 3 and 4. Proving file:
 services/api/tests/test_cutover.py.
 
-State when this shipped, from `harrier cutover preflight` against the real
-machine: two blocking checks. The parity checklist stood at 0 of 96 decided,
-and the old repo's .env has a value spanning a line break at line 20, which
-is the defect that has kept the old digest from running. The tracker check
-passed at the full tracker size and all three old jobs were loaded. So the tooling exists
-and correctly refuses; the cutover has not happened.
+State when this shipped: `harrier cutover preflight` reported blocking checks
+against the real machine and refused, so the tooling exists and correctly
+refuses, and the cutover has not happened. What blocked it, and how far the
+parity checklist had got, are operational facts about one machine and one
+person's search; `harrier cutover preflight` reports them locally, which is
+where they belong (spec 046, review of PR #50).
 
 ## Stated changes from the plan
 

@@ -14,7 +14,9 @@ git clone https://github.com/akin-oz/harrier && cd harrier && just demo
 You need [`just`](https://github.com/casey/just),
 [`uv`](https://docs.astral.sh/uv/) and [`pnpm`](https://pnpm.io/) on your PATH
 first. Without them the line above stops at `command not found`, which is a
-poor introduction, so they are named here rather than assumed.
+poor introduction, so they are named here rather than assumed. The recipes are
+in the [`justfile`](justfile), and the demo's no-network behaviour is proven by
+`services/api/tests/test_demo.py`.
 
 It seeds a throwaway database from synthetic fixtures and serves the API and
 the web app from `http://127.0.0.1:8000`. No API keys, no accounts, and no
@@ -180,12 +182,15 @@ PDF rendering. None of them is required to run the pipeline.
 
 - **Single user, single machine.** The API binds to localhost and holds a
   local token plus a trusted-host check, so a page in another tab cannot drive
-  it (spec 035). That is a same-machine boundary, not a user model: there is no
-  account, no tenant resolution, and no isolation. Multi-tenancy is a direction
+  it (spec 035; `services/api/src/harrier_api/localauth.py`, proven by
+  `services/api/tests/test_api_exposure.py`). That is a same-machine boundary,
+  not a user model: there is no account, no tenant resolution, and no
+  isolation. Multi-tenancy is a direction
   (ADR-009), not a feature, and spec 041 removed the config scope column that
   gestured at it rather than leave speculative generality in the schema.
 - **macOS is the production platform.** Scheduling is launchd. Everything else
-  is portable; the scheduler is not, and reports as much on other systems.
+  is portable; the scheduler is not, and reports as much on other systems
+  (`services/api/tests/test_cli_decisions.py::test_a_missing_launchctl_is_reported_rather_than_raised`).
 - **Personal data has exactly one home.** This machine, plus your own backups.
   Losing both loses the data. The repo cannot help you, by design.
 - **Never-in-git protects the repository, not the machine.** Disk encryption and

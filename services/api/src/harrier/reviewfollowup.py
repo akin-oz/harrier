@@ -260,6 +260,10 @@ def decide(state: PullRequestState, *, requests_today: int, daily_limit: int) ->
             parts.append(f"{len(state.unread_reviews)} unread review(s)")
             if hidden:
                 parts.append(f"{hidden} carrying findings outside the diff")
+        if state.truncated:
+            # Otherwise a truncation-only outstanding state printed
+            # "NEEDS A REPLY:" with nothing after the colon (review of PR #50).
+            parts.append("a bounded query had another page, so this is not a full picture")
         return Decision(RESPOND, reason="; ".join(parts))
 
     if requests_today >= daily_limit:
@@ -440,7 +444,7 @@ def gather(number: int, run: GitHubRunner, *, owner: str, repo: str) -> PullRequ
                 f"{{pullRequest(number:{number}){{"
                 f"reviewThreads(first:100){{pageInfo{{hasNextPage}} nodes{{id isResolved "
                 f"comments(last:1){{nodes{{id author{{login}}}}}}}}}} "
-                f"reviews(last:20){{pageInfo{{hasNextPage}} "
+                f"reviews(last:20){{pageInfo{{hasPreviousPage}} "
                 f"nodes{{id author{{login}} body commit{{oid}}}}}}"
                 f"}}}}}}",
             ]
@@ -468,8 +472,12 @@ def gather(number: int, run: GitHubRunner, *, owner: str, repo: str) -> PullRequ
         # pull request most likely to have something outstanding: the one with
         # the most review traffic. Reading hasNextPage makes truncation
         # visible, and `outstanding` below makes it fail closed (spec 045).
+        # reviewThreads is first:100, so anything beyond it is a NEXT page.
+        # reviews is last:20, so it already holds the newest and anything
+        # omitted is a PREVIOUS one: hasNextPage is always false there and
+        # reading it made the reviews half of this check inert (review of #50).
         truncated = bool(_as_dict(threads_conn.get("pageInfo")).get("hasNextPage")) or bool(
-            _as_dict(reviews_conn.get("pageInfo")).get("hasNextPage")
+            _as_dict(reviews_conn.get("pageInfo")).get("hasPreviousPage")
         )
     except json.JSONDecodeError as error:
         raise FollowUpError(f"unexpected review payload for {number}: {error}") from error

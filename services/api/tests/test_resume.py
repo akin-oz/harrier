@@ -118,7 +118,10 @@ def test_markdown_header_uses_grounded_title_not_requested_identity(
     assert lines[1] == "Senior Frontend Engineer — TypeScript & Vue 3"
     assert lines[2] == "Exampleland | deniz@example.com | linkedin.com/in/deniz-ornek"
     assert "Tailored for" not in markdown
-    assert "exampleco — Senior Software Engineer" not in markdown
+    # Against the CURRENT request. The old string named a role REQUESTED_ROLE
+    # no longer contains, so it passed without testing anything (review of #50).
+    assert "Node/Vue/TypeScript" not in markdown
+    assert "exampleco" not in markdown
 
 
 def test_a_forbidden_phrase_refuses_the_rendered_resume(

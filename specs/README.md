@@ -35,7 +35,7 @@ Body sections: Problem, Scope, Acceptance criteria (checkboxes), Proof / origin
 - **M4** outreach, Gmail, digest: 016, 017, 018, 019
 - **M5** scheduling, demo, parity, cutover: 020, 021, 022, 024
 - **M6** review findings, gates that can fail, the UI that drives the tool:
-  025 and 027 through 043
+  025, 026, and 027 through 043
 - **M7** open-source readiness: 044, 045, 046
 
 Stubs sequence the backlog; they do not define final scope. Refine a stub into a
@@ -55,9 +55,9 @@ not this paragraph.
 - **M5 (added)** user configuration in the database: 023 (ADR-009; approved separately)
 
 M5 shipped in full: 020, 021, 022, 023 and 024. The backlog is not empty,
-though this file used to say it was: six specs are in progress at any reading,
-and `grep -l '^status: in-progress' specs/*.md` is the answer rather than a
-number written here (spec 045).
+though this file used to say it was. `grep -l '^status: in-progress' specs/*.md`
+is the answer; a number written here goes stale the moment one lands, which is
+how the previous sentence became wrong (spec 045).
 
 That does not mean the cutover happened. Spec 024 delivered the tooling for it;
 the event itself is an operational step whose criteria are listed separately in
