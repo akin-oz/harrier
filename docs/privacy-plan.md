@@ -55,9 +55,36 @@ gets content; an uncovered path is a spec-worthy gap, not a judgment call.
 ## 5. Log redaction
 
 - The logging setup loads candidate and contact identity values from the
-  database at startup and installs a redaction filter for them.
+  database at startup and installs a redaction filter for them
+  (`harrier.logredact`, installed by `configure_logging`, proven by
+  `services/api/tests/test_logging.py`).
 - LLM prompts and artifact contents log at debug only; debug logs are
   never-in-git.
+
+This sentence was false from spec 029 until spec 045: there was no
+`logging.Filter` anywhere in the tree, and `configure_logging` was called only
+by the CLI, so the process serving the browser had neither. It is written here
+because a public repository that claims a privacy control it never built is
+worse than one that admits the gap, and the record of having done it once is
+the cheapest defence against doing it again.
+
+What redaction covers, and what it does not. The value set is refreshed from
+the tracker write path, so a contact added after startup is redacted from the
+moment it exists
+(`services/api/tests/test_logging.py::test_a_contact_added_after_startup_is_redacted`).
+Values of two characters and up are redacted, on word boundaries below four so
+a short name does not shred unrelated text
+(`::test_a_short_identity_is_redacted_on_a_word_boundary`,
+`::test_a_short_value_inside_another_word_is_left_alone`); only single
+characters are excluded. Exception and stack text are redacted too, because
+`record.getMessage()` excludes them and `logger.exception()` carried identity
+values past an earlier version of the filter
+(`::test_an_exception_traceback_does_not_carry_an_identity`).
+
+It still matches literal values, so a paraphrase or a different spelling of the
+same name is not caught, and no value-matching filter would catch it. Logs are
+never-in-git regardless, so this defends the log that gets pasted into an issue
+or shared on a call, not the repository.
 
 ## 6. Fixture policy
 
@@ -85,10 +112,18 @@ any history rewrite:
 - [ ] `gitleaks detect` over the full history, zero findings.
 - [ ] Classification coverage test green.
 - [ ] `git ls-files` reviewed file by file; every file's class confirmed.
-- [ ] `git log --stat` for the whole history reviewed for accidental adds
-      (including the pre-ADR-008 commits: the only ever-committed private file
-      was an encrypted placeholder with no personal content; verify nothing
-      else slipped in).
+- [ ] `git log --stat` for the whole history reviewed for accidental adds.
+      This line used to assert that the only privately-classed file ever
+      committed was an encrypted placeholder with no personal content. That
+      was false: `config/feeds.txt` and `config/linkedin_search_urls.txt` held
+      the real watchlist and the real saved searches, were committed, and were
+      untracked later without their blobs going anywhere (spec 046). A
+      reviewer working this checklist honestly would have signed off on a
+      history that still served them. Verify against the object graph, not
+      against this sentence.
+- [ ] After any rewrite, confirm the remote no longer serves the old objects,
+      and record that anyone who cloned before it keeps them: a force push
+      reduces exposure and does not undo it.
 - [ ] Fixtures re-checked by privacy-reviewer; no real person recoverable.
 - [ ] `.env.example` contains placeholders only.
 - [ ] README limitations section states what privacy this design does and does

@@ -112,12 +112,12 @@ def test_load_dataset_files_unwraps_items_container(tmp_path: Path) -> None:
 
 
 def test_linkedin_job_id_handles_both_url_shapes() -> None:
-    assert linkedin_job_id("https://www.linkedin.com/jobs/view/4436595657") == "4436595657"
+    assert linkedin_job_id("https://www.linkedin.com/jobs/view/1234567890") == "1234567890"
     assert (
         linkedin_job_id(
-            "https://www.linkedin.com/jobs/view/senior-frontend-engineer-at-exampleco-4436595657"
+            "https://www.linkedin.com/jobs/view/senior-frontend-engineer-at-exampleco-1234567890"
         )
-        == "4436595657"
+        == "1234567890"
     )
     assert linkedin_job_id("https://www.linkedin.com/jobs/search/?currentJobId=987654") == "987654"
     assert linkedin_job_id("https://example.com/not-linkedin") == ""

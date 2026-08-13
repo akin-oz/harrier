@@ -93,7 +93,7 @@ Proven by services/api/tests/test_seen_policy.py:
 | any weight or keyword change moves the version | `test_changing_a_scoring_weight_changes_the_version`, `test_changing_any_deciding_key_changes_the_version` (one case per configuration path), `test_the_domain_bonus_is_part_of_the_version`, `test_changing_a_rule_table_in_code_changes_the_version`, `test_changing_the_domain_keyword_table_changes_the_version` |
 | the deciding paths describe the real configuration | `test_every_deciding_path_exists_in_the_real_configuration` |
 | a recorded reason is groupable | `test_the_recorded_reason_is_a_stable_slug` |
-| a corrupt state file is reported | `test_a_corrupt_state_file_is_reported_rather_than_silently_empty`, `test_a_state_file_that_is_not_an_object_is_reported` |
+| a corrupt state file is reported | `test_a_corrupt_state_file_is_refused_rather_than_read_as_empty`, `test_a_state_file_that_is_not_an_object_is_refused` |
 | stale rejections reconsidered, current ones not | `test_a_rejection_under_an_older_policy_is_cleared`, `test_a_rejection_under_the_current_policy_is_left_alone` |
 | a manual rejection is never resurrected | `test_a_job_the_operator_rejected_is_never_resurrected`, `test_the_protection_matches_on_company_and_title_too` |
 | pre-change entries are unknown and eligible | `test_the_old_format_migrates_to_unknown_rather_than_being_discarded`, `test_a_migrated_entry_is_eligible_for_the_first_reconsideration`, `test_a_migrated_entry_is_never_read_as_an_acceptance` |

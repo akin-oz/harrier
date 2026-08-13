@@ -11,6 +11,13 @@ SQLite underneath, one machine, no cloud.
 git clone https://github.com/akin-oz/harrier && cd harrier && just demo
 ```
 
+You need [`just`](https://github.com/casey/just),
+[`uv`](https://docs.astral.sh/uv/) and [`pnpm`](https://pnpm.io/) on your PATH
+first. Without them the line above stops at `command not found`, which is a
+poor introduction, so they are named here rather than assumed. The recipes are
+in the [`justfile`](justfile), and the demo's no-network behaviour is proven by
+`services/api/tests/test_demo.py`.
+
 It seeds a throwaway database from synthetic fixtures and serves the API and
 the web app from `http://127.0.0.1:8000`. No API keys, no accounts, and no
 sign-up: the running demo reaches no network at all, because every job board
@@ -71,7 +78,7 @@ apps/web          React 19, strict TypeScript, feature-sliced, generated API typ
 services/api      FastAPI service + the harrier domain package + the CLI
 packages/contract OpenAPI document and the TS types generated from it
 specs/            the approved change log: nothing ships without one
-docs/adr/         nine accepted decision records
+docs/adr/         nine decision records, one partially superseded
 fixtures/         synthetic demo data, doubling as public test fixtures
 ```
 
@@ -173,12 +180,17 @@ PDF rendering. None of them is required to run the pipeline.
 
 ## Honest limitations
 
-- **Single user, single machine.** No auth on the API because it binds to
-  localhost. Multi-tenancy is a direction (ADR-009), not a feature: the config
-  store has a scope column that partitions, and that is the whole of it. There
-  is no authentication, no tenant resolution, and no isolation.
+- **Single user, single machine.** The API binds to localhost and holds a
+  local token plus a trusted-host check, so a page in another tab cannot drive
+  it (spec 035; `services/api/src/harrier_api/localauth.py`, proven by
+  `services/api/tests/test_api_exposure.py`). That is a same-machine boundary,
+  not a user model: there is no account, no tenant resolution, and no
+  isolation. Multi-tenancy is a direction
+  (ADR-009), not a feature, and spec 041 removed the config scope column that
+  gestured at it rather than leave speculative generality in the schema.
 - **macOS is the production platform.** Scheduling is launchd. Everything else
-  is portable; the scheduler is not, and reports as much on other systems.
+  is portable; the scheduler is not, and reports as much on other systems
+  (`services/api/tests/test_cli_decisions.py::test_a_missing_launchctl_is_reported_rather_than_raised`).
 - **Personal data has exactly one home.** This machine, plus your own backups.
   Losing both loses the data. The repo cannot help you, by design.
 - **Never-in-git protects the repository, not the machine.** Disk encryption and
@@ -186,9 +198,20 @@ PDF rendering. None of them is required to run the pipeline.
 - **The generation gates reduce invention; they do not eliminate it.** The
   resume validator checks claims against a truth document, which means it can
   only catch what that document contradicts. Read what it produces.
-- **A rewrite in progress.** M0 through M4 are shipped and M5 is underway. The
+- **A rewrite in progress.** M0 through M6 are shipped and M7 is underway. The
   private system it replaces is still the one in daily use until the parity
-  cutover (spec 022) verifies this one matches it.
+  cutover (spec 022) verifies this one matches it, and that cutover is an
+  operational step nobody has taken yet: `harrier cutover preflight` reports
+  where it stands.
+
+## Contributing and security
+
+[`CONTRIBUTING.md`](CONTRIBUTING.md) covers the spec gate, which is the part
+of this repository most likely to surprise a contributor: no change to
+observable behavior lands without an approved spec, and a pull request cannot
+approve the spec it implements. [`SECURITY.md`](SECURITY.md) says what the
+threat model is for a local-first single-user tool, and how to report
+something privately.
 
 ## License
 

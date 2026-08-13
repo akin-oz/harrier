@@ -56,7 +56,7 @@ def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
             {
                 "candidate": {"name": "Deniz Örnek"},
                 "targets": {"titles": ["Senior Frontend Engineer"]},
-                "compensation": {"salary_min_eur": 70000, "salary_target_eur": 85000},
+                "compensation": {"salary_min_eur": 50000, "salary_target_eur": 60000},
             }
         ),
     )
@@ -130,8 +130,8 @@ def test_system_prompt_is_assembled_from_data(db: sqlite3.Connection) -> None:
     prompt = build_system_prompt(db)
     assert "Deniz Örnek" in prompt
     assert "Senior Frontend Engineer" in prompt
-    assert "70,000-85,000" in prompt
-    assert "below 60k EUR" in prompt
+    assert "50,000-60,000" in prompt
+    assert "below 40k EUR" in prompt
     assert "{name}" not in prompt
     assert "{comp_floor}" not in prompt
 

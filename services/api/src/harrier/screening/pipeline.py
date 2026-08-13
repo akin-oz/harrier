@@ -2,7 +2,13 @@
 
 Gate order is load-bearing (enrichment cost, Apify billing) and pinned by
 tests: seen-state, hold list, title rules, remote/EMEA policy, tracker
-dedupe, description enrichment, scoring with the hard cutoff.
+dedupe, description enrichment, scoring.
+
+There is no cutoff. Spec 033 removed it: it could only ever fire against
+LinkedIn results, whose score floor is one bonus lower than the ATS path's,
+so it penalised a source for behaving correctly. The gates filter and the
+score ranks. This docstring said "scoring with the hard cutoff" for three
+specs after that landed, while a comment 200 lines below said the opposite.
 
 Persistence is the caller's job: this module returns tracker-ready rows and
 mutates only the in-memory dedupe sets; nothing here writes the tracker

@@ -70,6 +70,6 @@ harrier.tracker (spec 004).
 ## Out of scope
 
 Mutations (tracker verbs arrive with their own specs), the run manager and SSE
-(spec 006), pagination (701 rows renders fine; revisit when real), TanStack
+(spec 006), pagination (the current tracker renders fine; revisit when real), TanStack
 Router (single page today; routing lands with the second page), auth (localhost
 tool, ADR-007 limitations).

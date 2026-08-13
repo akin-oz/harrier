@@ -315,9 +315,13 @@ test("every tracker write carries the token and no read does", async () => {
   }
   // And no read carries it: sending it to every GET would gain nothing and
   // make it that much easier to leak.
-  expect(seen.filter((call) => call.method === "GET").every((call) => call.token === null)).toBe(
-    true,
-  );
+  //
+  // The count is asserted first. `every` over an empty array is true, so a
+  // change that stopped the page reading anything at all would have satisfied
+  // this line rather than failed it (spec 045).
+  const reads = seen.filter((call) => call.method === "GET");
+  expect(reads.length).toBeGreaterThan(0);
+  expect(reads.every((call) => call.token === null)).toBe(true);
 });
 
 test("the other verbs are out of reach while a rejection reason is being typed", async () => {

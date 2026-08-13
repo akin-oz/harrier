@@ -138,7 +138,7 @@ def test_enrichment_fetches_job_page_for_thin_rows(
         source="hiring_cafe",
         title="Senior Frontend Platform Engineer",
         location="Portugal",
-        url="https://job-boards.greenhouse.io/datacamp/jobs/7741105",
+        url="https://job-boards.greenhouse.io/exampledata/jobs/1",
         description="",
     )
     html = """
@@ -162,7 +162,7 @@ def test_screen_jobs_enriches_before_low_score_rejection(
         source="hiring_cafe",
         title="Senior Frontend Platform Engineer",
         location="Remote, Portugal",
-        url="https://job-boards.greenhouse.io/datacamp/jobs/7741105",
+        url="https://job-boards.greenhouse.io/exampledata/jobs/1",
         description="",
     )
     html = """

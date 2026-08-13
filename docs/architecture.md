@@ -18,7 +18,7 @@ launchd (schedule)          browser (GUI)              terminal
       |                          |                        |
       +---------> harrier domain package <----------------+
                   (tracker, screening, scoring,        (types only)
-                   artifacts, outreach, mail)
+                   resume, apply, offers, outreach, mail)
                          |
                   SQLite (data/tracker.db)  +  file stores (state/, runtime/)
 ```
@@ -43,8 +43,8 @@ the old code implies but does not enforce:
 | `harrier.tracker` | The single write path, status lifecycle, selectors, dedupe indexes, CSV export | `scripts/jobs.py`, tracker parts of `job_sources.py` |
 | `harrier.screening` | Normalized job shape, gate order, remote/EMEA policy, scoring, archetypes | `scripts/job_sources.py` |
 | `harrier.sources` | One ingestion module per source, each returning normalized jobs only | `scripts/import_*.py` |
-| `harrier.artifacts` | Resume, cover letter, answers; truth validation; PDF gates; label scrubbing | `tailor_resume.py`, `openai_cover_letters.py`, `application_answers_lib.py` |
-| `harrier.evaluation` | Offer evaluation blocks, verdict contract, batch prospect evaluation | `evaluate_offer.py`, `evaluate_prospects.py` |
+| `harrier.resume`, `harrier.apply` | Resume, cover letter, answers; truth validation; PDF gates; label scrubbing | `tailor_resume.py`, `openai_cover_letters.py`, `application_answers_lib.py` |
+| `harrier.offers` | Offer evaluation blocks, verdict contract, batch prospect evaluation | `evaluate_offer.py`, `evaluate_prospects.py` |
 | `harrier.outreach` | Contacts store, staged discovery, fit scoring, drafts, queue state machine | `outreach_lib.py`, `find_contacts.py`, message generators |
 | `harrier.mail` | Gmail poll, classification cascade, event log | `gmail_watch_lib.py` |
 | `harrier.notify` | Telegram sending, digest assembly | `send_telegram.py`, `send_daily_digest.py` |
@@ -88,7 +88,8 @@ feeds.txt / linkedin_search_urls.txt
   -> normalize to the shared job shape
   -> harrier.screening.screen():             seen-state -> hold list -> title
                                              -> remote/EMEA -> tracker dedupe
-                                             -> enrich -> score (cutoff 55)
+                                             -> enrich -> score (ranks; spec 033
+                                                removed the cutoff)
   -> harrier.tracker.add_prospects()         (one write path, one transaction)
   -> per-source summary + run summary        (incoming/ shape preserved)
   -> one aggregated Telegram notify
@@ -102,7 +103,7 @@ subprocess; stdout's structured progress lines become SSE events
 
 ```
 GUI/CLI: shortlist -> tailor -> applied -> interviewing | rejected
-tailor: harrier.artifacts.tailor_resume()
+tailor: harrier.resume.tailor_resume()
   -> content plan (LLM selects bullet IDs; require_truth validates against truth sources)
   -> markdown -> HTML template -> Playwright PDF -> validate_rendered_pdf
   -> success only if the PDF exists; tracker row updated only on success
@@ -145,7 +146,7 @@ classification table to `.gitignore`.
 
 ## Governance chain
 
-The Sorrel chain (see `/Users/akinoztorun/Documents/projects/sorrel`, README
+The Sorrel chain (a private sibling project of the author's, README
 "Spec-gated quality enforcement"), expressed through `.ai/` sources and compiled by
 `aie`, with hooks the compiler cannot express wired directly into
 `.claude/settings.json` (the compiler preserves entries it does not own):

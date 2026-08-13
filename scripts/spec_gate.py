@@ -130,12 +130,54 @@ def check(repo: str, base: str, head: str) -> list[Verdict]:
     return verdicts
 
 
+NULL_SHA = "0" * 40
+
+
+def resolve_base(repo: str, base: str, head: str) -> str:
+    """The base to diff from, when the event did not supply a usable one.
+
+    Added with the push trigger (spec 045). On a pull request the base is
+    always a real commit. On a push it is `github.event.before`, which is the
+    all-zeroes SHA for a branch's first push and a commit that no longer
+    exists after a force push, and the history rewrite this project has
+    planned makes the second case certain rather than theoretical.
+
+    Falling back to the head's first parent checks the pushed commit itself
+    rather than skipping the gate, which is the direction a gate should fail.
+    """
+    if base and base != NULL_SHA:
+        try:
+            _git(repo, "cat-file", "-e", f"{base}^{{commit}}")
+        except GateError:
+            # Fail closed. Falling back to head^ here checked the tip commit
+            # only, so a force push could land earlier commits with no
+            # approved-spec trailer and the gate would report success on the
+            # one commit it happened to look at (review of #50).
+            raise GateError(
+                f"the event named base {base} but it does not resolve in this "
+                f"checkout, so the range to check is unknown"
+            ) from None
+        return base
+
+    # A null base is a branch's first push, where there is no previous tip to
+    # diff from. Every commit not already on the default branch is in scope;
+    # the empty tree is the backstop when there is no default branch to
+    # compare against, and checks everything rather than nothing.
+    for ref in ("origin/main", "main"):
+        try:
+            return _git(repo, "merge-base", ref, head).strip()
+        except GateError:
+            continue
+    return _git(repo, "hash-object", "-t", "tree", "/dev/null").strip()
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 3:
         print("usage: spec_gate.py <repo> <base-sha> <head-sha>", file=sys.stderr)
         return 2
     repo, base, head = argv
     try:
+        base = resolve_base(repo, base, head)
         verdicts = check(repo, base, head)
     except GateError as error:
         print(f"::error::the spec gate could not run: {error}", file=sys.stderr)

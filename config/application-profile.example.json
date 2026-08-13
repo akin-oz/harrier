@@ -15,7 +15,7 @@
   "professional_stories": [
     {
       "id": "funnel_conversion_improvement",
-      "summary": "Improved a signup funnel's completion from about 40% to 70% across roughly 250K annual applications."
+      "summary": "Improved a signup funnel's completion from about 50% to 75% across roughly 100K annual applications."
     },
     {
       "id": "ai_assisted_workflow_automation",
@@ -64,8 +64,8 @@
     },
     "experience": {
       "short": "My most relevant experience is shipping TypeScript-first frontend products and improving conversion-critical flows.",
-      "medium": "I've improved a signup funnel's completion from about 40% to 70% across roughly 250K annual applications, built shared UI libraries, and led frontend quality work in production codebases.",
-      "notes": ["Signup funnel completion improved from ~40% to ~70%"]
+      "medium": "I've improved a signup funnel's completion from about 50% to 75% across roughly 100K annual applications, built shared UI libraries, and led frontend quality work in production codebases.",
+      "notes": ["Signup funnel completion improved from ~50% to ~75%"]
     },
     "leaving": {
       "short": "I'm selective about the next role and looking for a good fit on ownership, engineering quality, and product work.",

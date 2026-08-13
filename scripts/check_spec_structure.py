@@ -46,9 +46,13 @@ def missing_headings(text: str) -> list[str]:
 
 
 def check_directory(specs: Path) -> dict[str, list[str]]:
-    """Every spec that is missing something, mapped to what it is missing."""
+    """Every spec that is missing something, mapped to what it is missing.
+
+    Recursive: a spec filed in a subdirectory was invisible to the flat glob
+    and passed unchecked (spec 045).
+    """
     problems: dict[str, list[str]] = {}
-    for path in sorted(specs.glob("*.md")):
+    for path in sorted(specs.rglob("*.md")):
         if path.name in EXEMPT:
             continue
         gaps = missing_headings(path.read_text(encoding="utf-8"))
@@ -62,6 +66,17 @@ def main(argv: list[str]) -> int:
     if not specs.is_dir():
         print(f"no specs directory at {specs}", file=sys.stderr)
         return 2
+    # Zero specs found reported success, so a checker pointed at the wrong
+    # directory, or run before the specs are checked out, read as "all clean"
+    # (spec 045). A gate whose file set is empty has not passed; it has not run.
+    checked = [path for path in specs.rglob("*.md") if path.name not in EXEMPT]
+    if not checked:
+        print(
+            f"::error::no specs found under {specs}; the check did not run",
+            file=sys.stderr,
+        )
+        return 2
+
     problems = check_directory(specs)
     for name, gaps in problems.items():
         for heading in gaps:

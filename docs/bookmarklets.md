@@ -8,8 +8,10 @@ LinkedIn, Wellfound, Welcome to the Jungle, or HiringCafe. No extension required
 > navigate a new tab to `http://localhost:8000/capture/add?...`. The server answers that
 > GET with a confirmation page showing what it captured, and one click adds it. The GET
 > itself changes nothing (spec 035): it used to add the row, which meant any page could
-> do the same with an image tag. The server handles the GET,
-> adds the job, and shows a result page. Plain navigation is never blocked.
+> do the same with an image tag. The server answers the GET with a confirmation page;
+> the row is added by the POST to `/capture/add-form` behind the button on it. Plain
+> navigation is never blocked. Proven by
+> `services/api/tests/test_batch_and_capture.py::test_the_bookmarklet_path_still_reaches_the_tracker`.
 
 ---
 
@@ -132,13 +134,15 @@ Browser (bookmarklet click)
        │  (plain GET navigation — never blocked by mixed-content policy)
        ▼
 harrier API (localhost:8000)
-       │  parses query string → harrier.capture.add_captured_job
+       │  parses query string, renders a confirmation page. Adds nothing:
+       │  a GET that wrote could be fired by any page's image tag (spec 035)
+       ▼
+ Confirmation tab: "Add this job?" showing title, company, location
+       │  one click → POST /capture/add-form (local token required)
+       ▼
+harrier.capture.add_captured_job
        ▼
 tracker database  ←  scored + deduped, same pipeline as automated discovery
-       │
-       ▼
- Small result tab: "✅ Added: Acme — Senior Frontend Engineer"
- (with a ← back to job posting link)
 ```
 
 The job goes through the exact same score_job plus build_tracker_row pipeline as

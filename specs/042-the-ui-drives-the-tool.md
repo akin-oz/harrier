@@ -158,7 +158,7 @@ named so an unticked box is a schedule rather than an omission.
       (`TrackerPage.test.tsx::a refusal is shown in the words the API used`,
       `::a duplicate is reported in the domain's words and the form keeps its input`,
       and the rescore refusal at
-      `test_ui_tracker.py::test_a_job_with_no_stored_description_is_refused_on_both_sides`)
+      `services/api/tests/test_ui_tracker.py::test_a_job_with_no_stored_description_is_refused_on_both_sides`)
 - [ ] the Operations page lists the CLI-only commands with their reasons,
       asserted by a test so the list cannot drift from reality (phase 5)
 - [x] no new route is reachable before spec 035's protections are in place,

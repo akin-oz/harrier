@@ -12,6 +12,7 @@ import sqlite3
 from collections.abc import Mapping
 from datetime import date, timedelta
 
+from harrier.logredact import refresh_installed
 from harrier.tracker.invariants import all_breaches
 from harrier.tracker.schema import (
     CONTACT_FIELDS,
@@ -243,6 +244,10 @@ def add_contact(conn: sqlite3.Connection, fields: Mapping[str, str]) -> int:
         )
     row_id = cursor.lastrowid
     assert row_id is not None
+    # A contact is identity data the moment it exists, and this process may run
+    # for days. Refreshing here rather than per log record keeps the database
+    # off the logging path (spec 045, review of PR #49).
+    refresh_installed(conn)
     return int(row_id)
 
 

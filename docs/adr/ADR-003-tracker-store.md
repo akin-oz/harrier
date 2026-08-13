@@ -5,8 +5,9 @@
 
 ## Context
 
-Today `tracker/jobs.csv` is the single source of truth (701 records, 20 columns), with
-`tracker/contacts.csv` beside it (146 records). Writers today are already plural:
+In the old repo `tracker/jobs.csv` was the single source of truth (one row per job, 20
+columns), with
+`tracker/contacts.csv` beside it. Writers today are already plural:
 scheduled imports four times daily, the CLI, the GUI (which shells out to the CLI), the
 capture server, and one automated mutator (`scripts/evaluate_prospects.py` auto-reject).
 The old repo carries the scars of concurrent-ish CSV writing: three ad hoc backup files

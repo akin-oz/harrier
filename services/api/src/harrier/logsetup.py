@@ -14,6 +14,14 @@ stopped running without saying so.
 Called once per process, by the CLI and by the API. Idempotent, because a
 second call adding a second handler is how a line gets logged twice and a
 log gets read as two runs.
+
+That sentence was false until spec 045: only the CLI called it, so the process
+serving the browser had none of this. `create_app` calls it now, and
+`test_logging.py::test_the_api_configures_logging_when_the_app_is_created`
+fails if the call is removed again.
+
+Handlers also carry the identity redaction filter (`harrier.logredact`), which
+the privacy plan claimed existed and which did not.
 """
 
 from __future__ import annotations
@@ -21,9 +29,10 @@ from __future__ import annotations
 import logging
 import logging.handlers
 import os
+import sqlite3
 from pathlib import Path
 
-from harrier.db import data_dir
+from harrier.db import connect, data_dir
 
 LOG_DIR_NAME = "logs"
 LOG_FILE_NAME = "harrier.log"
@@ -83,4 +92,32 @@ def configure_logging(*, force: bool = False) -> None:
     except OSError:
         root.warning("file logging is unavailable; logging to stderr only")
 
+    _install_identity_redaction(root)
+
     _configured = True
+
+
+def _install_identity_redaction(root: logging.Logger) -> None:
+    """Load the identity values once and filter every handler (spec 045).
+
+    Best effort for the same reason the file handler is: there is no database
+    on a fresh clone, and refusing to log because the profile store is not
+    there yet would make the tool unusable before it is configured. A failure
+    here means no redaction, so it says so rather than passing silently.
+    """
+    from harrier.logredact import IdentityRedactionFilter, forget_all, identity_values, register
+
+    try:
+        with connect() as conn:
+            values = identity_values(conn)
+    except (sqlite3.Error, OSError):
+        root.warning("identity redaction is unavailable; logs are not redacted")
+        return
+
+    redaction = IdentityRedactionFilter(values)
+    for handler in root.handlers:
+        handler.addFilter(redaction)
+    # Registered so the tracker write path can refresh it when a contact is
+    # added, rather than leaving that contact unredacted until restart.
+    forget_all()
+    register(redaction)

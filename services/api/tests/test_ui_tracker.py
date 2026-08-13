@@ -114,14 +114,20 @@ def test_rescore_goes_through_the_same_function(
     with patch("harrier.tracker.actions.rescore") as action:
         action.return_value = rescore(connect(), str(job_id))
         main(["reevaluate", str(job_id)])
-        cli_called = action.called
+        cli_call = action.call_args
 
     with patch("harrier.tracker.actions.rescore") as action:
         action.return_value = rescore(connect(), str(job_id))
         client.post(f"/tracker/{job_id}/rescore", headers=auth())
-        api_called = action.called
+        api_call = action.call_args
 
-    assert cli_called and api_called
+    assert cli_call is not None, "the CLI did not reach the shared action"
+    assert api_call is not None, "the API did not reach the shared action"
+    # Same selector, as in the status pairing above. This asserted only that
+    # each side had called *something*, which stays true if they call it with
+    # different arguments, and that is the whole property being claimed
+    # (spec 045). The connection differs because each opens its own.
+    assert cli_call.args[1:] == api_call.args[1:]
 
 
 def test_a_job_with_no_stored_description_is_refused_on_both_sides(

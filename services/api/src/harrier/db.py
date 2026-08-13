@@ -11,6 +11,7 @@ import sqlite3
 from pathlib import Path
 
 from harrier.demo import demo_data_dir, is_demo_mode
+from harrier.paths import repo_root
 
 DB_FILENAME = "tracker.db"
 
@@ -20,7 +21,15 @@ def data_dir() -> Path:
     if override:
         return Path(override)
     # A demo run writes to a temp directory, never into the clone (spec 021).
-    return demo_data_dir() if is_demo_mode() else Path("data")
+    if is_demo_mode():
+        return demo_data_dir()
+    # Anchored to the repository root, not the working directory. Relative to
+    # cwd, `just export` (which cd's into services/api) opened a second, empty
+    # database and wrote a header-only CSV, exit code 0 both times: two
+    # databases where ADR-003 says one. It also put a never-in-git directory
+    # outside the root-anchored .gitignore patterns, so the tracker and the
+    # logs were writable to a path git would have offered to commit.
+    return repo_root() / "data"
 
 
 def default_db_path() -> Path:

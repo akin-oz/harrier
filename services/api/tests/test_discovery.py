@@ -56,8 +56,26 @@ def _capture(sink: list[str]) -> Callable[[str], int]:
 def discovery_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
-    repo_root = Path(__file__).resolve().parents[3]
-    monkeypatch.chdir(repo_root)
+
+    # Isolated, not the repository root (spec 045).
+    #
+    # This chdir'd to the repo root, and harrier.userconfig.accessors resolves
+    # config/companies-hold.csv, config/discovery.json and
+    # config/linkedin_search_urls.txt relative to the working directory. So on
+    # any machine where the operator had used a documented feature, these
+    # tests read that operator's real configuration and four of them changed
+    # answer. The comment further down this file records the same defect being
+    # fixed on one test; the fixture that caused it was left in place.
+    #
+    # The example files are copied under their real names, so the tests still
+    # have config to read and it is the committed synthetic config every time.
+    workspace = tmp_path / "workspace"
+    (workspace / "config").mkdir(parents=True)
+    source = Path(__file__).resolve().parents[3] / "config"
+    for example in source.glob("*.example.*"):
+        real = example.name.replace(".example.", ".", 1)
+        (workspace / "config" / real).write_bytes(example.read_bytes())
+    monkeypatch.chdir(workspace)
     return tmp_path
 
 

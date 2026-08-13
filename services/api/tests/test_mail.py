@@ -30,7 +30,7 @@ def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
 def build_message(
     subject: str,
     body: str,
-    sender: str = "Recruiter <jobs@reedsy.com>",
+    sender: str = "Recruiter <jobs@exampleco.example>",
     message_id: str = "<abc@example.com>",
 ) -> GmailMessage:
     return GmailMessage(
@@ -44,9 +44,9 @@ def build_message(
     )
 
 
-REEDSY_ROW = {
-    "company": "reedsy",
-    "title": "Senior Software Engineer (Node/Vue/TypeScript) - Remote Europe",
+EXAMPLECO_ROW = {
+    "company": "exampleco",
+    "title": "Senior Frontend Engineer (Node/Vue/TypeScript) - Remote Europe",
     "id": "7",
 }
 
@@ -62,7 +62,7 @@ def test_interview_invite_classification_with_tracker_match() -> None:
             "Interview invitation for Senior Software Engineer",
             "We would like to invite you to interview next week.",
         ),
-        [dict(REEDSY_ROW)],
+        [dict(EXAMPLECO_ROW)],
     )
     assert event["kind"] == "interview_invite"
     assert event["tracker_row"] == "7"
@@ -102,10 +102,10 @@ def test_follow_up_beats_application_confirmation() -> None:
 def test_thanks_for_applying_is_application_confirmation() -> None:
     event = classify_message(
         build_message(
-            "Thanks for applying to Reedsy!",
-            "Thanks for applying to Reedsy. We received your application and will review it.",
+            "Thanks for applying to Exampleco!",
+            "Thanks for applying to Exampleco. We received your application and will review it.",
         ),
-        [dict(REEDSY_ROW)],
+        [dict(EXAMPLECO_ROW)],
     )
     assert event["kind"] == "application_confirmation"
     assert event["actionable"] is True
@@ -116,9 +116,9 @@ def test_thanks_for_applying_is_application_confirmation() -> None:
 def test_thanks_for_your_interest_is_application_confirmation() -> None:
     event = classify_message(
         build_message(
-            "Thanks for your interest in ExampleCo",
+            "Thanks for your interest in Exampleco",
             "Thanks for your interest. We received your application and will be in touch.",
-            sender="ExampleCo Careers <careers@example.co>",
+            sender="Exampleco Careers <careers@example.com>",
         ),
         [],
     )
@@ -146,12 +146,12 @@ def test_security_alert_stays_ignored() -> None:
 ASSESSMENT_EVENT: dict[str, object] = {
     "priority": "high",
     "kind": "assessment",
-    "company": "Reedsy",
+    "company": "Exampleco",
     "role": "Senior Software Engineer",
     "tracker_row": "7",
     "next_action": "Review the assessment, confirm deadline, and plan completion time.",
     "summary": "Coding assessment with a one-week deadline.",
-    "from": "Recruiter <jobs@reedsy.com>",
+    "from": "Recruiter <jobs@exampleco.example>",
     "timestamp": "2026-03-20T12:00:00+00:00",
 }
 
@@ -159,7 +159,7 @@ ASSESSMENT_EVENT: dict[str, object] = {
 def test_telegram_message_is_compact_and_readable() -> None:
     message = format_telegram_message(dict(ASSESSMENT_EVENT))
     assert "Priority: high • assessment" in message
-    assert "Company/Role: Reedsy — Senior Software Engineer" in message
+    assert "Company/Role: Exampleco — Senior Software Engineer" in message
     assert "Next action:" in message
     assert "Summary:" in message
     assert "From/time:" in message
@@ -185,7 +185,7 @@ def test_normalize_gmail_api_message_extracts_headers_and_body() -> None:
         "payload": {
             "headers": [
                 {"name": "Subject", "value": "Interview invitation"},
-                {"name": "From", "value": "Recruiter <jobs@reedsy.com>"},
+                {"name": "From", "value": "Recruiter <jobs@exampleco.example>"},
                 {"name": "Date", "value": "Fri, 20 Mar 2026 12:00:00 +0000"},
             ],
             "mimeType": "multipart/alternative",
@@ -204,7 +204,7 @@ def test_normalize_gmail_api_message_extracts_headers_and_body() -> None:
     message = normalize_gmail_api_message(raw)
     assert message.message_id == "18c123"
     assert message.subject == "Interview invitation"
-    assert message.sender_email == "jobs@reedsy.com"
+    assert message.sender_email == "jobs@exampleco.example"
     assert "invite you to interview" in message.body_plain.lower()
 
 
@@ -266,7 +266,7 @@ def test_missing_message_id_is_reported_clearly(db: sqlite3.Connection) -> None:
 def test_seen_message_reports_already_seen(db: sqlite3.Connection) -> None:
     messages = [
         build_message(
-            "Thanks for applying to Reedsy!", "We received your application.", message_id="m1"
+            "Thanks for applying to Exampleco!", "We received your application.", message_id="m1"
         )
     ]
     first = run_watch(db, dry_run=True, fetch=lambda: messages, send=no_send)
@@ -312,9 +312,9 @@ def test_live_run_sends_actionable_and_stops_on_send_failure(
     add_job(
         db,
         {
-            "company": "reedsy",
+            "company": "exampleco",
             "title": "Senior Software Engineer",
-            "url": "https://example.test/reedsy",
+            "url": "https://example.test/exampleco",
             "source": "greenhouse",
             "status": "applied",
         },

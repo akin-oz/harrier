@@ -20,6 +20,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from harrier.db import default_db_path
 from harrier.demo import repo_root
+from harrier.logsetup import configure_logging
 from harrier.tracker import list_jobs
 from harrier.tracker.selector import SelectorError
 from harrier.tracker.store import TrackerError
@@ -538,6 +539,10 @@ class ApiPrefixMiddleware:
 
 
 def create_app(run_manager: RunManager | None = None, spa_dir: Path | None = None) -> FastAPI:
+    # logsetup said it was called by the CLI and by the API. Only the CLI ever
+    # called it, so the process serving the browser had no configured root
+    # logger and no identity redaction (spec 045).
+    configure_logging()
     if is_demo_mode():
         seed_demo_db()
     app = FastAPI(

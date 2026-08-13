@@ -146,8 +146,23 @@ def _is_not_loaded(code: int, stderr: str) -> bool:
     return code in _NOT_LOADED_CODES or "no such process" in stderr.lower()
 
 
+# launchctl exists only on macOS. `subprocess.run` raises FileNotFoundError
+# rather than returning a code, so every caller that expected a code got an
+# exception instead, and the README's "the scheduler is not portable, and
+# reports as much on other systems" was false: it did not report, it crashed.
+# Found when a cutover preflight test first ran on Linux CI (spec 045).
+LAUNCHCTL_ABSENT = 127
+
+
 def default_launchctl(args: list[str]) -> tuple[int, str, str]:
-    result = subprocess.run(["launchctl", *args], capture_output=True, text=True, check=False)
+    try:
+        result = subprocess.run(["launchctl", *args], capture_output=True, text=True, check=False)
+    except FileNotFoundError:
+        return (
+            LAUNCHCTL_ABSENT,
+            "",
+            "launchctl not found: scheduling is launchd and needs macOS",
+        )
     return result.returncode, result.stdout, result.stderr
 
 
