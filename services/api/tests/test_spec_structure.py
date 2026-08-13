@@ -149,11 +149,29 @@ def test_every_test_a_spec_names_actually_exists() -> None:
         text = path.read_text(encoding="utf-8")
         defined.update(re.findall(r"(?:it|test)\(\s*[\"'`]([^\"'`]+)", text))
 
+    # Both forms: a bare `test_x` and a qualified `path/to/file.py::test_x`.
+    # Qualifying the references in specs 044 and 045 made them invisible to the
+    # bare-symbol pattern, so the two specs this check exists for became the two
+    # it no longer read (review of PR #49).
+    reference = re.compile(r"`(?:(?P<path>[A-Za-z0-9_./-]+\.py)::)?(?P<symbol>test_[A-Za-z0-9_]+)`")
+
     missing: list[str] = []
     for spec in sorted((REPO_ROOT / "specs").glob("*.md")):
-        for name in sorted(
-            set(re.findall(r"`(test_[A-Za-z0-9_]+)`", spec.read_text(encoding="utf-8")))
-        ):
-            if name not in defined:
-                missing.append(f"{spec.name}: {name}")
+        seen: set[tuple[str, str]] = set()
+        for match in reference.finditer(spec.read_text(encoding="utf-8")):
+            seen.add((match.group("path") or "", match.group("symbol")))
+        for path, symbol in sorted(seen):
+            if symbol not in defined:
+                missing.append(f"{spec.name}: {symbol}")
+                continue
+            if not path:
+                continue
+            # Specs write these both ways: from the repository root, and from
+            # services/api, which is where pytest runs. Both resolve.
+            candidates = [REPO_ROOT / path, REPO_ROOT / "services" / "api" / path]
+            target = next((c for c in candidates if c.is_file()), None)
+            if target is None:
+                missing.append(f"{spec.name}: {path} does not exist")
+            elif f"def {symbol}" not in target.read_text(encoding="utf-8"):
+                missing.append(f"{spec.name}: {symbol} is not in {path}")
     assert not missing, "specs name tests that do not exist: " + "; ".join(missing)

@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import subprocess
 from pathlib import Path
 from typing import cast
 from urllib.parse import urlparse
@@ -444,11 +445,41 @@ def suite_files() -> list[Path]:
     return sorted((ROOT / "services" / "api" / "tests").rglob("*.py"))
 
 
+# Prose lives in Markdown and in the docstrings and comments of the Python
+# that carries this project's reasoning. Both are read; a tracked file of
+# either kind that falls outside this set fails
+# test_the_aggregate_check_reads_every_tracked_prose_file below.
+#
+# Generated files are read like any other. docs/parity-checklist.md is
+# generated from the matrix and is exactly where an aggregate was found, so
+# exempting generated output would have exempted the finding.
+PROSE_SUFFIXES = (".md", ".py")
+
+# Vendored or fixture text is not this repository's prose. Fixtures have their
+# own, stricter pass above; node_modules and lockfiles are neither ours nor
+# read by anyone.
+PROSE_EXCLUDED_PREFIXES = ("fixtures/", "node_modules/", ".venv/")
+
+
+def tracked_files() -> list[str]:
+    out = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True)
+    return [line for line in out.stdout.splitlines() if line]
+
+
 def prose_files() -> list[Path]:
-    files = sorted((ROOT / "docs").rglob("*.md"))
-    files += sorted((ROOT / "specs").rglob("*.md"))
-    files += sorted((ROOT / "services" / "api" / "src").rglob("*.py"))
-    return files
+    """Every tracked prose file, derived rather than listed.
+
+    This used to name three directories by hand, which silently excluded
+    README.md, CONTRIBUTING.md, SECURITY.md and everything under apps/. An
+    aggregate in any of them passed, and the non-empty-file guard could not
+    tell: a file set that is merely too small still looks like a set (spec
+    044, review of PR #49).
+    """
+    return [
+        ROOT / path
+        for path in tracked_files()
+        if path.endswith(PROSE_SUFFIXES) and not path.startswith(PROSE_EXCLUDED_PREFIXES)
+    ]
 
 
 def board_slug(url: str) -> str | None:
@@ -517,17 +548,66 @@ def test_no_committed_prose_states_an_aggregate_of_the_real_search() -> None:
     )
 
 
+# Account names that are obviously nobody: a synthetic path in a test fixture
+# is documentation, not disclosure. Declared rather than inferred, so a real
+# account name fails here until someone adds it, which is a reviewable act.
+PLACEHOLDER_ACCOUNTS = frozenset({"someone", "user", "youruser", "example", "me", "you"})
+
+# Only the absolute form. A `~/` path names no account and is the portable way
+# to write a home-relative location, which this repository uses 25 times for
+# real things: ~/Library/LaunchAgents, ~/.local/bin/codex, ~/Backups/harrier.
+#
+# The review of PR #49 found a backup location committed as `~/harrier-...`,
+# and the first fix here was to match tildes too. That was wrong: it flagged
+# all 25 legitimate uses. What made that line a disclosure was that it named
+# where the only offline copy of one person's data sits, and no path pattern
+# separates that from ~/Library/LaunchAgents. It is a judgement the privacy
+# reviewer makes, recorded in spec 046 rather than pretended into a regex.
+_HOME_PATH_RE = re.compile(r"/(?:Users|home)/(?P<account>[a-z][a-z0-9._-]{2,})", re.IGNORECASE)
+
+
 def test_no_committed_file_names_an_absolute_home_directory() -> None:
     """An absolute /Users/<name> path publishes the maintainer's account name,
     and two of them pointed a stranger at a private sibling project. The repo
     already tests this class in rendered artifacts; committed prose was not
     covered (spec 045)."""
-    pattern = re.compile(r"/(?:Users|home)/[a-z][a-z0-9._-]{2,}", re.IGNORECASE)
     offenders: list[str] = []
-    for path in [*prose_files(), ROOT / "README.md"]:
+    for path in prose_files():
         for number, line in enumerate(
             path.read_text(encoding="utf-8", errors="replace").splitlines(), 1
         ):
-            if pattern.search(line):
-                offenders.append(f"{path.relative_to(ROOT)}:{number}")
-    assert not offenders, "an absolute home path is committed: " + "; ".join(offenders)
+            for match in _HOME_PATH_RE.finditer(line):
+                account = (match.group("account") or "").lower()
+                if account and account in PLACEHOLDER_ACCOUNTS:
+                    continue
+                offenders.append(f"{path.relative_to(ROOT)}:{number}: {match.group()}")
+    assert not offenders, "a home path is committed: " + "; ".join(offenders)
+
+
+def test_the_aggregate_check_reads_every_tracked_prose_file() -> None:
+    """The non-empty-file guard cannot catch an input set that is merely too
+    small, and the earlier hand-listed set was: it named three directories and
+    silently excluded README.md, CONTRIBUTING.md, SECURITY.md and apps/.
+
+    This fails when a tracked prose file falls outside the scanned set, so
+    adding a document to a new directory is a visible decision rather than a
+    silent exemption (spec 044, review of PR #49).
+    """
+    scanned = {path.relative_to(ROOT).as_posix() for path in prose_files()}
+    missing = [
+        path
+        for path in tracked_files()
+        if path.endswith(PROSE_SUFFIXES)
+        and not path.startswith(PROSE_EXCLUDED_PREFIXES)
+        and path not in scanned
+    ]
+    assert not missing, "tracked prose outside the aggregate check: " + "; ".join(missing)
+
+
+def test_the_prose_set_reaches_the_files_the_old_one_missed() -> None:
+    """Named individually, because these four are the ones that were exempt
+    and a regression would be silent again."""
+    scanned = {path.relative_to(ROOT).as_posix() for path in prose_files()}
+    for path in ("README.md", "CONTRIBUTING.md", "SECURITY.md"):
+        assert path in scanned, f"{path} is not scanned for aggregates"
+    assert any(path.startswith("apps/") for path in scanned), "apps/ is not scanned"

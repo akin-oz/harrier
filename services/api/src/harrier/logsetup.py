@@ -105,7 +105,7 @@ def _install_identity_redaction(root: logging.Logger) -> None:
     there yet would make the tool unusable before it is configured. A failure
     here means no redaction, so it says so rather than passing silently.
     """
-    from harrier.logredact import IdentityRedactionFilter, identity_values
+    from harrier.logredact import IdentityRedactionFilter, forget_all, identity_values, register
 
     try:
         with connect() as conn:
@@ -117,3 +117,7 @@ def _install_identity_redaction(root: logging.Logger) -> None:
     redaction = IdentityRedactionFilter(values)
     for handler in root.handlers:
         handler.addFilter(redaction)
+    # Registered so the tracker write path can refresh it when a contact is
+    # added, rather than leaving that contact unredacted until restart.
+    forget_all()
+    register(redaction)

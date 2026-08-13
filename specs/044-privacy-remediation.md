@@ -109,11 +109,9 @@ most-recent end date disclosed when the current search began.
 
 ## Acceptance criteria
 
-Unticked on purpose. This spec is proposed on its own so that the gate has an
-approved spec on the base to resolve against, and a pull request cannot approve
-the spec it implements. The tree changes and their proofs land in the stacked
-pull request, and the boxes are ticked there, where a reviewer can see the code
-that earns each one.
+Ticked here, in the pull request that carries the code. They were unticked on
+the specs-only pull request, because a reviewer there could not see anything
+that earned them.
 
 | Criterion | Proof |
 |---|---|
@@ -124,16 +122,16 @@ that earns each one.
 | the suite addresses only reserved domains | `services/api/tests/test_demo.py::test_the_test_suite_addresses_only_reserved_domains` |
 | no committed prose states a real aggregate | `services/api/tests/test_demo.py::test_no_committed_prose_states_an_aggregate_of_the_real_search` |
 
-- [ ] the six unclassified personal config paths are gitignored and classified,
+- [x] the six unclassified personal config paths are gitignored and classified,
       from a list derived from the tree rather than maintained by hand
-- [ ] `data_dir()` resolves against the repository root, and the never-in-git
+- [x] `data_dir()` resolves against the repository root, and the never-in-git
       probe for it is gitignored
-- [ ] no real employer, recruiting mailbox, posting title, or posting id
+- [x] no real employer, recruiting mailbox, posting title, or posting id
       remains in the test suite
-- [ ] the resume timeline and the compensation figures are synthetic
-- [ ] the aggregates are removed from the ADRs, the specs, the parity matrix,
+- [x] the resume timeline and the compensation figures are synthetic
+- [x] the aggregates are removed from the ADRs, the specs, the parity matrix,
       and its regenerated checklist
-- [ ] each new check fails against the state that preceded it, executed rather
+- [x] each new check fails against the state that preceded it, executed rather
       than asserted
 - [ ] All gates green on PR
 

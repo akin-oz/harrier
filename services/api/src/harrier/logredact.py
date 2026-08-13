@@ -16,21 +16,27 @@ What this does and does not protect:
   bundle. That is a real path and it was undefended.
 - Redaction is by literal value. A name spelled differently from the profile
   document, or a paraphrase, is not caught. This is a floor.
-- The values are read once, at configure time. A contact added later in the
-  same process is not redacted until the next start. Reading per record would
-  put a database query on every log call, which is the wrong trade for a
-  process that logs on failure paths.
+- The value set is refreshed from the one tracker write path (ADR-003) rather
+  than read once at configure time. The API is long-lived, so a contact added
+  after startup is the normal case, not the edge, and an earlier version left
+  exactly that unredacted (review of PR #49). Refreshing at the write path
+  rather than per log record keeps the database off the logging path, where a
+  query that failed would log and recurse.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 from typing import cast
 
-# Below this length a "value" is not identifying and redacting it would shred
-# unrelated lines: a one-letter name, an empty column, a bare initial.
-MIN_REDACTABLE_LENGTH = 4
+# A one-character value is not identifying and matches everywhere. Everything
+# longer is redacted, but a short value only where it stands as its own word:
+# that was the real reason for the old four-character floor, and a boundary
+# match answers it without giving up the redaction (review of PR #49).
+MIN_REDACTABLE_LENGTH = 2
+WORD_BOUNDED_BELOW = 4
 
 REDACTION = "[redacted]"
 
@@ -102,9 +108,24 @@ class IdentityRedactionFilter(logging.Filter):
 
     def __init__(self, values: set[str]) -> None:
         super().__init__()
+        self._set_values(values)
+
+    def _set_values(self, values: set[str]) -> None:
         # Longest first, so redacting an address does not leave the name behind
         # inside it, or vice versa.
         self._values = sorted(values, key=len, reverse=True)
+        self._patterns = [
+            (
+                value,
+                re.compile(rf"\b{re.escape(value)}\b") if len(value) < WORD_BOUNDED_BELOW else None,
+            )
+            for value in self._values
+        ]
+
+    def refresh(self, values: set[str]) -> None:
+        """Replace the value set in place, so every handler already holding
+        this filter starts redacting the new values immediately."""
+        self._set_values(values)
 
     def filter(self, record: logging.LogRecord) -> bool:
         if not self._values:
@@ -114,10 +135,45 @@ class IdentityRedactionFilter(logging.Filter):
         except (TypeError, ValueError):
             return True
         redacted = message
-        for value in self._values:
-            if value in redacted:
+        for value, bounded in self._patterns:
+            if bounded is not None:
+                redacted = bounded.sub(REDACTION, redacted)
+            elif value in redacted:
                 redacted = redacted.replace(value, REDACTION)
         if redacted != message:
             record.msg = redacted
             record.args = ()
         return True
+
+
+# Every filter configure_logging installed, so a refresh reaches all of them.
+# A list rather than a single slot because the CLI and the API each configure
+# their own process, and tests configure repeatedly with force=True.
+_INSTALLED: list[IdentityRedactionFilter] = []
+
+
+def register(filter_: IdentityRedactionFilter) -> None:
+    _INSTALLED.append(filter_)
+
+
+def forget_all() -> None:
+    """Drop the registry. Only `configure_logging(force=True)` and tests."""
+    _INSTALLED.clear()
+
+
+def refresh_installed(conn: sqlite3.Connection) -> None:
+    """Re-read identity values and push them into every installed filter.
+
+    Called from the tracker write path, so a contact is redactable from the
+    moment it exists rather than from the next process start. Best effort for
+    the same reason the initial load is: a refresh that fails must not break
+    the write it was triggered by.
+    """
+    if not _INSTALLED:
+        return
+    try:
+        values = identity_values(conn)
+    except sqlite3.Error:
+        return
+    for installed in _INSTALLED:
+        installed.refresh(values)

@@ -86,13 +86,53 @@ def test_identity_values_survives_a_database_without_the_tables(tmp_path: Path) 
     assert identity_values(bare) == set()
 
 
-def test_short_values_are_not_redactable(tmp_path: Path) -> None:
-    """A one-letter name would shred every unrelated line that contains it."""
+def test_a_short_identity_is_redacted_on_a_word_boundary() -> None:
+    """An earlier version skipped anything under four characters, so a
+    two-letter name reached the log untouched. The compiled privacy rule
+    grants no such exemption (review of PR #49)."""
+    record = logging.LogRecord("t", logging.INFO, __file__, 1, "note from Jo today", None, None)
+    IdentityRedactionFilter({"Jo"}).filter(record)
+    assert "Jo" not in record.getMessage()
+    assert REDACTION in record.getMessage()
+
+
+def test_a_short_value_inside_another_word_is_left_alone() -> None:
+    """The reason the length floor existed: redacting `Jo` by substring turns
+    every `Join`, `Jobs` and `Jordan` into noise. A boundary match keeps the
+    redaction and drops the shredding."""
+    record = logging.LogRecord(
+        "t", logging.INFO, __file__, 1, "Jobs joined the Johnson queue", None, None
+    )
+    IdentityRedactionFilter({"Jo"}).filter(record)
+    assert record.getMessage() == "Jobs joined the Johnson queue"
+
+
+def test_a_single_character_value_is_still_ignored(tmp_path: Path) -> None:
+    """One character is not identifying and matches as its own word constantly:
+    an initial, a column left as `a`."""
     conn = sqlite3.connect(tmp_path / "short.db")
     conn.execute("CREATE TABLE contacts (person_name TEXT, person_email TEXT, linkedin_url TEXT)")
-    conn.execute("INSERT INTO contacts VALUES ('Jo', '', '')")
+    conn.execute("INSERT INTO contacts VALUES ('J', '', '')")
     conn.commit()
     assert identity_values(conn) == set()
+
+
+def test_a_contact_added_after_startup_is_redacted(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The API runs for days, so a contact added after configure_logging is
+    the normal case. It used to reach the log unredacted until restart, which
+    the spec accepted as a limitation and the review rightly refused."""
+    from harrier.tracker.store import add_contact
+
+    written = _capture(monkeypatch)
+    add_contact(db, {"person_name": "Wilhelmina Latecomer", "company": "Exampleco"})
+
+    logging.getLogger("harrier.outreach").info("drafted for Wilhelmina Latecomer")
+
+    assert written, "nothing was logged"
+    assert "Wilhelmina Latecomer" not in written[0]
+    assert REDACTION in written[0]
 
 
 def test_the_candidate_name_does_not_reach_a_log_line(
