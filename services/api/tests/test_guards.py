@@ -25,6 +25,33 @@ from harrier.demo import repo_root
 ROOT = repo_root()
 HOOKS = ROOT / ".claude" / "hooks"
 
+GIT_IDENTITY = [
+    "-c",
+    "user.email=test@example.com",
+    "-c",
+    "user.name=Test",
+    "-c",
+    "commit.gpgsign=false",
+]
+
+
+def git(repo: Path, *args: str) -> str:
+    """git in a throwaway repo. The identity flags are not decoration: a CI
+    runner has no user.email, so `git commit` exits 128 there and passes
+    locally, which is how both of these tests went green before CI saw them."""
+    result = subprocess.run(
+        ["git", *GIT_IDENTITY, *args], cwd=repo, capture_output=True, text=True, check=True
+    )
+    return result.stdout
+
+
+def a_repo(tmp_path: Path, name: str) -> Path:
+    repo = tmp_path / name
+    repo.mkdir(parents=True)
+    git(repo, "init", "-q", "-b", "main")
+    return repo
+
+
 DENY = 2
 ALLOW = 0
 
@@ -102,10 +129,8 @@ def test_the_turn_gate_sees_a_file_that_is_only_added(tmp_path: Path) -> None:
     a last resort: it breaks on a wrapped line and passes for the wrong reason
     (review of PR #50).
     """
-    repo = tmp_path / "repo"
-    (repo / ".git").mkdir(parents=True)
-    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "base"], cwd=repo, check=True)
+    repo = a_repo(tmp_path, "repo")
+    git(repo, "commit", "-q", "--allow-empty", "-m", "base")
     (repo / "added.py").write_text("x = 1\n", encoding="utf-8")
 
     bindir = tmp_path / "bin"
@@ -193,16 +218,34 @@ def test_the_spec_gate_refuses_a_base_it_cannot_resolve() -> None:
     assert "does not resolve" in result.stderr
 
 
-def test_a_null_base_checks_every_commit_not_on_main() -> None:
-    """A branch's first push has no previous tip. Checking one commit there
-    would skip the rest of the branch."""
-    head = subprocess.run(
-        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=ROOT, check=True
-    ).stdout.strip()
+def test_a_null_base_checks_every_commit_not_on_main(tmp_path: Path) -> None:
+    """A branch's first push has no previous tip, and the old fallback checked
+    one commit there, so everything before the tip went unchecked.
+
+    Built against a synthetic repository with a known shape. The first version
+    read this repository, which passed locally and failed in CI because CI
+    checks out a merge ref whose range is a single trailer-less commit: a test
+    that depended on the topology it happened to run in.
+    """
+    repo = a_repo(tmp_path, "nullbase")
+    (repo / "spec.txt").write_text("base\n", encoding="utf-8")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "base")
+
+    git(repo, "checkout", "-q", "-b", "work")
+    for n in (1, 2):
+        (repo / f"f{n}.txt").write_text("x\n", encoding="utf-8")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", f"work {n}\n\nSpec: 044")
+    head = git(repo, "rev-parse", "HEAD").strip()
+
     result = subprocess.run(
-        ["python3", str(ROOT / "scripts" / "spec_gate.py"), str(ROOT), "0" * 40, head],
+        ["python3", str(ROOT / "scripts" / "spec_gate.py"), str(repo), "0" * 40, head],
         capture_output=True,
         text=True,
         cwd=ROOT,
     )
-    assert result.stdout.count("ok:") > 1, "a null base checked only the tip"
+    # Both work commits are in the range, not just the tip.
+    assert result.stdout.count("no 'Spec: NNN' trailer") == 0, result.stdout
+    assert result.stdout.count("work 1") == 1, f"the first commit was skipped:\n{result.stdout}"
+    assert result.stdout.count("work 2") == 1, result.stdout
