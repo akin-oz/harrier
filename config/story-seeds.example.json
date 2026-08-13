@@ -2,10 +2,10 @@
   {
     "id": "funnel_conversion_turnaround",
     "theme": "Impact at Scale",
-    "situation": "Inherited a signup funnel handling ~250K applications/year with a ~40% completion rate.",
+    "situation": "Inherited a signup funnel handling ~100K applications/year with a ~50% completion rate.",
     "task": "Own the frontend end to end, identify drop-off causes, and measurably improve completion.",
     "action": "Instrumented the funnel with structured telemetry, identified the biggest friction points, rebuilt key form steps with better validation UX, and added performance checks to CI.",
-    "result": "Completion grew from ~40% to ~70% across hundreds of thousands of applications.",
+    "result": "Completion grew from ~50% to ~75% across hundreds of thousands of applications.",
     "reflection": "Set up telemetry on day one rather than reverse-engineering drop-off from logs."
   },
   {

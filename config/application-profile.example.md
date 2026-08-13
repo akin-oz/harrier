@@ -15,8 +15,8 @@ truth-source validation.
 
 ## Reusable Professional Stories
 
-- funnel_conversion_improvement: signup funnel completion from ~40% to
-  ~70% across ~250K annual applications.
+- funnel_conversion_improvement: signup funnel completion from ~50% to
+  ~75% across ~100K annual applications.
 - ai_assisted_workflow_automation: AI-assisted local automation pipeline
   with validation gates.
 
