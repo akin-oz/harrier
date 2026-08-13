@@ -100,10 +100,18 @@ any history rewrite:
 - [ ] `gitleaks detect` over the full history, zero findings.
 - [ ] Classification coverage test green.
 - [ ] `git ls-files` reviewed file by file; every file's class confirmed.
-- [ ] `git log --stat` for the whole history reviewed for accidental adds
-      (including the pre-ADR-008 commits: the only ever-committed private file
-      was an encrypted placeholder with no personal content; verify nothing
-      else slipped in).
+- [ ] `git log --stat` for the whole history reviewed for accidental adds.
+      This line used to assert that the only privately-classed file ever
+      committed was an encrypted placeholder with no personal content. That
+      was false: `config/feeds.txt` and `config/linkedin_search_urls.txt` held
+      the real watchlist and the real saved searches, were committed, and were
+      untracked later without their blobs going anywhere (spec 046). A
+      reviewer working this checklist honestly would have signed off on a
+      history that still served them. Verify against the object graph, not
+      against this sentence.
+- [ ] After any rewrite, confirm the remote no longer serves the old objects,
+      and record that anyone who cloned before it keeps them: a force push
+      reduces exposure and does not undo it.
 - [ ] Fixtures re-checked by privacy-reviewer; no real person recoverable.
 - [ ] `.env.example` contains placeholders only.
 - [ ] README limitations section states what privacy this design does and does
