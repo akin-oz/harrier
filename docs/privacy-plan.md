@@ -55,9 +55,24 @@ gets content; an uncovered path is a spec-worthy gap, not a judgment call.
 ## 5. Log redaction
 
 - The logging setup loads candidate and contact identity values from the
-  database at startup and installs a redaction filter for them.
+  database at startup and installs a redaction filter for them
+  (`harrier.logredact`, installed by `configure_logging`, proven by
+  `services/api/tests/test_logging.py`).
 - LLM prompts and artifact contents log at debug only; debug logs are
   never-in-git.
+
+This sentence was false from spec 029 until spec 045: there was no
+`logging.Filter` anywhere in the tree, and `configure_logging` was called only
+by the CLI, so the process serving the browser had neither. It is written here
+because a public repository that claims a privacy control it never built is
+worse than one that admits the gap, and the record of having done it once is
+the cheapest defence against doing it again.
+
+What redaction does not do: it matches literal values read once at startup, so
+a paraphrase, a different spelling, or a contact added later in the same
+process is not caught, and values shorter than four characters are ignored
+deliberately. Logs are never-in-git regardless, so this defends the log that
+gets pasted into an issue or shared on a call, not the repository.
 
 ## 6. Fixture policy
 
