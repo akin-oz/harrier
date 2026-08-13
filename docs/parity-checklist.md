@@ -28,7 +28,7 @@ repository: keep them about the capability, never about a company or a person.
 - [ ] `eu-permit-and-eu-entity-phrases-as-positive-signals-never-filters` **EU-permit and EU-entity phrases as positive signals, never filters** (keep: behavior identical, proof named) source: `scripts/job_sources.py` (PREFERRED_SIGNAL_WEIGHTS), `CLAUDE.md` "Candidate EU status"
 - [ ] `scoring-model-base-30-title-keywords-skill-signals-region-domain-bonus-c` **Scoring model (base 30, title, keywords, skill signals, region, domain bonus, cap 120)** (keep: behavior identical, proof named) source: `scripts/job_sources.py` (score_job, DEFAULT_SCORING)
 - [ ] `archetype-detection` **Archetype detection** (change: difference verified intentional) source: `scripts/job_sources.py` (detect_archetype) + two more copies
-- [ ] `description-cache-keyed-by-url-hash` **Description cache keyed by URL hash** (keep: behavior identical, proof named) source: `state/job-descriptions/` (4,079 files)
+- [ ] `description-cache-keyed-by-url-hash` **Description cache keyed by URL hash** (keep: behavior identical, proof named) source: `state/job-descriptions/` (one file per description)
 - [ ] `jd-enrichment-fetch-for-short-descriptions-on-ats-hosts` **JD enrichment fetch for short descriptions on ATS hosts** (keep: behavior identical, proof named) source: `scripts/job_sources.py` (enrich_job_description_for_scoring)
 - [ ] `per-source-seen-state-capped-at-10-000-keys` **Per-source seen-state, capped at 10,000 keys** (keep: behavior identical, proof named) source: `state/job-discovery/*_seen.json`
 - [ ] `notes-column-as-key-value-store-score-signals-external-key` **notes column as key=value store (score=, signals=, external_key=, ...)** (change: difference verified intentional) source: `scripts/job_sources.py` (extract_note_value)
@@ -76,7 +76,7 @@ repository: keep them about the capability, never about a company or a person.
 - [ ] `resume-facts-module-experience-years-period-labels` **Resume facts module (experience years, period labels)** (keep: behavior identical, proof named) source: `scripts/resume_facts.py`
 - [ ] `offer-evaluation-6-block-report-machine-verdict-contract` **Offer evaluation: 6-block report, machine verdict contract** (change: difference verified intentional) source: `scripts/evaluate_offer.py`
 - [ ] `batch-prospect-evaluation-with-auto-reject-at-confidence-threshold` **Batch prospect evaluation with auto-reject at confidence threshold** (change: difference verified intentional) source: `scripts/evaluate_prospects.py`
-- [ ] `star-story-bank-append` **STAR story bank append** (change: difference verified intentional) source: `scripts/evaluate_offer.py` writing `interview-prep/story-bank.md` (641 KB)
+- [ ] `star-story-bank-append` **STAR story bank append** (change: difference verified intentional) source: `scripts/evaluate_offer.py` writing `interview-prep/story-bank.md`
 - [ ] `pipeline-inbox-from-markdown-checklist` **Pipeline inbox from markdown checklist** (drop: confirmed dropped on purpose) source: `scripts/process_pipeline.py`, `data/pipeline.md`
 - [ ] `provider-seam-codex-cli-claude-cli-openai-api-anthropic-api-auto-fallbac` **Provider seam: codex-cli, claude-cli, openai-api, anthropic-api, auto fallback chain** (keep: behavior identical, proof named) source: `scripts/llm_client.py`
 

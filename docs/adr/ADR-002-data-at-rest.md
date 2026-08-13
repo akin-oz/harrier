@@ -18,7 +18,7 @@ Harrier is one public repo. The system handles three kinds of sensitive data tod
 2. Third-party PII: recruiter and contact names, emails, LinkedIn URLs
    (`tracker/contacts.csv`, `runtime/outreach/**`), plus mailbox-derived events
    (`gmail_handler.log`).
-3. Live credentials: 14 keys in `.env` (OpenAI, Anthropic, Apify, Telegram, Hunter,
+3. Live credentials: the live API keys in `.env` (OpenAI, Anthropic, Apify, Telegram, Hunter,
    Gmail OAuth paths) and Google OAuth client and token JSON in `secrets/`.
 
 A stranger must be able to clone and run demo mode with none of it. In the old repo,

@@ -104,7 +104,7 @@ State when this shipped, from `harrier cutover preflight` against the real
 machine: two blocking checks. The parity checklist stood at 0 of 96 decided,
 and the old repo's .env has a value spanning a line break at line 20, which
 is the defect that has kept the old digest from running. The tracker check
-passed at 701 jobs and all three old jobs were loaded. So the tooling exists
+passed at the full tracker size and all three old jobs were loaded. So the tooling exists
 and correctly refuses; the cutover has not happened.
 
 ## Stated changes from the plan

@@ -20,7 +20,7 @@ Legend:
 | EU-permit and EU-entity phrases as positive signals, never filters | `scripts/job_sources.py` (PREFERRED_SIGNAL_WEIGHTS), `CLAUDE.md` "Candidate EU status" | keep | EU-entity contracting context; a requirement, not a heuristic. |
 | Scoring model (base 30, title, keywords, skill signals, region, domain bonus, cap 120) | `scripts/job_sources.py` (score_job, DEFAULT_SCORING) | keep | Overridable from candidate config; behavior preserved, weights stay config-driven. |
 | Archetype detection | `scripts/job_sources.py` (detect_archetype) + two more copies | change | Keep the capability, collapse the three copies (also in `evaluate_offer.py` and `tailor_resume.py`) into one domain function. |
-| Description cache keyed by URL hash | `state/job-descriptions/` (4,079 files) | keep | Saves Apify re-billing and re-fetches; port as is, migrate existing cache. |
+| Description cache keyed by URL hash | `state/job-descriptions/` (one file per description) | keep | Saves Apify re-billing and re-fetches; port as is, migrate existing cache. |
 | JD enrichment fetch for short descriptions on ATS hosts | `scripts/job_sources.py` (enrich_job_description_for_scoring) | keep | Prevents false low-score rejections; pinned by tests. |
 | Per-source seen-state, capped at 10,000 keys | `state/job-discovery/*_seen.json` | keep | Cross-run dedupe layer; migrate existing state at cutover. |
 | notes column as key=value store (score=, signals=, external_key=, ...) | `scripts/job_sources.py` (extract_note_value) | change | The hidden schema becomes real columns in the new store (ADR-003). external_key dedupe becomes a first-class indexed field. |
@@ -72,7 +72,7 @@ Legend:
 | Resume facts module (experience years, period labels) | `scripts/resume_facts.py` | keep | Clean domain module already; ports nearly as is. |
 | Offer evaluation: 6-block report, machine verdict contract | `scripts/evaluate_offer.py` | change | Keep the capability and verdict contract; route its private OpenAI path through the shared provider seam (`scripts/llm_client.py` is bypassed today). |
 | Batch prospect evaluation with auto-reject at confidence threshold | `scripts/evaluate_prospects.py` | change | Keep, but auto-reject becomes an explicit opt-in flag with an audit trail; it is the only automated status mutation and it has a `.bak-auto-reject` scar. |
-| STAR story bank append | `scripts/evaluate_offer.py` writing `interview-prep/story-bank.md` (641 KB) | change | Keep story capture, add dedupe and a bounded store; the append-only file grows without limit. |
+| STAR story bank append | `scripts/evaluate_offer.py` writing `interview-prep/story-bank.md` | change | Keep story capture, add dedupe and a bounded store; the append-only file grows without limit. |
 | Pipeline inbox from markdown checklist | `scripts/process_pipeline.py`, `data/pipeline.md` | drop | Lightly used; the capture server and manual add cover the same flow. |
 | Provider seam: codex-cli, claude-cli, openai-api, anthropic-api, auto fallback chain | `scripts/llm_client.py` | keep | Env-selected, pluggable, with fallback-on-empty; becomes the only LLM entry point (see the two bypasses above). |
 
@@ -139,10 +139,10 @@ Legend:
 | Path | Verdict | Rationale |
 |---|---|---|
 | `_bmad/` | drop | BMAD framework install; nothing in the job-hunt code references it. |
-| `downloaded_skills/` + `skills.json` | drop | 51 marketplace skills unrelated to this project. |
+| `downloaded_skills/` + `skills.json` | drop | Marketplace skills unrelated to this project. |
 | `.claude/skills/` | drop | BMAD skills, same. |
 | `interview-prep/` | keep (data) | Real prep content; migrates into the local database (ADR-008), not public. |
-| `reports/` | keep (data) | 266 evaluation reports; regenerable but useful history. Migrates as private data; existence-gating for re-runs keeps. |
+| `reports/` | keep (data) | Evaluation reports; regenerable but useful history. Migrates as private data; existence-gating for re-runs keeps. |
 | `templates/resume-template.html` + css, cover-letter templates | keep | Render shells for the PDF pipeline. |
 | `templates/job-fit-rubric*`, `job-eval-*` | drop | Human reference docs no code reads; scoring lives in code and config. |
 | `templates/openclaw-*.md` | drop | OpenClaw is explicitly out of scope. |
@@ -154,7 +154,7 @@ Legend:
 
 ## Counts
 
-Keep 59, change 22, drop 16, across 97 rows. Every change and drop above traces to a spec
+Keep 59, change 22, drop 16, across 97 matrix rows. Every change and drop above traces to a spec
 in the backlog before implementation; nothing is dropped by accident at cutover: the parity
 checklist (`docs/parity-checklist.md`) is generated from this table by
 `harrier parity checklist`, and `test_parity.py::test_stated_counts_match_the_table` fails
