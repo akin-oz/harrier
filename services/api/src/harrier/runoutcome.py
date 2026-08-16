@@ -1,10 +1,13 @@
 """Whether a run worked, and when each job last did (spec 029).
 
-This project exists because a scheduled job can fail silently.
-The rewrite reproduced the mechanism: discovery ended in a literal `return 0`,
-every upstream failure was absorbed into the summary rather than the exit
-status, and the only notification was gated on having found something. A run
-where every board answered 404 exited zero and said nothing.
+This project exists because a scheduled job can fail silently
+(`specs/029-run-outcome-visibility.md`). The rewrite reproduced the mechanism:
+discovery ended in a literal `return 0`, every upstream failure was absorbed
+into the summary rather than the exit status, and the only notification was
+gated on having found something. A run where every board answered 404 exited
+zero and said nothing. That run now exits non-zero and says so, proven by
+`tests/test_run_outcome.py::test_a_run_where_every_source_failed_exits_non_zero`
+and `::test_the_notification_is_sent_when_nothing_was_found`.
 
 Two ideas here, and they are separate on purpose.
 
@@ -59,8 +62,11 @@ class RunOutcome:
 
         Both are the shape of a broken installation rather than a quiet week.
         Nothing attempted usually means nothing is configured or every source
-        was skipped, and a scheduled job that runs nothing every four hours
-        indefinitely is the exact outage this spec exists for.
+        was skipped, and a scheduled job that runs nothing on its cadence
+        indefinitely is the exact outage `specs/029-run-outcome-visibility.md`
+        exists for. Pinned by
+        `tests/test_run_outcome.py::test_a_run_that_attempted_nothing_exits_non_zero`
+        and `::test_a_run_where_everything_was_skipped_exits_non_zero`.
         """
         return not self.attempted or len(self.failed) == len(self.attempted)
 

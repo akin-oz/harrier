@@ -71,14 +71,13 @@ with a tracker entity is flagged; a cap or a page size is a specification and
 is exempt by its qualifier.
 
 **Nor how long a real incident lasted.** Amended after the review of PR #51,
-which found a spec recording that a scheduled job on this machine failed
-silently for a stated number of months. The aggregate rule above reads
-straight past it: this is the same disclosure in a different unit, a
-measurement of the maintainer's own running system rather than a rule the
-code must satisfy. A sweep found ten instances across specs, the governance
-sources, their generated copies, and two module docstrings, which is the
-documented recurrence shape for this repository: the finding names one sink
-and the property holds nowhere.
+which found a spec pairing a silently failing scheduled job with the time it
+ran undetected. The aggregate rule above reads straight past it: this is the
+same disclosure in a different unit, a measurement of the maintainer's own
+running system rather than a rule the code must satisfy. A sweep found the
+same shape across specs, the governance sources, their generated copies, and
+module docstrings, which is the documented recurrence shape for this
+repository: the finding names one sink and the property holds nowhere.
 
 The failure mode is what the project needs to describe, and it is kept
 everywhere. How long it went unnoticed, on whose machine, is removed. A
@@ -150,6 +149,11 @@ that earned them.
 - [x] no committed file states how long a real incident lasted, in the specs,
       the governance sources, their generated copies, or the module
       docstrings, and a cadence is not mistaken for one
+- [x] that check reads wrapped prose, so a disclosure split across two lines
+      is still found, and its grammar covers indefinite durations as well as
+      counted ones (review of PR #53)
+- [x] that check exempts no file, including the one that defines it, pinned by
+      `test_the_rule_scans_its_own_file`
 - [x] each new check fails against the state that preceded it, executed rather
       than asserted
 - [ ] All gates green on PR
