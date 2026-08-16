@@ -359,7 +359,9 @@ def test_the_staged_file_is_private_from_the_moment_it_exists(env: Path) -> None
         write_run_input("notes about why this job")
 
     assert seen, "the file was not created through os.open, so no mode was requested"
-    assert all(mode & 0o077 == 0 for mode in seen), f"created with {[oct(m) for m in seen]}"
+    # The exact contract, not merely "nothing for group or other": 0o400
+    # satisfies that mask and is not what `write_run_input` promises.
+    assert all(mode == 0o600 for mode in seen), f"created with {[oct(m) for m in seen]}"
 
 
 def test_the_staged_directory_is_not_traversable_by_other_users(env: Path) -> None:

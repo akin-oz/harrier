@@ -112,8 +112,12 @@ export function OutreachPage() {
       const path = approve
         ? "/outreach/{selector}/candidates/approve"
         : "/outreach/{selector}/candidates/reject";
+      // `settled`, not `selector`: the rows on screen belong to the settled
+      // value, and during the debounce window the two differ. Sending the raw
+      // value applied a decision about one job to another (review finding on
+      // PR #51).
       const { error } = await api.POST(path, {
-        params: { path: { selector } },
+        params: { path: { selector: settled } },
         body: { linkedin_url: url },
       });
       if (error !== undefined) throw new Error(refused(error, "could not record that decision"));
@@ -127,7 +131,7 @@ export function OutreachPage() {
   const findContacts = useMutation({
     mutationFn: async () => {
       const { error } = await api.POST("/outreach/{selector}/find-contacts", {
-        params: { path: { selector } },
+        params: { path: { selector: settled } },
         body: { best_only: false, max_items: null },
       });
       if (error !== undefined) throw new Error(refused(error, "could not start contact discovery"));
@@ -234,7 +238,7 @@ export function OutreachPage() {
         </label>
         <button
           type="button"
-          disabled={selector === "" || findContacts.isPending}
+          disabled={settled === "" || settled !== selector || findContacts.isPending}
           onClick={() => {
             setFailure(null);
             findContacts.mutate();
@@ -249,13 +253,16 @@ export function OutreachPage() {
       {/* An unknown job id answers 404, and this used to render nothing at
           all: the operator typed an id, the page went quiet, and the reason
           never reached them. Spec 048 requires the refusal to be visible. */}
-      {settled !== "" && candidates.isError && (
+      {settled === selector && settled !== "" && candidates.isError && (
         <p role="alert" className="outreach-page__error">
           {candidates.error.message}
         </p>
       )}
 
-      {settled !== "" && candidates.isSuccess && (
+      {/* Nothing actionable is shown while the typed value and the settled
+          one disagree, so a decision cannot land on the row of a job the
+          operator has already navigated away from. */}
+      {settled === selector && settled !== "" && candidates.isSuccess && (
         <>
           <p className="outreach-page__muted">
             Staged for your decision. Approving is what creates a contact; nothing else does.

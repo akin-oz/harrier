@@ -158,6 +158,34 @@ test("approving posts to the approval route with the candidate's identifier", as
   expect(sent?.body).toEqual({ linkedin_url: CANDIDATE_URL });
 });
 
+test("a decision cannot land on a job the operator has navigated away from", async () => {
+  // The debounce introduced this: the rows on screen belonged to the settled
+  // value while a decision sent the raw one, so approving during that window
+  // applied a decision about one job to another (review finding on PR #51).
+  const calls = stubApi({ candidates: [candidate()] });
+  const user = userEvent.setup();
+  renderPage();
+
+  await user.type(screen.getByLabelText("Job id"), "12");
+  await screen.findByRole("button", { name: "Approve" });
+
+  // Type on, so the typed value and the settled one disagree.
+  await user.type(screen.getByLabelText("Job id"), "9");
+  expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
+  });
+  await user.click(screen.getByRole("button", { name: "Approve" }));
+
+  await waitFor(() => {
+    expect(calls.some((call) => call.url.endsWith("/candidates/approve"))).toBe(true);
+  });
+  const sent = calls.find((call) => call.url.endsWith("/candidates/approve"));
+  // 129, the job whose candidates are on screen, never 12.
+  expect(sent?.url).toBe("/api/outreach/129/candidates/approve");
+});
+
 test("a refused approval is shown in the words the API used", async () => {
   stubApi({
     candidates: [candidate()],
