@@ -43,8 +43,16 @@ COPY services/api/pyproject.toml services/api/uv.lock services/api/
 
 # Dependencies as their own layer: the project itself is installed after the
 # source arrives, so editing a module does not reinstall FastAPI.
+# Every non-dev dependency group, because the UI can reach every feature.
+# Optional on a laptop means "install it when you want that feature"; in an
+# image it means the feature is missing and the operator cannot install it.
+# `pdf` backs resume and cover letter generation, whose artifact gate is
+# PDF-or-failure. `gmail` backs the mail watch run that `POST /mail/watch`
+# starts. Both were absent from the first image and both fail identically:
+# a run that dies on a lazy import telling the operator to run an install
+# command, inside a container.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    cd services/api && uv sync --frozen --no-install-project --no-dev
+    cd services/api && uv sync --frozen --no-install-project --no-dev --group pdf --group gmail
 
 COPY services/api services/api
 
@@ -70,7 +78,26 @@ COPY docs docs
 COPY --from=web /build/apps/web/dist apps/web/dist
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    cd services/api && uv sync --frozen --no-dev
+    cd services/api && uv sync --frozen --no-dev --group pdf --group gmail
+
+# Chromium renders the PDF and `pdfinfo` counts its pages. Both are needed for
+# `harrier tailor` to reach a validated artifact rather than an error.
+#
+# The browser path is pinned rather than left to default. The container runs as
+# the host user's uid with no passwd entry, so HOME is unset and resolves to
+# `/`, and Playwright looked for its browser under `/.cache/ms-playwright`,
+# which is neither writable at build time nor where the download went. A fixed
+# world-readable location makes the lookup independent of which uid runs it.
+#
+# This is the largest thing in the image by far. It is here because the
+# alternative is an artifact run that fails in the UI with a message telling
+# the operator to run an install command inside a container.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN /app/services/api/.venv/bin/playwright install --with-deps chromium \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends poppler-utils \
+    && rm -rf /var/lib/apt/lists/* \
+    && chmod -R a+rX /ms-playwright
 
 # What this image is, readable at runtime. An image is stale until rebuilt, so
 # a container that answers correctly while running old code is the failure this

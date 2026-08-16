@@ -172,6 +172,41 @@ running container whose image predates the working tree is then visible instead
 of silent. Without this criterion the change re-creates today's failure with
 better ergonomics, which is worse than leaving it alone.
 
+### The image carries what the features need, not only what imports resolve
+
+**Amendment, at implementation.** This spec said the image "builds the SPA and
+installs the Python service", and that turned out to describe an image that
+cannot do the work. Three rounds of the same defect:
+
+1. `templates/`, `fixtures/` and the parity documents were never copied, so
+   every module was present and the files three of them open were not.
+   `harrier tailor` died on a missing resume template.
+2. The `pdf` dependency group was skipped, because it is optional. Optional on
+   a laptop means "install it when you want the feature"; in an image it means
+   the feature is absent and the operator cannot add it. The next run died on
+   a missing Chromium.
+3. `gmail` was the same shape behind it, unhit only because nobody had started
+   a mail watch from the UI yet.
+
+So the rule is stated rather than left to whoever edits the Dockerfile next:
+**the image installs every non-dev dependency group and copies every
+repository directory the runtime resolves.** Both halves are derived by tests
+from the source and from `pyproject.toml`, not from a list in the Dockerfile,
+because a hand-maintained list is what produced all three.
+
+Chromium and `poppler-utils` are in the image for the same reason. The artifact
+gate is PDF-or-failure and the page count comes from `pdfinfo`, so a container
+without them turns every artifact run into an error telling the operator to run
+an install command inside a container.
+
+Cost, stated rather than discovered: the image is about 2.4 GB, and Chromium
+with its system libraries is nearly all of it. That is the price of the daily
+driver being able to do what the host could.
+
+`PLAYWRIGHT_BROWSERS_PATH` is pinned. The container runs as the host user's uid
+with no passwd entry, so `HOME` resolves to `/` and Playwright looked for its
+browser under `/.cache/ms-playwright`, which is not where the build put it.
+
 ## Inputs, outputs, failure modes
 
 - Inputs: `docker compose up -d` from the repository root, the host's `.env`,

@@ -217,6 +217,61 @@ def test_personal_directories_are_mounted_rather_than_copied(personal: str) -> N
     assert personal not in copied_paths(), f"{personal}/ is copied into the image"
 
 
+PYPROJECT = ROOT / "services" / "api" / "pyproject.toml"
+
+# Tooling, not a feature. The image is a runtime, so this one stays out and its
+# absence is asserted rather than assumed.
+BUILD_ONLY_GROUPS = {"dev"}
+
+
+def dependency_groups() -> set[str]:
+    """The group names declared in `pyproject.toml`, read from the file.
+
+    Derived so a group added tomorrow is either installed or explicitly
+    build-only, instead of becoming a lazy import that fails inside a running
+    container.
+    """
+    text = PYPROJECT.read_text(encoding="utf-8")
+    section = text.split("[dependency-groups]", 1)
+    assert len(section) == 2, "pyproject declares no dependency groups"
+    body = re.split(r"^\[", section[1], maxsplit=1, flags=re.MULTILINE)[0]
+    groups = set(re.findall(r"^([a-z][a-z0-9_-]*)\s*=\s*\[", body, flags=re.MULTILINE))
+    assert groups, "no dependency groups parsed; the scan did not run"
+    return groups
+
+
+@pytest.mark.parametrize("group", sorted(dependency_groups() - BUILD_ONLY_GROUPS))
+def test_the_image_installs_every_feature_dependency_group(group: str) -> None:
+    """Optional on a laptop is not optional in an image.
+
+    On a laptop an optional group means "install it when you want that
+    feature". In an image it means the feature is absent and the operator has
+    no way to add it: the run just fails with a message telling them to run an
+    install command. `pdf` was missing and `harrier tailor` died on Chromium;
+    `gmail` was missing behind it and `POST /mail/watch` would have died the
+    same way.
+    """
+    assert f"--group {group}" in DOCKERFILE.read_text(encoding="utf-8"), (
+        f"dependency group {group!r} is a feature the UI can reach, but the image never installs it"
+    )
+
+
+def test_the_dev_group_stays_out_of_the_runtime_image() -> None:
+    assert "--no-dev" in DOCKERFILE.read_text(encoding="utf-8")
+
+
+def test_the_browser_path_is_pinned_rather_than_left_to_home() -> None:
+    """The container runs as a uid with no passwd entry, so HOME resolves to
+    `/` and Playwright looked under `/.cache/ms-playwright`, which is not where
+    the download went. Pinning the path makes the lookup uid-independent."""
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    assert "PLAYWRIGHT_BROWSERS_PATH=" in text
+    assert "playwright install" in text
+    # The page-count gate shells out to pdfinfo; without poppler every render
+    # validates as "could not inspect PDF page count".
+    assert "poppler-utils" in text
+
+
 def test_the_container_comes_back_when_docker_starts() -> None:
     assert "restart: unless-stopped" in COMPOSE.read_text(encoding="utf-8")
 
