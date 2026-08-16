@@ -3,6 +3,7 @@ import { useState } from "react";
 
 import type { Job } from "../entities/job";
 import { ApplyPage } from "../pages/apply/ApplyPage";
+import { InboxPage } from "../pages/inbox/InboxPage";
 import { OutreachPage } from "../pages/outreach/OutreachPage";
 import { TrackerPage } from "../pages/tracker/TrackerPage";
 import "../shared/ui/tokens.css";
@@ -18,6 +19,7 @@ const queryClient = new QueryClient({
 const SECTIONS = [
   { id: "tracker", label: "Tracker" },
   { id: "outreach", label: "Outreach" },
+  { id: "inbox", label: "Inbox" },
 ] as const;
 
 type Section = (typeof SECTIONS)[number]["id"];
@@ -60,8 +62,10 @@ export function App() {
             />
           ) : section === "tracker" ? (
             <TrackerPage onApply={setApplying} />
-          ) : (
+          ) : section === "outreach" ? (
             <OutreachPage />
+          ) : (
+            <InboxPage />
           )}
         </main>
       </div>

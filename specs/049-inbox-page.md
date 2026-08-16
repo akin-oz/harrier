@@ -128,29 +128,71 @@ Failure modes this must not introduce:
 
 ## Acceptance criteria
 
-Proving symbols are named at implementation.
+All symbols below are in `services/api/tests/test_ui_inbox.py` unless another
+file is named.
 
-- [ ] `POST /mail/watch` and the `gmail-watch` verb call the same domain
-      function, asserted in the shape spec 042 established
-- [ ] the dry-run flag reaches `run_watch` and suppresses notification, proven
+- [x] `POST /mail/watch` and the `gmail-watch` verb call the same domain
+      function (`::test_the_route_argv_reaches_the_same_function_the_cli_verb_does`,
+      which executes the argv the route builds). Registry coverage is held
+      once, by `services/api/tests/test_ui_outreach.py::test_every_parameterized_kind_is_reachable_from_a_page`,
+      which failed on this spec's new kind until its route was listed
+- [x] the dry-run flag reaches `run_watch` and suppresses notification, proven
       by a test that asserts nothing was sent
-- [ ] `GET /mail/events` returns only fields `redact_event` archives, proven by
+      (`::test_a_dry_run_notifies_nobody`, which also asserts the watch still
+      classified, so the assertion cannot pass because nothing happened, and
+      `::test_the_dry_run_flag_survives_the_trip_through_argv`). A dry run
+      still archives, which is what makes the classifier checkable
+- [x] `GET /mail/events` returns only fields `redact_event` archives, proven by
       a test that asserts the response of a seeded store carries no subject,
       no body, and no full sender address
-- [ ] a missing token fails the run with a message naming `gmail-oauth`
-- [ ] a notification failure is reported as a delivery failure, with the
+      (`::test_the_events_route_returns_nothing_the_archive_redacted`,
+      `::test_the_route_carries_only_fields_the_archive_holds`). The store's
+      own boundary is pinned separately by
+      `::test_the_archive_still_holds_only_what_it_held`, because the reader
+      test alone cannot catch a widened `ARCHIVED_FIELDS`: `append_event`
+      drops the subject on the way in, so a reader that grew the field would
+      still render an empty one
+- [x] a missing token fails the run with a message naming `gmail-oauth`
+      (`::test_a_missing_token_fails_the_watch_naming_the_command_that_repairs_it`).
+      Limitation found while writing it: with nothing configured at all the
+      watch fails earlier, on `missing environment variables`, and that
+      message names no fix. Recorded here rather than widened into this
+      change
+- [x] a notification failure is reported as a delivery failure, with the
       classification still reported as successful
-- [ ] zero actionable messages renders as a stated outcome, and a
+      (`::test_a_delivery_failure_is_not_the_same_as_a_broken_watch`). This
+      needed a change: the CLI returned a non-zero status and printed nothing
+      to tell a failed delivery from a broken watch, so it now says
+      `classified_but_not_delivered` with the count
+- [x] zero actionable messages renders as a stated outcome, and a
       never-run watch renders as "the watch has not run", and the two are
       different strings
-- [ ] a rotated event file is presented as a window rather than a full history
-- [ ] no route can write to `events.jsonl` except through `run_watch`
-- [ ] the generated client carries every new route and no hand-written request
-      or response shape appears in `apps/web`
-- [ ] no personal data enters a committed fixture, a test name, or a
+      (`apps/web/src/pages/inbox/InboxPage.test.tsx::a watch that never ran
+      does not read as an empty inbox`, `::a watch that ran and classified
+      nothing says that instead`, and
+      `::test_a_watch_that_never_ran_is_not_an_empty_inbox`,
+      `::test_a_watch_that_ran_and_classified_nothing_says_so`)
+- [x] a rotated event file is presented as a window rather than a full history
+      (`::test_a_rotated_archive_is_reported_as_a_window`,
+      `::test_a_short_archive_is_not_reported_as_a_window`, and
+      `apps/web/src/pages/inbox/InboxPage.test.tsx::an archive at its cap is
+      presented as a window rather than a history`)
+- [x] no route can write to `events.jsonl` except through `run_watch`
+      (`::test_only_the_watch_can_write_to_the_archive`, which reads the
+      module's syntax tree rather than its text after the first version
+      matched its own docstring, paired with the behavioural
+      `::test_reading_the_events_does_not_change_them`)
+- [x] the generated client carries every new route and no hand-written request
+      or response shape appears in `apps/web`: the page's rows are
+      `components["schemas"]["MailEventsOut"]` and `["MailEventOut"]`, and the
+      contract drift gate enforces the rest
+      (`::test_both_routes_are_in_the_contract`)
+- [x] no personal data enters a committed fixture, a test name, or a
       screenshot. Every seeded event is an invented company at an invented
-      domain
-- [ ] all gates green on PR
+      domain. Limitation: this is a property of the diff, and no test asserts
+      it
+- [x] all gates green on PR (`just check` passes: 1065 Python tests, 51 web
+      tests, contract regenerated with no change to any existing route)
 
 ## Proof / origin
 

@@ -238,6 +238,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/mail/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Mail Events
+         * @description The archived events, newest first.
+         *
+         *     No token: this is a read of a store that was redacted on the way in
+         *     (spec 049). The asymmetry with spec 047's artifact reads is the
+         *     redaction, not an oversight.
+         */
+        get: operations["listMailEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/mail/watch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Mail Watch
+         * @description The same `gmail-watch` verb the CLI runs, as a run.
+         *
+         *     A run rather than a request: it reaches a remote service, its duration
+         *     depends on how much mail is waiting, and its failures are the kind an
+         *     operator needs to read rather than a spinner that stops.
+         */
+        post: operations["runMailWatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/outreach/backfill-posters": {
         parameters: {
             query?: never;
@@ -1068,6 +1116,83 @@ export interface components {
             /** Url */
             url: string;
         };
+        /**
+         * MailEventOut
+         * @description One archived classification.
+         *
+         *     Every field here is one `redact_event` archives. There is no subject and
+         *     no sender, because the archive has neither.
+         */
+        MailEventOut: {
+            /**
+             * Actionable
+             * @default false
+             */
+            actionable?: boolean;
+            /**
+             * Company
+             * @default
+             */
+            company?: string;
+            /**
+             * From Domain
+             * @default
+             */
+            from_domain?: string;
+            /**
+             * Ignore Reason
+             * @default
+             */
+            ignore_reason?: string;
+            /** Kind */
+            kind: string;
+            /**
+             * Message Id
+             * @default
+             */
+            message_id?: string;
+            /**
+             * Next Action
+             * @default
+             */
+            next_action?: string;
+            /**
+             * Priority
+             * @default
+             */
+            priority?: string;
+            /**
+             * Role
+             * @default
+             */
+            role?: string;
+            /**
+             * Timestamp
+             * @default
+             */
+            timestamp?: string;
+            /**
+             * Tracker Row
+             * @default
+             */
+            tracker_row?: string;
+        };
+        /**
+         * MailEventsOut
+         * @description The window, and what it cannot tell you.
+         *
+         *     `has_run` is not a nicety: a watch that has never run and one that ran
+         *     and classified nothing produce the same empty list and mean entirely
+         *     different things.
+         */
+        MailEventsOut: {
+            /** At Cap */
+            at_cap: boolean;
+            /** Events */
+            events: components["schemas"]["MailEventOut"][];
+            /** Has Run */
+            has_run: boolean;
+        };
         /** MarkIn */
         MarkIn: {
             /** Date */
@@ -1198,6 +1323,18 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /**
+         * WatchIn
+         * @description A dry run classifies and notifies nobody, which is how an operator
+         *     checks the classifier without sending themselves messages.
+         */
+        WatchIn: {
+            /**
+             * Dry Run
+             * @default false
+             */
+            dry_run?: boolean;
         };
     };
     responses: never;
@@ -1863,6 +2000,77 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["JobOut"][];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    listMailEvents: {
+        parameters: {
+            query?: {
+                limit?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MailEventsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    runMailWatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WatchIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

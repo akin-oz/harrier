@@ -127,8 +127,10 @@ def test_every_parameterized_kind_is_reachable_from_a_page(env: Path) -> None:
     """The one exhaustive check over the whole run registry.
 
     Adding a kind without a route leaves an operation only the CLI can start,
-    which is the gap specs 042 and 048 exist to close. It lives here because
-    this spec is what grew the registry past spec 047's four.
+    which is the gap specs 042, 048 and 049 exist to close. It covers every
+    kind rather than this spec's, which is why adding `gmail-watch` in spec
+    049 failed here until its route was listed. Whichever spec grows the
+    registry next updates this map.
     """
     paths = create_app().openapi()["paths"]
     routed = {
@@ -139,6 +141,7 @@ def test_every_parameterized_kind_is_reachable_from_a_page(env: Path) -> None:
         "find-contacts": "/outreach/{selector}/find-contacts",
         "outreach-draft": "/outreach/{selector}/draft",
         "backfill-posters": "/outreach/backfill-posters",
+        "gmail-watch": "/mail/watch",
     }
     assert set(routed) == set(PARAMETERIZED_KINDS), "a parameterized kind has no route"
     for path in routed.values():

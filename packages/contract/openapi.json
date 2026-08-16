@@ -686,6 +686,97 @@
         "title": "JobOut",
         "type": "object"
       },
+      "MailEventOut": {
+        "description": "One archived classification.\n\nEvery field here is one `redact_event` archives. There is no subject and\nno sender, because the archive has neither.",
+        "properties": {
+          "actionable": {
+            "default": false,
+            "title": "Actionable",
+            "type": "boolean"
+          },
+          "company": {
+            "default": "",
+            "title": "Company",
+            "type": "string"
+          },
+          "from_domain": {
+            "default": "",
+            "title": "From Domain",
+            "type": "string"
+          },
+          "ignore_reason": {
+            "default": "",
+            "title": "Ignore Reason",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "message_id": {
+            "default": "",
+            "title": "Message Id",
+            "type": "string"
+          },
+          "next_action": {
+            "default": "",
+            "title": "Next Action",
+            "type": "string"
+          },
+          "priority": {
+            "default": "",
+            "title": "Priority",
+            "type": "string"
+          },
+          "role": {
+            "default": "",
+            "title": "Role",
+            "type": "string"
+          },
+          "timestamp": {
+            "default": "",
+            "title": "Timestamp",
+            "type": "string"
+          },
+          "tracker_row": {
+            "default": "",
+            "title": "Tracker Row",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "MailEventOut",
+        "type": "object"
+      },
+      "MailEventsOut": {
+        "description": "The window, and what it cannot tell you.\n\n`has_run` is not a nicety: a watch that has never run and one that ran\nand classified nothing produce the same empty list and mean entirely\ndifferent things.",
+        "properties": {
+          "at_cap": {
+            "title": "At Cap",
+            "type": "boolean"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/MailEventOut"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "has_run": {
+            "title": "Has Run",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "events",
+          "has_run",
+          "at_cap"
+        ],
+        "title": "MailEventsOut",
+        "type": "object"
+      },
       "MarkIn": {
         "properties": {
           "date": {
@@ -1050,6 +1141,18 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "WatchIn": {
+        "description": "A dry run classifies and notifies nobody, which is how an operator\nchecks the classifier without sending themselves messages.",
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          }
+        },
+        "title": "WatchIn",
         "type": "object"
       }
     }
@@ -1875,6 +1978,97 @@
           }
         },
         "summary": "Jobs"
+      }
+    },
+    "/mail/events": {
+      "get": {
+        "description": "The archived events, newest first.\n\nNo token: this is a read of a store that was redacted on the way in\n(spec 049). The asymmetry with spec 047's artifact reads is the\nredaction, not an oversight.",
+        "operationId": "listMailEvents",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 500,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailEventsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Mail Events"
+      }
+    },
+    "/mail/watch": {
+      "post": {
+        "description": "The same `gmail-watch` verb the CLI runs, as a run.\n\nA run rather than a request: it reaches a remote service, its duration\ndepends on how much mail is waiting, and its failures are the kind an\noperator needs to read rather than a spinner that stops.",
+        "operationId": "runMailWatch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WatchIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Mail Watch"
       }
     },
     "/outreach/backfill-posters": {

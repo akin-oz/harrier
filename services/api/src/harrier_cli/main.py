@@ -613,6 +613,14 @@ def _cmd_gmail_watch(args: argparse.Namespace) -> int:
     for line in summary.lines:
         print(line)
     if summary.send_failure:
+        # Two different failures wore one face: the mail was classified and
+        # archived, and only the Telegram delivery failed. Saying so is what
+        # lets the operator tell "the watch is broken" from "the watch worked
+        # and my notifier did not" (spec 049).
+        print(
+            f"gmail_watch=classified_but_not_delivered actionable_count={summary.actionable_count}",
+            file=sys.stderr,
+        )
         # Clamp: POSIX exit statuses are modulo 256, so a raw helper value
         # like 256 would read as success (review finding).
         return min(max(1, summary.send_failure), 255)

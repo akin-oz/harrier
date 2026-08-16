@@ -33,6 +33,7 @@ from harrier_api.localauth import (
     load_or_create_token,
     require_token,
 )
+from harrier_api.mail_routes import mail_router
 from harrier_api.outreach_routes import outreach_router
 from harrier_api.runmodels import Manager, RunOut, run_out
 from harrier_api.runs import RunManager, RunParams, RunState, format_sse, write_run_input
@@ -709,6 +710,7 @@ def create_app(run_manager: RunManager | None = None, spa_dir: Path | None = Non
     app.include_router(tracker_router)
     app.include_router(apply_router)
     app.include_router(outreach_router)
+    app.include_router(mail_router)
     app.add_middleware(ApiPrefixMiddleware)
     # Closes DNS rebinding, which is what made every other protection here
     # bypassable: a page the operator visits resolves its own hostname to

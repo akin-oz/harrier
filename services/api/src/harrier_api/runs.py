@@ -86,6 +86,11 @@ PARAMETERIZED_KINDS: dict[str, ParameterizedKind] = {
         numbers=frozenset({"--limit"}),
         takes_job=False,
     ),
+    "gmail-watch": ParameterizedKind(
+        "gmail-watch",
+        switches=frozenset({"--dry-run"}),
+        takes_job=False,
+    ),
 }
 
 

@@ -8,6 +8,7 @@ from harrier.mail.run import WatchSummary, migrate_seen_state, run_watch
 from harrier.mail.watch import (
     ACTIONABLE_KINDS,
     GMAIL_SCOPES,
+    EventsWindow,
     GmailMessage,
     classify_message,
     env_config,
@@ -15,12 +16,14 @@ from harrier.mail.watch import (
     format_telegram_message,
     infer_company_role,
     normalize_gmail_api_message,
+    read_events,
     validate_env,
 )
 
 __all__ = [
     "ACTIONABLE_KINDS",
     "GMAIL_SCOPES",
+    "EventsWindow",
     "GmailMessage",
     "WatchSummary",
     "classify_message",
@@ -30,6 +33,7 @@ __all__ = [
     "infer_company_role",
     "migrate_seen_state",
     "normalize_gmail_api_message",
+    "read_events",
     "run_watch",
     "validate_env",
 ]
