@@ -67,6 +67,51 @@
         "title": "AddJobOut",
         "type": "object"
       },
+      "AnswersIn": {
+        "properties": {
+          "questions": {
+            "default": "",
+            "title": "Questions",
+            "type": "string"
+          }
+        },
+        "title": "AnswersIn",
+        "type": "object"
+      },
+      "ArtifactOut": {
+        "description": "One artifact kind for a job, present or not.\n\nCarries the filename rather than the path: the operator does not need the\nabsolute location, and it would put the home directory into every\nresponse for nothing.",
+        "properties": {
+          "exists": {
+            "title": "Exists",
+            "type": "boolean"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "produced_by": {
+            "title": "Produced By",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "exists",
+          "produced_by",
+          "media_type",
+          "filename"
+        ],
+        "title": "ArtifactOut",
+        "type": "object"
+      },
       "Body_captureJobFromForm": {
         "properties": {
           "company": {
@@ -225,6 +270,28 @@
           "updated_at"
         ],
         "title": "ConfigOut",
+        "type": "object"
+      },
+      "CoverLetterIn": {
+        "properties": {
+          "notes": {
+            "default": "",
+            "title": "Notes",
+            "type": "string"
+          }
+        },
+        "title": "CoverLetterIn",
+        "type": "object"
+      },
+      "EvaluateIn": {
+        "properties": {
+          "jd_text": {
+            "default": "",
+            "title": "Jd Text",
+            "type": "string"
+          }
+        },
+        "title": "EvaluateIn",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -675,6 +742,22 @@
         "title": "StatusChangeIn",
         "type": "object"
       },
+      "TailorIn": {
+        "properties": {
+          "jd_text": {
+            "default": "",
+            "title": "Jd Text",
+            "type": "string"
+          },
+          "no_ai": {
+            "default": false,
+            "title": "No Ai",
+            "type": "boolean"
+          }
+        },
+        "title": "TailorIn",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -724,6 +807,329 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/apply/{selector}/answers": {
+      "post": {
+        "operationId": "draftAnswers",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnswersIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "description": "no job matched the selector"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Draft Answers"
+      }
+    },
+    "/apply/{selector}/artifacts": {
+      "get": {
+        "description": "The index requires the token even though it is a read.\n\nTracker reads do not, and this deliberately differs: the names here are\nderived from the candidate's own name and the company, and the bodies\nbehind them are the densest personal content the system holds (spec 047).",
+        "operationId": "listArtifacts",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ArtifactOut"
+                  },
+                  "title": "Response Listartifacts",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "description": "no job matched the selector"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Artifacts"
+      }
+    },
+    "/apply/{selector}/artifacts/{kind}": {
+      "get": {
+        "operationId": "readArtifact",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "title": "Kind",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "description": "no such job, artifact kind, or the artifact is not produced yet"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Artifact"
+      }
+    },
+    "/apply/{selector}/cover-letter": {
+      "post": {
+        "operationId": "draftCoverLetter",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CoverLetterIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "description": "no job matched the selector"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Draft Cover Letter"
+      }
+    },
+    "/apply/{selector}/evaluate": {
+      "post": {
+        "operationId": "evaluateOffer",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvaluateIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "description": "no job matched the selector"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Evaluate Offer Route"
+      }
+    },
+    "/apply/{selector}/resume": {
+      "post": {
+        "description": "The same `tailor` verb the CLI runs, as a run (spec 047).",
+        "operationId": "tailorResume",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TailorIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "description": "no job matched the selector"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Tailor Resume"
+      }
+    },
     "/capture/add": {
       "get": {
         "description": "Renders. Changes nothing.\n\nThis used to add the row, which meant `<img src=\"http://localhost:8000/\ncapture/add?company=x&title=y\">` on any page the operator visited wrote to\nthe tracker with no interaction at all (spec 035).",

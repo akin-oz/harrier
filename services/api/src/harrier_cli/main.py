@@ -263,6 +263,13 @@ def _cmd_cover_letter(args: argparse.Namespace) -> int:
     jd_text, error_code = _read_jd_file(args.jd_file)
     if error_code is not None:
         return error_code
+    notes = args.notes
+    if getattr(args, "notes_file", None):
+        try:
+            notes = Path(args.notes_file).read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            print(f"cover letter failed: cannot read --notes-file: {error}", file=sys.stderr)
+            return 1
     conn = connect()
     try:
         row = get_job(conn, args.job_id)
@@ -275,7 +282,7 @@ def _cmd_cover_letter(args: argparse.Namespace) -> int:
             job_url=row.get("url", ""),
             tracker_row=row,
             jd_text=jd_text,
-            extra_notes=args.notes,
+            extra_notes=notes,
         )
         artifacts = write_cover_letter_artifacts(
             conn,
@@ -1424,7 +1431,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     cover.add_argument("--job-id", type=int, required=True)
     cover.add_argument("--jd-file", help="path to a job description text file")
-    cover.add_argument("--notes", help="extra guidance passed to the generator")
+    notes_group = cover.add_mutually_exclusive_group()
+    notes_group.add_argument("--notes", help="extra guidance passed to the generator")
+    # The API passes notes as a file rather than on argv: argv is readable
+    # from the process table and notes are the operator's own words (spec 047).
+    notes_group.add_argument("--notes-file", help="path to a file holding that guidance")
     cover.set_defaults(func=_cmd_cover_letter)
 
     answers = sub.add_parser(

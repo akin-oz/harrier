@@ -1,46 +1,16 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
 
 import type { components } from "@harrier/contract";
 
 import { api } from "../../shared/api/client";
 import "./RunPanel.css";
+import { TERMINAL_STATES, useRunStream } from "./useRunStream";
+import type { EventSourceFactory, RunOut } from "./useRunStream";
 
-type RunOut = components["schemas"]["RunOut"];
 type RunKind = components["schemas"]["StartRunIn"]["kind"];
-type RunEventPayload = components["schemas"]["RunEventOut"];
 
-export type EventSourceFactory = (url: string) => EventSource;
-
-const TERMINAL_STATES = new Set<RunOut["state"]>(["succeeded", "failed", "cancelled"]);
-
-interface ProgressState {
-  step: number | null;
-  total: number | null;
-}
-
-function describeEvent(payload: RunEventPayload): string {
-  if (payload.type === "log_line") {
-    return payload.line ?? "";
-  }
-  if (payload.type === "progress") {
-    return `progress ${String(payload.step ?? "?")}/${String(payload.total ?? "?")}: ${payload.message ?? ""}`;
-  }
-  if (payload.type === "state_change") {
-    return `run is ${payload.state ?? "unknown"}`;
-  }
-  return JSON.stringify(payload);
-}
-
-async function fetchRun(runId: string): Promise<RunOut> {
-  const { data, error } = await api.GET("/runs/{run_id}", {
-    params: { path: { run_id: runId } },
-  });
-  if (error !== undefined) {
-    throw new Error(`getRun failed: ${JSON.stringify(error)}`);
-  }
-  return data;
-}
+export type { EventSourceFactory };
 
 export function RunPanel({
   createEventSource = (url: string) => new EventSource(url),
@@ -48,30 +18,14 @@ export function RunPanel({
   createEventSource?: EventSourceFactory;
 }) {
   const queryClient = useQueryClient();
-  const [runId, setRunId] = useState<string | null>(null);
-  const [lines, setLines] = useState<readonly string[]>([]);
-  const [progress, setProgress] = useState<ProgressState | null>(null);
   // Collapsed by default. A healthy run is thousands of lines nobody needs
   // to read, and it used to push the tracker off the screen entirely. It
   // opens itself on failure, the one case where the log is the point.
   const [expanded, setExpanded] = useState(false);
-  const [disconnected, setDisconnected] = useState(false);
-  const sourceRef = useRef<EventSource | null>(null);
   const logRef = useRef<HTMLPreElement | null>(null);
 
-  useEffect(() => {
-    return () => {
-      sourceRef.current?.close();
-    };
-  }, []);
-
-  const runQuery = useQuery({
-    queryKey: ["run", runId],
-    queryFn: () => fetchRun(runId ?? ""),
-    enabled: runId !== null,
-  });
-  const run = runQuery.data ?? null;
-  const failed = run?.state === "failed";
+  const stream = useRunStream(createEventSource);
+  const { run, lines, progress, disconnected, failed } = stream;
 
   useEffect(() => {
     if (failed) {
@@ -84,37 +38,6 @@ export function RunPanel({
       logRef.current.scrollTop = logRef.current.scrollHeight;
     }
   }, [lines, expanded]);
-
-  const subscribe = useCallback(
-    (id: string) => {
-      sourceRef.current?.close();
-      const source = createEventSource(`/api/runs/${id}/events`);
-      source.onmessage = (message: MessageEvent<string>) => {
-        const payload = JSON.parse(message.data) as RunEventPayload;
-        setLines((existing) => [...existing, describeEvent(payload)]);
-        if (payload.type === "progress") {
-          setProgress({ step: payload.step ?? null, total: payload.total ?? null });
-        }
-        if (payload.type === "state_change" && payload.state != null) {
-          const state = payload.state;
-          queryClient.setQueryData<RunOut>(["run", id], (existing) =>
-            existing ? { ...existing, state, exit_code: payload.exit_code ?? null } : existing,
-          );
-          if (TERMINAL_STATES.has(state)) {
-            source.close();
-          }
-        }
-      };
-      source.onerror = () => {
-        // The stream dropping is not the run failing: say so, and refetch
-        // server truth rather than leaving the panel looking stuck.
-        setDisconnected(true);
-        void queryClient.invalidateQueries({ queryKey: ["run", id] });
-      };
-      sourceRef.current = source;
-    },
-    [createEventSource, queryClient],
-  );
 
   const startMutation = useMutation({
     mutationFn: async (kind: RunKind) => {
@@ -131,13 +54,8 @@ export function RunPanel({
       return data;
     },
     onSuccess: (data) => {
-      setLines([]);
-      setProgress(null);
       setExpanded(false);
-      setDisconnected(false);
-      setRunId(data.id);
-      queryClient.setQueryData<RunOut>(["run", data.id], data);
-      subscribe(data.id);
+      stream.begin(data);
     },
   });
 

@@ -13,6 +13,17 @@ export const TOKEN_HEADER = "X-Harrier-Token";
 
 const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
+// The one read that carries the token. Tracker reads do not, and this differs
+// deliberately: an artifact is a generated resume, cover letter or offer
+// evaluation, which is the densest personal content the system holds, so the
+// API requires the token on it (spec 047).
+const TOKENED_READS = /\/apply\/[^/]+\/artifacts(\/|$)/;
+
+function needsToken(request: Request): boolean {
+  if (MUTATING.has(request.method.toUpperCase())) return true;
+  return TOKENED_READS.test(new URL(request.url).pathname);
+}
+
 // Fetched once and reused. The API refuses a state-changing request that does
 // not carry it, which is what stops a page that merely happens to be open in
 // the same browser from starting a run or rewriting configuration
@@ -41,9 +52,9 @@ export const api = createClient<paths>({
 
 api.use({
   async onRequest({ request }) {
-    // Only where it is required. Adding it to reads would send it to every
-    // GET for no gain and make it that much easier to leak.
-    if (!MUTATING.has(request.method.toUpperCase())) return undefined;
+    // Only where it is required. Adding it to every read would send it for no
+    // gain and make it that much easier to leak.
+    if (!needsToken(request)) return undefined;
     const token = await localToken();
     if (token) request.headers.set(TOKEN_HEADER, token);
     return request;

@@ -54,7 +54,7 @@ async function fetchQueue(undecided: boolean): Promise<readonly Job[]> {
   return data;
 }
 
-export function TrackerPage() {
+export function TrackerPage({ onApply }: { onApply?: (job: Job) => void } = {}) {
   const [status, setStatus] = useState<JobStatus | "">("");
   const [search, setSearch] = useState("");
   const [view, setView] = useState<View>("all");
@@ -185,7 +185,22 @@ export function TrackerPage() {
           jobs={filtered}
           emptyMessage={emptyMessage}
           keepOrder={view !== "all"}
-          renderActions={(job) => <JobActions job={job} />}
+          renderActions={(job) => (
+            <>
+              <JobActions job={job} />
+              {onApply !== undefined && (
+                <button
+                  type="button"
+                  className="tracker-page__apply"
+                  onClick={() => {
+                    onApply(job);
+                  }}
+                >
+                  Apply
+                </button>
+              )}
+            </>
+          )}
         />
       )}
     </section>

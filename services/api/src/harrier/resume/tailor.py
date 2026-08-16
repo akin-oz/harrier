@@ -44,6 +44,30 @@ def resumes_dir() -> Path:
     return data_dir() / "resumes"
 
 
+def resume_paths_for(
+    candidate_name: str,
+    company: str,
+    role: str,
+    output_dir: Path | None = None,
+) -> dict[str, Path]:
+    """Where a tailoring run puts its files, by artifact kind.
+
+    `run_tailor` calls this rather than building the names inline, so the
+    reader that serves an artifact back and the writer that produced it cannot
+    disagree about where it is (spec 047). Duplicating the slug in the reader
+    is the second implementation the spec forbids.
+    """
+    directory = output_dir if output_dir is not None else resumes_dir()
+    slug = slugify(f"{candidate_name}-{company}-{role}")
+    return {
+        "markdown": directory / f"{slug}.md",
+        "html": directory / f"{slug}.html",
+        "pdf": directory / f"{slug}.pdf",
+        "metadata": directory / f"{slug}.metadata.json",
+        "evaluation": directory / f"{slug}.evaluation.md",
+    }
+
+
 def run_tailor(
     conn: sqlite3.Connection,
     job_id: int,
@@ -93,11 +117,11 @@ def run_tailor(
 
     directory = output_dir if output_dir is not None else resumes_dir()
     directory.mkdir(parents=True, exist_ok=True)
-    slug = slugify(f"{bundle.name}-{company}-{requested_role}")
-    markdown_path = directory / f"{slug}.md"
-    html_path = directory / f"{slug}.html"
-    pdf_path = directory / f"{slug}.pdf"
-    metadata_path = directory / f"{slug}.metadata.json"
+    paths = resume_paths_for(bundle.name, company, requested_role, directory)
+    markdown_path = paths["markdown"]
+    html_path = paths["html"]
+    pdf_path = paths["pdf"]
+    metadata_path = paths["metadata"]
 
     markdown_path.write_text(markdown + "\n", encoding="utf-8")
     html_path.write_text(html_text, encoding="utf-8")
@@ -120,7 +144,7 @@ def run_tailor(
 
     evaluation_path: Path | None = None
     if fit_evaluation is not None:
-        evaluation_path = directory / f"{slug}.evaluation.md"
+        evaluation_path = paths["evaluation"]
         evaluation_path.write_text(
             format_fit_evaluation_markdown(fit_evaluation, company, requested_role),
             encoding="utf-8",

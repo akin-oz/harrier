@@ -141,6 +141,23 @@ def cover_letters_dir() -> Path:
     return data_dir() / "cover-letters"
 
 
+def cover_letter_paths_for(
+    company: str, role: str, output_dir: Path | None = None
+) -> dict[str, Path]:
+    """Where a cover letter run puts its files, by artifact kind.
+
+    Shared by the writer below and by the reader that serves an artifact back,
+    so the two cannot disagree about where a letter is (spec 047).
+    """
+    directory = output_dir if output_dir is not None else cover_letters_dir()
+    slug = slugify(f"{company}-{role}")
+    return {
+        "markdown": directory / f"{slug}.md",
+        "html": directory / f"{slug}.html",
+        "pdf": directory / f"{slug}.pdf",
+    }
+
+
 def candidate_contact(conn: sqlite3.Connection) -> dict[str, str]:
     candidate = load_candidate_document(conn)
     block_raw = candidate.get("candidate")
@@ -387,10 +404,10 @@ def write_cover_letter_artifacts(
 ) -> dict[str, Path]:
     directory = output_dir if output_dir is not None else cover_letters_dir()
     directory.mkdir(parents=True, exist_ok=True)
-    slug = slugify(f"{company}-{role}")
-    markdown_path = directory / f"{slug}.md"
-    html_path = directory / f"{slug}.html"
-    pdf_path = directory / f"{slug}.pdf"
+    paths = cover_letter_paths_for(company, role, directory)
+    markdown_path = paths["markdown"]
+    html_path = paths["html"]
+    pdf_path = paths["pdf"]
 
     markdown = render_cover_letter_markdown(company, role, job_url, short_version, full_version)
     html_text = render_cover_letter_html(conn, company, role, full_version, template_dir)

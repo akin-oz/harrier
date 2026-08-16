@@ -4,6 +4,118 @@
  */
 
 export interface paths {
+    "/apply/{selector}/answers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Draft Answers */
+        post: operations["draftAnswers"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apply/{selector}/artifacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Artifacts
+         * @description The index requires the token even though it is a read.
+         *
+         *     Tracker reads do not, and this deliberately differs: the names here are
+         *     derived from the candidate's own name and the company, and the bodies
+         *     behind them are the densest personal content the system holds (spec 047).
+         */
+        get: operations["listArtifacts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apply/{selector}/artifacts/{kind}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Artifact */
+        get: operations["readArtifact"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apply/{selector}/cover-letter": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Draft Cover Letter */
+        post: operations["draftCoverLetter"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apply/{selector}/evaluate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Evaluate Offer Route */
+        post: operations["evaluateOffer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apply/{selector}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Tailor Resume
+         * @description The same `tailor` verb the CLI runs, as a run (spec 047).
+         */
+        post: operations["tailorResume"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/capture/add": {
         parameters: {
             query?: never;
@@ -354,6 +466,34 @@ export interface components {
             /** Status */
             status: string;
         };
+        /** AnswersIn */
+        AnswersIn: {
+            /**
+             * Questions
+             * @default
+             */
+            questions?: string;
+        };
+        /**
+         * ArtifactOut
+         * @description One artifact kind for a job, present or not.
+         *
+         *     Carries the filename rather than the path: the operator does not need the
+         *     absolute location, and it would put the home directory into every
+         *     response for nothing.
+         */
+        ArtifactOut: {
+            /** Exists */
+            exists: boolean;
+            /** Filename */
+            filename: string;
+            /** Kind */
+            kind: string;
+            /** Media Type */
+            media_type: string;
+            /** Produced By */
+            produced_by: string;
+        };
         /** Body_captureJobFromForm */
         Body_captureJobFromForm: {
             /**
@@ -473,6 +613,22 @@ export interface components {
             updated_at: string | null;
             /** Value */
             value: unknown;
+        };
+        /** CoverLetterIn */
+        CoverLetterIn: {
+            /**
+             * Notes
+             * @default
+             */
+            notes?: string;
+        };
+        /** EvaluateIn */
+        EvaluateIn: {
+            /**
+             * Jd Text
+             * @default
+             */
+            jd_text?: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -632,6 +788,19 @@ export interface components {
             /** Verb */
             verb: string;
         };
+        /** TailorIn */
+        TailorIn: {
+            /**
+             * Jd Text
+             * @default
+             */
+            jd_text?: string;
+            /**
+             * No Ai
+             * @default false
+             */
+            no_ai?: boolean;
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -654,6 +823,293 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    draftAnswers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                selector: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnswersIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no job matched the selector */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    listArtifacts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                selector: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactOut"][];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no job matched the selector */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readArtifact: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                selector: string;
+                kind: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no such job, artifact kind, or the artifact is not produced yet */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    draftCoverLetter: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                selector: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CoverLetterIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no job matched the selector */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    evaluateOffer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                selector: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EvaluateIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no job matched the selector */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    tailorResume: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                selector: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TailorIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no job matched the selector */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     captureJobConfirm: {
         parameters: {
             query?: {
