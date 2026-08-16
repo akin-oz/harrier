@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from contextlib import suppress
 from pathlib import Path
 from unittest.mock import patch
@@ -336,6 +337,46 @@ def test_a_staged_input_file_is_owner_readable_only(env: Path) -> None:
     path = write_run_input("notes about why this job")
     assert path.stat().st_mode & 0o077 == 0, "another local user can read the operator's words"
     assert path.parent == run_inputs_dir()
+
+
+def test_the_staged_file_is_private_from_the_moment_it_exists(env: Path) -> None:
+    """The mode is part of creation, not applied afterwards.
+
+    The test above passed while the file was created at the umask's mode and
+    only then chmodded, which on a common umask of 022 left the operator's
+    words world-readable for the width of that window. Checking the mode
+    after the fact cannot see a window, so this asserts the mode was
+    requested at open time (review finding on PR #51).
+    """
+    seen: list[int] = []
+    real_open = os.open
+
+    def recording_open(path: object, flags: int, mode: int = 0o777, **kwargs: object) -> int:
+        seen.append(mode)
+        return real_open(path, flags, mode, **kwargs)  # pyright: ignore[reportArgumentType]
+
+    with patch("harrier_api.runs.os.open", side_effect=recording_open):
+        write_run_input("notes about why this job")
+
+    assert seen, "the file was not created through os.open, so no mode was requested"
+    assert all(mode & 0o077 == 0 for mode in seen), f"created with {[oct(m) for m in seen]}"
+
+
+def test_the_staged_directory_is_not_traversable_by_other_users(env: Path) -> None:
+    """Belt to the file mode's braces: no path to the file either."""
+    write_run_input("notes")
+    assert run_inputs_dir().stat().st_mode & 0o077 == 0
+
+
+def test_a_pre_existing_directory_is_tightened_rather_than_trusted(env: Path) -> None:
+    """`mkdir(mode=...)` is ignored when the directory already exists, and an
+    install that predates this fix has a 0755 one sitting there."""
+    directory = run_inputs_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    directory.chmod(0o755)
+
+    write_run_input("notes")
+    assert directory.stat().st_mode & 0o077 == 0
 
 
 # --- artifacts ---------------------------------------------------------------

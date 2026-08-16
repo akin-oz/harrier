@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import uuid
 from collections.abc import AsyncIterator, Mapping
@@ -133,16 +134,25 @@ def run_inputs_dir() -> Path:
 def write_run_input(text: str) -> Path:
     """Put the operator's free text on disk so it never reaches argv.
 
-    Owner-readable only: this is the operator's own words about a job
-    application, and it lives under the data directory, which is
-    never-in-git. It is removed when the run that consumes it ends
-    (spec 047).
+    Owner-readable only, and owner-readable from the moment it exists. The
+    first version wrote the file and then chmodded it, which left it at the
+    umask's mode in between: on a common umask of 022 that is 0644, so the
+    operator's words about a job application were readable by every other
+    local user for the width of that window. The mode is now part of
+    creation, and the directory is created private too, so the window has no
+    path to it either (review finding on PR #51).
+
+    It is removed when the run that consumes it ends (spec 047).
     """
     directory = run_inputs_dir()
-    directory.mkdir(parents=True, exist_ok=True)
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # mkdir's mode is ignored when the directory already exists, and this one
+    # may predate the fix.
+    directory.chmod(0o700)
     path = directory / f"{uuid.uuid4().hex}.txt"
-    path.write_text(text, encoding="utf-8")
-    path.chmod(0o600)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(text)
     return path
 
 
