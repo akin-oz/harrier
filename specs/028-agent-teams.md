@@ -98,7 +98,7 @@ deserves defending.
 | `review-domain-model` | Every tracker column is a string, including scores, dates and enums. Statuses have no transitions. What can the model not express, and what does it permit that is illegal? |
 | `review-screening` | Most of the tracker is rejected and scores cluster well above the cutoff. Is the score discriminating, or is the cutoff dead? |
 | `review-honesty-gates` | The resume validator checks generated lines against a truth document, so it can only catch what that document contradicts. Is the honesty invariant real or nominal? |
-| `review-operability` | One machine, launchd, no auth, and a scheduled job that failed silently for two months. Can the operator tell that it is working? |
+| `review-operability` | One machine, launchd, no auth, and a scheduled job that can fail without a visible error. Can the operator tell that it is working? |
 
 ## Inputs, outputs, failure modes
 

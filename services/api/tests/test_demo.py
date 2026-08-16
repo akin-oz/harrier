@@ -433,6 +433,62 @@ _AGGREGATE_RE = re.compile(
     r"evaluation reports|reports|descriptions)\b",
     re.IGNORECASE,
 )
+# A duration sitting next to a failure word is a report of something that
+# happened here, not a rule. Both orders are matched, because the sentence
+# reads with the duration on either side of the failure word. The window is
+# one clause, so a duration that merely shares a paragraph with a failure word
+# does not trip it.
+#
+# Deliberately no self-exemption for this file. An earlier version skipped
+# test_demo.py entirely so that this comment could quote a violating phrase,
+# which blinded the rule to every other line of a 600-line file (review of
+# PR #53). The comment no longer quotes one, so the file is scanned like any
+# other and `test_the_rule_scans_its_own_file` holds it that way.
+_INCIDENT_WORDS = (
+    r"failed|failing|fails silently|silent|silently|outage|unnoticed|undetected|"
+    r"nobody noticed|no one noticed|stopped running|went unnoticed|broke"
+)
+# Indefinite and vague quantities are durations too. "a month", "several
+# weeks" and "thirteen days" all state how long something was broken while
+# naming no digit, and the first version of this grammar stopped at twelve
+# (review of PR #53).
+_COUNT = (
+    r"\d+|a couple of|a few|a handful of|one|two|three|four|five|six|seven|eight|"
+    r"nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|"
+    r"nineteen|twenty|thirty|forty|fifty|sixty|ninety|hundred|several|many|numerous"
+)
+_UNIT = r"second|minute|hour|day|week|month|year"
+# `an?` is admitted only for the coarse units. "a second line", "a second one"
+# and "a second copy" are ordinals rather than durations, and admitting bare
+# `a` for every unit made all three read as outages (review of PR #53). An
+# outage worth policing is not measured in "a second" anyway.
+_DURATION = rf"(?:(?:{_COUNT})[\s-](?:{_UNIT})s?|an?[\s-](?:day|week|month|year)s?)"
+# A duration standing before the failure word only reports an outage when a
+# preposition introduces it. A duration led by `for` reports one; a bare count
+# standing next to a noun the code implements does not. The retention sentence
+# in `backup.py` is the case that matters: the archive count and the window it
+# covers sit beside the word "unnoticed", and the first broadened version of
+# this rule read that specification as a disclosure.
+# `\b` matters: without it the `over` alternative matches the tail of "cover",
+# which is the exact word standing before the specification in `backup.py`.
+_TEMPORAL_LEAD = r"\b(?:for|over|after|within|lasting|spanning)\s+$"
+_INCIDENT_DURATION_RE = re.compile(
+    rf"(?:\b(?:{_INCIDENT_WORDS})\b[^.;\n]{{0,60}}?\b{_DURATION}\b"
+    rf"|\b{_DURATION}\b[^.;\n]{{0,60}}?\b(?:{_INCIDENT_WORDS})\b)",
+    re.IGNORECASE,
+)
+_TEMPORAL_LEAD_RE = re.compile(_TEMPORAL_LEAD, re.IGNORECASE)
+_INCIDENT_FIRST_RE = re.compile(
+    rf"\b(?:{_INCIDENT_WORDS})\b[^.;\n]{{0,60}}?\b{_DURATION}\b", re.IGNORECASE
+)
+# `every four hours` is a cadence, which is a specification of how often
+# something runs and not a measurement of how long anything was broken. The
+# first version read a job running on a fixed cadence and trying nothing as
+# a disclosure, which is the same false positive the aggregate check avoids
+# with its own qualifier. Admitting `a` and `an` to the grammar above brought
+# the rest: `four times a day` and `once a week` are cadences in the same way.
+_CADENCE_QUALIFIER = re.compile(r"(?:every|each|per|times|time|twice|once)\s*$", re.IGNORECASE)
+_DURATION_RE = re.compile(rf"\b{_DURATION}\b", re.IGNORECASE)
 _SPECIFICATION_QUALIFIER = re.compile(
     r"(?:capped at|cap of|up to|at most|no more than|max(?:imum)? of|per page|"
     r"page size|limit of|bounded to)\s*$",
@@ -481,6 +537,57 @@ def prose_files() -> list[Path]:
     ]
 
 
+def prose_paragraphs(text: str) -> list[tuple[int, str]]:
+    """Blank-line-separated blocks, each joined into one logical line.
+
+    A clause-bounded rule that reads one physical line at a time cannot see a
+    clause that wrapped, and prose in this repository is wrapped at about
+    eighty columns, so the wrap is the common case rather than the corner one.
+    A disclosure escaped exactly that way (review of PR #53).
+
+    Blank lines stay as separators so a match cannot span two paragraphs, and
+    the reported number is the paragraph's first line.
+    """
+    blocks: list[tuple[int, str]] = []
+    start = 0
+    buffer: list[str] = []
+    for number, line in enumerate(text.splitlines(), 1):
+        if line.strip():
+            if not buffer:
+                start = number
+            buffer.append(line.strip())
+            continue
+        if buffer:
+            blocks.append((start, " ".join(buffer)))
+            buffer = []
+    if buffer:
+        blocks.append((start, " ".join(buffer)))
+    return blocks
+
+
+def stated_incident_durations(text: str) -> list[tuple[int, str]]:
+    """Paragraphs of `text` that say how long a real failure lasted.
+
+    One function so the repository scan and the synthetic cases below exercise
+    the same decision rather than two copies of it that can drift.
+    """
+    found: list[tuple[int, str]] = []
+    for number, block in prose_paragraphs(text):
+        durations = list(_DURATION_RE.finditer(block))
+        # Every duration in the paragraph is a cadence, so nothing here says
+        # how long anything was broken.
+        if durations and all(
+            _CADENCE_QUALIFIER.search(block[: found_at.start()].rstrip()) for found_at in durations
+        ):
+            continue
+        for match in _INCIDENT_DURATION_RE.finditer(block):
+            leads_with_incident = _INCIDENT_FIRST_RE.match(match.group(0)) is not None
+            if leads_with_incident or _TEMPORAL_LEAD_RE.search(block[: match.start()]):
+                found.append((number, block))
+                break
+    return found
+
+
 def board_slug(url: str) -> str | None:
     try:
         parsed = urlparse(url)
@@ -524,6 +631,110 @@ def test_the_test_suite_addresses_only_reserved_domains() -> None:
             if not is_reserved(domain) and domain not in INFRASTRUCTURE_SENDERS:
                 offenders.append(f"{path.relative_to(ROOT)}: {address}")
     assert not offenders, "non-reserved address in the test suite: " + "; ".join(offenders)
+
+
+def test_no_committed_prose_states_how_long_a_real_incident_lasted() -> None:
+    """A duration attached to a real failure is operational history.
+
+    The aggregate check below looks for counts of tracker entities and reads
+    straight past a sentence pairing a silent failure with the time it ran
+    undetected. That is the same disclosure in a different unit: it measures
+    the maintainer's own running system rather than stating a rule the code
+    must satisfy. The review of PR #51 found one instance and a sweep found
+    more, across specs, the governance sources, their generated copies, and
+    module docstrings.
+
+    The failure mode is what the project needs to describe. How long it went
+    unnoticed, and on whose machine, is not, and reads as a specification only
+    until someone asks whose outage it was.
+
+    The rule scans this file too. Nothing here is exempt, so the sentences
+    above say what the rule forbids without demonstrating it, and the cases in
+    `test_the_rule_flags_a_stated_incident_duration` are assembled from
+    fragments for the same reason.
+    """
+    offenders: list[str] = []
+    for path in prose_files():
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for number, block in stated_incident_durations(text):
+            offenders.append(f"{path.relative_to(ROOT)}:{number}: {block.strip()[:70]}")
+    assert not offenders, "a real incident's duration is committed: " + "; ".join(offenders)
+
+
+# Assembled from fragments rather than written out. This file is scanned by
+# the rule under test, so a literal disclosure here would be a real one, and
+# writing the cases out is what forced the previous version to exempt the whole
+# file (review of PR #53). Each fragment is inert alone; the case is the join.
+_BROKE = "failed silently"
+_MISSED = "went unnoticed"
+_STOPPED = "stopped running and went unnoticed"
+# The durations are fragments for the same reason as the failure words: a
+# source line carrying both halves is itself a disclosure, whichever half is
+# spelled out.
+_MONTHS = "two months"
+_A_MONTH = "a month"
+_WEEKS = "several weeks"
+_DAYS = "thirteen days"
+_COUPLE = "a couple of weeks"
+_NINETEEN = "nineteen days"
+
+
+@pytest.mark.parametrize(
+    "disclosure",
+    [
+        # The wrap is the bypass that mattered: one clause in the source, two
+        # lines on disk. Line-at-a-time matching could never see it.
+        f"a scheduled job {_BROKE}\nfor {_MONTHS} before anyone looked",
+        f"a scheduled job {_BROKE} for {_MONTHS} before anyone looked",
+        f"the job {_STOPPED} for {_A_MONTH}",
+        f"the outage {_MISSED} for {_WEEKS}",
+        f"it {_BROKE} for {_DAYS}",
+        f"the digest {_BROKE} for {_COUPLE}",
+        f"the watch had broken and nobody noticed\nfor {_NINETEEN}",
+        # Duration first, introduced by a preposition.
+        f"for {_MONTHS} nobody noticed that discovery {_BROKE}",
+    ],
+)
+def test_the_rule_flags_a_stated_incident_duration(disclosure: str) -> None:
+    assert stated_incident_durations(disclosure)
+
+
+@pytest.mark.parametrize(
+    "specification",
+    [
+        # A cadence says how often something runs and measures no outage.
+        "a job that runs every four hours and tries nothing is still broken",
+        "discovery runs four times a day and a failed board is reported",
+        "the watch runs once a week; a silent failure is still a failure",
+        # Ordinals, not durations. All three of these shapes appear in the
+        # source tree and were flagged by the first broadened grammar.
+        "the wrapper broke by wrapping a value onto a second line",
+        "comparing only the first breach let a second one through",
+        "a test that asserts a remembered number is a second copy that goes stale silently",
+        # A quantity the code implements, not an outage: the duration leads
+        # with no preposition introducing it.
+        "fourteen nightly archives cover fourteen days, so a corruption that "
+        "went unnoticed had nothing behind it",
+        # A duration far from any failure word is not a report of an incident.
+        "the token expires in seven days",
+        # Separate sentences: the clause bound is what keeps this out.
+        "the job failed. seven days later the schedule was rewritten",
+    ],
+)
+def test_the_rule_leaves_specifications_and_cadences_alone(specification: str) -> None:
+    assert not stated_incident_durations(specification)
+
+
+def test_the_rule_scans_its_own_file() -> None:
+    """No self-exemption, because the previous one hid 600 lines.
+
+    The rule used to skip `test_demo.py` outright so its explanatory comment
+    could quote a violating phrase. That exempted every other line in the file
+    as a side effect (review of PR #53). The comment was reworded instead, so
+    this file is scanned like any other, and this test fails if the skip
+    returns.
+    """
+    assert Path(__file__).resolve() in prose_files()
 
 
 def test_no_committed_prose_states_an_aggregate_of_the_real_search() -> None:

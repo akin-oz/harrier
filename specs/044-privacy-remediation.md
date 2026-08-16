@@ -70,6 +70,20 @@ slug, which makes it a reviewable act rather than a silent omission.
 with a tracker entity is flagged; a cap or a page size is a specification and
 is exempt by its qualifier.
 
+**Nor how long a real incident lasted.** Amended after the review of PR #51,
+which found a spec pairing a silently failing scheduled job with the time it
+ran undetected. The aggregate rule above reads straight past it: this is the
+same disclosure in a different unit, a measurement of the maintainer's own
+running system rather than a rule the code must satisfy. A sweep found the
+same shape across specs, the governance sources, their generated copies, and
+module docstrings, which is the documented recurrence shape for this
+repository: the finding names one sink and the property holds nowhere.
+
+The failure mode is what the project needs to describe, and it is kept
+everywhere. How long it went unnoticed, on whose machine, is removed. A
+cadence is exempt: `every four hours` specifies how often something runs and
+measures no outage.
+
 **The resume timeline and the compensation figures in the example config are
 synthetic.** The employers were already scrubbed and the dates were not, which
 is the documented recurrence shape: the names go, the numbers stay. The
@@ -121,6 +135,7 @@ that earned them.
 | the suite names only synthetic employers | `services/api/tests/test_demo.py::test_the_test_suite_names_only_synthetic_employers` |
 | the suite addresses only reserved domains | `services/api/tests/test_demo.py::test_the_test_suite_addresses_only_reserved_domains` |
 | no committed prose states a real aggregate | `services/api/tests/test_demo.py::test_no_committed_prose_states_an_aggregate_of_the_real_search` |
+| no committed prose states how long a real incident lasted | `services/api/tests/test_demo.py::test_no_committed_prose_states_how_long_a_real_incident_lasted` |
 
 - [x] the six unclassified personal config paths are gitignored and classified,
       from a list derived from the tree rather than maintained by hand
@@ -131,6 +146,14 @@ that earned them.
 - [x] the resume timeline and the compensation figures are synthetic
 - [x] the aggregates are removed from the ADRs, the specs, the parity matrix,
       and its regenerated checklist
+- [x] no committed file states how long a real incident lasted, in the specs,
+      the governance sources, their generated copies, or the module
+      docstrings, and a cadence is not mistaken for one
+- [x] that check reads wrapped prose, so a disclosure split across two lines
+      is still found, and its grammar covers indefinite durations as well as
+      counted ones (review of PR #53)
+- [x] that check exempts no file, including the one that defines it, pinned by
+      `test_the_rule_scans_its_own_file`
 - [x] each new check fails against the state that preceded it, executed rather
       than asserted
 - [ ] All gates green on PR
