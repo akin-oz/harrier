@@ -17,12 +17,25 @@ const VERBS = [
   { verb: "reject", label: "Reject", from: [] },
 ] as const;
 
-type Props = { job: Job };
+// The one verb that is what to do next from this status. The rest stay
+// reachable behind a disclosure, which is what keeps the actions column
+// narrow enough that the table does not scroll sideways. Every verb is still
+// on the row; none is removed.
+function forwardVerb(status: string): (typeof VERBS)[number] | null {
+  return VERBS.find((entry) => (entry.from as readonly string[]).includes(status)) ?? null;
+}
 
-export function JobActions({ job }: Props) {
+// `onApply` is passed in rather than the page rendering its own button
+// beside this one: two separate controls stacked into two rows and made the
+// table row twice as tall as it needed to be. What to do next for this job
+// belongs on one line.
+type Props = { job: Job; onApply?: (job: Job) => void };
+
+export function JobActions({ job, onApply }: Props) {
   const queryClient = useQueryClient();
   const [reason, setReason] = useState("");
   const [asking, setAsking] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
   const change = useMutation({
@@ -75,6 +88,13 @@ export function JobActions({ job }: Props) {
   });
 
   const busy = change.isPending || rescore.isPending;
+  const primary = forwardVerb(job.status);
+  const closed = job.status === "rejected";
+  // Everything the row can do that is not the primary verb and not Reject,
+  // which has its own control because it asks for a reason first.
+  const secondary = VERBS.filter(
+    (entry) => entry.verb !== "reject" && entry.verb !== primary?.verb,
+  );
 
   return (
     <div className="job-actions">
@@ -82,33 +102,90 @@ export function JobActions({ job }: Props) {
           the other verbs are not what to do next. They used to stay live, so
           a click landed a status change on a row the operator was in the
           middle of rejecting (review finding on PR #41). */}
-      {!asking &&
-        VERBS.filter((entry) => entry.verb !== "reject").map((entry) => (
+      {!asking && (
+        <div className="job-actions__row">
+          {primary !== null && (
+            <button
+              type="button"
+              className="job-actions__primary"
+              disabled={busy || closed}
+              onClick={() => {
+                change.mutate({ verb: primary.verb });
+              }}
+            >
+              {primary.label}
+            </button>
+          )}
+          {/* Reject keeps its own control rather than sitting behind the
+              disclosure. It is the one verb that closes a row and the one
+              that asks for a reason, so it is weighted differently from the
+              rest. */}
           <button
-            key={entry.verb}
             type="button"
-            disabled={busy || job.status === "rejected"}
+            className="job-actions__reject"
+            disabled={busy || closed}
             onClick={() => {
-              change.mutate({ verb: entry.verb });
+              setAsking(true);
             }}
           >
-            {entry.label}
+            Reject
           </button>
-        ))}
-
-      {!asking && (
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => {
-            rescore.mutate();
-          }}
-        >
-          Rescore
-        </button>
+          {onApply !== undefined && (
+            <button
+              type="button"
+              disabled={closed}
+              aria-label={`Apply to ${job.company}, ${job.title}`}
+              onClick={() => {
+                onApply(job);
+              }}
+            >
+              Apply
+            </button>
+          )}
+          <button
+            type="button"
+            aria-expanded={moreOpen}
+            aria-label={`More actions for ${job.company}, ${job.title}`}
+            onClick={() => {
+              setMoreOpen(!moreOpen);
+            }}
+          >
+            More
+          </button>
+        </div>
       )}
 
-      {asking ? (
+      {!asking && moreOpen && (
+        <div
+          className="job-actions__more"
+          role="group"
+          aria-label={`More actions for ${job.company}, ${job.title}`}
+        >
+          {secondary.map((entry) => (
+            <button
+              key={entry.verb}
+              type="button"
+              disabled={busy || closed}
+              onClick={() => {
+                change.mutate({ verb: entry.verb });
+              }}
+            >
+              {entry.label}
+            </button>
+          ))}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              rescore.mutate();
+            }}
+          >
+            Rescore
+          </button>
+        </div>
+      )}
+
+      {asking && (
         <span className="job-actions__reason">
           <input
             aria-label="Rejection reason"
@@ -136,17 +213,6 @@ export function JobActions({ job }: Props) {
             Cancel
           </button>
         </span>
-      ) : (
-        <button
-          type="button"
-          className="job-actions__reject"
-          disabled={busy || job.status === "rejected"}
-          onClick={() => {
-            setAsking(true);
-          }}
-        >
-          Reject
-        </button>
       )}
 
       {failure !== null && (

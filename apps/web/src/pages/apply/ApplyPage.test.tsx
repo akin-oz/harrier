@@ -151,7 +151,7 @@ test("tailoring posts to the resume route for this job", async () => {
   const user = userEvent.setup();
   renderPage();
 
-  await user.click(screen.getByRole("button", { name: "Tailor resume" }));
+  await user.click(screen.getByRole("button", { name: "Run tailoring" }));
 
   await waitFor(() => {
     expect(calls.some((call) => call.url === "/api/apply/7/resume")).toBe(true);
@@ -167,7 +167,7 @@ test("each operation posts to its own route", async () => {
   renderPage();
 
   await user.click(screen.getByRole("radio", { name: "Evaluate offer" }));
-  await user.click(screen.getByRole("button", { name: "Evaluate offer" }));
+  await user.click(screen.getByRole("button", { name: "Evaluate the offer" }));
 
   await waitFor(() => {
     expect(calls.some((call) => call.url === "/api/apply/7/evaluate")).toBe(true);
@@ -181,7 +181,9 @@ test("drafting answers will not start without a question", async () => {
   renderPage();
 
   await user.click(screen.getByRole("radio", { name: "Draft answers" }));
-  expect(screen.getByRole("button", { name: "Draft answers" }).hasAttribute("disabled")).toBe(true);
+  expect(screen.getByRole("button", { name: "Draft the answers" }).hasAttribute("disabled")).toBe(
+    true,
+  );
   expect(screen.getByText("Add at least one question to draft.")).toBeTruthy();
 });
 
@@ -197,7 +199,7 @@ test("a refusal is shown in the words the API used", async () => {
   const user = userEvent.setup();
   renderPage();
 
-  await user.click(screen.getByRole("button", { name: "Tailor resume" }));
+  await user.click(screen.getByRole("button", { name: "Run tailoring" }));
 
   const alert = await screen.findByRole("alert");
   // The gate's own sentence, not "something went wrong".
@@ -210,7 +212,7 @@ test("a gate's refusal on a failed run is shown, not swallowed", async () => {
   const user = userEvent.setup();
   renderPage();
 
-  await user.click(screen.getByRole("button", { name: "Tailor resume" }));
+  await user.click(screen.getByRole("button", { name: "Run tailoring" }));
   await waitFor(() => {
     expect(FakeEventSource.last).not.toBeNull();
   });
@@ -235,7 +237,8 @@ test("a gate's refusal on a failed run is shown, not swallowed", async () => {
 
 // --- artifacts ---------------------------------------------------------------
 
-test("an absent artifact says which operation would produce it", async () => {
+test("an absent artifact is listed with the operation that would produce it", async () => {
+  // Listed rather than omitted: an omitted row cannot say what would make it.
   stubApi({
     artifacts: [
       artifact("resume-pdf", false, "resume"),
@@ -244,9 +247,28 @@ test("an absent artifact says which operation would produce it", async () => {
   });
   renderPage();
 
-  const absent = await screen.findByText(/Not generated yet/);
-  expect(absent.textContent).toContain("Tailor resume");
-  expect(absent.textContent).toContain("Draft cover letter");
+  expect(await screen.findByText("Tailored resume")).toBeTruthy();
+  expect(
+    screen.getByRole("button", { name: /^Select Tailor resume to produce Tailored resume/ }),
+  ).toBeTruthy();
+  expect(
+    screen.getByRole("button", { name: /^Select Draft cover letter to produce Cover letter/ }),
+  ).toBeTruthy();
+});
+
+test("the button on an absent artifact selects its operation and does not run it", async () => {
+  // These operations spend money. A control in a list of files that quietly
+  // started one would be a surprise, so it selects and the operator runs it.
+  const calls = stubApi({ artifacts: [artifact("resume-pdf", false, "resume")] });
+  const user = userEvent.setup();
+  renderPage();
+
+  await user.click(await screen.findByRole("button", { name: /^Select Tailor resume to produce/ }));
+
+  expect(screen.getByRole("radio", { name: "Tailor resume" }).getAttribute("aria-checked")).toBe(
+    "true",
+  );
+  expect(calls.some((call) => call.method === "POST")).toBe(false);
 });
 
 test("a present artifact is offered to open", async () => {
@@ -254,7 +276,16 @@ test("a present artifact is offered to open", async () => {
   renderPage();
 
   expect(await screen.findByText("Application answers")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Open" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Open Application answers" })).toBeTruthy();
+});
+
+test("the artifact summary counts what exists", async () => {
+  stubApi({
+    artifacts: [artifact("answers", true, "answers"), artifact("resume-pdf", false, "resume")],
+  });
+  renderPage();
+
+  expect(await screen.findByText("1 of 2 generated")).toBeTruthy();
 });
 
 test("nothing generated yet reads as such rather than as an empty list", async () => {
@@ -275,7 +306,7 @@ test("the artifact read carries the token although other reads do not", async ()
   // compare against. Asserting on /api/session would not work: the client
   // caches the token for the module's lifetime, so a later test never
   // re-fetches it.
-  await user.click(screen.getByRole("button", { name: "Tailor resume" }));
+  await user.click(screen.getByRole("button", { name: "Run tailoring" }));
 
   await waitFor(() => {
     expect(calls.some((call) => call.url === "/api/apply/7/artifacts")).toBe(true);

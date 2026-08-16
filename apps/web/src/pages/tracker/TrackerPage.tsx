@@ -185,22 +185,7 @@ export function TrackerPage({ onApply }: { onApply?: (job: Job) => void } = {}) 
           jobs={filtered}
           emptyMessage={emptyMessage}
           keepOrder={view !== "all"}
-          renderActions={(job) => (
-            <>
-              <JobActions job={job} />
-              {onApply !== undefined && (
-                <button
-                  type="button"
-                  className="tracker-page__apply"
-                  onClick={() => {
-                    onApply(job);
-                  }}
-                >
-                  Apply
-                </button>
-              )}
-            </>
-          )}
+          renderActions={(job) => <JobActions job={job} onApply={onApply} />}
         />
       )}
     </section>

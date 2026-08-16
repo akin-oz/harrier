@@ -129,12 +129,22 @@ test("a status button sends the verb, not a status the UI picked", async () => {
   expect(sent?.body).toEqual({ verb: "shortlist", reason: null });
 });
 
-test("every verb the CLI has is on the page", async () => {
+test("every verb the CLI has is reachable on the page", async () => {
+  // What to do next for this status sits on the row; the rest are behind the
+  // disclosure. The property is that none of them is gone, so this opens it
+  // and then asserts the whole set, rather than asserting that all five are
+  // visible at once.
   stubApi({ jobs: [job(1, "Northwind", "80")] });
+  const user = userEvent.setup();
   renderPage();
   const row = await rowFor("Northwind");
-  for (const label of ["Shortlist", "Request CV", "Applied", "Interviewing", "Reject"]) {
-    expect(within(row).getByRole("button", { name: label })).toBeDefined();
+
+  await user.click(within(row).getByRole("button", { name: /^More actions/ }));
+  for (const label of ["Shortlist", "Request CV", "Applied", "Interviewing", "Reject", "Rescore"]) {
+    expect(
+      within(row).getByRole("button", { name: label }),
+      `${label} is not reachable on the row`,
+    ).toBeDefined();
   }
 });
 
@@ -192,10 +202,12 @@ test("the queue view renders the server's ranking rather than re-sorting it", as
     expect(calls.some((call) => call.url.startsWith("/api/tracker/queue"))).toBe(true);
   });
   await waitFor(() => {
+    // The company element, not the whole cell: company and title share one
+    // column now. The ranking being asserted is unchanged.
     const companies = screen
       .getAllByRole("row")
       .slice(1)
-      .map((row) => row.querySelectorAll("td")[1]?.textContent);
+      .map((row) => row.querySelector(".job-table__company")?.textContent);
     expect(companies).toEqual(["Aurora", "Zephyr"]);
   });
 });
@@ -299,6 +311,7 @@ test("every tracker write carries the token and no read does", async () => {
 
   const row = await rowFor("Northwind");
   await user.click(within(row).getByRole("button", { name: "Shortlist" }));
+  await user.click(within(row).getByRole("button", { name: /^More actions/ }));
   await user.click(within(row).getByRole("button", { name: "Rescore" }));
   await user.click(screen.getByRole("button", { name: "Add a job by hand" }));
   await user.type(screen.getByLabelText("Company"), "Alder");
@@ -333,7 +346,11 @@ test("the other verbs are out of reach while a rejection reason is being typed",
   renderPage();
 
   const row = await rowFor("Northwind");
+  // Opened first, so Rescore is on screen and its disappearance below is the
+  // rejection hiding it rather than the disclosure never having been open.
+  await user.click(within(row).getByRole("button", { name: /^More actions/ }));
   expect(within(row).getByRole("button", { name: "Shortlist" })).toBeDefined();
+  expect(within(row).getByRole("button", { name: "Rescore" })).toBeDefined();
 
   await user.click(within(row).getByRole("button", { name: "Reject" }));
   expect(within(row).queryByRole("button", { name: "Shortlist" })).toBeNull();
