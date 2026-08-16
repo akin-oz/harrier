@@ -1120,8 +1120,14 @@ export interface components {
          * MailEventOut
          * @description One archived classification.
          *
-         *     Every field here is one `redact_event` archives. There is no subject and
-         *     no sender, because the archive has neither.
+         *     A subset of what `redact_event` archives. There is no subject and no
+         *     sender, because the archive has neither.
+         *
+         *     `messageId` is archived but deliberately not returned. It is a stable
+         *     identifier for a message in the operator's mailbox, and this route
+         *     answers without a token; the spec's argument for that is that nothing
+         *     identifying is here, and an id that survives across reads is the one
+         *     field that argument does not cover (review finding on PR #51).
          */
         MailEventOut: {
             /**
@@ -1146,11 +1152,6 @@ export interface components {
             ignore_reason?: string;
             /** Kind */
             kind: string;
-            /**
-             * Message Id
-             * @default
-             */
-            message_id?: string;
             /**
              * Next Action
              * @default

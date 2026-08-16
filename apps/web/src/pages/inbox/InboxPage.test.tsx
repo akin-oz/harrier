@@ -33,7 +33,6 @@ function event(overrides: Record<string, unknown> = {}) {
     tracker_row: "12",
     next_action: "Reply and confirm interview availability.",
     timestamp: "2026-08-10T09:00:00+00:00",
-    message_id: "abc123",
     from_domain: "northwind.example",
     actionable: true,
     ignore_reason: "",

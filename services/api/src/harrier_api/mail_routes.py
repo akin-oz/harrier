@@ -35,8 +35,14 @@ class WatchIn(BaseModel):
 class MailEventOut(BaseModel):
     """One archived classification.
 
-    Every field here is one `redact_event` archives. There is no subject and
-    no sender, because the archive has neither.
+    A subset of what `redact_event` archives. There is no subject and no
+    sender, because the archive has neither.
+
+    `messageId` is archived but deliberately not returned. It is a stable
+    identifier for a message in the operator's mailbox, and this route
+    answers without a token; the spec's argument for that is that nothing
+    identifying is here, and an id that survives across reads is the one
+    field that argument does not cover (review finding on PR #51).
     """
 
     kind: str
@@ -46,7 +52,6 @@ class MailEventOut(BaseModel):
     tracker_row: str = ""
     next_action: str = ""
     timestamp: str = ""
-    message_id: str = ""
     from_domain: str = ""
     actionable: bool = False
     ignore_reason: str = ""
@@ -78,7 +83,6 @@ def _as_event(raw: dict[str, object]) -> MailEventOut:
         tracker_row=text("tracker_row"),
         next_action=text("next_action"),
         timestamp=text("timestamp"),
-        message_id=text("messageId"),
         from_domain=text("from_domain"),
         actionable=bool(raw.get("actionable", False)),
         ignore_reason=text("ignore_reason"),

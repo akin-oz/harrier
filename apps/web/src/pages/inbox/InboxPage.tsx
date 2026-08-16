@@ -214,8 +214,11 @@ function Archive({ data, actionableCount }: { data: MailEvents; actionableCount:
             </tr>
           </thead>
           <tbody>
-            {data.events.map((event) => (
-              <EventRow key={`${event.message_id ?? ""}-${event.timestamp ?? ""}`} event={event} />
+            {data.events.map((event, index) => (
+              <EventRow
+                key={`${event.timestamp ?? ""}-${event.company ?? ""}-${String(index)}`}
+                event={event}
+              />
             ))}
           </tbody>
         </table>

@@ -79,7 +79,16 @@ notifications.
 
 `GET /mail/events` reads the archived events, newest first, with a limit. It
 is a read of a redacted store and follows the phase-1 rule that reads do not
-carry the token. This differs from spec 047's artifact reads, which do, and the
+carry the token.
+
+**Amended during implementation: the route returns a subset of the archive,
+not all of it.** The archive keeps `messageId`, and the first implementation
+returned it. A review found that this spec permits `from_domain` and argues
+for the missing token on the grounds that nothing identifying is here, and a
+stable identifier for a message in the operator's mailbox is the one field
+that argument does not cover: it survives across reads and lets an
+unauthenticated caller correlate them. It is no longer returned. It stays in
+the archive, which is spec 018's decision and is untouched. This differs from spec 047's artifact reads, which do, and the
 reason is the redaction: an artifact is the candidate's own resume, and an
 archived event has already had every identifying field removed.
 

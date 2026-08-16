@@ -202,6 +202,10 @@ def test_the_events_route_returns_nothing_the_archive_redacted(
     # What it does carry: the classification and the employer's domain.
     assert "interview_invite" in body
     assert "northwind.example" in body
+    # The archive's own message id is not returned either: this route answers
+    # without a token, and a stable identifier is the one field the spec's
+    # "nothing identifying is here" argument does not cover.
+    assert "abc123" not in body
 
 
 def test_the_archive_still_holds_only_what_it_held(env: Path) -> None:
@@ -242,7 +246,6 @@ def test_the_route_carries_only_fields_the_archive_holds(client: TestClient, env
         "tracker_row",
         "next_action",
         "timestamp",
-        "message_id",
         "from_domain",
         "actionable",
         "ignore_reason",
@@ -258,17 +261,17 @@ def test_the_next_action_comes_from_the_classifier(client: TestClient, env: Path
 
 
 def test_events_are_newest_first(client: TestClient, env: Path) -> None:
-    append_event(seed(messageId="older", timestamp="2026-08-01T09:00:00+00:00"))
-    append_event(seed(messageId="newer", timestamp="2026-08-09T09:00:00+00:00"))
+    append_event(seed(company="Older Labs", timestamp="2026-08-01T09:00:00+00:00"))
+    append_event(seed(company="Newer Labs", timestamp="2026-08-09T09:00:00+00:00"))
     events = client.get("/mail/events").json()["events"]
-    assert [item["message_id"] for item in events] == ["newer", "older"]
+    assert [item["company"] for item in events] == ["Newer Labs", "Older Labs"]
 
 
 def test_the_limit_takes_the_newest(client: TestClient, env: Path) -> None:
     for index in range(5):
-        append_event(seed(messageId=f"m{index}"))
+        append_event(seed(company=f"Company {index}"))
     events = client.get("/mail/events?limit=2").json()["events"]
-    assert [item["message_id"] for item in events] == ["m4", "m3"]
+    assert [item["company"] for item in events] == ["Company 4", "Company 3"]
 
 
 # --- three empty lists that mean different things ----------------------------

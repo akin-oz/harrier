@@ -687,7 +687,7 @@
         "type": "object"
       },
       "MailEventOut": {
-        "description": "One archived classification.\n\nEvery field here is one `redact_event` archives. There is no subject and\nno sender, because the archive has neither.",
+        "description": "One archived classification.\n\nA subset of what `redact_event` archives. There is no subject and no\nsender, because the archive has neither.\n\n`messageId` is archived but deliberately not returned. It is a stable\nidentifier for a message in the operator's mailbox, and this route\nanswers without a token; the spec's argument for that is that nothing\nidentifying is here, and an id that survives across reads is the one\nfield that argument does not cover (review finding on PR #51).",
         "properties": {
           "actionable": {
             "default": false,
@@ -711,11 +711,6 @@
           },
           "kind": {
             "title": "Kind",
-            "type": "string"
-          },
-          "message_id": {
-            "default": "",
-            "title": "Message Id",
             "type": "string"
           },
           "next_action": {
