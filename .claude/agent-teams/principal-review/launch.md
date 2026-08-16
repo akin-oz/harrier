@@ -33,7 +33,7 @@ currently allowed to say so.
 | Domain model        | `review-domain-model`        | sonnet | Every column is a string and statuses have no transitions. What can the model not express? |
 | Screening           | `review-screening`           | opus   | Is the score discriminating, or has the cutoff stopped doing work? |
 | Honesty gates       | `review-honesty-gates`       | opus   | The validator catches contradiction. Does it catch invention? |
-| Operability         | `review-operability`         | opus   | A scheduled job failed silently for two months. Would this one? |
+| Operability         | `review-operability`         | opus   | A scheduled job can fail with no visible error. Would this one? |
 
 All five are read-only in the enforceable sense: `Read, Glob, Grep` and no
 `Bash`, so nothing they can invoke writes, installs, or reaches the network.
@@ -104,9 +104,9 @@ export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
 > - **`review-honesty-gates`**: find the exact point a generated line is
 >   accepted and state what property is verified. Then write the invented
 >   line that passes: plausible, unsupported, uncontradicted.
-> - **`review-operability`**: start from the job in the old system that
->   failed silently for two months. For every scheduled job here, say how a
->   silent failure would be noticed, and what an attacker on the same machine
+> - **`review-operability`**: start from a scheduled job that stops running
+>   with no visible error. For every scheduled job here, say how a silent
+>   failure would be noticed, and what an attacker on the same machine
 >   reaches through an unauthenticated `POST /runs`.
 >
 > Findings name the file, the line, and what is wrong. They do not quote

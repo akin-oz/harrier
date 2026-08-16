@@ -70,8 +70,8 @@ def build_telegram_message(
     result is hard-capped as a last resort.
 
     The outcome line leads, because this message is now sent whether or not
-    anything was found (spec 029) and "0 new prospects" alone is what a
-    two-month outage looks like.
+    anything was found (spec 029) and "0 new prospects" alone is what an outage
+    of any length looks like.
     """
     lines: list[str] = []
     if outcome is not None:

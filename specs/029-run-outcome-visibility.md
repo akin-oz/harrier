@@ -11,8 +11,9 @@ depends: [011, 019]
 
 ## Problem
 
-This project exists because a scheduled job in the old system failed silently
-for two months. The rewrite reproduces the mechanism.
+This project exists because a scheduled job can fail silently: the wrapper
+exits non-zero, nothing reports it, and the only signal is an absence. The
+rewrite reproduces the mechanism.
 
 `harrier discover` ends with a literal `return 0`
 (services/api/src/harrier_cli/main.py). Every upstream failure is absorbed
@@ -66,8 +67,8 @@ way the tracker does. Recorded on the success path only.
 
 **The digest reports the schedule.** The digest leads with the age of each
 scheduled job's last success. "Discovery last succeeded 61 days ago" cannot
-be misread; `New prospects today: 0` is what a two-month outage currently
-looks like.
+be misread; `New prospects today: 0` is what an outage of any length
+currently looks like.
 
 **Logging.** One logging configuration, applied at every entry point: level,
 timestamp, module, and a bounded file. The cost-gate skip and every other

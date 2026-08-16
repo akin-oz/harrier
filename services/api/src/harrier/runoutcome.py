@@ -1,6 +1,6 @@
 """Whether a run worked, and when each job last did (spec 029).
 
-This project exists because a scheduled job failed silently for two months.
+This project exists because a scheduled job can fail silently.
 The rewrite reproduced the mechanism: discovery ended in a literal `return 0`,
 every upstream failure was absorbed into the summary rather than the exit
 status, and the only notification was gated on having found something. A run
@@ -60,7 +60,7 @@ class RunOutcome:
         Both are the shape of a broken installation rather than a quiet week.
         Nothing attempted usually means nothing is configured or every source
         was skipped, and a scheduled job that runs nothing every four hours
-        for two months is the exact outage this spec exists for.
+        indefinitely is the exact outage this spec exists for.
         """
         return not self.attempted or len(self.failed) == len(self.attempted)
 

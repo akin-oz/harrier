@@ -433,6 +433,31 @@ _AGGREGATE_RE = re.compile(
     r"evaluation reports|reports|descriptions)\b",
     re.IGNORECASE,
 )
+# A duration sitting next to a failure word is a report of something that
+# happened here, not a rule. Both orders are matched, because the sentence
+# reads either way: "failed silently for two months" and "for two months
+# nobody noticed". The window is one clause, so a duration that merely shares
+# a paragraph with the word "failed" does not trip it.
+_INCIDENT_WORDS = (
+    r"failed|failing|fails silently|silent|silently|outage|unnoticed|undetected|"
+    r"nobody noticed|no one noticed|stopped running|went unnoticed|broke"
+)
+_DURATION = (
+    r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)"
+    r"[\s-](?:second|minute|hour|day|week|month|year)s?"
+)
+_INCIDENT_DURATION_RE = re.compile(
+    rf"(?:\b(?:{_INCIDENT_WORDS})\b[^.;\n]{{0,60}}?\b{_DURATION}\b"
+    rf"|\b{_DURATION}\b[^.;\n]{{0,60}}?\b(?:{_INCIDENT_WORDS})\b)",
+    re.IGNORECASE,
+)
+# `every four hours` is a cadence, which is a specification of how often
+# something runs and not a measurement of how long anything was broken. The
+# first version read "a job that runs every four hours and tries nothing" as
+# a disclosure, which is the same false positive the aggregate check avoids
+# with its own qualifier.
+_CADENCE_QUALIFIER = re.compile(r"(?:every|each|per)\s*$", re.IGNORECASE)
+_DURATION_RE = re.compile(rf"\b{_DURATION}\b", re.IGNORECASE)
 _SPECIFICATION_QUALIFIER = re.compile(
     r"(?:capped at|cap of|up to|at most|no more than|max(?:imum)? of|per page|"
     r"page size|limit of|bounded to)\s*$",
@@ -524,6 +549,45 @@ def test_the_test_suite_addresses_only_reserved_domains() -> None:
             if not is_reserved(domain) and domain not in INFRASTRUCTURE_SENDERS:
                 offenders.append(f"{path.relative_to(ROOT)}: {address}")
     assert not offenders, "non-reserved address in the test suite: " + "; ".join(offenders)
+
+
+def test_no_committed_prose_states_how_long_a_real_incident_lasted() -> None:
+    """A duration attached to a real failure is operational history.
+
+    The aggregate check below looks for counts of tracker entities and reads
+    straight past "a scheduled job failed silently for two months", which is
+    the same disclosure in a different unit: it measures the maintainer's own
+    running system rather than stating a rule the code must satisfy. The
+    review of PR #51 found one instance; a sweep found nine more, across
+    specs, the governance sources, their generated copies, and two module
+    docstrings.
+
+    The failure mode is what the project needs to describe. How long it went
+    unnoticed on one machine is not, and reads as a specification only until
+    someone asks whose two months those were.
+    """
+    offenders: list[str] = []
+    for path in prose_files():
+        # The module that defines the rule has to be able to quote what the
+        # rule forbids, in the pattern and in the sentence explaining it. The
+        # aggregate check below solves the same problem with its own
+        # self-describing exemption.
+        if path == Path(__file__).resolve():
+            continue
+        for number, line in enumerate(
+            path.read_text(encoding="utf-8", errors="replace").splitlines(), 1
+        ):
+            if not _INCIDENT_DURATION_RE.search(line):
+                continue
+            # Every duration on the line is a cadence, so nothing here says
+            # how long anything was broken.
+            durations = list(_DURATION_RE.finditer(line))
+            if durations and all(
+                _CADENCE_QUALIFIER.search(line[: found.start()].rstrip()) for found in durations
+            ):
+                continue
+            offenders.append(f"{path.relative_to(ROOT)}:{number}: {line.strip()[:70]}")
+    assert not offenders, "a real incident's duration is committed: " + "; ".join(offenders)
 
 
 def test_no_committed_prose_states_an_aggregate_of_the_real_search() -> None:
