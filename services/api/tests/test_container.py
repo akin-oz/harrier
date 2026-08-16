@@ -178,6 +178,22 @@ def runtime_asset_roots() -> set[str]:
     return found - MOUNTED_NOT_COPIED
 
 
+def dockerfile_instructions() -> str:
+    """The Dockerfile with its comments removed.
+
+    Every assertion below is a substring match, and this file is heavily
+    commented, so a comment mentioning a command would satisfy a check that the
+    command exists. Deleting a `RUN` while leaving the paragraph explaining it
+    is exactly how a guard comes to pass for the wrong reason, which is the
+    shape this repository keeps finding (review of PR #58).
+    """
+    return "\n".join(
+        line
+        for line in DOCKERFILE.read_text(encoding="utf-8").splitlines()
+        if not line.lstrip().startswith("#")
+    )
+
+
 def copied_paths() -> set[str]:
     """The first path of every `COPY` in the runtime stage.
 
@@ -251,25 +267,31 @@ def test_the_image_installs_every_feature_dependency_group(group: str) -> None:
     `gmail` was missing behind it and `POST /mail/watch` would have died the
     same way.
     """
-    assert f"--group {group}" in DOCKERFILE.read_text(encoding="utf-8"), (
+    assert f"--group {group}" in dockerfile_instructions(), (
         f"dependency group {group!r} is a feature the UI can reach, but the image never installs it"
     )
 
 
 def test_the_dev_group_stays_out_of_the_runtime_image() -> None:
-    assert "--no-dev" in DOCKERFILE.read_text(encoding="utf-8")
+    assert "--no-dev" in dockerfile_instructions()
 
 
 def test_the_browser_path_is_pinned_rather_than_left_to_home() -> None:
     """The container runs as a uid with no passwd entry, so HOME resolves to
     `/` and Playwright looked under `/.cache/ms-playwright`, which is not where
-    the download went. Pinning the path makes the lookup uid-independent."""
-    text = DOCKERFILE.read_text(encoding="utf-8")
-    assert "PLAYWRIGHT_BROWSERS_PATH=" in text
-    assert "playwright install" in text
+    the download went. Pinning the path makes the lookup uid-independent.
+
+    Asserted against the instructions rather than the file, so deleting the
+    command while leaving the paragraph that explains it fails (review of
+    PR #58).
+    """
+    text = dockerfile_instructions()
+    assert "ENV PLAYWRIGHT_BROWSERS_PATH=" in text
+    assert "playwright install --with-deps chromium" in text
     # The page-count gate shells out to pdfinfo; without poppler every render
-    # validates as "could not inspect PDF page count".
-    assert "poppler-utils" in text
+    # validates as "could not inspect PDF page count", so the install command
+    # itself is what is asserted.
+    assert "apt-get install" in text and "poppler-utils" in text
 
 
 def test_the_container_comes_back_when_docker_starts() -> None:

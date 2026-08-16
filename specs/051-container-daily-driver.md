@@ -192,7 +192,11 @@ So the rule is stated rather than left to whoever edits the Dockerfile next:
 **the image installs every non-dev dependency group and copies every
 repository directory the runtime resolves.** Both halves are derived by tests
 from the source and from `pyproject.toml`, not from a list in the Dockerfile,
-because a hand-maintained list is what produced all three.
+because a hand-maintained list is what produced all three:
+
+- `services/api/tests/test_container.py::test_the_image_copies_every_repository_asset_the_runtime_reads`
+- `services/api/tests/test_container.py::test_the_image_installs_every_feature_dependency_group`
+- `services/api/tests/test_container.py::test_the_dev_group_stays_out_of_the_runtime_image`
 
 Chromium and `poppler-utils` are in the image for the same reason. The artifact
 gate is PDF-or-failure and the page count comes from `pdfinfo`, so a container
@@ -206,6 +210,9 @@ driver being able to do what the host could.
 `PLAYWRIGHT_BROWSERS_PATH` is pinned. The container runs as the host user's uid
 with no passwd entry, so `HOME` resolves to `/` and Playwright looked for its
 browser under `/.cache/ms-playwright`, which is not where the build put it.
+Proven by
+`services/api/tests/test_container.py::test_the_browser_path_is_pinned_rather_than_left_to_home`,
+which asserts the install commands rather than the comments that explain them.
 
 ## Inputs, outputs, failure modes
 
