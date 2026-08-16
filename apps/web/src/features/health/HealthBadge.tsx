@@ -30,12 +30,26 @@ export function HealthBadge() {
     return <span className="health-badge health-badge--error">API unreachable</span>;
   }
   const health = query.data;
+  // An image is stale until rebuilt, so a container answering correctly while
+  // running older code than the checkout is the failure spec 051 exists to
+  // remove. Showing the revision is what makes that visible to the operator
+  // rather than only to whoever thinks to curl /health. "unknown" is what a
+  // process started outside an image build reports, which `just dev` is, so it
+  // is rendered as a plain label rather than as a fault.
+  const stamped = health.revision !== "unknown";
   return (
     <span className="health-badge">
       {health.demo && <span className="health-badge__tag">DEMO</span>}
       <span>{health.database}</span>
       <span className="health-badge__dot" aria-hidden="true" />
       <span>{health.job_count} jobs</span>
+      <span className="health-badge__dot" aria-hidden="true" />
+      <span
+        className="health-badge__revision"
+        title={stamped ? `built ${health.built_at}` : "not built from an image"}
+      >
+        {stamped ? health.revision : "dev"}
+      </span>
     </span>
   );
 }

@@ -45,35 +45,50 @@ def never_in_git_patterns() -> list[str]:
     return [str(pattern) for pattern in cast("list[object]", patterns)]
 
 
-def dockerignore_lines() -> set[str]:
+def dockerignore_rules() -> list[str]:
+    """The rules in file order.
+
+    Order is the whole semantics: docker applies every rule and the last one
+    that matches decides. A set loses that, and the earlier version of this
+    helper returned one (review of PR #56).
+    """
     text = DOCKERIGNORE.read_text(encoding="utf-8")
-    return {
+    return [
         line.strip()
         for line in text.splitlines()
         if line.strip() and not line.lstrip().startswith("#")
-    }
+    ]
 
 
-def excludes(pattern: str, lines: set[str]) -> bool:
-    """Whether `.dockerignore` excludes a classified path.
+def rule_matches(stem: str, pattern: str) -> bool:
+    """Whether one rule covers one classified path.
 
-    Two syntaxes have to agree here. `data/**` in the classification and
-    `data/` in the ignore file are the same instruction, so the comparison is
-    on the path prefix rather than the literal string. And an ignore line may
-    be a glob covering several classified paths: `.env.*` covers `.env.local`,
-    which a string comparison reads as uncovered. The first version of this
-    check did exactly that and failed on a path that was already excluded,
-    which is the right direction for a check to fail in but still wrong.
+    Two syntaxes have to agree. `data/**` in the classification and `data/` in
+    the ignore file are the same instruction, so the comparison is on the path
+    prefix rather than the literal string. And a rule may be a glob covering
+    several classified paths: `.env.*` covers `.env.local`, which a string
+    comparison reads as uncovered.
+    """
+    bare = pattern.rstrip("/")
+    return bare in {stem, f"{stem}/**", f"{stem}/*"} or fnmatch(stem, bare)
+
+
+def excludes(pattern: str, rules: list[str]) -> bool:
+    """Whether `.dockerignore` excludes a classified path, last match winning.
+
+    A negation re-includes a path, so `data/` followed by `!data/` leaves the
+    directory in the build context. Skipping negations entirely, which the
+    first version did, reports that path as excluded while the image carries
+    it: the check would have said the personal data was out while it was in,
+    which is the worst direction for a privacy guard to be wrong in.
     """
     stem = pattern.removesuffix("/**").removesuffix("/*").rstrip("/")
-    for candidate in lines:
-        if candidate.startswith("!"):
-            # A negation re-includes a path; it never excludes one.
-            continue
-        bare = candidate.rstrip("/")
-        if bare in {stem, f"{stem}/**", f"{stem}/*"} or fnmatch(stem, bare):
-            return True
-    return False
+    verdict = False
+    for rule in rules:
+        negated = rule.startswith("!")
+        if rule_matches(stem, rule[1:] if negated else rule):
+            verdict = not negated
+    return verdict
 
 
 @pytest.mark.parametrize("pattern", never_in_git_patterns())
@@ -85,9 +100,24 @@ def test_every_never_in_git_path_is_kept_out_of_the_image(pattern: str) -> None:
     the same class ADR-008 removed from git, applied to the other artifact this
     repository now produces.
     """
-    assert excludes(pattern, dockerignore_lines()), (
+    assert excludes(pattern, dockerignore_rules()), (
         f"{pattern} is never-in-git but .dockerignore does not exclude it"
     )
+
+
+def test_a_negation_that_reintroduces_a_classified_path_is_caught() -> None:
+    """The regression case for the bug this check itself had.
+
+    `data/` then `!data/` leaves the directory in the build context. A checker
+    that skips negations calls that excluded, so the guard would report the
+    personal data was out of the image while it was in it.
+    """
+    assert excludes("data/**", ["data/"])
+    assert not excludes("data/**", ["data/", "!data/"])
+    # Order decides, so re-excluding after the negation restores the verdict.
+    assert excludes("data/**", ["data/", "!data/", "data/"])
+    # A negation of something else does not re-include this one.
+    assert excludes("data/**", ["data/", "!logs/"])
 
 
 # A published mapping, host side first. Matched from the compose file rather

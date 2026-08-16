@@ -25,7 +25,7 @@ dev:
 container-up:
     mkdir -p data config secrets
     HARRIER_UID="$(id -u)" HARRIER_GID="$(id -g)" \
-    HARRIER_REVISION="$(git rev-parse --short HEAD)$(git diff --quiet || echo -dirty)" \
+    HARRIER_REVISION="$(git rev-parse --short HEAD)$([ -n "$(git status --porcelain)" ] && echo -dirty)" \
     HARRIER_BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     docker compose up -d --build
     @echo "harrier on http://127.0.0.1:8000"

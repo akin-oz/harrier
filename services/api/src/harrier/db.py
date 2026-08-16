@@ -15,6 +15,12 @@ from harrier.paths import repo_root
 
 DB_FILENAME = "tracker.db"
 
+# How long a writer waits for another writer before giving up. Long enough to
+# outlast any transaction this system holds, which are all single-statement or
+# single-row, and short enough that a genuinely stuck writer still surfaces as
+# an error rather than hanging a scheduled run forever.
+BUSY_TIMEOUT_MS = 5000
+
 
 def data_dir() -> Path:
     override = os.environ.get("HARRIER_DATA_DIR", "").strip()
@@ -52,6 +58,13 @@ def connect(db_path: Path | None = None, *, same_thread: bool = True) -> sqlite3
     conn = sqlite3.connect(path, check_same_thread=same_thread)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
+    # Two processes write this database now: the container serving the API and
+    # the host CLI that launchd invokes on the cadence (spec 051, ADR-010).
+    # WAL lets them interleave, but a second writer arriving mid-transaction
+    # still fails immediately without this, and "database is locked" on a
+    # scheduled run is a failure nobody is watching for. Waiting is the
+    # correct behaviour for a writer that will get its turn in milliseconds.
+    conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
     conn.execute("PRAGMA foreign_keys=ON")
     _apply_schema(conn)
     return conn
