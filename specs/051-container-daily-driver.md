@@ -138,6 +138,28 @@ The implementation picks one of these and the spec is amended to record which:
 An implementation that picks none of these and simply mounts the file is out of
 bounds under this spec.
 
+**Amendment, at implementation.** The third was taken: WAL, which `connect`
+already set, plus a busy timeout, which it did not. The first option turned out
+not to describe anything buildable, since the container is the API and there is
+no second process for it to reach the database through. The second contradicts
+ADR-010's stated consequence that the schedule keeps running when Docker is
+down, so taking it would have meant reopening the ADR rather than implementing
+it.
+
+The condition attached to the third option is met rather than waived. Without
+a busy timeout two processes writing at once fail with "database is locked",
+executed and observed, not reasoned about; with it both commit and
+`PRAGMA integrity_check` returns ok. The timeout is finite so a genuinely stuck
+writer still surfaces as an error instead of hanging a scheduled run forever,
+which is its own case in the same test file
+(`services/api/tests/test_concurrent_writers.py`).
+
+Honest limitation: that test exercises two processes against one file, which is
+the mechanism, on whatever filesystem the test runs on. It does not by itself
+prove Docker Desktop's bind mount honours the same locking. That was verified
+by hand on this machine and is not pinned by CI, because pinning it needs a
+container in the Python job.
+
 ### Staleness must be legible
 
 The bug this spec exists to prevent is a server that answers correctly while
@@ -197,36 +219,36 @@ Failure modes this must not introduce:
 
 Proving symbols are named at implementation.
 
-- [ ] ADR-010 is accepted and supersedes the "not the daily driver" sentence in
+- [x] ADR-010 is accepted and supersedes the "not the daily driver" sentence in
       ADR-007; ADR-007 carries the revision marker the way ADR-002 carries
       ADR-008's
-- [ ] `docker compose up -d` from a clean clone with a populated `.env` serves
+- [x] `docker compose up -d` from a clean clone with a populated `.env` serves
       the same UI on `http://127.0.0.1:8000` that `just demo` serves
-- [ ] the published port is bound to `127.0.0.1` and a test asserts the compose
+- [x] the published port is bound to `127.0.0.1` and a test asserts the compose
       file declares no unqualified port mapping
-- [ ] `restart: unless-stopped` is declared, and stopping the container
+- [x] `restart: unless-stopped` is declared, and stopping the container
       deliberately leaves it stopped across a Docker daemon restart
-- [ ] no secret value appears in the Dockerfile, the compose file, or any image
+- [x] no secret value appears in the Dockerfile, the compose file, or any image
       layer, asserted by a test that greps the built image's history and the
       committed files
-- [ ] `data/`, `config/` and `secrets/` are bind mounts, `secrets/` is read-only,
+- [x] `data/`, `config/` and `secrets/` are bind mounts, `secrets/` is read-only,
       and a test asserts nothing under those paths is copied by the Dockerfile
-- [ ] every new path is classified in `config/data-classification.json` before
+- [x] every new path is classified in `config/data-classification.json` before
       the file exists, and the existing coverage test passes unchanged
 - [ ] the local auth token written by the container is readable by the host CLI
       and the reverse, proven by a test rather than by inspection
-- [ ] the tracker database has exactly one writer under the chosen option, proven
+- [x] the tracker database has exactly one writer under the chosen option, proven
       by a test that runs a scheduled-shape write and a container write against
       the same database and asserts both committed and neither corrupted
-- [ ] the API reports the built revision and build time, the UI displays it, and
+- [x] the API reports the built revision and build time, the UI displays it, and
       a test asserts a container built from an older tree is distinguishable from
       a current one
 - [ ] `HARRIER_DEMO=1` inside the container writes to a temp directory and a test
       asserts nothing is written under `/app/data`
-- [ ] `just contract` produces no diff, because no route shape changes
-- [ ] the README documents the Docker Desktop start-on-login setting as machine
+- [x] `just contract` produces no diff, because no route shape changes
+- [x] the README documents the Docker Desktop start-on-login setting as machine
       configuration the repository cannot enforce, and does not claim otherwise
-- [ ] `just dev` continues to work unchanged for anyone who prefers it
+- [x] `just dev` continues to work unchanged for anyone who prefers it
 - [ ] all gates green on PR
 
 ## Proof / origin

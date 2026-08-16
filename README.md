@@ -153,6 +153,43 @@ just dev        # FastAPI on :8000, Vite on :5173
 just demo       # the built SPA and the API on :8000, synthetic data
 ```
 
+### Keeping it up
+
+`just dev` runs while a terminal stays open. To have the API and the UI simply
+be there, run them as a supervised container (spec 051, ADR-010):
+
+```bash
+just container-up      # build and start, http://127.0.0.1:8000
+just container-status  # what is running, and which revision it is
+just container-logs
+just container-down
+```
+
+The container holds no data of its own: `data/`, `config/` and `secrets/` are
+bind-mounted from the checkout, `secrets/` read-only, so nothing personal
+enters an image layer (proven by
+`services/api/tests/test_container.py::test_every_never_in_git_path_is_kept_out_of_the_image`).
+The port is published to `127.0.0.1` only, pinned by
+`::test_the_published_port_never_leaves_loopback`.
+
+`restart: unless-stopped` brings it back whenever the Docker daemon starts and
+leaves it down when you stopped it deliberately. **Making that mean "always up"
+also needs Docker Desktop's own "Start Docker Desktop when you sign in"
+setting.** That is machine configuration this repository cannot set or verify,
+so it is written here rather than claimed as done.
+
+If the container will not start with `address already in use`, a host process
+holds the port. `lsof -nP -iTCP:8000 -sTCP:LISTEN` names it.
+
+**launchd still owns the schedule**, on the host, as ADR-006 decided. The
+container is the interactive surface only. Discovery, the digest and the mail
+watch keep running whether or not Docker is up.
+
+`/health` reports the revision and build time the image was stamped with, so a
+container running older code than your checkout is visible rather than silent.
+A process started outside an image build, which is what `just dev` is, reports
+`unknown` rather than guessing.
+
 To use it on your own search, copy the `config/*.example.*` files to their real
 names, fill them in, and run `harrier config import` to move them into the
 database, where they are editable through `harrier config set` and the `/config`

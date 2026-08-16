@@ -23,3 +23,9 @@
   border-radius: 50%;
   background: var(--color-text-tertiary);
 }
+/* The revision the running process was built from (spec 051). Monospaced so a
+   short hash reads as an identifier rather than as a word. */
+.health-badge__revision {
+  font-family: var(--font-mono);
+  color: var(--color-text-tertiary);
+}
