@@ -52,10 +52,16 @@ local state and answers as a request.
 
 ### Request fields, and defaults that do nothing
 
-Three of these routes can change something or spend something, so their
-request shapes are named here rather than left to the implementation. Every
-default is the harmless one: a request with an empty body reports and changes
-nothing.
+Five of these routes can change something or spend something, so their
+request shapes are named here rather than left to the implementation. With an
+empty body, none of them applies a change, sends a message, installs a job or
+prunes stored configuration.
+
+`POST /ops/backup` is the one that still does something on an empty body: it
+writes an archive. That is deliberate rather than an exception smuggled in.
+A backup is additive and a refusal to take one is the more dangerous default,
+so it takes no confirmation, and the criterion below says what it must not do
+rather than pretending it is inert.
 
 | Route | Field | Default | What the default means |
 |---|---|---|---|
@@ -178,9 +184,11 @@ Proving symbols are named at implementation.
       same test
 - [ ] reconsideration defaults to reporting and requires a separate action to
       apply, proven by a test that the default changes nothing
-- [ ] every side-effecting route's default is the harmless one, proven by a
-      test that posts an empty body to each and asserts nothing was applied,
-      sent, installed or pruned
+- [ ] with an empty body no route applies a change, sends a message, installs
+      a job or prunes stored configuration, proven by a test that posts an
+      empty body to each and asserts it
+- [ ] `POST /ops/backup` on an empty body writes an archive and deletes
+      nothing, proven by a test that asserts the retention prune did not run
 - [ ] a second non-dry digest for the same target date is refused with a
       message saying when the first went, proven by a test that posts twice
       and asserts one delivery
