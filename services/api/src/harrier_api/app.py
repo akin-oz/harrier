@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Annotated, Literal, cast
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -33,7 +33,10 @@ from harrier_api.localauth import (
     load_or_create_token,
     require_token,
 )
-from harrier_api.runs import Run, RunManager, RunState, format_sse
+from harrier_api.mail_routes import mail_router
+from harrier_api.outreach_routes import outreach_router
+from harrier_api.runmodels import Manager, RunOut, run_out
+from harrier_api.runs import RunManager, RunParams, RunState, format_sse, write_run_input
 
 API_VERSION = "0.1.0"
 
@@ -131,16 +134,6 @@ def jobs(
     return [JobOut.model_validate({**row, "id": int(row["id"])}) for row in rows]
 
 
-class RunOut(BaseModel):
-    id: str
-    kind: str
-    state: RunState
-    created_at: str
-    started_at: str | None
-    ended_at: str | None
-    exit_code: int | None
-
-
 class StartRunIn(BaseModel):
     kind: Literal["demo", "discovery"]
 
@@ -163,24 +156,6 @@ class RunEventOut(BaseModel):
     state: RunState | None = None
     exit_code: int | None = None
 
-
-def _run_out(run: Run) -> RunOut:
-    return RunOut(
-        id=run.id,
-        kind=run.kind,
-        state=run.state,
-        created_at=run.created_at,
-        started_at=run.started_at,
-        ended_at=run.ended_at,
-        exit_code=run.exit_code,
-    )
-
-
-def get_manager(request: Request) -> RunManager:
-    return cast(RunManager, request.app.state.run_manager)
-
-
-Manager = Annotated[RunManager, Depends(get_manager)]
 
 tracker_router = APIRouter()
 
@@ -314,6 +289,183 @@ def tracker_counts(conn: Conn) -> dict[str, int]:
     return counts(conn)
 
 
+# --- apply: artifacts for one job (spec 047) ---
+
+apply_router = APIRouter()
+
+
+class TailorIn(BaseModel):
+    jd_text: str = ""
+    no_ai: bool = False
+
+
+class CoverLetterIn(BaseModel):
+    notes: str = ""
+
+
+class AnswersIn(BaseModel):
+    questions: str = ""
+
+
+class EvaluateIn(BaseModel):
+    jd_text: str = ""
+
+
+class ArtifactOut(BaseModel):
+    """One artifact kind for a job, present or not.
+
+    Carries the filename rather than the path: the operator does not need the
+    absolute location, and it would put the home directory into every
+    response for nothing.
+    """
+
+    kind: str
+    exists: bool
+    produced_by: str
+    media_type: str
+    filename: str
+
+
+APPLY_ERRORS: dict[int | str, dict[str, str]] = {
+    404: {"description": "no job matched the selector"},
+    **TOKEN_RESPONSES,
+}
+
+ARTIFACT_ERRORS: dict[int | str, dict[str, str]] = {
+    404: {"description": "no such job, artifact kind, or the artifact is not produced yet"},
+    **TOKEN_RESPONSES,
+}
+
+
+def _job_id_for(conn: sqlite3.Connection, selector: str) -> int:
+    from harrier.tracker.selector import resolve_selector
+
+    try:
+        return int(resolve_selector(conn, selector)["id"])
+    except SelectorError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+def _apply_params(conn: sqlite3.Connection, selector: str, text: str, *, no_ai: bool) -> RunParams:
+    """Resolve the selector and stage the free text, in that order.
+
+    The order matters: staging first would write a file for a job that does
+    not exist, and nothing would ever consume or remove it.
+    """
+    job_id = _job_id_for(conn, selector)
+    stripped = text.strip()
+    return RunParams(
+        job_id=job_id,
+        switches=frozenset({"--no-ai"}) if no_ai else frozenset(),
+        input_path=write_run_input(text) if stripped else None,
+    )
+
+
+@apply_router.post(
+    "/apply/{selector}/resume",
+    operation_id="tailorResume",
+    dependencies=[Depends(require_token)],
+    responses=APPLY_ERRORS,
+)
+async def tailor_resume(selector: str, body: TailorIn, conn: Conn, manager: Manager) -> RunOut:
+    """The same `tailor` verb the CLI runs, as a run (spec 047)."""
+    params = _apply_params(conn, selector, body.jd_text, no_ai=body.no_ai)
+    return run_out(await manager.start("tailor", params))
+
+
+@apply_router.post(
+    "/apply/{selector}/cover-letter",
+    operation_id="draftCoverLetter",
+    dependencies=[Depends(require_token)],
+    responses=APPLY_ERRORS,
+)
+async def draft_cover_letter(
+    selector: str, body: CoverLetterIn, conn: Conn, manager: Manager
+) -> RunOut:
+    params = _apply_params(conn, selector, body.notes, no_ai=False)
+    return run_out(await manager.start("cover-letter", params))
+
+
+@apply_router.post(
+    "/apply/{selector}/answers",
+    operation_id="draftAnswers",
+    dependencies=[Depends(require_token)],
+    responses=APPLY_ERRORS,
+)
+async def draft_answers(selector: str, body: AnswersIn, conn: Conn, manager: Manager) -> RunOut:
+    params = _apply_params(conn, selector, body.questions, no_ai=False)
+    return run_out(await manager.start("answers", params))
+
+
+@apply_router.post(
+    "/apply/{selector}/evaluate",
+    operation_id="evaluateOffer",
+    dependencies=[Depends(require_token)],
+    responses=APPLY_ERRORS,
+)
+async def evaluate_offer_route(
+    selector: str, body: EvaluateIn, conn: Conn, manager: Manager
+) -> RunOut:
+    params = _apply_params(conn, selector, body.jd_text, no_ai=False)
+    return run_out(await manager.start("evaluate", params))
+
+
+@apply_router.get(
+    "/apply/{selector}/artifacts",
+    operation_id="listArtifacts",
+    dependencies=[Depends(require_token)],
+    responses=APPLY_ERRORS,
+)
+def list_artifacts(selector: str, conn: Conn) -> list[ArtifactOut]:
+    """The index requires the token even though it is a read.
+
+    Tracker reads do not, and this deliberately differs: the names here are
+    derived from the candidate's own name and the company, and the bodies
+    behind them are the densest personal content the system holds (spec 047).
+    """
+    from harrier.artifacts import artifacts_for_job
+
+    job_id = _job_id_for(conn, selector)
+    return [
+        ArtifactOut(
+            kind=item.kind,
+            exists=item.exists,
+            produced_by=item.produced_by,
+            media_type=item.media_type,
+            filename=item.path.name,
+        )
+        for item in artifacts_for_job(conn, job_id)
+    ]
+
+
+@apply_router.get(
+    "/apply/{selector}/artifacts/{kind}",
+    operation_id="readArtifact",
+    dependencies=[Depends(require_token)],
+    responses=ARTIFACT_ERRORS,
+)
+def read_artifact(selector: str, kind: str, conn: Conn) -> FileResponse:
+    from harrier.artifacts import UnknownArtifactKind, artifact_for_job
+
+    job_id = _job_id_for(conn, selector)
+    try:
+        artifact = artifact_for_job(conn, job_id, kind)
+    except UnknownArtifactKind as error:
+        # A path-shaped kind lands here, refused before anything touched the
+        # filesystem, because the kind is a closed set (spec 047).
+        raise HTTPException(status_code=404, detail=f"unknown artifact kind: {kind}") from error
+    if not artifact.exists:
+        raise HTTPException(
+            status_code=404,
+            detail=f"no {kind} for this job yet; run {artifact.produced_by} to produce it",
+        )
+    return FileResponse(
+        artifact.path,
+        media_type=artifact.media_type,
+        filename=artifact.path.name,
+    )
+
+
 runs_router = APIRouter()
 
 
@@ -324,12 +476,12 @@ runs_router = APIRouter()
     responses=TOKEN_RESPONSES,
 )
 async def start_run(body: StartRunIn, manager: Manager) -> RunOut:
-    return _run_out(await manager.start(body.kind))
+    return run_out(await manager.start(body.kind))
 
 
 @runs_router.get("/runs", operation_id="listRuns")
 def list_runs(manager: Manager) -> list[RunOut]:
-    return [_run_out(run) for run in manager.list_runs()]
+    return [run_out(run) for run in manager.list_runs()]
 
 
 @runs_router.get("/runs/{run_id}", operation_id="getRun")
@@ -337,7 +489,7 @@ def get_run(run_id: str, manager: Manager) -> RunOut:
     run = manager.get(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
-    return _run_out(run)
+    return run_out(run)
 
 
 @runs_router.post(
@@ -350,7 +502,7 @@ async def cancel_run(run_id: str, manager: Manager) -> RunOut:
     run = await manager.cancel(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
-    return _run_out(run)
+    return run_out(run)
 
 
 @runs_router.get(
@@ -556,6 +708,9 @@ def create_app(run_manager: RunManager | None = None, spa_dir: Path | None = Non
     app.include_router(capture_router)
     app.include_router(config_router)
     app.include_router(tracker_router)
+    app.include_router(apply_router)
+    app.include_router(outreach_router)
+    app.include_router(mail_router)
     app.add_middleware(ApiPrefixMiddleware)
     # Closes DNS rebinding, which is what made every other protection here
     # bypassable: a page the operator visits resolves its own hostname to

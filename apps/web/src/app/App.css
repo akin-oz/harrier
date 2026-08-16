@@ -10,3 +10,23 @@
   width: 100%;
   margin: 0 auto;
 }
+
+.app-nav {
+  display: flex;
+  gap: var(--space-2);
+  padding: 0 var(--space-4);
+}
+.app-nav__link {
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+}
+.app-nav__link--active {
+  color: var(--color-text);
+  border-color: var(--color-border-strong);
+  background: var(--color-bg-raised);
+}

@@ -1,0 +1,204 @@
+.inbox-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.inbox-page__toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.inbox-page__heading {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.inbox-page__checkbox {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+.inbox-page__toolbar button {
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-bg-raised);
+  color: var(--color-text);
+}
+.inbox-page__toolbar button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.inbox-page__run {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+.inbox-page__note,
+.inbox-page__summary,
+.inbox-page__muted {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+.inbox-page__error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-danger);
+}
+.inbox-page__refusal {
+  margin: 0;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  padding: 10px var(--space-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-danger);
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+.inbox-page__empty {
+  margin: 0;
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--color-text-tertiary);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+}
+.inbox-page__log {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.inbox-page__log-toggle {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 2px 0;
+  color: var(--color-accent-text);
+  text-decoration: underline;
+}
+
+.inbox-table-scroll {
+  overflow: auto;
+  max-height: 70vh;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-raised);
+  font-size: 13px;
+}
+.inbox-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.inbox-table thead tr {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--color-bg-sunken);
+}
+.inbox-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+.inbox-table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: top;
+}
+.inbox-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.inbox-table__company {
+  display: block;
+  font-weight: 500;
+}
+.inbox-table__role {
+  display: block;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+.inbox-table__action {
+  color: var(--color-text-secondary);
+}
+.inbox-table__muted {
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.inbox-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 12px;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+}
+/* Needing an action reads by weight and by mark shape, not by hue alone. */
+.inbox-kind--actionable {
+  color: var(--color-text);
+  font-weight: 600;
+}
+.inbox-kind__mark {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: transparent;
+  border: 1.5px solid currentcolor;
+}
+.inbox-kind--actionable .inbox-kind__mark {
+  background: currentcolor;
+}
+
+/* The run dot and log, local to this page.
+   `.run-dot` and `.run-log` live in features/runs/RunPanel.css, and a page
+   rendering another slice's class names is the coupling that lets a rule
+   deleted in one place change a page in another. */
+.inbox-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--color-text-tertiary);
+}
+.inbox-dot--running {
+  background: var(--color-accent);
+}
+.inbox-dot--succeeded {
+  background: var(--color-success);
+}
+.inbox-dot--failed {
+  background: var(--color-danger);
+}
+.inbox-log {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--color-bg-sunken);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.inbox-log--failed {
+  border-color: var(--color-danger);
+  background: var(--color-danger-bg);
+}

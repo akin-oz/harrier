@@ -442,6 +442,20 @@ def write_candidates_artifact(company: str, role: str, payload: dict[str, object
     return path
 
 
+def staged_candidates(company: str, role: str) -> list[dict[str, str]]:
+    """The candidates awaiting a decision, as approve and reject see them.
+
+    The reader the Outreach page uses (spec 048). It goes through the same
+    extraction `approve_candidate` and `update_candidate_review_status` use,
+    so the page cannot show a candidate those two would not find, which is
+    the shape of bug that would make an approval button silently do nothing.
+    """
+    payload = load_candidates_artifact(company, role)
+    if payload is None:
+        return []
+    return _artifact_candidates(payload)
+
+
 def _artifact_candidates(payload: dict[str, object]) -> list[dict[str, str]]:
     candidates = payload.get("candidates")
     if not isinstance(candidates, list):

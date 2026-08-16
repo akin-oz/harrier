@@ -263,6 +263,13 @@ def _cmd_cover_letter(args: argparse.Namespace) -> int:
     jd_text, error_code = _read_jd_file(args.jd_file)
     if error_code is not None:
         return error_code
+    notes = args.notes
+    if getattr(args, "notes_file", None):
+        try:
+            notes = Path(args.notes_file).read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            print(f"cover letter failed: cannot read --notes-file: {error}", file=sys.stderr)
+            return 1
     conn = connect()
     try:
         row = get_job(conn, args.job_id)
@@ -275,7 +282,7 @@ def _cmd_cover_letter(args: argparse.Namespace) -> int:
             job_url=row.get("url", ""),
             tracker_row=row,
             jd_text=jd_text,
-            extra_notes=args.notes,
+            extra_notes=notes,
         )
         artifacts = write_cover_letter_artifacts(
             conn,
@@ -527,18 +534,37 @@ def _cmd_backfill_posters(args: argparse.Namespace) -> int:
 
 
 def _cmd_outreach_draft(args: argparse.Namespace) -> int:
+    from typing import cast
+
     from harrier.outreach import find_contact, generate_outreach, write_outreach_draft
     from harrier.tracker import get_job
 
     jd_text, error_code = _read_jd_file(args.jd_file)
     if error_code is not None:
         return error_code
+    supplied: dict[str, object] = {}
+    if getattr(args, "input_file", None):
+        try:
+            parsed: object = json.loads(Path(args.input_file).read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            print(f"outreach-draft failed: cannot read --input-file: {error}", file=sys.stderr)
+            return 1
+        if not isinstance(parsed, dict):
+            print("outreach-draft failed: --input-file must hold a JSON object", file=sys.stderr)
+            return 1
+        supplied = cast("dict[str, object]", parsed)
+
+    def supplied_text(key: str, fallback: str) -> str:
+        value = supplied.get(key)
+        return str(value) if isinstance(value, str) and value else fallback
+
     conn = connect()
     try:
         row = get_job(conn, args.job_id)
-        contact_name = args.contact_name or ""
-        contact_role = args.contact_role or ""
-        contact_linkedin = args.contact_linkedin or ""
+        contact_name = supplied_text("contact_name", args.contact_name or "")
+        contact_role = supplied_text("contact_role", args.contact_role or "")
+        contact_linkedin = supplied_text("contact_linkedin", args.contact_linkedin or "")
+        jd_text = supplied_text("jd_text", jd_text or "") or None
         if contact_linkedin:
             # A supplied identifier always resolves; explicit manual fields
             # take precedence over the stored values (review finding: an
@@ -562,8 +588,8 @@ def _cmd_outreach_draft(args: argparse.Namespace) -> int:
             contact_role=contact_role,
             contact_linkedin=contact_linkedin,
             jd_text=jd_text or "",
-            audience=args.audience or "",
-            tone=args.tone,
+            audience=supplied_text("audience", args.audience or ""),
+            tone=supplied_text("tone", args.tone),
             ai=args.ai,
         )
         paths = write_outreach_draft(row.get("company", ""), row.get("title", ""), drafts)
@@ -587,6 +613,14 @@ def _cmd_gmail_watch(args: argparse.Namespace) -> int:
     for line in summary.lines:
         print(line)
     if summary.send_failure:
+        # Two different failures wore one face: the mail was classified and
+        # archived, and only the Telegram delivery failed. Saying so is what
+        # lets the operator tell "the watch is broken" from "the watch worked
+        # and my notifier did not" (spec 049).
+        print(
+            f"gmail_watch=classified_but_not_delivered actionable_count={summary.actionable_count}",
+            file=sys.stderr,
+        )
         # Clamp: POSIX exit statuses are modulo 256, so a raw helper value
         # like 256 would read as success (review finding).
         return min(max(1, summary.send_failure), 255)
@@ -1424,7 +1458,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     cover.add_argument("--job-id", type=int, required=True)
     cover.add_argument("--jd-file", help="path to a job description text file")
-    cover.add_argument("--notes", help="extra guidance passed to the generator")
+    notes_group = cover.add_mutually_exclusive_group()
+    notes_group.add_argument("--notes", help="extra guidance passed to the generator")
+    # The API passes notes as a file rather than on argv: argv is readable
+    # from the process table and notes are the operator's own words (spec 047).
+    notes_group.add_argument("--notes-file", help="path to a file holding that guidance")
     cover.set_defaults(func=_cmd_cover_letter)
 
     answers = sub.add_parser(
@@ -1518,6 +1556,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     outreach_draft.add_argument("--jd-file", default=None)
     outreach_draft.add_argument("--ai", action="store_true", help="AI drafts instead of templates")
+    # The API passes the contact and the tone as a JSON file rather than on
+    # argv: a contact's name and LinkedIn URL are a real person's details, and
+    # argv is readable from the process table (spec 048).
+    outreach_draft.add_argument(
+        "--input-file", default=None, help="JSON holding the contact, audience, tone and jd_text"
+    )
     outreach_draft.set_defaults(func=_cmd_outreach_draft)
 
     backfill = sub.add_parser(

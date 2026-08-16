@@ -62,10 +62,13 @@ test("empty list renders the message the page supplied", () => {
 });
 
 function companyOrder(): (string | undefined)[] {
+  // Reads the company element rather than the whole cell: company and title
+  // now share one column, so the cell's text is both plus the meta line. The
+  // ordering being asserted is unchanged.
   return screen
     .getAllByRole("row")
     .slice(1)
-    .map((row) => row.querySelectorAll("td")[1]?.textContent);
+    .map((row) => row.querySelector(".job-table__company")?.textContent);
 }
 
 test("rows are ordered by score, highest first", () => {

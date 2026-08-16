@@ -520,6 +520,60 @@ def append_event(event: dict[str, object]) -> None:
     _rotate_events(path)
 
 
+@dataclass(frozen=True)
+class EventsWindow:
+    """What the archive holds, and what it cannot tell you.
+
+    `has_run` separates a watch that has never run from one that ran and
+    classified nothing. They look identical in the events themselves and they
+    mean completely different things to an operator, so the difference is
+    carried rather than left to be guessed from an empty list.
+
+    `at_cap` says the file is at the rotation limit, so this is a window on
+    recent classifications and not a history (spec 049).
+    """
+
+    events: list[dict[str, object]]
+    has_run: bool
+    at_cap: bool
+
+
+def read_events(limit: int | None = None) -> EventsWindow:
+    """The archived events, newest first.
+
+    Reads only what `redact_event` wrote: the sender is already reduced to a
+    domain and the subject and body were never stored. There is nothing to
+    scrub here because the scrubbing happened on the way in.
+    """
+    path = events_path()
+    if not path.is_file():
+        return EventsWindow(events=[], has_run=False, at_cap=False)
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        # An unreadable archive is not a watch that never ran, and saying so
+        # would send the operator to fix the wrong thing.
+        return EventsWindow(events=[], has_run=True, at_cap=False)
+
+    events: list[dict[str, object]] = []
+    for line in reversed(lines):
+        if not line.strip():
+            continue
+        try:
+            parsed: object = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            events.append(cast("dict[str, object]", parsed))
+        if limit is not None and len(events) >= limit:
+            break
+    return EventsWindow(
+        events=events,
+        has_run=True,
+        at_cap=len(lines) >= EVENTS_MAX_LINES,
+    )
+
+
 def tracker_rows(conn: sqlite3.Connection) -> list[dict[str, str]]:
     return list_jobs(conn)
 

@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -43,6 +44,153 @@ KIND_COMMANDS: dict[str, list[str]] = {
         "0.4",
     ],
 }
+
+
+@dataclass(frozen=True)
+class ParameterizedKind:
+    """A run kind and the flags its CLI verb accepts.
+
+    The kind owns the mapping to a CLI verb and to the flags that verb
+    accepts, so no caller assembles argv (spec 047).
+
+    Spec 047 gave this one boolean and a job. Spec 048's verbs need more:
+    `find-contacts` takes a count, `backfill-posters` takes no job at all.
+    Rather than a field per flag, a kind declares the closed sets it accepts.
+    The property spec 047 asked for is unchanged and is now easier to state:
+    a flag name reaching argv came from one of these sets, and a value
+    reaching argv is an int or a path this process chose.
+    """
+
+    verb: str
+    input_flag: str | None = None
+    switches: frozenset[str] = frozenset()
+    numbers: frozenset[str] = frozenset()
+    takes_job: bool = True
+
+
+PARAMETERIZED_KINDS: dict[str, ParameterizedKind] = {
+    "tailor": ParameterizedKind("tailor", "--jd-file", switches=frozenset({"--no-ai"})),
+    "cover-letter": ParameterizedKind("cover-letter", "--notes-file"),
+    "answers": ParameterizedKind("answers", "--questions-file"),
+    "evaluate": ParameterizedKind("evaluate", "--jd-file"),
+    "find-contacts": ParameterizedKind(
+        "find-contacts",
+        switches=frozenset({"--best-only"}),
+        numbers=frozenset({"--max-items"}),
+    ),
+    "outreach-draft": ParameterizedKind(
+        "outreach-draft", "--input-file", switches=frozenset({"--ai"})
+    ),
+    "backfill-posters": ParameterizedKind(
+        "backfill-posters",
+        switches=frozenset({"--dry-run"}),
+        numbers=frozenset({"--limit"}),
+        takes_job=False,
+    ),
+    "gmail-watch": ParameterizedKind(
+        "gmail-watch",
+        switches=frozenset({"--dry-run"}),
+        takes_job=False,
+    ),
+}
+
+
+@dataclass(frozen=True)
+class RunParams:
+    """Validated inputs for a parameterized run.
+
+    `job_id` is an int, not a string: the one selector that reaches argv
+    cannot then be made to look like a flag. Operator free text never appears
+    here at all. It goes to `input_path`, a file this process wrote, because
+    argv is readable from the process table by every other process on the
+    machine and application answers are exactly the content ADR-008 keeps out
+    of reach (spec 047).
+
+    A contact's name and LinkedIn URL travel the same way, for the same
+    reason: they are a real person's details, and the process table is
+    readable by everything else on the machine (spec 048).
+    """
+
+    job_id: int | None = None
+    input_path: Path | None = None
+    switches: frozenset[str] = frozenset()
+    numbers: Mapping[str, int] = field(default_factory=dict[str, int])
+
+    def __post_init__(self) -> None:
+        if self.job_id is not None and self.job_id <= 0:
+            raise ValueError(f"job id must be a positive integer, got {self.job_id!r}")
+        for flag, value in self.numbers.items():
+            # bool is a subclass of int, so a True here satisfies the type and
+            # then renders as `--limit=True`, which the CLI rejects at a
+            # distance with a message about the wrong thing.
+            if isinstance(value, bool):
+                raise ValueError(f"{flag} must be an integer, got {value!r}")
+
+
+def run_inputs_dir() -> Path:
+    return data_dir() / "runs" / "inputs"
+
+
+def write_run_input(text: str) -> Path:
+    """Put the operator's free text on disk so it never reaches argv.
+
+    Owner-readable only, and owner-readable from the moment it exists. The
+    first version wrote the file and then chmodded it, which left it at the
+    umask's mode in between: on a common umask of 022 that is 0644, so the
+    operator's words about a job application were readable by every other
+    local user for the width of that window. The mode is now part of
+    creation, and the directory is created private too, so the window has no
+    path to it either (review finding on PR #51).
+
+    It is removed when the run that consumes it ends (spec 047).
+    """
+    directory = run_inputs_dir()
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # mkdir's mode is ignored when the directory already exists, and this one
+    # may predate the fix.
+    directory.chmod(0o700)
+    path = directory / f"{uuid.uuid4().hex}.txt"
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    return path
+
+
+def build_command(kind: str, params: RunParams) -> list[str]:
+    """The argv for a parameterized kind.
+
+    Values are passed as `--flag=value` rather than as two arguments so that a
+    value beginning with a dash is still a value. `job_id` cannot produce one,
+    and the input path is a name this process chose, so neither can today;
+    the form is used anyway because the guarantee should not depend on every
+    future caller re-deriving that argument.
+    """
+    if kind not in PARAMETERIZED_KINDS:
+        raise KeyError(kind)
+    parameterized = PARAMETERIZED_KINDS[kind]
+    argv = [sys.executable, "-m", "harrier_cli.main", parameterized.verb]
+
+    if parameterized.takes_job:
+        if params.job_id is None:
+            raise ValueError(f"{kind} acts on a job and none was given")
+        argv.append(f"--job-id={params.job_id}")
+    elif params.job_id is not None:
+        raise ValueError(f"{kind} acts on everything and takes no job")
+
+    for flag in sorted(params.switches):
+        if flag not in parameterized.switches:
+            raise ValueError(f"{kind} does not accept {flag}")
+        argv.append(flag)
+    for flag in sorted(params.numbers):
+        if flag not in parameterized.numbers:
+            raise ValueError(f"{kind} does not accept {flag}")
+        argv.append(f"{flag}={params.numbers[flag]}")
+
+    if params.input_path is not None:
+        if parameterized.input_flag is None:
+            raise ValueError(f"{kind} takes no input file")
+        argv.append(f"{parameterized.input_flag}={params.input_path}")
+    return argv
 
 
 def _now() -> str:
@@ -93,6 +241,11 @@ class Run:
     exit_code: int | None = None
     events: list[RunEvent] = field(default_factory=list[RunEvent])
     cancel_requested: bool = False
+    # What this run acts on, and what it therefore locks against. Empty for
+    # the kinds that act on everything, which keeps their one-at-a-time
+    # behaviour exactly as it was (spec 047).
+    target: str = ""
+    input_path: Path | None = None
 
 
 class RunManager:
@@ -138,25 +291,52 @@ class RunManager:
     def list_runs(self) -> list[Run]:
         return sorted(self._runs.values(), key=lambda run: run.created_at, reverse=True)
 
-    def active_run(self, kind: str) -> Run | None:
+    def active_run(self, kind: str, target: str = "") -> Run | None:
         for run in self._runs.values():
-            if run.kind == kind and run.state in ("queued", "running"):
+            if run.kind == kind and run.target == target and run.state in ("queued", "running"):
                 return run
         return None
 
     # -- lifecycle ----------------------------------------------------------
 
-    async def start(self, kind: str) -> Run:
-        """Start a run, or return the already-active run of this kind (ADR-004)."""
-        active = self.active_run(kind)
+    async def start(self, kind: str, params: RunParams | None = None) -> Run:
+        """Start a run, or return the already-active run for this target.
+
+        The lock is per (kind, target) rather than per kind, so two jobs
+        tailor at once while one job tailored twice joins the run already in
+        flight. ADR-004 called for this under "artifact renders are per-slug
+        locked"; spec 047 is where it was built.
+        """
+        # A kind that acts on everything locks on the empty target, which is
+        # the one-at-a-time behaviour discovery always had. Kinds never
+        # collide with each other because the lock is on the pair.
+        target = "" if params is None or params.job_id is None else str(params.job_id)
+        active = self.active_run(kind, target)
         if active is not None:
+            # This attempt never becomes a run, so the input file written for
+            # it has no terminal state to be cleaned up by. Removing it here
+            # is the difference between joining a run and leaking a file of
+            # the operator's own words on every double click.
+            self._discard_input(params)
             return active
-        command = self._kind_commands[kind]
-        run = Run(id=uuid.uuid4().hex[:12], kind=kind, command=list(command))
+        command = list(self._kind_commands[kind]) if params is None else build_command(kind, params)
+        run = Run(
+            id=uuid.uuid4().hex[:12],
+            kind=kind,
+            command=command,
+            target=target,
+            input_path=None if params is None else params.input_path,
+        )
         self._runs[run.id] = run
         self._journal(run)
         self._tasks[run.id] = asyncio.create_task(self._execute(run))
         return run
+
+    @staticmethod
+    def _discard_input(params: RunParams | None) -> None:
+        if params is None or params.input_path is None:
+            return
+        params.input_path.unlink(missing_ok=True)
 
     async def cancel(self, run_id: str) -> Run | None:
         """Request cancellation and return immediately; the state change lands
@@ -190,6 +370,22 @@ class RunManager:
         return run
 
     async def _execute(self, run: Run) -> None:
+        try:
+            await self._run_process(run)
+        finally:
+            # Every terminal state, including a failed spawn and a
+            # cancellation, and including an unexpected exception: the
+            # operator's free text does not outlive the run that consumed it
+            # (spec 047).
+            self._cleanup_input(run)
+
+    def _cleanup_input(self, run: Run) -> None:
+        if run.input_path is None:
+            return
+        run.input_path.unlink(missing_ok=True)
+        run.input_path = None
+
+    async def _run_process(self, run: Run) -> None:
         await self._set_state(run, "running")
         run.started_at = _now()
         try:

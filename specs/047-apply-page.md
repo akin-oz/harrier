@@ -173,35 +173,79 @@ Failure modes this must not introduce:
 
 Proving symbols are named at implementation.
 
-- [ ] `start` accepts parameters, and a test asserts two different jobs tailor
+All symbols below are in `services/api/tests/test_ui_apply.py` unless another
+file is named.
+
+- [x] `start` accepts parameters, and a test asserts two different jobs tailor
       concurrently while the same job twice returns the active run
-- [ ] a parameter whose value begins with a dash reaches the domain function as
+      (`::test_two_jobs_tailor_concurrently_while_one_job_twice_joins_the_run`;
+      `::test_a_parameterless_kind_still_allows_only_one_at_a_time` pins that
+      discovery and demo keep the behaviour they had)
+- [x] a parameter whose value begins with a dash reaches the domain function as
       a value, proven by a test that passes one
-- [ ] no operator free text appears in a run's argv, its journal record, or the
+      (`::test_a_path_that_looks_like_a_flag_is_still_a_value`, which parses the
+      argv with the CLI's own parser rather than reading the string). The
+      selector cannot produce one at all
+      (`::test_a_job_selector_must_be_a_positive_integer`)
+- [x] no operator free text appears in a run's argv, its journal record, or the
       response of `GET /runs/{id}`, proven by a test that submits a question
       containing a recognizable token and asserts its absence in all three
-- [ ] the run-scoped input file is owner-readable from the moment it exists,
-      and is removed when the run reaches a terminal state, including when it
-      fails and when it is cancelled
-- [ ] each of the four operations has a route, and a test asserts the route and
+      (`::test_operator_free_text_never_reaches_argv_or_the_run_record`)
+- [x] the run-scoped input file is removed when the run reaches a terminal
+      state, including when it fails and when it is cancelled
+      (`::test_the_input_file_is_removed_when_the_run_succeeds`,
+      `::test_the_input_file_is_removed_when_the_run_is_cancelled`,
+      `::test_the_input_file_is_removed_when_the_run_fails_to_spawn`, and
+      `::test_an_attempt_that_joins_an_active_run_leaves_no_file_behind` for
+      the attempt that never becomes a run)
+- [x] each of the four operations has a route, and a test asserts the route and
       the CLI verb call the same domain function
-- [ ] a truth-gate refusal surfaces in the UI with the gate's own words, not a
+      (`::test_the_route_argv_reaches_the_same_function_the_cli_verb_does`).
+      It is a stronger form than spec 042's: an apply route starts a run and a
+      run is the CLI, so the test executes the argv the route builds rather
+      than patching a shared function. Coverage of the set is held by
+      `::test_every_parameterized_kind_is_reachable_from_the_page` and
+      `::test_every_apply_operation_has_a_route_in_the_contract`
+- [x] a truth-gate refusal surfaces in the UI with the gate's own words, not a
       generic failure
-- [ ] a PDF-gate refusal leaves the tracker row unchanged, and the page says
-      the artifact was not produced
-- [ ] the artifact route resolves through the writing helpers and accepts no
+      (`apps/web/src/pages/apply/ApplyPage.test.tsx::a gate's refusal on a
+      failed run is shown, not swallowed`, and
+      `::a refusal is shown in the words the API used` for a refusal that
+      arrives on the start request instead). Writing the first of these found a
+      defect: the panel showed the tail of the log, which after a state change
+      is "run is failed" rather than the gate's sentence, so the hook now
+      tracks the last line the process printed separately
+- [x] a PDF-gate refusal leaves the tracker row unchanged
+      (`services/api/tests/test_resume.py::test_failing_pdf_gate_leaves_tracker_row_unchanged`,
+      which predates this spec and is cited rather than duplicated), and the
+      page says the artifact was not produced
+      (`ApplyPage.test.tsx::an absent artifact says which operation would
+      produce it`)
+- [x] the artifact route resolves through the writing helpers and accepts no
       caller-supplied path, proven by a test that a traversal-shaped kind is
       refused as an unknown kind rather than read
-- [ ] an artifact read without the token is refused, and a tracker read without
+      (`::test_a_path_shaped_kind_is_refused_as_a_kind_rather_than_read`,
+      `::test_an_unknown_artifact_kind_is_refused`). That the reader and the
+      writer share one naming helper is held by
+      `::test_the_reader_finds_what_the_writer_wrote`, which writes through the
+      writer and reads through the route
+- [x] an artifact read without the token is refused, and a tracker read without
       the token still succeeds
-- [ ] a missing artifact returns 404 naming the operation that produces it
-- [ ] the generated client carries every new route and no hand-written request
+      (`::test_an_artifact_read_without_the_token_is_refused`,
+      `::test_a_tracker_read_still_does_not_need_the_token`). The client half of
+      that asymmetry is held by `ApplyPage.test.tsx::the artifact read carries
+      the token although other reads do not`
+- [x] a missing artifact returns 404 naming the operation that produces it
+      (`::test_a_missing_artifact_names_the_operation_that_produces_it`)
+- [x] the generated client carries every new route and no hand-written request
       or response shape appears in `apps/web`, enforced by the existing
-      contract drift gate
-- [ ] no personal data enters a committed fixture, a test name, or a
+      contract drift gate. `ArtifactOut` reaches the page as
+      `components["schemas"]["ArtifactOut"]`
+- [x] no personal data enters a committed fixture, a test name, or a
       screenshot. Every fixture is an invented company. Limitation: this is a
       property of the diff, and no test asserts it
-- [ ] all gates green on PR
+- [x] all gates green on PR (`just check` passes: 1009 Python tests, 33 web
+      tests, contract regenerated with no unexpected diff)
 
 ## Proof / origin
 

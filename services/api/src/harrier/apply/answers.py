@@ -482,9 +482,19 @@ def render_markdown(
     return "\n".join(lines).rstrip() + "\n"
 
 
+def answers_path_for(company: str, role: str, output_dir: Path | None = None) -> Path:
+    """Where an answers run puts its file.
+
+    Shared by the writer below and by the reader that serves it back, so the
+    two cannot disagree about where it is (spec 047).
+    """
+    directory = output_dir if output_dir is not None else answers_dir()
+    return directory / f"{slugify(f'{company}-{role}')}.md"
+
+
 def write_output(company: str, role: str, content: str, output_dir: Path | None = None) -> Path:
     directory = output_dir if output_dir is not None else answers_dir()
     directory.mkdir(parents=True, exist_ok=True)
-    output_path = directory / f"{slugify(f'{company}-{role}')}.md"
+    output_path = answers_path_for(company, role, directory)
     output_path.write_text(content, encoding="utf-8")
     return output_path

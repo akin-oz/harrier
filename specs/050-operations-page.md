@@ -21,8 +21,9 @@ reconsidering past rejections, seeing whether the launchd schedule is installed
 and when it last succeeded, taking a backup, sending the digest, exporting, and
 managing profile documents.
 
-The schedule matters more than the rest. A scheduled job on this system failed
-silently for two months. `schedule status` reports installed state, drift, and
+The schedule matters more than the rest. A scheduled job can stop running
+without any error appearing anywhere: the plists are installed but not
+loaded, and nothing says so until somebody thinks to ask. `schedule status` reports installed state, drift, and
 next run, and an operator who has to remember to run it is an operator who will
 not. That is the single strongest reason this page exists.
 
@@ -49,6 +50,33 @@ Reconsideration, backup, digest, parity and export are runs because each walks
 the whole tracker or the whole data directory. Schedule status is a read of
 local state and answers as a request.
 
+### Request fields, and defaults that do nothing
+
+Five of these routes can change something or spend something, so their
+request shapes are named here rather than left to the implementation. With an
+empty body, none of them applies a change, sends a message, installs a job or
+prunes stored configuration.
+
+`POST /ops/backup` is the one that still does something on an empty body: it
+writes an archive. That is deliberate rather than an exception smuggled in.
+A backup is additive and a refusal to take one is the more dangerous default,
+so it takes no confirmation, and the criterion below says what it must not do
+rather than pretending it is inert.
+
+| Route | Field | Default | What the default means |
+|---|---|---|---|
+| `POST /ops/reconsider` | `apply` | `false` | Report what would be cleared, clear nothing. Applying is a second, separate request the operator makes after reading the count. |
+| `POST /ops/reconsider` | `source` | absent | Every source, as the CLI does. |
+| `POST /ops/digest` | `dry_run` | `true` | Produce the digest text and send nothing. Sending is the explicit `false`. |
+| `POST /ops/digest` | `date` | absent | Today, as the CLI does. |
+| `POST /ops/schedule/install` | `confirm` | `false` | Refuse. Installing loads launchd jobs, so it takes an explicit confirmation in the body rather than being the effect of a single click. |
+| `POST /ops/feeds/prune` | `confirm` | `false` | Refuse, for the same reason: it edits stored configuration. |
+| `POST /ops/backup` | `keep` | the CLI's own default | Retention is the CLI's decision, not a second copy of it here. |
+
+`dry_run` defaulting to `true` on the digest inverts the CLI's default,
+which sends. That is deliberate: a request whose body was dropped, or a
+client that forgot the field, must not send a message to a real person.
+
 ### Three operations that need marking, not just wiring
 
 **Reconsideration defaults to a dry run.** `reconsider` without `--apply`
@@ -63,6 +91,15 @@ outbound messages this system produces, so this is allowed rather than a
 violation, but it is still the one button on this page that talks to the
 outside world. It is marked as sending, and the dry-run flag the CLI has is
 offered first.
+
+**It sends at most once for a given day.** A browser retry, a double click,
+or a second operator tab can all deliver the same digest twice, and the
+recipient cannot tell a duplicate from a real second digest. So a non-dry
+digest is single-flight and idempotent per target date: the run machinery's
+per-target lock already refuses a second concurrent run for the same key
+(spec 047), and a digest already delivered for that date is refused with a
+message saying when it went, rather than sent again. Re-sending deliberately
+is a separate explicit request.
 
 **Pruning dead feeds edits stored configuration.** It removes boards from the
 watchlist. It is a separate action from checking, never a checkbox on the
@@ -109,9 +146,9 @@ Failure modes that must reach the operator:
 
 - **launchd is absent or the plists are not loaded.** `schedule_status` reports
   installed, loaded, drift and next run as separate facts, and the page shows
-  them separately. "Installed but not loaded" is the state that produced a
-  two-month silent failure and it must be legible as its own condition, not
-  folded into a single green badge.
+  them separately. "Installed but not loaded" is the state a silent failure
+  hides in, and it must be legible as its own condition rather than folded
+  into a single green badge.
 - **Drift between the installed plist and the rendered one.** Reported as
   drift, naming what differs.
 - **No boards are configured.** `check-feeds` treats it as an error and exits
@@ -147,6 +184,14 @@ Proving symbols are named at implementation.
       same test
 - [ ] reconsideration defaults to reporting and requires a separate action to
       apply, proven by a test that the default changes nothing
+- [ ] with an empty body no route applies a change, sends a message, installs
+      a job or prunes stored configuration, proven by a test that posts an
+      empty body to each and asserts it
+- [ ] `POST /ops/backup` on an empty body writes an archive and deletes
+      nothing, proven by a test that asserts the retention prune did not run
+- [ ] a second non-dry digest for the same target date is refused with a
+      message saying when the first went, proven by a test that posts twice
+      and asserts one delivery
 - [ ] "nothing is eligible to clear" and the all-current-rules case remain
       distinct strings on both sides
 - [ ] `installed`, `loaded`, `drifted`, `last_exit_status` and `next_run` reach
@@ -178,9 +223,7 @@ The domain functions are the imports in `_cmd_check_feeds`, `_cmd_reconsider`,
 the profile handlers in `services/api/src/harrier_cli/main.py`. The
 "nothing is eligible to clear" distinction is a review finding recorded in a
 comment in `_cmd_reconsider`. `schedule_status` is in
-`services/api/src/harrier/schedule.py`. The silent-failure history is the
-stated motivation of the operability review lens in
-`.ai/agents/review-operability.md`.
+`services/api/src/harrier/schedule.py`.
 
 ## Out of scope
 

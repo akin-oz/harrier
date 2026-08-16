@@ -67,6 +67,73 @@
         "title": "AddJobOut",
         "type": "object"
       },
+      "AnswersIn": {
+        "properties": {
+          "questions": {
+            "default": "",
+            "title": "Questions",
+            "type": "string"
+          }
+        },
+        "title": "AnswersIn",
+        "type": "object"
+      },
+      "ArtifactOut": {
+        "description": "One artifact kind for a job, present or not.\n\nCarries the filename rather than the path: the operator does not need the\nabsolute location, and it would put the home directory into every\nresponse for nothing.",
+        "properties": {
+          "exists": {
+            "title": "Exists",
+            "type": "boolean"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "produced_by": {
+            "title": "Produced By",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "exists",
+          "produced_by",
+          "media_type",
+          "filename"
+        ],
+        "title": "ArtifactOut",
+        "type": "object"
+      },
+      "BackfillIn": {
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit"
+          }
+        },
+        "title": "BackfillIn",
+        "type": "object"
+      },
       "Body_captureJobFromForm": {
         "properties": {
           "company": {
@@ -106,6 +173,58 @@
           }
         },
         "title": "Body_captureJobFromForm",
+        "type": "object"
+      },
+      "CandidateOut": {
+        "properties": {
+          "fit_score": {
+            "title": "Fit Score",
+            "type": "string"
+          },
+          "linkedin_url": {
+            "title": "Linkedin Url",
+            "type": "string"
+          },
+          "person_name": {
+            "title": "Person Name",
+            "type": "string"
+          },
+          "person_title": {
+            "title": "Person Title",
+            "type": "string"
+          },
+          "relevance": {
+            "title": "Relevance",
+            "type": "string"
+          },
+          "review_status": {
+            "title": "Review Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "person_name",
+          "person_title",
+          "relevance",
+          "fit_score",
+          "linkedin_url",
+          "review_status"
+        ],
+        "title": "CandidateOut",
+        "type": "object"
+      },
+      "CandidateRef": {
+        "description": "A staged candidate, identified the way the CLI identifies one.",
+        "properties": {
+          "linkedin_url": {
+            "title": "Linkedin Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "linkedin_url"
+        ],
+        "title": "CandidateRef",
         "type": "object"
       },
       "CaptureIn": {
@@ -225,6 +344,134 @@
           "updated_at"
         ],
         "title": "ConfigOut",
+        "type": "object"
+      },
+      "ContactOut": {
+        "properties": {
+          "company": {
+            "title": "Company",
+            "type": "string"
+          },
+          "contact_status": {
+            "title": "Contact Status",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "linkedin_url": {
+            "title": "Linkedin Url",
+            "type": "string"
+          },
+          "person_name": {
+            "title": "Person Name",
+            "type": "string"
+          },
+          "person_title": {
+            "title": "Person Title",
+            "type": "string"
+          },
+          "relevance": {
+            "title": "Relevance",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "person_name",
+          "person_title",
+          "relevance",
+          "company",
+          "contact_status",
+          "linkedin_url"
+        ],
+        "title": "ContactOut",
+        "type": "object"
+      },
+      "CoverLetterIn": {
+        "properties": {
+          "notes": {
+            "default": "",
+            "title": "Notes",
+            "type": "string"
+          }
+        },
+        "title": "CoverLetterIn",
+        "type": "object"
+      },
+      "DraftIn": {
+        "properties": {
+          "ai": {
+            "default": false,
+            "title": "Ai",
+            "type": "boolean"
+          },
+          "audience": {
+            "default": "",
+            "title": "Audience",
+            "type": "string"
+          },
+          "contact_linkedin": {
+            "default": "",
+            "title": "Contact Linkedin",
+            "type": "string"
+          },
+          "contact_name": {
+            "default": "",
+            "title": "Contact Name",
+            "type": "string"
+          },
+          "contact_role": {
+            "default": "",
+            "title": "Contact Role",
+            "type": "string"
+          },
+          "jd_text": {
+            "default": "",
+            "title": "Jd Text",
+            "type": "string"
+          },
+          "tone": {
+            "default": "direct",
+            "title": "Tone",
+            "type": "string"
+          }
+        },
+        "title": "DraftIn",
+        "type": "object"
+      },
+      "EvaluateIn": {
+        "properties": {
+          "jd_text": {
+            "default": "",
+            "title": "Jd Text",
+            "type": "string"
+          }
+        },
+        "title": "EvaluateIn",
+        "type": "object"
+      },
+      "FindContactsIn": {
+        "properties": {
+          "best_only": {
+            "default": false,
+            "title": "Best Only",
+            "type": "boolean"
+          },
+          "max_items": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Items"
+          }
+        },
+        "title": "FindContactsIn",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -439,6 +686,153 @@
         "title": "JobOut",
         "type": "object"
       },
+      "MailEventOut": {
+        "description": "One archived classification.\n\nA subset of what `redact_event` archives. There is no subject and no\nsender, because the archive has neither.\n\n`messageId` is archived but deliberately not returned. It is a stable\nidentifier for a message in the operator's mailbox, and this route\nanswers without a token; the spec's argument for that is that nothing\nidentifying is here, and an id that survives across reads is the one\nfield that argument does not cover (review finding on PR #51).",
+        "properties": {
+          "actionable": {
+            "default": false,
+            "title": "Actionable",
+            "type": "boolean"
+          },
+          "company": {
+            "default": "",
+            "title": "Company",
+            "type": "string"
+          },
+          "from_domain": {
+            "default": "",
+            "title": "From Domain",
+            "type": "string"
+          },
+          "ignore_reason": {
+            "default": "",
+            "title": "Ignore Reason",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "next_action": {
+            "default": "",
+            "title": "Next Action",
+            "type": "string"
+          },
+          "priority": {
+            "default": "",
+            "title": "Priority",
+            "type": "string"
+          },
+          "role": {
+            "default": "",
+            "title": "Role",
+            "type": "string"
+          },
+          "timestamp": {
+            "default": "",
+            "title": "Timestamp",
+            "type": "string"
+          },
+          "tracker_row": {
+            "default": "",
+            "title": "Tracker Row",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "MailEventOut",
+        "type": "object"
+      },
+      "MailEventsOut": {
+        "description": "The window, and what it cannot tell you.\n\n`has_run` is not a nicety: a watch that has never run and one that ran\nand classified nothing produce the same empty list and mean entirely\ndifferent things.",
+        "properties": {
+          "at_cap": {
+            "title": "At Cap",
+            "type": "boolean"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/MailEventOut"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "has_run": {
+            "title": "Has Run",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "events",
+          "has_run",
+          "at_cap"
+        ],
+        "title": "MailEventsOut",
+        "type": "object"
+      },
+      "MarkIn": {
+        "properties": {
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date"
+          }
+        },
+        "title": "MarkIn",
+        "type": "object"
+      },
+      "OutreachRowOut": {
+        "description": "A tracker row seen through the outreach axis, which is orthogonal to\nthe status lifecycle and stays that way.",
+        "properties": {
+          "best_contact_linkedin": {
+            "title": "Best Contact Linkedin",
+            "type": "string"
+          },
+          "best_contact_name": {
+            "title": "Best Contact Name",
+            "type": "string"
+          },
+          "company": {
+            "title": "Company",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "next_outreach_action": {
+            "title": "Next Outreach Action",
+            "type": "string"
+          },
+          "outreach_status": {
+            "title": "Outreach Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "company",
+          "title",
+          "outreach_status",
+          "next_outreach_action",
+          "best_contact_name",
+          "best_contact_linkedin"
+        ],
+        "title": "OutreachRowOut",
+        "type": "object"
+      },
       "RescoreOut": {
         "properties": {
           "current": {
@@ -634,6 +1028,19 @@
         "title": "SessionOut",
         "type": "object"
       },
+      "SnoozeIn": {
+        "properties": {
+          "until": {
+            "title": "Until",
+            "type": "string"
+          }
+        },
+        "required": [
+          "until"
+        ],
+        "title": "SnoozeIn",
+        "type": "object"
+      },
       "StartRunIn": {
         "properties": {
           "kind": {
@@ -675,6 +1082,22 @@
         "title": "StatusChangeIn",
         "type": "object"
       },
+      "TailorIn": {
+        "properties": {
+          "jd_text": {
+            "default": "",
+            "title": "Jd Text",
+            "type": "string"
+          },
+          "no_ai": {
+            "default": false,
+            "title": "No Ai",
+            "type": "boolean"
+          }
+        },
+        "title": "TailorIn",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -714,6 +1137,18 @@
         ],
         "title": "ValidationError",
         "type": "object"
+      },
+      "WatchIn": {
+        "description": "A dry run classifies and notifies nobody, which is how an operator\nchecks the classifier without sending themselves messages.",
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          }
+        },
+        "title": "WatchIn",
+        "type": "object"
       }
     }
   },
@@ -724,6 +1159,329 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/apply/{selector}/answers": {
+      "post": {
+        "operationId": "draftAnswers",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnswersIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "description": "no job matched the selector"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Draft Answers"
+      }
+    },
+    "/apply/{selector}/artifacts": {
+      "get": {
+        "description": "The index requires the token even though it is a read.\n\nTracker reads do not, and this deliberately differs: the names here are\nderived from the candidate's own name and the company, and the bodies\nbehind them are the densest personal content the system holds (spec 047).",
+        "operationId": "listArtifacts",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ArtifactOut"
+                  },
+                  "title": "Response Listartifacts",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "description": "no job matched the selector"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Artifacts"
+      }
+    },
+    "/apply/{selector}/artifacts/{kind}": {
+      "get": {
+        "operationId": "readArtifact",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "title": "Kind",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "description": "no such job, artifact kind, or the artifact is not produced yet"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Artifact"
+      }
+    },
+    "/apply/{selector}/cover-letter": {
+      "post": {
+        "operationId": "draftCoverLetter",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CoverLetterIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "description": "no job matched the selector"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Draft Cover Letter"
+      }
+    },
+    "/apply/{selector}/evaluate": {
+      "post": {
+        "operationId": "evaluateOffer",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvaluateIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "description": "no job matched the selector"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Evaluate Offer Route"
+      }
+    },
+    "/apply/{selector}/resume": {
+      "post": {
+        "description": "The same `tailor` verb the CLI runs, as a run (spec 047).",
+        "operationId": "tailorResume",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TailorIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "description": "no job matched the selector"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Tailor Resume"
+      }
+    },
     "/capture/add": {
       "get": {
         "description": "Renders. Changes nothing.\n\nThis used to add the row, which meant `<img src=\"http://localhost:8000/\ncapture/add?company=x&title=y\">` on any page the operator visited wrote to\nthe tracker with no interaction at all (spec 035).",
@@ -1215,6 +1973,735 @@
           }
         },
         "summary": "Jobs"
+      }
+    },
+    "/mail/events": {
+      "get": {
+        "description": "The archived events, newest first.\n\nNo token: this is a read of a store that was redacted on the way in\n(spec 049). The asymmetry with spec 047's artifact reads is the\nredaction, not an oversight.",
+        "operationId": "listMailEvents",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 500,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailEventsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Mail Events"
+      }
+    },
+    "/mail/watch": {
+      "post": {
+        "description": "The same `gmail-watch` verb the CLI runs, as a run.\n\nA run rather than a request: it reaches a remote service, its duration\ndepends on how much mail is waiting, and its failures are the kind an\noperator needs to read rather than a spinner that stops.",
+        "operationId": "runMailWatch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WatchIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Mail Watch"
+      }
+    },
+    "/outreach/backfill-posters": {
+      "post": {
+        "description": "Acts on every LinkedIn row rather than one job, so it takes no\nselector and locks one at a time, as discovery does.",
+        "operationId": "backfillPosters",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BackfillIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Backfill"
+      }
+    },
+    "/outreach/contacts": {
+      "get": {
+        "operationId": "listOutreachContacts",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ContactOut"
+                  },
+                  "title": "Response Listoutreachcontacts",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          }
+        },
+        "summary": "List Outreach Contacts"
+      }
+    },
+    "/outreach/due": {
+      "get": {
+        "operationId": "listOutreachDue",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/OutreachRowOut"
+                  },
+                  "title": "Response Listoutreachdue",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          }
+        },
+        "summary": "List Outreach Due"
+      }
+    },
+    "/outreach/sync": {
+      "post": {
+        "operationId": "syncOutreach",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/OutreachRowOut"
+                  },
+                  "title": "Response Syncoutreach",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          }
+        },
+        "summary": "Sync Outreach"
+      }
+    },
+    "/outreach/{selector}/best-contact": {
+      "post": {
+        "operationId": "setBestContact",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CandidateRef"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutreachRowOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "description": "no job matched the selector, or the candidate was never staged"
+          },
+          "409": {
+            "description": "the domain refused the change"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Best Contact"
+      }
+    },
+    "/outreach/{selector}/candidates": {
+      "get": {
+        "description": "The staged artifact, read through the same extraction approve uses.\n\nThis carries a real person's name and title, so it authenticates, for the\nsame reason spec 047's artifact reads do.",
+        "operationId": "listCandidates",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CandidateOut"
+                  },
+                  "title": "Response Listcandidates",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "description": "no job matched the selector, or the candidate was never staged"
+          },
+          "409": {
+            "description": "the domain refused the change"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Candidates"
+      }
+    },
+    "/outreach/{selector}/candidates/approve": {
+      "post": {
+        "description": "The only path in this API from a staged candidate to a stored contact.\n\nA candidate discovery never staged is refused rather than created, which\nis the staging invariant holding at the one place it could be bypassed.",
+        "operationId": "approveCandidate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CandidateRef"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContactOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "description": "no job matched the selector, or the candidate was never staged"
+          },
+          "409": {
+            "description": "the domain refused the change"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Approve"
+      }
+    },
+    "/outreach/{selector}/candidates/reject": {
+      "post": {
+        "operationId": "rejectCandidate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CandidateRef"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "description": "no job matched the selector, or the candidate was never staged"
+          },
+          "409": {
+            "description": "the domain refused the change"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reject"
+      }
+    },
+    "/outreach/{selector}/draft": {
+      "post": {
+        "description": "The contact and the tone travel in a file, not argv.\n\nA contact's name and LinkedIn URL are a real person's details, and argv\nis readable from the process table by every other process on the machine\n(spec 047's rule, applied to spec 048's inputs).",
+        "operationId": "draftOutreach",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "description": "no job matched the selector, or the candidate was never staged"
+          },
+          "409": {
+            "description": "the domain refused the change"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Draft Outreach"
+      }
+    },
+    "/outreach/{selector}/find-contacts": {
+      "post": {
+        "description": "A run, and one that spends money: it reaches Hunter and Apify.\n\nIt stages candidates. It writes no contact, which is the invariant this\nmodule exists to keep.",
+        "operationId": "findContacts",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FindContactsIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "description": "no job matched the selector, or the candidate was never staged"
+          },
+          "409": {
+            "description": "the domain refused the change"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Find Contacts"
+      }
+    },
+    "/outreach/{selector}/replied": {
+      "post": {
+        "operationId": "markOutreachReplied",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarkIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutreachRowOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "description": "no job matched the selector, or the candidate was never staged"
+          },
+          "409": {
+            "description": "the domain refused the change"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mark Replied"
+      }
+    },
+    "/outreach/{selector}/sent": {
+      "post": {
+        "description": "Records that the operator sent something themselves.\n\nIt sends nothing. The page says so in those words, because a control\nnext to a generated draft is exactly where that would be misread.",
+        "operationId": "markOutreachSent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarkIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutreachRowOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "description": "no job matched the selector, or the candidate was never staged"
+          },
+          "409": {
+            "description": "the domain refused the change"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mark Sent"
+      }
+    },
+    "/outreach/{selector}/snooze": {
+      "post": {
+        "operationId": "snoozeOutreach",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SnoozeIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutreachRowOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "description": "no job matched the selector, or the candidate was never staged"
+          },
+          "409": {
+            "description": "the domain refused the change"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Snooze"
       }
     },
     "/runs": {
