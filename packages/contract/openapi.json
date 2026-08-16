@@ -489,6 +489,10 @@
       },
       "HealthOut": {
         "properties": {
+          "built_at": {
+            "title": "Built At",
+            "type": "string"
+          },
           "database": {
             "title": "Database",
             "type": "string"
@@ -505,6 +509,10 @@
             "title": "Name",
             "type": "string"
           },
+          "revision": {
+            "title": "Revision",
+            "type": "string"
+          },
           "version": {
             "title": "Version",
             "type": "string"
@@ -515,7 +523,9 @@
           "version",
           "demo",
           "database",
-          "job_count"
+          "job_count",
+          "revision",
+          "built_at"
         ],
         "title": "HealthOut",
         "type": "object"

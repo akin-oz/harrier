@@ -6,6 +6,7 @@ Routes speak Pydantic models only; the web app speaks generated types only.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -39,6 +40,21 @@ from harrier_api.runmodels import Manager, RunOut, run_out
 from harrier_api.runs import RunManager, RunParams, RunState, format_sse, write_run_input
 
 API_VERSION = "0.1.0"
+
+# Stamped into the image at build time (Dockerfile, spec 051). Read from the
+# environment rather than from git, because the container has no .git directory
+# and asking git inside it would answer about whatever tree happened to be
+# mounted rather than about the code that is running.
+BUILD_UNKNOWN = "unknown"
+
+
+def build_revision() -> str:
+    return os.environ.get("HARRIER_REVISION", "").strip() or BUILD_UNKNOWN
+
+
+def build_timestamp() -> str:
+    return os.environ.get("HARRIER_BUILT_AT", "").strip() or BUILD_UNKNOWN
+
 
 # Kept in lockstep with harrier.tracker.STATUSES by test_status_literal_matches.
 JobStatus = Literal[
@@ -90,6 +106,14 @@ class HealthOut(BaseModel):
     demo: bool
     database: str
     job_count: int
+    # What is actually running. A process started from an old tree, or a
+    # container built from one, answers every request correctly while serving
+    # code nobody is looking at, and that is the failure spec 051 exists to
+    # remove rather than reproduce in a new shape. "unknown" is the honest
+    # answer for a process started outside the image build, which is what
+    # `just dev` is, rather than a revision it cannot know.
+    revision: str
+    built_at: str
 
 
 router = APIRouter()
@@ -104,6 +128,8 @@ def health(conn: Conn) -> HealthOut:
         demo=is_demo_mode(),
         database=str(demo_db_path() if is_demo_mode() else default_db_path()),
         job_count=int(count[0]),
+        revision=build_revision(),
+        built_at=build_timestamp(),
     )
 
 

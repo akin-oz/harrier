@@ -1,0 +1,69 @@
+# The API and the UI, supervised (spec 051, ADR-010).
+#
+#   docker compose up -d --build
+#
+# launchd stays on the host and keeps the schedule. This file owns the
+# interactive surface only, which is the half that had no supervisor.
+
+services:
+  harrier:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Passed through from the shell so the running container can say which
+        # revision it is. `just container-up` sets both; a bare
+        # `docker compose build` leaves them unknown, which reports honestly
+        # rather than claiming a revision.
+        HARRIER_REVISION: ${HARRIER_REVISION:-unknown}
+        HARRIER_BUILT_AT: ${HARRIER_BUILT_AT:-unknown}
+    image: harrier:local
+    container_name: harrier
+
+    # Back whenever the Docker daemon starts, including after a reboot, and
+    # still down when it was stopped deliberately. "Live all the time Docker is
+    # open" also needs Docker Desktop's own start-on-login setting, which is
+    # machine configuration this file cannot enforce. See README.
+    restart: unless-stopped
+
+    # Loopback only. Spec 035 spent its scope establishing that this API is not
+    # an open door, and a published container port is the easiest way to undo
+    # that without noticing. Never "8000:8000".
+    ports:
+      - "127.0.0.1:8000:8000"
+
+    # The host user's uid and gid. The local auth token is written 0600 into
+    # data/, so a container running as anyone else either cannot read the token
+    # the host CLI created or writes one the host CLI cannot read. Override per
+    # machine with HARRIER_UID and HARRIER_GID.
+    user: "${HARRIER_UID:-501}:${HARRIER_GID:-20}"
+
+    env_file:
+      - path: .env
+        required: false
+
+    # Nothing personal is in the image. The database, config and secrets live
+    # on the host and are mounted, so ADR-008 is untouched and the container
+    # stays disposable.
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+      # Read-only: the Gmail OAuth material is read here and rewritten only by
+      # `harrier gmail-oauth` on the host, which is a browser consent flow that
+      # belongs where the operator can watch the whole exchange (spec 050).
+      - ./secrets:/app/secrets:ro
+
+    healthcheck:
+      # python rather than curl: the slim image has no curl, and a healthcheck
+      # that always fails on a missing binary is worse than none.
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).status == 200 else 1)",
+        ]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3

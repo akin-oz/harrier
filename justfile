@@ -14,6 +14,34 @@ dev:
     trap 'kill "$api_pid" 2>/dev/null || true' EXIT INT TERM; \
     pnpm --filter @harrier/web dev
 
+# Build and start the supervised container (spec 051, ADR-010). The API and
+# the built SPA on http://127.0.0.1:8000, back whenever Docker starts.
+#
+# The mkdir is load-bearing rather than defensive: compose creates a missing
+# bind-mount source as root, which then breaks every write from a container
+# running as the host user, and looks like a code fault rather than a
+# permission one. The uid and gid are passed for the same reason: the local
+# auth token is 0600 in data/.
+container-up:
+    mkdir -p data config secrets
+    HARRIER_UID="$(id -u)" HARRIER_GID="$(id -g)" \
+    HARRIER_REVISION="$(git rev-parse --short HEAD)$(git diff --quiet || echo -dirty)" \
+    HARRIER_BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    docker compose up -d --build
+    @echo "harrier on http://127.0.0.1:8000"
+
+container-down:
+    docker compose down
+
+container-logs:
+    docker compose logs -f harrier
+
+# What the running container actually is, which is the question a stale image
+# makes worth asking.
+container-status:
+    @docker compose ps
+    @curl -fsS http://127.0.0.1:8000/health || echo "not answering on 127.0.0.1:8000"
+
 # Demo mode for strangers: synthetic fixtures, no keys, and no network in
 # the demo itself (spec 021). The two lines below are the build, not the
 # demo: pnpm needs the registry on a cold store and vite writes

@@ -1,0 +1,39 @@
+# Nothing personal enters an image layer (ADR-008, spec 051). A layer survives
+# `docker image save` and outlives any deletion of the mounted directory, so
+# the never-in-git set is excluded here as well as from git. The runtime reads
+# these through bind mounts instead.
+.env
+.env.*
+!.env.example
+secrets/
+data/
+tracker/
+runtime/
+reports/
+state/
+incoming/
+logs/
+interview-prep/
+backups/
+config/companies-hold.csv
+config/feeds.txt
+config/linkedin_search_urls.txt
+config/discovery.json
+config/candidate.json
+config/resume-content.json
+config/application-profile.json
+config/application-profile.md
+config/story-seeds.json
+config/outreach-defaults.json
+
+# Build inputs the image produces for itself, and host state that would either
+# bloat the context or arrive built for the wrong platform.
+.git/
+node_modules/
+**/node_modules/
+services/api/.venv/
+apps/web/dist/
+.ruff_cache/
+**/__pycache__/
+**/.pytest_cache/
+.idea/

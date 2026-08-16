@@ -1039,6 +1039,8 @@ export interface components {
         };
         /** HealthOut */
         HealthOut: {
+            /** Built At */
+            built_at: string;
             /** Database */
             database: string;
             /** Demo */
@@ -1047,6 +1049,8 @@ export interface components {
             job_count: number;
             /** Name */
             name: string;
+            /** Revision */
+            revision: string;
             /** Version */
             version: string;
         };
