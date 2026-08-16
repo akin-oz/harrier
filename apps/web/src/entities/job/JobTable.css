@@ -4,17 +4,36 @@
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-bg-raised);
-}
-.job-table {
-  width: 100%;
-  border-collapse: collapse;
   font-size: 13px;
 }
-.job-table thead th {
+
+/* Grid rather than the default table algorithm, so every row shares one
+   column track and the header can stick. `display: contents` on the sections
+   lets each row become a grid item of the table itself. */
+.job-table {
+  display: grid;
+  width: 100%;
+  min-width: 800px;
+  border-collapse: collapse;
+}
+.job-table thead,
+.job-table tbody {
+  display: contents;
+}
+.job-table tr {
+  display: grid;
+  grid-template-columns: 112px minmax(200px, 1.5fr) 104px minmax(170px, 1fr) 208px;
+}
+.job-table--no-actions tr {
+  grid-template-columns: 112px minmax(200px, 1.5fr) 104px minmax(170px, 1fr);
+}
+.job-table thead tr {
   position: sticky;
   top: 0;
   z-index: 1;
   background: var(--color-bg-sunken);
+}
+.job-table th {
   text-align: left;
   font-size: 11px;
   font-weight: 600;
@@ -28,65 +47,76 @@
 .job-table td {
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--color-border);
-  vertical-align: middle;
-}
-.job-table tbody tr:hover {
-  background: var(--color-bg-sunken);
+  display: flex;
+  align-items: center;
+  min-width: 0;
 }
 .job-table tbody tr:last-child td {
   border-bottom: none;
 }
+
+/* Qualified with td, so it outranks the `.job-table td` base rule. Left as a
+   bare class it lost on specificity and the cell centred its contents. */
+.job-table td.job-table__job {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+}
+.job-table__job-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
 .job-table__company {
   font-weight: 500;
+  white-space: nowrap;
 }
-/* Job titles have no length limit and some carry a whole advert. Left to
-   wrap they set the row height and destroy the density the table exists
-   for, so they clamp to two lines and keep the full text in a tooltip. */
 .job-table__title {
-  max-width: 320px;
-}
-.job-table__title a,
-.job-table__title span {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.job-table td {
-  overflow: hidden;
-}
-.job-table__next-action {
-  color: var(--color-text-secondary);
-  max-width: 280px;
-}
-/* The clamp goes on an inner element, never the cell: -webkit-box on a td
-   takes it out of table layout and the clipped line bleeds through. */
-.job-table__clamp {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.job-table__location {
-  max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--color-text-secondary);
 }
-.job-table__muted {
+.job-table__meta {
+  font-size: 11px;
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+
 .job-table__num {
+  justify-content: flex-end;
   text-align: right;
 }
+.job-table th.job-table__num {
+  display: block;
+  text-align: right;
+}
+.job-table__next-action {
+  color: var(--color-text-secondary);
+  overflow: hidden;
+}
+.job-table__clamp {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.job-table td.job-table__actions {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: var(--space-1);
+  padding-left: var(--space-2);
+  padding-right: var(--space-2);
+}
+
 .job-table-empty {
   padding: var(--space-6);
   text-align: center;
   color: var(--color-text-tertiary);
   border: 1px dashed var(--color-border);
   border-radius: var(--radius-md);
+  margin: 0;
 }

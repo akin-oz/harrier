@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { components } from "@harrier/contract";
 
 import { api } from "../../shared/api/client";
+import "../../shared/ui/run.css";
 import "./RunPanel.css";
 import { TERMINAL_STATES, useRunStream } from "./useRunStream";
 import type { EventSourceFactory, RunOut } from "./useRunStream";

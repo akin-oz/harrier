@@ -1,7 +1,7 @@
 .apply-page {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-5);
 }
 .apply-page__toolbar {
   display: flex;
@@ -14,8 +14,15 @@
   font-size: 16px;
   font-weight: 600;
 }
+.apply-page__sep {
+  color: var(--color-text-tertiary);
+}
+.apply-page__title {
+  font-size: 16px;
+  color: var(--color-text-secondary);
+}
 .apply-page__back {
-  padding: 6px 10px;
+  padding: 5px 10px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--color-border-strong);
   background: var(--color-bg-raised);
@@ -23,38 +30,93 @@
   font-size: 13px;
   cursor: pointer;
 }
+
+/* The operations sit beside the panel rather than above it, so choosing one
+   does not move the form the operator is about to fill in. */
+.apply-page__layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+@media (max-width: 860px) {
+  .apply-page__layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .apply-page__operations {
   display: flex;
-  gap: var(--space-2);
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 6px;
 }
-.apply-chip {
-  padding: 4px 10px;
+.apply-op {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border-strong);
+  border: 1px solid var(--color-border);
   background: var(--color-bg-raised);
-  color: var(--color-text-secondary);
-  font-size: 13px;
+  color: var(--color-text);
   cursor: pointer;
 }
-.apply-chip--active {
-  color: var(--color-text);
+.apply-op--active {
   border-color: var(--color-accent);
+  background: var(--color-bg-sunken);
 }
+.apply-op__label {
+  font-size: 13px;
+  font-weight: 600;
+}
+/* What the operation spends, on the control rather than left for the
+   operator to remember. */
+.apply-op__cost {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+.apply-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-raised);
+  padding: var(--space-4);
+}
+.apply-panel__head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.apply-panel__title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.apply-panel__explainer {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
 .apply-page__field {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  font-size: 13px;
+  gap: var(--space-1);
+  font-size: 12px;
+  color: var(--color-text-secondary);
 }
 .apply-page__field textarea {
-  padding: 8px 10px;
+  padding: var(--space-2) 10px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border-strong);
-  background: var(--color-bg-raised);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
   color: var(--color-text);
+  font: inherit;
   font-size: 13px;
-  font-family: inherit;
   resize: vertical;
 }
 .apply-page__checkbox {
@@ -62,6 +124,7 @@
   align-items: center;
   gap: var(--space-2);
   font-size: 13px;
+  color: var(--color-text-secondary);
 }
 .apply-page__actions {
   display: flex;
@@ -70,12 +133,59 @@
   flex-wrap: wrap;
 }
 .apply-page__run {
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-bg-raised);
+  color: var(--color-text);
+  font-weight: 500;
+}
+.apply-page__run:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.apply-page__run-state {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
   font-size: 13px;
   color: var(--color-text-secondary);
 }
+
+.apply-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.apply-progress__row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.apply-progress__row > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.apply-progress__pct {
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+.apply-progress__track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-bg-sunken);
+  overflow: hidden;
+}
+.apply-progress__fill {
+  display: block;
+  height: 100%;
+  background: var(--color-accent);
+  transition: width 0.15s linear;
+}
+
 .apply-page__muted {
   margin: 0;
   font-size: 13px;
@@ -86,41 +196,123 @@
   font-size: 13px;
   color: var(--color-danger);
 }
+/* A refusal is the domain's own sentence, so it is set in the mono face the
+   log uses rather than as page prose. */
 .apply-page__refusal {
-  padding: 8px 10px;
+  margin: 0;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  padding: 10px var(--space-3);
   border-radius: var(--radius-sm);
   border: 1px solid var(--color-danger);
-  background: var(--color-bg-raised);
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
 }
-.apply-page__subheading {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
+
+.apply-page__log {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
+.apply-page__log-toggle {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 2px 0;
+  color: var(--color-accent-text);
+  text-decoration: underline;
+}
+
 .apply-artifacts {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
 }
-.apply-artifacts__list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+.apply-artifacts__head {
   display: flex;
-  flex-direction: column;
+  align-items: baseline;
   gap: var(--space-2);
 }
-.apply-artifacts__item {
+.apply-artifacts__heading {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.apply-artifacts__summary {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+.apply-artifacts__list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-raised);
+  overflow: hidden;
+}
+.apply-artifact {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  align-items: center;
+  padding: 10px var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+.apply-artifact:last-child {
+  border-bottom: none;
+}
+.apply-artifact__main {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  font-size: 13px;
-  padding: 6px 10px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-raised);
+  gap: 10px;
+  min-width: 0;
 }
-.apply-artifacts__absent {
-  font-style: italic;
+/* Present and absent read apart without relying on hue: the dot is filled
+   for one and hollow for the other. */
+.apply-artifact__dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--color-success);
+}
+.apply-artifact--absent .apply-artifact__dot {
+  background: transparent;
+  border: 1.5px solid var(--color-text-tertiary);
+}
+.apply-artifact__name {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.apply-artifact--absent .apply-artifact__name {
+  color: var(--color-text-tertiary);
+}
+.apply-artifact__format {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--color-bg-sunken);
+  color: var(--color-text-tertiary);
+  flex: none;
+}
+.apply-artifact button {
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-bg-raised);
+  color: var(--color-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.apply-artifact__generate {
+  border-color: var(--color-border) !important;
+  background: var(--color-bg) !important;
+  color: var(--color-text-secondary) !important;
 }

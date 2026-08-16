@@ -1,23 +1,44 @@
-/* Six controls per row would be a very wide column and a very tall row, so
-   they sit in a fixed three-across grid: two tidy lines rather than a ragged
-   wrap that changes shape with the button labels. */
+/* Six controls at once made the actions column the widest thing in the table
+   and pushed it into a sideways scroll. What to do next for this status sits
+   on the row with Reject and a disclosure; the rest are one click away and
+   none of them is gone. */
 .job-actions {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.2rem;
-  min-width: 16rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.job-actions__row {
+  display: flex;
+  gap: var(--space-1);
+  align-items: center;
+  flex-wrap: wrap;
+  min-height: 26px;
+}
+.job-actions__more {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+  padding-top: 2px;
 }
 
 .job-actions button {
   font: inherit;
-  font-size: 0.78rem;
-  padding: 0.25rem 0.4rem;
+  font-size: 11.5px;
+  padding: 4px 7px;
   white-space: nowrap;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: var(--color-bg-raised);
   color: var(--color-text);
   cursor: pointer;
+}
+
+/* The forward verb is what to do next, so it is the one control on the row
+   that does not look like every other control on the row. */
+.job-actions__primary {
+  border-color: var(--color-border-strong);
+  font-weight: 500;
 }
 
 .job-actions button:hover:not(:disabled) {
@@ -43,10 +64,9 @@
 /* Asking for the reason takes over the whole block: the row is mid-decision
    and the other verbs are not what to do next. */
 .job-actions__reason {
-  grid-column: 1 / -1;
   display: grid;
   grid-template-columns: 1fr auto auto;
-  gap: 0.2rem;
+  gap: var(--space-1);
   align-items: center;
 }
 
@@ -64,8 +84,7 @@
 /* A refusal is a normal outcome, so it reads as information rather than as
    an error the operator has to clear. */
 .job-actions__failure {
-  grid-column: 1 / -1;
-  margin: 0.2rem 0 0;
-  font-size: 0.8rem;
+  margin: 0;
+  font-size: 12px;
   color: var(--color-text-secondary);
 }

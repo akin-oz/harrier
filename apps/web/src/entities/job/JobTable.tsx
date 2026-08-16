@@ -19,6 +19,16 @@ function parseScore(job: Job): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
+// Location, source and the added date were three columns that pushed the
+// table into a sideways scroll and were never sorted or filtered on. They
+// are the same facts, on one line under the job, where they read as context
+// rather than as data to compare across rows.
+function metaLine(job: Job): string {
+  return [job.location, job.source, job.added_at ? `added ${job.added_at}` : ""]
+    .filter((part) => part !== "")
+    .join("  ·  ");
+}
+
 // `renderActions` is passed in rather than imported, because JobTable is an
 // entity and the actions are a feature: an entity importing a feature is the
 // layering violation `fsd-reviewer` exists to catch. The page owns the wiring
@@ -61,24 +71,24 @@ export function JobTable({
     return <p className="job-table-empty">{emptyMessage}</p>;
   }
 
+  const hasActions = renderActions !== undefined;
+
   return (
     <div className="job-table-scroll">
-      <table className="job-table">
+      {/* Laid out with CSS grid, but still real table elements. The grid gives
+          the column alignment and the sticky header; keeping thead, tr and td
+          keeps the semantics a screen reader already understands, without
+          restating them as role attributes. */}
+      <table className={`job-table${hasActions ? "" : " job-table--no-actions"}`}>
         <thead>
           <tr>
             <th scope="col">Status</th>
-            <th scope="col">Company</th>
-            <th scope="col">Title</th>
+            <th scope="col">Job</th>
             <th scope="col" className="job-table__num">
               Score
             </th>
             <th scope="col">Next action</th>
-            <th scope="col">Location</th>
-            <th scope="col">Source</th>
-            <th scope="col" className="job-table__num">
-              Added
-            </th>
-            {renderActions !== undefined && <th scope="col">Actions</th>}
+            {hasActions && <th scope="col">Actions</th>}
           </tr>
         </thead>
         <tbody>
@@ -87,15 +97,26 @@ export function JobTable({
               <td>
                 <StatusPill status={job.status} />
               </td>
-              <td className="job-table__company">{job.company}</td>
-              <td className="job-table__title" title={job.title}>
-                {job.url ? (
-                  <a href={job.url} target="_blank" rel="noreferrer">
-                    {job.title}
-                  </a>
-                ) : (
-                  <span>{job.title}</span>
-                )}
+              <td className="job-table__job">
+                <span className="job-table__job-line">
+                  <span className="job-table__company">{job.company}</span>
+                  {job.url ? (
+                    <a
+                      className="job-table__title"
+                      href={job.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={job.title}
+                    >
+                      {job.title}
+                    </a>
+                  ) : (
+                    <span className="job-table__title" title={job.title}>
+                      {job.title}
+                    </span>
+                  )}
+                </span>
+                <span className="job-table__meta">{metaLine(job)}</span>
               </td>
               <td className="job-table__num">
                 <ScoreBar score={parseScore(job)} />
@@ -103,12 +124,7 @@ export function JobTable({
               <td className="job-table__next-action" title={job.next_action}>
                 <span className="job-table__clamp">{job.next_action}</span>
               </td>
-              <td className="job-table__location" title={job.location}>
-                {job.location}
-              </td>
-              <td className="job-table__muted">{job.source}</td>
-              <td className="job-table__muted job-table__num">{job.added_at}</td>
-              {renderActions !== undefined && <td>{renderActions(job)}</td>}
+              {hasActions && <td className="job-table__actions">{renderActions(job)}</td>}
             </tr>
           ))}
         </tbody>
