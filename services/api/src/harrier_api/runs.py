@@ -12,7 +12,7 @@ import asyncio
 import json
 import sys
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -47,28 +47,51 @@ KIND_COMMANDS: dict[str, list[str]] = {
 
 @dataclass(frozen=True)
 class ParameterizedKind:
-    """A run kind that acts on one tracker job.
+    """A run kind and the flags its CLI verb accepts.
 
     The kind owns the mapping to a CLI verb and to the flags that verb
     accepts, so no caller assembles argv (spec 047).
+
+    Spec 047 gave this one boolean and a job. Spec 048's verbs need more:
+    `find-contacts` takes a count, `backfill-posters` takes no job at all.
+    Rather than a field per flag, a kind declares the closed sets it accepts.
+    The property spec 047 asked for is unchanged and is now easier to state:
+    a flag name reaching argv came from one of these sets, and a value
+    reaching argv is an int or a path this process chose.
     """
 
     verb: str
     input_flag: str | None = None
-    accepts_no_ai: bool = False
+    switches: frozenset[str] = frozenset()
+    numbers: frozenset[str] = frozenset()
+    takes_job: bool = True
 
 
 PARAMETERIZED_KINDS: dict[str, ParameterizedKind] = {
-    "tailor": ParameterizedKind("tailor", "--jd-file", accepts_no_ai=True),
+    "tailor": ParameterizedKind("tailor", "--jd-file", switches=frozenset({"--no-ai"})),
     "cover-letter": ParameterizedKind("cover-letter", "--notes-file"),
     "answers": ParameterizedKind("answers", "--questions-file"),
     "evaluate": ParameterizedKind("evaluate", "--jd-file"),
+    "find-contacts": ParameterizedKind(
+        "find-contacts",
+        switches=frozenset({"--best-only"}),
+        numbers=frozenset({"--max-items"}),
+    ),
+    "outreach-draft": ParameterizedKind(
+        "outreach-draft", "--input-file", switches=frozenset({"--ai"})
+    ),
+    "backfill-posters": ParameterizedKind(
+        "backfill-posters",
+        switches=frozenset({"--dry-run"}),
+        numbers=frozenset({"--limit"}),
+        takes_job=False,
+    ),
 }
 
 
 @dataclass(frozen=True)
 class RunParams:
-    """Validated inputs for a run that acts on one job.
+    """Validated inputs for a parameterized run.
 
     `job_id` is an int, not a string: the one selector that reaches argv
     cannot then be made to look like a flag. Operator free text never appears
@@ -76,15 +99,26 @@ class RunParams:
     argv is readable from the process table by every other process on the
     machine and application answers are exactly the content ADR-008 keeps out
     of reach (spec 047).
+
+    A contact's name and LinkedIn URL travel the same way, for the same
+    reason: they are a real person's details, and the process table is
+    readable by everything else on the machine (spec 048).
     """
 
-    job_id: int
-    no_ai: bool = False
+    job_id: int | None = None
     input_path: Path | None = None
+    switches: frozenset[str] = frozenset()
+    numbers: Mapping[str, int] = field(default_factory=dict[str, int])
 
     def __post_init__(self) -> None:
-        if self.job_id <= 0:
+        if self.job_id is not None and self.job_id <= 0:
             raise ValueError(f"job id must be a positive integer, got {self.job_id!r}")
+        for flag, value in self.numbers.items():
+            # bool is a subclass of int, so a True here satisfies the type and
+            # then renders as `--limit=True`, which the CLI rejects at a
+            # distance with a message about the wrong thing.
+            if isinstance(value, bool):
+                raise ValueError(f"{flag} must be an integer, got {value!r}")
 
 
 def run_inputs_dir() -> Path:
@@ -119,17 +153,24 @@ def build_command(kind: str, params: RunParams) -> list[str]:
     if kind not in PARAMETERIZED_KINDS:
         raise KeyError(kind)
     parameterized = PARAMETERIZED_KINDS[kind]
-    argv = [
-        sys.executable,
-        "-m",
-        "harrier_cli.main",
-        parameterized.verb,
-        f"--job-id={params.job_id}",
-    ]
-    if params.no_ai:
-        if not parameterized.accepts_no_ai:
-            raise ValueError(f"{kind} does not accept --no-ai")
-        argv.append("--no-ai")
+    argv = [sys.executable, "-m", "harrier_cli.main", parameterized.verb]
+
+    if parameterized.takes_job:
+        if params.job_id is None:
+            raise ValueError(f"{kind} acts on a job and none was given")
+        argv.append(f"--job-id={params.job_id}")
+    elif params.job_id is not None:
+        raise ValueError(f"{kind} acts on everything and takes no job")
+
+    for flag in sorted(params.switches):
+        if flag not in parameterized.switches:
+            raise ValueError(f"{kind} does not accept {flag}")
+        argv.append(flag)
+    for flag in sorted(params.numbers):
+        if flag not in parameterized.numbers:
+            raise ValueError(f"{kind} does not accept {flag}")
+        argv.append(f"{flag}={params.numbers[flag]}")
+
     if params.input_path is not None:
         if parameterized.input_flag is None:
             raise ValueError(f"{kind} takes no input file")
@@ -251,7 +292,10 @@ class RunManager:
         flight. ADR-004 called for this under "artifact renders are per-slug
         locked"; spec 047 is where it was built.
         """
-        target = "" if params is None else str(params.job_id)
+        # A kind that acts on everything locks on the empty target, which is
+        # the one-at-a-time behaviour discovery always had. Kinds never
+        # collide with each other because the lock is on the pair.
+        target = "" if params is None or params.job_id is None else str(params.job_id)
         active = self.active_run(kind, target)
         if active is not None:
             # This attempt never becomes a run, so the input file written for

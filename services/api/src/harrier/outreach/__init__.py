@@ -32,6 +32,7 @@ from harrier.outreach.discovery import (
     normalize_profile_result,
     outreach_slug,
     score_contact_fit,
+    staged_candidates,
     update_candidate_review_status,
     write_candidates_artifact,
 )
@@ -113,6 +114,7 @@ __all__ = [
     "serialize_linked_jobs",
     "set_best_contact_for_job",
     "snooze_job_outreach",
+    "staged_candidates",
     "sync_tracker_outreach",
     "update_candidate_review_status",
     "update_contact",

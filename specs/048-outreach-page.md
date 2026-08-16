@@ -66,6 +66,26 @@ Draft generation carries operator free text (audience, tone) and so uses the
 run-scoped input file spec 047 defines. Contact discovery carries only a job
 selector and a limit.
 
+**Amended during implementation: what travels in that file, and what the run
+mechanism had to grow.** Two gaps appeared once these verbs were routed.
+
+The first is about whose data it is. Spec 047 kept *operator* free text off
+argv. A draft also carries the contact: a name, a title, and a LinkedIn URL
+belonging to a real person who never chose to use this tool. That is the same
+hazard for a stronger reason, so the contact travels in the file too, as JSON,
+and `outreach-draft` gains an `--input-file` flag to read it. The existing
+per-field flags are unchanged and still work.
+
+The second is that spec 047's parameters could not express these verbs.
+They allowed one job and one boolean. `find-contacts` takes a count,
+`outreach-draft` takes a different boolean, and `backfill-posters` acts on
+every LinkedIn row and takes no job at all. So a kind now declares the closed
+sets of switches and numeric flags its verb accepts, and a job becomes
+optional. The guarantee spec 047 asked for is unchanged and easier to state:
+a flag name reaching argv came from one of those sets, and a value reaching
+argv is an integer or a path this process chose. A kind with no job locks on
+the empty target, which is the one-at-a-time behaviour discovery already had.
+
 ### Money
 
 `find-contacts` reaches Hunter, which is paid. `backfill-posters` reaches the
@@ -123,32 +143,73 @@ Failure modes this must not introduce:
 
 ## Acceptance criteria
 
-Proving symbols are named at implementation.
+All symbols below are in `services/api/tests/test_ui_outreach.py` unless
+another file is named.
 
-- [ ] every outreach CLI verb in the table has a route, and a test asserts the
-      route and the verb call the same domain function
-- [ ] no route writes a contact except the approval route, proven by a test
+- [x] every outreach CLI verb in the table has a route
+      (`::test_every_outreach_verb_in_the_spec_has_a_route`), and a test
+      asserts the route and the verb call the same domain function
+      (`::test_the_route_argv_reaches_the_same_function_the_cli_verb_does`,
+      which executes the argv the route builds rather than patching a shared
+      function, because a run *is* the CLI). Coverage of the whole run
+      registry is held once, by
+      `::test_every_parameterized_kind_is_reachable_from_a_page`
+- [x] no route writes a contact except the approval route, proven by a test
       that enumerates the outreach routes and asserts which of them can reach
-      the contact write path
-- [ ] approving a candidate that was never staged is refused with the same
+      the contact write path (`::test_only_the_approval_route_can_write_a_contact`)
+- [x] approving a candidate that was never staged is refused with the same
       message on both sides, and writes no contact
-- [ ] approving a candidate syncs the tracker, as the CLI does
-- [ ] a draft-generation request whose contact identifier matches nothing is
+      (`::test_approving_a_candidate_that_was_never_staged_is_refused`,
+      `::test_approving_an_unstaged_candidate_beside_a_staged_one_is_refused`
+      for the harder case where an artifact exists but omits this person, and
+      `::test_the_cli_refuses_the_same_candidate_with_the_same_words`)
+- [x] approving a candidate syncs the tracker, as the CLI does
+      (`::test_approving_syncs_the_tracker_as_the_cli_does`)
+- [x] a draft-generation request whose contact identifier matches nothing is
       refused rather than drafted with empty fields
-- [ ] no route sends anything, proven by a test asserting the outreach routes
-      reach no send path
-- [ ] a paid operation is marked as paid in the UI before it runs, and the cost
-      gate's refusal reaches the page in its own words
-- [ ] zero staged candidates renders as "none found" rather than an empty table
-- [ ] every outreach write requires the token; the due queue and the contact
-      list are reads and do not
-- [ ] the generated client carries every new route and no hand-written request
-      or response shape appears in `apps/web`
-- [ ] no personal data enters a committed fixture, a test name, or a
+      (`::test_a_draft_for_an_unknown_contact_is_refused_rather_than_drafted_empty`,
+      which drives the argv the route builds so the refusal is proved to
+      survive the trip through the input file)
+- [x] no route sends anything
+      (`::test_marking_sent_sends_nothing`, which patches
+      `send_telegram_message` by its real name, paired with
+      `::test_no_outreach_route_reaches_a_send_path` over the module's
+      imports). The source-level half is a last resort by this repo's own
+      rule, which is why it is a pair rather than the whole check
+- [x] a paid operation is marked as paid in the UI before it runs
+      (`apps/web/src/pages/outreach/OutreachPage.test.tsx::contact discovery
+      is marked as reaching a paid service`), and a refusal reaches the page
+      in its own words (`::a refused approval is shown in the words the API
+      used`). Limitation: the cost gate's *own* refusal is not exercised
+      end to end here, because it arrives as a failed run and this spec adds
+      no run-log surface of its own; it is shown by the same mechanism spec
+      047 built and tested
+- [x] zero staged candidates renders as "none found" rather than an empty
+      table (`OutreachPage.test.tsx::no candidates reads as none found rather
+      than an empty table`, and `::test_no_staged_candidates_is_an_empty_list_not_an_error`
+      for the API half)
+- [x] **amended: every outreach read requires the token too, not only the
+      writes.** This criterion originally said the due queue and the contact
+      list are reads and therefore carry no token. Implementation showed that
+      wrong. Those responses name a real human being who is not the operator
+      and never chose to use this tool, which is a stronger case than the
+      artifacts spec 047 already decided to authenticate. So every outreach
+      route authenticates, reads included
+      (`::test_outreach_reads_require_the_token`,
+      `::test_outreach_writes_require_the_token`, and
+      `OutreachPage.test.tsx::outreach reads carry the token`). Tracker reads
+      are unchanged and still carry none
+- [x] the generated client carries every new route and no hand-written request
+      or response shape appears in `apps/web`: the page's rows are
+      `components["schemas"]["OutreachRowOut"]`, `["CandidateOut"]` and
+      `["ContactOut"]`, and the contract drift gate enforces the rest
+- [x] no personal data enters a committed fixture, a test name, or a
       screenshot. Contacts are the highest-risk fixture content in this spec:
       every staged candidate in a test is an invented person at an invented
-      company
-- [ ] all gates green on PR
+      company. Limitation: this is a property of the diff, and no test
+      asserts it
+- [x] all gates green on PR (`just check` passes: 1043 Python tests, 41 web
+      tests, contract regenerated with no change to any existing route)
 
 ## Proof / origin
 

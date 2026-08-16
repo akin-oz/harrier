@@ -534,18 +534,37 @@ def _cmd_backfill_posters(args: argparse.Namespace) -> int:
 
 
 def _cmd_outreach_draft(args: argparse.Namespace) -> int:
+    from typing import cast
+
     from harrier.outreach import find_contact, generate_outreach, write_outreach_draft
     from harrier.tracker import get_job
 
     jd_text, error_code = _read_jd_file(args.jd_file)
     if error_code is not None:
         return error_code
+    supplied: dict[str, object] = {}
+    if getattr(args, "input_file", None):
+        try:
+            parsed: object = json.loads(Path(args.input_file).read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            print(f"outreach-draft failed: cannot read --input-file: {error}", file=sys.stderr)
+            return 1
+        if not isinstance(parsed, dict):
+            print("outreach-draft failed: --input-file must hold a JSON object", file=sys.stderr)
+            return 1
+        supplied = cast("dict[str, object]", parsed)
+
+    def supplied_text(key: str, fallback: str) -> str:
+        value = supplied.get(key)
+        return str(value) if isinstance(value, str) and value else fallback
+
     conn = connect()
     try:
         row = get_job(conn, args.job_id)
-        contact_name = args.contact_name or ""
-        contact_role = args.contact_role or ""
-        contact_linkedin = args.contact_linkedin or ""
+        contact_name = supplied_text("contact_name", args.contact_name or "")
+        contact_role = supplied_text("contact_role", args.contact_role or "")
+        contact_linkedin = supplied_text("contact_linkedin", args.contact_linkedin or "")
+        jd_text = supplied_text("jd_text", jd_text or "") or None
         if contact_linkedin:
             # A supplied identifier always resolves; explicit manual fields
             # take precedence over the stored values (review finding: an
@@ -569,8 +588,8 @@ def _cmd_outreach_draft(args: argparse.Namespace) -> int:
             contact_role=contact_role,
             contact_linkedin=contact_linkedin,
             jd_text=jd_text or "",
-            audience=args.audience or "",
-            tone=args.tone,
+            audience=supplied_text("audience", args.audience or ""),
+            tone=supplied_text("tone", args.tone),
             ai=args.ai,
         )
         paths = write_outreach_draft(row.get("company", ""), row.get("title", ""), drafts)
@@ -1529,6 +1548,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     outreach_draft.add_argument("--jd-file", default=None)
     outreach_draft.add_argument("--ai", action="store_true", help="AI drafts instead of templates")
+    # The API passes the contact and the tone as a JSON file rather than on
+    # argv: a contact's name and LinkedIn URL are a real person's details, and
+    # argv is readable from the process table (spec 048).
+    outreach_draft.add_argument(
+        "--input-file", default=None, help="JSON holding the contact, audience, tone and jd_text"
+    )
     outreach_draft.set_defaults(func=_cmd_outreach_draft)
 
     backfill = sub.add_parser(

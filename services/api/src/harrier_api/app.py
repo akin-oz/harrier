@@ -33,7 +33,9 @@ from harrier_api.localauth import (
     load_or_create_token,
     require_token,
 )
-from harrier_api.runs import Run, RunManager, RunParams, RunState, format_sse, write_run_input
+from harrier_api.outreach_routes import outreach_router
+from harrier_api.runmodels import Manager, RunOut, run_out
+from harrier_api.runs import RunManager, RunParams, RunState, format_sse, write_run_input
 
 API_VERSION = "0.1.0"
 
@@ -131,16 +133,6 @@ def jobs(
     return [JobOut.model_validate({**row, "id": int(row["id"])}) for row in rows]
 
 
-class RunOut(BaseModel):
-    id: str
-    kind: str
-    state: RunState
-    created_at: str
-    started_at: str | None
-    ended_at: str | None
-    exit_code: int | None
-
-
 class StartRunIn(BaseModel):
     kind: Literal["demo", "discovery"]
 
@@ -163,24 +155,6 @@ class RunEventOut(BaseModel):
     state: RunState | None = None
     exit_code: int | None = None
 
-
-def _run_out(run: Run) -> RunOut:
-    return RunOut(
-        id=run.id,
-        kind=run.kind,
-        state=run.state,
-        created_at=run.created_at,
-        started_at=run.started_at,
-        ended_at=run.ended_at,
-        exit_code=run.exit_code,
-    )
-
-
-def get_manager(request: Request) -> RunManager:
-    return cast(RunManager, request.app.state.run_manager)
-
-
-Manager = Annotated[RunManager, Depends(get_manager)]
 
 tracker_router = APIRouter()
 
@@ -381,7 +355,7 @@ def _apply_params(conn: sqlite3.Connection, selector: str, text: str, *, no_ai: 
     stripped = text.strip()
     return RunParams(
         job_id=job_id,
-        no_ai=no_ai,
+        switches=frozenset({"--no-ai"}) if no_ai else frozenset(),
         input_path=write_run_input(text) if stripped else None,
     )
 
@@ -395,7 +369,7 @@ def _apply_params(conn: sqlite3.Connection, selector: str, text: str, *, no_ai: 
 async def tailor_resume(selector: str, body: TailorIn, conn: Conn, manager: Manager) -> RunOut:
     """The same `tailor` verb the CLI runs, as a run (spec 047)."""
     params = _apply_params(conn, selector, body.jd_text, no_ai=body.no_ai)
-    return _run_out(await manager.start("tailor", params))
+    return run_out(await manager.start("tailor", params))
 
 
 @apply_router.post(
@@ -408,7 +382,7 @@ async def draft_cover_letter(
     selector: str, body: CoverLetterIn, conn: Conn, manager: Manager
 ) -> RunOut:
     params = _apply_params(conn, selector, body.notes, no_ai=False)
-    return _run_out(await manager.start("cover-letter", params))
+    return run_out(await manager.start("cover-letter", params))
 
 
 @apply_router.post(
@@ -419,7 +393,7 @@ async def draft_cover_letter(
 )
 async def draft_answers(selector: str, body: AnswersIn, conn: Conn, manager: Manager) -> RunOut:
     params = _apply_params(conn, selector, body.questions, no_ai=False)
-    return _run_out(await manager.start("answers", params))
+    return run_out(await manager.start("answers", params))
 
 
 @apply_router.post(
@@ -432,7 +406,7 @@ async def evaluate_offer_route(
     selector: str, body: EvaluateIn, conn: Conn, manager: Manager
 ) -> RunOut:
     params = _apply_params(conn, selector, body.jd_text, no_ai=False)
-    return _run_out(await manager.start("evaluate", params))
+    return run_out(await manager.start("evaluate", params))
 
 
 @apply_router.get(
@@ -501,12 +475,12 @@ runs_router = APIRouter()
     responses=TOKEN_RESPONSES,
 )
 async def start_run(body: StartRunIn, manager: Manager) -> RunOut:
-    return _run_out(await manager.start(body.kind))
+    return run_out(await manager.start(body.kind))
 
 
 @runs_router.get("/runs", operation_id="listRuns")
 def list_runs(manager: Manager) -> list[RunOut]:
-    return [_run_out(run) for run in manager.list_runs()]
+    return [run_out(run) for run in manager.list_runs()]
 
 
 @runs_router.get("/runs/{run_id}", operation_id="getRun")
@@ -514,7 +488,7 @@ def get_run(run_id: str, manager: Manager) -> RunOut:
     run = manager.get(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
-    return _run_out(run)
+    return run_out(run)
 
 
 @runs_router.post(
@@ -527,7 +501,7 @@ async def cancel_run(run_id: str, manager: Manager) -> RunOut:
     run = await manager.cancel(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
-    return _run_out(run)
+    return run_out(run)
 
 
 @runs_router.get(
@@ -734,6 +708,7 @@ def create_app(run_manager: RunManager | None = None, spa_dir: Path | None = Non
     app.include_router(config_router)
     app.include_router(tracker_router)
     app.include_router(apply_router)
+    app.include_router(outreach_router)
     app.add_middleware(ApiPrefixMiddleware)
     # Closes DNS rebinding, which is what made every other protection here
     # bypassable: a page the operator visits resolves its own hostname to

@@ -132,22 +132,22 @@ def test_every_apply_operation_has_a_route_in_the_contract(env: Path) -> None:
     assert "/apply/{selector}/artifacts/{kind}" in paths
 
 
-def test_every_parameterized_kind_is_reachable_from_the_page(env: Path) -> None:
-    """The registry and the routes cannot drift apart.
+def test_this_spec_s_kinds_are_reachable_from_the_page(env: Path) -> None:
+    """The four kinds this spec added, each with a route.
 
-    Adding a kind to `PARAMETERIZED_KINDS` without a route leaves an
-    operation only the CLI can start, which is the gap this whole spec
-    exists to close.
+    That *every* kind in `PARAMETERIZED_KINDS` has one is asserted once, in
+    `test_ui_outreach.py::test_every_parameterized_kind_is_reachable_from_a_page`,
+    because the registry grew past this spec and the exhaustive check belongs
+    wherever it can cover all of it.
     """
     paths = create_app().openapi()["paths"]
-    routed = {
+    for kind, path in {
         "tailor": "/apply/{selector}/resume",
         "cover-letter": "/apply/{selector}/cover-letter",
         "answers": "/apply/{selector}/answers",
         "evaluate": "/apply/{selector}/evaluate",
-    }
-    assert set(routed) == set(PARAMETERIZED_KINDS), "a parameterized kind has no route"
-    for path in routed.values():
+    }.items():
+        assert kind in PARAMETERIZED_KINDS
         assert path in paths
 
 
@@ -209,9 +209,9 @@ def test_a_job_selector_must_be_a_positive_integer() -> None:
         RunParams(job_id=0)
 
 
-def test_a_kind_that_takes_no_input_file_refuses_one(job_id: int) -> None:
+def test_a_kind_refuses_a_flag_its_verb_does_not_accept(job_id: int) -> None:
     with pytest.raises(ValueError, match="does not accept --no-ai"):
-        build_command("answers", RunParams(job_id=job_id, no_ai=True))
+        build_command("answers", RunParams(job_id=job_id, switches=frozenset({"--no-ai"})))
 
 
 # --- the lock is per target --------------------------------------------------
