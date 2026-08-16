@@ -178,6 +178,22 @@ def runtime_asset_roots() -> set[str]:
     return found - MOUNTED_NOT_COPIED
 
 
+def dockerfile_instructions() -> str:
+    """The Dockerfile with its comments removed.
+
+    Every assertion below is a substring match, and this file is heavily
+    commented, so a comment mentioning a command would satisfy a check that the
+    command exists. Deleting a `RUN` while leaving the paragraph explaining it
+    is exactly how a guard comes to pass for the wrong reason, which is the
+    shape this repository keeps finding (review of PR #58).
+    """
+    return "\n".join(
+        line
+        for line in DOCKERFILE.read_text(encoding="utf-8").splitlines()
+        if not line.lstrip().startswith("#")
+    )
+
+
 def copied_paths() -> set[str]:
     """The first path of every `COPY` in the runtime stage.
 
@@ -215,6 +231,67 @@ def test_personal_directories_are_mounted_rather_than_copied(personal: str) -> N
     """The other half of the same rule, so widening the COPY list cannot
     quietly pull personal data into a layer while making the test above pass."""
     assert personal not in copied_paths(), f"{personal}/ is copied into the image"
+
+
+PYPROJECT = ROOT / "services" / "api" / "pyproject.toml"
+
+# Tooling, not a feature. The image is a runtime, so this one stays out and its
+# absence is asserted rather than assumed.
+BUILD_ONLY_GROUPS = {"dev"}
+
+
+def dependency_groups() -> set[str]:
+    """The group names declared in `pyproject.toml`, read from the file.
+
+    Derived so a group added tomorrow is either installed or explicitly
+    build-only, instead of becoming a lazy import that fails inside a running
+    container.
+    """
+    text = PYPROJECT.read_text(encoding="utf-8")
+    section = text.split("[dependency-groups]", 1)
+    assert len(section) == 2, "pyproject declares no dependency groups"
+    body = re.split(r"^\[", section[1], maxsplit=1, flags=re.MULTILINE)[0]
+    groups = set(re.findall(r"^([a-z][a-z0-9_-]*)\s*=\s*\[", body, flags=re.MULTILINE))
+    assert groups, "no dependency groups parsed; the scan did not run"
+    return groups
+
+
+@pytest.mark.parametrize("group", sorted(dependency_groups() - BUILD_ONLY_GROUPS))
+def test_the_image_installs_every_feature_dependency_group(group: str) -> None:
+    """Optional on a laptop is not optional in an image.
+
+    On a laptop an optional group means "install it when you want that
+    feature". In an image it means the feature is absent and the operator has
+    no way to add it: the run just fails with a message telling them to run an
+    install command. `pdf` was missing and `harrier tailor` died on Chromium;
+    `gmail` was missing behind it and `POST /mail/watch` would have died the
+    same way.
+    """
+    assert f"--group {group}" in dockerfile_instructions(), (
+        f"dependency group {group!r} is a feature the UI can reach, but the image never installs it"
+    )
+
+
+def test_the_dev_group_stays_out_of_the_runtime_image() -> None:
+    assert "--no-dev" in dockerfile_instructions()
+
+
+def test_the_browser_path_is_pinned_rather_than_left_to_home() -> None:
+    """The container runs as a uid with no passwd entry, so HOME resolves to
+    `/` and Playwright looked under `/.cache/ms-playwright`, which is not where
+    the download went. Pinning the path makes the lookup uid-independent.
+
+    Asserted against the instructions rather than the file, so deleting the
+    command while leaving the paragraph that explains it fails (review of
+    PR #58).
+    """
+    text = dockerfile_instructions()
+    assert "ENV PLAYWRIGHT_BROWSERS_PATH=" in text
+    assert "playwright install --with-deps chromium" in text
+    # The page-count gate shells out to pdfinfo; without poppler every render
+    # validates as "could not inspect PDF page count", so the install command
+    # itself is what is asserted.
+    assert "apt-get install" in text and "poppler-utils" in text
 
 
 def test_the_container_comes_back_when_docker_starts() -> None:
