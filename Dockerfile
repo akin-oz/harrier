@@ -47,7 +47,26 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     cd services/api && uv sync --frozen --no-install-project --no-dev
 
 COPY services/api services/api
+
+# Everything the runtime reads from the repository root, not just the code.
+# The first version of this image copied services/api, config and the SPA, and
+# `harrier tailor` died on a missing resume template inside a running
+# container: the code was all there and the assets it reads were not.
+# `test_the_image_copies_every_repository_asset_the_runtime_reads` derives this
+# list from the source rather than trusting this comment.
+#
+#   config     discovery settings, outreach templates, the classification
+#   templates  resume and cover letter HTML and CSS (harrier.resume,
+#              harrier.apply.letters)
+#   fixtures   demo mode's offline HTTP recordings and synthetic jobs
+#   docs       the parity matrix and its checklist, read by `harrier parity`
+#
+# data/ and secrets/ are deliberately absent: they are personal and arrive as
+# bind mounts at runtime (ADR-008, spec 051).
 COPY config config
+COPY templates templates
+COPY fixtures fixtures
+COPY docs docs
 COPY --from=web /build/apps/web/dist apps/web/dist
 
 RUN --mount=type=cache,target=/root/.cache/uv \

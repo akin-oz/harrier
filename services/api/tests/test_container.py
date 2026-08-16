@@ -144,6 +144,79 @@ def test_the_published_port_never_leaves_loopback() -> None:
     assert offenders == [], "a port mapping is not bound to loopback: " + "; ".join(offenders)
 
 
+# A repository-root directory the runtime resolves, in either of the two forms
+# the source uses: `Path("templates")` against the working directory, and
+# `repo_root() / "fixtures"` against the tree.
+_ASSET_ROOT = re.compile(r'(?:Path\(|repo_root\(\)\s*/\s*)"([a-z_]+)"')
+
+# Personal, and mounted rather than copied (ADR-008). Their absence from the
+# image is the requirement, not an oversight, so they are excluded here and
+# asserted absent below.
+MOUNTED_NOT_COPIED = {"data", "secrets"}
+
+SOURCE_DIRS = (
+    ROOT / "services" / "api" / "src" / "harrier",
+    ROOT / "services" / "api" / "src" / "harrier_api",
+    ROOT / "services" / "api" / "src" / "harrier_cli",
+)
+
+
+def runtime_asset_roots() -> set[str]:
+    """Repository directories the runtime opens, read out of the source.
+
+    Derived rather than listed. A new module reading a new directory adds
+    itself here, so the image is told about it by a failing test rather than by
+    a traceback from a running container.
+    """
+    found: set[str] = set()
+    for directory in SOURCE_DIRS:
+        for path in directory.rglob("*.py"):
+            for name in _ASSET_ROOT.findall(path.read_text(encoding="utf-8")):
+                if (ROOT / name).is_dir():
+                    found.add(name)
+    assert found, "no asset roots discovered; the scan did not run"
+    return found - MOUNTED_NOT_COPIED
+
+
+def copied_paths() -> set[str]:
+    """The first path of every `COPY` in the runtime stage.
+
+    `COPY --from=web ...` is the SPA arriving from the build stage, which is
+    how `apps` gets there, so its destination is what counts.
+    """
+    copied: set[str] = set()
+    for line in DOCKERFILE.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("COPY "):
+            continue
+        parts = [word for word in stripped.split()[1:] if not word.startswith("--")]
+        if not parts:
+            continue
+        destination = parts[-1].strip("./")
+        copied.add(destination.split("/")[0])
+        copied.add(parts[0].split("/")[0])
+    return copied
+
+
+@pytest.mark.parametrize("asset", sorted(runtime_asset_roots()))
+def test_the_image_copies_every_repository_asset_the_runtime_reads(asset: str) -> None:
+    """The regression case for a container that had the code and not the files.
+
+    `harrier tailor` failed inside a running container with a missing
+    `templates/resume-template.html`. Nothing was wrong with the code; the
+    image simply never copied the directory, and no check existed that could
+    notice. The same hole covered `fixtures/` and the parity documents.
+    """
+    assert asset in copied_paths(), f"the runtime reads {asset}/ but the Dockerfile never copies it"
+
+
+@pytest.mark.parametrize("personal", sorted(MOUNTED_NOT_COPIED))
+def test_personal_directories_are_mounted_rather_than_copied(personal: str) -> None:
+    """The other half of the same rule, so widening the COPY list cannot
+    quietly pull personal data into a layer while making the test above pass."""
+    assert personal not in copied_paths(), f"{personal}/ is copied into the image"
+
+
 def test_the_container_comes_back_when_docker_starts() -> None:
     assert "restart: unless-stopped" in COMPOSE.read_text(encoding="utf-8")
 
