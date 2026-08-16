@@ -1,6 +1,9 @@
 # ADR-007: Repo layout and toolchain
 
-- Status: accepted
+- Status: partially superseded by ADR-010 (2026-08-16): Docker is the daily
+  driver for the API and the UI, not the demo path alone. The rest of this
+  decision, including the demo container path and the `just`-recipes-in-CI
+  rule, stands.
 - Date: 2026-08-08
 
 ## Context
