@@ -105,9 +105,22 @@ Three sections, in the order the operator works:
 - **Contacts.** What has been approved, which is the read `contacts list`
   gives.
 
-Drafts are generated from a job row and shown as text to copy. They are
-artifacts, and they are read back through spec 047's artifact route rather than
-a second mechanism.
+Drafts are generated from a job row. **Amended during implementation: the
+page does not display them yet, and this section overstated twice.**
+
+The first sentence of the original said drafts are shown as text to copy. The
+delivered page has Due, Candidates and Contacts, and no control that reaches
+`POST /outreach/{selector}/draft`; the route and its tests exist, and no page
+calls them. The second sentence said drafts are read back through spec 047's
+artifact route, and that is not possible as written: `write_outreach_draft`
+writes to `outreach_drafts_dir()`, and spec 047's artifact route resolves a
+closed set of kinds that does not include an outreach draft. Reading one back
+needs a new kind in that set, which is spec 047's surface to widen and not
+this spec's.
+
+So drafting from the page is deferred, with both halves named: a control that
+starts the draft run, and an artifact kind that lets the result be read back.
+Whichever spec takes it owns both.
 
 ## Inputs, outputs, failure modes
 

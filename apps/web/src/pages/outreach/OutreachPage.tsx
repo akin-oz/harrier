@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { components } from "@harrier/contract";
 
@@ -51,14 +51,27 @@ async function fetchCandidates(selector: string): Promise<readonly Candidate[]> 
 export function OutreachPage() {
   const queryClient = useQueryClient();
   const [selector, setSelector] = useState("");
+  // What the query actually keys on. Typing "1234" into the box used to
+  // issue four requests, one per keystroke, and each of them read the
+  // tracker and the staged artifact on the server (review finding on PR #51).
+  const [settled, setSettled] = useState("");
   const [failure, setFailure] = useState<string | null>(null);
+
+  useEffect(() => {
+    const timer = globalThis.setTimeout(() => {
+      setSettled(selector);
+    }, 300);
+    return () => {
+      globalThis.clearTimeout(timer);
+    };
+  }, [selector]);
 
   const due = useQuery({ queryKey: ["outreach", "due"], queryFn: fetchDue });
   const contacts = useQuery({ queryKey: ["outreach", "contacts"], queryFn: fetchContacts });
   const candidates = useQuery({
-    queryKey: ["outreach", "candidates", selector],
-    queryFn: () => fetchCandidates(selector),
-    enabled: selector !== "",
+    queryKey: ["outreach", "candidates", settled],
+    queryFn: () => fetchCandidates(settled),
+    enabled: settled !== "",
   });
 
   const refreshAll = () => {
@@ -233,7 +246,16 @@ export function OutreachPage() {
         <span className="outreach-page__paid">calls a paid service (Hunter, Apify)</span>
       </div>
 
-      {selector !== "" && candidates.isSuccess && (
+      {/* An unknown job id answers 404, and this used to render nothing at
+          all: the operator typed an id, the page went quiet, and the reason
+          never reached them. Spec 048 requires the refusal to be visible. */}
+      {settled !== "" && candidates.isError && (
+        <p role="alert" className="outreach-page__error">
+          {candidates.error.message}
+        </p>
+      )}
+
+      {settled !== "" && candidates.isSuccess && (
         <>
           <p className="outreach-page__muted">
             Staged for your decision. Approving is what creates a contact; nothing else does.
