@@ -203,9 +203,50 @@ gate is PDF-or-failure and the page count comes from `pdfinfo`, so a container
 without them turns every artifact run into an error telling the operator to run
 an install command inside a container.
 
-Cost, stated rather than discovered: the image is about 2.4 GB, and Chromium
-with its system libraries is nearly all of it. That is the price of the daily
-driver being able to do what the host could.
+**Second amendment, at implementation.** A fourth round, and the first that the
+rule above does not cover, because the missing thing was neither a dependency
+group nor a repository directory.
+
+`.env` sets `AI_PROVIDER=claude-cli` and `env_file` hands it to the container,
+which had no `claude` binary, no Node, and `HOME` resolving to `/`. Every
+feature behind the LLM seam failed with "`claude` CLI not found": resume
+tailoring, cover letters, application answers, outreach drafts, and offer
+evaluation, all six call sites of `harrier.llm.generate_text`. So the rule
+widens by one clause: **the image also carries the external binaries the
+configured provider seam resolves.**
+
+The image installs the CLI at a pinned version under `/opt/claude`, and sets
+`CLAUDE_CLI_PATH`, which is the override `find_binary` reads before `PATH`
+(`services/api/src/harrier/llm/config.py:96`). A fixed world-readable prefix
+rather than a home directory, for the same reason `PLAYWRIGHT_BROWSERS_PATH` is
+pinned.
+
+**What the container cannot have, stated rather than discovered.** The host's
+`claude-cli` runs on a Max subscription whose OAuth credential lives in the
+macOS Keychain, not in a file, and the host binary is a Mach-O arm64
+executable. Neither crosses into a Linux container. So the container's CLI
+authenticates with `ANTHROPIC_API_KEY` instead, through the
+`CLAUDE_CLI_USE_API_KEY` switch the provider already reads
+(`services/api/src/harrier/llm/providers.py:157`), set in the compose file.
+
+The consequence is a cost asymmetry, and it belongs in the spec rather than in
+a surprised invoice: **an AI run started from the container is billed per
+token; the same run started from the host CLI is not.** Carrying the
+subscription in would mean exporting a live OAuth token from the Keychain to a
+bind-mounted file, where two independent refreshers could rotate each other
+out of a session. That was rejected, and is recorded here so the next reader
+sees a decision rather than an oversight.
+
+Verified rather than reasoned about, on this machine, before the Dockerfile was
+edited: the pinned installer produces a working `linux/arm64` binary, it runs as
+uid 501 with `HOME=/`, every flag `_generate_claude_cli` passes is still
+accepted, and the call returns the `{"is_error": false, "result": ...}` envelope
+the provider parses.
+
+Cost, stated rather than discovered: the image is about 2.8 GB. Chromium with
+its system libraries is most of it, and the `claude` CLI added by the second
+amendment below is 279 MB more. That is the price of the daily driver being
+able to do what the host could.
 
 `PLAYWRIGHT_BROWSERS_PATH` is pinned. The container runs as the host user's uid
 with no passwd entry, so `HOME` resolves to `/` and Playwright looked for its
@@ -287,6 +328,13 @@ Proving symbols are named at implementation.
       a current one
 - [ ] `HARRIER_DEMO=1` inside the container writes to a temp directory and a test
       asserts nothing is written under `/app/data`
+- [x] the image carries the external binary the configured provider seam
+      resolves, at the path it advertises and at a pinned version, and the
+      compose file supplies the credential that CLI authenticates with, proven
+      by `services/api/tests/test_container.py::test_the_image_installs_the_cli_the_provider_seam_resolves`,
+      `::test_the_cli_lands_where_the_image_says_it_did`,
+      `::test_the_cli_version_is_pinned_rather_than_floating` and
+      `::test_the_container_supplies_the_credential_the_cli_authenticates_with`
 - [x] `just contract` produces no diff, because no route shape changes
 - [x] the README documents the Docker Desktop start-on-login setting as machine
       configuration the repository cannot enforce, and does not claim otherwise

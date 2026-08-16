@@ -21,7 +21,9 @@ from typing import cast
 
 import pytest
 
+import harrier.llm.providers as llm_providers
 from harrier.demo import repo_root
+from harrier.llm import LLMConfig
 from harrier_api.app import BUILD_UNKNOWN, build_revision, build_timestamp
 
 ROOT = repo_root()
@@ -292,6 +294,144 @@ def test_the_browser_path_is_pinned_rather_than_left_to_home() -> None:
     # validates as "could not inspect PDF page count", so the install command
     # itself is what is asserted.
     assert "apt-get install" in text and "poppler-utils" in text
+
+
+# --- the provider seam the container has to be able to run -------------------
+#
+# Round four of the missing-runtime-dependency defect, and the first one that
+# was neither a dependency group nor a repository directory: `.env` carries
+# AI_PROVIDER=claude-cli into the container through `env_file`, and the image
+# had no `claude` binary. All six call sites of `harrier.llm.generate_text`
+# failed identically.
+
+_CLI_PATH = re.compile(r"^ENV\s+CLAUDE_CLI_PATH=(\S+)\s*$", re.MULTILINE)
+_CLI_VERSION = re.compile(r"^ARG\s+CLAUDE_CLI_VERSION=(\S+)\s*$", re.MULTILINE)
+# The installer writes under $HOME, so the HOME this command sets is what
+# decides where the binary actually lands.
+_CLI_INSTALL = re.compile(r"HOME=(\S+)\s+sh -c \"curl[^\"]*install\.sh[^\"]*\"")
+
+
+def test_the_image_installs_the_cli_the_provider_seam_resolves() -> None:
+    """Asserted against the instructions rather than the file, so deleting the
+    command while leaving the paragraph explaining it fails (review of PR #58)."""
+    text = dockerfile_instructions()
+    assert _CLI_INSTALL.search(text), "the image never installs the `claude` CLI"
+    assert _CLI_PATH.search(text), "the image installs the CLI without telling the runtime where"
+
+
+def test_the_cli_lands_where_the_image_says_it_did() -> None:
+    """The Playwright bug, one binary over.
+
+    `PLAYWRIGHT_BROWSERS_PATH` pointed somewhere the download had not gone, and
+    nothing failed until a run needed the browser. `CLAUDE_CLI_PATH` is the
+    override `find_binary` reads before `PATH`, so the same drift would leave
+    the image carrying 279 MB of CLI that the provider cannot find.
+    """
+    text = dockerfile_instructions()
+    advertised = _CLI_PATH.search(text)
+    installed = _CLI_INSTALL.search(text)
+    assert advertised and installed
+    prefix = installed.group(1).rstrip("/")
+    assert advertised.group(1).startswith(f"{prefix}/"), (
+        f"the image advertises {advertised.group(1)} but installs under {prefix}"
+    )
+
+
+def test_the_cli_version_is_pinned_rather_than_floating() -> None:
+    """`stable` would mean the image's behavior changes without the tree
+    changing, which is this spec's staleness failure inverted: not a container
+    running old code, but two containers built from one commit running
+    different code."""
+    text = dockerfile_instructions()
+    version = _CLI_VERSION.search(text)
+    assert version, "the CLI version is not declared"
+    assert re.fullmatch(r"\d+\.\d+\.\d+", version.group(1)), (
+        f"CLAUDE_CLI_VERSION={version.group(1)!r} is not an exact version"
+    )
+    assert "bash -s ${CLAUDE_CLI_VERSION}" in text, "the pinned version is declared but not used"
+
+
+def compose_environment_value(name: str) -> str | None:
+    """One value from the compose file's `environment:` block."""
+    match = re.search(
+        rf'^\s+{re.escape(name)}:\s*"?([^"\s]+)"?\s*$',
+        COMPOSE.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    return match.group(1) if match else None
+
+
+def test_the_container_supplies_the_credential_the_cli_authenticates_with(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The install is inert without this, and the failure is silent-ish.
+
+    `_generate_claude_cli` strips ANTHROPIC_API_KEY from the child environment
+    unless `CLAUDE_CLI_USE_API_KEY` is truthy, because on the host the CLI runs
+    on a subscription login and must not silently bill an API key instead. In
+    the container that login cannot exist: it lives in the macOS Keychain. So
+    the compose file sets the switch, and this asserts the value it sets
+    actually survives the provider's decision rather than that the line exists.
+    """
+    declared = compose_environment_value("CLAUDE_CLI_USE_API_KEY")
+    assert declared, "the compose file supplies no credential for the CLI it installed"
+
+    captured: dict[str, str] = {}
+
+    class FakeProc:
+        returncode = 0
+        stdout = '{"is_error": false, "result": "ok"}'
+        stderr = ""
+
+    def fake_binary(name: str, path_env: str, fallbacks: tuple[str, ...]) -> str | None:
+        return "/opt/claude/.local/bin/claude"
+
+    def fake_run(*args: object, **kwargs: object) -> FakeProc:
+        env = kwargs.get("env")
+        assert isinstance(env, dict)
+        captured.update(cast("dict[str, str]", env))
+        return FakeProc()
+
+    monkeypatch.setattr(llm_providers, "find_binary", fake_binary)
+    monkeypatch.setattr(llm_providers.subprocess, "run", fake_run)
+    monkeypatch.setenv("CLAUDE_CLI_USE_API_KEY", declared)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-probe")
+
+    config = LLMConfig(provider="claude-cli", model="sonnet", api_key="claude-cli")
+    assert llm_providers.generate_with_config("system", "user", config, 30) == "ok"
+    assert captured.get("ANTHROPIC_API_KEY") == "sk-ant-probe", (
+        f"CLAUDE_CLI_USE_API_KEY={declared!r} does not reach the CLI as a credential"
+    )
+
+
+def test_without_the_switch_the_key_is_still_withheld(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The other half, so the test above cannot pass by the provider having
+    stopped stripping the key at all. On the host the CLI runs on a
+    subscription and an inherited API key would bill silently."""
+    captured: dict[str, str] = {}
+
+    class FakeProc:
+        returncode = 0
+        stdout = '{"is_error": false, "result": "ok"}'
+        stderr = ""
+
+    def fake_binary(name: str, path_env: str, fallbacks: tuple[str, ...]) -> str | None:
+        return "/opt/claude/.local/bin/claude"
+
+    def fake_run(*args: object, **kwargs: object) -> FakeProc:
+        env = kwargs.get("env")
+        assert isinstance(env, dict)
+        captured.update(cast("dict[str, str]", env))
+        return FakeProc()
+
+    monkeypatch.setattr(llm_providers, "find_binary", fake_binary)
+    monkeypatch.setattr(llm_providers.subprocess, "run", fake_run)
+    monkeypatch.delenv("CLAUDE_CLI_USE_API_KEY", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-probe")
+
+    config = LLMConfig(provider="claude-cli", model="sonnet", api_key="claude-cli")
+    llm_providers.generate_with_config("system", "user", config, 30)
+    assert "ANTHROPIC_API_KEY" not in captured
 
 
 def test_the_container_comes_back_when_docker_starts() -> None:
