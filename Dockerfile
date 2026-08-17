@@ -99,6 +99,52 @@ RUN /app/services/api/.venv/bin/playwright install --with-deps chromium \
     && rm -rf /var/lib/apt/lists/* \
     && chmod -R a+rX /ms-playwright
 
+# The `claude` CLI, for the same reason as Chromium above: AI_PROVIDER selects
+# it, the UI can reach every feature that calls it, and the container could not
+# run it. `.env` carries AI_PROVIDER=claude-cli to the container through
+# `env_file`, so resume tailoring, cover letters, application answers, outreach
+# drafts and offer evaluation all failed identically with "`claude` CLI not
+# found", which is the fourth round of this defect and the first one that could
+# not be fixed by installing a Python group.
+#
+# Installed under a fixed world-readable prefix rather than a home directory,
+# for the reason PLAYWRIGHT_BROWSERS_PATH is pinned: the container runs as the
+# host user's uid with no passwd entry, so HOME resolves to `/`. The installer
+# places the binary under $HOME, so the build sets HOME for that command only
+# and tells the runtime where it landed. CLAUDE_CLI_PATH is the override
+# harrier.llm.config.find_binary reads first, so nothing here depends on PATH.
+#
+# The version is pinned. A floating `stable` would mean the image's behavior
+# changes without the tree changing, which is the staleness failure this spec
+# exists to make visible, inverted.
+#
+# curl is installed for this and then purged, so the compose healthcheck's
+# reason for using python rather than curl stays true.
+#
+# The download is a file, not a pipe, and the layer verifies what it produced.
+# `curl ... | bash` returns the shell's status rather than curl's, so a failed
+# download fed an empty script to a shell that exited 0: the layer went green
+# and the image shipped without the CLI. That was reproduced rather than
+# reasoned about, on the first version of this block (review of PR #59), and it
+# is the "reports success while doing nothing" shape this repository keeps
+# finding. So the last two clauses are the guard: the binary must exist, be
+# executable, and answer with the version that was pinned. An image that lacks
+# the CLI now fails to build instead of failing at runtime in front of the
+# operator.
+ARG CLAUDE_CLI_VERSION=2.1.224
+ENV CLAUDE_CLI_PATH=/opt/claude/.local/bin/claude
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && curl -fsSL --retry 5 --retry-all-errors --http1.1 \
+        https://claude.ai/install.sh -o /tmp/install-claude.sh \
+    && HOME=/opt/claude bash /tmp/install-claude.sh "${CLAUDE_CLI_VERSION}" \
+    && rm -f /tmp/install-claude.sh \
+    && chmod -R a+rX /opt/claude \
+    && test -x "${CLAUDE_CLI_PATH}" \
+    && test "$("${CLAUDE_CLI_PATH}" --version | cut -d' ' -f1)" = "${CLAUDE_CLI_VERSION}" \
+    && apt-get purge -y --auto-remove curl \
+    && rm -rf /var/lib/apt/lists/*
+
 # What this image is, readable at runtime. An image is stale until rebuilt, so
 # a container that answers correctly while running old code is the failure this
 # change exists to remove rather than reproduce (spec 051). `docker compose

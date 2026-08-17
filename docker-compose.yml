@@ -42,6 +42,20 @@ services:
       - path: .env
         required: false
 
+    environment:
+      # The `claude` CLI in the image authenticates with ANTHROPIC_API_KEY, not
+      # with the host's subscription login. That credential lives in the macOS
+      # Keychain rather than in a file, so it cannot cross into a Linux
+      # container; the CLI would be installed and have nothing to authenticate
+      # with. The provider strips ANTHROPIC_API_KEY from the CLI's environment
+      # unless this is set (services/api/src/harrier/llm/providers.py), so
+      # without this line the install is inert.
+      #
+      # Stated plainly because it is a cost difference, not a detail: AI runs
+      # started from the container are billed per token, while the same run
+      # started from the host CLI goes through the subscription.
+      CLAUDE_CLI_USE_API_KEY: "1"
+
     # Nothing personal is in the image. The database, config and secrets live
     # on the host and are mounted, so ADR-008 is untouched and the container
     # stays disposable.

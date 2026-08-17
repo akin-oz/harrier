@@ -203,9 +203,86 @@ gate is PDF-or-failure and the page count comes from `pdfinfo`, so a container
 without them turns every artifact run into an error telling the operator to run
 an install command inside a container.
 
-Cost, stated rather than discovered: the image is about 2.4 GB, and Chromium
-with its system libraries is nearly all of it. That is the price of the daily
-driver being able to do what the host could.
+**Second amendment, at implementation.** A fourth round, and the first that the
+rule above does not cover, because the missing thing was neither a dependency
+group nor a repository directory.
+
+`.env` sets `AI_PROVIDER=claude-cli` and `env_file` hands it to the container,
+which had no `claude` binary, no Node, and `HOME` resolving to `/`. Every
+feature behind the LLM seam failed with "`claude` CLI not found": resume
+tailoring, cover letters, application answers, outreach drafts, and offer
+evaluation, all six call sites of `harrier.llm.generate_text`. So the rule
+widens by one clause: **the image also carries the external binaries the
+configured provider seam resolves.**
+
+The image installs the CLI at a pinned version under `/opt/claude`, and sets
+`CLAUDE_CLI_PATH`, which is the override `find_binary` reads before `PATH`
+(`services/api/src/harrier/llm/config.py:96`). A fixed world-readable prefix
+rather than a home directory, for the same reason `PLAYWRIGHT_BROWSERS_PATH` is
+pinned. That it is installed at all is
+`services/api/tests/test_container.py::test_the_image_installs_the_cli_the_provider_seam_resolves`;
+that it lands where the image advertises is
+`services/api/tests/test_container.py::test_the_cli_lands_where_the_image_says_it_did`;
+that the version cannot float is
+`services/api/tests/test_container.py::test_the_cli_version_is_pinned_rather_than_floating`.
+
+**The install cannot report success without installing.** The first version of
+this block piped the download into a shell, and a pipeline returns the shell's
+status rather than the download's, so a failed download fed an empty script to
+a shell that exited 0: the layer went green and the image shipped with no CLI.
+Reproduced rather than argued (review of PR #59), by building the same
+instruction with a download that fails and observing a successful build whose
+image had no binary at `CLAUDE_CLI_PATH`.
+
+So the download goes to a file, and the layer then requires that
+`CLAUDE_CLI_PATH` is executable and answers with the pinned version. The same
+failing condition now aborts the build. This lives in the build rather than in
+a test because it must hold for every build, and
+`services/api/tests/test_container.py::test_a_failed_download_cannot_produce_a_green_image`
+pins that the guard is still in the Dockerfile.
+
+**What the container cannot have, stated rather than discovered.** The host's
+`claude-cli` runs on a Max subscription whose OAuth credential lives in the
+macOS Keychain, not in a file, and the host binary is a Mach-O arm64
+executable. Neither crosses into a Linux container. So the container's CLI
+authenticates with `ANTHROPIC_API_KEY` instead, through the
+`CLAUDE_CLI_USE_API_KEY` switch the provider already reads
+(`services/api/src/harrier/llm/providers.py:157`), set in the compose file.
+
+The consequence is a cost asymmetry, and it belongs in the spec rather than in
+a surprised invoice: **an AI run started from the container is billed per
+token; the same run started from the host CLI is not.** Carrying the
+subscription in would mean exporting a live OAuth token from the Keychain to a
+bind-mounted file, where two independent refreshers could rotate each other
+out of a session. That was rejected, and is recorded here so the next reader
+sees a decision rather than an oversight.
+
+That the switch reaches the CLI as a credential is
+`services/api/tests/test_container.py::test_the_container_supplies_the_credential_the_cli_authenticates_with`,
+which asserts the value the compose file sets survives the provider's decision
+rather than that the line exists. Its negative half,
+`services/api/tests/test_container.py::test_without_the_switch_the_key_is_still_withheld`,
+keeps the key withheld when the switch is absent, so the pair cannot pass by
+the stripping having been dropped altogether.
+
+Reproducible acceptance, in order: `just gate` runs the tests named above;
+`docker compose build` fails unless the pinned CLI is present and executable in
+the image; and
+
+    docker compose run --rm --no-deps harrier \
+      python -c "from harrier.llm import generate_text; \
+      print(generate_text('Reply with one word.', 'Say the single word: pong'))"
+
+returns `pong` through the seam that reported "`claude` CLI not found".
+
+Honest limitation, in the same terms the two-writer section above uses: the
+last of those three is not pinned by CI, because it costs a live API call and
+the Python job has no container runtime. The first two are.
+
+Cost, stated rather than discovered: the image is about 2.8 GB. Chromium with
+its system libraries is most of it, and the `claude` CLI added by the second
+amendment below is 279 MB more. That is the price of the daily driver being
+able to do what the host could.
 
 `PLAYWRIGHT_BROWSERS_PATH` is pinned. The container runs as the host user's uid
 with no passwd entry, so `HOME` resolves to `/` and Playwright looked for its
@@ -287,6 +364,17 @@ Proving symbols are named at implementation.
       a current one
 - [ ] `HARRIER_DEMO=1` inside the container writes to a temp directory and a test
       asserts nothing is written under `/app/data`
+- [x] the image carries the external binary the configured provider seam
+      resolves, at the path it advertises and at a pinned version, and the
+      compose file supplies the credential that CLI authenticates with, proven by
+      `services/api/tests/test_container.py::test_the_image_installs_the_cli_the_provider_seam_resolves`,
+      `services/api/tests/test_container.py::test_the_cli_lands_where_the_image_says_it_did`,
+      `services/api/tests/test_container.py::test_the_cli_version_is_pinned_rather_than_floating`,
+      `services/api/tests/test_container.py::test_the_container_supplies_the_credential_the_cli_authenticates_with`
+      and `services/api/tests/test_container.py::test_without_the_switch_the_key_is_still_withheld`
+- [x] a failed download of that binary fails the build rather than producing an
+      image without it, proven by
+      `services/api/tests/test_container.py::test_a_failed_download_cannot_produce_a_green_image`
 - [x] `just contract` produces no diff, because no route shape changes
 - [x] the README documents the Docker Desktop start-on-login setting as machine
       configuration the repository cannot enforce, and does not claim otherwise
