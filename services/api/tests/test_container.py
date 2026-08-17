@@ -308,7 +308,9 @@ _CLI_PATH = re.compile(r"^ENV\s+CLAUDE_CLI_PATH=(\S+)\s*$", re.MULTILINE)
 _CLI_VERSION = re.compile(r"^ARG\s+CLAUDE_CLI_VERSION=(\S+)\s*$", re.MULTILINE)
 # The installer writes under $HOME, so the HOME this command sets is what
 # decides where the binary actually lands.
-_CLI_INSTALL = re.compile(r"HOME=(\S+)\s+sh -c \"curl[^\"]*install\.sh[^\"]*\"")
+_CLI_INSTALL = re.compile(r"HOME=(\S+)\s+bash\s+\S*install[-\w]*\.sh")
+# A download piped straight into a shell, which is the failure below.
+_PIPED_INTO_SHELL = re.compile(r"curl[^\n]*\|\s*(?:ba)?sh\b")
 
 
 def test_the_image_installs_the_cli_the_provider_seam_resolves() -> None:
@@ -317,6 +319,34 @@ def test_the_image_installs_the_cli_the_provider_seam_resolves() -> None:
     text = dockerfile_instructions()
     assert _CLI_INSTALL.search(text), "the image never installs the `claude` CLI"
     assert _CLI_PATH.search(text), "the image installs the CLI without telling the runtime where"
+
+
+def test_a_failed_download_cannot_produce_a_green_image() -> None:
+    """The build must not be able to report success without the CLI.
+
+    `curl ... | bash` yields the shell's exit status, not curl's, so a failed
+    download feeds an empty script to a shell that exits 0. Reproduced on the
+    first version of this block (review of PR #59): the layer reported DONE,
+    the image built, and `/opt/claude/.local/bin/claude` was not in it. The
+    provider then failed at runtime in front of the operator, which is the
+    failure the whole change exists to remove.
+
+    So the download goes to a file and the layer verifies what it produced.
+    This is asserted here rather than by building an image because the Python
+    CI job has no container runtime; the executable check lives in the build
+    itself, where it runs on every build including CI's, and this pins that it
+    is still there.
+    """
+    text = dockerfile_instructions()
+    assert not _PIPED_INTO_SHELL.search(text), (
+        "a download is piped into a shell, which hides its failure from the layer"
+    )
+    assert 'test -x "${CLAUDE_CLI_PATH}"' in text, (
+        "the layer never checks that the binary it advertises exists"
+    )
+    assert '--version | cut -d\' \' -f1)" = "${CLAUDE_CLI_VERSION}"' in text, (
+        "the layer never checks that the installed CLI is the pinned version"
+    )
 
 
 def test_the_cli_lands_where_the_image_says_it_did() -> None:
@@ -348,7 +378,13 @@ def test_the_cli_version_is_pinned_rather_than_floating() -> None:
     assert re.fullmatch(r"\d+\.\d+\.\d+", version.group(1)), (
         f"CLAUDE_CLI_VERSION={version.group(1)!r} is not an exact version"
     )
-    assert "bash -s ${CLAUDE_CLI_VERSION}" in text, "the pinned version is declared but not used"
+    install_line = next(
+        (line for line in text.splitlines() if _CLI_INSTALL.search(line)),
+        "",
+    )
+    assert "${CLAUDE_CLI_VERSION}" in install_line, (
+        f"the pinned version is declared but the installer is not told it: {install_line.strip()!r}"
+    )
 
 
 def compose_environment_value(name: str) -> str | None:

@@ -120,12 +120,28 @@ RUN /app/services/api/.venv/bin/playwright install --with-deps chromium \
 #
 # curl is installed for this and then purged, so the compose healthcheck's
 # reason for using python rather than curl stays true.
+#
+# The download is a file, not a pipe, and the layer verifies what it produced.
+# `curl ... | bash` returns the shell's status rather than curl's, so a failed
+# download fed an empty script to a shell that exited 0: the layer went green
+# and the image shipped without the CLI. That was reproduced rather than
+# reasoned about, on the first version of this block (review of PR #59), and it
+# is the "reports success while doing nothing" shape this repository keeps
+# finding. So the last two clauses are the guard: the binary must exist, be
+# executable, and answer with the version that was pinned. An image that lacks
+# the CLI now fails to build instead of failing at runtime in front of the
+# operator.
 ARG CLAUDE_CLI_VERSION=2.1.224
 ENV CLAUDE_CLI_PATH=/opt/claude/.local/bin/claude
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates \
-    && HOME=/opt/claude sh -c "curl -fsSL --retry 5 --retry-all-errors --http1.1 https://claude.ai/install.sh | bash -s ${CLAUDE_CLI_VERSION}" \
+    && curl -fsSL --retry 5 --retry-all-errors --http1.1 \
+        https://claude.ai/install.sh -o /tmp/install-claude.sh \
+    && HOME=/opt/claude bash /tmp/install-claude.sh "${CLAUDE_CLI_VERSION}" \
+    && rm -f /tmp/install-claude.sh \
     && chmod -R a+rX /opt/claude \
+    && test -x "${CLAUDE_CLI_PATH}" \
+    && test "$("${CLAUDE_CLI_PATH}" --version | cut -d' ' -f1)" = "${CLAUDE_CLI_VERSION}" \
     && apt-get purge -y --auto-remove curl \
     && rm -rf /var/lib/apt/lists/*
 
