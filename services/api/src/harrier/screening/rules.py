@@ -217,13 +217,16 @@ DOMAIN_KEYWORDS: dict[str, list[str]] = {
 # forces the region bonus too. The floor is 59 against a cutoff of 55: it
 # could not reject.
 #
-# Except on one path, and that was worse. A LinkedIn result returns early
-# from the region gate, because those searches are already region-filtered at
-# query level, so it never earns the region bonus and its floor is 51. The
-# only postings the cutoff ever rejected were LinkedIn ones, and it rejected
-# them for the mechanism that makes them valid. A filter that fires on one
-# source as a side effect of that source being correct is worse than no
-# filter.
+# Except on one path, and that was worse. A LinkedIn result skips only the
+# preferred-region text requirement, because those searches are region-scoped
+# at query level, so it never earns the region bonus and its floor is 51.
+# Since spec 053 the LinkedIn path shares the remote-text requirement with
+# every other path (the query-level remote filter no longer exists), so the
+# remote bonus is forced there too and the floors differ by exactly the
+# region bonus. Historically the only postings the cutoff ever rejected were
+# LinkedIn ones, and it rejected them for the mechanism that makes them
+# valid. A filter that fires on one source as a side effect of that source
+# being correct is worse than no filter.
 #
 # `tests/test_scoring.py::test_the_arithmetic_floor_is_derived_from_the_rules`
 # derives both floors from the configuration rather than restating them, so a
@@ -363,10 +366,17 @@ def remote_region_allowed(job: NormalizedJob, candidate_cfg: CandidateConfig) ->
     signal = job["remote_signal"]
     if signal and signal != "unknown":
         if signal == "linkedin_search":
-            # LinkedIn jobs come from EMEA-scoped search URLs; the region
-            # filter is applied at query level, so "Remote" without a region
-            # tag is valid.
-            return True, "linkedin remote-filtered search result"
+            # The searches are still region-scoped at query level (geoId is a
+            # live URL filter), so the preferred-region text requirement stays
+            # waived: requiring it would re-reject EMEA postings whose text
+            # names only a city (specs 032, 033). The remote guarantee is
+            # gone: LinkedIn's AI search retired f_WT and the actor converts
+            # it to keywords, so remote must be evidenced by the posting
+            # itself. A declared workplace type arrives in the location field
+            # via normalize_apify_job (spec 053).
+            if text_matches_any_pattern(combined, REMOTE_POSITIVE_PATTERNS):
+                return True, "linkedin region-scoped search with remote evidence"
+            return False, "remote signal missing"
         return True, f"source declares {signal}"
 
     if not text_matches_any_pattern(combined, REMOTE_POSITIVE_PATTERNS):

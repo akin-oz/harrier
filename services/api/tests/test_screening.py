@@ -228,7 +228,7 @@ def test_linkedin_search_bypasses_region_check() -> None:
         candidate_cfg(),
     )
     assert allowed is True
-    assert reason == "linkedin remote-filtered search result"
+    assert reason == "linkedin region-scoped search with remote evidence"
 
 
 def test_eu_permit_phrases_raise_score_never_reject() -> None:

@@ -191,6 +191,43 @@ def apify_request(
     return fetch_dataset_items(dataset_id, token, timeout_seconds)
 
 
+# The workplace declaration on the item, normalized to display labels. LinkedIn
+# retired the query-level workplace filter (f_WT: its AI search converts it to
+# keywords), so this per-item field is the only workplace fact the actor
+# delivers (spec 053).
+WORKPLACE_TYPE_LABELS: dict[str, str] = {
+    "remote": "Remote",
+    "hybrid": "Hybrid",
+    "on-site": "On-site",
+    "onsite": "On-site",
+}
+
+
+def workplace_declaration(item: dict[str, Any]) -> list[str]:
+    """The workplace types the item declares, in declaration order.
+
+    Unrecognized values are ignored rather than guessed at. workRemoteAllowed
+    is consulted only when no recognized type exists, and only true counts:
+    false is what the scraper reports for hybrid, on-site, and missing data
+    alike, so it cannot name which one.
+    """
+    raw = cast("object", item.get("workplaceTypes"))
+    if isinstance(raw, str):
+        entries: list[object] = [raw]
+    elif isinstance(raw, list):
+        entries = cast("list[object]", raw)
+    else:
+        entries = []
+    labels: list[str] = []
+    for entry in entries:
+        label = WORKPLACE_TYPE_LABELS.get(str(entry).strip().lower())
+        if label and label not in labels:
+            labels.append(label)
+    if not labels and item.get("workRemoteAllowed") is True:
+        labels.append("Remote")
+    return labels
+
+
 def normalize_apify_job(item: dict[str, Any]) -> NormalizedJob:
     title = str(item.get("Title") or item.get("title") or "").strip()
     description = str(
@@ -200,6 +237,14 @@ def normalize_apify_job(item: dict[str, Any]) -> NormalizedJob:
         item.get("Detail URL") or item.get("detailUrl") or item.get("link") or item.get("url") or ""
     ).strip()
     location = str(item.get("Location") or item.get("location") or "").strip()
+    # Declared types ride in the location string (the lever.py precedent from
+    # spec 032), joined with the alternative separator so a posting offered as
+    # remote or hybrid still qualifies on its remote alternative. The shared
+    # location gate does the rejecting; this stays ingestion (spec 053).
+    declared = workplace_declaration(item)
+    if declared:
+        prefix = " | ".join(declared)
+        location = f"{prefix}, {location}" if location else prefix
     company = str(
         item.get("Company Name") or item.get("companyName") or item.get("company") or ""
     ).strip()

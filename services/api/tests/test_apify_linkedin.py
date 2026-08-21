@@ -64,6 +64,83 @@ def test_normalize_apify_job_maps_fields() -> None:
     assert job["remote_signal"] == "linkedin_search"
 
 
+# --- the workplace declaration rides in the location (spec 053) -------------
+
+
+@pytest.mark.parametrize("declared", ["Hybrid", "On-site", "Onsite", "HYBRID"])
+def test_a_declared_non_remote_type_is_prefixed_to_the_location(declared: str) -> None:
+    job = normalize_apify_job(
+        {"title": "T", "location": "Berlin, Germany", "workplaceTypes": [declared], "id": "1"}
+    )
+    expected = "On-site" if declared.lower() in {"on-site", "onsite"} else "Hybrid"
+    assert job["location"] == f"{expected}, Berlin, Germany"
+
+
+def test_a_declared_remote_type_is_prefixed_to_the_location() -> None:
+    job = normalize_apify_job(
+        {"title": "T", "location": "Warsaw, Poland", "workplaceTypes": ["Remote"], "id": "1"}
+    )
+    assert job["location"] == "Remote, Warsaw, Poland"
+
+
+def test_multiple_declared_types_join_as_alternatives() -> None:
+    job = normalize_apify_job(
+        {
+            "title": "T",
+            "location": "Warsaw, Poland",
+            "workplaceTypes": ["Remote", "Hybrid"],
+            "id": "1",
+        }
+    )
+    assert job["location"] == "Remote | Hybrid, Warsaw, Poland"
+
+
+def test_work_remote_allowed_true_counts_only_without_a_declared_type() -> None:
+    fallback = normalize_apify_job(
+        {"title": "T", "location": "Lisbon, Portugal", "workRemoteAllowed": True, "id": "1"}
+    )
+    assert fallback["location"] == "Remote, Lisbon, Portugal"
+    outranked = normalize_apify_job(
+        {
+            "title": "T",
+            "location": "Lisbon, Portugal",
+            "workplaceTypes": ["Hybrid"],
+            "workRemoteAllowed": True,
+            "id": "1",
+        }
+    )
+    assert outranked["location"] == "Hybrid, Lisbon, Portugal"
+
+
+def test_work_remote_allowed_false_is_not_a_declaration() -> None:
+    """False is what the scraper reports for hybrid, on-site, and missing
+    data alike, so it cannot name which one."""
+    job = normalize_apify_job(
+        {"title": "T", "location": "Berlin, Germany", "workRemoteAllowed": False, "id": "1"}
+    )
+    assert job["location"] == "Berlin, Germany"
+
+
+@pytest.mark.parametrize("raw", [["Flexible"], [2], "somewhere nice", {"type": "Remote"}, [], None])
+def test_an_unrecognized_or_malformed_declaration_changes_nothing(raw: object) -> None:
+    job = normalize_apify_job(
+        {"title": "T", "location": "Berlin, Germany", "workplaceTypes": raw, "id": "1"}
+    )
+    assert job["location"] == "Berlin, Germany"
+
+
+def test_a_declaration_with_no_location_stands_alone() -> None:
+    job = normalize_apify_job({"title": "T", "workplaceTypes": ["Hybrid"], "id": "1"})
+    assert job["location"] == "Hybrid"
+
+
+def test_a_string_declaration_is_treated_as_one_entry() -> None:
+    job = normalize_apify_job(
+        {"title": "T", "location": "Berlin, Germany", "workplaceTypes": "Remote", "id": "1"}
+    )
+    assert job["location"] == "Remote, Berlin, Germany"
+
+
 def test_normalize_apify_job_maps_lowercase_field_shape() -> None:
     job = normalize_apify_job(
         {

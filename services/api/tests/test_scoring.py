@@ -104,13 +104,26 @@ def test_the_arithmetic_floor_is_derived_from_the_rules(cfg: dict[str, object]) 
         scoring["preferred_region_bonus"]
     ), "the ATS path no longer earns the region bonus unconditionally"
 
-    # The LinkedIn path forfeits the region bonus, because those searches are
-    # region-filtered at query level and return early from the gate. Its floor
-    # is lower by exactly that bonus, and that gap is the whole reason a single
-    # threshold could not be fair to both paths.
+    # The LinkedIn path forfeits only the region bonus, because those searches
+    # are region-scoped at query level and skip the preferred-region text
+    # requirement. Since spec 053 it shares the remote-text requirement with
+    # every other path (the query-level remote filter no longer exists), so
+    # the remote bonus is forced there too and the floors differ by exactly
+    # the region bonus. That gap is the whole reason a single threshold could
+    # not be fair to both paths.
     assert min(s for s in linkedin if s is not None) == min(s for s in ats if s is not None) - int(
         scoring["preferred_region_bonus"]
     )
+
+    # The derivation above holds only because the LinkedIn gate now demands
+    # the remote text it used to assume: a bare-city LinkedIn posting with no
+    # remote wording is rejected, not scored (spec 053).
+    assert (
+        _passes_and_scores(
+            cfg, f"{keywords[0].title()} Engineer", "Berlin, Germany", signal="linkedin_search"
+        )
+        is None
+    ), "the linkedin gate accepted a posting with no remote evidence"
 
 
 def test_there_is_no_score_cutoff(cfg: dict[str, object]) -> None:
