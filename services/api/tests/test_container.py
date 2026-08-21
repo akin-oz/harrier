@@ -387,14 +387,18 @@ def test_the_cli_version_is_pinned_rather_than_floating() -> None:
     )
 
 
-def compose_environment_value(name: str) -> str | None:
-    """One value from the compose file's `environment:` block."""
-    match = re.search(
-        rf'^\s+{re.escape(name)}:\s*"?([^"\s]+)"?\s*$',
-        COMPOSE.read_text(encoding="utf-8"),
-        re.MULTILINE,
-    )
-    return match.group(1) if match else None
+def compose_assigns(name: str) -> bool:
+    """Whether the compose file carries an active assignment of `name`.
+
+    Any assignment counts, an empty value included: `environment:` outranks
+    `env_file`, so even `NAME: ""` would silently override the operator's
+    value from the local environment file. A mention inside a comment does
+    not count; the guard is about assignments, not vocabulary (review of
+    PR #61: the first version required a non-empty value, so an empty
+    assignment would have passed as absent).
+    """
+    pattern = rf"^(?!\s*#)\s+{re.escape(name)}:"
+    return re.search(pattern, COMPOSE.read_text(encoding="utf-8"), re.MULTILINE) is not None
 
 
 def test_the_compose_file_does_not_force_api_key_billing() -> None:
@@ -404,11 +408,26 @@ def test_the_compose_file_does_not_force_api_key_billing() -> None:
     plain environment value that crosses through env_file and bills the
     subscription. Forcing the switch made every container AI run bill the
     API key even when the cheap path was configured (spec 054). Billing the
-    key is now an explicit opt-in from .env, never a compose default.
+    key is now an explicit opt-in from .env, never a compose default, and no
+    compose assignment may shadow the operator's value either way.
     """
-    assert compose_environment_value("CLAUDE_CLI_USE_API_KEY") is None, (
-        "the compose file forces per-token API billing again"
+    assert not compose_assigns("CLAUDE_CLI_USE_API_KEY"), (
+        "the compose file assigns CLAUDE_CLI_USE_API_KEY, forcing or shadowing the billing choice"
     )
+
+
+def test_the_compose_file_wires_the_env_file_the_credential_rides_in() -> None:
+    """The subscription token reaches the container only through the
+    `env_file: .env` line. The provider test below injects the token
+    directly, so it cannot notice this line disappearing; this can (review
+    of PR #61)."""
+    text = COMPOSE.read_text(encoding="utf-8")
+    env_file_block = re.search(
+        r"^\s+env_file:\s*\n(?:\s*-.*\n)*?\s*-\s*(?:path:\s*)?\.env\s*$",
+        text,
+        re.MULTILINE,
+    )
+    assert env_file_block, "the compose file no longer loads .env; the CLI credential cannot arrive"
 
 
 def test_the_container_supplies_the_credential_the_cli_authenticates_with(

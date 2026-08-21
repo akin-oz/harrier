@@ -94,9 +94,12 @@ untouched and its text stays as the record of what was decided then.
 
 ## Acceptance criteria
 
-- `docker-compose.yml` contains no `CLAUDE_CLI_USE_API_KEY` line, and
-  the test that asserted the compose file forces the switch now asserts
-  its absence (services/api/tests/test_container.py).
+- `docker-compose.yml` carries no active `CLAUDE_CLI_USE_API_KEY`
+  assignment, empty values included, since an `environment:` entry
+  outranks `env_file` and even an empty one would shadow the operator's
+  opt-in. The identifier may still appear in comments. The test that
+  asserted the compose file forces the switch now asserts this absence
+  (services/api/tests/test_container.py).
 - A provider-level test proves `CLAUDE_CODE_OAUTH_TOKEN` set in the
   parent environment reaches the CLI child environment while
   `ANTHROPIC_API_KEY` is stripped: the container credential path exists
