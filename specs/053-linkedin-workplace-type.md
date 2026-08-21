@@ -222,9 +222,13 @@ spec 032 and `services/api/src/harrier/sources/lever.py`.
 - "Never surface hybrid or on-site" is enforceable only over what the data
   declares. A posting that declares remote (or says remote in its text)
   while actually requiring office days passes; no filter on this data can
-  catch a lie. The guarantee this spec makes: no posting that declares
-  hybrid or on-site, in its workplace field or its location text, is
-  surfaced.
+  catch a lie. The guarantee this spec makes, stated precisely: no posting
+  whose workplace declaration or location text offers hybrid or on-site
+  without a remote alternative is surfaced. A posting declared as remote
+  or hybrid qualifies on its remote alternative, by the same
+  any-alternative rule `split_locations` already applies to a location
+  naming several offices; the title's "declare hybrid or on-site" is this
+  guarantee's shorthand, not a stricter one.
 - The stricter no-declaration path trades recall for precision: a real
   remote posting whose text never says remote is now rejected. Rejections
   are visible in the existing rejected-debug output for tuning.

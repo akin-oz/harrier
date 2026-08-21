@@ -375,7 +375,7 @@ def remote_region_allowed(job: NormalizedJob, candidate_cfg: CandidateConfig) ->
             # itself. A declared workplace type arrives in the location field
             # via normalize_apify_job (spec 053).
             if text_matches_any_pattern(combined, REMOTE_POSITIVE_PATTERNS):
-                return True, "linkedin remote-filtered search result"
+                return True, "linkedin region-scoped search with remote evidence"
             return False, "remote signal missing"
         return True, f"source declares {signal}"
 

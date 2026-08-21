@@ -192,7 +192,7 @@ def test_a_remote_only_board_signal_is_honoured(cfg: dict[str, Any]) -> None:
 def test_the_linkedin_signal_keeps_its_own_reason(cfg: dict[str, Any]) -> None:
     allowed, reason = verdict("Remote", cfg, remote_signal="linkedin_search")
     assert allowed
-    assert reason == "linkedin remote-filtered search result"
+    assert reason == "linkedin region-scoped search with remote evidence"
 
 
 def test_the_linkedin_signal_no_longer_accepts_without_remote_evidence(
