@@ -1,5 +1,9 @@
 # One LinkedIn public jobs search URL per line.
-# geoId=91000007 = Europe, f_WT=2 = Remote, f_TPR=r86400 = posted in last 24h
+# geoId=91000007 = Europe, f_TPR=r86400 = posted in last 24h.
+# f_WT=2 was LinkedIn's remote filter; its AI search retired it and the Apify
+# actor converts it to search keywords, so it only biases results toward
+# remote (fewer paid results discarded). Remote-only enforcement happens in
+# screening, on the posting's own workplace declaration (spec 053).
 # f_TPR=r86400 is the key cost-saver: keeps Apify from re-scraping the same
 # stale top-N relevance results every run. Daily cron + 24h filter = no gaps.
 # Stack-specific (Europe, remote)

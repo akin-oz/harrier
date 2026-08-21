@@ -195,6 +195,95 @@ def test_the_linkedin_signal_keeps_its_own_reason(cfg: dict[str, Any]) -> None:
     assert reason == "linkedin remote-filtered search result"
 
 
+def test_the_linkedin_signal_no_longer_accepts_without_remote_evidence(
+    cfg: dict[str, Any],
+) -> None:
+    """LinkedIn retired the query-level remote filter, so the signal stopped
+    meaning "remote is query-guaranteed" (spec 053). A bare-city posting with
+    no remote wording anywhere is what a leaked on-site posting looks like."""
+    allowed, reason = verdict(
+        "Berlin, Germany",
+        cfg,
+        remote_signal="linkedin_search",
+        description="Ship features with a modern stack.",
+    )
+    assert not allowed
+    assert reason == "remote signal missing"
+
+
+def test_the_linkedin_signal_still_waives_the_region_text_requirement(
+    cfg: dict[str, Any],
+) -> None:
+    """The searches stay region-scoped at query level (geoId is a live URL
+    filter), so remote evidence in the posting's own text is enough: no
+    preferred-region wording is required of it (specs 032, 033, 053)."""
+    allowed, reason = verdict(
+        "Berlin, Germany",
+        cfg,
+        remote_signal="linkedin_search",
+        description="This is a fully remote role.",
+    )
+    assert allowed, f"rejected as {reason}"
+
+
+def test_a_declared_hybrid_apify_item_is_rejected_end_to_end(cfg: dict[str, Any]) -> None:
+    """Spec 053's acceptance row: the normalizer renders the declaration into
+    the location, and the existing location gate does the rejecting."""
+    from harrier.sources.apify_linkedin import normalize_apify_job
+
+    job = normalize_apify_job(
+        {
+            "title": "Senior Frontend Engineer",
+            "location": "Berlin, Germany",
+            "workplaceTypes": ["Hybrid"],
+            "descriptionText": "A remote-friendly team, on paper.",
+            "link": "https://www.linkedin.com/jobs/view/1",
+            "id": "1",
+        }
+    )
+    assert job["location"] == "Hybrid, Berlin, Germany"
+    allowed, reason = remote_region_allowed(job, cfg)
+    assert not allowed
+    assert reason == "location says hybrid/on-site"
+
+
+def test_a_declared_remote_apify_item_is_accepted_end_to_end(cfg: dict[str, Any]) -> None:
+    """The other half: a posting that declares remote passes by construction,
+    even when its text never says the word."""
+    from harrier.sources.apify_linkedin import normalize_apify_job
+
+    job = normalize_apify_job(
+        {
+            "title": "Senior Frontend Engineer",
+            "location": "Warsaw, Poland",
+            "workplaceTypes": ["Remote"],
+            "descriptionText": "Ship features with a modern stack.",
+            "link": "https://www.linkedin.com/jobs/view/2",
+            "id": "2",
+        }
+    )
+    allowed, reason = remote_region_allowed(job, cfg)
+    assert allowed, f"rejected as {reason}"
+
+
+def test_an_apify_item_offered_remote_or_hybrid_qualifies_on_remote(
+    cfg: dict[str, Any],
+) -> None:
+    from harrier.sources.apify_linkedin import normalize_apify_job
+
+    job = normalize_apify_job(
+        {
+            "title": "Senior Frontend Engineer",
+            "location": "Warsaw, Poland",
+            "workplaceTypes": ["Remote", "Hybrid"],
+            "link": "https://www.linkedin.com/jobs/view/3",
+            "id": "3",
+        }
+    )
+    allowed, reason = remote_region_allowed(job, cfg)
+    assert allowed, f"rejected as {reason}"
+
+
 def test_a_source_signal_does_not_override_a_non_remote_location(cfg: dict[str, Any]) -> None:
     """The location gate runs first on purpose: a board-wide claim about
     remoteness must not admit a posting whose own location says on-site."""
