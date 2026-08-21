@@ -397,21 +397,32 @@ def compose_environment_value(name: str) -> str | None:
     return match.group(1) if match else None
 
 
+def test_the_compose_file_does_not_force_api_key_billing() -> None:
+    """Spec 051 set `CLAUDE_CLI_USE_API_KEY: "1"` here on the premise that no
+    subscription credential could cross into a Linux container. The premise
+    was incomplete: `claude setup-token` mints CLAUDE_CODE_OAUTH_TOKEN, a
+    plain environment value that crosses through env_file and bills the
+    subscription. Forcing the switch made every container AI run bill the
+    API key even when the cheap path was configured (spec 054). Billing the
+    key is now an explicit opt-in from .env, never a compose default.
+    """
+    assert compose_environment_value("CLAUDE_CLI_USE_API_KEY") is None, (
+        "the compose file forces per-token API billing again"
+    )
+
+
 def test_the_container_supplies_the_credential_the_cli_authenticates_with(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The install is inert without this, and the failure is silent-ish.
+    """The container credential path, end to end at the provider seam.
 
-    `_generate_claude_cli` strips ANTHROPIC_API_KEY from the child environment
-    unless `CLAUDE_CLI_USE_API_KEY` is truthy, because on the host the CLI runs
-    on a subscription login and must not silently bill an API key instead. In
-    the container that login cannot exist: it lives in the macOS Keychain. So
-    the compose file sets the switch, and this asserts the value it sets
-    actually survives the provider's decision rather than that the line exists.
+    Under spec 051 the credential was the API key, forced by a compose
+    switch. Under spec 054 it is the subscription token: with no opt-in
+    switch, CLAUDE_CODE_OAUTH_TOKEN survives into the CLI's child
+    environment and ANTHROPIC_API_KEY is stripped, so the run bills the
+    subscription. Same property, new credential, so the test keeps the name
+    spec 051 cites.
     """
-    declared = compose_environment_value("CLAUDE_CLI_USE_API_KEY")
-    assert declared, "the compose file supplies no credential for the CLI it installed"
-
     captured: dict[str, str] = {}
 
     class FakeProc:
@@ -430,13 +441,48 @@ def test_the_container_supplies_the_credential_the_cli_authenticates_with(
 
     monkeypatch.setattr(llm_providers, "find_binary", fake_binary)
     monkeypatch.setattr(llm_providers.subprocess, "run", fake_run)
-    monkeypatch.setenv("CLAUDE_CLI_USE_API_KEY", declared)
+    monkeypatch.delenv("CLAUDE_CLI_USE_API_KEY", raising=False)
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat-probe")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-probe")
+
+    config = LLMConfig(provider="claude-cli", model="sonnet", api_key="claude-cli")
+    assert llm_providers.generate_with_config("system", "user", config, 30) == "ok"
+    assert captured.get("CLAUDE_CODE_OAUTH_TOKEN") == "sk-ant-oat-probe", (
+        "the subscription token does not reach the CLI"
+    )
+    assert "ANTHROPIC_API_KEY" not in captured
+
+
+def test_the_opt_in_switch_still_hands_the_cli_the_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The escape hatch spec 054 keeps: CLAUDE_CLI_USE_API_KEY=1 from .env
+    restores per-token billing, explicitly and only then."""
+    captured: dict[str, str] = {}
+
+    class FakeProc:
+        returncode = 0
+        stdout = '{"is_error": false, "result": "ok"}'
+        stderr = ""
+
+    def fake_binary(name: str, path_env: str, fallbacks: tuple[str, ...]) -> str | None:
+        return "/opt/claude/.local/bin/claude"
+
+    def fake_run(*args: object, **kwargs: object) -> FakeProc:
+        env = kwargs.get("env")
+        assert isinstance(env, dict)
+        captured.update(cast("dict[str, str]", env))
+        return FakeProc()
+
+    monkeypatch.setattr(llm_providers, "find_binary", fake_binary)
+    monkeypatch.setattr(llm_providers.subprocess, "run", fake_run)
+    monkeypatch.setenv("CLAUDE_CLI_USE_API_KEY", "1")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-probe")
 
     config = LLMConfig(provider="claude-cli", model="sonnet", api_key="claude-cli")
     assert llm_providers.generate_with_config("system", "user", config, 30) == "ok"
     assert captured.get("ANTHROPIC_API_KEY") == "sk-ant-probe", (
-        f"CLAUDE_CLI_USE_API_KEY={declared!r} does not reach the CLI as a credential"
+        "the explicit opt-in no longer reaches the CLI as a credential"
     )
 
 
