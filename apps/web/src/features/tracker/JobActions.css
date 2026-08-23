@@ -61,6 +61,43 @@
   color: var(--color-danger);
 }
 
+/* The frequent-reason pills (spec 056). Standard button anatomy so they read
+   as one family with the verb that opened them, plus the danger hover the
+   Reject button already has: these clicks close a row. */
+.job-actions__pills {
+  display: flex;
+  gap: var(--space-1);
+  align-items: center;
+  flex-wrap: wrap;
+  min-height: 26px;
+}
+
+/* The table header's own 11px uppercase voice, so the row reads as
+   mid-decision rather than as more verbs. */
+.job-actions__pills-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+.job-actions__pill:hover:not(:disabled) {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.job-actions__pill-other {
+  color: var(--color-text-secondary);
+}
+
+.job-actions button.job-actions__cancel {
+  border-color: transparent;
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+
 /* Asking for the reason takes over the whole block: the row is mid-decision
    and the other verbs are not what to do next. */
 .job-actions__reason {

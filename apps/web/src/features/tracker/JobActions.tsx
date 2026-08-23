@@ -31,10 +31,17 @@ function forwardVerb(status: string): (typeof VERBS)[number] | null {
 // belongs on one line.
 type Props = { job: Job; onApply?: (job: Job) => void };
 
+// The operator's four most frequent rejection reasons, submitted verbatim so
+// the stored values stay groupable. Shortcuts, not an enum: the API keeps
+// accepting any string and `other…` still reaches the free-text input
+// (spec 056).
+const FREQUENT_REASONS = ["hybrid", "onsite", "closed", "missing stack"] as const;
+
 export function JobActions({ job, onApply }: Props) {
   const queryClient = useQueryClient();
   const [reason, setReason] = useState("");
   const [asking, setAsking] = useState(false);
+  const [otherOpen, setOtherOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
@@ -58,6 +65,7 @@ export function JobActions({ job, onApply }: Props) {
     onSuccess: () => {
       setFailure(null);
       setAsking(false);
+      setOtherOpen(false);
       setReason("");
       void queryClient.invalidateQueries({ queryKey: ["jobs"] });
     },
@@ -185,7 +193,48 @@ export function JobActions({ job, onApply }: Props) {
         </div>
       )}
 
-      {asking && (
+      {/* The frequent reasons are one click: the pill is the confirmation,
+          and Cancel covers a mis-press before it. `other…` reaches the
+          free-text input, which stops being the default path (spec 056). */}
+      {asking && !otherOpen && (
+        <div className="job-actions__pills" role="group" aria-label="Rejection reason">
+          <span className="job-actions__pills-label">Reject:</span>
+          {FREQUENT_REASONS.map((why) => (
+            <button
+              key={why}
+              type="button"
+              className="job-actions__pill"
+              disabled={busy}
+              onClick={() => {
+                change.mutate({ verb: "reject", why });
+              }}
+            >
+              {why}
+            </button>
+          ))}
+          <button
+            type="button"
+            className="job-actions__pill-other"
+            disabled={busy}
+            onClick={() => {
+              setOtherOpen(true);
+            }}
+          >
+            other…
+          </button>
+          <button
+            type="button"
+            className="job-actions__cancel"
+            onClick={() => {
+              setAsking(false);
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {asking && otherOpen && (
         <span className="job-actions__reason">
           <input
             aria-label="Rejection reason"
@@ -206,8 +255,10 @@ export function JobActions({ job, onApply }: Props) {
           </button>
           <button
             type="button"
+            className="job-actions__cancel"
             onClick={() => {
               setAsking(false);
+              setOtherOpen(false);
             }}
           >
             Cancel
