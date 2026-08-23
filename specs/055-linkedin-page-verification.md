@@ -46,6 +46,8 @@ no JSON-LD at all (stable across a retry against the canonical
 - `services/api/src/harrier/screening/pipeline.py`: a verification step
   for jobs whose `remote_signal` is `linkedin_search` that survived the
   existing gates, with its own rejection slug.
+- `services/api/src/harrier/discovery.py`: one field in the per-source
+  run summary carrying the unverified count.
 - Tests in `services/api/tests/test_screening_linkedin_page.py` (new) and
   pipeline tests.
 
