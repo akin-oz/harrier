@@ -147,14 +147,18 @@ def _save_cached_verdict(url: str, verdict: str) -> None:
     path.write_text(json.dumps({"url": url, "verdict": verdict}), encoding="utf-8")
 
 
-def page_workplace_verdict(url: str, *, fetcher: Callable[[str], str] | None = None) -> str:
+def page_workplace_verdict(
+    url: str, *, fetcher: Callable[[str], str] | None = None, write_cache: bool = True
+) -> str:
     """The posting's own workplace declaration, from its public page.
 
     Answers are cached per URL under the data directory so a posting is
     fetched at most once across runs; unknown is not cached, because a later
-    run may see a page shape that answers. The fetched URL is constructed
-    from the extracted job id, never taken from the posting, so a crafted
-    posting URL cannot point the check anywhere else (spec 055)."""
+    run may see a page shape that answers. A dry run passes
+    write_cache=False: it still reads the cache but leaves no file behind,
+    per the dry-run contract (review finding on PR #64). The fetched URL is
+    constructed from the extracted job id, never taken from the posting, so
+    a crafted posting URL cannot point the check anywhere else (spec 055)."""
     job_id = linkedin_job_id(url)
     if not job_id:
         return VERDICT_UNKNOWN
@@ -168,7 +172,7 @@ def page_workplace_verdict(url: str, *, fetcher: Callable[[str], str] | None = N
         logger.warning("LinkedIn page verdict fetch failed for %s: %s", job_id, exc)
         return VERDICT_UNKNOWN
     verdict = workplace_verdict_from_html(page)
-    if verdict != VERDICT_UNKNOWN:
+    if verdict != VERDICT_UNKNOWN and write_cache:
         _save_cached_verdict(url, verdict)
     return verdict
 

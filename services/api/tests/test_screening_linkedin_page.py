@@ -141,6 +141,30 @@ def test_an_answered_verdict_is_cached_and_not_refetched(
     assert len(fetcher.urls) == 1
 
 
+def test_a_dry_run_writes_no_verdict_cache_file(isolated_data_dir: Path) -> None:
+    """Dry runs mutate nothing (the contract in discovery.py). The first
+    version wrote verdict files during dry runs; caught on review of
+    PR #64."""
+    fetcher = CountingFetcher(ld_page('{"@type": "JobPosting"}'))
+    url = "https://www.linkedin.com/jobs/view/54321"
+    assert page_workplace_verdict(url, fetcher=fetcher, write_cache=False) == VERDICT_NOT_REMOTE
+    assert list(isolated_data_dir.rglob("*.json")) == []
+    # Nothing was remembered, so the question is asked again next time.
+    assert page_workplace_verdict(url, fetcher=fetcher, write_cache=False) == VERDICT_NOT_REMOTE
+    assert len(fetcher.urls) == 2
+
+
+def test_a_dry_run_still_reads_an_existing_verdict_cache(isolated_data_dir: Path) -> None:
+    """Read, never write: a verdict cached by a real run spares the dry run
+    a fetch without the dry run leaving anything behind."""
+    url = "https://www.linkedin.com/jobs/view/98765"
+    warm = CountingFetcher(ld_page('{"@type": "JobPosting"}'))
+    assert page_workplace_verdict(url, fetcher=warm) == VERDICT_NOT_REMOTE
+    dry = CountingFetcher("")
+    assert page_workplace_verdict(url, fetcher=dry, write_cache=False) == VERDICT_NOT_REMOTE
+    assert dry.urls == []
+
+
 def test_an_unknown_verdict_is_not_cached(isolated_data_dir: Path) -> None:
     """A later run may see a page shape that answers, so unknown is asked
     again rather than remembered."""
@@ -217,6 +241,38 @@ def test_a_non_linkedin_job_triggers_no_verification() -> None:
     result = _screen_one(job, verifier)
     assert calls == []
     assert len(result.new_tracker_rows) == 1
+
+
+def test_the_default_verifier_inherits_the_runs_cache_switch(
+    isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The wiring, not the helper: with no injected verifier, screen_jobs
+    hands page_workplace_verdict the same cache-write switch _run_source
+    derives from dry_run, so a dry run cannot write through the default
+    path either (review finding on PR #64)."""
+    from harrier.screening import pipeline
+
+    captured: list[bool] = []
+
+    def fake_verdict(url: str, *, write_cache: bool = True) -> str:
+        captured.append(write_cache)
+        return VERDICT_REMOTE
+
+    monkeypatch.setattr(pipeline, "page_workplace_verdict", fake_verdict)
+    job = build_job(
+        location="Remote",
+        remote_signal="linkedin_search",
+        url="https://www.linkedin.com/jobs/view/555",
+    )
+    screen_jobs(
+        [job],
+        candidate_cfg=candidate_cfg(),
+        hold_companies=set(),
+        indexes=TrackerIndexes(),
+        source_seen={},
+        cache_descriptions=False,
+    )
+    assert captured == [False]
 
 
 def test_the_page_verdict_runs_after_the_cheap_gates() -> None:

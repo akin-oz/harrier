@@ -83,7 +83,11 @@ against its own page before the tracker append:
 - Verdicts are cached per job URL under the data directory
   (never-in-git), alongside the description cache, so each posting is
   fetched at most once across runs. `unknown` is not cached: a later run
-  may see a page shape that answers.
+  may see a page shape that answers. A dry run reads the cache but writes
+  nothing, the same contract the description cache already keeps
+  (amendment from the review of PR #64: the first version wrote verdict
+  files during dry runs, breaking the dry-runs-mutate-nothing promise in
+  discovery.py).
 - A job with no extractable LinkedIn job id is treated as unknown.
 - Only `linkedin_search` jobs are verified. The other sources' postings
   have no LinkedIn page to consult and their existing gates already read

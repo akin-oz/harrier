@@ -248,10 +248,15 @@ def screen_jobs(
         # so a fetch is never spent on a posting already in the tracker, and
         # only for LinkedIn jobs: the other sources have no LinkedIn page.
         if job["remote_signal"] == "linkedin_search":
+            # cache_descriptions is the run's one cache-write switch:
+            # _run_source sets it to `not dry_run`, and a dry run must leave
+            # no file behind, verdict cache included (dry-run contract in
+            # discovery.py; review finding on PR #64).
+            def _default_verifier(url: str) -> str:
+                return page_workplace_verdict(url, write_cache=cache_descriptions)
+
             verifier = (
-                linkedin_page_verifier
-                if linkedin_page_verifier is not None
-                else page_workplace_verdict
+                linkedin_page_verifier if linkedin_page_verifier is not None else _default_verifier
             )
             page_verdict = verifier(job["url"])
             if page_verdict == VERDICT_NOT_REMOTE:
