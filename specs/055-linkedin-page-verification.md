@@ -31,12 +31,13 @@ Ground truth exists and is free: the posting's own public page. LinkedIn
 embeds a schema.org `JobPosting` JSON-LD block in the logged-out job view
 page and sets `jobLocationType: "TELECOMMUTE"` exactly when the poster
 tagged the job remote; a posting tagged hybrid or on-site carries the
-JobPosting block without the field. Measured on this machine across all
-45 LinkedIn prospects on 2026-08-23: 1 page declared TELECOMMUTE, 33
-carried JobPosting JSON-LD without it (12 of those openly admit hybrid or
-office-attendance language in their cached descriptions), and 11 exposed
-no JSON-LD at all (stable across a retry against the canonical
-`www.linkedin.com` host; not an authwall).
+JobPosting block without the field. Measured on this machine across the
+LinkedIn prospects then in the tracker (2026-08-23): a single page
+declared TELECOMMUTE, the large majority carried JobPosting JSON-LD
+without it (and a third of those openly admit hybrid or
+office-attendance language in their cached descriptions), and the rest,
+roughly a quarter, exposed no JSON-LD at all (stable across a retry
+against the canonical `www.linkedin.com` host; not an authwall).
 
 ## Scope
 
@@ -128,8 +129,9 @@ against its own page before the tracker append:
 The leak is observable in this machine's tracker: prospects accepted
 after spec 053 whose cached descriptions say "hybrid working model" or
 "On-site primarily". The page signal was measured directly on 2026-08-23
-over all 45 LinkedIn prospects (counts in the Problem section) with the
-known-hybrid rejects as negative controls: every one of them carries
+over every LinkedIn prospect then in the tracker (proportions in the
+Problem section) with the known-hybrid rejects as negative controls:
+every one of them carries
 JobPosting JSON-LD without `jobLocationType`, and the one posting
 LinkedIn tags remote carries `TELECOMMUTE`. The guest fragment endpoint
 (`jobs-guest/jobs/api/jobPosting/{id}`, spec 009) was checked first and
@@ -141,8 +143,8 @@ fetch, retry, and HTML plumbing this reuses is
 ## Out of scope
 
 - Re-screening rows already in the tracker. Done as a one-off operator
-  pass on 2026-08-23 (31 prospects rejected on this evidence); the spec
-  covers new arrivals.
+  pass on 2026-08-23, rejecting the prospects whose pages disclaimed the
+  remote tag; the spec covers new arrivals.
 - Description-text hybrid detection. The location-scoped negative hints
   (spec 032) stay untouched.
 - Any change to the Apify actor input or to spec 053's gates.
@@ -158,9 +160,9 @@ fetch, retry, and HTML plumbing this reuses is
   poster tagged a city is rejected. The tag is the posting's public
   claim, and enforcing it is the strongest guarantee available without a
   human reading every posting.
-- Unknown pages (11 of 45 in the measurement) pass on spec 053's weaker
-  text evidence. The unverified count makes the size of that hole visible
-  per run.
+- Unknown pages (roughly a quarter in the measurement) pass on spec
+  053's weaker text evidence. The unverified count makes the size of that
+  hole visible per run.
 
 ## Migration
 
