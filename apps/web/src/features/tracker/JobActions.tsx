@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { Job } from "../../entities/job";
 import { api } from "../../shared/api/client";
@@ -44,6 +44,16 @@ export function JobActions({ job, onApply }: Props) {
   const [otherOpen, setOtherOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const reasonInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Choosing `other…` unmounts the button that had focus, so without this a
+  // keyboard user lands on nothing and has to tab back to the input the
+  // click just asked for (review finding on PR #65).
+  useEffect(() => {
+    if (asking && otherOpen) {
+      reasonInputRef.current?.focus();
+    }
+  }, [asking, otherOpen]);
 
   const change = useMutation({
     mutationFn: async ({ verb, why }: { verb: string; why?: string }) => {
@@ -237,6 +247,7 @@ export function JobActions({ job, onApply }: Props) {
       {asking && otherOpen && (
         <span className="job-actions__reason">
           <input
+            ref={reasonInputRef}
             aria-label="Rejection reason"
             value={reason}
             placeholder="why?"

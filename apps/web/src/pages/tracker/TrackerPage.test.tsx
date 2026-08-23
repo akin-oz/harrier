@@ -225,6 +225,24 @@ test("every pill submits its exact lowercase label as the reason", async () => {
   }
 });
 
+test("choosing other moves focus into the reason input", async () => {
+  // The click unmounts the button that had focus; a keyboard user must land
+  // in the input the click asked for, not on nothing (review finding on
+  // PR #65).
+  stubApi({ jobs: [job(1, "Northwind", "80")] });
+  const user = userEvent.setup();
+  renderPage();
+
+  const row = await rowFor("Northwind");
+  await user.click(within(row).getByRole("button", { name: "Reject" }));
+  await user.click(within(row).getByRole("button", { name: "other…" }));
+
+  const input = within(row).getByLabelText("Rejection reason");
+  await waitFor(() => {
+    expect(document.activeElement).toBe(input);
+  });
+});
+
 test("cancelling the pills closes the picker without posting", async () => {
   const calls = stubApi({ jobs: [job(1, "Northwind", "80")] });
   const user = userEvent.setup();
