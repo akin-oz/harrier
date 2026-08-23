@@ -8,17 +8,34 @@ and serves enrichment, backfill, and outreach consumers alike.
 
 from __future__ import annotations
 
+import hashlib
 import html as html_lib
+import json
 import logging
 import re
+from collections.abc import Callable
+from pathlib import Path
 from typing import Any, cast
 
+from harrier.db import data_dir
 from harrier.screening.descriptions import load_cached_description, save_description_cache
 from harrier.screening.http import request_text, strip_html
 
 logger = logging.getLogger(__name__)
 
 GUEST_JD_URL = "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
+
+# The full job view page, always on the canonical host. The guest fragment
+# above carries the description but not the workplace type; the view page
+# embeds schema.org JobPosting JSON-LD, and jobLocationType is set to
+# TELECOMMUTE exactly when the poster tagged the job remote (spec 055).
+JOB_VIEW_URL = "https://www.linkedin.com/jobs/view/{job_id}"
+
+VERDICT_REMOTE = "remote"
+VERDICT_NOT_REMOTE = "not_remote"
+VERDICT_UNKNOWN = "unknown"
+
+_LD_JSON_RE = re.compile(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', re.S)
 
 _DESC_RE = re.compile(
     r'<div[^>]*class="[^"]*show-more-less-html__markup[^"]*"[^>]*>(.*?)</div>',
@@ -76,6 +93,88 @@ def linkedin_job_id(url: str) -> str:
     if match:
         return match.group(1)
     return ""
+
+
+def workplace_verdict_from_html(page: str) -> str:
+    """remote, not_remote, or unknown from a job view page's JSON-LD.
+
+    Any JobPosting block with jobLocationType TELECOMMUTE (case-insensitive)
+    wins. A JobPosting without it, or with any other value, is not_remote:
+    that is how LinkedIn renders a posting tagged hybrid or on-site. A page
+    with no JobPosting block answers nothing. A malformed block is skipped,
+    never fatal (spec 055)."""
+    verdict = VERDICT_UNKNOWN
+    for block in _LD_JSON_RE.findall(page):
+        try:
+            parsed: object = json.loads(html_lib.unescape(block))
+        except (json.JSONDecodeError, ValueError):
+            continue
+        items = cast("list[object]", parsed) if isinstance(parsed, list) else [parsed]
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            posting = cast("dict[str, Any]", item)
+            if posting.get("@type") != "JobPosting":
+                continue
+            location_type = str(posting.get("jobLocationType") or "").strip()
+            if location_type.upper() == "TELECOMMUTE":
+                return VERDICT_REMOTE
+            verdict = VERDICT_NOT_REMOTE
+    return verdict
+
+
+def _verdict_cache_path(url: str) -> Path:
+    key = hashlib.sha256(url.encode()).hexdigest()[:24]
+    return data_dir() / "linkedin-page-verdicts" / f"{key}.json"
+
+
+def _load_cached_verdict(url: str) -> str:
+    path = _verdict_cache_path(url)
+    if not path.is_file():
+        return ""
+    try:
+        parsed: object = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    if isinstance(parsed, dict):
+        return str(cast("dict[str, Any]", parsed).get("verdict", ""))
+    return ""
+
+
+def _save_cached_verdict(url: str, verdict: str) -> None:
+    path = _verdict_cache_path(url)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"url": url, "verdict": verdict}), encoding="utf-8")
+
+
+def page_workplace_verdict(
+    url: str, *, fetcher: Callable[[str], str] | None = None, write_cache: bool = True
+) -> str:
+    """The posting's own workplace declaration, from its public page.
+
+    Answers are cached per URL under the data directory so a posting is
+    fetched at most once across runs; unknown is not cached, because a later
+    run may see a page shape that answers. A dry run passes
+    write_cache=False: it still reads the cache but leaves no file behind,
+    per the dry-run contract (review finding on PR #64). The fetched URL is
+    constructed from the extracted job id, never taken from the posting, so
+    a crafted posting URL cannot point the check anywhere else (spec 055)."""
+    job_id = linkedin_job_id(url)
+    if not job_id:
+        return VERDICT_UNKNOWN
+    cached = _load_cached_verdict(url)
+    if cached in (VERDICT_REMOTE, VERDICT_NOT_REMOTE):
+        return cached
+    fetch = fetcher if fetcher is not None else request_text
+    try:
+        page = fetch(JOB_VIEW_URL.format(job_id=job_id))
+    except Exception as exc:
+        logger.warning("LinkedIn page verdict fetch failed for %s: %s", job_id, exc)
+        return VERDICT_UNKNOWN
+    verdict = workplace_verdict_from_html(page)
+    if verdict != VERDICT_UNKNOWN and write_cache:
+        _save_cached_verdict(url, verdict)
+    return verdict
 
 
 def extract_publisher_contact(item: dict[str, Any]) -> dict[str, str]:

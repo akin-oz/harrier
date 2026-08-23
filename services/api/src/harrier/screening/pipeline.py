@@ -17,6 +17,7 @@ mutates only the in-memory dedupe sets; nothing here writes the tracker
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -24,6 +25,11 @@ from harrier.screening.archetypes import detect_archetype
 from harrier.screening.descriptions import (
     enrich_job_description_for_scoring,
     save_description_cache,
+)
+from harrier.screening.linkedin import (
+    VERDICT_NOT_REMOTE,
+    VERDICT_UNKNOWN,
+    page_workplace_verdict,
 )
 from harrier.screening.normalized import NormalizedJob, normalize
 from harrier.screening.policy import policy_version
@@ -41,6 +47,10 @@ from harrier.tracker.score import score_fields
 # than taken from the gate's message, which is prose meant for a human and
 # would silently split one cause into two if reworded.
 REMOTE_REGION_REASON = "remote_region"
+
+# The slug recorded when the posting's own LinkedIn page carries a JobPosting
+# declaration without the remote tag (spec 055).
+LINKEDIN_PAGE_REASON = "linkedin_page"
 
 
 @dataclass
@@ -84,6 +94,9 @@ class ScreenResult:
     skipped_tracker_duplicate: int = 0
     skipped_hold: int = 0
     skipped_rejected: int = 0
+    # LinkedIn jobs whose page gave no workplace verdict and passed on the
+    # text gates alone (spec 055). The size of the fail-open hole, per run.
+    linkedin_unverified: int = 0
 
 
 def build_tracker_row(
@@ -157,6 +170,7 @@ def screen_jobs(
     write_rejected_debug: bool = False,
     cache_descriptions: bool = True,
     policy: str | None = None,
+    linkedin_page_verifier: Callable[[str], str] | None = None,
 ) -> ScreenResult:
     result = ScreenResult()
     current_policy = policy if policy is not None else policy_version(candidate_cfg)
@@ -227,6 +241,37 @@ def screen_jobs(
             if write_rejected_debug:
                 result.rejected_debug_rows.append(_build_rejected_debug_row(job, reject_reason))
             continue
+
+        # The posting's own page outranks everything the actor delivered
+        # (spec 055): the actor omits the workplace declaration in practice,
+        # and text evidence over-matches. Verified after the duplicate check
+        # so a fetch is never spent on a posting already in the tracker, and
+        # only for LinkedIn jobs: the other sources have no LinkedIn page.
+        if job["remote_signal"] == "linkedin_search":
+            # cache_descriptions is the run's one cache-write switch:
+            # _run_source sets it to `not dry_run`, and a dry run must leave
+            # no file behind, verdict cache included (dry-run contract in
+            # discovery.py; review finding on PR #64).
+            def _default_verifier(url: str) -> str:
+                return page_workplace_verdict(url, write_cache=cache_descriptions)
+
+            verifier = (
+                linkedin_page_verifier if linkedin_page_verifier is not None else _default_verifier
+            )
+            page_verdict = verifier(job["url"])
+            if page_verdict == VERDICT_NOT_REMOTE:
+                record(job_key, REJECTED, LINKEDIN_PAGE_REASON)
+                result.rejected_counts[LINKEDIN_PAGE_REASON] = (
+                    result.rejected_counts.get(LINKEDIN_PAGE_REASON, 0) + 1
+                )
+                result.skipped_rejected += 1
+                if write_rejected_debug:
+                    result.rejected_debug_rows.append(
+                        _build_rejected_debug_row(job, LINKEDIN_PAGE_REASON)
+                    )
+                continue
+            if page_verdict == VERDICT_UNKNOWN:
+                result.linkedin_unverified += 1
 
         scored_job = enrich_job_description_for_scoring(job)
         # Cached as soon as it is fetched, before anything downstream can

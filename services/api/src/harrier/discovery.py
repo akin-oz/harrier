@@ -211,6 +211,9 @@ def _run_source(
         "skipped_seen": result.skipped_seen,
         "skipped_hold": result.skipped_hold,
         "skipped_rejected": result.skipped_rejected,
+        # LinkedIn jobs that passed with no page verdict: the fail-open hole,
+        # sized per run (spec 055).
+        "linkedin_unverified": result.linkedin_unverified,
         "items": result.latest_items,
     }
     summary.update(extra)
