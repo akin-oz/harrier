@@ -173,6 +173,9 @@ test("rejecting asks for a reason before it sends anything", async () => {
   await user.click(within(row).getByRole("button", { name: "Reject" }));
   expect(calls.some((call) => call.url.endsWith("/status"))).toBe(false);
 
+  // The free-text path lives behind `other…` now; a typed reason still
+  // travels exactly as before (spec 056).
+  await user.click(within(row).getByRole("button", { name: "other…" }));
   await user.type(within(row).getByLabelText("Rejection reason"), "wrong stack");
   await user.click(within(row).getByRole("button", { name: "Confirm" }));
 
@@ -180,6 +183,78 @@ test("rejecting asks for a reason before it sends anything", async () => {
     const sent = calls.find((call) => call.url === "/api/tracker/1/status");
     expect(sent?.body).toEqual({ verb: "reject", reason: "wrong stack" });
   });
+});
+
+test("a reason pill submits the rejection in one click", async () => {
+  // The pill is the confirmation: no second control stands between the
+  // operator and the frequent case (spec 056).
+  const calls = stubApi({ jobs: [job(1, "Northwind", "80")] });
+  const user = userEvent.setup();
+  renderPage();
+
+  const row = await rowFor("Northwind");
+  await user.click(within(row).getByRole("button", { name: "Reject" }));
+  await user.click(within(row).getByRole("button", { name: "hybrid" }));
+
+  await waitFor(() => {
+    const sent = calls.find((call) => call.url === "/api/tracker/1/status");
+    expect(sent?.body).toEqual({ verb: "reject", reason: "hybrid" });
+  });
+});
+
+test("every pill submits its exact lowercase label as the reason", async () => {
+  // The strings are the stored values; consistent spellings are what makes
+  // rejection_reason groupable later (spec 056).
+  for (const why of ["hybrid", "onsite", "closed", "missing stack"]) {
+    cleanup();
+    const calls = stubApi({ jobs: [job(1, "Northwind", "80")] });
+    const user = userEvent.setup();
+    renderPage();
+
+    const row = await rowFor("Northwind");
+    await user.click(within(row).getByRole("button", { name: "Reject" }));
+    await user.click(within(row).getByRole("button", { name: why }));
+
+    await waitFor(() => {
+      const sent = calls.find((call) => call.url === "/api/tracker/1/status");
+      expect(sent?.body, `${why} did not travel verbatim`).toEqual({
+        verb: "reject",
+        reason: why,
+      });
+    });
+  }
+});
+
+test("choosing other moves focus into the reason input", async () => {
+  // The click unmounts the button that had focus; a keyboard user must land
+  // in the input the click asked for, not on nothing (review finding on
+  // PR #65).
+  stubApi({ jobs: [job(1, "Northwind", "80")] });
+  const user = userEvent.setup();
+  renderPage();
+
+  const row = await rowFor("Northwind");
+  await user.click(within(row).getByRole("button", { name: "Reject" }));
+  await user.click(within(row).getByRole("button", { name: "other…" }));
+
+  const input = within(row).getByLabelText("Rejection reason");
+  await waitFor(() => {
+    expect(document.activeElement).toBe(input);
+  });
+});
+
+test("cancelling the pills closes the picker without posting", async () => {
+  const calls = stubApi({ jobs: [job(1, "Northwind", "80")] });
+  const user = userEvent.setup();
+  renderPage();
+
+  const row = await rowFor("Northwind");
+  await user.click(within(row).getByRole("button", { name: "Reject" }));
+  await user.click(within(row).getByRole("button", { name: "Cancel" }));
+
+  expect(calls.some((call) => call.url.endsWith("/status"))).toBe(false);
+  expect(within(row).queryByRole("button", { name: "hybrid" })).toBeNull();
+  expect(within(row).getByRole("button", { name: "Shortlist" })).toBeDefined();
 });
 
 // --- the queue ordering is the domain's answer -------------------------------
