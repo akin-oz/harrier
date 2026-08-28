@@ -14,6 +14,7 @@ import re
 from typing import cast
 
 from harrier.llm import LLMClientError, generate_text
+from harrier.llm.jsonparse import loads_tolerant
 from harrier.resume.content import ResumeBundle, TruthSources
 
 logger = logging.getLogger(__name__)
@@ -110,7 +111,7 @@ def build_ai_tailored_content(
         match = re.search(r"\{[\s\S]*\}", cleaned)
         if not match:
             raise ValueError("no JSON object found in response")
-        data: object = json.loads(match.group())
+        data: object = loads_tolerant(match.group())
     except (ValueError, json.JSONDecodeError) as exc:
         logger.warning("failed to parse AI response: %s", exc)
         return None

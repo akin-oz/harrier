@@ -18,6 +18,7 @@ from typing import cast
 from harrier.apply.profile import load_candidate_document
 from harrier.db import data_dir
 from harrier.llm import LLMClientError, generate_text
+from harrier.llm.jsonparse import loads_tolerant
 from harrier.offers.report import ARCHETYPES, build_report
 from harrier.offers.stories import capture_stories, load_seed_stories
 from harrier.resume.content import load_bundle, load_truth_sources
@@ -155,7 +156,7 @@ def parse_json_response(text: str) -> dict[str, object] | None:
     if not match:
         return None
     try:
-        parsed: object = json.loads(match.group())
+        parsed: object = loads_tolerant(match.group())
     except json.JSONDecodeError as exc:
         logger.warning("JSON parse error: %s", exc)
         return None

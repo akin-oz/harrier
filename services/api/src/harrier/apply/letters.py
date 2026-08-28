@@ -24,6 +24,7 @@ from harrier.apply.profile import (
 )
 from harrier.db import data_dir
 from harrier.llm import LLMClientError, generate_text
+from harrier.llm.jsonparse import loads_tolerant
 from harrier.resume.content import load_truth_sources
 from harrier.resume.markdown import normalize_visible_role_title, normalize_visible_url_text
 from harrier.resume.pdf import render_pdf, validate_rendered_pdf
@@ -223,7 +224,7 @@ def build_cover_letter_payload(
 
 
 def parse_cover_letter_response(text: str) -> dict[str, str]:
-    payload_raw: object = json.loads(extract_json_object(text))
+    payload_raw: object = loads_tolerant(extract_json_object(text))
     payload = cast("dict[str, object]", payload_raw) if isinstance(payload_raw, dict) else {}
     short_version = str(payload.get("short_version", "")).strip()
     full_version = str(payload.get("full_version", "")).strip()

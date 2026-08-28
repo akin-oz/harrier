@@ -284,6 +284,12 @@ def full_ai_response(short_text: str = "Short note about Exampledata frontend wo
     )
 
 
+def test_parse_ai_response_tolerates_trailing_comma() -> None:
+    with_trailing = full_ai_response()[:-1] + ",\n}"
+    messages = parse_ai_outreach_response(with_trailing)
+    assert set(messages) == set(MESSAGE_KINDS)
+
+
 def test_parse_ai_response_rejects_missing_kind() -> None:
     incomplete_payload = {
         kind: ai_kind(["a", "b", "c"])

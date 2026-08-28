@@ -22,6 +22,7 @@ from harrier.apply.profile import (
 )
 from harrier.db import data_dir
 from harrier.llm import LLMClientError, generate_text
+from harrier.llm.jsonparse import loads_tolerant
 from harrier.outreach.messages import (
     MESSAGE_KINDS,
     OutreachRequest,
@@ -194,7 +195,7 @@ def parse_ai_outreach_response(text: str) -> dict[str, list[dict[str, Any]]]:
     end = value.rfind("}")
     if start == -1 or end == -1 or end < start:
         raise ValueError("AI response did not contain JSON")
-    parsed: object = json.loads(value[start : end + 1])
+    parsed: object = loads_tolerant(value[start : end + 1])
     if not isinstance(parsed, dict):
         raise ValueError("expected a JSON object from the AI response")
     data = cast("dict[str, Any]", parsed)
