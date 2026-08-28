@@ -142,6 +142,12 @@ def test_parse_json_response_strips_markdown_fences() -> None:
     assert cast("dict[str, object]", payload["block_f"])["verdict"] == "apply"
 
 
+def test_parse_json_response_tolerates_trailing_comma() -> None:
+    payload = parse_json_response('{"block_f": {"verdict": "apply",},}')
+    assert payload is not None
+    assert cast("dict[str, object]", payload["block_f"])["verdict"] == "apply"
+
+
 def test_parse_verdict_contract_defends_against_malformed_output() -> None:
     unknown = parse_verdict({"block_f": {"verdict": "yolo", "confidence": 0.99}})
     assert unknown.verdict == "borderline"

@@ -28,6 +28,7 @@ from harrier.llm.config import (
     CODEX_FALLBACK_LOCATIONS,
     LLMClientError,
     LLMConfig,
+    LLMTransientError,
     debug_enabled,
     find_binary,
 )
@@ -104,7 +105,7 @@ def _generate_codex_cli(
         if output_path.exists():
             output_text = output_path.read_text(encoding="utf-8", errors="replace").strip()
     except subprocess.TimeoutExpired as exc:
-        raise LLMClientError(f"codex CLI timed out after {timeout}s") from exc
+        raise LLMTransientError(f"codex CLI timed out after {timeout}s") from exc
     except FileNotFoundError as exc:
         raise LLMClientError("`codex` CLI not found on PATH") from exc
     finally:
@@ -128,7 +129,7 @@ def _generate_codex_cli(
 
     if proc.returncode != 0:
         detail = (proc.stderr or "").strip() or (proc.stdout or "").strip() or "(no output)"
-        raise LLMClientError(f"codex CLI exited {proc.returncode}: {detail}")
+        raise LLMTransientError(f"codex CLI exited {proc.returncode}: {detail}")
     return output_text or (proc.stdout or "").strip()
 
 
@@ -168,7 +169,7 @@ def _generate_claude_cli(
             env=child_env,
         )
     except subprocess.TimeoutExpired as exc:
-        raise LLMClientError(f"claude CLI timed out after {timeout}s") from exc
+        raise LLMTransientError(f"claude CLI timed out after {timeout}s") from exc
     except FileNotFoundError as exc:
         raise LLMClientError("`claude` CLI not found on PATH") from exc
 
@@ -188,11 +189,11 @@ def _generate_claude_cli(
 
     if proc.returncode != 0:
         detail = (proc.stderr or "").strip() or (proc.stdout or "").strip() or "(no output)"
-        raise LLMClientError(f"claude CLI exited {proc.returncode}: {detail}")
+        raise LLMTransientError(f"claude CLI exited {proc.returncode}: {detail}")
 
     raw = (proc.stdout or "").strip()
     if not raw:
-        raise LLMClientError("claude CLI returned no output")
+        raise LLMTransientError("claude CLI returned no output")
     try:
         envelope: object = json.loads(raw)
     except json.JSONDecodeError:
@@ -202,10 +203,10 @@ def _generate_claude_cli(
     envelope_dict = cast("dict[str, object]", envelope)
     if envelope_dict.get("is_error"):
         msg = envelope_dict.get("result") or envelope_dict.get("error") or "(no message)"
-        raise LLMClientError(f"claude CLI error: {msg}")
+        raise LLMTransientError(f"claude CLI error: {msg}")
     result = envelope_dict.get("result")
     if not isinstance(result, str) or not result.strip():
-        raise LLMClientError("claude CLI returned empty result")
+        raise LLMTransientError("claude CLI returned empty result")
     return result
 
 
@@ -221,13 +222,16 @@ def _post_json(url: str, headers: dict[str, str], body: dict[str, object], timeo
             raw = response.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")[:1000]
-        raise LLMClientError(f"{url} exited {exc.code}: {detail}") from exc
+        # 429 and 5xx pass on a retry often enough to earn one; a 4xx is
+        # the request's fault and will repeat identically (spec 058).
+        error_cls = LLMTransientError if exc.code == 429 or exc.code >= 500 else LLMClientError
+        raise error_cls(f"{url} exited {exc.code}: {detail}") from exc
     except urllib.error.URLError as exc:
-        raise LLMClientError(f"{url} request failed: {exc.reason}") from exc
+        raise LLMTransientError(f"{url} request failed: {exc.reason}") from exc
     try:
         return json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise LLMClientError(f"{url} returned non-JSON output") from exc
+        raise LLMTransientError(f"{url} returned non-JSON output") from exc
 
 
 def _api_debug_log(

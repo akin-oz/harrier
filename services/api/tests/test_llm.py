@@ -9,7 +9,14 @@ import pytest
 import harrier.llm as llm
 import harrier.llm.config as llm_config
 import harrier.llm.providers as llm_providers
-from harrier.llm import LLMClientError, LLMConfig, generate_text, load_config
+from harrier.llm import LLMClientError, LLMConfig, LLMTransientError, generate_text, load_config
+
+
+@pytest.fixture(autouse=True)
+def zero_retry_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The transient retry (spec 058) waits 2 seconds in production; tests
+    that trigger it should not."""
+    monkeypatch.setattr(llm, "RETRY_WAIT_SECONDS", 0)
 
 
 @pytest.fixture(autouse=True)
@@ -262,3 +269,90 @@ def test_claude_cli_error_envelope_surfaces(monkeypatch: pytest.MonkeyPatch) -> 
     config = LLMConfig(provider="claude-cli", model="sonnet", api_key="claude-cli")
     with pytest.raises(LLMClientError, match="over quota"):
         llm_providers.generate_with_config("system", "user", config, 30)
+
+
+# ---------------------------------------------------------------------------
+# Transient retry (spec 058)
+# ---------------------------------------------------------------------------
+
+
+def test_transient_failure_retries_once_and_returns_second_attempt(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    attempts: list[int] = []
+
+    def flaky(_system_prompt: str, _user_input: str, _config: LLMConfig, _timeout: int) -> str:
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise LLMTransientError("claude CLI exited 1: connection closed mid-response")
+        return "recovered"
+
+    monkeypatch.setattr(llm, "generate_with_config", flaky)
+    with caplog.at_level("WARNING", logger="harrier.llm"):
+        output = generate_text("system", "user", provider="claude-cli")
+    assert output == "recovered"
+    assert len(attempts) == 2
+    assert any("retrying once" in record.getMessage() for record in caplog.records)
+
+
+def test_second_transient_failure_raises_with_second_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts: list[int] = []
+
+    def failing(_system_prompt: str, _user_input: str, _config: LLMConfig, _timeout: int) -> str:
+        attempts.append(1)
+        raise LLMTransientError(f"attempt {len(attempts)} failed")
+
+    monkeypatch.setattr(llm, "generate_with_config", failing)
+    with pytest.raises(LLMClientError, match="attempt 2 failed"):
+        generate_text("system", "user", provider="claude-cli")
+    assert len(attempts) == 2
+
+
+def test_non_transient_failure_does_not_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts: list[int] = []
+
+    def missing_binary(
+        _system_prompt: str, _user_input: str, _config: LLMConfig, _timeout: int
+    ) -> str:
+        attempts.append(1)
+        raise LLMClientError("`claude` CLI not found on PATH")
+
+    monkeypatch.setattr(llm, "generate_with_config", missing_binary)
+    with pytest.raises(LLMClientError, match="not found"):
+        generate_text("system", "user", provider="claude-cli")
+    assert len(attempts) == 1
+
+
+def test_empty_first_response_retries_and_returns_second(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts: list[int] = []
+
+    def empty_then_full(
+        _system_prompt: str, _user_input: str, _config: LLMConfig, _timeout: int
+    ) -> str:
+        attempts.append(1)
+        return "" if len(attempts) == 1 else "second"
+
+    monkeypatch.setattr(llm, "generate_with_config", empty_then_full)
+    assert generate_text("system", "user", provider="claude-cli") == "second"
+    assert len(attempts) == 2
+
+
+def test_empty_response_twice_raises_the_same_error_as_before(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts: list[int] = []
+
+    def always_empty(
+        _system_prompt: str, _user_input: str, _config: LLMConfig, _timeout: int
+    ) -> str:
+        attempts.append(1)
+        return "   "
+
+    monkeypatch.setattr(llm, "generate_with_config", always_empty)
+    with pytest.raises(LLMClientError, match="claude-cli returned an empty response"):
+        generate_text("system", "user", provider="claude-cli")
+    assert len(attempts) == 2

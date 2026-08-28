@@ -173,6 +173,25 @@ def test_parse_answers_response_reads_json_payload() -> None:
     assert answers[0]["notes"] == ["Tie the answer to shipped frontend work."]
 
 
+def test_parse_answers_response_tolerates_trailing_comma() -> None:
+    text = json.dumps(
+        {
+            "answers": [
+                {
+                    "question": "Why are you interested?",
+                    "short_answer": "Because the role fits my background well.",
+                    "medium_answer": "Because the product is useful and the work is close.",
+                    "notes": ["Tie the answer to shipped frontend work."],
+                }
+            ]
+        }
+    )
+    with_trailing = text[:-1] + ",\n}"
+    answers = parse_answers_response(with_trailing)
+    assert len(answers) == 1
+    assert answers[0]["question"] == "Why are you interested?"
+
+
 def test_generate_answers_propagates_ai_error(
     db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -302,6 +321,16 @@ def test_parse_cover_letter_response_reads_json_payload() -> None:
     text = json.dumps({"short_version": SHORT_LETTER, "full_version": FULL_LETTER})
     parsed = parse_cover_letter_response(text)
     assert "Examplesoft" in parsed["full_version"]
+
+
+def test_parse_cover_letter_response_tolerates_trailing_comma() -> None:
+    # The observed failure shape (spec 058): both fields valid, one
+    # trailing comma before the closing brace.
+    text = json.dumps({"short_version": SHORT_LETTER, "full_version": FULL_LETTER})
+    with_trailing = text[:-1] + ",\n}"
+    parsed = parse_cover_letter_response(with_trailing)
+    assert parsed["short_version"] == SHORT_LETTER
+    assert parsed["full_version"] == FULL_LETTER
 
 
 def test_normalize_cover_letter_text_removes_internal_dump_language() -> None:

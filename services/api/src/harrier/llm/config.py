@@ -46,6 +46,16 @@ class LLMClientError(RuntimeError):
     pass
 
 
+class LLMTransientError(LLMClientError):
+    """A failure worth one retry: the same request may succeed if repeated.
+
+    Providers raise this for timeouts, non-zero CLI exits, connection
+    errors, and 429/5xx responses. Configuration failures (missing binary,
+    missing key, unknown provider) stay plain LLMClientError so they fail
+    immediately (spec 058).
+    """
+
+
 @dataclass(frozen=True)
 class LLMConfig:
     provider: str

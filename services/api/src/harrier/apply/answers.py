@@ -24,6 +24,7 @@ from harrier.apply.profile import (
 )
 from harrier.db import data_dir
 from harrier.llm import LLMClientError, generate_text
+from harrier.llm.jsonparse import loads_tolerant
 from harrier.resume.content import load_truth_sources
 
 logger = logging.getLogger(__name__)
@@ -353,7 +354,7 @@ def extract_json_object(text: str) -> str:
 
 
 def parse_answers_response(text: str) -> list[dict[str, object]]:
-    payload_raw: object = json.loads(extract_json_object(text))
+    payload_raw: object = loads_tolerant(extract_json_object(text))
     payload = cast("dict[str, object]", payload_raw) if isinstance(payload_raw, dict) else {}
     answers = payload.get("answers")
     if not isinstance(answers, list) or not answers:

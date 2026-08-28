@@ -364,6 +364,43 @@ def test_ai_tailored_content_is_none_on_llm_failure_or_garbage(
     assert ai_module.build_ai_tailored_content(bundle, sources, "jd", "Co", "Role") is None
 
 
+def test_ai_tailoring_tolerates_trailing_comma(
+    bundle: ResumeBundle, sources: TruthSources, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Same ordering with and without the trailing commas (spec 058): the
+    # `sources` fixture holds every pool bullet, so validation cannot thin
+    # the result.
+    import harrier.resume.ai as ai_module
+
+    payload: dict[str, list[str]] = {
+        f"role{position}_bullets": [
+            bullet_id
+            for bullet_id in bundle.bullet_pool
+            if bullet_id.startswith(f"{role_entry.id}_")
+        ]
+        for position, role_entry in enumerate(bundle.roles, start=1)
+    }
+    payload["selected_achievements"] = [
+        bullet_id for bullet_id in bundle.bullet_pool if bullet_id.startswith("ach_")
+    ]
+    clean = json.dumps(payload)
+    with_trailing = clean.replace("]", ",]").replace("}", ",}")
+
+    def clean_generate(_system_prompt: str, _user_input: str) -> str:
+        return clean
+
+    def trailing_generate(_system_prompt: str, _user_input: str) -> str:
+        return with_trailing
+
+    monkeypatch.setattr(ai_module, "generate_text", clean_generate)
+    expected = ai_module.build_ai_tailored_content(bundle, sources, "jd", "Co", "Role")
+    assert expected is not None
+
+    monkeypatch.setattr(ai_module, "generate_text", trailing_generate)
+    tolerated = ai_module.build_ai_tailored_content(bundle, sources, "jd", "Co", "Role")
+    assert tolerated == expected
+
+
 def test_standalone_compensation_requirement_still_raises_question(
     bundle: ResumeBundle,
 ) -> None:
