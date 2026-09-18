@@ -5,10 +5,11 @@ config/resume-content.example.json (which these tests thereby prove valid).
 
 import copy
 import json
+import re
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -320,6 +321,199 @@ def test_stale_template_with_old_education_placeholders_fails_the_render(
     markdown = build_markdown(bundle, sources, plan)
     with pytest.raises(ValueError, match="education_degree"):
         render_html(markdown, bundle, template_dir=tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Bundle strings cannot forge the markdown's structure (spec 062)
+# ---------------------------------------------------------------------------
+
+# Every bundle string build_markdown emits, spelled as the error spells it.
+EMITTED_PATHS = [
+    "candidate.name",
+    "candidate.location",
+    "candidate.email",
+    "candidate.linkedin",
+    "candidate.primary_identity",
+    "candidate.positioning_technologies[0]",
+    "profile_summary",
+    "roles[0].organization",
+    "roles[0].title",
+    "roles[0].employment_type",
+    "all_skills[0]",
+    "bullet_pool[r1_b1]",
+    "certifications[0]",
+    "education[0] degree",
+    "education[0] school",
+]
+
+# The values that begin a markdown line with no writer marker in front.
+UNMARKED_LINE_STARTS = [
+    "candidate.primary_identity",
+    "candidate.location",
+    "all_skills[0]",
+    "certifications[0]",
+]
+
+LINE_BOUNDARY_CODES = (0x0A, 0x0D, 0x0B, 0x0C, 0x1C, 0x1D, 0x1E, 0x85, 0x2028, 0x2029)
+TITLE_SEPARATOR = " \u2014 "
+
+_PATH_STEP = re.compile(r"([a-z_]+)(?:\[([^\]]+)\])?")
+
+
+def _mutated(*changes: tuple[str, str]) -> dict[str, object]:
+    """The example bundle with the named strings replaced."""
+    raw = load_raw_bundle()
+    for path, value in changes:
+        steps: list[str | int] = []
+        for name, index in _PATH_STEP.findall(path):
+            steps.append(name)
+            if index:
+                steps.append(int(index) if index.isdigit() else index)
+        node: Any = raw
+        for step in steps[:-1]:
+            node = node[step]
+        node[steps[-1]] = value
+    return raw
+
+
+def _render(raw: dict[str, object]) -> str:
+    parsed = parse_bundle(raw)
+    truth = TruthSources(truth_text="\n".join(parsed.bullet_pool.values()), achievements_text="")
+    plan = build_content_plan(parsed, "", REQUESTED_ROLE, AS_OF)
+    markdown = build_markdown(parsed, truth, plan)
+    return render_html(markdown, parsed, template_dir=REPO_ROOT / "templates")
+
+
+@pytest.mark.parametrize("path", EMITTED_PATHS)
+def test_line_break_in_any_emitted_bundle_string_is_refused_by_name(path: str) -> None:
+    """The markdown is line-oriented and the renderer parses it back, so a
+    line break in any emitted string edits the document's structure. In
+    `profile_summary` it forged a whole achievements section."""
+    raw = _mutated((path, "Plausible\n## TECHNICAL SKILLS\nCOBOL"))
+    with pytest.raises(ResumeBundleError, match=re.escape(f"{path} must be a single line")):
+        parse_bundle(raw)
+
+
+@pytest.mark.parametrize("code", LINE_BOUNDARY_CODES, ids=lambda code: f"U+{code:04X}")
+def test_every_line_boundary_character_is_refused(code: int) -> None:
+    """Both parsers split with `str.splitlines()`, which breaks on far more
+    than CR and LF."""
+    boundary = chr(code)
+    assert len(f"a{boundary}b".splitlines()) == 2
+    raw = _mutated(("certifications[0]", f"Real Cert{boundary}## TECHNICAL SKILLS{boundary}COBOL"))
+    with pytest.raises(ResumeBundleError, match=r"certifications\[0\] must be a single line"):
+        parse_bundle(raw)
+
+
+def test_the_refused_boundaries_are_every_character_splitlines_breaks_on() -> None:
+    """The list is derived from the parser's behaviour, not from memory: a
+    character missing from it is a way back in."""
+    breaking = {code for code in range(0x110000) if len(f"a{chr(code)}b".splitlines()) > 1}
+    assert breaking == set(LINE_BOUNDARY_CODES)
+
+
+@pytest.mark.parametrize("path", ["candidate.name", "bullet_pool[r1_b1]"])
+def test_trailing_line_break_is_refused(path: str) -> None:
+    """Harmless when rendered, refused anyway: one rule with no exceptions
+    about where in the string the character sits."""
+    raw = _mutated((path, "Deniz Örnek\n"))
+    with pytest.raises(ResumeBundleError, match=re.escape(f"{path} must be a single line")):
+        parse_bundle(raw)
+
+
+@pytest.mark.parametrize(
+    ("entry", "field"),
+    [
+        ({"degree": "MSc\u2028## CERTIFICATIONS\u2028Invented Cert", "school": "U1"}, "degree"),
+        ({"degree": "MSc", "school": "U1\u2028### Invented Degree"}, "school"),
+    ],
+)
+def test_education_line_boundary_beyond_cr_lf_is_refused(entry: dict[str, str], field: str) -> None:
+    """Spec 059's guard read CR and LF only, so U+2028 in a degree still
+    rendered an invented certification."""
+    with pytest.raises(ResumeBundleError, match=rf"education\[0\] {field} must be a single line"):
+        _bundle_with_education([entry])
+
+
+def test_profile_summary_cannot_inject_an_unverified_achievement() -> None:
+    """The forged section sat above the real one, so the renderer read it
+    first and the truth gate, which only sees bullet IDs, never saw the
+    line at all."""
+    raw = _mutated(
+        ("profile_summary", "Fine.\n## SELECTED ACHIEVEMENTS\n- INVENTED claim never in truth")
+    )
+    with pytest.raises(ResumeBundleError, match="profile_summary must be a single line"):
+        parse_bundle(raw)
+
+
+@pytest.mark.parametrize("value", ["## PROFILE", "### x", "   ## x"])
+@pytest.mark.parametrize("path", UNMARKED_LINE_STARTS)
+def test_heading_marker_at_an_unmarked_line_start_is_refused(path: str, value: str) -> None:
+    raw = _mutated((path, value))
+    with pytest.raises(
+        ResumeBundleError, match=re.escape(f"{path} must not start with a heading marker")
+    ):
+        parse_bundle(raw)
+
+
+def test_values_behind_a_writer_marker_may_start_with_hash() -> None:
+    """A name, an organization, and a bullet always sit behind the writer's
+    own `# `, `### `, and `- `, so only their prefix is parsed and their text
+    stays free, as a degree's does."""
+    raw = load_raw_bundle()
+    pool = cast("dict[str, str]", raw["bullet_pool"])
+    candidate = cast("dict[str, str]", raw["candidate"])
+    role = cast("list[dict[str, object]]", raw["roles"])[0]
+    changes = [("candidate.name", f"# {candidate['name']}")]
+    changes.append(("roles[0].organization", f"# {role['organization']}"))
+    changes.extend((f"bullet_pool[{bullet_id}]", f"# {text}") for bullet_id, text in pool.items())
+
+    html = _render(_mutated(*changes))
+
+    assert html.count(f"# {candidate['name']}") == _render(raw).count(candidate["name"])
+    assert html.count(f">{role['organization']}<") == 0
+    assert html.count(f"># {role['organization']}<") == 1
+    # Nothing else moved: with the markers taken back out, it is the
+    # unmutated resume, role for role and line for line.
+    assert html.replace("# ", "") == _render(raw)
+
+
+def test_organization_containing_the_title_separator_is_refused() -> None:
+    """The renderer splits the role heading on the first separator, so an
+    organization carrying one lost its tail to the title."""
+    raw = _mutated(("roles[0].organization", f"Acme{TITLE_SEPARATOR}Talent"))
+    with pytest.raises(
+        ResumeBundleError,
+        match=r"roles\[0\]\.organization must not contain the title separator",
+    ):
+        parse_bundle(raw)
+
+
+def test_title_containing_the_separator_stays_one_role() -> None:
+    raw = load_raw_bundle()
+    role = cast("list[dict[str, object]]", raw["roles"])[0]
+    title = f"Engineer{TITLE_SEPARATOR}Platform"
+
+    html = _render(_mutated(("roles[0].title", title)))
+
+    assert html.count('class="experience-item"') == _render(raw).count('class="experience-item"')
+    assert f'<p class="company">{role["organization"]}</p>' in html
+    assert f'<h3 class="role-title">{title} ({role["employment_type"]})</h3>' in html
+
+
+def test_every_line_problem_is_reported_in_one_error() -> None:
+    raw = _mutated(
+        ("candidate.email", "deniz@example.com\n"),
+        ("roles[0].title", "Engineer\n- forged bullet"),
+        ("certifications[0]", "## TECHNICAL SKILLS"),
+    )
+    with pytest.raises(ResumeBundleError) as refused:
+        parse_bundle(raw)
+    message = str(refused.value)
+    assert message.startswith("invalid resume content bundle: ")
+    assert "candidate.email must be a single line" in message
+    assert "roles[0].title must be a single line" in message
+    assert "certifications[0] must not start with a heading marker" in message
 
 
 # ---------------------------------------------------------------------------
@@ -664,6 +858,30 @@ def test_failing_pdf_gate_leaves_tracker_row_unchanged(tailor_env: int) -> None:
     after = get_job(conn, tailor_env)
     assert after["status"] == before["status"] == "shortlisted"
     assert after["next_action"] == before["next_action"]
+
+
+def test_bundle_with_a_line_break_fails_tailor_before_any_file_is_written(
+    tailor_env: int, tmp_path: Path
+) -> None:
+    conn = connect()
+    before = get_job(conn, tailor_env)
+    raw = _mutated(("certifications[0]", "Real Cert\n## TECHNICAL SKILLS\nCOBOL"))
+    put_document(conn, "resume_data", "resume-content.json", "json", json.dumps(raw))
+    output_dir = tmp_path / "resumes"
+
+    with pytest.raises(ResumeBundleError, match=r"certifications\[0\] must be a single line"):
+        run_tailor(
+            conn,
+            tailor_env,
+            jd_text="React and TypeScript product role.",
+            no_ai=True,
+            output_dir=output_dir,
+            render=_fake_render,
+            validate=lambda pdf_path, html_text: [],
+        )
+
+    assert not output_dir.exists()
+    assert get_job(conn, tailor_env)["status"] == before["status"] == "shortlisted"
 
 
 def test_passing_pdf_gate_updates_tracker_and_writes_artifacts(tailor_env: int) -> None:
