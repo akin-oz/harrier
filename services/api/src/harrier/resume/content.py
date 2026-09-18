@@ -41,6 +41,16 @@ class ResumeRole:
 
 
 @dataclass(frozen=True)
+class EducationEntry:
+    """One degree as it appears on the resume (spec 059). Qualifiers such
+    as part-time or an expected year live inside `degree`; order in the
+    bundle is display order."""
+
+    degree: str
+    school: str
+
+
+@dataclass(frozen=True)
 class EvaluationDimension:
     name: str
     signals: tuple[str, ...]
@@ -69,7 +79,7 @@ class ResumeBundle:
     evaluation_dimensions: tuple[EvaluationDimension, ...]
     forbidden_phrases: tuple[str, ...]
     default_achievements: tuple[str, ...]
-    education: tuple[str, ...]
+    education: tuple[EducationEntry, ...]
     certifications: tuple[str, ...]
     profile_summary: str = ""
     ownership_terms: tuple[str, ...] = field(
@@ -151,6 +161,46 @@ def _parse_role(raw: object, index: int, errors: list[str]) -> ResumeRole | None
             default_bullets=_str_tuple(role.get("default_bullets")),
         )
     return None
+
+
+def _parse_education(raw: object, errors: list[str]) -> tuple[EducationEntry, ...]:
+    """Education is an ordered list of {degree, school} objects (spec 059).
+
+    The old flat list of lines is refused by name rather than reinterpreted:
+    the renderer used to keep its first two lines and silently drop the rest.
+    """
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        errors.append("education must be a list of {degree, school} objects")
+        return ()
+    entries: list[EducationEntry] = []
+    for index, item in enumerate(cast("list[object]", raw)):
+        if not isinstance(item, dict):
+            errors.append("education must be a list of {degree, school} objects")
+            return ()
+        entry = cast("dict[str, object]", item)
+        values: dict[str, str] = {}
+        for key in ("degree", "school"):
+            value = entry.get(key)
+            if not isinstance(value, str) or not value.strip():
+                errors.append(f"education[{index}] missing {key}")
+                continue
+            # The markdown resume is line-oriented and the HTML renderer
+            # re-parses it, so a value that spans lines or opens with a
+            # heading marker rewrites the document's structure: a line break
+            # in `degree` closed the section and injected a certification
+            # (review finding on PR #68).
+            if "\n" in value or "\r" in value:
+                errors.append(f"education[{index}] {key} must be a single line")
+                continue
+            if key == "school" and value.lstrip().startswith("#"):
+                errors.append(f"education[{index}] school must not start with a heading marker")
+                continue
+            values[key] = value
+        if len(values) == 2:
+            entries.append(EducationEntry(degree=values["degree"], school=values["school"]))
+    return tuple(entries)
 
 
 def _parse_dimension(raw: object, index: int, errors: list[str]) -> EvaluationDimension | None:
@@ -263,7 +313,7 @@ def parse_bundle(raw: object) -> ResumeBundle:
         evaluation_dimensions=tuple(dimensions),
         forbidden_phrases=_str_tuple(data.get("forbidden_phrases")),
         default_achievements=default_achievements,
-        education=_str_tuple(data.get("education")),
+        education=_parse_education(data.get("education"), errors),
         certifications=_str_tuple(data.get("certifications")),
         profile_summary=str(data.get("profile_summary") or ""),
     )

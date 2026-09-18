@@ -59,6 +59,42 @@ def _parse_experience(lines: list[str]) -> list[dict[str, object]]:
     return roles
 
 
+def _parse_education(lines: list[str]) -> list[tuple[str, str]]:
+    """(degree, school) pairs from `### degree` headings, each followed by
+    one school line (spec 059). A heading with no school line renders the
+    degree alone rather than borrowing the next heading."""
+    entries: list[tuple[str, str]] = []
+    index = 0
+    while index < len(lines):
+        if not lines[index].startswith("### "):
+            index += 1
+            continue
+        degree = lines[index][4:]
+        school = ""
+        if index + 1 < len(lines) and not lines[index + 1].startswith("### "):
+            school = lines[index + 1]
+            index += 1
+        entries.append((degree, school))
+        index += 1
+    return entries
+
+
+def _render_education_html(entries: list[tuple[str, str]]) -> str:
+    blocks: list[str] = []
+    for degree, school in entries:
+        blocks.append(
+            "\n".join(
+                [
+                    '<div class="education-item">',
+                    f"  <span>{html.escape(degree)}</span>",
+                    f"  <span>{html.escape(school)}</span>",
+                    "</div>",
+                ]
+            )
+        )
+    return "\n".join(blocks)
+
+
 def _render_experience_html(entries: list[dict[str, object]]) -> str:
     articles: list[str] = []
     for entry in entries:
@@ -105,7 +141,7 @@ def render_html(markdown: str, bundle: ResumeBundle, template_dir: Path | None =
         if line.startswith("- ")
     ]
     certifications = _extract_section(lines, "## CERTIFICATIONS")
-    education = _extract_section(lines, "## EDUCATION")
+    education = _parse_education(_extract_section(lines, "## EDUCATION"))
     technical_skills = " ".join(_extract_section(lines, "## TECHNICAL SKILLS"))
     visible_role_title = lines[1].strip() if len(lines) > 1 else ""
 
@@ -118,8 +154,6 @@ def render_html(markdown: str, bundle: ResumeBundle, template_dir: Path | None =
         "email": bundle.email,
         "phone": bundle.phone,
         "profile": profile,
-        "education_degree": education[0] if education else "",
-        "education_school": education[1] if len(education) > 1 else "",
         "technical_skills": technical_skills,
     }
     for key, value in replacements.items():
@@ -128,6 +162,7 @@ def render_html(markdown: str, bundle: ResumeBundle, template_dir: Path | None =
     experience = _parse_experience(_extract_section(lines, "## EXPERIENCE"))
     template = template.replace("{{experience_html}}", _render_experience_html(experience))
     template = template.replace("{{certifications_html}}", _render_list_items(certifications))
+    template = template.replace("{{education_html}}", _render_education_html(education))
     unresolved = sorted(set(re.findall(r"{{([a-zA-Z0-9_]+)}}", template)))
     if unresolved:
         raise ValueError(f"unresolved resume template placeholders: {', '.join(unresolved)}")

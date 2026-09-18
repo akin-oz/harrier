@@ -250,6 +250,16 @@ body {
   list-style: none;
 }
 
+.education-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.education-item + .education-item {
+  margin-top: 4px;
+}
+
 .footer-block strong {
   color: var(--ink);
   font-weight: 700;

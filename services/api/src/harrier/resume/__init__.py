@@ -8,6 +8,7 @@ content bundle from the profile store (content.py).
 from __future__ import annotations
 
 from harrier.resume.content import (
+    EducationEntry,
     ResumeBundle,
     ResumeBundleError,
     TruthSources,
@@ -42,6 +43,7 @@ from harrier.resume.ranking import rank_skills
 
 __all__ = [
     "ContentPlan",
+    "EducationEntry",
     "ResumeBundle",
     "ResumeBundleError",
     "TruthSources",

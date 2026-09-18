@@ -177,8 +177,14 @@
   "forbidden_phrases": ["placeholder", "open source", "public talk"],
   "default_achievements": ["ach_1", "ach_6", "ach_2"],
   "education": [
-    "Bachelor's Degree, Example Engineering",
-    "Example Technical University"
+    {
+      "degree": "MSc, Example Computing (part-time, expected 2030)",
+      "school": "Example University"
+    },
+    {
+      "degree": "Bachelor's Degree, Example Engineering",
+      "school": "Example Technical University"
+    }
   ],
   "certifications": [
     "Example Framework Certification Level II"
