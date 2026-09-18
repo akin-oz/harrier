@@ -1,8 +1,8 @@
 """The test suite cannot open the operator's data directory (spec 060).
 
-Isolation used to be opt-in, and the operator's log held thousands of lines
-from Starlette's test client to show for it. Each of those was a test that had
-also opened the operator's `tracker.db` in WAL mode.
+Isolation used to be opt-in, and the operator's log held lines from
+Starlette's test client to show for it. A test that logged there had also
+opened the operator's `tracker.db` in WAL mode.
 
 Every test here that aims at the real directory first proves the guard is
 live. Without that, deleting the audit hook would turn these tests into the
