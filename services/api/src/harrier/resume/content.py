@@ -20,6 +20,15 @@ ACHIEVEMENTS_KIND = "achievements"
 
 DIMENSION_KINDS = ("default", "backend_ownership", "database", "absent_by_default")
 
+# The resume markdown is line-oriented, and both its validator and the HTML
+# renderer read it back with `str.splitlines()`, which breaks on every one
+# of these and not only on CR and LF (spec 062).
+LINE_BOUNDARIES = "\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029"
+
+# What `build_markdown` writes between a role's organization and its title,
+# and what `_parse_experience` splits on, first occurrence only.
+TITLE_SEPARATOR = " \u2014 "
+
 
 class ResumeBundleError(ValueError):
     pass
@@ -85,6 +94,14 @@ class ResumeBundle:
     ownership_terms: tuple[str, ...] = field(
         default=("owned", "led", "designed", "established", "authored")
     )
+
+
+def _is_single_line(value: str) -> bool:
+    return not any(boundary in value for boundary in LINE_BOUNDARIES)
+
+
+def _starts_with_heading_marker(value: str) -> bool:
+    return value.lstrip().startswith("#")
 
 
 def _require_str(source: dict[str, object], key: str, errors: list[str], context: str) -> str:
@@ -191,10 +208,10 @@ def _parse_education(raw: object, errors: list[str]) -> tuple[EducationEntry, ..
             # heading marker rewrites the document's structure: a line break
             # in `degree` closed the section and injected a certification
             # (review finding on PR #68).
-            if "\n" in value or "\r" in value:
+            if not _is_single_line(value):
                 errors.append(f"education[{index}] {key} must be a single line")
                 continue
-            if key == "school" and value.lstrip().startswith("#"):
+            if key == "school" and _starts_with_heading_marker(value):
                 errors.append(f"education[{index}] school must not start with a heading marker")
                 continue
             values[key] = value
@@ -224,6 +241,92 @@ def _parse_dimension(raw: object, index: int, errors: list[str]) -> EvaluationDi
         kind=kind,
         candidate_question=question if isinstance(question, str) else "",
     )
+
+
+def _check_emitted(
+    path: str, value: object, errors: list[str], *, begins_unmarked_line: bool = False
+) -> None:
+    """One string `build_markdown` emits. Read as written, before any
+    trimming, so a trailing line break is refused with the rest."""
+    if not isinstance(value, str):
+        return
+    if not _is_single_line(value):
+        errors.append(f"{path} must be a single line")
+    if begins_unmarked_line and _starts_with_heading_marker(value):
+        errors.append(f"{path} must not start with a heading marker")
+
+
+def _check_emitted_list(
+    path: str, value: object, errors: list[str], *, begins_unmarked_line: bool = False
+) -> None:
+    if not isinstance(value, list):
+        return
+    for index, item in enumerate(cast("list[object]", value)):
+        _check_emitted(f"{path}[{index}]", item, errors, begins_unmarked_line=begins_unmarked_line)
+
+
+def _check_markdown_structure(data: dict[str, object], errors: list[str]) -> None:
+    """Every bundle string the resume markdown emits must be unable to edit
+    that markdown's structure (spec 062).
+
+    A line break anywhere ends the line the writer meant to write, and the
+    renderer reads whatever follows as structure: in `profile_summary` it
+    forged an achievements section the truth gate never saw. A value that
+    begins a line with no writer marker in front of it must also not open
+    with `#`. Values that always sit behind `# `, `### `, or `- `, or
+    mid-line, keep that freedom, as an education `degree` does.
+
+    Education is checked where it is parsed (spec 059).
+    """
+    candidate_raw = data.get("candidate")
+    if isinstance(candidate_raw, dict):
+        candidate = cast("dict[str, object]", candidate_raw)
+        _check_emitted("candidate.name", candidate.get("name"), errors)
+        _check_emitted("candidate.email", candidate.get("email"), errors)
+        _check_emitted("candidate.linkedin", candidate.get("linkedin"), errors)
+        # The contact line and the title line both start with these.
+        _check_emitted(
+            "candidate.location", candidate.get("location"), errors, begins_unmarked_line=True
+        )
+        _check_emitted(
+            "candidate.primary_identity",
+            candidate.get("primary_identity"),
+            errors,
+            begins_unmarked_line=True,
+        )
+        _check_emitted_list(
+            "candidate.positioning_technologies",
+            candidate.get("positioning_technologies"),
+            errors,
+        )
+    _check_emitted("profile_summary", data.get("profile_summary"), errors)
+
+    roles_raw = data.get("roles")
+    if isinstance(roles_raw, list):
+        for index, item in enumerate(cast("list[object]", roles_raw)):
+            if not isinstance(item, dict):
+                continue
+            role = cast("dict[str, object]", item)
+            for key in ("organization", "title", "employment_type"):
+                _check_emitted(f"roles[{index}].{key}", role.get(key), errors)
+            organization = role.get("organization")
+            # The renderer splits the role heading on the first separator, so
+            # one inside the organization hands its tail to the title. A title
+            # may carry one: with a clean organization the split is exact.
+            if isinstance(organization, str) and TITLE_SEPARATOR in organization:
+                errors.append(f"roles[{index}].organization must not contain the title separator")
+
+    # Any entry can rank first and so begin the skills line. `verified_skills`
+    # needs no pass of its own: an entry missing from `all_skills` is already
+    # refused, and one present is checked here.
+    _check_emitted_list("all_skills", data.get("all_skills"), errors, begins_unmarked_line=True)
+    _check_emitted_list(
+        "certifications", data.get("certifications"), errors, begins_unmarked_line=True
+    )
+    pool_raw = data.get("bullet_pool")
+    if isinstance(pool_raw, dict):
+        for bullet_id, text in cast("dict[object, object]", pool_raw).items():
+            _check_emitted(f"bullet_pool[{bullet_id}]", text, errors)
 
 
 def parse_bundle(raw: object) -> ResumeBundle:
@@ -319,6 +422,7 @@ def parse_bundle(raw: object) -> ResumeBundle:
     )
     if not bundle.positioning_technologies:
         errors.append("candidate has no positioning_technologies")
+    _check_markdown_structure(data, errors)
     if errors:
         raise ResumeBundleError("invalid resume content bundle: " + "; ".join(errors))
     return bundle

@@ -245,51 +245,56 @@ today, and its markdown, HTML, and PDF are byte-identical.
 
 ## Acceptance criteria
 
-The new tests live in `services/api/tests/test_resume.py`. They are
-described here and named when they exist, because
+Every test named here is in `services/api/tests/test_resume.py`. The
+spec was approved describing them, because
 `services/api/tests/test_spec_structure.py::test_every_test_a_spec_names_actually_exists`
-fails on a test symbol that is not yet defined (the convention spec 060
-set). The implementing change amends this section with each name. Every
-test mutates the example bundle and calls `parse_bundle`, and each
-assertion checks the `ResumeBundleError` message for the named path.
+fails on a test symbol that is not yet defined; the implementing change
+named them. Every test mutates the example bundle and calls
+`parse_bundle`, and each assertion checks the `ResumeBundleError`
+message for the named path.
 
 - [ ] A line feed in each Rule 1 field raises with `<path> must be a
-  single line`, parametrized over every path in the Rule 1 list;
-  a test pins it.
+  single line`, parametrized over every path in the Rule 1 list:
+  `test_line_break_in_any_emitted_bundle_string_is_refused_by_name`.
 - [ ] Each of the ten boundary characters in `certifications[0]` raises
-  with `certifications[0] must be a single line`;
-  a test pins it.
+  with `certifications[0] must be a single line`:
+  `test_every_line_boundary_character_is_refused`.
+- [ ] The ten characters are exactly the code points at which
+  `str.splitlines()` breaks, checked against every code point rather
+  than recalled (added during implementation: the list is the rule, and
+  a character missing from it is a way back in):
+  `test_the_refused_boundaries_are_every_character_splitlines_breaks_on`.
 - [ ] A value ending in a line feed, with nothing after it, raises, for
-  `candidate.name` and `bullet_pool[r1_b1]`;
-  a test pins it.
+  `candidate.name` and `bullet_pool[r1_b1]`:
+  `test_trailing_line_break_is_refused`.
 - [ ] U+2028 in an education `degree` and in a `school` raises with
-  spec 059's `education[0] <field> must be a single line`;
-  a test pins it.
+  spec 059's `education[0] <field> must be a single line`:
+  `test_education_line_boundary_beyond_cr_lf_is_refused`.
 - [ ] The reproduction's `profile_summary` payload raises with
-  `profile_summary must be a single line`;
-  a test pins it.
+  `profile_summary must be a single line`:
+  `test_profile_summary_cannot_inject_an_unverified_achievement`.
 - [ ] `## PROFILE`, `### x`, and `   ## x` raise with `<path> must not
   start with a heading marker` for `candidate.primary_identity`,
-  `candidate.location`, `all_skills[0]`, and `certifications[0]`;
-  a test pins it.
+  `candidate.location`, `all_skills[0]`, and `certifications[0]`:
+  `test_heading_marker_at_an_unmarked_line_start_is_refused`.
 - [ ] A `name`, an `organization`, and a pool bullet starting with `#`
   parse, and `render_html` shows each once with the role count and the
-  section contents otherwise unchanged;
-  a test pins it.
+  section contents otherwise unchanged:
+  `test_values_behind_a_writer_marker_may_start_with_hash`.
 - [ ] An organization containing the separator raises with
-  `roles[0].organization must not contain the title separator`;
-  a test pins it.
+  `roles[0].organization must not contain the title separator`:
+  `test_organization_containing_the_title_separator_is_refused`.
 - [ ] A `title` containing the separator parses and renders with the
-  company intact and the full title;
-  a test pins it.
+  company intact and the full title:
+  `test_title_containing_the_separator_stays_one_role`.
 - [ ] A bundle breaking Rule 1 in two fields and Rule 2 in a third
-  raises once, and the message names all three;
-  a test pins it.
+  raises once, and the message names all three:
+  `test_every_line_problem_is_reported_in_one_error`.
 - [ ] `run_tailor` on a stored bundle with a line feed in a
   certification raises `ResumeBundleError`, writes nothing under the
   output directory, and leaves the tracker status unchanged (uses the
-  existing `tailor_env` fixture);
-  a test pins it.
+  existing `tailor_env` fixture):
+  `test_bundle_with_a_line_break_fails_tailor_before_any_file_is_written`.
 - [ ] The unmodified example bundle still parses. The `bundle` fixture
   proves it, so every fixture-driven test fails otherwise.
 - [ ] The diff touches only `content.py`, `test_resume.py`, and this
