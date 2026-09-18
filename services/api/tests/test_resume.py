@@ -15,6 +15,7 @@ import pytest
 from harrier.db import connect
 from harrier.profile.store import put_document
 from harrier.resume import (
+    EducationEntry,
     ResumeBundle,
     ResumeBundleError,
     TruthSources,
@@ -178,6 +179,109 @@ def test_html_header_uses_grounded_markdown_title(
     assert ">LinkedIn<" not in html
     assert ">linkedin.com/in/deniz-ornek<" in html
     assert 'href="https://linkedin.com/in/deniz-ornek"' in html
+
+
+# ---------------------------------------------------------------------------
+# Education entries (spec 059)
+# ---------------------------------------------------------------------------
+
+TWO_DEGREES: list[dict[str, str]] = [
+    {"degree": "MSc, X", "school": "U1"},
+    {"degree": "BSc, Y", "school": "U2"},
+]
+
+
+def _bundle_with_education(education: object) -> ResumeBundle:
+    raw = load_raw_bundle()
+    raw["education"] = education
+    return parse_bundle(raw)
+
+
+def test_education_entries_keep_bundle_order() -> None:
+    parsed = _bundle_with_education(copy.deepcopy(TWO_DEGREES))
+    assert parsed.education == (
+        EducationEntry(degree="MSc, X", school="U1"),
+        EducationEntry(degree="BSc, Y", school="U2"),
+    )
+
+
+def test_education_flat_line_list_is_refused_by_name() -> None:
+    """The old shape is named, not reinterpreted: the renderer used to keep
+    its first two lines and silently drop the rest."""
+    with pytest.raises(
+        ResumeBundleError, match=r"education must be a list of \{degree, school\} objects"
+    ):
+        _bundle_with_education(["MSc, X", "U1"])
+
+
+def test_education_entry_missing_school_is_refused() -> None:
+    with pytest.raises(ResumeBundleError, match=r"education\[0\] missing school"):
+        _bundle_with_education([{"degree": "MSc, X"}])
+
+
+def test_education_entry_with_empty_degree_is_refused() -> None:
+    with pytest.raises(ResumeBundleError, match=r"education\[1\] missing degree"):
+        _bundle_with_education([TWO_DEGREES[0], {"degree": " ", "school": "U2"}])
+
+
+def test_empty_education_is_valid_and_renders_an_empty_block(sources: TruthSources) -> None:
+    parsed = _bundle_with_education([])
+    plan = build_content_plan(parsed, "", REQUESTED_ROLE, AS_OF)
+    markdown = build_markdown(parsed, sources, plan)
+    assert "## EDUCATION\n\n## CERTIFICATIONS" in markdown
+    html = render_html(markdown, parsed, template_dir=REPO_ROOT / "templates")
+    assert ">Education<" in html
+    assert 'class="education-item"' not in html
+    assert "{{" not in html
+
+
+def test_markdown_writes_each_degree_as_a_heading_then_its_school(
+    sources: TruthSources,
+) -> None:
+    parsed = _bundle_with_education(copy.deepcopy(TWO_DEGREES))
+    plan = build_content_plan(parsed, "", REQUESTED_ROLE, AS_OF)
+    markdown = build_markdown(parsed, sources, plan)
+    section = markdown.split("## EDUCATION\n", 1)[1].split("\n## ", 1)[0]
+    assert section.splitlines()[:4] == ["### MSc, X", "U1", "### BSc, Y", "U2"]
+
+
+def test_html_renders_every_degree_newest_first(sources: TruthSources) -> None:
+    """The PDF used to carry only the first two education lines, so a second
+    degree was silently dropped."""
+    parsed = _bundle_with_education(copy.deepcopy(TWO_DEGREES))
+    plan = build_content_plan(parsed, "", REQUESTED_ROLE, AS_OF)
+    markdown = build_markdown(parsed, sources, plan)
+    html = render_html(markdown, parsed, template_dir=REPO_ROOT / "templates")
+    assert html.count('class="education-item"') == 2
+    assert html.index("MSc, X") < html.index("BSc, Y")
+    assert ">U1<" in html
+    assert ">U2<" in html
+    assert "{{" not in html
+
+
+def test_html_escapes_degree_text(sources: TruthSources) -> None:
+    parsed = _bundle_with_education([{"degree": "<b>x</b>", "school": "U1"}])
+    plan = build_content_plan(parsed, "", REQUESTED_ROLE, AS_OF)
+    markdown = build_markdown(parsed, sources, plan)
+    html = render_html(markdown, parsed, template_dir=REPO_ROOT / "templates")
+    assert "<b>x</b>" not in html
+    assert "&lt;b&gt;x&lt;/b&gt;" in html
+
+
+def test_stale_template_with_old_education_placeholders_fails_the_render(
+    bundle: ResumeBundle, sources: TruthSources, tmp_path: Path
+) -> None:
+    templates = REPO_ROOT / "templates"
+    stale = (templates / "resume-template.html").read_text(encoding="utf-8")
+    stale = stale.replace("{{education_html}}", "{{education_degree}}")
+    (tmp_path / "resume-template.html").write_text(stale, encoding="utf-8")
+    (tmp_path / "resume-template.css").write_text(
+        (templates / "resume-template.css").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    plan = build_content_plan(bundle, "", REQUESTED_ROLE, AS_OF)
+    markdown = build_markdown(bundle, sources, plan)
+    with pytest.raises(ValueError, match="education_degree"):
+        render_html(markdown, bundle, template_dir=tmp_path)
 
 
 # ---------------------------------------------------------------------------

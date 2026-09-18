@@ -108,6 +108,15 @@ def _section_bullets(
     return texts
 
 
+def _education_lines(bundle: ResumeBundle) -> list[str]:
+    """One `### degree` heading and one school line per entry, in bundle
+    order: the same entry marker the experience section uses (spec 059)."""
+    lines: list[str] = []
+    for entry in bundle.education:
+        lines.extend([f"### {entry.degree}", entry.school])
+    return lines
+
+
 def build_markdown(
     bundle: ResumeBundle,
     sources: TruthSources,
@@ -158,7 +167,7 @@ def build_markdown(
     lines.extend(
         [
             "## EDUCATION",
-            *bundle.education,
+            *_education_lines(bundle),
             "",
             "## CERTIFICATIONS",
             *bundle.certifications,
