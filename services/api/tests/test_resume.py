@@ -6,6 +6,7 @@ config/resume-content.example.json (which these tests thereby prove valid).
 import copy
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
@@ -360,6 +361,20 @@ TITLE_SEPARATOR = " \u2014 "
 _PATH_STEP = re.compile(r"([a-z_]+)(?:\[([^\]]+)\])?")
 
 
+def _leaf(raw: dict[str, object], steps: Sequence[str | int]) -> object:
+    node: Any = raw
+    for step in steps:
+        node = node[step]
+    return node
+
+
+def _set_leaf(raw: dict[str, object], steps: Sequence[str | int], value: str) -> None:
+    node: Any = raw
+    for step in steps[:-1]:
+        node = node[step]
+    node[steps[-1]] = value
+
+
 def _mutated(*changes: tuple[str, str]) -> dict[str, object]:
     """The example bundle with the named strings replaced."""
     raw = load_raw_bundle()
@@ -369,17 +384,18 @@ def _mutated(*changes: tuple[str, str]) -> dict[str, object]:
             steps.append(name)
             if index:
                 steps.append(int(index) if index.isdigit() else index)
-        node: Any = raw
-        for step in steps[:-1]:
-            node = node[step]
-        node[steps[-1]] = value
+        _set_leaf(raw, steps, value)
     return raw
 
 
-def _render(raw: dict[str, object]) -> str:
+def _render(raw: dict[str, object], plan_from: dict[str, object] | None = None) -> str:
+    """The HTML resume for a raw bundle. `plan_from` takes the content plan
+    from another bundle, so two renders can differ in text alone and not in
+    what the ranking chose."""
     parsed = parse_bundle(raw)
     truth = TruthSources(truth_text="\n".join(parsed.bullet_pool.values()), achievements_text="")
-    plan = build_content_plan(parsed, "", REQUESTED_ROLE, AS_OF)
+    planned = parse_bundle(plan_from) if plan_from is not None else parsed
+    plan = build_content_plan(planned, "", REQUESTED_ROLE, AS_OF)
     markdown = build_markdown(parsed, truth, plan)
     return render_html(markdown, parsed, template_dir=REPO_ROOT / "templates")
 
@@ -403,13 +419,6 @@ def test_every_line_boundary_character_is_refused(code: int) -> None:
     raw = _mutated(("certifications[0]", f"Real Cert{boundary}## TECHNICAL SKILLS{boundary}COBOL"))
     with pytest.raises(ResumeBundleError, match=r"certifications\[0\] must be a single line"):
         parse_bundle(raw)
-
-
-def test_the_refused_boundaries_are_every_character_splitlines_breaks_on() -> None:
-    """The list is derived from the parser's behaviour, not from memory: a
-    character missing from it is a way back in."""
-    breaking = {code for code in range(0x110000) if len(f"a{chr(code)}b".splitlines()) > 1}
-    assert breaking == set(LINE_BOUNDARY_CODES)
 
 
 @pytest.mark.parametrize("path", ["candidate.name", "bullet_pool[r1_b1]"])
@@ -456,6 +465,21 @@ def test_heading_marker_at_an_unmarked_line_start_is_refused(path: str, value: s
         parse_bundle(raw)
 
 
+def _rendered_parts(html: str) -> dict[str, list[str]]:
+    """What the renderer put where, read back out of the real template."""
+    patterns = {
+        "name": r"<h1>(.*?)</h1>",
+        "summary": r'<p class="summary">(.*?)</p>',
+        "role_titles": r'<h3 class="role-title">(.*?)</h3>',
+        "companies": r'<p class="company">(.*?)</p>',
+        "periods": r'<p class="period">(.*?)</p>',
+        "items": r"<li>(.*?)</li>",
+        "skills": r'<p class="skills-inline">(.*?)</p>',
+        "education": r'<div class="education-item">(.*?)</div>',
+    }
+    return {key: re.findall(pattern, html, flags=re.S) for key, pattern in patterns.items()}
+
+
 def test_values_behind_a_writer_marker_may_start_with_hash() -> None:
     """A name, an organization, and a bullet always sit behind the writer's
     own `# `, `### `, and `- `, so only their prefix is parsed and their text
@@ -464,18 +488,26 @@ def test_values_behind_a_writer_marker_may_start_with_hash() -> None:
     pool = cast("dict[str, str]", raw["bullet_pool"])
     candidate = cast("dict[str, str]", raw["candidate"])
     role = cast("list[dict[str, object]]", raw["roles"])[0]
+    certifications = cast("list[str]", raw["certifications"])
     changes = [("candidate.name", f"# {candidate['name']}")]
     changes.append(("roles[0].organization", f"# {role['organization']}"))
     changes.extend((f"bullet_pool[{bullet_id}]", f"# {text}") for bullet_id, text in pool.items())
 
-    html = _render(_mutated(*changes))
+    plain = _rendered_parts(_render(raw))
+    # Planned from the unmarked bundle: the same bullet IDs in the same
+    # places, so this pins the writer and the renderer and leaves the
+    # ranking, which reads bullet text, out of it.
+    marked = _rendered_parts(_render(_mutated(*changes), plan_from=raw))
 
-    assert html.count(f"# {candidate['name']}") == _render(raw).count(candidate["name"])
-    assert html.count(f">{role['organization']}<") == 0
-    assert html.count(f"># {role['organization']}<") == 1
-    # Nothing else moved: with the markers taken back out, it is the
-    # unmutated resume, role for role and line for line.
-    assert html.replace("# ", "") == _render(raw)
+    assert marked["name"] == [f"# {plain['name'][0]}"]
+    assert marked["companies"] == [f"# {plain['companies'][0]}", *plain["companies"][1:]]
+    # Every bullet kept its place and gained only its marker; the
+    # certifications, which share the list markup, gained nothing.
+    assert [item.removeprefix("# ") for item in marked["items"]] == plain["items"]
+    bullets = len(plain["items"]) - len(certifications)
+    assert sum(item.startswith("# ") for item in marked["items"]) == bullets > 0
+    for untouched in ("summary", "role_titles", "periods", "skills", "education"):
+        assert marked[untouched] == plain[untouched]
 
 
 def test_organization_containing_the_title_separator_is_refused() -> None:
@@ -484,9 +516,37 @@ def test_organization_containing_the_title_separator_is_refused() -> None:
     raw = _mutated(("roles[0].organization", f"Acme{TITLE_SEPARATOR}Talent"))
     with pytest.raises(
         ResumeBundleError,
-        match=r"roles\[0\]\.organization must not contain the title separator",
+        match=(
+            r"roles\[0\]\.organization must not contain the title separator "
+            r"or end with its dash"
+        ),
     ):
         parse_bundle(raw)
+
+
+@pytest.mark.parametrize("tail", [" \u2014", " \u2014 ", " \u2014\t"])
+def test_organization_ending_in_the_separators_dash_is_refused(tail: str) -> None:
+    """The writer trims the organization and appends its own separator, so a
+    trailing dash made a doubled one: the split fell a dash early and the
+    title rendered with the organization's dash in front of it (local review
+    of PR #73)."""
+    raw = _mutated(("roles[0].organization", f"Acme Talent{tail}"))
+    with pytest.raises(
+        ResumeBundleError,
+        match=(
+            r"roles\[0\]\.organization must not contain the title separator "
+            r"or end with its dash"
+        ),
+    ):
+        parse_bundle(raw)
+
+
+def test_organization_made_of_dashes_elsewhere_still_splits_exactly() -> None:
+    """The rule is about where the first separator falls, not about the
+    dash: a leading one, or one with no spaces around it, splits cleanly."""
+    for organization in ("\u2014 Acme", "Acme\u2014Talent", "Acme \u2014Talent"):
+        html = _render(_mutated(("roles[0].organization", organization)))
+        assert f'<p class="company">{organization}</p>' in html
 
 
 def test_title_containing_the_separator_stays_one_role() -> None:
@@ -499,6 +559,78 @@ def test_title_containing_the_separator_stays_one_role() -> None:
     assert html.count('class="experience-item"') == _render(raw).count('class="experience-item"')
     assert f'<p class="company">{role["organization"]}</p>' in html
     assert f'<h3 class="role-title">{title} ({role["employment_type"]})</h3>' in html
+
+
+def _string_leaves(
+    value: object, label: str = "", steps: tuple[str | int, ...] = ()
+) -> list[tuple[str, tuple[str | int, ...]]]:
+    """Every string value under `value`, with a label and the steps to it."""
+    if isinstance(value, str):
+        return [(label, steps)]
+    found: list[tuple[str, tuple[str | int, ...]]] = []
+    if isinstance(value, dict):
+        for key, item in cast("dict[str, object]", value).items():
+            found.extend(_string_leaves(item, f"{label}.{key}" if label else key, (*steps, key)))
+    elif isinstance(value, list):
+        for index, item in enumerate(cast("list[object]", value)):
+            found.extend(_string_leaves(item, f"{label}[{index}]", (*steps, index)))
+    return found
+
+
+def _markdown_or_refusal(raw: dict[str, object]) -> str | None:
+    """The markdown resume, or None when any gate before it refused."""
+    try:
+        parsed = parse_bundle(raw)
+        truth = TruthSources(
+            truth_text="\n".join(parsed.bullet_pool.values()), achievements_text=""
+        )
+        plan = build_content_plan(parsed, "", REQUESTED_ROLE, AS_OF)
+        return build_markdown(parsed, truth, plan)
+    except ValueError:
+        return None
+
+
+def test_no_bundle_string_carries_a_line_break_or_heading_into_the_markdown() -> None:
+    """The list of emitted strings above is written by hand, and so is the
+    validator's. This asks the writer instead: every string in the example
+    bundle, one at a time, is given a forged section, and none may reach the
+    markdown as the start of a line.
+
+    Two limits, so nobody leans on it for more. It walks the example bundle,
+    so a newly emitted field is covered once that bundle carries it. And a
+    value whose change first trips something else (a renamed skill breaks
+    `verified_skills`, a bullet fails the truth gate, a name moves the title
+    line) counts as refused here whatever Rule 1 says; the named tests above
+    are what hold those.
+    """
+    pristine = load_raw_bundle()
+    # Any ValueError below reads as a refusal, so the test is only worth
+    # something while the untouched bundle gets through.
+    assert _markdown_or_refusal(copy.deepcopy(pristine)) is not None
+    leaves = _string_leaves(pristine)
+    assert len(leaves) > len(EMITTED_PATHS)
+
+    forged_line = "## FORGED SECTION"
+    built = 0
+    escaped: list[str] = []
+    for label, steps in leaves:
+        original = cast("str", _leaf(pristine, steps))
+        for payload in (f"{original}\n{forged_line}", forged_line):
+            raw = copy.deepcopy(pristine)
+            _set_leaf(raw, steps, payload)
+            markdown = _markdown_or_refusal(raw)
+            if markdown is None:
+                continue
+            built += 1
+            # A prefix match, as the renderer's own section scan is: whatever
+            # the writer appends after the value does not unmake the heading.
+            if any(line.startswith(forged_line) for line in markdown.splitlines()):
+                escaped.append(label)
+    assert not escaped, f"bundle strings that forged a markdown line: {sorted(set(escaped))}"
+    # Most strings are never emitted and nothing cross-references them, so
+    # most cases build a resume. Fewer than one per string means the gates
+    # are refusing for some other reason and the loop above proved nothing.
+    assert built >= len(leaves), f"only {built} of {2 * len(leaves)} cases built a resume"
 
 
 def test_every_line_problem_is_reported_in_one_error() -> None:

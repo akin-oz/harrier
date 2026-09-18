@@ -20,11 +20,6 @@ ACHIEVEMENTS_KIND = "achievements"
 
 DIMENSION_KINDS = ("default", "backend_ownership", "database", "absent_by_default")
 
-# The resume markdown is line-oriented, and both its validator and the HTML
-# renderer read it back with `str.splitlines()`, which breaks on every one
-# of these and not only on CR and LF (spec 062).
-LINE_BOUNDARIES = "\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029"
-
 # What `build_markdown` writes between a role's organization and its title,
 # and what `_parse_experience` splits on, first occurrence only.
 TITLE_SEPARATOR = " \u2014 "
@@ -97,7 +92,31 @@ class ResumeBundle:
 
 
 def _is_single_line(value: str) -> bool:
-    return not any(boundary in value for boundary in LINE_BOUNDARIES)
+    """Whether the parsers would read this value back as the one line it was
+    written as.
+
+    Asked of `str.splitlines()` itself, because that is what both the
+    markdown validator and the HTML renderer split with, and it breaks on
+    ten characters, not two (spec 062). A list of them kept here could only
+    drift from the parser it describes. A trailing boundary fails too:
+    `splitlines` drops it, so the value does not come back unchanged.
+    """
+    return value == "" or value.splitlines() == [value]
+
+
+def _splits_at_its_end(organization: str) -> bool:
+    """Whether the role heading the writer builds splits back into this
+    organization.
+
+    The writer emits the trimmed organization, then the separator, then the
+    title, and the renderer splits on the first separator it finds. So the
+    first one must be the writer's own. Containing a whole separator breaks
+    that, and so does ending in its dash: `Acme` plus a trailing dash made a
+    doubled separator, the split fell a dash early, and the title rendered
+    with the organization's dash in front of it (local review of PR #73).
+    """
+    emitted = organization.strip()
+    return f"{emitted}{TITLE_SEPARATOR}".find(TITLE_SEPARATOR) == len(emitted)
 
 
 def _starts_with_heading_marker(value: str) -> bool:
@@ -310,11 +329,13 @@ def _check_markdown_structure(data: dict[str, object], errors: list[str]) -> Non
             for key in ("organization", "title", "employment_type"):
                 _check_emitted(f"roles[{index}].{key}", role.get(key), errors)
             organization = role.get("organization")
-            # The renderer splits the role heading on the first separator, so
-            # one inside the organization hands its tail to the title. A title
-            # may carry one: with a clean organization the split is exact.
-            if isinstance(organization, str) and TITLE_SEPARATOR in organization:
-                errors.append(f"roles[{index}].organization must not contain the title separator")
+            # A title may carry a separator: once the organization splits at
+            # its own end, everything after that first separator is the title.
+            if isinstance(organization, str) and not _splits_at_its_end(organization):
+                errors.append(
+                    f"roles[{index}].organization must not contain the title separator "
+                    "or end with its dash"
+                )
 
     # Any entry can rank first and so begin the skills line. `verified_skills`
     # needs no pass of its own: an entry missing from `all_skills` is already
