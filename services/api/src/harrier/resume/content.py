@@ -333,7 +333,8 @@ def _check_markdown_structure(data: dict[str, object], errors: list[str]) -> Non
             # its own end, everything after that first separator is the title.
             if isinstance(organization, str) and not _splits_at_its_end(organization):
                 errors.append(
-                    f"roles[{index}].organization must not contain or end with the title separator"
+                    f"roles[{index}].organization must not contain the title separator "
+                    "or end with its dash"
                 )
 
     # Any entry can rank first and so begin the skills line. `verified_skills`
