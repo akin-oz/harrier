@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import cast
 
 from harrier.resume.content import ResumeBundle
+from harrier.resume.heading import split_role_heading
 from harrier.resume.markdown import normalize_visible_url_text
 
 TEMPLATE_DIR = Path("templates")
@@ -54,7 +55,7 @@ def _parse_experience(lines: list[str]) -> list[dict[str, object]]:
         while index < len(lines) and lines[index].startswith("- "):
             bullets.append(lines[index][2:])
             index += 1
-        company, title = company_title.split(" — ", 1)
+        company, title = split_role_heading(company_title, len(roles) + 1)
         roles.append({"company": company, "title": title, "period": period, "bullets": bullets})
     return roles
 

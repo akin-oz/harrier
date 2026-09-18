@@ -174,11 +174,11 @@ that `build_markdown` did not write.
 
 ## Acceptance criteria
 
-The new tests live in `services/api/tests/test_resume.py`. They are
-described here and named when they exist, because
+Every test named here is in `services/api/tests/test_resume.py`. The
+spec was approved describing the new ones, because
 `services/api/tests/test_spec_structure.py::test_every_test_a_spec_names_actually_exists`
-fails on a test symbol that is not yet defined. The implementing change
-amends this section with each name. Tests that already exist are named.
+fails on a test symbol that is not yet defined; the implementing change
+named them.
 
 - [ ] With the separator changed to ` | ` in its one definition, for
   the duration of one test: the markdown role heading is written with
@@ -186,12 +186,17 @@ amends this section with each name. Tests that already exist are named.
   unchanged from the unpatched render; `parse_bundle` refuses an
   organization of `Acme | Talent` with spec 062's Rule 3 message; and
   an organization containing the old separator parses and renders as
-  the company intact; a test pins it. This is the test that cannot be
-  written today: the experiment above is its failing form.
+  the company intact:
+  `test_changing_the_one_separator_moves_writer_parser_and_validator`.
+  Before this change the test could not be written; the experiment
+  above was its failing form. It fails again if any one of the three
+  sites goes back to its own copy of the separator (each tried during
+  implementation).
 - [ ] The heading line for the example bundle's first role is asserted
   literally, character for character including U+2014 and the
   `(Freelance)` suffix, so changing the separator is a visible,
-  deliberate act; a test pins it.
+  deliberate act:
+  `test_role_heading_line_is_written_exactly_as_it_always_was`.
 - [ ] Output is unchanged. The proof is the literal heading line
   above, which is the only line whose construction moves, together
   with the existing render tests passing unedited
@@ -207,10 +212,14 @@ amends this section with each name. Tests that already exist are named.
   `test_title_containing_the_separator_stays_one_role`.
 - [ ] `render_html` on a markdown whose `## EXPERIENCE` section holds a
   `### ` line with no separator raises `ValueError` matching `role
-  heading 1 has no title separator`; a test pins it.
+  heading 1 has no title separator`, and `role heading 2` when the
+  second heading is the broken one, and the message carries none of the
+  line's text:
+  `test_role_heading_with_no_separator_has_a_named_error`.
 - [ ] A role with an empty employment type writes a heading with no
   suffix and no trailing space, and it splits back to the same
-  organization and title; a test pins it.
+  organization and title:
+  `test_role_without_an_employment_type_has_no_suffix_and_splits_back`.
 - [ ] `git grep -n 'u2014' services/api/src/harrier/resume` and the
   same search for the literal character show the role heading
   separator defined once, in `heading.py`. The remaining hits are the

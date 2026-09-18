@@ -561,6 +561,96 @@ def test_title_containing_the_separator_stays_one_role() -> None:
     assert f'<h3 class="role-title">{title} ({role["employment_type"]})</h3>' in html
 
 
+# --- the role heading has one definition (spec 063) ---
+
+
+def _role_heading_lines(raw: dict[str, object]) -> list[str]:
+    """The `### ` lines of the experience section, as the writer wrote them."""
+    parsed = parse_bundle(raw)
+    truth = TruthSources(truth_text="\n".join(parsed.bullet_pool.values()), achievements_text="")
+    plan = build_content_plan(parsed, "", REQUESTED_ROLE, AS_OF)
+    markdown = build_markdown(parsed, truth, plan)
+    section = markdown.split("## EXPERIENCE\n", 1)[1].split("\n## ", 1)[0]
+    return [line for line in section.splitlines() if line.startswith("### ")]
+
+
+def test_role_heading_line_is_written_exactly_as_it_always_was() -> None:
+    """Character for character, separator and suffix included, so changing
+    the format is a visible, deliberate act and not a side effect of moving
+    the code that builds it."""
+    assert _role_heading_lines(load_raw_bundle())[0] == (
+        "### Acme Talent \u2014 Senior Frontend Engineer (Freelance)"
+    )
+
+
+def test_role_without_an_employment_type_has_no_suffix_and_splits_back() -> None:
+    raw = load_raw_bundle()
+    role = cast("list[dict[str, object]]", raw["roles"])[1]
+    assert role["employment_type"] == ""
+
+    assert _role_heading_lines(raw)[1] == f"### {role['organization']} \u2014 {role['title']}"
+    parts = _rendered_parts(_render(raw))
+    assert parts["companies"][1] == role["organization"]
+    assert parts["role_titles"][1] == role["title"]
+
+
+def test_changing_the_one_separator_moves_writer_parser_and_validator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The format used to be known in three places, and the validator
+    re-enacted the other two by hand. With the writer and the parser moved
+    to another separator together, every test stayed green and an
+    organization containing the new one rendered with its tail in the title:
+    the defect spec 062 closed, back. Now there is one definition, and all
+    three follow it."""
+    before = _rendered_parts(_render(load_raw_bundle()))
+
+    monkeypatch.setattr("harrier.resume.heading.TITLE_SEPARATOR", " | ")
+
+    assert _role_heading_lines(load_raw_bundle())[0] == (
+        "### Acme Talent | Senior Frontend Engineer (Freelance)"
+    )
+    after = _rendered_parts(_render(load_raw_bundle()))
+    assert after["companies"] == before["companies"]
+    assert after["role_titles"] == before["role_titles"]
+
+    with pytest.raises(
+        ResumeBundleError,
+        match=(
+            r"roles\[0\]\.organization must not contain the title separator "
+            r"or end with its dash"
+        ),
+    ):
+        parse_bundle(_mutated(("roles[0].organization", "Acme | Talent")))
+
+    # The old separator is just text now: it no longer splits early.
+    old = f"Acme{TITLE_SEPARATOR}Talent"
+    assert _rendered_parts(_render(_mutated(("roles[0].organization", old))))["companies"][0] == old
+
+
+@pytest.mark.parametrize(
+    ("experience", "position"),
+    [
+        ("### Acme Talent\nOct 2023\n- did a thing", 1),
+        ("### Acme \u2014 Engineer\nOct 2023\n- did a thing\n\n### Exampleworks\nJan 2014", 2),
+    ],
+    ids=["first-heading", "second-heading"],
+)
+def test_role_heading_with_no_separator_has_a_named_error(
+    bundle: ResumeBundle, experience: str, position: int
+) -> None:
+    """A hand-edited markdown used to fail with `not enough values to
+    unpack`. The message names a position, never the line's text: that text
+    is an employer's name."""
+    markdown = f"# Name\nTitle\ncontact\n\n## EXPERIENCE\n\n{experience}\n"
+    with pytest.raises(
+        ValueError, match=rf"role heading {position} has no title separator"
+    ) as raised:
+        render_html(markdown, bundle, template_dir=REPO_ROOT / "templates")
+    assert "Acme" not in str(raised.value)
+    assert "Exampleworks" not in str(raised.value)
+
+
 def _string_leaves(
     value: object, label: str = "", steps: tuple[str | int, ...] = ()
 ) -> list[tuple[str, tuple[str | int, ...]]]:

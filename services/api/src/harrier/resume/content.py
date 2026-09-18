@@ -14,15 +14,13 @@ import sqlite3
 from dataclasses import dataclass, field
 from typing import cast
 
+from harrier.resume.heading import role_heading, split_role_heading
+
 RESUME_DATA_KIND = "resume_data"
 RESUME_TRUTH_KIND = "resume_truth"
 ACHIEVEMENTS_KIND = "achievements"
 
 DIMENSION_KINDS = ("default", "backend_ownership", "database", "absent_by_default")
-
-# What `build_markdown` writes between a role's organization and its title,
-# and what `_parse_experience` splits on, first occurrence only.
-TITLE_SEPARATOR = " \u2014 "
 
 
 class ResumeBundleError(ValueError):
@@ -104,19 +102,23 @@ def _is_single_line(value: str) -> bool:
     return value == "" or value.splitlines() == [value]
 
 
-def _splits_at_its_end(organization: str) -> bool:
-    """Whether the role heading the writer builds splits back into this
-    organization.
+def _organization_survives_its_heading(
+    organization: str, title: str, employment_type: str, position: int
+) -> bool:
+    """Whether the heading the writer builds for this role splits back into
+    this organization (spec 062 Rule 3, asked of the one definition the
+    writer and the parser share, spec 063).
 
-    The writer emits the trimmed organization, then the separator, then the
-    title, and the renderer splits on the first separator it finds. So the
-    first one must be the writer's own. Containing a whole separator breaks
-    that, and so does ending in its dash: `Acme` plus a trailing dash made a
-    doubled separator, the split fell a dash early, and the title rendered
-    with the organization's dash in front of it (local review of PR #73).
+    Containing a whole separator fails, and so does ending in its dash:
+    the writer's own separator then makes a doubled one and the split falls
+    a dash early. This used to re-enact the writer and the parser by hand,
+    which was right only while neither of them changed. The verdict does
+    not depend on what the title says: a separator in the title comes after
+    the writer's own, and the split is on the first.
     """
     emitted = organization.strip()
-    return f"{emitted}{TITLE_SEPARATOR}".find(TITLE_SEPARATOR) == len(emitted)
+    written = role_heading(emitted, title.strip(), employment_type)
+    return split_role_heading(written, position)[0] == emitted
 
 
 def _starts_with_heading_marker(value: str) -> bool:
@@ -329,9 +331,16 @@ def _check_markdown_structure(data: dict[str, object], errors: list[str]) -> Non
             for key in ("organization", "title", "employment_type"):
                 _check_emitted(f"roles[{index}].{key}", role.get(key), errors)
             organization = role.get("organization")
-            # A title may carry a separator: once the organization splits at
-            # its own end, everything after that first separator is the title.
-            if isinstance(organization, str) and not _splits_at_its_end(organization):
+            title = role.get("title")
+            # Needs a title to write the heading with; a role without one is
+            # already refused by name.
+            if (
+                isinstance(organization, str)
+                and isinstance(title, str)
+                and not _organization_survives_its_heading(
+                    organization, title, str(role.get("employment_type") or ""), index + 1
+                )
+            ):
                 errors.append(
                     f"roles[{index}].organization must not contain the title separator "
                     "or end with its dash"
