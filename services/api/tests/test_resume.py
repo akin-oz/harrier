@@ -388,15 +388,23 @@ def _mutated(*changes: tuple[str, str]) -> dict[str, object]:
     return raw
 
 
-def _render(raw: dict[str, object], plan_from: dict[str, object] | None = None) -> str:
-    """The HTML resume for a raw bundle. `plan_from` takes the content plan
-    from another bundle, so two renders can differ in text alone and not in
-    what the ranking chose."""
+def _markdown(
+    raw: dict[str, object], plan_from: dict[str, object] | None = None
+) -> tuple[ResumeBundle, str]:
+    """The parsed bundle and its markdown resume, with the truth sources
+    built from the bundle's own pool. `plan_from` takes the content plan from
+    another bundle, so two resumes can differ in text alone and not in what
+    the ranking chose."""
     parsed = parse_bundle(raw)
     truth = TruthSources(truth_text="\n".join(parsed.bullet_pool.values()), achievements_text="")
     planned = parse_bundle(plan_from) if plan_from is not None else parsed
     plan = build_content_plan(planned, "", REQUESTED_ROLE, AS_OF)
-    markdown = build_markdown(parsed, truth, plan)
+    return parsed, build_markdown(parsed, truth, plan)
+
+
+def _render(raw: dict[str, object], plan_from: dict[str, object] | None = None) -> str:
+    """The HTML resume for a raw bundle."""
+    parsed, markdown = _markdown(raw, plan_from)
     return render_html(markdown, parsed, template_dir=REPO_ROOT / "templates")
 
 
@@ -561,6 +569,109 @@ def test_title_containing_the_separator_stays_one_role() -> None:
     assert f'<h3 class="role-title">{title} ({role["employment_type"]})</h3>' in html
 
 
+# --- the role heading has one definition (spec 063) ---
+
+
+def _role_heading_lines(raw: dict[str, object]) -> list[str]:
+    """The `### ` lines of the experience section, as the writer wrote them."""
+    section = _markdown(raw)[1].split("## EXPERIENCE\n", 1)[1].split("\n## ", 1)[0]
+    return [line for line in section.splitlines() if line.startswith("### ")]
+
+
+def test_role_heading_line_is_written_exactly_as_it_always_was() -> None:
+    """Character for character, separator and suffix included, so changing
+    the format is a visible, deliberate act and not a side effect of moving
+    the code that builds it."""
+    assert _role_heading_lines(load_raw_bundle())[0] == (
+        "### Acme Talent \u2014 Senior Frontend Engineer (Freelance)"
+    )
+
+
+def test_role_without_an_employment_type_has_no_suffix_and_splits_back() -> None:
+    raw = load_raw_bundle()
+    role = cast("list[dict[str, object]]", raw["roles"])[1]
+    assert role["employment_type"] == ""
+
+    assert _role_heading_lines(raw)[1] == f"### {role['organization']} \u2014 {role['title']}"
+    parts = _rendered_parts(_render(raw))
+    assert parts["companies"][1] == role["organization"]
+    assert parts["role_titles"][1] == role["title"]
+
+
+def test_bad_organization_is_still_named_when_the_title_is_missing() -> None:
+    """One error names every problem, so the document is fixed in one edit.
+    The organization's verdict never depended on the title, so a missing
+    title must not hide it (local review of PR #77)."""
+    raw = _mutated(("roles[0].organization", f"Acme{TITLE_SEPARATOR}Talent"))
+    del cast("list[dict[str, object]]", raw["roles"])[0]["title"]
+
+    with pytest.raises(ResumeBundleError) as refused:
+        parse_bundle(raw)
+
+    message = str(refused.value)
+    assert "roles[0]: missing or empty title" in message
+    assert "roles[0].organization must not contain the title separator" in message
+
+
+def test_changing_the_one_separator_moves_writer_parser_and_validator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The format used to be known in three places, and the validator
+    re-enacted the other two by hand. With the writer and the parser moved
+    to another separator together, every test stayed green and an
+    organization containing the new one rendered with its tail in the title:
+    the defect spec 062 closed, back. Now there is one definition, and all
+    three follow it."""
+    before = _rendered_parts(_render(load_raw_bundle()))
+
+    monkeypatch.setattr("harrier.resume.heading.TITLE_SEPARATOR", " | ")
+
+    assert _role_heading_lines(load_raw_bundle())[0] == (
+        "### Acme Talent | Senior Frontend Engineer (Freelance)"
+    )
+    after = _rendered_parts(_render(load_raw_bundle()))
+    assert after["companies"] == before["companies"]
+    assert after["role_titles"] == before["role_titles"]
+
+    # Containing the new separator, and ending in its leading part: the
+    # second is the case spec 062 got wrong the first time. Only the stable
+    # start of the message is matched, because its tail names a dash, which
+    # is true of the real separator and not of this one.
+    for organization in ("Acme | Talent", "Acme |"):
+        with pytest.raises(
+            ResumeBundleError,
+            match=r"roles\[0\]\.organization must not contain the title separator",
+        ):
+            parse_bundle(_mutated(("roles[0].organization", organization)))
+
+    # The old separator is just text now: it no longer splits early.
+    old = f"Acme{TITLE_SEPARATOR}Talent"
+    assert _rendered_parts(_render(_mutated(("roles[0].organization", old))))["companies"][0] == old
+
+
+@pytest.mark.parametrize(
+    ("experience", "position"),
+    [
+        ("### Acme Talent\nOct 2023\n- did a thing", 1),
+        ("### Acme \u2014 Engineer\nOct 2023\n- did a thing\n\n### Exampleworks\nJan 2014", 2),
+    ],
+    ids=["first-heading", "second-heading"],
+)
+def test_role_heading_with_no_separator_has_a_named_error(
+    bundle: ResumeBundle, experience: str, position: int
+) -> None:
+    """A hand-edited markdown used to fail with `not enough values to
+    unpack`. The message names a position, never the line's text: that text
+    is an employer's name."""
+    markdown = f"# Name\nTitle\ncontact\n\n## EXPERIENCE\n\n{experience}\n"
+    with pytest.raises(
+        ValueError, match=rf"role heading {position} has no title separator"
+    ) as raised:
+        render_html(markdown, bundle, template_dir=REPO_ROOT / "templates")
+    assert "Acme" not in str(raised.value)
+    assert "Exampleworks" not in str(raised.value)
+
+
 def _string_leaves(
     value: object, label: str = "", steps: tuple[str | int, ...] = ()
 ) -> list[tuple[str, tuple[str | int, ...]]]:
@@ -580,12 +691,7 @@ def _string_leaves(
 def _markdown_or_refusal(raw: dict[str, object]) -> str | None:
     """The markdown resume, or None when any gate before it refused."""
     try:
-        parsed = parse_bundle(raw)
-        truth = TruthSources(
-            truth_text="\n".join(parsed.bullet_pool.values()), achievements_text=""
-        )
-        plan = build_content_plan(parsed, "", REQUESTED_ROLE, AS_OF)
-        return build_markdown(parsed, truth, plan)
+        return _markdown(raw)[1]
     except ValueError:
         return None
 

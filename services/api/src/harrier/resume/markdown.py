@@ -12,6 +12,7 @@ from datetime import date
 
 from harrier.resume.content import ResumeBundle, TruthSources, forbidden_hits
 from harrier.resume.facts import role_period_label
+from harrier.resume.heading import role_heading
 from harrier.resume.plan import ContentPlan, validate_content_plan
 
 _TR_MAP = str.maketrans("çğıöşüÇĞİÖŞÜ", "cgiosuCGIOSU")
@@ -155,10 +156,9 @@ def build_markdown(
             plan.role_bullets.get(role.id, []),
             list(role.default_bullets),
         )
-        suffix = f" ({role.employment_type})" if role.employment_type else ""
         lines.extend(
             [
-                f"### {role.organization} — {role.title}{suffix}",
+                f"### {role_heading(role.organization, role.title, role.employment_type)}",
                 plan.role_periods[role.id],
                 *[f"- {bullet}" for bullet in bullets],
                 "",
