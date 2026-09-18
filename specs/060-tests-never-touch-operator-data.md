@@ -54,9 +54,10 @@ fresh-clone readiness lens asks the question, but nothing enforces it.
   guard.
 - `services/api/tests/test_test_isolation.py` (new): the tests that
   prove the guard.
-- `docs/architecture.md` or the testing section that describes test
-  setup, if one exists: one paragraph naming the rule and the file that
-  enforces it.
+- `docs/quality-ci-plan.md`, "Test strategy notes": one entry naming the
+  rule and the file that enforces it. (Amended at implementation: the
+  draft said `docs/architecture.md` "or the testing section, if one
+  exists". This is the one that exists.)
 
 No change to `harrier.db`, `harrier.logsetup`, or any other source
 module. No contract, tracker schema, classification, or web change. The
@@ -65,7 +66,27 @@ classified public.
 
 ## Behavior
 
-**Default data directory.** An autouse fixture in
+**Session default (amended at implementation).** The draft of this spec
+had only the per-test fixture below, and implementation showed that
+could not work. `harrier_api/app.py` builds its app at import
+(`app = create_app()`), so a test file that imports it configures
+logging during collection, before any fixture runs. Switching the guard
+on with only a fixture in place failed eleven files at collection:
+`test_api_exposure.py`, `test_api_jobs.py`, `test_batch_and_capture.py`,
+`test_container.py`, `test_demo.py`, `test_runs.py`, `test_ui_apply.py`,
+`test_ui_inbox.py`, `test_ui_outreach.py`, `test_ui_tracker.py`,
+`test_userconfig.py`. Because `configure_logging` is idempotent, the
+handler opened at import then stayed on the operator's log for the whole
+session, which is how lines from tests that did set the override still
+reached it.
+
+So `conftest.py` also sets `HARRIER_DATA_DIR` at import, to a directory
+made with `tempfile.mkdtemp` and removed at interpreter exit. pytest
+imports a directory's `conftest.py` before any test module in it, so the
+value is in place for collection. It is set unconditionally: a value
+inherited from the invoking shell does not win.
+
+**Per-test data directory.** An autouse fixture in
 `services/api/tests/conftest.py` sets `HARRIER_DATA_DIR` to a directory
 under the test's own `tmp_path` before the test body runs. Every test
 therefore starts with `data_dir()` pointing at an empty, per-test
@@ -89,11 +110,23 @@ same temporary directory.
 **Guard.** `conftest.py` installs a Python audit hook
 (`sys.addaudithook`) once per test session. For the events `open`,
 `sqlite3.connect`, and `os.mkdir`, the hook resolves the path argument
-and, if it is `repo_root()/data` or anything beneath it, raises
+and, if it is a guarded directory or anything beneath one, raises
 `OperatorDataAccessError`. That error is a plain `Exception` subclass,
 not an `OSError` and not a `sqlite3.Error`, so the best-effort handlers
 in `logsetup.py` do not swallow it and the test fails with a message
 naming the path and the audit event.
+
+The guarded directories are `repo_root()/data` and, when the invoking
+shell exported `HARRIER_DATA_DIR`, the directory it named (amended at
+implementation). The container exports it, and a directory the operator
+named is the operator's. It is read before the session default
+overwrites it.
+
+A relative path is resolved against the working directory, with one
+exception (amended after the review of PR #72). `os.mkdir` reports its
+`dir_fd` in the audit event, so a relative `mkdir` is resolved against
+the directory that descriptor names. `open` reports no descriptor, so
+the same cannot be done for it. See Limitations.
 
 The hook raises before the operating system call happens. The guard
 therefore prevents the access rather than reporting it afterwards: a
@@ -103,11 +136,19 @@ The guard covers reads as well as writes. Opening `tracker.db` for
 reading still creates `-wal` and `-shm` files in WAL mode, and reading
 the real log or database pulls operator data into a test.
 
-Paths outside `repo_root()/data` are untouched, including
-`config/`, `templates/`, and test fixtures.
+Paths outside the guarded directories are untouched, including
+`config/`, `templates/`, and test fixtures. Containment is by path
+component, so a sibling such as `data-export` is not guarded.
+
+The hook also answers a private probe event, so a test can prove the
+hook is live before aiming at the real directory. Without that, removing
+the hook would turn the guard's own tests into the access they exist to
+prevent.
 
 ## Failure modes
 
+- **A module configures logging or opens the database at import**: it
+  gets the session default. This is the case the draft missed.
 - **A test forgets the override**: it gets the per-test temporary
   directory and passes or fails on its own merits. Nothing reaches the
   real directory.
@@ -140,37 +181,52 @@ Paths outside `repo_root()/data` are untouched, including
 
 ## Acceptance criteria
 
-The new tests live in `services/api/tests/test_test_isolation.py`. They
-are described here and named when they exist, because
-`services/api/tests/test_spec_structure.py::test_every_test_a_spec_names_actually_exists`
-fails on a test symbol that is not yet defined.
+All in `services/api/tests/test_test_isolation.py`.
 
-- [ ] With `HARRIER_DATA_DIR` unset in the invoking shell, a test that
-  requests no fixture sees `data_dir()` resolve to a path under its
-  `tmp_path` and not under `repo_root()`; a test pins it.
-- [ ] A test that sets `HARRIER_DATA_DIR` itself sees its own value; a
-  test pins it.
-- [ ] With the variable deleted, `connect()` raises
-  `OperatorDataAccessError` and no file under `repo_root()/data` is
-  created or modified by the attempt; a test pins it.
-- [ ] With the variable deleted, `configure_logging(force=True)` raises
+- [x] A test that requests no fixture sees `data_dir()` resolve to a
+  path under its `tmp_path` and not under `repo_root()`
+  (`test_the_default_data_directory_is_temporary`).
+- [x] A module imported during collection does not log to a guarded
+  directory (`test_nothing_imported_during_collection_logs_to_the_operator`).
+  Added at implementation with the session default.
+- [x] A test that sets `HARRIER_DATA_DIR` itself sees its own value
+  (`test_a_test_can_still_choose_its_own_data_directory`).
+- [x] A child process inherits the temporary directory
+  (`test_a_child_process_inherits_the_temporary_directory`).
+- [x] With the variable deleted, `connect()` raises
+  `OperatorDataAccessError` and the attempt creates nothing under
+  `repo_root()/data` (`test_opening_the_real_database_fails_the_test`,
+  `test_an_explicit_path_into_the_real_directory_fails_too`). Amended:
+  the draft also said "or modified". That is not asserted, because the
+  container may be writing the directory while the suite runs and an
+  mtime comparison would be noise. The mechanism stands in for it: the
+  hook raises before the system call.
+- [x] With the variable deleted, `configure_logging(force=True)` raises
   `OperatorDataAccessError` rather than degrading to "file logging is
-  unavailable"; a test pins it.
-- [ ] `open(repo_root() / "data" / "probe")` raises
-  `OperatorDataAccessError` for both read and write modes, and
-  `open` on a `tmp_path` file and on `config/resume-content.example.json`
-  does not; a test pins it.
-- [ ] Removing the autouse fixture from `conftest.py` makes at least one
-  of the tests above fail; removing the audit hook makes at least one
-  other fail. Stated in the pull request with the output of both runs.
-- [ ] The full suite passes with the guard on. Every test that failed
-  when the guard was first switched on is listed in the pull request,
-  with the fix applied to it (it was touching the real directory).
-- [ ] After a full `uv run pytest` in `services/api`, the count of
-  `testserver` lines in the operator's `data/logs/harrier.log*` is the
-  same as before the run. Checked by hand once at landing and reported
-  in the pull request as a before and after count.
-- [ ] `just gate` passes.
+  unavailable" (`test_logging_to_the_real_directory_fails_the_test`).
+- [x] `open` on a path under `repo_root()/data` raises for both read and
+  write modes, as does `mkdir`; `open` on a `tmp_path` file and on
+  `config/resume-content.example.json` does not
+  (`test_the_guard_is_scoped_to_the_data_directory`,
+  `test_a_sibling_whose_name_starts_the_same_is_not_guarded`,
+  `test_arguments_that_name_no_path_are_ignored`).
+- [x] A relative `os.mkdir` with a `dir_fd` is judged by the directory
+  the descriptor names
+  (`test_a_mkdir_relative_to_a_descriptor_is_resolved_against_it`).
+  Added after the review of PR #72.
+- [x] Each layer has a test that fails without it. Run against `test_test_isolation.py`: with the per-test fixture removed,
+  2 failed; with the audit hook removed, 4 errored on the liveness
+  check without touching the directory; with the session default
+  removed, `test_api_jobs.py` errored at collection.
+- [x] The full suite passes with the guard on. The files that failed
+  when the guard was first switched on are the eleven listed under
+  Behavior, all for the one cause named there, and all fixed by the
+  session default rather than by editing them.
+- [x] A full `uv run pytest` in `services/api`, with
+  `HARRIER_DATA_DIR` unset in the shell, left the count of `testserver`
+  lines in the operator's `data/logs/harrier.log*` unchanged. Checked by
+  hand at landing.
+- [x] `just gate` passes, run on this change applied to `main`, in a checkout with no `data/` directory. None was created.
 
 ## Limitations
 
@@ -182,8 +238,20 @@ fails on a test symbol that is not yet defined.
   not cover `os.remove`, `os.rename`, `shutil` operations, or
   `os.scandir`. Those cannot corrupt the database through WAL, which is
   the failure that motivated this, but they are not blocked.
+- `os.open(path, flags, dir_fd=fd)` with a relative path is resolved
+  against the working directory, not against `fd`, because the `open`
+  audit event carries `path`, `mode` and `flags` and nothing else. A
+  descriptor held on an ancestor of a guarded directory therefore
+  reaches inside it unseen. Reproduced in review of PR #72. A descriptor
+  on a guarded directory itself cannot be obtained unseen: that open
+  names the directory and is refused. No code in this repository opens
+  files relative to a descriptor.
 - Audit hooks cannot be removed once installed, so the guard is on for
   the whole session by design. A test cannot opt out.
+- The session default is shared by everything imported during
+  collection, and the log handler opened there stays for the session.
+  It points at a temporary directory, which is the property that
+  matters, but it is not per-test.
 - This does not make host and container access to one WAL database
   safe. It removes one of the host-side processes that opens the file. The operator rule
   (stop the container before host-side writes) still stands.
@@ -202,6 +270,9 @@ fails on a test symbol that is not yet defined.
 
 ## Out of scope
 
+- Removing the import-time `app = create_app()` from
+  `harrier_api/app.py`. It is why a fixture was not enough, and it is
+  how the server is started, so it stays.
 - Changing `data_dir()`, `connect()`, or `logsetup` so production code
   refuses to run under pytest. The source modules stay unaware of the
   test runner.
