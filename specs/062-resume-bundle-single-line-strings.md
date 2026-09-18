@@ -131,6 +131,13 @@ first `<sep>`. An organization of `Acme <sep> Talent` renders the
 company as `Acme` and the title as `Talent <sep> Senior Frontend
 Engineer (Freelance)`.
 
+Found after landing, by the local review of PR #73, and executed
+against `origin/main` at `723dcee`: an organization of `Acme Talent`,
+space, U+2014 passed `parse_bundle` under the first wording of Rule 3
+(it does not contain a whole separator). The writer produced a doubled
+separator, and `render_html` showed the company as `Acme Talent` and
+the title as U+2014, space, `Senior Frontend Engineer (Freelance)`.
+
 ### Results: spec 059's guard is incomplete
 
 Both parsers use `str.splitlines()`, which also breaks on U+000B,
@@ -166,11 +173,16 @@ before any trimming. Every violation is collected and reported in the
 one existing `ResumeBundleError`, `invalid resume content bundle:
 <problems joined by "; ">`, alongside the existing problems.
 
-**Rule 1: single line.** A value is a single line when it contains none
-of the ten characters at which `str.splitlines()` breaks: U+000A,
-U+000D, U+000B, U+000C, U+001C, U+001D, U+001E, U+0085, U+2028, U+2029.
-A trailing one counts. The error is `<path> must be a single line`. It
-applies to every bundle string `build_markdown` emits:
+**Rule 1: single line.** A value is a single line when
+`str.splitlines()`, which both parsers split with, returns it unchanged
+as its only element (an empty string is a single line). Today that
+refuses ten characters: U+000A, U+000D, U+000B, U+000C, U+001C, U+001D,
+U+001E, U+0085, U+2028, U+2029. A trailing one counts, because
+`splitlines` drops it and the value does not come back unchanged. The
+rule is the parser's behaviour, not the list: the list is what that
+behaviour is on the Python this was written against. The error is
+`<path> must be a single line`. It applies to every bundle string
+`build_markdown` emits:
 
 - `candidate.name`, `candidate.location`, `candidate.email`,
   `candidate.linkedin`, `candidate.primary_identity`
@@ -206,11 +218,18 @@ freedom to start with `#`, as `degree` does in spec 059: `name` (behind
 `title`, `employment_type`, `email`, `linkedin`, `profile_summary`,
 and `positioning_technologies` entries.
 
-**Rule 3: the organization cannot contain the separator.**
-`roles[<i>].organization` must not contain space, U+2014, space. The
-error is `roles[<i>].organization must not contain the title
-separator`. `title` may contain it: the parser splits on the first
-occurrence, so with a clean organization the split is exact.
+**Rule 3: the role heading splits at the end of the organization.**
+The writer emits the trimmed organization, then the separator (space,
+U+2014, space), then the title, and the parser splits on the first
+separator. So in the trimmed organization followed by the separator,
+the first separator must start exactly where the organization ends.
+That refuses an organization containing a whole separator, and one
+ending in space, U+2014: the writer's own separator then makes a
+doubled one and the split falls a dash early. The error is
+`roles[<i>].organization must not contain or end with the title
+separator`. A leading U+2014, or one without spaces on both sides,
+splits exactly and is allowed. `title` may contain the separator: once
+the organization splits at its own end, everything after is the title.
 
 A bundle that breaks no rule parses to the same `ResumeBundle` as
 today, and its markdown, HTML, and PDF are byte-identical.
@@ -259,11 +278,6 @@ message for the named path.
 - [ ] Each of the ten boundary characters in `certifications[0]` raises
   with `certifications[0] must be a single line`:
   `test_every_line_boundary_character_is_refused`.
-- [ ] The ten characters are exactly the code points at which
-  `str.splitlines()` breaks, checked against every code point rather
-  than recalled (added during implementation: the list is the rule, and
-  a character missing from it is a way back in):
-  `test_the_refused_boundaries_are_every_character_splitlines_breaks_on`.
 - [ ] A value ending in a line feed, with nothing after it, raises, for
   `candidate.name` and `bullet_pool[r1_b1]`:
   `test_trailing_line_break_is_refused`.
@@ -282,11 +296,25 @@ message for the named path.
   section contents otherwise unchanged:
   `test_values_behind_a_writer_marker_may_start_with_hash`.
 - [ ] An organization containing the separator raises with
-  `roles[0].organization must not contain the title separator`:
+  `roles[0].organization must not contain or end with the title
+  separator`:
   `test_organization_containing_the_title_separator_is_refused`.
+- [ ] An organization ending in space, U+2014, alone or followed by a
+  space or a tab, raises with the same message:
+  `test_organization_ending_in_the_separators_dash_is_refused`.
+- [ ] An organization with a leading U+2014, or one without spaces on
+  both sides, parses and renders as the company unchanged:
+  `test_organization_made_of_dashes_elsewhere_still_splits_exactly`.
 - [ ] A `title` containing the separator parses and renders with the
   company intact and the full title:
   `test_title_containing_the_separator_stays_one_role`.
+- [ ] Every string value in the example bundle, one at a time, is given
+  a forged `## ` section, once after a line feed and once as the whole
+  value. For each, either a gate before the markdown refuses, or no
+  line of the markdown starts with the forged heading. The test walks
+  the bundle rather than a list, so a field the writer starts emitting
+  later fails here without anyone adding it:
+  `test_no_bundle_string_carries_a_line_break_or_heading_into_the_markdown`.
 - [ ] A bundle breaking Rule 1 in two fields and Rule 2 in a third
   raises once, and the message names all three:
   `test_every_line_problem_is_reported_in_one_error`.
@@ -300,6 +328,43 @@ message for the named path.
 - [ ] The diff touches only `content.py`, `test_resume.py`, and this
   spec, where it names the tests.
 - [ ] `just gate` passes.
+
+## Amendments after the local review of PR #73
+
+PR #73 merged with no review: the review service was rate limited and
+`harrier review-followup` reported `NOT REVIEWED`. A local review of
+the merged commit found one defect and three weaknesses, fixed together
+in one follow-up change.
+
+- **Rule 3 was too narrow (defect).** It refused only a whole separator
+  inside the organization. The evidence is in the separator results
+  above. The rule is now stated on the emitted heading, and the error
+  message changed to cover both cases. The first wording also claimed
+  "with a clean organization the split is exact", which was false for
+  a trailing U+2014.
+- **Rule 1 is derived, not listed.** `parse_bundle` now asks
+  `str.splitlines()` whether the value comes back unchanged, instead of
+  holding its own list of ten characters. The two predicates were
+  compared over every code point, in interior and trailing position,
+  with no disagreement. The criterion added during the first
+  implementation, which checked the list against every code point, is
+  removed with the list: there is nothing left to drift.
+  `test_every_line_boundary_character_is_refused` still pins the ten.
+- **The emitted-string list was unguarded.** It is written by hand in
+  the validator and again in the tests. The new whole-bundle test asks
+  the writer instead. With the spec 062 guard switched off it names 15
+  fields; with it on, none. It cannot see a value whose change breaks a
+  cross-reference first (a skill, a bullet ID), which the named tests
+  cover.
+- **The marker test was brittle.**
+  `test_values_behind_a_writer_marker_may_start_with_hash` compared
+  HTML after deleting every `# `, which would break the day the example
+  bundle or a template contained that sequence. It now compares the
+  parsed parts of the page.
+
+Not changed, and still out of scope: the separator literal is written
+three times (`content.py`, `markdown.py`, `htmlrender.py`), and the
+guard lives only in `parse_bundle`.
 
 ## Proof / origin
 

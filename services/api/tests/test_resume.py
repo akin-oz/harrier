@@ -405,13 +405,6 @@ def test_every_line_boundary_character_is_refused(code: int) -> None:
         parse_bundle(raw)
 
 
-def test_the_refused_boundaries_are_every_character_splitlines_breaks_on() -> None:
-    """The list is derived from the parser's behaviour, not from memory: a
-    character missing from it is a way back in."""
-    breaking = {code for code in range(0x110000) if len(f"a{chr(code)}b".splitlines()) > 1}
-    assert breaking == set(LINE_BOUNDARY_CODES)
-
-
 @pytest.mark.parametrize("path", ["candidate.name", "bullet_pool[r1_b1]"])
 def test_trailing_line_break_is_refused(path: str) -> None:
     """Harmless when rendered, refused anyway: one rule with no exceptions
@@ -456,6 +449,21 @@ def test_heading_marker_at_an_unmarked_line_start_is_refused(path: str, value: s
         parse_bundle(raw)
 
 
+def _rendered_parts(html: str) -> dict[str, list[str]]:
+    """What the renderer put where, read back out of the real template."""
+    patterns = {
+        "name": r"<h1>(.*?)</h1>",
+        "summary": r'<p class="summary">(.*?)</p>',
+        "role_titles": r'<h3 class="role-title">(.*?)</h3>',
+        "companies": r'<p class="company">(.*?)</p>',
+        "periods": r'<p class="period">(.*?)</p>',
+        "items": r"<li>(.*?)</li>",
+        "skills": r'<p class="skills-inline">(.*?)</p>',
+        "education": r'<div class="education-item">(.*?)</div>',
+    }
+    return {key: re.findall(pattern, html, flags=re.S) for key, pattern in patterns.items()}
+
+
 def test_values_behind_a_writer_marker_may_start_with_hash() -> None:
     """A name, an organization, and a bullet always sit behind the writer's
     own `# `, `### `, and `- `, so only their prefix is parsed and their text
@@ -464,18 +472,23 @@ def test_values_behind_a_writer_marker_may_start_with_hash() -> None:
     pool = cast("dict[str, str]", raw["bullet_pool"])
     candidate = cast("dict[str, str]", raw["candidate"])
     role = cast("list[dict[str, object]]", raw["roles"])[0]
+    certifications = cast("list[str]", raw["certifications"])
     changes = [("candidate.name", f"# {candidate['name']}")]
     changes.append(("roles[0].organization", f"# {role['organization']}"))
     changes.extend((f"bullet_pool[{bullet_id}]", f"# {text}") for bullet_id, text in pool.items())
 
-    html = _render(_mutated(*changes))
+    plain = _rendered_parts(_render(raw))
+    marked = _rendered_parts(_render(_mutated(*changes)))
 
-    assert html.count(f"# {candidate['name']}") == _render(raw).count(candidate["name"])
-    assert html.count(f">{role['organization']}<") == 0
-    assert html.count(f"># {role['organization']}<") == 1
-    # Nothing else moved: with the markers taken back out, it is the
-    # unmutated resume, role for role and line for line.
-    assert html.replace("# ", "") == _render(raw)
+    assert marked["name"] == [f"# {plain['name'][0]}"]
+    assert marked["companies"] == [f"# {plain['companies'][0]}", *plain["companies"][1:]]
+    # Every bullet kept its place and gained only its marker; the
+    # certifications, which share the list markup, gained nothing.
+    assert [item.removeprefix("# ") for item in marked["items"]] == plain["items"]
+    bullets = len(plain["items"]) - len(certifications)
+    assert sum(item.startswith("# ") for item in marked["items"]) == bullets > 0
+    for untouched in ("summary", "role_titles", "periods", "skills", "education"):
+        assert marked[untouched] == plain[untouched]
 
 
 def test_organization_containing_the_title_separator_is_refused() -> None:
@@ -484,9 +497,31 @@ def test_organization_containing_the_title_separator_is_refused() -> None:
     raw = _mutated(("roles[0].organization", f"Acme{TITLE_SEPARATOR}Talent"))
     with pytest.raises(
         ResumeBundleError,
-        match=r"roles\[0\]\.organization must not contain the title separator",
+        match=r"roles\[0\]\.organization must not contain or end with the title separator",
     ):
         parse_bundle(raw)
+
+
+@pytest.mark.parametrize("tail", [" \u2014", " \u2014 ", " \u2014\t"])
+def test_organization_ending_in_the_separators_dash_is_refused(tail: str) -> None:
+    """The writer trims the organization and appends its own separator, so a
+    trailing dash made a doubled one: the split fell a dash early and the
+    title rendered with the organization's dash in front of it (local review
+    of PR #73)."""
+    raw = _mutated(("roles[0].organization", f"Acme Talent{tail}"))
+    with pytest.raises(
+        ResumeBundleError,
+        match=r"roles\[0\]\.organization must not contain or end with the title separator",
+    ):
+        parse_bundle(raw)
+
+
+def test_organization_made_of_dashes_elsewhere_still_splits_exactly() -> None:
+    """The rule is about where the first separator falls, not about the
+    dash: a leading one, or one with no spaces around it, splits cleanly."""
+    for organization in ("\u2014 Acme", "Acme\u2014Talent", "Acme \u2014Talent"):
+        html = _render(_mutated(("roles[0].organization", organization)))
+        assert f'<p class="company">{organization}</p>' in html
 
 
 def test_title_containing_the_separator_stays_one_role() -> None:
@@ -499,6 +534,67 @@ def test_title_containing_the_separator_stays_one_role() -> None:
     assert html.count('class="experience-item"') == _render(raw).count('class="experience-item"')
     assert f'<p class="company">{role["organization"]}</p>' in html
     assert f'<h3 class="role-title">{title} ({role["employment_type"]})</h3>' in html
+
+
+def _string_leaves(node: object, path: str = "") -> list[tuple[str, list[str | int]]]:
+    """Every string value in the bundle, with a label and the steps to it."""
+
+    def walk(
+        value: object, label: str, steps: list[str | int]
+    ) -> list[tuple[str, list[str | int]]]:
+        if isinstance(value, str):
+            return [(label, steps)]
+        found: list[tuple[str, list[str | int]]] = []
+        if isinstance(value, dict):
+            for key, item in cast("dict[str, object]", value).items():
+                found.extend(walk(item, f"{label}.{key}" if label else key, [*steps, key]))
+        elif isinstance(value, list):
+            for index, item in enumerate(cast("list[object]", value)):
+                found.extend(walk(item, f"{label}[{index}]", [*steps, index]))
+        return found
+
+    return walk(node, path, [])
+
+
+def _markdown_or_refusal(raw: dict[str, object]) -> str | None:
+    """The markdown resume, or None when any gate before it refused."""
+    try:
+        parsed = parse_bundle(raw)
+        truth = TruthSources(
+            truth_text="\n".join(parsed.bullet_pool.values()), achievements_text=""
+        )
+        plan = build_content_plan(parsed, "", REQUESTED_ROLE, AS_OF)
+        return build_markdown(parsed, truth, plan)
+    except ValueError:
+        return None
+
+
+def test_no_bundle_string_carries_a_line_break_or_heading_into_the_markdown() -> None:
+    """The list of emitted strings above is written by hand, and so is the
+    validator's. This asks the writer instead: every string in the bundle, one
+    at a time, is given a forged section, and none may reach the markdown as
+    the start of a line. A field the writer starts emitting tomorrow fails here
+    before anyone remembers to add it to either list."""
+    leaves = _string_leaves(load_raw_bundle())
+    assert len(leaves) > len(EMITTED_PATHS)
+
+    forged_line = "## FORGED SECTION"
+    escaped: list[str] = []
+    for label, steps in leaves:
+        for payload in (f"{{original}}\n{forged_line}", forged_line):
+            raw = load_raw_bundle()
+            node: Any = raw
+            for step in steps[:-1]:
+                node = node[step]
+            node[steps[-1]] = payload.format(original=node[steps[-1]])
+            markdown = _markdown_or_refusal(raw)
+            # A prefix match, as the renderer's own section scan is: whatever
+            # the writer appends after the value does not unmake the heading.
+            if markdown is not None and any(
+                line.startswith(forged_line) for line in markdown.splitlines()
+            ):
+                escaped.append(label)
+    assert not escaped, f"bundle strings that forged a markdown line: {sorted(set(escaped))}"
 
 
 def test_every_line_problem_is_reported_in_one_error() -> None:
