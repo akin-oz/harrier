@@ -29,17 +29,16 @@ directory. Two code paths make that expensive:
 `create_app` calls `configure_logging` (spec 045), so any test that
 builds the app without the override does both.
 
-This is observed, not theoretical. On 2026-09-18 the operator's
-`data/logs/harrier.log` and its rotations held 8314 lines containing
-`testserver`, the hostname only Starlette's test client uses. A test
-that logged there had configured logging against the real directory,
-and the same call opens the operator's `tracker.db`.
+This is observed, not theoretical. The operator's log contained lines
+naming `testserver`, the hostname only Starlette's test client uses. A
+test that logged there had configured logging against the real
+directory, and the same call opens the operator's `tracker.db`.
 
-On 2026-09-18 that host-side access coincided with the API container
-writing the same database through a Docker bind mount (spec 051), and
-the database was corrupted. SQLite's WAL mode relies on shared memory
-that does not work across that boundary. The test suite was one of the
-host-side processes opening the file.
+That matters most when the API container has the same database open
+through a Docker bind mount (spec 051). SQLite's WAL mode relies on
+shared memory that does not work across that boundary, so a host-side
+process opening the file while the container writes it can corrupt it.
+The test suite was such a host-side process.
 
 There is also a privacy cost: a test that opens the real database reads
 the operator's candidate and contact identity values into a test
@@ -185,8 +184,8 @@ fails on a test symbol that is not yet defined.
   the failure that motivated this, but they are not blocked.
 - Audit hooks cannot be removed once installed, so the guard is on for
   the whole session by design. A test cannot opt out.
-- This does not explain or repair the 2026-09-18 corruption. It removes
-  one of the host-side processes that opens the file. The operator rule
+- This does not make host and container access to one WAL database
+  safe. It removes one of the host-side processes that opens the file. The operator rule
   (stop the container before host-side writes) still stands.
 
 ## Proof / origin
@@ -198,8 +197,7 @@ fails on a test symbol that is not yet defined.
 - `create_app` configures logging: spec 045,
   `services/api/tests/test_logging.py::test_the_api_configures_logging_when_the_app_is_created`.
 - Evidence of leakage: `testserver` lines in the operator's local
-  `data/logs/harrier.log*` (never in git; the count is a local
-  observation on 2026-09-18).
+  `data/logs/harrier.log*` (never in git, and not quantified here).
 - Container bind mount: spec 051.
 
 ## Out of scope
@@ -215,8 +213,8 @@ fails on a test symbol that is not yet defined.
 - Guarding `apps/web` tests, which have no access to the Python data
   directory.
 - A host and container locking scheme for `tracker.db`, or moving off
-  WAL over the bind mount. That is the real fix for the corruption and
-  needs its own spec against spec 051.
+  WAL over the bind mount. That is the real fix for the corruption
+  hazard and needs its own spec against spec 051.
 - Cleaning the existing test lines out of the operator's log.
 
 ## Migration
