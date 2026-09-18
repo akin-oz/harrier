@@ -15,7 +15,7 @@ Each role in the resume markdown is one line:
 `### <organization> <sep> <title> (<employment type>)`, where `<sep>`
 is space, U+2014, space and the parenthesised suffix is present only
 when the role has an employment type. Three places know that format,
-and each knows it separately:
+and each knows it separately (line numbers are `main` at `7e2da1b`):
 
 - the writer, `build_markdown` in
   `services/api/src/harrier/resume/markdown.py` (line 161), builds the
@@ -42,6 +42,19 @@ every test green. The old system had this in one place for the writer
 (`role_heading` in `~/job-hunt-local/scripts/tailor_resume.py`, lines
 1174 to 1178) and a literal in the parser (line 1295); the port kept
 the two literals and spec 062 added the third.
+
+### Why this is a spec and not a refactor
+
+Sharing one definition changes no output, and the rules say a refactor
+needs no spec. Two things make this more than one. The named error
+below is new behaviour, small as it is. And the guarantee being bought,
+that the validator follows the writer and the parser when either
+changes, is not visible in any output today; it is visible only in the
+test that changes the definition, which is why that test is the first
+acceptance criterion. If the named error is struck at approval, what
+remains is a refactor plus that test, and it could land under spec 062
+instead, with 062's scope line amended to admit the two files. That is
+the approver's call; this spec is written so either works.
 
 ### What was run
 
@@ -70,8 +83,10 @@ experiments is in any branch.
 ## Scope
 
 - A new module, `services/api/src/harrier/resume/heading.py`: the one
-  definition. Public source like its neighbours; it holds a format and
-  no data, so the classification table needs no entry.
+  definition. Classified public: `config/data-classification.json`
+  defines public as the complement of its `never_in_git` list, no
+  entry there matches `services/api/src`, and the file holds a format
+  and no data.
 - `services/api/src/harrier/resume/markdown.py`: `build_markdown`
   writes the role heading through it.
 - `services/api/src/harrier/resume/htmlrender.py`: `_parse_experience`
@@ -95,7 +110,9 @@ splits back into that organization, trimmed as the loader trims it.
 
 **Nothing the operator sees changes.** For every bundle that
 `parse_bundle` accepts today, the markdown, the HTML, and the PDF are
-byte-identical to today's. The heading line keeps its exact text:
+byte-identical to today's. The role heading is the only line whose
+construction moves, so the proof is the test that asserts that line
+literally, with the render tests that already exist. The heading line keeps its exact text:
 `### `, the organization, space, U+2014, space, the title, and ` (<type>)`
 when the role has an employment type. The parser still splits on the
 first separator, so a title may still contain one, and the rendered
@@ -116,7 +133,10 @@ and watching all three move.
 raises `ValueError` with the message `role heading <n> has no title
 separator`, where `<n>` is the 1-based position of that heading in the
 section. It names a position, not the line's text, because the text is
-an employer's name and error messages reach logs. This replaces
+an employer's name and an error message is the kind of text that gets
+pasted into a terminal, a CI log, or a bug report. Nothing in harrier
+logs it today: the only caller that prints a resume error is
+`_cmd_tailor` in `services/api/src/harrier_cli/main.py`, to stderr. This replaces
 today's unnamed unpacking error. It is reachable only with a markdown
 that `build_markdown` did not write.
 
@@ -127,6 +147,16 @@ that `build_markdown` did not write.
   organization that contains it or ends with its leading part. An
   organization containing the old separator becomes acceptable, which
   is correct: it no longer splits early.
+- **The message under a changed separator**: spec 062's Rule 3
+  message says "or end with its dash". With another separator that
+  word would be wrong. The message is not made generic here, because
+  that would edit approved spec 062 text for a separator nobody has
+  proposed; whoever changes the separator changes the message with it.
+  The drift test asserts the message as it stands.
+- **A role whose title is missing or not a string**: already refused by
+  name (`roles[<i>]: missing or empty title`). The organization check
+  needs a title to write the heading with, so it runs only when both
+  are strings, and its verdict does not depend on what the title says.
 - **Someone reintroduces a literal** in the writer or the parser
   instead of calling the shared functions: the drift test fails,
   because changing the definition no longer moves that site.
@@ -162,12 +192,14 @@ amends this section with each name. Tests that already exist are named.
   literally, character for character including U+2014 and the
   `(Freelance)` suffix, so changing the separator is a visible,
   deliberate act; a test pins it.
-- [ ] The markdown and the HTML for the unmodified example bundle are
-  byte-identical before and after the change. The reviewer checks this
-  by rendering on `main` and on the branch; the existing render tests
+- [ ] Output is unchanged. The proof is the literal heading line
+  above, which is the only line whose construction moves, together
+  with the existing render tests passing unedited
   (`test_html_header_uses_grounded_markdown_title`,
-  `test_html_renders_every_degree_newest_first`) keep passing
-  unedited.
+  `test_html_renders_every_degree_newest_first`,
+  `test_title_containing_the_separator_stays_one_role`). A reviewer who
+  wants more can diff the markdown for the example bundle between
+  `main` and the branch; that is a check, not a criterion.
 - [ ] Spec 062's separator tests pass unedited:
   `test_organization_containing_the_title_separator_is_refused`,
   `test_organization_ending_in_the_separators_dash_is_refused`,
@@ -212,10 +244,18 @@ amends this section with each name. Tests that already exist are named.
   entry markers, `- ` bullets, and the education entry format
   (`_education_lines` in `markdown.py`, `_parse_education` in
   `htmlrender.py`, the `school` rule in `content.py`) are known in
-  more than one place in the same way. They share this problem's
-  shape. They are not in this spec because none of them has a
-  validator re-enacting a split by hand, which is what made the role
-  heading the one that could reopen silently.
+  more than one place in the same way, and they share this problem's
+  shape, silent drift included: spec 062's Rule 2
+  (`_starts_with_heading_marker` in `content.py`) is the validator
+  holding the parser's `## ` and `### ` markers (`htmlrender.py`,
+  `_extract_section`, `_parse_experience`, `_parse_education`) by hand,
+  and if those markers changed it would guard the wrong character with
+  every test green. An earlier draft of this section said otherwise
+  and was wrong. They are left out for two honest reasons. The markers
+  are markdown's own syntax, which this codebase has far less reason
+  to change than a separator it chose itself. And sharing them means
+  the renderer stops re-parsing markdown and reads the plan, which is
+  a redesign with its own spec, not a slice of this one.
 - **A writer that checks its own input.** `build_markdown` still
   trusts a `ResumeBundle` or a `ContentPlan` that did not come through
   `parse_bundle`. Having the writer refuse a heading that does not
