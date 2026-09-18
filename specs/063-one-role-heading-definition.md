@@ -105,8 +105,10 @@ next to one function that writes a role heading from an organization,
 a title, and an employment type, and one that splits a heading line
 back into the organization and the rest. The writer calls the first.
 The parser calls the second. The validator calls both: a role's
-organization is acceptable when the heading written for that role
-splits back into that organization, trimmed as the loader trims it.
+organization is acceptable when a heading written for it splits back
+into that organization, trimmed as the loader trims it. The validator
+writes that heading with an empty title and no employment type,
+because neither can change where the first separator falls.
 
 **Nothing the operator sees changes.** For every bundle that
 `parse_bundle` accepts today, the markdown, the HTML, and the PDF are
@@ -129,10 +131,12 @@ without being edited, and a test proves it by changing the definition
 and watching all three move.
 
 **A role heading that cannot be split has a named error.** When a
-`### ` line under `## EXPERIENCE` has no separator, the split function
+`### ` line under `## EXPERIENCE` has no separator, `render_html`
 raises `ValueError` with the message `role heading <n> has no title
 separator`, where `<n>` is the 1-based position of that heading in the
-section. It names a position, not the line's text, because the text is
+section. The split function reports only that a heading has no
+separator; the parser, which is the one caller that knows a position,
+adds it. It names a position, not the line's text, because the text is
 an employer's name and an error message is the kind of text that gets
 pasted into a terminal, a CI log, or a bug report. Nothing in harrier
 logs it today: the only caller that prints a resume error is
@@ -153,10 +157,11 @@ that `build_markdown` did not write.
   that would edit approved spec 062 text for a separator nobody has
   proposed; whoever changes the separator changes the message with it.
   The drift test asserts the message as it stands.
-- **A role whose title is missing or not a string**: already refused by
-  name (`roles[<i>]: missing or empty title`). The organization check
-  needs a title to write the heading with, so it runs only when both
-  are strings, and its verdict does not depend on what the title says.
+- **A role whose title is missing or not a string**: refused by name
+  (`roles[<i>]: missing or empty title`), and its organization is
+  still checked, so one error names both problems. The organization's
+  verdict does not depend on the title, so nothing about the title may
+  hide it.
 - **Someone reintroduces a literal** in the writer or the parser
   instead of calling the shared functions: the drift test fails,
   because changing the definition no longer moves that site.
@@ -188,6 +193,9 @@ named them.
   an organization containing the old separator parses and renders as
   the company intact:
   `test_changing_the_one_separator_moves_writer_parser_and_validator`.
+  The same test refuses an organization ending in the new separator's
+  leading part (`Acme |`), and matches only the stable start of the
+  message, because its tail names a dash.
   Before this change the test could not be written; the experiment
   above was its failing form. It fails again if any one of the three
   sites goes back to its own copy of the separator (each tried during
@@ -216,6 +224,9 @@ named them.
   second heading is the broken one, and the message carries none of the
   line's text:
   `test_role_heading_with_no_separator_has_a_named_error`.
+- [ ] A role with a separator in its organization and no title is
+  refused with both problems named in the one error:
+  `test_bad_organization_is_still_named_when_the_title_is_missing`.
 - [ ] A role with an empty employment type writes a heading with no
   suffix and no trailing space, and it splits back to the same
   organization and title:
@@ -233,6 +244,37 @@ named them.
   `htmlrender.py` can all import it without a cycle.
 - [ ] The diff touches only the five files in Scope and this spec.
 - [ ] `just gate` passes.
+
+## Amendments after the local review of PR #77
+
+The review service was rate limited again, so the implementing pull
+request was reviewed locally. One regression and four smaller things,
+fixed in the same pull request.
+
+- **A missing title hid a bad organization (regression).** The first
+  implementation ran the organization check only when the title was
+  also a string, and this spec's failure modes said so as if it were a
+  choice. Executed on both refs with a role that has a separator in its
+  organization and no title: `main` named both problems, the branch
+  named only the title. `parse_bundle` names every problem, and spec
+  062 promises one error for all of them. The validator now writes its
+  heading with an empty title, which cannot change the verdict.
+- **The split function took a position it had no business knowing.**
+  It needed one only to word its error, so the validator had to pass a
+  position for an error it can never reach. The function now raises a
+  plain "no separator" error and `_parse_experience` adds the position.
+  The message and its test are unchanged.
+- The drift test now also refuses an organization ending in the new
+  separator's leading part, the case spec 062 got wrong the first time,
+  and matches only the stable start of the message.
+- Three test helpers built markdown from a raw bundle in the same four
+  lines. There is one now.
+
+Rechecked after these changes: markdown and HTML for the example
+bundle hash identically to `main`; the validator agrees with the old
+hand-written check on every string up to length 8 over `A`, space,
+U+2014, and tab; and each of the three sites, put back on its own copy
+of the separator, fails the drift test.
 
 ## Proof / origin
 

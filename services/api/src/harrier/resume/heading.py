@@ -28,15 +28,20 @@ def role_heading(organization: str, title: str, employment_type: str) -> str:
     return f"{organization}{TITLE_SEPARATOR}{title}{suffix}"
 
 
-def split_role_heading(heading: str, position: int) -> tuple[str, str]:
+class RoleHeadingError(ValueError):
+    """A heading with no separator in it. It carries no text on purpose: the
+    heading is an employer's name, and an error message is the kind of text
+    that gets pasted elsewhere. The caller that knows which heading it was
+    says so."""
+
+
+def split_role_heading(heading: str) -> tuple[str, str]:
     """The organization and the rest, split on the first separator.
 
     The rest is the title with its employment type suffix, which is how the
-    resume shows it. `position` is the heading's 1-based place among the
-    roles and is all the error names: the text is an employer's name, and an
-    error message is the kind of text that gets pasted elsewhere.
+    resume shows it.
     """
     organization, separator, rest = heading.partition(TITLE_SEPARATOR)
     if not separator:
-        raise ValueError(f"role heading {position} has no title separator")
+        raise RoleHeadingError("role heading has no title separator")
     return organization, rest

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import cast
 
 from harrier.resume.content import ResumeBundle
-from harrier.resume.heading import split_role_heading
+from harrier.resume.heading import RoleHeadingError, split_role_heading
 from harrier.resume.markdown import normalize_visible_url_text
 
 TEMPLATE_DIR = Path("templates")
@@ -55,7 +55,12 @@ def _parse_experience(lines: list[str]) -> list[dict[str, object]]:
         while index < len(lines) and lines[index].startswith("- "):
             bullets.append(lines[index][2:])
             index += 1
-        company, title = split_role_heading(company_title, len(roles) + 1)
+        try:
+            company, title = split_role_heading(company_title)
+        except RoleHeadingError:
+            # Only a markdown `build_markdown` did not write gets here. The
+            # position is named and the line is not: it is an employer's name.
+            raise ValueError(f"role heading {len(roles) + 1} has no title separator") from None
         roles.append({"company": company, "title": title, "period": period, "bullets": bullets})
     return roles
 

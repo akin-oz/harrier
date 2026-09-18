@@ -388,15 +388,23 @@ def _mutated(*changes: tuple[str, str]) -> dict[str, object]:
     return raw
 
 
-def _render(raw: dict[str, object], plan_from: dict[str, object] | None = None) -> str:
-    """The HTML resume for a raw bundle. `plan_from` takes the content plan
-    from another bundle, so two renders can differ in text alone and not in
-    what the ranking chose."""
+def _markdown(
+    raw: dict[str, object], plan_from: dict[str, object] | None = None
+) -> tuple[ResumeBundle, str]:
+    """The parsed bundle and its markdown resume, with the truth sources
+    built from the bundle's own pool. `plan_from` takes the content plan from
+    another bundle, so two resumes can differ in text alone and not in what
+    the ranking chose."""
     parsed = parse_bundle(raw)
     truth = TruthSources(truth_text="\n".join(parsed.bullet_pool.values()), achievements_text="")
     planned = parse_bundle(plan_from) if plan_from is not None else parsed
     plan = build_content_plan(planned, "", REQUESTED_ROLE, AS_OF)
-    markdown = build_markdown(parsed, truth, plan)
+    return parsed, build_markdown(parsed, truth, plan)
+
+
+def _render(raw: dict[str, object], plan_from: dict[str, object] | None = None) -> str:
+    """The HTML resume for a raw bundle."""
+    parsed, markdown = _markdown(raw, plan_from)
     return render_html(markdown, parsed, template_dir=REPO_ROOT / "templates")
 
 
@@ -566,11 +574,7 @@ def test_title_containing_the_separator_stays_one_role() -> None:
 
 def _role_heading_lines(raw: dict[str, object]) -> list[str]:
     """The `### ` lines of the experience section, as the writer wrote them."""
-    parsed = parse_bundle(raw)
-    truth = TruthSources(truth_text="\n".join(parsed.bullet_pool.values()), achievements_text="")
-    plan = build_content_plan(parsed, "", REQUESTED_ROLE, AS_OF)
-    markdown = build_markdown(parsed, truth, plan)
-    section = markdown.split("## EXPERIENCE\n", 1)[1].split("\n## ", 1)[0]
+    section = _markdown(raw)[1].split("## EXPERIENCE\n", 1)[1].split("\n## ", 1)[0]
     return [line for line in section.splitlines() if line.startswith("### ")]
 
 
@@ -594,6 +598,21 @@ def test_role_without_an_employment_type_has_no_suffix_and_splits_back() -> None
     assert parts["role_titles"][1] == role["title"]
 
 
+def test_bad_organization_is_still_named_when_the_title_is_missing() -> None:
+    """One error names every problem, so the document is fixed in one edit.
+    The organization's verdict never depended on the title, so a missing
+    title must not hide it (local review of PR #77)."""
+    raw = _mutated(("roles[0].organization", f"Acme{TITLE_SEPARATOR}Talent"))
+    del cast("list[dict[str, object]]", raw["roles"])[0]["title"]
+
+    with pytest.raises(ResumeBundleError) as refused:
+        parse_bundle(raw)
+
+    message = str(refused.value)
+    assert "roles[0]: missing or empty title" in message
+    assert "roles[0].organization must not contain the title separator" in message
+
+
 def test_changing_the_one_separator_moves_writer_parser_and_validator(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -614,14 +633,16 @@ def test_changing_the_one_separator_moves_writer_parser_and_validator(
     assert after["companies"] == before["companies"]
     assert after["role_titles"] == before["role_titles"]
 
-    with pytest.raises(
-        ResumeBundleError,
-        match=(
-            r"roles\[0\]\.organization must not contain the title separator "
-            r"or end with its dash"
-        ),
-    ):
-        parse_bundle(_mutated(("roles[0].organization", "Acme | Talent")))
+    # Containing the new separator, and ending in its leading part: the
+    # second is the case spec 062 got wrong the first time. Only the stable
+    # start of the message is matched, because its tail names a dash, which
+    # is true of the real separator and not of this one.
+    for organization in ("Acme | Talent", "Acme |"):
+        with pytest.raises(
+            ResumeBundleError,
+            match=r"roles\[0\]\.organization must not contain the title separator",
+        ):
+            parse_bundle(_mutated(("roles[0].organization", organization)))
 
     # The old separator is just text now: it no longer splits early.
     old = f"Acme{TITLE_SEPARATOR}Talent"
@@ -670,12 +691,7 @@ def _string_leaves(
 def _markdown_or_refusal(raw: dict[str, object]) -> str | None:
     """The markdown resume, or None when any gate before it refused."""
     try:
-        parsed = parse_bundle(raw)
-        truth = TruthSources(
-            truth_text="\n".join(parsed.bullet_pool.values()), achievements_text=""
-        )
-        plan = build_content_plan(parsed, "", REQUESTED_ROLE, AS_OF)
-        return build_markdown(parsed, truth, plan)
+        return _markdown(raw)[1]
     except ValueError:
         return None
 
