@@ -15,6 +15,8 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+import subprocess
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -110,8 +112,20 @@ def test_a_test_can_still_choose_its_own_data_directory(
 
 
 def test_a_child_process_inherits_the_temporary_directory(tmp_path: Path) -> None:
-    """The hook cannot see a subprocess, so the environment has to carry it."""
-    assert Path(os.environ["HARRIER_DATA_DIR"]).is_relative_to(tmp_path)
+    """The hook cannot see a subprocess, so the environment has to carry it.
+
+    Asked of a real child, and asked of `data_dir()` rather than of the
+    variable: reading `os.environ` here would pass without a child existing
+    (review of PR #72).
+    """
+    child = subprocess.run(
+        [sys.executable, "-c", "from harrier.db import data_dir; print(data_dir())"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert Path(child.stdout.strip()).is_relative_to(tmp_path)
 
 
 def test_opening_the_real_database_fails_the_test(real_directory: Path) -> None:
@@ -151,6 +165,30 @@ def test_the_guard_is_scoped_to_the_data_directory(real_directory: Path, tmp_pat
     assert elsewhere.read_text(encoding="utf-8") == "fine"
     example = repo_root() / "config" / "resume-content.example.json"
     assert example.read_text(encoding="utf-8")
+
+
+def test_a_mkdir_relative_to_a_descriptor_is_resolved_against_it(
+    real_directory: Path, tmp_path: Path
+) -> None:
+    """`os.mkdir` reports its `dir_fd`, so the hook resolves against it and not
+    against the working directory, which is somewhere else entirely here."""
+    from conftest import _guarded_path  # pyright: ignore[reportPrivateUsage]
+
+    elsewhere = os.open(tmp_path, os.O_RDONLY)
+    try:
+        assert _guarded_path("os.mkdir", ("made", 0o777, elsewhere)) == tmp_path.resolve() / "made"
+        os.mkdir("made", dir_fd=elsewhere)
+    finally:
+        os.close(elsewhere)
+    assert (tmp_path / "made").is_dir()
+
+    above = os.open(real_directory.parent, os.O_RDONLY)
+    try:
+        with pytest.raises(OperatorDataAccessError):
+            os.mkdir(f"{real_directory.name}/spec-060-probe-dir", dir_fd=above)
+    finally:
+        os.close(above)
+    assert not (real_directory / "spec-060-probe-dir").exists()
 
 
 def test_a_sibling_whose_name_starts_the_same_is_not_guarded(tmp_path: Path) -> None:

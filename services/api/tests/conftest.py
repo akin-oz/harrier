@@ -27,6 +27,7 @@ module in this directory.
 from __future__ import annotations
 
 import atexit
+import fcntl
 import os
 import shutil
 import sys
@@ -86,6 +87,17 @@ class OperatorDataAccessError(Exception):
     """
 
 
+def _descriptor_path(fd: int) -> str | None:
+    """The directory a descriptor refers to, where the platform can say."""
+    proc = f"/proc/self/fd/{fd}"
+    if os.path.exists(proc):
+        return os.readlink(proc)
+    get_path = getattr(fcntl, "F_GETPATH", None)
+    if get_path is None:
+        return None
+    return os.fsdecode(fcntl.fcntl(fd, get_path, b"\0" * 1024).rstrip(b"\0"))
+
+
 def _guarded_path(event: str, args: tuple[Any, ...]) -> Path | None:
     """The filesystem path an audited call names, or None if it names none."""
     if not args:
@@ -106,6 +118,16 @@ def _guarded_path(event: str, args: tuple[Any, ...]) -> Path | None:
             text = unquote(urlsplit(text).path)
             if not text:
                 return None
+    # `os.mkdir` reports its `dir_fd`, so a relative path can be resolved
+    # against the directory it is really relative to. `open` reports none, which
+    # is a limitation the spec states rather than one this can close.
+    if event == "os.mkdir" and len(args) > 2 and not os.path.isabs(text):
+        dir_fd = args[2]
+        if isinstance(dir_fd, int) and not isinstance(dir_fd, bool):
+            base = _descriptor_path(dir_fd)
+            if base is None:
+                return None
+            text = os.path.join(base, text)
     return Path(os.path.realpath(text))
 
 

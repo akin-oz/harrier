@@ -122,6 +122,12 @@ implementation). The container exports it, and a directory the operator
 named is the operator's. It is read before the session default
 overwrites it.
 
+A relative path is resolved against the working directory, with one
+exception (amended after the review of PR #72). `os.mkdir` reports its
+`dir_fd` in the audit event, so a relative `mkdir` is resolved against
+the directory that descriptor names. `open` reports no descriptor, so
+the same cannot be done for it. See Limitations.
+
 The hook raises before the operating system call happens. The guard
 therefore prevents the access rather than reporting it afterwards: a
 test that slips past the fixture fails without having opened the file.
@@ -204,6 +210,10 @@ All in `services/api/tests/test_test_isolation.py`.
   (`test_the_guard_is_scoped_to_the_data_directory`,
   `test_a_sibling_whose_name_starts_the_same_is_not_guarded`,
   `test_arguments_that_name_no_path_are_ignored`).
+- [x] A relative `os.mkdir` with a `dir_fd` is judged by the directory
+  the descriptor names
+  (`test_a_mkdir_relative_to_a_descriptor_is_resolved_against_it`).
+  Added after the review of PR #72.
 - [x] Each layer has a test that fails without it. Run against `test_test_isolation.py`: with the per-test fixture removed,
   2 failed; with the audit hook removed, 4 errored on the liveness
   check without touching the directory; with the session default
@@ -228,6 +238,14 @@ All in `services/api/tests/test_test_isolation.py`.
   not cover `os.remove`, `os.rename`, `shutil` operations, or
   `os.scandir`. Those cannot corrupt the database through WAL, which is
   the failure that motivated this, but they are not blocked.
+- `os.open(path, flags, dir_fd=fd)` with a relative path is resolved
+  against the working directory, not against `fd`, because the `open`
+  audit event carries `path`, `mode` and `flags` and nothing else. A
+  descriptor held on an ancestor of a guarded directory therefore
+  reaches inside it unseen. Reproduced in review of PR #72. A descriptor
+  on a guarded directory itself cannot be obtained unseen: that open
+  names the directory and is refused. No code in this repository opens
+  files relative to a descriptor.
 - Audit hooks cannot be removed once installed, so the guard is on for
   the whole session by design. A test cannot opt out.
 - The session default is shared by everything imported during
