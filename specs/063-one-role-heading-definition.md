@@ -1,8 +1,8 @@
 ---
 spec: 063
 title: The resume role heading has one definition that the writer, the parser, and the validator share
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M8
 depends: [013, 062]
 ---
