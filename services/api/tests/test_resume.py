@@ -224,6 +224,44 @@ def test_education_entry_with_empty_degree_is_refused() -> None:
         _bundle_with_education([TWO_DEGREES[0], {"degree": " ", "school": "U2"}])
 
 
+@pytest.mark.parametrize(
+    ("entry", "field"),
+    [
+        ({"degree": "MSc, X\n## CERTIFICATIONS\nInvented Cert", "school": "U1"}, "degree"),
+        ({"degree": "MSc, X", "school": "U1\r\n## TECHNICAL SKILLS"}, "school"),
+        ({"degree": "MSc, X\rY", "school": "U1"}, "degree"),
+    ],
+)
+def test_education_line_break_in_either_field_is_refused(entry: dict[str, str], field: str) -> None:
+    """The markdown is line-oriented and re-parsed for the PDF: a line break
+    in `degree` closed the section, dropped the school, and rendered an
+    invented certification (review finding on PR #68)."""
+    with pytest.raises(ResumeBundleError, match=rf"education\[0\] {field} must be a single line"):
+        _bundle_with_education([entry])
+
+
+@pytest.mark.parametrize("school", ["### Not A Degree", "## CERTIFICATIONS", "  ### indented"])
+def test_education_school_that_looks_like_a_heading_is_refused(school: str) -> None:
+    """A school opening with `### ` was read back as a second degree, and one
+    opening with `## ` ended the education section."""
+    with pytest.raises(
+        ResumeBundleError, match=r"education\[0\] school must not start with a heading marker"
+    ):
+        _bundle_with_education([{"degree": "MSc, X", "school": school}])
+
+
+def test_degree_starting_with_heading_marker_stays_one_entry(sources: TruthSources) -> None:
+    """The degree sits behind the writer's own `### ` marker, so its text is
+    free: only the line prefix is parsed."""
+    parsed = _bundle_with_education([{"degree": "### odd", "school": "U1"}])
+    plan = build_content_plan(parsed, "", REQUESTED_ROLE, AS_OF)
+    markdown = build_markdown(parsed, sources, plan)
+    html = render_html(markdown, parsed, template_dir=REPO_ROOT / "templates")
+    assert html.count('class="education-item"') == 1
+    assert ">### odd<" in html
+    assert ">U1<" in html
+
+
 def test_empty_education_is_valid_and_renders_an_empty_block(sources: TruthSources) -> None:
     parsed = _bundle_with_education([])
     plan = build_content_plan(parsed, "", REQUESTED_ROLE, AS_OF)

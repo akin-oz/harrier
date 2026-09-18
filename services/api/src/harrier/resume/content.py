@@ -186,6 +186,17 @@ def _parse_education(raw: object, errors: list[str]) -> tuple[EducationEntry, ..
             if not isinstance(value, str) or not value.strip():
                 errors.append(f"education[{index}] missing {key}")
                 continue
+            # The markdown resume is line-oriented and the HTML renderer
+            # re-parses it, so a value that spans lines or opens with a
+            # heading marker rewrites the document's structure: a line break
+            # in `degree` closed the section and injected a certification
+            # (review finding on PR #68).
+            if "\n" in value or "\r" in value:
+                errors.append(f"education[{index}] {key} must be a single line")
+                continue
+            if key == "school" and value.lstrip().startswith("#"):
+                errors.append(f"education[{index}] school must not start with a heading marker")
+                continue
             values[key] = value
         if len(values) == 2:
             entries.append(EducationEntry(degree=values["degree"], school=values["school"]))
