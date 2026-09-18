@@ -245,50 +245,55 @@ today, and its markdown, HTML, and PDF are byte-identical.
 
 ## Acceptance criteria
 
-Every test named here is in `services/api/tests/test_resume.py` and
-mutates the example bundle, calling `parse_bundle`. Each assertion
-checks the `ResumeBundleError` message for the named path.
+The new tests live in `services/api/tests/test_resume.py`. They are
+described here and named when they exist, because
+`services/api/tests/test_spec_structure.py::test_every_test_a_spec_names_actually_exists`
+fails on a test symbol that is not yet defined (the convention spec 060
+set). The implementing change amends this section with each name. Every
+test mutates the example bundle and calls `parse_bundle`, and each
+assertion checks the `ResumeBundleError` message for the named path.
 
 - [ ] A line feed in each Rule 1 field raises with `<path> must be a
-  single line`, parametrized over every path in the Rule 1 list:
-  `test_line_break_in_any_emitted_bundle_string_is_refused_by_name`.
+  single line`, parametrized over every path in the Rule 1 list;
+  a test pins it.
 - [ ] Each of the ten boundary characters in `certifications[0]` raises
-  with `certifications[0] must be a single line`:
-  `test_every_line_boundary_character_is_refused`.
+  with `certifications[0] must be a single line`;
+  a test pins it.
 - [ ] A value ending in a line feed, with nothing after it, raises, for
-  `candidate.name` and `bullet_pool[r1_b1]`:
-  `test_trailing_line_break_is_refused`.
+  `candidate.name` and `bullet_pool[r1_b1]`;
+  a test pins it.
 - [ ] U+2028 in an education `degree` and in a `school` raises with
-  spec 059's `education[0] <field> must be a single line`:
-  `test_education_line_boundary_beyond_cr_lf_is_refused`.
+  spec 059's `education[0] <field> must be a single line`;
+  a test pins it.
 - [ ] The reproduction's `profile_summary` payload raises with
-  `profile_summary must be a single line`:
-  `test_profile_summary_cannot_inject_an_unverified_achievement`.
+  `profile_summary must be a single line`;
+  a test pins it.
 - [ ] `## PROFILE`, `### x`, and `   ## x` raise with `<path> must not
   start with a heading marker` for `candidate.primary_identity`,
-  `candidate.location`, `all_skills[0]`, and `certifications[0]`:
-  `test_heading_marker_at_an_unmarked_line_start_is_refused`.
+  `candidate.location`, `all_skills[0]`, and `certifications[0]`;
+  a test pins it.
 - [ ] A `name`, an `organization`, and a pool bullet starting with `#`
   parse, and `render_html` shows each once with the role count and the
-  section contents otherwise unchanged:
-  `test_values_behind_a_writer_marker_may_start_with_hash`.
+  section contents otherwise unchanged;
+  a test pins it.
 - [ ] An organization containing the separator raises with
-  `roles[0].organization must not contain the title separator`:
-  `test_organization_containing_the_title_separator_is_refused`.
+  `roles[0].organization must not contain the title separator`;
+  a test pins it.
 - [ ] A `title` containing the separator parses and renders with the
-  company intact and the full title:
-  `test_title_containing_the_separator_stays_one_role`.
+  company intact and the full title;
+  a test pins it.
 - [ ] A bundle breaking Rule 1 in two fields and Rule 2 in a third
-  raises once, and the message names all three:
-  `test_every_line_problem_is_reported_in_one_error`.
+  raises once, and the message names all three;
+  a test pins it.
 - [ ] `run_tailor` on a stored bundle with a line feed in a
   certification raises `ResumeBundleError`, writes nothing under the
   output directory, and leaves the tracker status unchanged (uses the
-  existing `tailor_env` fixture):
-  `test_bundle_with_a_line_break_fails_tailor_before_any_file_is_written`.
+  existing `tailor_env` fixture);
+  a test pins it.
 - [ ] The unmodified example bundle still parses. The `bundle` fixture
   proves it, so every fixture-driven test fails otherwise.
-- [ ] The diff touches only `content.py` and `test_resume.py`.
+- [ ] The diff touches only `content.py`, `test_resume.py`, and this
+  spec, where it names the tests.
 - [ ] `just gate` passes.
 
 ## Proof / origin
