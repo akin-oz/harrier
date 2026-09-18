@@ -46,6 +46,11 @@ drift (ADR-007).
   pytest suites per spec (each spec stub names its pins).
 - Known coverage gaps in the old repo become new tests, not ported gaps:
   `evaluate_offer`, the auto-reject path, `send_daily_digest`, the RemoteOK importer.
+- The Python suite cannot open the operator's data directory (spec 060).
+  `services/api/tests/conftest.py` points `HARRIER_DATA_DIR` at a temporary directory,
+  once at import for anything loaded during collection and again per test, and an audit
+  hook fails any test that opens `repo_root()/data` anyway. Proven by
+  `services/api/tests/test_test_isolation.py`. The hook does not see child processes.
 - The walking skeleton (specs 004 to 006) must cross every gate once before feature
   work: the first PR that exercises contract drift, the SSE protocol, and the
   migration assertions proves the harness end to end.
