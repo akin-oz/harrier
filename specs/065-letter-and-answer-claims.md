@@ -147,11 +147,6 @@ time-sensitive tool details unless the material supplies them.
 
 ## Acceptance criteria
 
-Test names below are planned and written without backticks, because
-`test_every_test_a_spec_names_actually_exists` fails on a backticked name
-that does not exist yet. The implementing change backticks each one, which
-binds it to the check.
-
 All tests in `services/api/tests/test_apply_claims.py`, a new file. Every
 test stubs `generate_text` with a synthetic response and calls
 `generate_cover_letter` or `generate_answer_set`, never a rule helper
@@ -161,44 +156,84 @@ predicate can fail (spec 034's lesson).
 
 | Criterion | Proof |
 |---|---|
-| N1 a banned phrase refuses instead of being deleted mid-word | test_a_banned_phrase_refuses_and_is_not_deleted_mid_word |
-| N1 a long letter is refused, not trimmed | test_a_letter_over_240_words_is_refused_not_trimmed |
-| N1 a stub or fourth paragraph refuses instead of being dropped | test_a_stub_paragraph_refuses_instead_of_being_dropped, test_a_fourth_paragraph_refuses_instead_of_being_dropped |
-| N1 answers refuse a banned phrase too | test_a_banned_phrase_refuses_the_answers |
-| C1 a claim quoting a sentence the output does not contain is refused | test_a_claim_sentence_missing_from_the_letter_is_refused |
-| C2 a candidate claim citing text absent from the truth document is refused | test_a_claim_with_invented_evidence_is_refused |
-| C2 evidence under a "must not claim" heading does not verify | test_evidence_from_a_disclaimer_section_does_not_verify |
-| C2 evidence only in the application profile does not verify | test_evidence_only_in_the_application_profile_is_refused |
-| C3 employer evidence must be in the posting | test_employer_evidence_absent_from_the_posting_is_refused |
-| C4 a first-person sentence cannot be cited to the employer | test_a_first_person_sentence_cited_to_the_employer_is_refused |
-| C5 a number with no evidence is refused | test_a_number_absent_from_its_evidence_is_refused |
-| C5 company, role, mixed tokens and slash pairs are not checked | test_numbers_in_the_company_and_role_are_exempt, test_mixed_tokens_and_slash_pairs_are_not_numbers |
-| C6 a total rewritten as a rate is refused | test_a_total_rewritten_as_a_rate_is_refused |
-| C6 a total rewritten with a slash suffix is refused | test_a_total_rewritten_with_a_slash_suffix_is_refused |
-| C6 a rate kept as a rate passes | test_a_rate_kept_as_a_rate_passes |
-| C6 a percentage dropping its sign is refused | test_a_percentage_without_its_sign_is_refused |
-| C7 a claim resting on synthetic evidence must say so | test_unlabelled_synthetic_evidence_is_refused, test_labelled_synthetic_evidence_passes |
-| C7 "demonstrated" is not a synthetic marker | test_demonstrated_is_not_a_synthetic_marker |
-| C8 a known technology not in verified skills is refused | test_an_unverified_skill_is_refused |
-| C8 an alias of a verified skill passes | test_an_alias_of_a_verified_skill_passes |
-| C8 a term from the role title is exempt | test_a_role_title_term_is_not_a_skill_claim |
-| C9 "enforced" without evidence saying so is refused | test_enforcement_language_without_evidence_is_refused |
-| C10 a letter with a placeholder writes markdown and no PDF | test_a_letter_with_a_placeholder_writes_markdown_and_no_pdf |
-| C10 the CLI exits 3 and names each placeholder | test_cli_cover_letter_exits_3_and_names_each_placeholder |
-| every violation is reported, not only the first | test_every_violation_is_listed_in_one_refusal |
-| a response without claims is a parse failure | test_a_response_without_claims_fails_to_parse |
-| a clean synthetic letter and answer set still pass end to end | test_a_grounded_letter_passes_every_rule, test_a_grounded_answer_set_passes_every_rule |
+| N1 a banned phrase refuses instead of being deleted mid-word | `test_a_banned_phrase_refuses_and_is_not_deleted_mid_word` |
+| N1 a long letter is refused, not trimmed | `test_a_letter_over_240_words_is_refused_not_trimmed` |
+| N1 a stub or fourth paragraph refuses instead of being dropped | `test_a_stub_paragraph_refuses_instead_of_being_dropped`, `test_a_fourth_paragraph_refuses_instead_of_being_dropped` |
+| N1 answers refuse a banned phrase too | `test_a_banned_phrase_refuses_the_answers` |
+| C1 a claim quoting a sentence the output does not contain is refused | `test_a_claim_sentence_missing_from_the_letter_is_refused` |
+| C2 a candidate claim citing text absent from the truth document is refused | `test_a_claim_with_invented_evidence_is_refused` |
+| C2 evidence under a "must not claim" heading does not verify | `test_evidence_from_a_disclaimer_section_does_not_verify` |
+| C2 evidence only in the application profile does not verify | `test_evidence_only_in_the_application_profile_is_refused` |
+| C3 employer evidence must be in the posting | `test_employer_evidence_absent_from_the_posting_is_refused` |
+| C4 a first-person sentence cannot be cited to the employer | `test_a_first_person_sentence_cited_to_the_employer_is_refused` |
+| C5 a number with no evidence is refused | `test_a_number_absent_from_its_evidence_is_refused` |
+| C5 company, role, mixed tokens and slash pairs are not checked | `test_numbers_in_the_company_and_role_are_exempt`, `test_mixed_tokens_and_slash_pairs_are_not_numbers` |
+| C6 a total rewritten as a rate is refused | `test_a_total_rewritten_as_a_rate_is_refused` |
+| C6 a total rewritten with a slash suffix is refused | `test_a_total_rewritten_with_a_slash_suffix_is_refused` |
+| C6 a rate kept as a rate passes | `test_a_rate_kept_as_a_rate_passes` |
+| C6 a percentage dropping its sign is refused | `test_a_percentage_without_its_sign_is_refused` |
+| C7 a claim resting on synthetic evidence must say so | `test_unlabelled_synthetic_evidence_is_refused`, `test_labelled_synthetic_evidence_passes` |
+| C7 "demonstrated" is not a synthetic marker | `test_demonstrated_is_not_a_synthetic_marker` |
+| C8 a known technology not in verified skills is refused | `test_an_unverified_skill_is_refused` |
+| C8 an alias of a verified skill passes | `test_an_alias_of_a_verified_skill_passes` |
+| C8 a term from the role title is exempt | `test_a_role_title_term_is_not_a_skill_claim` |
+| C9 "enforced" without evidence saying so is refused | `test_enforcement_language_without_evidence_is_refused` |
+| C10 a letter with a placeholder writes markdown and no PDF | `test_a_letter_with_a_placeholder_writes_markdown_and_no_pdf` |
+| C10 the CLI exits 3 and names each placeholder | `test_cli_cover_letter_exits_3_and_names_each_placeholder` |
+| every violation is reported, not only the first | `test_every_violation_is_listed_in_one_refusal` |
+| a response without claims is a parse failure | `test_a_response_without_claims_fails_to_parse` |
+| C2 an answer citing invented evidence is refused | `test_an_answer_with_invented_evidence_is_refused` |
+| C6 the rate is read from the line the evidence was quoted from | `test_a_rate_is_read_from_the_line_the_evidence_was_quoted_from` |
+| C9 "enforced" backed by evidence passes | `test_enforcement_language_with_evidence_passes` |
+| C10 a placeholder run removes the PDF and HTML of an earlier run, so the artifact endpoint never offers a stale PDF beside a new draft (review of #84) | `test_a_placeholder_run_removes_the_pdf_and_html_of_an_earlier_run` |
+| C10 a bracketed "insert" is a placeholder too | `test_a_bracketed_insert_is_a_placeholder_too` |
+| a claim with no evidence is a parse failure | `test_a_claim_without_evidence_fails_to_parse` |
+| a clean synthetic letter and answer set still pass end to end | `test_a_grounded_letter_passes_every_rule`, `test_a_grounded_answer_set_passes_every_rule` |
 
-- [ ] every row above has a test that fails when its rule is removed
-- [ ] the existing tests in `services/api/tests/test_apply.py` pass, with
+- [x] every row above has a test that fails when its rule is removed:
+      checked by disabling each rule in turn (25 mutants, all failed a test)
+- [x] the existing tests in `services/api/tests/test_apply.py` pass, with
       their stubbed responses extended to include `claims`; a test that
       asserted the old trimming or dropping is changed to assert the
       refusal, and the change is named in the pull request
-- [ ] README.md "Application artifacts" states what the letter and answer
+- [x] README.md "Application artifacts" states what the letter and answer
       gates check and what they cannot, each naming its test
-- [ ] no candidate content in any test or fixture; every truth document,
+- [x] no candidate content in any test or fixture; every truth document,
       posting and response in the new tests is synthetic
-- [ ] `just check` green
+- [x] `just check` green
+
+## What the implementation decided
+
+Recorded here so the spec and the code agree.
+
+- **The vocabulary is read from the `resume_data` fields, not through
+  `load_bundle`.** `load_skill_vocabulary` in
+  `services/api/src/harrier/resume/content.py` reads `all_skills`,
+  `verified_skills` and `technology_aliases` directly, the same way
+  `load_forbidden_phrases` reads its list. `load_bundle` validates the whole
+  resume bundle, and a letter should not fail because an unrelated resume
+  field is malformed. No document means an empty vocabulary; a document
+  that is not valid JSON refuses, so a broken file cannot switch C8 off
+  silently.
+- **Answers carry claims per answer.** Each answer object has its own
+  `claims` list, and C1 to C9 run on that answer's short and medium text and
+  notes together.
+- **Two-letter terms match case-sensitively in C8**, so a skill named `Go`
+  or an alias `TS` does not match every "go" or "ts" in prose.
+- **C6 reads the rate from the line the evidence was quoted from**, not
+  only the quoted fragment, so quoting part of a sentence does not drop its
+  rate. The rate window stops at the end of a sentence.
+- **Placeholders are removed before C5 to C9 run**, so the text inside a
+  placeholder is not checked as a claim.
+- **The answers CLI also exits 3** when an answer holds a placeholder,
+  printing `answers=<path>` and then one `needs_input=` line each.
+- **Existing tests changed, not only extended.**
+  test_normalize_cover_letter_text_removes_internal_dump_language (removed) became
+  `test_internal_dump_language_refuses_the_letter` plus
+  `test_normalize_cover_letter_text_changes_formatting_only`, and
+  test_generated_answers_avoid_banned_phrases (removed) became
+  `test_generated_answers_with_banned_phrases_are_refused`. Each old test
+  asserted the deletion this spec removes.
 
 ## Which lessons this tests, and which stay rules
 
@@ -235,6 +270,11 @@ and `answers`), so its surface is unchanged.
   by C8. `SKILL_SIGNALS` in the screening rules was considered and rejected
   as the vocabulary: it holds role words (`frontend`, `product engineer`)
   that every letter for such a role repeats.
+- **The letter header still deletes banned phrases as substrings.**
+  `strip_banned_phrases` is kept for the header, which is built from the
+  tracker title rather than generated (spec 034). A title containing a
+  banned word inside a longer word would be cut the same way. Not changed
+  here: the header is not generated text.
 - **Exit 3 shows as a failed run in the GUI.** Distinguishing "needs input"
   in the run manager would change the run state enum in the API contract,
   which is its own spec.

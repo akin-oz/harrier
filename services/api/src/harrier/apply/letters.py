@@ -17,6 +17,16 @@ from pathlib import Path
 from typing import cast
 
 from harrier.apply.answers import extract_json_object, slugify
+from harrier.apply.claims import (
+    Claim,
+    ClaimCheckError,
+    ClaimContext,
+    NeedsInputError,
+    banned_hits,
+    check_claims,
+    find_placeholders,
+    parse_claims,
+)
 from harrier.apply.profile import (
     load_candidate_document,
     load_profile_json,
@@ -25,7 +35,12 @@ from harrier.apply.profile import (
 from harrier.db import data_dir
 from harrier.llm import LLMClientError, generate_text
 from harrier.llm.jsonparse import loads_tolerant
-from harrier.resume.content import forbidden_hits, load_forbidden_phrases, load_truth_sources
+from harrier.resume.content import (
+    forbidden_hits,
+    load_forbidden_phrases,
+    load_skill_vocabulary,
+    load_truth_sources,
+)
 from harrier.resume.markdown import normalize_visible_role_title, normalize_visible_url_text
 from harrier.resume.pdf import render_pdf, validate_rendered_pdf
 
@@ -96,7 +111,9 @@ Hard constraints:
 - No flattering praise
 - No corporate filler
 - No invented experience
-- Use the application profile for positioning, story selection, and safe framing.
+- Use the application profile for positioning and safe framing only. Every
+  fact about the candidate must come from resume_truth_source_md or
+  latest_project_achievements_md.
 - Usually 170 to 240 words max unless the user explicitly asks for longer
 - Prefer 3 short paragraphs of 2 to 3 sentences each
 - Pick 1 or 2 proof points, not a full career summary
@@ -127,10 +144,32 @@ Banned phrasing:
     + "\n".join(f"- {phrase}" for phrase in BANNED_PHRASES)
     + """
 
+Claims and evidence:
+- Declare every factual sentence you write as a claim: the sentence exactly
+  as it appears in your letter, whether it is about the candidate or the
+  employer, and one or more evidence fragments.
+- Evidence is quoted verbatim. Candidate evidence comes only from
+  resume_truth_source_md or latest_project_achievements_md. Employer evidence
+  comes only from job_description_text.
+- Keep every number exactly as the evidence states it. A total over a period
+  is never a rate, and a percentage keeps its sign.
+- If the evidence describes a demo or synthetic data, say so in the sentence.
+- Name a technology only if the truth sources show the candidate used it.
+- If the letter needs a concrete example and none exists in the material,
+  write [[TODO: what is needed]] instead of inventing one.
+- Say "convention" or "warning" rather than "enforced" unless the material
+  shows something enforcing it.
+- Do not state model names, versions or other time-sensitive tool details
+  unless the material supplies them.
+- Write exactly 3 paragraphs of at least 8 words each and at most 240 words.
+
 Return strict JSON only with this shape:
 {
   "short_version": "string",
-  "full_version": "string"
+  "full_version": "string",
+  "claims": [
+    {"sentence": "string", "about": "candidate or employer", "evidence": ["string"]}
+  ]
 }
 
 FORMATTING: Never use em dashes anywhere in the output. Use commas, semicolons, colons, or hyphens instead.
@@ -233,6 +272,13 @@ def parse_cover_letter_response(text: str) -> dict[str, str]:
     return {"short_version": short_version, "full_version": full_version}
 
 
+def parse_cover_letter_claims(text: str) -> list[Claim]:
+    """The claims the model declared alongside the letter (spec 065)."""
+    payload_raw: object = loads_tolerant(extract_json_object(text))
+    payload = cast("dict[str, object]", payload_raw) if isinstance(payload_raw, dict) else {}
+    return parse_claims(payload.get("claims"))
+
+
 def strip_banned_phrases(text: str) -> str:
     value = text
     for banned in BANNED_PHRASES:
@@ -240,54 +286,64 @@ def strip_banned_phrases(text: str) -> str:
     return value
 
 
-def trim_to_word_limit(text: str, max_words: int = 300) -> str:
-    words = text.split()
-    if len(words) <= max_words:
-        return text.strip()
-    trimmed = " ".join(words[:max_words]).strip()
-    sentence_end = max(trimmed.rfind("."), trimmed.rfind("!"), trimmed.rfind("?"))
-    if sentence_end > max_words // 4:
-        trimmed = trimmed[: sentence_end + 1]
-    return trimmed.strip()
+MAX_WORDS = 240
+PARAGRAPHS = 3
+MIN_PARAGRAPH_WORDS = 8
 
 
 def normalize_cover_letter_text(text: str, *, is_full: bool) -> str:
+    """Formatting only: whitespace, leading bullet markers, and `Paragraph N:`
+    labels (spec 065, rule N1).
+
+    This used to delete banned phrases as substrings, drop short paragraphs,
+    keep the first three, and trim to 240 words. Each of those changed what
+    the letter said without saying so, and the first one cut words in half.
+    They are now checks that refuse in `cover_letter_violations`.
+    """
     value = (text or "").replace("\r\n", "\n")
-    value = strip_banned_phrases(value)
     value = re.sub(r"^[\-\*•]\s+", "", value, flags=re.MULTILINE)
     value = re.sub(r"^\s*paragraph\s*\d+\s*:\s*", "", value, flags=re.IGNORECASE | re.MULTILINE)
-    value = re.sub(
-        r"^\s*(most relevant to this role|practically)\s*:?\s*",
-        "",
-        value,
-        flags=re.IGNORECASE | re.MULTILINE,
-    )
     if is_full:
         blocks = [
             re.sub(r"\s+", " ", block).strip()
             for block in re.split(r"\n\s*\n", value)
             if block.strip()
         ]
-        # Stub paragraphs under 8 words pass the 3-paragraph check but add
-        # no value; drop them before keeping the first three.
-        blocks = [block for block in blocks if len(block.split()) >= 8]
-        value = "\n\n".join(blocks[:3])
-        value = trim_to_word_limit(value, max_words=240)
+        value = "\n\n".join(blocks)
     else:
         value = re.sub(r"\s+", " ", value).strip()
     return value.strip()
 
 
+def cover_letter_violations(letter: dict[str, str]) -> list[str]:
+    """Every shape and phrasing rule the letter breaks (spec 065, rule N1)."""
+    violations = [
+        f"banned phrase: {phrase}"
+        for phrase in banned_hits(
+            BANNED_PHRASES, f"{letter['short_version']}\n{letter['full_version']}"
+        )
+    ]
+    full = letter["full_version"]
+    if "\n- " in full or full.lstrip().startswith("- "):
+        violations.append("cover letter should not use bullet-list voice")
+    paragraphs = [block for block in re.split(r"\n\s*\n", full) if block.strip()]
+    if len(paragraphs) < PARAGRAPHS:
+        violations.append("cover letter should contain three short paragraphs")
+    if len(paragraphs) > PARAGRAPHS:
+        violations.append(f"too many paragraphs: {len(paragraphs)}, at most {PARAGRAPHS}")
+    for paragraph in paragraphs:
+        if len(paragraph.split()) < MIN_PARAGRAPH_WORDS:
+            violations.append(f"stub paragraph: {paragraph}")
+    words = len(full.split())
+    if words > MAX_WORDS:
+        violations.append(f"over the word limit: {words} words, at most {MAX_WORDS}")
+    return violations
+
+
 def validate_cover_letter(letter: dict[str, str]) -> None:
-    joined = f"{letter['short_version']}\n{letter['full_version']}".lower()
-    for banned in BANNED_PHRASES:
-        if banned in joined:
-            raise ValueError(f"cover letter contains banned phrasing: {banned}")
-    if "\n- " in letter["full_version"] or letter["full_version"].lstrip().startswith("- "):
-        raise ValueError("cover letter should not use bullet-list voice")
-    paragraphs = [block for block in re.split(r"\n\s*\n", letter["full_version"]) if block.strip()]
-    if len(paragraphs) < 3:
-        raise ValueError("cover letter should contain three short paragraphs")
+    violations = cover_letter_violations(letter)
+    if violations:
+        raise ClaimCheckError(violations)
 
 
 def generate_cover_letter(
@@ -318,20 +374,31 @@ def generate_cover_letter(
         raise RuntimeError("AI backend returned an empty response")
     try:
         parsed = parse_cover_letter_response(output_text)
+        claims = parse_cover_letter_claims(output_text)
     except (ValueError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"failed to parse AI response: {exc}") from exc
     letter = {
         "short_version": normalize_cover_letter_text(parsed["short_version"], is_full=False),
         "full_version": normalize_cover_letter_text(parsed["full_version"], is_full=True),
     }
-    validate_cover_letter(letter)
+    texts = [letter["short_version"], letter["full_version"]]
+    violations = cover_letter_violations(letter)
     # The candidate's own never-claim list. Spec 034 required it on the
     # letter; only the resume validator was calling it.
-    forbidden = forbidden_hits(
-        load_forbidden_phrases(conn), f"{letter['short_version']}\n{letter['full_version']}"
+    violations.extend(
+        f"forbidden phrase: {phrase}"
+        for phrase in forbidden_hits(load_forbidden_phrases(conn), "\n".join(texts))
     )
-    if forbidden:
-        raise ValueError(f"cover letter contains forbidden phrase: {', '.join(forbidden)}")
+    context = ClaimContext(
+        sources=load_truth_sources(conn),
+        posting=jd_text or "",
+        company=company,
+        role=role,
+        vocabulary=load_skill_vocabulary(conn),
+    )
+    violations.extend(check_claims(texts, claims, context))
+    if violations:
+        raise ClaimCheckError(violations)
     return letter
 
 
@@ -418,8 +485,18 @@ def write_cover_letter_artifacts(
     pdf_path = paths["pdf"]
 
     markdown = render_cover_letter_markdown(company, role, job_url, short_version, full_version)
-    html_text = render_cover_letter_html(conn, company, role, full_version, template_dir)
     markdown_path.write_text(markdown, encoding="utf-8")
+    # The draft is kept so the operator can fill it in, but a recruiter-facing
+    # artifact never carries a placeholder (spec 065, rule C10).
+    placeholders = find_placeholders(f"{short_version}\n{full_version}")
+    if placeholders:
+        # The paths are per company and role, and the artifact endpoint
+        # serves whatever PDF is there, so an earlier run's PDF would sit
+        # beside this new draft as if it were current (review of #84).
+        html_path.unlink(missing_ok=True)
+        pdf_path.unlink(missing_ok=True)
+        raise NeedsInputError(markdown_path, placeholders)
+    html_text = render_cover_letter_html(conn, company, role, full_version, template_dir)
     html_path.write_text(html_text, encoding="utf-8")
     render_fn = render if render is not None else _default_render
     render_fn(html_text, pdf_path)
