@@ -20,6 +20,7 @@ import json
 import re
 import sqlite3
 import subprocess
+import threading
 from pathlib import Path
 from typing import cast
 from urllib.parse import urlparse
@@ -202,8 +203,22 @@ def test_demo_discovery_needs_no_environment_keys(
         assert not entry.get("errors"), entry
         assert not entry.get("board_errors"), entry
     # A stranger watching the run log must see nothing that looks broken.
-    assert "TELEGRAM" not in caplog.text
-    assert not caplog.text.strip(), caplog.text
+    #
+    # Only records from this thread count, because run_discovery is
+    # synchronous and caplog is not: it captures every thread in the process.
+    # An earlier test that starts a run through a TestClient leaves the child
+    # process running after the request's event loop has closed, and asyncio's
+    # waitpid thread logs "Loop ... that handles pid ... is closed" when that
+    # child exits. Under load the exit landed inside this block and failed
+    # the gate once with a warning the demo never emitted.
+    own_thread = threading.get_ident()
+    run_log = "\n".join(
+        f"{record.levelname} {record.name}: {record.getMessage()}"
+        for record in caplog.records
+        if record.thread == own_thread
+    )
+    assert "TELEGRAM" not in run_log
+    assert not run_log, run_log
 
 
 def test_profile_seeds_all_name_a_committed_example(tmp_path: Path) -> None:
