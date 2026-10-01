@@ -19,7 +19,7 @@ from harrier.resume.content import load_bundle, load_truth_sources
 from harrier.resume.evaluation import evaluate_resume_fit, format_fit_evaluation_markdown
 from harrier.resume.htmlrender import render_html
 from harrier.resume.markdown import build_internal_metadata, build_markdown, slugify
-from harrier.resume.pdf import render_pdf, validate_rendered_pdf
+from harrier.resume.pdf import render_pdf, render_validated_pdf, validate_rendered_pdf
 from harrier.resume.plan import apply_ai_bullet_order, build_content_plan, validate_content_plan
 from harrier.screening.descriptions import load_cached_description
 from harrier.tracker import get_job, set_status
@@ -124,23 +124,33 @@ def run_tailor(
     metadata_path = paths["metadata"]
 
     markdown_path.write_text(markdown + "\n", encoding="utf-8")
-    html_path.write_text(html_text, encoding="utf-8")
-    metadata = build_internal_metadata(
-        company=company,
-        requested_role=requested_role,
-        visible_role_title=markdown.splitlines()[1],
-        job_url=job_url,
-        tracker_score=row.get("fit_score", ""),
-        jd_source=jd_source,
-        plan=plan,
-        fit_evaluation=fit_evaluation,
-    )
-    metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+    # From here an earlier run's PDF no longer describes the markdown beside
+    # it, and the artifact endpoint would serve it as current (spec 067).
+    pdf_path.unlink(missing_ok=True)
+    try:
+        html_path.write_text(html_text, encoding="utf-8")
+        metadata = build_internal_metadata(
+            company=company,
+            requested_role=requested_role,
+            visible_role_title=markdown.splitlines()[1],
+            job_url=job_url,
+            tracker_score=row.get("fit_score", ""),
+            jd_source=jd_source,
+            plan=plan,
+            fit_evaluation=fit_evaluation,
+        )
+        metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
 
-    render(html_text, pdf_path)
-    pdf_errors = validate(pdf_path, html_text)
-    if pdf_errors:
-        raise RuntimeError("resume render validation failed: " + "; ".join(pdf_errors))
+        pdf_errors = render_validated_pdf(html_text, pdf_path, render, validate)
+        if pdf_errors:
+            raise RuntimeError("resume render validation failed: " + "; ".join(pdf_errors))
+    except BaseException:
+        # The draft and its sidecar stay for the operator. The HTML is only
+        # an intermediate, and an earlier evaluation report would be served
+        # beside the new draft as if it were this run's.
+        html_path.unlink(missing_ok=True)
+        paths["evaluation"].unlink(missing_ok=True)
+        raise
 
     evaluation_path: Path | None = None
     if fit_evaluation is not None:
