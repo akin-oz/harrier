@@ -1,8 +1,8 @@
 ---
 spec: 065
 title: Cover letters and application answers cite the evidence for every claim, and code checks the citations
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M8
 depends: [014, 034]
 ---
