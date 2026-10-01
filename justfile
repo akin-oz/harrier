@@ -23,7 +23,7 @@ dev:
 # permission one. The uid and gid are passed for the same reason: the local
 # auth token is 0600 in data/.
 container-up:
-    mkdir -p data config secrets
+    mkdir -p data config secrets "${HARRIER_BACKUP_HOST_DIR:-$HOME/Backups/harrier}"
     HARRIER_UID="$(id -u)" HARRIER_GID="$(id -g)" \
     HARRIER_REVISION="$(git rev-parse --short HEAD)$([ -n "$(git status --porcelain)" ] && echo -dirty)" \
     HARRIER_BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
