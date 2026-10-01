@@ -36,13 +36,14 @@ from harrier.resume import (
     slugify,
     validate_content_plan,
 )
+from harrier.resume.content import load_bundle
 from harrier.resume.markdown import (
     UnverifiedClaimError,
     resolve_bullets,
     validate_rendered_markdown,
 )
 from harrier.resume.ranking import rank_bullet_ids
-from harrier.resume.tailor import run_tailor
+from harrier.resume.tailor import resume_paths_for, run_tailor
 from harrier.tracker import add_job, get_job
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -1096,6 +1097,70 @@ def test_failing_pdf_gate_leaves_tracker_row_unchanged(tailor_env: int) -> None:
     after = get_job(conn, tailor_env)
     assert after["status"] == before["status"] == "shortlisted"
     assert after["next_action"] == before["next_action"]
+
+
+def _seed_earlier_resume(conn: Any) -> dict[str, Path]:
+    """The PDF, HTML and evaluation a successful earlier run left for the job."""
+    paths = resume_paths_for(load_bundle(conn).name, "Example Co", "Senior Frontend Engineer")
+    paths["pdf"].parent.mkdir(parents=True, exist_ok=True)
+    paths["pdf"].write_bytes(b"%PDF-1.4 earlier run")
+    paths["html"].write_text("<html>earlier run</html>", encoding="utf-8")
+    paths["evaluation"].write_text("# earlier run\n", encoding="utf-8")
+    return paths
+
+
+def test_a_resume_that_fails_the_gate_removes_the_earlier_pdf_html_and_evaluation(
+    tailor_env: int,
+) -> None:
+    """Spec 067: the Apply page serves resume-pdf and resume-evaluation by
+    path, so after a refused render neither may be the earlier run's. The new
+    draft and its sidecar stay for the operator."""
+    conn = connect()
+    paths = _seed_earlier_resume(conn)
+
+    def failing_validate(pdf_path: Path, html_text: str) -> list[str]:
+        return ["rendered PDF has 2 pages; expected 1"]
+
+    with pytest.raises(RuntimeError, match="render validation failed"):
+        run_tailor(
+            conn,
+            tailor_env,
+            jd_text="React and TypeScript product role.",
+            no_ai=True,
+            render=_fake_render,
+            validate=failing_validate,
+        )
+
+    assert not paths["pdf"].exists()
+    assert not paths["html"].exists()
+    assert not paths["evaluation"].exists()
+    assert "earlier run" not in paths["markdown"].read_text(encoding="utf-8")
+    assert paths["metadata"].is_file()
+    assert sorted(path.name for path in paths["pdf"].parent.iterdir()) == sorted(
+        [paths["markdown"].name, paths["metadata"].name]
+    )
+    assert get_job(conn, tailor_env)["status"] == "shortlisted"
+
+
+def test_a_resume_render_that_raises_removes_the_earlier_pdf(tailor_env: int) -> None:
+    conn = connect()
+    paths = _seed_earlier_resume(conn)
+
+    def crashing_render(html_text: str, pdf_path: Path) -> None:
+        raise RuntimeError("Playwright is not installed.")
+
+    with pytest.raises(RuntimeError, match="Playwright is not installed"):
+        run_tailor(
+            conn,
+            tailor_env,
+            jd_text="React and TypeScript product role.",
+            no_ai=True,
+            render=crashing_render,
+        )
+
+    assert not paths["pdf"].exists()
+    assert not paths["html"].exists()
+    assert paths["markdown"].is_file()
 
 
 def test_bundle_with_a_line_break_fails_tailor_before_any_file_is_written(

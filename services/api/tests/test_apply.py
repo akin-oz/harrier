@@ -433,6 +433,78 @@ def test_write_cover_letter_artifacts_fails_when_pdf_not_created(
         )
 
 
+def _seed_earlier_letter(directory: Path) -> dict[str, Path]:
+    """The PDF and HTML a successful earlier run left for the same job."""
+    paths = letters_module.cover_letter_paths_for(
+        "examplesoft", "Senior Product Engineer (Remote)", directory
+    )
+    directory.mkdir(parents=True, exist_ok=True)
+    paths["pdf"].write_bytes(b"%PDF-1.4\n%earlier run\n")
+    paths["html"].write_text("<html>earlier run</html>", encoding="utf-8")
+    return paths
+
+
+def test_a_letter_that_fails_the_gate_removes_the_earlier_pdf_and_keeps_the_draft(
+    db: sqlite3.Connection, tmp_path: Path
+) -> None:
+    """Spec 067: neither the refused PDF nor the earlier one is left for the
+    Apply page to offer, and the new draft stays so the operator can fix it."""
+    directory = tmp_path / "letters"
+    paths = _seed_earlier_letter(directory)
+
+    def fake_render(html_text: str, pdf_path: Path) -> None:
+        pdf_path.write_bytes(b"%PDF-1.4\n")
+
+    def failing_validate(pdf_path: Path, html_text: str) -> list[str]:
+        return ["rendered PDF has 2 pages; expected 1"]
+
+    with pytest.raises(RuntimeError, match="invalid cover letter PDF: rendered PDF has 2 pages"):
+        write_cover_letter_artifacts(
+            db,
+            "examplesoft",
+            "Senior Product Engineer (Remote)",
+            "https://jobs.ashbyhq.com/examplesoft/123",
+            SHORT_LETTER,
+            FULL_LETTER,
+            output_dir=directory,
+            template_dir=REPO_ROOT / "templates",
+            render=fake_render,
+            validate=failing_validate,
+        )
+
+    assert not paths["pdf"].exists()
+    assert not paths["html"].exists()
+    assert "## Full Version" in paths["markdown"].read_text(encoding="utf-8")
+    assert sorted(path.name for path in directory.iterdir()) == [paths["markdown"].name]
+
+
+def test_a_letter_render_that_raises_removes_the_earlier_pdf(
+    db: sqlite3.Connection, tmp_path: Path
+) -> None:
+    directory = tmp_path / "letters"
+    paths = _seed_earlier_letter(directory)
+
+    def crashing_render(html_text: str, pdf_path: Path) -> None:
+        raise RuntimeError("Playwright is not installed.")
+
+    with pytest.raises(RuntimeError, match="Playwright is not installed"):
+        write_cover_letter_artifacts(
+            db,
+            "examplesoft",
+            "Senior Product Engineer (Remote)",
+            "https://jobs.ashbyhq.com/examplesoft/123",
+            SHORT_LETTER,
+            FULL_LETTER,
+            output_dir=directory,
+            template_dir=REPO_ROOT / "templates",
+            render=crashing_render,
+        )
+
+    assert not paths["pdf"].exists()
+    assert not paths["html"].exists()
+    assert paths["markdown"].is_file()
+
+
 def test_render_cover_letter_html_contains_only_full_letter(db: sqlite3.Connection) -> None:
     html = render_cover_letter_html(
         db,

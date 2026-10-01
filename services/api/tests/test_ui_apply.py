@@ -426,6 +426,54 @@ def test_the_artifact_index_lists_absent_kinds_rather_than_omitting_them(
     assert kinds["cover-letter-pdf"]["produced_by"] == "cover-letter"
 
 
+def test_a_failed_letter_run_reports_its_pdf_as_absent(
+    client: TestClient, job_id: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec 067: the run fails, and the index beside it must not offer a PDF.
+
+    An earlier run's PDF is seeded first, because that is the file the index
+    used to report as present after a failure. The letter HTML is stubbed: the
+    application profile has nothing to do with what the index reports.
+    """
+    import harrier.apply.letters as letters_module
+
+    paths = letters_module.cover_letter_paths_for("Northwind Labs", "Senior Frontend Engineer")
+    paths["pdf"].parent.mkdir(parents=True, exist_ok=True)
+    paths["pdf"].write_bytes(b"%PDF-1.4\n%earlier run\n")
+
+    def stub_html(*_args: object) -> str:
+        return "<html>letter</html>"
+
+    monkeypatch.setattr(letters_module, "render_cover_letter_html", stub_html)
+
+    def fake_render(html_text: str, pdf_path: Path) -> None:
+        pdf_path.write_bytes(b"%PDF-1.4\n")
+
+    def failing_validate(pdf_path: Path, html_text: str) -> list[str]:
+        return ["rendered PDF has 2 pages; expected 1"]
+
+    conn = connect()
+    with pytest.raises(RuntimeError, match="invalid cover letter PDF"):
+        letters_module.write_cover_letter_artifacts(
+            conn,
+            "Northwind Labs",
+            "Senior Frontend Engineer",
+            "https://boards.example.com/northwind/1",
+            "A short letter.",
+            "A full letter.",
+            render=fake_render,
+            validate=failing_validate,
+        )
+    conn.close()
+
+    response = client.get(f"/apply/{job_id}/artifacts", headers=auth())
+    kinds = {item["kind"]: item for item in response.json()}
+    assert kinds["cover-letter-pdf"]["exists"] is False
+    assert kinds["cover-letter-markdown"]["exists"] is True
+    served = client.get(f"/apply/{job_id}/artifacts/cover-letter-pdf", headers=auth())
+    assert served.status_code == 404
+
+
 def test_an_artifact_is_served_with_its_own_media_type(client: TestClient, job_id: int) -> None:
     from harrier.apply.letters import cover_letter_paths_for
 

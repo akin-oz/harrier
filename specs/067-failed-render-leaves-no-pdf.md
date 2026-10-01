@@ -157,29 +157,30 @@ gap appeared: spec 065 fixed one path and not the other.
 
 ## Acceptance criteria
 
-Planned tests. Names are written without code formatting because they do not
-exist yet; each becomes a backticked reference when it lands.
+The five letter, resume and Apply page tests below fail on the code before
+this change. The four `test_pdf_gate.py` tests cannot run against it,
+because the function they exercise is new.
 
 | Criterion | Proof |
 | --- | --- |
-| a PDF that fails the gate is not at the final path afterwards | test_pdf_gate.py: test_a_pdf_that_fails_the_gate_is_never_moved_into_place |
-| the gate validates a temporary path, and the final path is absent while it runs | test_pdf_gate.py: test_the_final_path_is_empty_while_the_gate_runs |
-| a render that raises leaves no PDF and no temporary file | test_pdf_gate.py: test_a_render_that_raises_leaves_no_pdf_and_no_temporary_file |
-| a passing render ends at the final path and leaves no temporary file | test_pdf_gate.py: test_a_passing_render_is_moved_into_place |
-| a letter that fails the gate removes an earlier run's PDF and HTML and keeps the new markdown | test_apply.py: test_a_letter_that_fails_the_gate_removes_the_earlier_pdf_and_keeps_the_draft |
-| a letter whose render raises removes an earlier run's PDF | test_apply.py: test_a_letter_render_that_raises_removes_the_earlier_pdf |
-| a resume that fails the gate removes an earlier run's PDF, HTML and evaluation report, keeps markdown and sidecar, and leaves the tracker row unchanged | test_resume.py: test_a_resume_that_fails_the_gate_removes_the_earlier_pdf_html_and_evaluation |
-| a resume whose render raises removes an earlier run's PDF | test_resume.py: test_a_resume_render_that_raises_removes_the_earlier_pdf |
-| after a failed letter run the artifact list reports the PDF absent and the markdown present | test_ui_apply.py: test_a_failed_letter_run_reports_its_pdf_as_absent |
+| a PDF that fails the gate is not at the final path afterwards | `services/api/tests/test_pdf_gate.py::test_a_pdf_that_fails_the_gate_is_never_moved_into_place` |
+| the gate validates a temporary path, and the final path is absent while it runs | `services/api/tests/test_pdf_gate.py::test_the_final_path_is_empty_while_the_gate_runs` |
+| a render that raises leaves no PDF and no temporary file | `services/api/tests/test_pdf_gate.py::test_a_render_that_raises_leaves_no_pdf_and_no_temporary_file` |
+| a passing render ends at the final path and leaves no temporary file | `services/api/tests/test_pdf_gate.py::test_a_passing_render_is_moved_into_place` |
+| a letter that fails the gate removes an earlier run's PDF and HTML and keeps the new markdown | `services/api/tests/test_apply.py::test_a_letter_that_fails_the_gate_removes_the_earlier_pdf_and_keeps_the_draft` |
+| a letter whose render raises removes an earlier run's PDF | `services/api/tests/test_apply.py::test_a_letter_render_that_raises_removes_the_earlier_pdf` |
+| a resume that fails the gate removes an earlier run's PDF, HTML and evaluation report, keeps markdown and sidecar, and leaves the tracker row unchanged | `services/api/tests/test_resume.py::test_a_resume_that_fails_the_gate_removes_the_earlier_pdf_html_and_evaluation` |
+| a resume whose render raises removes an earlier run's PDF | `services/api/tests/test_resume.py::test_a_resume_render_that_raises_removes_the_earlier_pdf` |
+| after a failed letter run the artifact list reports the PDF absent and the markdown present | `services/api/tests/test_ui_apply.py::test_a_failed_letter_run_reports_its_pdf_as_absent` |
 
-Each "earlier run" test seeds a file at the final path before the run, so it
-fails against today's code. The tests use synthetic companies and roles and
+The letter, resume and Apply page tests seed an earlier run's files at the
+final paths before the run. The tests use synthetic companies and roles and
 stub `render` and `validate`; none needs Playwright or `pdfinfo`.
 
-- [ ] every criterion above has its test, and each fails on the code before
-      this change
-- [ ] spec 065's placeholder test still passes unchanged
-- [ ] `just gate` passes
+- [x] every criterion above has its test, and each behavioural test fails
+      on the code before this change
+- [x] spec 065's placeholder test still passes unchanged
+- [x] `just gate` passes
 
 ## Out of scope
 

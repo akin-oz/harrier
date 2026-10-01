@@ -12,7 +12,9 @@ from __future__ import annotations
 # pyright: reportMissingImports=false, reportUnknownVariableType=false
 # pyright: reportUnknownMemberType=false
 import re
+import secrets
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 
@@ -80,3 +82,33 @@ def validate_rendered_pdf(pdf_path: Path, html_text: str, intended_pages: int = 
     elif int(match.group(1)) != intended_pages:
         errors.append(f"rendered PDF has {match.group(1)} pages; expected {intended_pages}")
     return errors
+
+
+def render_validated_pdf(
+    html_text: str,
+    pdf_path: Path,
+    render: Callable[[str, Path], None],
+    validate: Callable[[Path, str], list[str]],
+) -> list[str]:
+    """Render beside `pdf_path`, gate the result, and move it in only if it passes.
+
+    The artifact endpoint serves whatever file sits at `pdf_path` (spec 047),
+    so that path must never hold a PDF the gate has not passed: not one that
+    failed, not one still being checked, and not an earlier run's (spec 067).
+    The earlier PDF goes first, the render lands on a hidden temporary name
+    in the same directory, and a rename moves it in, which is atomic within
+    one filesystem. Returns the gate's errors; on any error or exception
+    nothing is left at either path.
+    """
+    pdf_path.unlink(missing_ok=True)
+    # A name the render creates, rather than a file created here, so the PDF
+    # keeps the permissions it always had.
+    temporary = pdf_path.with_name(f".{pdf_path.name}.{secrets.token_hex(4)}.tmp")
+    try:
+        render(html_text, temporary)
+        errors = validate(temporary, html_text)
+        if not errors:
+            temporary.replace(pdf_path)
+        return errors
+    finally:
+        temporary.unlink(missing_ok=True)

@@ -53,7 +53,7 @@ from harrier.resume.content import (
     load_truth_sources,
 )
 from harrier.resume.markdown import normalize_visible_role_title, normalize_visible_url_text
-from harrier.resume.pdf import render_pdf, validate_rendered_pdf
+from harrier.resume.pdf import render_pdf, render_validated_pdf, validate_rendered_pdf
 
 logger = logging.getLogger(__name__)
 
@@ -549,25 +549,32 @@ def write_cover_letter_artifacts(
         company, role, job_url, short_version, full_version, review_section
     )
     markdown_path.write_text(markdown, encoding="utf-8")
-    # The draft is kept so the operator can fill it in, but a recruiter-facing
-    # artifact never carries a placeholder (spec 065, rule C10).
+    # The paths are per company and role, and the artifact endpoint serves
+    # whatever PDF is there, so from here an earlier run's PDF and HTML would
+    # sit beside this new draft as if they were current (review of #84). On
+    # any failure the draft stays, for the operator to fix (spec 067).
+    html_path.unlink(missing_ok=True)
+    pdf_path.unlink(missing_ok=True)
+    # A recruiter-facing artifact never carries a placeholder (spec 065,
+    # rule C10).
     placeholders = find_placeholders(f"{short_version}\n{full_version}")
     if placeholders:
-        # The paths are per company and role, and the artifact endpoint
-        # serves whatever PDF is there, so an earlier run's PDF would sit
-        # beside this new draft as if it were current (review of #84).
-        html_path.unlink(missing_ok=True)
-        pdf_path.unlink(missing_ok=True)
         raise NeedsInputError(markdown_path, placeholders)
-    html_text = render_cover_letter_html(conn, company, role, full_version, template_dir)
-    html_path.write_text(html_text, encoding="utf-8")
-    render_fn = render if render is not None else _default_render
-    render_fn(html_text, pdf_path)
-    # The resume path validated its PDF; this one only checked the file
-    # existed, so a zero-byte or four-page letter passed. It is the one
-    # recruiter-facing artifact that had neither gate (spec 034).
-    validate_fn = validate if validate is not None else validate_rendered_pdf
-    pdf_errors = validate_fn(pdf_path, html_text)
-    if pdf_errors:
-        raise RuntimeError("invalid cover letter PDF: " + "; ".join(pdf_errors))
+    try:
+        html_text = render_cover_letter_html(conn, company, role, full_version, template_dir)
+        html_path.write_text(html_text, encoding="utf-8")
+        # The resume path validated its PDF; this one only checked the file
+        # existed, so a zero-byte or four-page letter passed. It is the one
+        # recruiter-facing artifact that had neither gate (spec 034).
+        pdf_errors = render_validated_pdf(
+            html_text,
+            pdf_path,
+            render if render is not None else _default_render,
+            validate if validate is not None else validate_rendered_pdf,
+        )
+        if pdf_errors:
+            raise RuntimeError("invalid cover letter PDF: " + "; ".join(pdf_errors))
+    except BaseException:
+        html_path.unlink(missing_ok=True)
+        raise
     return {"markdown": markdown_path, "html": html_path, "pdf": pdf_path}
