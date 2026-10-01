@@ -25,7 +25,7 @@ from harrier.apply.profile import (
 from harrier.db import data_dir
 from harrier.llm import LLMClientError, generate_text
 from harrier.llm.jsonparse import loads_tolerant
-from harrier.resume.content import load_truth_sources
+from harrier.resume.content import forbidden_hits, load_forbidden_phrases, load_truth_sources
 
 logger = logging.getLogger(__name__)
 
@@ -440,6 +440,14 @@ def generate_answer_set(
         draft.notes = [
             sanitize_answer_text(note) for note in draft.notes if sanitize_answer_text(note)
         ]
+    # The candidate's own never-claim list, over every field that is written
+    # out. Spec 034 required it on the answers; nothing was calling it.
+    generated = "\n".join(
+        "\n".join([draft.short_answer, draft.medium_answer, *draft.notes]) for draft in drafts
+    )
+    forbidden = forbidden_hits(load_forbidden_phrases(conn), generated)
+    if forbidden:
+        raise ValueError(f"answers contain forbidden phrase: {', '.join(forbidden)}")
     return drafts
 
 

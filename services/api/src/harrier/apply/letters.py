@@ -25,7 +25,7 @@ from harrier.apply.profile import (
 from harrier.db import data_dir
 from harrier.llm import LLMClientError, generate_text
 from harrier.llm.jsonparse import loads_tolerant
-from harrier.resume.content import load_truth_sources
+from harrier.resume.content import forbidden_hits, load_forbidden_phrases, load_truth_sources
 from harrier.resume.markdown import normalize_visible_role_title, normalize_visible_url_text
 from harrier.resume.pdf import render_pdf, validate_rendered_pdf
 
@@ -325,6 +325,13 @@ def generate_cover_letter(
         "full_version": normalize_cover_letter_text(parsed["full_version"], is_full=True),
     }
     validate_cover_letter(letter)
+    # The candidate's own never-claim list. Spec 034 required it on the
+    # letter; only the resume validator was calling it.
+    forbidden = forbidden_hits(
+        load_forbidden_phrases(conn), f"{letter['short_version']}\n{letter['full_version']}"
+    )
+    if forbidden:
+        raise ValueError(f"cover letter contains forbidden phrase: {', '.join(forbidden)}")
     return letter
 
 

@@ -599,6 +599,26 @@ def load_bundle(conn: sqlite3.Connection) -> ResumeBundle:
     return parse_bundle(raw)
 
 
+def load_forbidden_phrases(conn: sqlite3.Connection) -> tuple[str, ...]:
+    """The candidate's never-claim list, for surfaces that do not parse the
+    whole bundle (the letter and the answers, spec 034).
+
+    No resume_data document means no list has been written, so there is
+    nothing to enforce. A document that cannot be read is refused rather
+    than read as an empty list: that would skip the check silently.
+    """
+    content = _document_by_kind(conn, RESUME_DATA_KIND)
+    if content is None:
+        return ()
+    try:
+        raw: object = json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise ResumeBundleError(f"resume_data document is not valid JSON: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise ResumeBundleError("resume_data document is not an object")
+    return _str_tuple(cast("dict[str, object]", raw).get("forbidden_phrases"))
+
+
 def load_truth_sources(conn: sqlite3.Connection) -> TruthSources:
     truth = _document_by_kind(conn, RESUME_TRUTH_KIND)
     achievements = _document_by_kind(conn, ACHIEVEMENTS_KIND)
