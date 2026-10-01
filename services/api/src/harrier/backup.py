@@ -58,6 +58,7 @@ ARCHIVE_SUFFIX = ".tar.gz"
 # Bounded so a repeating failure cannot fill the disk. Keeping several means
 # a corruption noticed late still has a good copy behind it.
 DEFAULT_KEEP = 14
+_DESTINATION_HINT = f"Set {BACKUP_DIR_ENV} or pass --dest."
 
 # Names inside the archive. Fixed, so a restore does not have to guess.
 SNAPSHOT_NAME = "tracker.db"
@@ -200,7 +201,14 @@ def create_backup(
     if not source.is_dir():
         raise BackupError(f"no data directory at {source}")
     target_dir = destination if destination is not None else backup_dir()
-    target_dir.mkdir(parents=True, exist_ok=True)
+    # An OSError here used to escape as a traceback. Inside the container
+    # HOME is `/`, so the default was `/Backups/harrier` (spec 064).
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise BackupError(
+            f"cannot create backup directory {target_dir}: {error}. {_DESTINATION_HINT}"
+        ) from error
     archive = target_dir / f"{ARCHIVE_PREFIX}{_timestamp()}{ARCHIVE_SUFFIX}"
     if archive.exists():
         raise BackupError(f"an archive already exists at {archive}")
@@ -228,8 +236,13 @@ def create_backup(
         # and deleted a verified archive to stay within `keep`: a failed
         # backup destroying a good one.
         try:
-            with tarfile.open(archive, "w:gz") as tar:
-                tar.add(staging, arcname=PAYLOAD_DIR)
+            try:
+                with tarfile.open(archive, "w:gz") as tar:
+                    tar.add(staging, arcname=PAYLOAD_DIR)
+            except OSError as error:
+                raise BackupError(
+                    f"cannot write to backup directory {target_dir}: {error}. {_DESTINATION_HINT}"
+                ) from error
 
             # Verified from the archive, not from the staging copy. Verifying
             # the thing you did not write is how a check ends up proving

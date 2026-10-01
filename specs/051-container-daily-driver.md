@@ -99,6 +99,7 @@ disposable.
 | `./data` | `/app/data` | read-write | The tracker database, state, logs, and the local auth token (ADR-003, ADR-008). |
 | `./config` | `/app/config` | read-write | Discovery settings and the profile documents the UI writes. |
 | `./secrets` | `/app/secrets` | read-only | Gmail OAuth client and token. The container reads them and must never rewrite them. |
+| `${HARRIER_BACKUP_HOST_DIR:-${HOME}/Backups/harrier}` | `/app/backups` | read-write | Backup archives, with `HARRIER_BACKUP_DIR=/app/backups` set in `environment`. Added by spec 064. |
 | `.env` | environment | via `env_file` | Credentials, never copied into the image. |
 
 `repo_root()` resolves four parents up from

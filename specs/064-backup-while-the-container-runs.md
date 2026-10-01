@@ -60,7 +60,16 @@ take one by hand with the SQLite backup API and `docker cp`.
 - `just container-up` creates the host directory with `mkdir -p` before
   `docker compose up`, as it already does for `data`, `config` and `secrets`.
   Spec 051 forbids relying on Docker to create a bind source, because Docker
-  creates it root-owned.
+  creates it root-owned. The directory is the one compose resolves, read from
+  `docker compose config`, so a `HARRIER_BACKUP_HOST_DIR` set only in `.env`
+  is the one created. If compose cannot render its config, the recipe stops
+  before `docker compose up`.
+
+  **Amended during implementation (review finding on PR #78).** As approved,
+  this said only "with `mkdir -p`". The first implementation expanded
+  `HARRIER_BACKUP_HOST_DIR` in the recipe's shell, which never sees `.env`,
+  while compose reads `.env` for interpolation. A value set there was mounted
+  but not created.
 - Files written there are owned by the host user, because the container runs
   as the host uid (`docker-compose.yml:39`).
 
@@ -81,14 +90,21 @@ path is not computed inside the container.
 ### A destination that cannot be created is a failure, not a crash
 
 Anywhere, host or container: when the backup directory cannot be created or
-written, `harrier backup` prints one line to stderr and exits 1:
+written, `harrier backup` prints one line to stderr and exits 1. The line names
+which of the two failed:
 
 ```
 backup failed: cannot create backup directory <path>: <OS error>. Set HARRIER_BACKUP_DIR or pass --dest.
+backup failed: cannot write to backup directory <path>: <OS error>. Set HARRIER_BACKUP_DIR or pass --dest.
 ```
 
-No traceback. No archive is left behind and nothing is pruned. This applies to
-the `mkdir` and to opening the archive for writing.
+No traceback. No archive is left behind and nothing is pruned. The first line
+covers the `mkdir`. The second covers writing the archive, including a
+directory that exists but is not writable (the root-owned case below).
+
+**Amended during implementation.** As approved, this section gave only the
+first line and said it applied to both cases. "cannot create" is untrue for a
+directory that exists, so writing the archive got its own wording.
 
 ### Under spec 061
 
@@ -120,8 +136,11 @@ applied to spec 051 in the same change.
 
 - **The host directory does not exist** because the operator started the
   container with plain `docker compose up`, not `just container-up`. Docker
-  creates it root-owned and the backup fails with the one-line error above,
-  naming `/app/backups`. It does not crash.
+  creates it root-owned and the backup fails with the `cannot write to backup
+  directory /app/backups` line above. It does not crash.
+- **`HARRIER_BACKUP_HOST_DIR` is set only in `.env`.** Compose mounts that
+  directory, and `just container-up` creates that same directory, because it
+  asks compose rather than expanding the variable itself.
 - **`HARRIER_BACKUP_HOST_DIR` is set but the host CLI's `HARRIER_BACKUP_DIR` is
   not, or the two differ.** Container backups and host backups go to different
   directories and each prunes only its own. Nothing is lost. This is named as
@@ -140,30 +159,31 @@ applied to spec 051 in the same change.
 
 ## Acceptance criteria
 
-- [ ] `docker compose config` shows the `/app/backups` bind mount with source
+- [x] `docker compose config` shows the `/app/backups` bind mount with source
       `${HOME}/Backups/harrier` when `HARRIER_BACKUP_HOST_DIR` is unset, and
       `HARRIER_BACKUP_DIR=/app/backups` under the service's environment.
-- [ ] `just container-up` on a machine with no `~/Backups/harrier` creates it,
+- [x] `just container-up` on a machine with no `~/Backups/harrier` creates it,
       owned by the host user, before the container starts.
-- [ ] With the container running, `docker exec harrier harrier backup` exits 0
+- [x] With the container running, `docker exec harrier harrier backup` exits 0
       and prints `/app/backups/harrier-data-<timestamp>.tar.gz (... verified)`. The
       archive exists in `~/Backups/harrier` on the host, owned by the host
       user, and `harrier verify-backup <that archive>` on the host exits 0.
       By hand, transcript in the pull request with identity values redacted.
-- [ ] `HARRIER_BACKUP_DIR` pointing at a directory that cannot be created makes
+- [x] `HARRIER_BACKUP_DIR` pointing at a directory that cannot be created makes
       `harrier backup` exit 1 with the one-line `backup failed: cannot create
       backup directory ...` message and no traceback. Proved by a new test in
       `services/api/tests/test_backup.py` that runs the CLI entry point with
       the directory under a read-only parent. The test fails on today's code,
       which raises `PermissionError`.
-- [ ] The same failure leaves no partial archive and prunes nothing. Same test.
+- [x] The same failure leaves no partial archive and prunes nothing. Same test.
 - [ ] Spec 061's class table text is amended as stated above, in the same
-      change.
+      change. Open: spec 061 is not yet in git, so the amendment is applied
+      to its working copy and lands when spec 061 is committed.
 - [ ] Once spec 061's delegation exists: on the host with the container
       running, `harrier backup` is delegated and exits 0, and
       `harrier backup --dest /tmp/x` exits 75. Proved by spec 061's class
       table tests, extended with these two vector cases.
-- [ ] Spec 051's mount table lists the backup mount.
+- [x] Spec 051's mount table lists the backup mount.
 
 ## Proof / origin
 

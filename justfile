@@ -22,8 +22,14 @@ dev:
 # running as the host user, and looks like a code fault rather than a
 # permission one. The uid and gid are passed for the same reason: the local
 # auth token is 0600 in data/.
+#
+# The backup directory is asked of compose rather than re-derived here, so it
+# is the directory compose will mount, .env included. A value set only in .env
+# was invisible to this recipe, and Docker then created the bind source
+# root-owned (spec 064).
 container-up:
     mkdir -p data config secrets
+    mkdir -p "$(docker compose config --format json | python3 -c 'import json, sys; print(next(v["source"] for v in json.load(sys.stdin)["services"]["harrier"]["volumes"] if v["target"] == "/app/backups"))')"
     HARRIER_UID="$(id -u)" HARRIER_GID="$(id -g)" \
     HARRIER_REVISION="$(git rev-parse --short HEAD)$([ -n "$(git status --porcelain)" ] && echo -dirty)" \
     HARRIER_BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \

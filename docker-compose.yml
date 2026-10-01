@@ -62,6 +62,18 @@ services:
       # `harrier gmail-oauth` on the host, which is a browser consent flow that
       # belongs where the operator can watch the whole exchange (spec 050).
       - ./secrets:/app/secrets:ro
+      # Backups land on the host, in the directory the host CLI uses by
+      # default, so both share one retention window (spec 064). The printed
+      # archive path is the container's: /app/backups is this directory.
+      # `just container-up` creates it first, because a directory Docker
+      # creates is root-owned (spec 051).
+      - ${HARRIER_BACKUP_HOST_DIR:-${HOME}/Backups/harrier}:/app/backups
+
+    # Set here rather than in .env: `environment` wins over `env_file`, so a
+    # host path for the host CLI cannot reach the container, where HOME is `/`
+    # and the default would be /Backups/harrier (spec 064).
+    environment:
+      HARRIER_BACKUP_DIR: /app/backups
 
     healthcheck:
       # python rather than curl: the slim image has no curl, and a healthcheck
