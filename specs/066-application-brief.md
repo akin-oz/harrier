@@ -1,8 +1,8 @@
 ---
 spec: 066
 title: Each application carries a brief that shapes and constrains its letter and answers, and every draft ends with what to check
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M8
 depends: [014, 065]
 ---
