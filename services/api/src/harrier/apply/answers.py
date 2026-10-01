@@ -16,6 +16,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from harrier.apply.claims import (
+    Claim,
+    ClaimCheckError,
+    ClaimContext,
+    banned_hits,
+    check_claims,
+    parse_claims,
+)
 from harrier.apply.profile import (
     build_question_guidance,
     load_candidate_document,
@@ -25,7 +33,12 @@ from harrier.apply.profile import (
 from harrier.db import data_dir
 from harrier.llm import LLMClientError, generate_text
 from harrier.llm.jsonparse import loads_tolerant
-from harrier.resume.content import forbidden_hits, load_forbidden_phrases, load_truth_sources
+from harrier.resume.content import (
+    forbidden_hits,
+    load_forbidden_phrases,
+    load_skill_vocabulary,
+    load_truth_sources,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +89,8 @@ Core voice:
 Non-negotiable rules:
 - Truthful only.
 - Do not invent experience, tools, domains, or responsibilities.
-- Use only the supplied truth sources and metadata.
-- Use the application profile for reusable stories, AI-tooling context, style guidance, and safe framing.
+- Every fact about the candidate comes from resume_truth_source_md or latest_project_achievements_md.
+- Use the application profile for style guidance and safe framing only. A profile story may be told only if the truth sources state it.
 - Prefer safe framing over overstating adjacent experience.
 - No corporate filler.
 - No cover-letter template tone.
@@ -93,6 +106,16 @@ Banned phrasing:
     + "\n".join(f"- {phrase}" for phrase in BANNED_PHRASES)
     + """
 
+Claims and evidence, for each answer:
+- Declare every factual sentence in the answer and its notes as a claim: the sentence exactly as written, whether it is about the candidate or the employer, and one or more evidence fragments.
+- Evidence is quoted verbatim. Candidate evidence comes only from resume_truth_source_md or latest_project_achievements_md. Employer evidence comes only from job_description_text.
+- Keep every number exactly as the evidence states it. A total over a period is never a rate, and a percentage keeps its sign.
+- If the evidence describes a demo or synthetic data, say so in the sentence.
+- Name a technology only if the truth sources show the candidate used it.
+- If an answer needs a concrete example and none exists in the material, write [[TODO: what is needed]] instead of inventing one.
+- Say "convention" or "warning" rather than "enforced" unless the material shows something enforcing it.
+- Do not state model names, versions or other time-sensitive tool details unless the material supplies them.
+
 Return strict JSON only with this shape:
 {
   "answers": [
@@ -100,7 +123,10 @@ Return strict JSON only with this shape:
       "question": "string",
       "short_answer": "string",
       "medium_answer": "string",
-      "notes": ["string"]
+      "notes": ["string"],
+      "claims": [
+        {"sentence": "string", "about": "candidate or employer", "evidence": ["string"]}
+      ]
     }
   ]
 }
@@ -189,12 +215,10 @@ def jd_product_signal(jd_text: str | None, company: str) -> str | None:
 
 
 def sanitize_answer_text(text: str) -> str:
-    value = " ".join(text.split())
-    for banned in BANNED_PHRASES:
-        if banned in value.lower():
-            value = re.sub(re.escape(banned), "", value, flags=re.IGNORECASE)
-            value = " ".join(value.split())
-    return value.strip()
+    """Whitespace only. Banned phrases used to be deleted here as substrings,
+    which changed what an answer said without saying so; they now refuse the
+    answer set instead (spec 065, rule N1)."""
+    return " ".join(text.split()).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -381,6 +405,7 @@ def parse_answers_response(text: str) -> list[dict[str, object]]:
                 "short_answer": short_answer,
                 "medium_answer": medium_answer,
                 "notes": notes,
+                "claims": parse_claims(entry.get("claims")),
             }
         )
     if not normalized:
@@ -440,14 +465,29 @@ def generate_answer_set(
         draft.notes = [
             sanitize_answer_text(note) for note in draft.notes if sanitize_answer_text(note)
         ]
-    # The candidate's own never-claim list, over every field that is written
-    # out. Spec 034 required it on the answers; nothing was calling it.
-    generated = "\n".join(
-        "\n".join([draft.short_answer, draft.medium_answer, *draft.notes]) for draft in drafts
+    context = ClaimContext(
+        sources=load_truth_sources(conn),
+        posting=jd_text or "",
+        company=company,
+        role=role,
+        vocabulary=load_skill_vocabulary(conn),
     )
-    forbidden = forbidden_hits(load_forbidden_phrases(conn), generated)
-    if forbidden:
-        raise ValueError(f"answers contain forbidden phrase: {', '.join(forbidden)}")
+    forbidden_phrases = load_forbidden_phrases(conn)
+    violations: list[str] = []
+    for draft, item in zip(drafts, generated, strict=True):
+        texts = [draft.short_answer, draft.medium_answer, *draft.notes]
+        joined = "\n".join(texts)
+        violations.extend(
+            f"banned phrase: {phrase}" for phrase in banned_hits(BANNED_PHRASES, joined)
+        )
+        # The candidate's own never-claim list, over every field that is
+        # written out. Spec 034 required it on the answers; nothing called it.
+        violations.extend(
+            f"forbidden phrase: {phrase}" for phrase in forbidden_hits(forbidden_phrases, joined)
+        )
+        violations.extend(check_claims(texts, cast("list[Claim]", item["claims"]), context))
+    if violations:
+        raise ClaimCheckError(list(dict.fromkeys(violations)))
     return drafts
 
 

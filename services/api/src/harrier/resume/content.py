@@ -539,6 +539,14 @@ class TruthSources:
             lines.extend(line for line in asserting_lines(document) if not _is_negated(line))
         return lines
 
+    def lines_containing(self, fragment: str) -> list[str]:
+        """The supporting lines that verify this fragment, so a check can
+        read the context a quoted fragment was cut from (spec 065)."""
+        check = fragment.strip().rstrip(".").lower()
+        if not check:
+            return []
+        return [line for line in self._supporting() if check in line.lower()]
+
     def contains(self, fragment: str) -> bool:
         """Whether the truth documents actually assert this.
 
@@ -599,24 +607,60 @@ def load_bundle(conn: sqlite3.Connection) -> ResumeBundle:
     return parse_bundle(raw)
 
 
-def load_forbidden_phrases(conn: sqlite3.Connection) -> tuple[str, ...]:
-    """The candidate's never-claim list, for surfaces that do not parse the
-    whole bundle (the letter and the answers, spec 034).
+def _resume_data_fields(conn: sqlite3.Connection) -> dict[str, object]:
+    """The resume_data document's top-level fields, for surfaces that need a
+    few of them without the whole bundle (the letter and the answers).
 
-    No resume_data document means no list has been written, so there is
-    nothing to enforce. A document that cannot be read is refused rather
-    than read as an empty list: that would skip the check silently.
+    No document means nothing has been written, so the result is empty. A
+    document that cannot be read is refused rather than read as empty: that
+    would skip every check built on it silently.
     """
     content = _document_by_kind(conn, RESUME_DATA_KIND)
     if content is None:
-        return ()
+        return {}
     try:
         raw: object = json.loads(content)
     except json.JSONDecodeError as exc:
         raise ResumeBundleError(f"resume_data document is not valid JSON: {exc}") from exc
     if not isinstance(raw, dict):
         raise ResumeBundleError("resume_data document is not an object")
-    return _str_tuple(cast("dict[str, object]", raw).get("forbidden_phrases"))
+    return cast("dict[str, object]", raw)
+
+
+def load_forbidden_phrases(conn: sqlite3.Connection) -> tuple[str, ...]:
+    """The candidate's never-claim list, for the letter and the answers
+    (spec 034)."""
+    return _str_tuple(_resume_data_fields(conn).get("forbidden_phrases"))
+
+
+@dataclass(frozen=True)
+class SkillVocabulary:
+    """The technologies the candidate's bundle knows about, and which of them
+    are verified (spec 065, rule C8)."""
+
+    terms: tuple[str, ...]
+    verified: frozenset[str]
+
+    def is_verified(self, term: str) -> bool:
+        return term.casefold() in self.verified
+
+
+def load_skill_vocabulary(conn: sqlite3.Connection) -> SkillVocabulary:
+    """`technology_aliases` keys and aliases plus `all_skills` are the
+    vocabulary. A verified skill verifies its aliases too."""
+    fields = _resume_data_fields(conn)
+    aliases = _alias_dict(fields.get("technology_aliases"))
+    verified_names = {name.casefold() for name in _str_tuple(fields.get("verified_skills"))}
+    terms: list[str] = [*_str_tuple(fields.get("all_skills"))]
+    verified = set(verified_names)
+    for key, names in aliases.items():
+        terms.append(key)
+        terms.extend(names)
+        if key.casefold() in verified_names or any(n.casefold() in verified_names for n in names):
+            verified.add(key.casefold())
+            verified.update(name.casefold() for name in names)
+    unique = tuple(dict.fromkeys(term for term in terms if term.strip()))
+    return SkillVocabulary(terms=unique, verified=frozenset(verified))
 
 
 def load_truth_sources(conn: sqlite3.Connection) -> TruthSources:

@@ -165,6 +165,7 @@ def test_parse_answers_response_reads_json_payload() -> None:
                     "short_answer": "Because the role fits my background well.",
                     "medium_answer": "Because the product is useful and the work is close.",
                     "notes": ["Tie the answer to shipped frontend work."],
+                    "claims": [],
                 }
             ]
         }
@@ -183,6 +184,7 @@ def test_parse_answers_response_tolerates_trailing_comma() -> None:
                     "short_answer": "Because the role fits my background well.",
                     "medium_answer": "Because the product is useful and the work is close.",
                     "notes": ["Tie the answer to shipped frontend work."],
+                    "claims": [],
                 }
             ]
         }
@@ -204,9 +206,13 @@ def test_generate_answers_propagates_ai_error(
         generate_answer_set(db, "exampleco", "Senior Software Engineer", ["Why?"])
 
 
-def test_generated_answers_avoid_banned_phrases(
+def test_generated_answers_with_banned_phrases_are_refused(
     db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """These phrases used to be deleted from the answer as substrings, which
+    changed what it said without saying so. They now refuse the set
+    (spec 065, rule N1)."""
+
     def fake_generate(system_prompt: str, user_input: str) -> str:
         return json.dumps(
             {
@@ -219,6 +225,7 @@ def test_generated_answers_avoid_banned_phrases(
                             "in a dynamic environment."
                         ),
                         "notes": ["cutting-edge", "world-class"],
+                        "claims": [],
                     }
                     for question in DEFAULT_QUESTIONS
                 ]
@@ -226,10 +233,10 @@ def test_generated_answers_avoid_banned_phrases(
         )
 
     monkeypatch.setattr(answers_module, "generate_text", fake_generate)
-    drafts = generate_answer_set(db, "exampleco", "Senior Software Engineer", DEFAULT_QUESTIONS)
-    joined = "\n".join(draft.short_answer + "\n" + draft.medium_answer for draft in drafts).lower()
+    with pytest.raises(ValueError) as caught:
+        generate_answer_set(db, "exampleco", "Senior Software Engineer", DEFAULT_QUESTIONS)
     for phrase in ("i am thrilled", "i am passionate about", "amazing opportunity", "cutting-edge"):
-        assert phrase not in joined
+        assert f"banned phrase: {phrase}" in str(caught.value)
 
 
 def test_parse_questions_file_mode_strips_bullets_and_numbers(tmp_path: Path) -> None:
@@ -334,22 +341,41 @@ def test_parse_cover_letter_response_tolerates_trailing_comma() -> None:
     assert parsed["full_version"] == FULL_LETTER
 
 
-def test_normalize_cover_letter_text_removes_internal_dump_language() -> None:
-    text = (
-        "Fit:\n- Tailored for Examplesoft\n- I can send those on request.\n\n"
-        "Most relevant to this role: I am thrilled about this amazing opportunity.\n\n"
-        "Practically, I would be honored."
+def test_internal_dump_language_refuses_the_letter(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Normalization used to delete this scaffolding. Deleting text the model
+    wrote changes the letter silently, and substring deletion cut words in
+    half, so it now refuses instead (spec 065, rule N1)."""
+    full = (
+        "Fit: Tailored for Examplesoft, and I can send those on request today.\n\n"
+        "Most relevant to this role: I am thrilled about this amazing opportunity here.\n\n"
+        "Practically, I would be honored to talk about the role at Examplesoft."
     )
-    normalized = normalize_cover_letter_text(text, is_full=True)
+
+    def dump_response(system_prompt: str, user_input: str) -> str:
+        return json.dumps({"short_version": SHORT_LETTER, "full_version": full, "claims": []})
+
+    monkeypatch.setattr(letters_module, "generate_text", dump_response)
+    with pytest.raises(ValueError) as caught:
+        generate_cover_letter(db, "examplesoft", "Senior Product Engineer")
     for phrase in (
-        "Fit:",
-        "Tailored for",
-        "I can send those on request",
-        "I am thrilled",
-        "Most relevant to this role",
-        "Practically",
+        "fit:",
+        "tailored for",
+        "i can send those on request",
+        "i am thrilled",
+        "most relevant to this role",
+        "practically",
     ):
-        assert phrase not in normalized
+        assert f"banned phrase: {phrase}" in str(caught.value)
+
+
+def test_normalize_cover_letter_text_changes_formatting_only() -> None:
+    text = "- Paragraph 1: I built the checkout flow.\r\n\n  Second   block here."
+    assert (
+        normalize_cover_letter_text(text, is_full=True)
+        == "I built the checkout flow.\n\nSecond block here."
+    )
 
 
 def test_write_cover_letter_artifacts_creates_md_html_pdf(
@@ -440,6 +466,7 @@ def test_generate_cover_letter_validates_three_paragraphs(
                     "I'm interested in Examplesoft because the work looks product-facing today.\n\n"
                     "My strongest fit is TypeScript-first frontend engineering in production."
                 ),
+                "claims": [],
             }
         )
 
@@ -469,7 +496,7 @@ def _store_forbidden(conn: sqlite3.Connection, *phrases: str) -> None:
 
 
 def _letter_response(system_prompt: str, user_input: str) -> str:
-    return json.dumps({"short_version": SHORT_LETTER, "full_version": FULL_LETTER})
+    return json.dumps({"short_version": SHORT_LETTER, "full_version": FULL_LETTER, "claims": []})
 
 
 def _answers_stub(note: str = "Keep it short.") -> Callable[[str, str], str]:
@@ -488,6 +515,7 @@ def _answers_json(note: str) -> str:
                     "short_answer": "The product work is close to what I have shipped.",
                     "medium_answer": "I have built TypeScript product features in production.",
                     "notes": [note],
+                    "claims": [],
                 }
             ]
         }

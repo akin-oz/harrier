@@ -256,6 +256,7 @@ def _read_jd_file(path_value: str | None) -> tuple[str | None, int | None]:
 
 def _cmd_cover_letter(args: argparse.Namespace) -> int:
     from harrier.apply import generate_cover_letter, write_cover_letter_artifacts
+    from harrier.apply.claims import NeedsInputError
     from harrier.apply.profile import ApplicationProfileError
     from harrier.screening.descriptions import load_cached_description
     from harrier.tracker import get_job
@@ -292,6 +293,13 @@ def _cmd_cover_letter(args: argparse.Namespace) -> int:
             letter["short_version"],
             letter["full_version"],
         )
+    except NeedsInputError as needs:
+        # The draft is written and only the operator can finish it. Its own
+        # exit code, so it reads as neither success nor failure (spec 065).
+        print(f"markdown={needs.markdown_path}")
+        for placeholder in needs.placeholders:
+            print(f"needs_input={placeholder}")
+        return 3
     except (ApplicationProfileError, TrackerError, ValueError, RuntimeError) as error:
         print(f"cover letter failed: {error}", file=sys.stderr)
         return 1
@@ -302,6 +310,7 @@ def _cmd_cover_letter(args: argparse.Namespace) -> int:
 
 def _cmd_answers(args: argparse.Namespace) -> int:
     from harrier.apply import generate_answer_set, parse_questions, render_markdown, write_output
+    from harrier.apply.claims import find_placeholders
     from harrier.apply.profile import ApplicationProfileError
     from harrier.screening.descriptions import load_cached_description
     from harrier.tracker import get_job
@@ -332,7 +341,14 @@ def _cmd_answers(args: argparse.Namespace) -> int:
         print(f"answers failed: {error}", file=sys.stderr)
         return 1
     print(f"answers={output_path}")
-    return 0
+    placeholders = find_placeholders(
+        "\n".join(
+            "\n".join([draft.short_answer, draft.medium_answer, *draft.notes]) for draft in drafts
+        )
+    )
+    for placeholder in placeholders:
+        print(f"needs_input={placeholder}")
+    return 3 if placeholders else 0
 
 
 def _cmd_evaluate(args: argparse.Namespace) -> int:

@@ -58,12 +58,22 @@ does not verify the claims it lists and "I did not own X" does not verify
 "own X". The candidate's own forbidden-phrase list refuses an artifact that
 contains one.
 
-Cover letters get the same PDF validation and phrase scrubbing as the resume.
-They do not get the line-by-line truth check: a letter is prose rather than a
-list of claims, and nothing here verifies it sentence by sentence. Application
-answers are in the same position. That limitation is stated because the
-previous version of this paragraph said all three worked the same way, and
-they did not.
+Cover letters and application answers are prose, so they are not matched
+sentence by sentence against the truth document. Instead the model declares
+each factual sentence as a claim with evidence quoted from the truth
+document or the posting, and code checks the citations with the same
+predicate (`services/api/tests/test_apply_claims.py`, spec 065). Numbers
+need evidence and keep their scope, so a total is never rewritten as a
+rate. A demo on synthetic data must say so. A technology from the
+candidate's own skill list must be verified. "Enforced" needs evidence that
+says so. Banned phrases and the forbidden-phrase list refuse the draft
+rather than being cut out of it. A draft holding a `[[TODO: ...]]`
+placeholder keeps its markdown, never becomes a PDF, and the CLI exits 3.
+
+The limit is stated plainly: a factual sentence the model does not declare,
+with no number, known technology or enforcement word in it, is not checked.
+The gate reduces invention in letters and answers; it does not eliminate
+it. Read them before sending.
 
 **Outreach and replies.** Contacts are discovered, staged for approval, and
 never messaged automatically. A Gmail watch classifies incoming mail into
