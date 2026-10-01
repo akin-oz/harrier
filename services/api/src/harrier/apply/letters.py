@@ -13,10 +13,20 @@ import logging
 import re
 import sqlite3
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
 from harrier.apply.answers import extract_json_object, slugify
+from harrier.apply.brief import (
+    EMPTY_BRIEF,
+    Brief,
+    Limits,
+    brief_instructions,
+    limit_violations,
+    never_name_hits,
+    with_operator_evidence,
+)
 from harrier.apply.claims import (
     Claim,
     ClaimCheckError,
@@ -32,6 +42,7 @@ from harrier.apply.profile import (
     load_profile_json,
     load_profile_markdown,
 )
+from harrier.apply.review import Review, render_review
 from harrier.db import data_dir
 from harrier.llm import LLMClientError, generate_text
 from harrier.llm.jsonparse import loads_tolerant
@@ -226,6 +237,7 @@ def build_cover_letter_payload(
     tracker_row: dict[str, str] | None = None,
     jd_text: str | None = None,
     extra_notes: str | None = None,
+    brief: Brief = EMPTY_BRIEF,
 ) -> dict[str, object]:
     tracker_metadata = None
     if tracker_row:
@@ -252,6 +264,11 @@ def build_cover_letter_payload(
         "tracker_metadata": tracker_metadata,
         "job_description_text": jd_text or "",
         "extra_notes": extra_notes or "",
+        # The application brief (spec 066). Empty values when there is none.
+        "never_name": list(brief.never_name),
+        "employer_guidance": brief.employer_guidance,
+        "guidance_url": brief.guidance_url,
+        "operator_evidence": list(brief.evidence),
         "truth_sources": {
             "resume_truth_source_md": sources.truth_text,
             "latest_project_achievements_md": sources.achievements_text,
@@ -315,8 +332,13 @@ def normalize_cover_letter_text(text: str, *, is_full: bool) -> str:
     return value.strip()
 
 
-def cover_letter_violations(letter: dict[str, str]) -> list[str]:
-    """Every shape and phrasing rule the letter breaks (spec 065, rule N1)."""
+def cover_letter_violations(letter: dict[str, str], limits: Limits | None = None) -> list[str]:
+    """Every shape and phrasing rule the letter breaks (spec 065, rule N1).
+
+    A brief's stated limits replace the defaults and apply to the full
+    letter, the version that is sent (spec 066, B2).
+    """
+    stated = limits or Limits()
     violations = [
         f"banned phrase: {phrase}"
         for phrase in banned_hits(
@@ -327,17 +349,39 @@ def cover_letter_violations(letter: dict[str, str]) -> list[str]:
     if "\n- " in full or full.lstrip().startswith("- "):
         violations.append("cover letter should not use bullet-list voice")
     paragraphs = [block for block in re.split(r"\n\s*\n", full) if block.strip()]
-    if len(paragraphs) < PARAGRAPHS:
-        violations.append("cover letter should contain three short paragraphs")
-    if len(paragraphs) > PARAGRAPHS:
-        violations.append(f"too many paragraphs: {len(paragraphs)}, at most {PARAGRAPHS}")
+    if stated.paragraphs is None:
+        if len(paragraphs) < PARAGRAPHS:
+            violations.append("cover letter should contain three short paragraphs")
+        if len(paragraphs) > PARAGRAPHS:
+            violations.append(f"too many paragraphs: {len(paragraphs)}, at most {PARAGRAPHS}")
+    else:
+        if len(paragraphs) < stated.paragraphs:
+            violations.append(
+                f"cover letter should contain {stated.paragraphs} paragraphs (letter.paragraphs)"
+            )
+        if len(paragraphs) > stated.paragraphs:
+            violations.append(
+                f"over the stated limit: letter.paragraphs {stated.paragraphs},"
+                f" full_version has {len(paragraphs)}"
+            )
     for paragraph in paragraphs:
         if len(paragraph.split()) < MIN_PARAGRAPH_WORDS:
             violations.append(f"stub paragraph: {paragraph}")
     words = len(full.split())
-    if words > MAX_WORDS:
+    if stated.max_words is None and words > MAX_WORDS:
         violations.append(f"over the word limit: {words} words, at most {MAX_WORDS}")
+    violations.extend(limit_violations(full, stated, "letter", "full_version"))
     return violations
+
+
+@dataclass(frozen=True)
+class LetterDraft:
+    """A letter that passed every check, with the claims it rests on, which
+    the draft's "To verify" section lists (spec 066, B9)."""
+
+    short_version: str
+    full_version: str
+    claims: tuple[Claim, ...] = ()
 
 
 def validate_cover_letter(letter: dict[str, str]) -> None:
@@ -354,7 +398,8 @@ def generate_cover_letter(
     tracker_row: dict[str, str] | None = None,
     jd_text: str | None = None,
     extra_notes: str | None = None,
-) -> dict[str, str]:
+    brief: Brief = EMPTY_BRIEF,
+) -> LetterDraft:
     payload = build_cover_letter_payload(
         conn,
         company,
@@ -363,10 +408,12 @@ def generate_cover_letter(
         tracker_row=tracker_row,
         jd_text=jd_text,
         extra_notes=extra_notes,
+        brief=brief,
     )
     try:
         output_text = generate_text(
-            SYSTEM_PROMPT_BASE, json.dumps(payload, ensure_ascii=False, indent=2)
+            SYSTEM_PROMPT_BASE + brief_instructions(brief, "letter"),
+            json.dumps(payload, ensure_ascii=False, indent=2),
         )
     except LLMClientError as exc:
         raise RuntimeError(f"AI request failed: {exc}") from exc
@@ -382,7 +429,11 @@ def generate_cover_letter(
         "full_version": normalize_cover_letter_text(parsed["full_version"], is_full=True),
     }
     texts = [letter["short_version"], letter["full_version"]]
-    violations = cover_letter_violations(letter)
+    violations = cover_letter_violations(letter, brief.letter)
+    violations.extend(
+        f"named a redacted name: {name}"
+        for name in never_name_hits(brief.never_name, "\n".join(texts))
+    )
     # The candidate's own never-claim list. Spec 034 required it on the
     # letter; only the resume validator was calling it.
     violations.extend(
@@ -390,8 +441,8 @@ def generate_cover_letter(
         for phrase in forbidden_hits(load_forbidden_phrases(conn), "\n".join(texts))
     )
     context = ClaimContext(
-        sources=load_truth_sources(conn),
-        posting=jd_text or "",
+        sources=with_operator_evidence(load_truth_sources(conn), *brief.evidence),
+        posting="\n".join(part for part in (jd_text or "", brief.employer_guidance) if part),
         company=company,
         role=role,
         vocabulary=load_skill_vocabulary(conn),
@@ -399,7 +450,11 @@ def generate_cover_letter(
     violations.extend(check_claims(texts, claims, context))
     if violations:
         raise ClaimCheckError(violations)
-    return letter
+    return LetterDraft(
+        short_version=letter["short_version"],
+        full_version=letter["full_version"],
+        claims=tuple(claims),
+    )
 
 
 def render_cover_letter_markdown(
@@ -408,6 +463,7 @@ def render_cover_letter_markdown(
     job_url: str | None,
     short_version: str,
     full_version: str,
+    review_section: str = "",
 ) -> str:
     lines = [
         "# Cover Letter",
@@ -418,7 +474,8 @@ def render_cover_letter_markdown(
     if job_url:
         lines.append(f"- Job URL: {job_url}")
     lines.extend(["", "## Short Version", short_version, "", "## Full Version", full_version, ""])
-    return "\n".join(lines).rstrip() + "\n"
+    markdown = "\n".join(lines).rstrip() + "\n"
+    return markdown + ("\n" + review_section if review_section else "")
 
 
 def markdown_to_html_paragraphs(text: str) -> str:
@@ -476,6 +533,7 @@ def write_cover_letter_artifacts(
     template_dir: Path | None = None,
     render: Callable[[str, Path], None] | None = None,
     validate: Callable[[Path, str], list[str]] | None = None,
+    review: Review | None = None,
 ) -> dict[str, Path]:
     directory = output_dir if output_dir is not None else cover_letters_dir()
     directory.mkdir(parents=True, exist_ok=True)
@@ -484,7 +542,12 @@ def write_cover_letter_artifacts(
     html_path = paths["html"]
     pdf_path = paths["pdf"]
 
-    markdown = render_cover_letter_markdown(company, role, job_url, short_version, full_version)
+    # The review sections go in the markdown draft only. The HTML and PDF are
+    # built from full_version alone, so no flag reaches a recruiter (B10).
+    review_section = render_review([short_version, full_version], review or Review(), markdown_path)
+    markdown = render_cover_letter_markdown(
+        company, role, job_url, short_version, full_version, review_section
+    )
     markdown_path.write_text(markdown, encoding="utf-8")
     # The draft is kept so the operator can fill it in, but a recruiter-facing
     # artifact never carries a placeholder (spec 065, rule C10).

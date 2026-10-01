@@ -54,3 +54,6 @@ dist/
 /config/application-profile.md
 /config/story-seeds.json
 /config/outreach-defaults.json
+# An operator's working copy of an application brief (spec 066). Briefs live
+# in the database; this name is ignored so a copy of the example stays local.
+/config/application-brief.json

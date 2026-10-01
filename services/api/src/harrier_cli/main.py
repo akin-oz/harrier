@@ -256,8 +256,11 @@ def _read_jd_file(path_value: str | None) -> tuple[str | None, int | None]:
 
 def _cmd_cover_letter(args: argparse.Namespace) -> int:
     from harrier.apply import generate_cover_letter, write_cover_letter_artifacts
+    from harrier.apply.brief import load_brief
     from harrier.apply.claims import NeedsInputError
     from harrier.apply.profile import ApplicationProfileError
+    from harrier.apply.requirements import requirement_flags
+    from harrier.apply.review import Review
     from harrier.screening.descriptions import load_cached_description
     from harrier.tracker import get_job
 
@@ -276,6 +279,7 @@ def _cmd_cover_letter(args: argparse.Namespace) -> int:
         row = get_job(conn, args.job_id)
         if not jd_text:
             jd_text = load_cached_description(row.get("url", "")) or None
+        brief = load_brief(conn, args.job_id)
         letter = generate_cover_letter(
             conn,
             row.get("company", ""),
@@ -284,14 +288,19 @@ def _cmd_cover_letter(args: argparse.Namespace) -> int:
             tracker_row=row,
             jd_text=jd_text,
             extra_notes=notes,
+            brief=brief,
         )
         artifacts = write_cover_letter_artifacts(
             conn,
             row.get("company", ""),
             row.get("title", ""),
             row.get("url", ""),
-            letter["short_version"],
-            letter["full_version"],
+            letter.short_version,
+            letter.full_version,
+            review=Review(
+                claims=letter.claims,
+                flags=tuple(requirement_flags(jd_text or "", brief.employer_guidance)),
+            ),
         )
     except NeedsInputError as needs:
         # The draft is written and only the operator can finish it. Its own
@@ -310,8 +319,11 @@ def _cmd_cover_letter(args: argparse.Namespace) -> int:
 
 def _cmd_answers(args: argparse.Namespace) -> int:
     from harrier.apply import generate_answer_set, parse_questions, render_markdown, write_output
+    from harrier.apply.answers import answers_path_for
+    from harrier.apply.brief import load_brief
     from harrier.apply.claims import find_placeholders
     from harrier.apply.profile import ApplicationProfileError
+    from harrier.apply.requirements import requirement_flags
     from harrier.screening.descriptions import load_cached_description
     from harrier.tracker import get_job
 
@@ -324,6 +336,7 @@ def _cmd_answers(args: argparse.Namespace) -> int:
         if not jd_text:
             jd_text = load_cached_description(row.get("url", "")) or None
         questions = parse_questions(args.question, args.questions_file)
+        brief = load_brief(conn, args.job_id)
         drafts = generate_answer_set(
             conn,
             row.get("company", ""),
@@ -332,9 +345,16 @@ def _cmd_answers(args: argparse.Namespace) -> int:
             job_url=row.get("url", ""),
             tracker_row=row,
             jd_text=jd_text,
+            brief=brief,
         )
         content = render_markdown(
-            row.get("company", ""), row.get("title", ""), row.get("url", ""), row, drafts
+            row.get("company", ""),
+            row.get("title", ""),
+            row.get("url", ""),
+            row,
+            drafts,
+            review_path=answers_path_for(row.get("company", ""), row.get("title", "")),
+            flags=requirement_flags(jd_text or "", brief.employer_guidance),
         )
         output_path = write_output(row.get("company", ""), row.get("title", ""), content)
     except (ApplicationProfileError, TrackerError, OSError, ValueError, RuntimeError) as error:
@@ -349,6 +369,38 @@ def _cmd_answers(args: argparse.Namespace) -> int:
     for placeholder in placeholders:
         print(f"needs_input={placeholder}")
     return 3 if placeholders else 0
+
+
+def _cmd_brief_set(args: argparse.Namespace) -> int:
+    """Validate and store a job's application brief (spec 066)."""
+    from harrier.apply.brief import BriefError, store_brief
+    from harrier.tracker import get_job
+
+    try:
+        text = Path(args.file).read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        print(f"brief failed: cannot read --file: {error}", file=sys.stderr)
+        return 1
+    conn = connect()
+    try:
+        get_job(conn, args.job_id)
+        store_brief(conn, args.job_id, text)
+    except (BriefError, TrackerError) as error:
+        print(f"brief failed: {error}", file=sys.stderr)
+        return 1
+    print(f"brief stored for job {args.job_id}")
+    return 0
+
+
+def _cmd_brief_show(args: argparse.Namespace) -> int:
+    from harrier.apply.brief import brief_text
+
+    content = brief_text(connect(), args.job_id)
+    if content is None:
+        print(f"no brief for job {args.job_id}", file=sys.stderr)
+        return 1
+    print(content)
+    return 0
 
 
 def _cmd_evaluate(args: argparse.Namespace) -> int:
@@ -1490,6 +1542,16 @@ def build_parser() -> argparse.ArgumentParser:
     answers_group.add_argument("--questions-file", help="file with one question per line")
     answers.add_argument("--jd-file", help="path to a job description text file")
     answers.set_defaults(func=_cmd_answers)
+
+    brief = sub.add_parser("brief", help="a job's application brief (spec 066)")
+    brief_sub = brief.add_subparsers(dest="brief_command", required=True)
+    brief_set = brief_sub.add_parser("set", help="validate and store a brief from a JSON file")
+    brief_set.add_argument("job_id", type=int)
+    brief_set.add_argument("--file", required=True, help="path to the brief JSON")
+    brief_set.set_defaults(func=_cmd_brief_set)
+    brief_show = brief_sub.add_parser("show", help="print a job's stored brief")
+    brief_show.add_argument("job_id", type=int)
+    brief_show.set_defaults(func=_cmd_brief_show)
 
     evaluate = sub.add_parser(
         "evaluate", help="six-block offer evaluation for a tracker job (spec 015)"

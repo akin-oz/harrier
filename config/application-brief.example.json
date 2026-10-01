@@ -1,0 +1,10 @@
+{
+  "never_name": ["Example Client Ltd"],
+  "guidance_url": "https://example.com/how-we-hire",
+  "employer_guidance": "Text the operator pasted from the company's guidance.",
+  "letter": {"max_words": 200, "max_sentences": 8, "paragraphs": 2},
+  "answers": {"max_words": 120, "max_sentences": 4},
+  "evidence": ["A verbatim fact the operator supplies for this application."],
+  "views": {"Which tool do you dislike most?": "The operator's own view."},
+  "compensation_number": "EUR 12,345"
+}

@@ -70,6 +70,18 @@ says so. Banned phrases and the forbidden-phrase list refuse the draft
 rather than being cut out of it. A draft holding a `[[TODO: ...]]`
 placeholder keeps its markdown, never becomes a PDF, and the CLI exits 3.
 
+Each application can carry a brief (`harrier brief set <job_id> --file
+<path>`, shape in `config/application-brief.example.json`, spec 066):
+names that must never appear, which refuse the draft if they do; the
+employer's own word, sentence and paragraph limits; guidance and extra
+evidence for that job; and the operator's views and salary number.
+Questions about time zone, travel, visa sponsorship or work authorization
+are flagged and never answered for you. Opinion questions stay
+placeholders until you supply your view. The salary answer is assembled by
+code from the posted range and marked "not advice". Every draft ends with
+a "To verify" list and one next action, in the markdown only, never in the
+PDF (`services/api/tests/test_apply_brief.py`).
+
 The limit is stated plainly: a factual sentence the model does not declare,
 with no number, known technology or enforcement word in it, is not checked.
 The gate reduces invention in letters and answers; it does not eliminate
