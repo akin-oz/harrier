@@ -1,8 +1,8 @@
 ---
 spec: 067
 title: A render or PDF gate failure leaves no PDF where the Apply page would serve it
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M8
 depends: [013, 014, 034, 047, 065]
 ---
