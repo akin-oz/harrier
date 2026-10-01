@@ -7,6 +7,7 @@ thereby prove valid)."""
 
 import json
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
@@ -444,4 +445,99 @@ def test_generate_cover_letter_validates_three_paragraphs(
 
     monkeypatch.setattr(letters_module, "generate_text", two_paragraph_response)
     with pytest.raises(ValueError, match="three short paragraphs"):
+        generate_cover_letter(db, "examplesoft", "Senior Product Engineer")
+
+
+# ---------------------------------------------------------------------------
+# Forbidden phrases (spec 034)
+#
+# Spec 034 ticked "forbidden_phrases refuses an artifact on the resume, the
+# letter, and the answers path", but only the resume validator called
+# forbidden_hits. These tests go through generate_cover_letter and
+# generate_answer_set, the decisions, so removing either call fails them.
+# ---------------------------------------------------------------------------
+
+
+def _store_forbidden(conn: sqlite3.Connection, *phrases: str) -> None:
+    put_document(
+        conn,
+        "resume_data",
+        "resume-content.json",
+        "json",
+        json.dumps({"forbidden_phrases": list(phrases)}),
+    )
+
+
+def _letter_response(system_prompt: str, user_input: str) -> str:
+    return json.dumps({"short_version": SHORT_LETTER, "full_version": FULL_LETTER})
+
+
+def _answers_stub(note: str = "Keep it short.") -> Callable[[str, str], str]:
+    def stub(system_prompt: str, user_input: str) -> str:
+        return _answers_json(note)
+
+    return stub
+
+
+def _answers_json(note: str) -> str:
+    return json.dumps(
+        {
+            "answers": [
+                {
+                    "question": "Why this role?",
+                    "short_answer": "The product work is close to what I have shipped.",
+                    "medium_answer": "I have built TypeScript product features in production.",
+                    "notes": [note],
+                }
+            ]
+        }
+    )
+
+
+def test_a_forbidden_phrase_refuses_the_cover_letter(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _store_forbidden(db, "Product Engineering")
+    monkeypatch.setattr(letters_module, "generate_text", _letter_response)
+    with pytest.raises(ValueError, match="forbidden phrase: Product Engineering"):
+        generate_cover_letter(db, "examplesoft", "Senior Product Engineer")
+
+
+def test_a_clean_cover_letter_passes_the_forbidden_list(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _store_forbidden(db, "world-class expert")
+    monkeypatch.setattr(letters_module, "generate_text", _letter_response)
+    letter = generate_cover_letter(db, "examplesoft", "Senior Product Engineer")
+    assert letter["full_version"]
+
+
+def test_a_forbidden_phrase_refuses_the_answers(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _store_forbidden(db, "typescript product features")
+    monkeypatch.setattr(answers_module, "generate_text", _answers_stub())
+    with pytest.raises(ValueError, match="forbidden phrase: typescript product features"):
+        generate_answer_set(db, "examplesoft", "Senior Product Engineer", ["Why this role?"])
+
+
+def test_a_forbidden_phrase_in_an_answer_note_refuses_the_answers(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _store_forbidden(db, "open source maintainer")
+    monkeypatch.setattr(
+        answers_module, "generate_text", _answers_stub("Mention being an open source maintainer.")
+    )
+    with pytest.raises(ValueError, match="forbidden phrase: open source maintainer"):
+        generate_answer_set(db, "examplesoft", "Senior Product Engineer", ["Why this role?"])
+
+
+def test_an_unreadable_resume_data_document_refuses_the_letter(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A broken document must not read as an empty list. Skipping the check
+    because the list could not be read is the silent pass spec 034 removed."""
+    put_document(db, "resume_data", "resume-content.json", "json", "{not json")
+    monkeypatch.setattr(letters_module, "generate_text", _letter_response)
+    with pytest.raises(ValueError, match="resume_data document is not valid JSON"):
         generate_cover_letter(db, "examplesoft", "Senior Product Engineer")
