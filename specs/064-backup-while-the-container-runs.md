@@ -60,7 +60,16 @@ take one by hand with the SQLite backup API and `docker cp`.
 - `just container-up` creates the host directory with `mkdir -p` before
   `docker compose up`, as it already does for `data`, `config` and `secrets`.
   Spec 051 forbids relying on Docker to create a bind source, because Docker
-  creates it root-owned.
+  creates it root-owned. The directory is the one compose resolves, read from
+  `docker compose config`, so a `HARRIER_BACKUP_HOST_DIR` set only in `.env`
+  is the one created. If compose cannot render its config, the recipe stops
+  before `docker compose up`.
+
+  **Amended during implementation (review finding on PR #78).** As approved,
+  this said only "with `mkdir -p`". The first implementation expanded
+  `HARRIER_BACKUP_HOST_DIR` in the recipe's shell, which never sees `.env`,
+  while compose reads `.env` for interpolation. A value set there was mounted
+  but not created.
 - Files written there are owned by the host user, because the container runs
   as the host uid (`docker-compose.yml:39`).
 
@@ -129,6 +138,9 @@ applied to spec 051 in the same change.
   container with plain `docker compose up`, not `just container-up`. Docker
   creates it root-owned and the backup fails with the `cannot write to backup
   directory /app/backups` line above. It does not crash.
+- **`HARRIER_BACKUP_HOST_DIR` is set only in `.env`.** Compose mounts that
+  directory, and `just container-up` creates that same directory, because it
+  asks compose rather than expanding the variable itself.
 - **`HARRIER_BACKUP_HOST_DIR` is set but the host CLI's `HARRIER_BACKUP_DIR` is
   not, or the two differ.** Container backups and host backups go to different
   directories and each prunes only its own. Nothing is lost. This is named as
