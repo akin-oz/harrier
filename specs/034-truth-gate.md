@@ -153,7 +153,7 @@ validator.
       the answers path
       (Corrected later. This box was ticked while only the resume called
       the check; the letter and answers had no caller. Found while writing
-      spec 064 and fixed under this spec, since the behavior was already
+      spec 065 and fixed under this spec, since the behavior was already
       written down here.)
 - [x] the letter validates its PDF and scrubs its header
 - [x] `normalize_visible_role_title` has a production caller, asserted by a
