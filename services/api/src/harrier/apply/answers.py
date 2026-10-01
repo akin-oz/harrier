@@ -12,10 +12,19 @@ import json
 import logging
 import re
 import sqlite3
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
+from harrier.apply.brief import (
+    EMPTY_BRIEF,
+    Brief,
+    brief_instructions,
+    limit_violations,
+    never_name_hits,
+    with_operator_evidence,
+)
 from harrier.apply.claims import (
     Claim,
     ClaimCheckError,
@@ -30,6 +39,14 @@ from harrier.apply.profile import (
     load_profile_json,
     load_profile_markdown,
 )
+from harrier.apply.requirements import (
+    Flag,
+    is_opinion_question,
+    posted_ranges,
+    requirement_flags,
+    requirement_kind,
+)
+from harrier.apply.review import Review, render_review
 from harrier.db import data_dir
 from harrier.llm import LLMClientError, generate_text
 from harrier.llm.jsonparse import loads_tolerant
@@ -142,6 +159,8 @@ class AnswerDraft:
     short_answer: str
     medium_answer: str
     notes: list[str]
+    # What the answer rests on, listed under "To verify" (spec 066, B9).
+    claims: list[Claim] = field(default_factory=list[Claim])
 
 
 def answers_dir() -> Path:
@@ -325,6 +344,7 @@ def build_answers_payload(
     job_url: str | None = None,
     tracker_row: dict[str, str] | None = None,
     jd_text: str | None = None,
+    brief: Brief = EMPTY_BRIEF,
 ) -> dict[str, object]:
     profile = load_profile_json(conn)
     candidate = load_candidate_document(conn)
@@ -344,6 +364,13 @@ def build_answers_payload(
         "questions": questions,
         "job_description_text": jd_text or "",
         "application_profile_question_guidance": build_question_guidance(profile, questions),
+        # The application brief (spec 066). Empty values when there is none.
+        "never_name": list(brief.never_name),
+        "employer_guidance": brief.employer_guidance,
+        "operator_evidence": list(brief.evidence),
+        "operator_views": {
+            question: view for question in questions if (view := brief.view_for(question))
+        },
         "truth_sources": {
             "resume_truth_source_md": sources.truth_text,
             "latest_project_achievements_md": sources.achievements_text,
@@ -421,11 +448,23 @@ def generate_ai_answers(
     job_url: str | None = None,
     tracker_row: dict[str, str] | None = None,
     jd_text: str | None = None,
+    brief: Brief = EMPTY_BRIEF,
 ) -> list[dict[str, object]]:
     payload = build_answers_payload(
-        conn, company, role, questions, job_url=job_url, tracker_row=tracker_row, jd_text=jd_text
+        conn,
+        company,
+        role,
+        questions,
+        job_url=job_url,
+        tracker_row=tracker_row,
+        jd_text=jd_text,
+        brief=brief,
     )
-    prompt = SYSTEM_PROMPT_BASE + style_guidance_prompt(load_profile_json(conn))
+    prompt = (
+        SYSTEM_PROMPT_BASE
+        + style_guidance_prompt(load_profile_json(conn))
+        + brief_instructions(brief, "answers")
+    )
     try:
         output_text = generate_text(prompt, json.dumps(payload, ensure_ascii=False, indent=2))
     except LLMClientError as exc:
@@ -438,6 +477,56 @@ def generate_ai_answers(
         raise RuntimeError(f"failed to parse AI response: {exc}") from exc
 
 
+REQUIREMENT_PLACEHOLDER = "[[TODO: your answer]]"
+OPINION_PLACEHOLDER = "[[TODO: your own view]]"
+NUMBER_PLACEHOLDER = "[[TODO: your number]]"
+
+
+def compensation_answer(posting: str, brief: Brief, candidate: dict[str, object]) -> str:
+    """Assembled by code, never by the model (spec 066, B8): the posted
+    ranges verbatim and the operator's own number, as a draft to edit."""
+    ranges = posted_ranges(posting)
+    posted = "; ".join(ranges) + "." if ranges else "none in the posting."
+    number = brief.compensation_number
+    if not number:
+        compensation_raw = candidate.get("compensation")
+        compensation = (
+            cast("dict[str, object]", compensation_raw)
+            if isinstance(compensation_raw, dict)
+            else {}
+        )
+        target = compensation.get("salary_target_eur")
+        if isinstance(target, int) and not isinstance(target, bool) and target > 0:
+            number = f"EUR {target:,}"
+    mine = f"{number}." if number else NUMBER_PLACEHOLDER
+    return f"Draft for you to edit. This is not advice. Posted range: {posted} My number: {mine}"
+
+
+def answer_without_the_model(
+    question: str,
+    brief: Brief,
+    flags: list[Flag],
+    posting: str,
+    candidate: dict[str, object],
+) -> AnswerDraft | None:
+    """Questions no truth document can answer stay with the operator.
+
+    Salary is assembled by code (B8). A hard requirement is a placeholder
+    with the matching flags under it (B6). An opinion waits for the
+    operator's view (B7). Anything else returns None and goes to the model.
+    """
+    if classify_question(question) == "salary":
+        text = compensation_answer(posting, brief, candidate)
+        return AnswerDraft(question, text, text, [])
+    kind = requirement_kind(question)
+    if kind is not None:
+        notes = [f'Flag ({flag.kind}): "{flag.sentence}"' for flag in flags if flag.kind == kind]
+        return AnswerDraft(question, REQUIREMENT_PLACEHOLDER, REQUIREMENT_PLACEHOLDER, notes)
+    if is_opinion_question(question) and brief.view_for(question) is None:
+        return AnswerDraft(question, OPINION_PLACEHOLDER, OPINION_PLACEHOLDER, [])
+    return None
+
+
 def generate_answer_set(
     conn: sqlite3.Connection,
     company: str,
@@ -446,35 +535,62 @@ def generate_answer_set(
     job_url: str | None = None,
     tracker_row: dict[str, str] | None = None,
     jd_text: str | None = None,
+    brief: Brief = EMPTY_BRIEF,
 ) -> list[AnswerDraft]:
+    flags = requirement_flags(jd_text or "", brief.employer_guidance)
+    candidate = load_candidate_document(conn)
+    built: dict[int, AnswerDraft] = {}
+    model_questions: list[str] = []
+    for index, question in enumerate(questions):
+        draft = answer_without_the_model(question, brief, flags, jd_text or "", candidate)
+        if draft is None:
+            model_questions.append(question)
+        else:
+            built[index] = draft
+    if not model_questions:
+        return [built[index] for index in range(len(questions))]
+
     generated = generate_ai_answers(
-        conn, company, role, questions, job_url=job_url, tracker_row=tracker_row, jd_text=jd_text
+        conn,
+        company,
+        role,
+        model_questions,
+        job_url=job_url,
+        tracker_row=tracker_row,
+        jd_text=jd_text,
+        brief=brief,
     )
+    # Model answers are placed back by position among the questions sent, so
+    # the count has to match or an answer would land under the wrong question.
+    if len(generated) != len(model_questions):
+        raise RuntimeError(
+            f"AI returned {len(generated)} answers for {len(model_questions)} questions"
+        )
     drafts = [
         AnswerDraft(
             question=str(item["question"]),
-            short_answer=str(item["short_answer"]),
-            medium_answer=str(item["medium_answer"]),
-            notes=[str(note) for note in cast("list[object]", item.get("notes", []))],
+            short_answer=sanitize_answer_text(str(item["short_answer"])),
+            medium_answer=sanitize_answer_text(str(item["medium_answer"])),
+            notes=[
+                sanitize_answer_text(str(note))
+                for note in cast("list[object]", item.get("notes", []))
+                if sanitize_answer_text(str(note))
+            ],
+            claims=list(cast("list[Claim]", item["claims"])),
         )
         for item in generated
     ]
-    for draft in drafts:
-        draft.short_answer = sanitize_answer_text(draft.short_answer)
-        draft.medium_answer = sanitize_answer_text(draft.medium_answer)
-        draft.notes = [
-            sanitize_answer_text(note) for note in draft.notes if sanitize_answer_text(note)
-        ]
+    views = [view for question in model_questions if (view := brief.view_for(question))]
     context = ClaimContext(
-        sources=load_truth_sources(conn),
-        posting=jd_text or "",
+        sources=with_operator_evidence(load_truth_sources(conn), *brief.evidence, *views),
+        posting="\n".join(part for part in (jd_text or "", brief.employer_guidance) if part),
         company=company,
         role=role,
         vocabulary=load_skill_vocabulary(conn),
     )
     forbidden_phrases = load_forbidden_phrases(conn)
     violations: list[str] = []
-    for draft, item in zip(drafts, generated, strict=True):
+    for number, draft in enumerate(drafts, start=1):
         texts = [draft.short_answer, draft.medium_answer, *draft.notes]
         joined = "\n".join(texts)
         violations.extend(
@@ -485,10 +601,21 @@ def generate_answer_set(
         violations.extend(
             f"forbidden phrase: {phrase}" for phrase in forbidden_hits(forbidden_phrases, joined)
         )
-        violations.extend(check_claims(texts, cast("list[Claim]", item["claims"]), context))
+        violations.extend(
+            f"named a redacted name: {name}" for name in never_name_hits(brief.never_name, joined)
+        )
+        for label, text in (("short", draft.short_answer), ("medium", draft.medium_answer)):
+            violations.extend(
+                limit_violations(text, brief.answers, "answers", f"answer {number} {label}")
+            )
+        violations.extend(check_claims(texts, draft.claims, context))
     if violations:
         raise ClaimCheckError(list(dict.fromkeys(violations)))
-    return drafts
+
+    model_drafts = iter(drafts)
+    return [
+        built[index] if index in built else next(model_drafts) for index in range(len(questions))
+    ]
 
 
 def render_markdown(
@@ -497,6 +624,8 @@ def render_markdown(
     job_url: str | None,
     tracker_row: dict[str, str] | None,
     drafts: list[AnswerDraft],
+    review_path: Path | None = None,
+    flags: Sequence[Flag] = (),
 ) -> str:
     lines = [
         "# Application Answer Drafts",
@@ -528,7 +657,14 @@ def render_markdown(
             lines.append("### Notes")
             lines.extend(f"- {note}" for note in draft.notes)
             lines.append("")
-    return "\n".join(lines).rstrip() + "\n"
+    markdown = "\n".join(lines).rstrip() + "\n"
+    if review_path is None:
+        return markdown
+    texts = [text for d in drafts for text in (d.short_answer, d.medium_answer, *d.notes)]
+    review = Review(
+        claims=tuple(claim for draft in drafts for claim in draft.claims), flags=tuple(flags)
+    )
+    return markdown + "\n" + render_review(texts, review, review_path)
 
 
 def answers_path_for(company: str, role: str, output_dir: Path | None = None) -> Path:

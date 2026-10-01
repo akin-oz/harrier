@@ -21,6 +21,7 @@ import harrier.apply.answers as answers_module
 import harrier.apply.letters as letters_module
 from harrier.apply import generate_answer_set, generate_cover_letter, write_cover_letter_artifacts
 from harrier.apply.claims import ClaimCheckError, NeedsInputError
+from harrier.apply.letters import LetterDraft
 from harrier.db import connect
 from harrier.profile.store import put_document
 
@@ -131,7 +132,7 @@ def answer(
     }
 
 
-def generate(db: sqlite3.Connection, role: str = ROLE) -> dict[str, str]:
+def generate(db: sqlite3.Connection, role: str = ROLE) -> LetterDraft:
     return generate_cover_letter(db, COMPANY, role, jd_text=POSTING)
 
 
@@ -144,7 +145,12 @@ def refusal(db: sqlite3.Connection, role: str = ROLE) -> str:
 @pytest.fixture()
 def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
     monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
-    conn = connect()
+    return seed(connect())
+
+
+def seed(conn: sqlite3.Connection) -> sqlite3.Connection:
+    """The synthetic profile, truth document and skill vocabulary these tests
+    run against. Shared with test_apply_brief.py."""
     put_document(
         conn,
         "application_profile",
@@ -197,7 +203,7 @@ def test_a_grounded_letter_passes_every_rule(
 ) -> None:
     stub_letter(monkeypatch, letter_json())
     letter = generate(db)
-    assert INVOICES in letter["full_version"]
+    assert INVOICES in letter.full_version
 
 
 def test_a_grounded_answer_set_passes_every_rule(
@@ -225,7 +231,7 @@ def test_a_banned_phrase_refuses_and_is_not_deleted_mid_word(
     assert "banned phrase: leverage" in refusal(db)
 
     stub_letter(monkeypatch, letter_json(last=f"{PARAGRAPH_THREE} I leveraged caching there."))
-    assert "I leveraged caching there." in generate(db)["full_version"]
+    assert "I leveraged caching there." in generate(db).full_version
 
 
 def test_an_answer_with_invented_evidence_is_refused(
@@ -352,7 +358,7 @@ def test_numbers_in_the_company_and_role_are_exempt(
     role = "Senior Engineer 2"
     first = f"The {role} role at Examplesoft is the kind of product work I want to do next."
     stub_letter(monkeypatch, letter_json(first=first))
-    assert generate(db, role)["full_version"]
+    assert generate(db, role).full_version
 
 
 def test_mixed_tokens_and_slash_pairs_are_not_numbers(
@@ -360,7 +366,7 @@ def test_mixed_tokens_and_slash_pairs_are_not_numbers(
 ) -> None:
     last = "I am happy to talk about storage on S3, OAuth2 and running a service 24/7 any time."
     stub_letter(monkeypatch, letter_json(last=last))
-    assert generate(db)["full_version"]
+    assert generate(db).full_version
 
 
 def test_a_total_rewritten_as_a_rate_is_refused(
@@ -391,7 +397,7 @@ def test_a_rate_kept_as_a_rate_passes(
         candidate(sentence, "Handled 300 support tickets a week during the launch"),
     ]
     stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {sentence}", claims))
-    assert sentence in generate(db)["full_version"]
+    assert sentence in generate(db).full_version
 
 
 def test_a_percentage_without_its_sign_is_refused(
@@ -414,7 +420,7 @@ def test_a_rate_is_read_from_the_line_the_evidence_was_quoted_from(
     sentence = "I handled 300 support tickets a week during the launch."
     claims = [*GROUNDED_CLAIMS, candidate(sentence, "300 support tickets")]
     stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {sentence}", claims))
-    assert sentence in generate(db)["full_version"]
+    assert sentence in generate(db).full_version
 
 
 # --- C7: synthetic data is labelled --------------------------------------------
@@ -438,7 +444,7 @@ def test_labelled_synthetic_evidence_passes(
         candidate(sentence, "Built a demo of the reporting dashboard on synthetic data"),
     ]
     stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {sentence}", claims))
-    assert sentence in generate(db)["full_version"]
+    assert sentence in generate(db).full_version
 
 
 def test_demonstrated_is_not_a_synthetic_marker(
@@ -450,7 +456,7 @@ def test_demonstrated_is_not_a_synthetic_marker(
         candidate(sentence, "Demonstrated the reporting dashboard to the finance team"),
     ]
     stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {sentence}", claims))
-    assert sentence in generate(db)["full_version"]
+    assert sentence in generate(db).full_version
 
 
 # --- C8: skills ----------------------------------------------------------------
@@ -469,7 +475,7 @@ def test_an_alias_of_a_verified_skill_passes(
 ) -> None:
     last = "I would be glad to talk about the billing work and the React.js front end."
     stub_letter(monkeypatch, letter_json(last=last))
-    assert "React.js" in generate(db)["full_version"]
+    assert "React.js" in generate(db).full_version
 
 
 def test_a_role_title_term_is_not_a_skill_claim(
@@ -478,7 +484,7 @@ def test_a_role_title_term_is_not_a_skill_claim(
     role = "Senior GraphQL Engineer"
     first = f"The {role} role at Examplesoft is the kind of product work I want to do next."
     stub_letter(monkeypatch, letter_json(first=first))
-    assert generate(db, role)["full_version"]
+    assert generate(db, role).full_version
 
 
 # --- C9: enforcement language --------------------------------------------------
@@ -504,7 +510,7 @@ def test_enforcement_language_with_evidence_passes(
         candidate(sentence, "Added a lint rule that is enforced in CI for every pull request"),
     ]
     stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {sentence}", claims))
-    assert sentence in generate(db)["full_version"]
+    assert sentence in generate(db).full_version
 
 
 # --- C10: placeholders -----------------------------------------------------------
@@ -529,8 +535,8 @@ def test_a_letter_with_a_placeholder_writes_markdown_and_no_pdf(
             COMPANY,
             ROLE,
             None,
-            letter["short_version"],
-            letter["full_version"],
+            letter.short_version,
+            letter.full_version,
             output_dir=tmp_path,
             render=render,
         )
@@ -563,8 +569,8 @@ def test_a_placeholder_run_removes_the_pdf_and_html_of_an_earlier_run(
         COMPANY,
         ROLE,
         None,
-        letter["short_version"],
-        letter["full_version"],
+        letter.short_version,
+        letter.full_version,
         output_dir=tmp_path,
         template_dir=REPO_ROOT / "templates",
         render=render,
@@ -577,7 +583,7 @@ def test_a_placeholder_run_removes_the_pdf_and_html_of_an_earlier_run(
     draft = generate(db)
     with pytest.raises(NeedsInputError):
         write_cover_letter_artifacts(
-            db, COMPANY, ROLE, None, draft["short_version"], draft["full_version"], tmp_path
+            db, COMPANY, ROLE, None, draft.short_version, draft.full_version, tmp_path
         )
     assert PLACEHOLDER in paths["markdown"].read_text(encoding="utf-8")
     assert not paths["pdf"].exists()
@@ -591,7 +597,7 @@ def test_a_bracketed_insert_is_a_placeholder_too(
     letter = generate(db)
     with pytest.raises(NeedsInputError) as caught:
         write_cover_letter_artifacts(
-            db, COMPANY, ROLE, None, letter["short_version"], letter["full_version"], tmp_path
+            db, COMPANY, ROLE, None, letter.short_version, letter.full_version, tmp_path
         )
     assert caught.value.placeholders == ["[Insert a short example here]"]
 

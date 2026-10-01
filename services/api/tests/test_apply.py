@@ -214,6 +214,9 @@ def test_generated_answers_with_banned_phrases_are_refused(
     (spec 065, rule N1)."""
 
     def fake_generate(system_prompt: str, user_input: str) -> str:
+        # Answers only the questions it was sent: salary is assembled by code
+        # and never reaches the model (spec 066, B8).
+        asked = cast("list[str]", json.loads(user_input)["questions"])
         return json.dumps(
             {
                 "answers": [
@@ -227,7 +230,7 @@ def test_generated_answers_with_banned_phrases_are_refused(
                         "notes": ["cutting-edge", "world-class"],
                         "claims": [],
                     }
-                    for question in DEFAULT_QUESTIONS
+                    for question in asked
                 ]
             }
         )
@@ -537,7 +540,7 @@ def test_a_clean_cover_letter_passes_the_forbidden_list(
     _store_forbidden(db, "world-class expert")
     monkeypatch.setattr(letters_module, "generate_text", _letter_response)
     letter = generate_cover_letter(db, "examplesoft", "Senior Product Engineer")
-    assert letter["full_version"]
+    assert letter.full_version
 
 
 def test_a_forbidden_phrase_refuses_the_answers(

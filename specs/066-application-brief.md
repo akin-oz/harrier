@@ -103,51 +103,86 @@ input" outcome: markdown written, exit 3.
 
 ## Acceptance criteria
 
-Test names below are planned and written without backticks, because
-`test_every_test_a_spec_names_actually_exists` fails on a backticked name
-that does not exist yet. The implementing change backticks each one, which
-binds it to the check.
-
 Tests in `services/api/tests/test_apply_brief.py`, a new file, with a
 stubbed provider and synthetic briefs, postings and truth documents.
 
 | Criterion | Proof |
 |---|---|
-| a brief round-trips through the store | test_a_brief_round_trips_through_put_document |
-| an unknown key or a wrong type is refused on set | test_brief_set_refuses_an_unknown_key, test_brief_set_refuses_a_wrong_type |
-| B1 a never-name in the letter refuses it | test_a_never_name_in_the_letter_refuses_it |
-| B1 a never-name in an answer note refuses the set | test_a_never_name_in_an_answer_note_refuses_the_set |
-| B1 matching is case-insensitive and on word boundaries | test_never_name_matches_case_insensitively_on_word_boundaries |
-| B1 the never-name list reaches the prompt | test_the_never_name_list_reaches_the_prompt |
-| B2 a letter over the stated word limit is refused | test_a_letter_over_the_stated_word_limit_is_refused |
-| B2 an answer over the stated sentence limit is refused | test_an_answer_over_the_stated_sentence_limit_is_refused |
-| B2 a stated paragraph count replaces three | test_a_two_paragraph_brief_accepts_two_paragraphs |
-| B2 abbreviations and version numbers do not end a sentence | test_abbreviations_and_versions_do_not_split_sentences |
-| B4 brief evidence verifies a candidate claim for its job only | test_brief_evidence_verifies_only_for_its_own_job |
-| B4 guidance reaches the prompt and verifies employer claims | test_employer_guidance_reaches_the_prompt, test_employer_guidance_verifies_an_employer_claim |
-| B5 each requirement kind is flagged from the posting | test_each_requirement_kind_is_flagged, parametrized over the four kinds |
-| B5 a posting with none produces no flags | test_a_posting_without_requirements_has_no_flags |
-| B6 a requirement question never reaches the model | test_a_work_authorization_question_is_not_sent_to_the_model |
-| B7 an opinion question without a view becomes a placeholder | test_an_opinion_question_without_a_view_is_a_placeholder |
-| B7 an interest question using "love" is not an opinion question | test_love_working_here_is_not_an_opinion_question |
-| B7 a supplied view is sent and verifies | test_a_supplied_view_is_sent_and_counts_as_evidence |
-| B8 the salary answer quotes the posted range and never reaches the model | test_the_salary_answer_quotes_the_posted_range, test_the_salary_question_is_not_sent_to_the_model |
-| B8 no range and no number gives two honest lines | test_salary_without_range_or_number_says_so_and_asks |
-| B9 the letter markdown ends with both sections | test_the_letter_markdown_ends_with_verify_and_next_action |
-| B9 the next action picks a placeholder first, then a flag, then reading | test_next_action_priority, parametrized over the three cases |
-| B9 there is exactly one next action | test_there_is_exactly_one_next_action |
-| B10 the HTML carries no review section and no flag | test_the_letter_html_has_no_review_section_or_flag |
-| the CLI loads the brief for its job | test_cli_cover_letter_uses_the_brief_for_its_job |
+| a brief round-trips through the store | `test_a_brief_round_trips_through_put_document` |
+| an unknown key or a wrong type is refused on set | `test_brief_set_refuses_an_unknown_key`, `test_brief_set_refuses_a_wrong_type` |
+| B1 a never-name in the letter refuses it | `test_a_never_name_in_the_letter_refuses_it` |
+| B1 a never-name in an answer note refuses the set | `test_a_never_name_in_an_answer_note_refuses_the_set` |
+| B1 matching is case-insensitive and on word boundaries | `test_never_name_matches_case_insensitively_on_word_boundaries` |
+| B1 the never-name list reaches the prompt | `test_the_never_name_list_reaches_the_prompt` |
+| B2 a letter over the stated word limit is refused | `test_a_letter_over_the_stated_word_limit_is_refused` |
+| B2 an answer over the stated sentence limit is refused | `test_an_answer_over_the_stated_sentence_limit_is_refused` |
+| B2 a stated paragraph count replaces three | `test_a_two_paragraph_brief_accepts_two_paragraphs` |
+| B2 abbreviations and version numbers do not end a sentence | `test_abbreviations_and_versions_do_not_split_sentences` |
+| B4 brief evidence verifies a candidate claim for its job only | `test_brief_evidence_verifies_only_for_its_own_job` |
+| B4 guidance reaches the prompt and verifies employer claims | `test_employer_guidance_reaches_the_prompt`, `test_employer_guidance_verifies_an_employer_claim` |
+| B5 each requirement kind is flagged from the posting | `test_each_requirement_kind_is_flagged`, parametrized over the four kinds |
+| B5 a posting with none produces no flags | `test_a_posting_without_requirements_has_no_flags` |
+| B6 a requirement question never reaches the model | `test_a_work_authorization_question_is_not_sent_to_the_model` |
+| B7 an opinion question without a view becomes a placeholder | `test_an_opinion_question_without_a_view_is_a_placeholder` |
+| B7 an interest question using "love" is not an opinion question | `test_love_working_here_is_not_an_opinion_question` |
+| B7 a supplied view is sent and verifies | `test_a_supplied_view_is_sent_and_counts_as_evidence` |
+| B8 the salary answer quotes the posted range and never reaches the model | `test_the_salary_answer_quotes_the_posted_range`, `test_the_salary_question_is_not_sent_to_the_model` |
+| B8 no range and no number gives two honest lines | `test_salary_without_range_or_number_says_so_and_asks` |
+| B9 the letter markdown ends with both sections | `test_the_letter_markdown_ends_with_verify_and_next_action` |
+| B9 the next action picks a placeholder first, then a flag, then reading | `test_next_action_priority`, parametrized over the three cases |
+| B9 there is exactly one next action | `test_there_is_exactly_one_next_action` |
+| B10 the HTML carries no review section and no flag | `test_the_letter_html_has_no_review_section_or_flag` |
+| B9 the answers markdown ends with both sections too | `test_the_answers_markdown_ends_with_verify_and_next_action` |
+| the CLI loads the brief for its job | `test_cli_cover_letter_uses_the_brief_for_its_job` |
 
-- [ ] every row above has a test that fails when its behavior is removed
-- [ ] `config/application-brief.json` is classified never-in-git and
+- [x] every row above has a test that fails when its behavior is removed:
+      checked by disabling each behavior in turn (27 mutants, all failed a
+      test)
+- [x] `config/application-brief.json` is classified never-in-git and
       gitignored before the example lands
       (`services/api/tests/test_classification_coverage.py`)
-- [ ] the example brief is synthetic: no real company, client, person or
+- [x] the example brief is synthetic: no real company, client, person or
       number
-- [ ] README.md "Application artifacts" describes the brief and names this
+- [x] README.md "Application artifacts" describes the brief and names this
       spec's tests
-- [ ] `just check` green
+- [x] `just check` green
+
+## What the implementation decided
+
+Recorded here so the spec and the code agree.
+
+- **`generate_cover_letter` returns a `LetterDraft`**, with
+  `short_version`, `full_version` and the `claims` the letter rests on,
+  instead of a dict of the two texts. The "To verify" section lists the
+  claims, so they have to leave the function. `write_cover_letter_artifacts`
+  takes them as `review=Review(claims, flags)`.
+- **Letter limits apply to `full_version`**, the version that is sent. The
+  short version is a textbox draft and keeps no stated limit.
+- **Answers built by code are not checked as generated text.** Salary,
+  requirement and opinion answers (B6 to B8) never pass through the model,
+  so spec 065's claim rules, the stated limits and the never-name check run
+  on the model's answers only.
+- **The model must return one answer per question it was sent.** Answers
+  built by code and answers from the model are merged back in the order the
+  questions were asked, by position, so a different count would put an
+  answer under the wrong question. A mismatch is a `RuntimeError`, like
+  other generation failures.
+- **Operator evidence and views go under their own heading** in the
+  candidate evidence (`## Operator evidence for this application`), so a
+  disclaimer section at the end of the achievements document cannot
+  swallow them.
+- **The candidate's `salary_target_eur` is written as `EUR <number>`.**
+- **The example brief carries no `_comment` key**, unlike the other
+  examples, because unknown keys are refused and a copied example has to
+  validate.
+- **`.dockerignore` excludes `config/application-brief.json` too.** The
+  spec named the classification config and `.gitignore`; every
+  never-in-git path must also stay out of the container image, which
+  `services/api/tests/test_container.py::test_every_never_in_git_path_is_kept_out_of_the_image`
+  enforces and which caught the gap.
+- **`harrier brief set` checks the job exists** before storing, and
+  validates before writing anything. `harrier brief show` exits 1 when the
+  job has no brief.
 
 ## Which lessons this tests, and which stay rules
 

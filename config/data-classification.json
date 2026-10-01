@@ -24,7 +24,8 @@
       "config/application-profile.json",
       "config/application-profile.md",
       "config/story-seeds.json",
-      "config/outreach-defaults.json"
+      "config/outreach-defaults.json",
+      "config/application-brief.json"
     ]
   }
 }
