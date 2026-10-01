@@ -185,6 +185,7 @@ predicate can fail (spec 034's lesson).
 | C2 an answer citing invented evidence is refused | `test_an_answer_with_invented_evidence_is_refused` |
 | C6 the rate is read from the line the evidence was quoted from | `test_a_rate_is_read_from_the_line_the_evidence_was_quoted_from` |
 | C9 "enforced" backed by evidence passes | `test_enforcement_language_with_evidence_passes` |
+| C10 a placeholder run removes the PDF and HTML of an earlier run, so the artifact endpoint never offers a stale PDF beside a new draft (review of #84) | `test_a_placeholder_run_removes_the_pdf_and_html_of_an_earlier_run` |
 | C10 a bracketed "insert" is a placeholder too | `test_a_bracketed_insert_is_a_placeholder_too` |
 | a claim with no evidence is a parse failure | `test_a_claim_without_evidence_fails_to_parse` |
 | a clean synthetic letter and answer set still pass end to end | `test_a_grounded_letter_passes_every_rule`, `test_a_grounded_answer_set_passes_every_rule` |

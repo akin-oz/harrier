@@ -490,6 +490,11 @@ def write_cover_letter_artifacts(
     # artifact never carries a placeholder (spec 065, rule C10).
     placeholders = find_placeholders(f"{short_version}\n{full_version}")
     if placeholders:
+        # The paths are per company and role, and the artifact endpoint
+        # serves whatever PDF is there, so an earlier run's PDF would sit
+        # beside this new draft as if it were current (review of #84).
+        html_path.unlink(missing_ok=True)
+        pdf_path.unlink(missing_ok=True)
         raise NeedsInputError(markdown_path, placeholders)
     html_text = render_cover_letter_html(conn, company, role, full_version, template_dir)
     html_path.write_text(html_text, encoding="utf-8")

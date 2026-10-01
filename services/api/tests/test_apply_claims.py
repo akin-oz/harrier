@@ -542,6 +542,48 @@ def test_a_letter_with_a_placeholder_writes_markdown_and_no_pdf(
     assert not list(tmp_path.glob("*.pdf"))
 
 
+def test_a_placeholder_run_removes_the_pdf_and_html_of_an_earlier_run(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The paths are per company and role, and the spec 047 artifact endpoint
+    serves whatever PDF is there. Without this, a rerun that stops on a
+    placeholder leaves the earlier PDF on offer beside the new draft (review
+    of #84)."""
+    stub_letter(monkeypatch, letter_json())
+    letter = generate(db)
+
+    def render(html_text: str, pdf_path: Path) -> None:
+        pdf_path.write_bytes(b"%PDF-1.4\n")
+
+    def validate(pdf_path: Path, html_text: str) -> list[str]:
+        return []
+
+    paths = write_cover_letter_artifacts(
+        db,
+        COMPANY,
+        ROLE,
+        None,
+        letter["short_version"],
+        letter["full_version"],
+        output_dir=tmp_path,
+        template_dir=REPO_ROOT / "templates",
+        render=render,
+        validate=validate,
+    )
+    assert paths["pdf"].is_file()
+    assert paths["html"].is_file()
+
+    stub_letter(monkeypatch, letter_json(last=f"{PARAGRAPH_THREE} {PLACEHOLDER}"))
+    draft = generate(db)
+    with pytest.raises(NeedsInputError):
+        write_cover_letter_artifacts(
+            db, COMPANY, ROLE, None, draft["short_version"], draft["full_version"], tmp_path
+        )
+    assert PLACEHOLDER in paths["markdown"].read_text(encoding="utf-8")
+    assert not paths["pdf"].exists()
+    assert not paths["html"].exists()
+
+
 def test_a_bracketed_insert_is_a_placeholder_too(
     db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
