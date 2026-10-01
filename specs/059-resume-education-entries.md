@@ -1,7 +1,7 @@
 ---
 spec: 059
 title: The resume PDF renders every education entry in bundle order
-status: proposed
+status: accepted
 approved: yes
 milestone: M8
 depends: [013]
