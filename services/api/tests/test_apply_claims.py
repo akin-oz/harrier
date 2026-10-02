@@ -341,6 +341,70 @@ def test_a_first_person_sentence_cited_to_the_employer_is_refused(
     assert "first-person sentence cited to the employer" in refusal(db)
 
 
+# --- spec 068: inline markup is formatting, not text --------------------------
+
+MARKED_TRUTH = "Wrote the `sync-contract` script that bundles the **billing** schema."
+MARKED_POSTING = "Examplesoft builds invoicing tools. We ship the **billing** `export` weekly."
+
+
+def with_marked_truth(db: sqlite3.Connection) -> None:
+    put_document(
+        db, "resume_truth", "truth.md", "markdown", TRUTH + f"\n## Tooling\n\n{MARKED_TRUTH}\n"
+    )
+
+
+def test_a_claim_quoting_a_backticked_truth_line_without_backticks_passes(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal that prompted spec 068, rebuilt synthetically."""
+    with_marked_truth(db)
+    sentence = "I wrote the sync-contract script that bundles the billing schema."
+    claims = [
+        *GROUNDED_CLAIMS,
+        candidate(sentence, "Wrote the sync-contract script that bundles the billing schema"),
+    ]
+    stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {sentence}", claims))
+    assert sentence in generate(db).full_version
+
+
+def test_employer_evidence_quoted_without_markers_passes(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sentence = "Examplesoft ships the billing export weekly."
+    claims = [*GROUNDED_CLAIMS, employer(sentence, "We ship the billing export weekly")]
+    stub_letter(monkeypatch, letter_json(first=f"{sentence} {PARAGRAPH_ONE}", claims=claims))
+    letter = generate_cover_letter(db, COMPANY, ROLE, jd_text=MARKED_POSTING)
+    assert sentence in letter.full_version
+
+
+def test_employer_evidence_absent_after_marker_removal_is_still_refused(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sentence = "Examplesoft ships the billing export daily."
+    claims = [*GROUNDED_CLAIMS, employer(sentence, "We ship the billing export daily")]
+    stub_letter(monkeypatch, letter_json(first=f"{sentence} {PARAGRAPH_ONE}", claims=claims))
+    with pytest.raises(ClaimCheckError, match="employer evidence not in posting"):
+        generate_cover_letter(db, COMPANY, ROLE, jd_text=MARKED_POSTING)
+
+
+def test_a_plain_claim_sentence_matches_output_that_carries_markers(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    claims = [candidate(CHECKOUT, CHECKOUT_EVIDENCE), *GROUNDED_CLAIMS[1:]]
+    marked = "I built the **checkout flow** in TypeScript and React."
+    stub_letter(monkeypatch, letter_json(f"{marked} {INVOICES}", claims))
+    assert marked in generate(db).full_version
+
+
+def test_a_marked_claim_sentence_matches_plain_output(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    marked = "I built the **checkout flow** in TypeScript and React."
+    claims = [candidate(marked, CHECKOUT_EVIDENCE), *GROUNDED_CLAIMS[1:]]
+    stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES}", claims))
+    assert CHECKOUT in generate(db).full_version
+
+
 # --- C5 and C6: numbers --------------------------------------------------------
 
 

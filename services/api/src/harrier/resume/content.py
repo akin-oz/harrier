@@ -10,6 +10,7 @@ synthetic example bundle; the real bundle lives in the local database.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from dataclasses import dataclass, field
 from typing import cast
@@ -486,6 +487,39 @@ NEGATIONS = (
 )
 
 
+# Inline code and paired emphasis are formatting. A model quoting a truth
+# line as plain prose drops them, and a quote that differs only by them is the
+# same claim (spec 068). An asterisk pair is a run of one or two that opens
+# before a non-space and closes after one, on the same line; any other
+# asterisk is text (`src/**/*.ts`, `5 * 3`).
+_BACKTICKS = re.compile(r"`+")
+_EMPHASIS = re.compile(r"(?<!\*)(\*\*|\*)(?![\s*])(.+?)(?<![\s*])\1(?!\*)")
+
+
+def strip_inline_markup(text: str) -> str:
+    """The text without backticks or paired emphasis markers, whitespace
+    collapsed (spec 068)."""
+    value = _BACKTICKS.sub("", text)
+    while True:
+        reduced = _EMPHASIS.sub(r"\2", value)
+        if reduced == value:
+            break
+        value = reduced
+    return " ".join(value.split())
+
+
+def _comparable(text: str) -> str:
+    """A fragment ready to compare: markup stripped, one trailing period
+    dropped, lowercased."""
+    return strip_inline_markup(text).rstrip(".").lower()
+
+
+def _comparable_line(line: str) -> str:
+    """A supporting line ready to compare. The trailing period stays: a
+    fragment without one is still its substring."""
+    return strip_inline_markup(line).lower()
+
+
 def _is_disclaimer_heading(line: str) -> bool:
     stripped = line.strip().lower().lstrip("#").strip()
     if not stripped:
@@ -541,11 +575,12 @@ class TruthSources:
 
     def lines_containing(self, fragment: str) -> list[str]:
         """The supporting lines that verify this fragment, so a check can
-        read the context a quoted fragment was cut from (spec 065)."""
-        check = fragment.strip().rstrip(".").lower()
+        read the context a quoted fragment was cut from (spec 065). Lines
+        come back raw; only the comparison ignores markup (spec 068)."""
+        check = _comparable(fragment)
         if not check:
             return []
-        return [line for line in self._supporting() if check in line.lower()]
+        return [line for line in self._supporting() if check in _comparable_line(line)]
 
     def contains(self, fragment: str) -> bool:
         """Whether the truth documents actually assert this.
@@ -560,11 +595,14 @@ class TruthSources:
           verify "own the incident response rota".
         - **Case.** A claim differing only in capitalisation is the same
           claim, and failing it silently dropped real evidence.
+
+        Inline code and paired emphasis markers are ignored on both sides
+        (spec 068).
         """
-        check = fragment.strip().rstrip(".").lower()
+        check = _comparable(fragment)
         if not check:
             return False
-        return any(check in line.lower() for line in self._supporting())
+        return any(check in _comparable_line(line) for line in self._supporting())
 
 
 def require_truth(sources: TruthSources, fragment: str) -> str:

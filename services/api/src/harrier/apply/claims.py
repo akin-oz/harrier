@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from harrier.resume.content import SkillVocabulary, TruthSources
+from harrier.resume.content import SkillVocabulary, TruthSources, strip_inline_markup
 
 CLAIM_SUBJECTS = ("candidate", "employer")
 
@@ -87,8 +87,9 @@ def parse_claims(raw: object) -> list[Claim]:
 
 def _norm(text: str) -> str:
     """Case-insensitive, whitespace collapsed, curly apostrophes straightened,
-    one trailing period dropped (C1, C3)."""
-    value = " ".join(text.replace("\u2019", "'").split()).casefold()
+    one trailing period dropped (C1, C3). Inline code and paired emphasis
+    markers are ignored (spec 068)."""
+    value = strip_inline_markup(text.replace("\u2019", "'")).casefold()
     return value.rstrip(".")
 
 
