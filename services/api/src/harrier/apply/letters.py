@@ -41,6 +41,7 @@ from harrier.apply.profile import (
     load_candidate_document,
     load_profile_json,
     load_profile_markdown,
+    profile_text,
 )
 from harrier.apply.review import Review, render_review
 from harrier.db import data_dir
@@ -162,6 +163,10 @@ Claims and evidence:
 - Evidence is quoted verbatim. Candidate evidence comes only from
   resume_truth_source_md or latest_project_achievements_md. Employer evidence
   comes only from job_description_text.
+- Never cite job_description_text or the application profile as candidate
+  evidence. A requirement the posting lists is something the employer wants,
+  not something the candidate did. If a sentence about the candidate has no
+  evidence in the truth sources, leave it out.
 - Keep every number exactly as the evidence states it. A total over a period
   is never a rate, and a percentage keeps its sign.
 - If the evidence describes a demo or synthetic data, say so in the sentence.
@@ -446,6 +451,7 @@ def generate_cover_letter(
         company=company,
         role=role,
         vocabulary=load_skill_vocabulary(conn),
+        profile=profile_text(conn),
     )
     violations.extend(check_claims(texts, claims, context))
     if violations:

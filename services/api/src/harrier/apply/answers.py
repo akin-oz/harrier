@@ -38,6 +38,7 @@ from harrier.apply.profile import (
     load_candidate_document,
     load_profile_json,
     load_profile_markdown,
+    profile_text,
 )
 from harrier.apply.requirements import (
     Flag,
@@ -126,6 +127,7 @@ Banned phrasing:
 Claims and evidence, for each answer:
 - Declare every factual sentence in the answer and its notes as a claim: the sentence exactly as written, whether it is about the candidate or the employer, and one or more evidence fragments.
 - Evidence is quoted verbatim. Candidate evidence comes only from resume_truth_source_md or latest_project_achievements_md. Employer evidence comes only from job_description_text.
+- Never cite job_description_text or the application profile as candidate evidence. A requirement the posting lists is something the employer wants, not something the candidate did. If a sentence about the candidate has no evidence in the truth sources, leave it out.
 - Keep every number exactly as the evidence states it. A total over a period is never a rate, and a percentage keeps its sign.
 - If the evidence describes a demo or synthetic data, say so in the sentence.
 - Name a technology only if the truth sources show the candidate used it.
@@ -587,6 +589,7 @@ def generate_answer_set(
         company=company,
         role=role,
         vocabulary=load_skill_vocabulary(conn),
+        profile=profile_text(conn),
     )
     forbidden_phrases = load_forbidden_phrases(conn)
     violations: list[str] = []

@@ -48,6 +48,17 @@ def _document(conn: sqlite3.Connection, kind: str, fmt: str) -> str | None:
     return str(row[0]) if row is not None else None
 
 
+def profile_text(conn: sqlite3.Connection) -> str:
+    """Every application profile document as raw text, or "" when none is
+    stored. Read only to name where misattributed evidence came from
+    (spec 069), so it neither parses nor raises."""
+    rows = conn.execute(
+        "SELECT content FROM profile_documents WHERE kind = ? ORDER BY name",
+        (APPLICATION_PROFILE_KIND,),
+    ).fetchall()
+    return "\n".join(str(row[0]) for row in rows)
+
+
 def load_profile_markdown(conn: sqlite3.Connection) -> str:
     content = _document(conn, APPLICATION_PROFILE_KIND, "markdown")
     if content is None:

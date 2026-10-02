@@ -119,31 +119,39 @@ The existing wording stays. The rule is added, not substituted.
 
 Proof lives in services/api/tests/test_apply_claims.py. Every test runs
 through `generate_cover_letter` or `generate_answer_set` with a stubbed
-provider and synthetic documents. Test names are chosen when written, and
-this list becomes a table naming them in the implementing change.
+provider and synthetic documents, except the no-profile case, which builds
+a `ClaimContext` from a database with no profile stored and calls
+`check_claims`, because both generators require a profile before they run.
 
-- A letter citing a posting sentence as candidate evidence is refused, and
-  the refusal contains `posting text cited as candidate evidence` and not
-  `unverified evidence` for that fragment.
-- A letter citing an application profile line as candidate evidence is
-  refused with `application profile cited as candidate evidence`.
-- A fragment in neither document is refused with `unverified evidence`, as
-  today.
-- A fragment in both the truth document and the posting passes.
-- A fragment in both the posting and the profile gets the posting message.
-- The answers path refuses a posting sentence cited as candidate evidence
-  with the posting message.
-- With no application profile stored, a profile-shaped fragment gets
-  `unverified evidence` and no exception.
-- The prompt rule: the letter and answers system prompts both contain the
-  new prohibition. This is a check on prompt text, the one place a
-  source-text assertion is the decision itself.
+| Criterion | Proof |
+|---|---|
+| posting text cited as candidate evidence gets the posting message, not `unverified evidence` | `test_posting_text_cited_as_candidate_evidence_is_named` |
+| an application profile line cited as candidate evidence gets the profile message | `test_evidence_only_in_the_application_profile_is_refused` |
+| a fragment in neither document is still `unverified evidence` | `test_evidence_in_neither_document_is_still_unverified` |
+| a fragment in the truth document and the posting passes | `test_evidence_in_the_truth_and_the_posting_passes` |
+| a fragment in the posting and the profile gets the posting message | `test_evidence_in_the_posting_and_the_profile_gets_the_posting_message` |
+| the answers path names posting text the same way | `test_the_answers_path_names_posting_text_cited_as_candidate_evidence` |
+| no profile stored: `unverified evidence`, no exception | `test_with_no_profile_stored_profile_text_is_unverified_and_nothing_raises` |
+| both prompts carry the prohibition | `test_both_prompts_forbid_citing_the_posting_or_profile_for_the_candidate` |
 
-- [ ] every criterion above has a test
-- [ ] the message tests fail with the change reverted
-- [ ] spec 065's existing tests pass unchanged
-- [ ] no real profile, truth or posting content in any test
-- [ ] `uv run ruff check` and `uv run pyright` clean
+One spec 065 test changes its expectation, by design.
+`test_evidence_only_in_the_application_profile_is_refused` asserted
+`unverified evidence` for a profile-only fragment. It now asserts the
+profile message, and that `unverified evidence` is absent. The refusal it
+pins is unchanged; only the wording is. Every other spec 065 test passes
+unchanged.
+
+Five of these fail with the message logic and the prompt rule reverted.
+The other three are guards that pass before and after: the unchanged
+`unverified evidence` case, truth winning over the posting, and the
+no-profile case.
+
+- [x] every criterion above has a test
+- [x] the message tests fail with the change reverted
+- [x] spec 065's existing tests pass, except the one named above whose
+      expected message this spec changes
+- [x] no real profile, truth or posting content in any test
+- [x] `uv run ruff check` and `uv run pyright` clean
 - [ ] All gates green on PR
 
 ## Proof / origin
