@@ -193,6 +193,9 @@ class ClaimContext:
     company: str
     role: str
     vocabulary: SkillVocabulary
+    # The application profile, consulted only to name the source of
+    # candidate evidence that failed C2 (spec 069). It never verifies.
+    profile: str = ""
 
     def evidence_lines(self, claim: Claim, fragment: str) -> list[str]:
         """The lines a fragment was quoted from: the truth documents for a
@@ -218,7 +221,7 @@ def check_claims(texts: Sequence[str], claims: Sequence[Claim], context: ClaimCo
             violations.append(f"first-person sentence cited to the employer: {claim.sentence}")
         for fragment in claim.evidence:
             if claim.about == "candidate" and not context.sources.contains(fragment):
-                violations.append(f"unverified evidence: {fragment}")
+                violations.append(_unverified(fragment, context))
             if claim.about == "employer" and _norm(fragment) not in _norm(context.posting):
                 violations.append(f"employer evidence not in posting: {fragment}")
         lines = [line for f in claim.evidence for line in context.evidence_lines(claim, f)]
@@ -229,6 +232,18 @@ def check_claims(texts: Sequence[str], claims: Sequence[Claim], context: ClaimCo
     violations.extend(_skill_violations(checked, context))
     violations.extend(_enforcement_violations(checked, claims))
     return list(dict.fromkeys(violations))
+
+
+def _unverified(fragment: str, context: ClaimContext) -> str:
+    """The C2 refusal, naming where the fragment was found when that was
+    somewhere other than the truth sources (spec 069). The refusal itself is
+    the same whichever message it carries."""
+    wanted = _norm(fragment)
+    if wanted and wanted in _norm(context.posting):
+        return f"posting text cited as candidate evidence: {fragment}"
+    if wanted and wanted in _norm(context.profile):
+        return f"application profile cited as candidate evidence: {fragment}"
+    return f"unverified evidence: {fragment}"
 
 
 def _number_violations(output: str, claims: Sequence[Claim], context: ClaimContext) -> list[str]:

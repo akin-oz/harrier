@@ -20,10 +20,18 @@ import pytest
 import harrier.apply.answers as answers_module
 import harrier.apply.letters as letters_module
 from harrier.apply import generate_answer_set, generate_cover_letter, write_cover_letter_artifacts
-from harrier.apply.claims import ClaimCheckError, NeedsInputError
+from harrier.apply.claims import (
+    ClaimCheckError,
+    ClaimContext,
+    NeedsInputError,
+    check_claims,
+    parse_claims,
+)
 from harrier.apply.letters import LetterDraft
+from harrier.apply.profile import profile_text
 from harrier.db import connect
 from harrier.profile.store import put_document
+from harrier.resume.content import load_skill_vocabulary, load_truth_sources
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PROFILE_JSON_PATH = REPO_ROOT / "config" / "application-profile.example.json"
@@ -312,14 +320,17 @@ def test_evidence_from_a_disclaimer_section_does_not_verify(
 def test_evidence_only_in_the_application_profile_is_refused(
     db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The profile is for framing. A story only there is not verified."""
+    """The profile is for framing. A story only there is not verified, and
+    the refusal says where the text came from (spec 069)."""
     sentence = "I shipped the mobile app rewrite for a retail client."
     claims = [
         *GROUNDED_CLAIMS,
         candidate(sentence, "Shipped the mobile app rewrite for a retail client"),
     ]
     stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {sentence}", claims))
-    assert "unverified evidence" in refusal(db)
+    message = refusal(db)
+    assert "application profile cited as candidate evidence" in message
+    assert "unverified evidence" not in message
 
 
 def test_employer_evidence_absent_from_the_posting_is_refused(
@@ -339,6 +350,104 @@ def test_a_first_person_sentence_cited_to_the_employer_is_refused(
     claims = [*GROUNDED_CLAIMS, employer(sentence, "ships to customers every week")]
     stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {sentence}", claims))
     assert "first-person sentence cited to the employer" in refusal(db)
+
+
+# --- spec 069: misattributed candidate evidence is named -----------------------
+
+POSTED = "Examplesoft builds invoicing tools for small firms."
+PROFILE_LINE = "Shipped the mobile app rewrite for a retail client"
+
+
+def test_posting_text_cited_as_candidate_evidence_is_named(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The observed refusal: a posting sentence labelled as the candidate's."""
+    sentence = "I build invoicing tools for small firms."
+    claims = [*GROUNDED_CLAIMS, candidate(sentence, POSTED)]
+    stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {sentence}", claims))
+    message = refusal(db)
+    assert f"posting text cited as candidate evidence: {POSTED}" in message
+    assert "unverified evidence" not in message
+
+
+def test_evidence_in_neither_document_is_still_unverified(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sentence = "I ran the payments platform team."
+    claims = [*GROUNDED_CLAIMS, candidate(sentence, "Ran the payments platform team")]
+    stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {sentence}", claims))
+    message = refusal(db)
+    assert "unverified evidence: Ran the payments platform team" in message
+    assert "cited as candidate evidence" not in message
+
+
+def test_evidence_in_the_truth_and_the_posting_passes(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Truth wins: the posting asking for it does not undo that the
+    candidate did it."""
+    stub_letter(monkeypatch, letter_json())
+    posting = f"{POSTING} {CHECKOUT_EVIDENCE}."
+    letter = generate_cover_letter(db, COMPANY, ROLE, jd_text=posting)
+    assert CHECKOUT in letter.full_version
+
+
+def test_evidence_in_the_posting_and_the_profile_gets_the_posting_message(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sentence = "I shipped the mobile app rewrite for a retail client."
+    claims = [*GROUNDED_CLAIMS, candidate(sentence, PROFILE_LINE)]
+    stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {sentence}", claims))
+    with pytest.raises(ClaimCheckError) as caught:
+        generate_cover_letter(db, COMPANY, ROLE, jd_text=f"{POSTING} {PROFILE_LINE}.")
+    message = str(caught.value)
+    assert "posting text cited as candidate evidence" in message
+    assert "application profile cited" not in message
+
+
+def test_the_answers_path_names_posting_text_cited_as_candidate_evidence(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sentence = "I build invoicing tools for small firms."
+    claims = [*GROUNDED_CLAIMS, candidate(sentence, POSTED)]
+    stub_answers(monkeypatch, [answer(f"{CHECKOUT} {INVOICES} {sentence}", claims)])
+    with pytest.raises(ClaimCheckError, match="posting text cited as candidate evidence"):
+        generate_answer_set(
+            db, COMPANY, ROLE, ["What relevant experience do you have?"], jd_text=POSTING
+        )
+
+
+def test_with_no_profile_stored_profile_text_is_unverified_and_nothing_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
+    conn = connect()
+    put_document(conn, "resume_truth", "truth.md", "markdown", TRUTH)
+    profile = profile_text(conn)
+    assert profile == ""
+    context = ClaimContext(
+        sources=load_truth_sources(conn),
+        posting=POSTING,
+        company=COMPANY,
+        role=ROLE,
+        vocabulary=load_skill_vocabulary(conn),
+        profile=profile,
+    )
+    sentence = "I shipped the mobile app rewrite for a retail client."
+    claims = parse_claims([candidate(sentence, PROFILE_LINE)])
+    assert check_claims([sentence], claims, context) == [f"unverified evidence: {PROFILE_LINE}"]
+
+
+def test_both_prompts_forbid_citing_the_posting_or_profile_for_the_candidate() -> None:
+    """The prompt text is the decision here: the rule is either sent or not.
+    Whether the model obeys it is not testable (spec 069 Limitations)."""
+    for prompt in (letters_module.SYSTEM_PROMPT_BASE, answers_module.SYSTEM_PROMPT_BASE):
+        flat = " ".join(prompt.split())
+        assert (
+            "Never cite job_description_text or the application profile as candidate evidence"
+            in flat
+        )
+        assert "not something the candidate did" in flat
 
 
 # --- spec 068: inline markup is formatting, not text --------------------------
