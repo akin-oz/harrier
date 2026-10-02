@@ -18,6 +18,7 @@ from harrier.resume.content import (
     TruthSources,
     asserting_lines,
     forbidden_hits,
+    strip_inline_markup,
 )
 
 
@@ -123,6 +124,67 @@ def test_matching_is_case_insensitive() -> None:
 
 def test_a_trailing_period_does_not_change_the_answer() -> None:
     assert sources("Led the design system rewrite.").contains("Led the design system rewrite.")
+
+
+# --- markup: a plain quote of a formatted line is the same claim (spec 068) --
+
+MARKED = "- Generates TypeScript types via `openapi-typescript` for **Nuxt 4**"
+
+
+def test_backticks_in_the_truth_line_do_not_block_a_plain_quote() -> None:
+    """The observed refusal: a verbatim quote, minus the backticks."""
+    assert sources(MARKED).contains("Generates TypeScript types via openapi-typescript")
+
+
+def test_emphasis_in_the_truth_line_does_not_block_a_plain_quote() -> None:
+    assert sources(MARKED).contains("generates typescript types via openapi-typescript for Nuxt 4")
+    assert sources("- Shipped *every* week").contains("Shipped every week")
+
+
+def test_a_quote_with_markers_still_verifies() -> None:
+    assert sources(MARKED).contains(
+        "Generates TypeScript types via `openapi-typescript` for **Nuxt 4**"
+    )
+
+
+def test_marker_removal_does_not_verify_a_different_claim() -> None:
+    assert not sources(MARKED).contains("Generates TypeScript types via openapi for Nuxt 4")
+
+
+def test_a_fragment_of_only_markers_verifies_nothing() -> None:
+    assert not sources(MARKED).contains("`` ** ``")
+
+
+def test_markers_do_not_revive_a_disclaimer_line() -> None:
+    truth = "## Must not claim\n\n- Led the **GraphQL** migration\n"
+    assert not sources(truth).contains("Led the GraphQL migration")
+
+
+def test_a_literal_asterisk_is_text() -> None:
+    truth = "- Linted every file matching src/**/*.ts"
+    assert sources(truth).contains("every file matching src/**/*.ts")
+    assert not sources(truth).contains("every file matching src//.ts")
+
+
+@pytest.mark.parametrize(
+    ("text", "reduced"),
+    [
+        ("**Nuxt 4**", "Nuxt 4"),
+        ("*shipped* weekly", "shipped weekly"),
+        ("src/**/*.ts", "src/**/*.ts"),
+        ("5 * 3 * 2", "5 * 3 * 2"),
+        ("***both***", "***both***"),
+        ("`$ref`s and `openapi-typescript`", "$refs and openapi-typescript"),
+    ],
+)
+def test_the_asterisk_examples_reduce_as_the_spec_says(text: str, reduced: str) -> None:
+    assert strip_inline_markup(text) == reduced
+
+
+def test_lines_containing_returns_the_raw_line_for_a_plain_quote() -> None:
+    """Only the comparison ignores markup. The rate check reads the line as
+    written."""
+    assert sources(MARKED).lines_containing("via openapi-typescript") == [MARKED]
 
 
 # --- an empty or unusable truth document verifies nothing -------------------

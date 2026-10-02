@@ -150,33 +150,39 @@ Examples, with truth line
 ## Acceptance criteria
 
 Proof lives in services/api/tests/test_honesty.py unless named otherwise.
-Every truth line and posting in these tests is synthetic. The implementing
-change replaces this list with a table naming each test.
+Every truth line and posting in these tests is synthetic.
 
-- A fragment without backticks verifies a truth line that has them.
-- A fragment without asterisks verifies a truth line with `**bold**` or
-  `*italic*`.
-- A fragment that keeps the markers still verifies.
-- Removing markers does not make an absent claim verify.
-- A fragment made only of markers verifies nothing.
-- A disclaimer line carrying markers still does not verify.
-- A literal asterisk is kept, on both sides.
-- Every row of the asterisk examples table reduces as shown.
-- `lines_containing` finds the line for a plain quote and returns it raw.
-- C2: the observed cover letter shape passes
-  (services/api/tests/test_apply_claims.py).
-- C3: employer evidence quoted without markers passes, and evidence absent
-  after marker removal is still refused
-  (services/api/tests/test_apply_claims.py).
-- C1: a plain claim sentence matches output with markers, and the reverse
-  (services/api/tests/test_apply_claims.py).
+| Criterion | Proof |
+|---|---|
+| a fragment without backticks verifies a truth line that has them | `test_backticks_in_the_truth_line_do_not_block_a_plain_quote` |
+| a fragment without asterisks verifies a truth line with `**bold**` or `*italic*` | `test_emphasis_in_the_truth_line_does_not_block_a_plain_quote` |
+| a fragment that keeps the markers still verifies | `test_a_quote_with_markers_still_verifies` |
+| removing markers does not make an absent claim verify | `test_marker_removal_does_not_verify_a_different_claim` |
+| a fragment made only of markers verifies nothing | `test_a_fragment_of_only_markers_verifies_nothing` |
+| a disclaimer line carrying markers still does not verify | `test_markers_do_not_revive_a_disclaimer_line` |
+| a literal asterisk is kept, on both sides | `test_a_literal_asterisk_is_text` |
+| every row of the asterisk examples table reduces as shown | `test_the_asterisk_examples_reduce_as_the_spec_says` |
+| `lines_containing` finds the line for a plain quote and returns it raw | `test_lines_containing_returns_the_raw_line_for_a_plain_quote` |
+| C2: the observed cover letter shape passes | `services/api/tests/test_apply_claims.py::test_a_claim_quoting_a_backticked_truth_line_without_backticks_passes` |
+| C3: employer evidence quoted without markers passes | `services/api/tests/test_apply_claims.py::test_employer_evidence_quoted_without_markers_passes` |
+| C3: evidence absent after marker removal is still refused | `services/api/tests/test_apply_claims.py::test_employer_evidence_absent_after_marker_removal_is_still_refused` |
+| C1: a plain claim sentence matches output with markers | `services/api/tests/test_apply_claims.py::test_a_plain_claim_sentence_matches_output_that_carries_markers` |
+| C1: a marked claim sentence matches plain output | `services/api/tests/test_apply_claims.py::test_a_marked_claim_sentence_matches_plain_output` |
 
-- [ ] every criterion that accepts something new has a test that fails
+Ten of these fail with the change reverted: every test where a match is
+newly accepted, plus the three asterisk rows that change. The rest are
+guards that pass before and after by design: they pin what must not loosen.
+
+The observed fragment was also rerun read-only against the live truth
+sources with the new `content.py`: it now verifies, and `lint-enforced
+boundaries` (the C9 case from the same refusal) still does not.
+
+- [x] every criterion that accepts something new has a test that fails
       without the change
-- [ ] spec 034's existing tests pass unchanged
-- [ ] spec 065's existing tests pass unchanged
-- [ ] no real truth-document content in any test
-- [ ] `uv run ruff check` and `uv run pyright` clean
+- [x] spec 034's existing tests pass unchanged
+- [x] spec 065's existing tests pass unchanged
+- [x] no real truth-document content in any test
+- [x] `uv run ruff check` and `uv run pyright` clean
 - [ ] All gates green on PR
 
 ## Proof / origin
