@@ -27,7 +27,9 @@ spec's acceptance criterion, not an error.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
+from datetime import date
 from typing import cast
 
 FEEDS = "feeds"
@@ -40,6 +42,80 @@ KINDS = (FEEDS, LINKEDIN_SEARCHES, DISCOVERY, COMPANY_HOLDS)
 
 class ConfigError(ValueError):
     """A configuration value is not the shape its kind requires."""
+
+
+# A hold is a bare company name, or an object naming the company and,
+# optionally, the last day the hold applies (spec 052). The bare form is the
+# shape every hold had before expiry existed, so it stays valid as-is.
+HoldEntry = str | dict[str, str]
+
+HOLD_KEYS = frozenset({"company", "hold_until"})
+
+# `date.fromisoformat` accepts more than the CSV column's format (`20260630`,
+# for one), so the shape is checked first and the calendar second.
+_HOLD_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def parse_hold_until(value: str, company: str) -> date | None:
+    """The last day a hold applies, or None for a hold with no expiry.
+
+    Empty means no expiry, which is how the CSV column reads. Anything else
+    must be a real `YYYY-MM-DD` date: a malformed one is refused rather than
+    read as "no expiry", because that fallback is the permanent-hold bug this
+    spec exists to remove, arriving by a different route.
+    """
+    text = value.strip()
+    if not text:
+        return None
+    if _HOLD_DATE.fullmatch(text):
+        try:
+            return date.fromisoformat(text)
+        except ValueError:
+            pass
+    raise ConfigError(
+        f"hold for {company!r} has a malformed hold_until {value!r}; expected YYYY-MM-DD"
+    )
+
+
+def hold_is_active(until: date | None, today: date) -> bool:
+    """Active with no date, or on and before its date (inclusive)."""
+    return until is None or today <= until
+
+
+def _validate_holds(items: list[object]) -> list[HoldEntry]:
+    entries: list[HoldEntry] = []
+    for item in items:
+        if isinstance(item, str):
+            if item.strip():
+                entries.append(item.strip())
+            continue
+        if not isinstance(item, dict):
+            raise ConfigError(
+                f"{COMPANY_HOLDS} entries must be strings or objects, got {type(item).__name__}"
+            )
+        entry = cast("dict[object, object]", item)
+        unknown = sorted(str(key) for key in entry if key not in HOLD_KEYS)
+        if unknown:
+            # Most likely a typo of hold_until. Accepting it would store a
+            # hold that never expires while looking as though it does.
+            raise ConfigError(
+                f"{COMPANY_HOLDS} entry {entry!r} has unknown keys {unknown}; "
+                f"expected only {sorted(HOLD_KEYS)}"
+            )
+        company = entry.get("company")
+        if not isinstance(company, str) or not company.strip():
+            raise ConfigError(f"{COMPANY_HOLDS} entry {entry!r} needs a non-blank company")
+        normalized: dict[str, str] = {"company": company.strip()}
+        if "hold_until" in entry:
+            until = entry["hold_until"]
+            if not isinstance(until, str):
+                raise ConfigError(
+                    f"hold for {company.strip()!r} has a hold_until that is not a string"
+                )
+            if parse_hold_until(until, company.strip()) is not None:
+                normalized["hold_until"] = until.strip()
+        entries.append(normalized)
+    return entries
 
 
 def _validate(kind: str, value: object) -> object:
@@ -61,6 +137,8 @@ def _validate(kind: str, value: object) -> object:
     if not isinstance(value, list):
         raise ConfigError(f"{kind} must be a JSON list, got {type(value).__name__}")
     items = cast("list[object]", value)
+    if kind == COMPANY_HOLDS:
+        return _validate_holds(items)
     for item in items:
         if not isinstance(item, str):
             raise ConfigError(f"{kind} entries must be strings, got {type(item).__name__}")
@@ -116,7 +194,11 @@ def list_config(conn: sqlite3.Connection) -> list[dict[str, str]]:
 
 
 def stored_list(conn: sqlite3.Connection | None, kind: str) -> list[str] | None:
-    """A stored list value, or None to mean "fall back to the file"."""
+    """A stored list of strings, or None to mean "fall back to the file".
+
+    For the line-list kinds only. A hold list may carry objects (spec 052)
+    and is read by `load_hold_companies` instead.
+    """
     if conn is None:
         return None
     value = get_config(conn, kind)

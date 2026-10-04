@@ -991,6 +991,7 @@ def _cmd_config(args: argparse.Namespace) -> int:
         LINKEDIN_SEARCHES,
         SEARCH_URLS_PATH,
         ConfigError,
+        HoldEntry,
         delete_config,
         get_config,
         list_config,
@@ -1022,7 +1023,10 @@ def _cmd_config(args: argparse.Namespace) -> int:
             return 0 if removed else 1
         else:
             # import: read each committed or local file once into the store.
-            sources: dict[str, list[str]] = {
+            # Every file is read before anything is stored, so a malformed
+            # hold date refuses the whole import rather than half of it
+            # (spec 052).
+            sources: dict[str, list[str] | list[HoldEntry]] = {
                 FEEDS: read_line_config(FEEDS_PATH),
                 LINKEDIN_SEARCHES: read_line_config(SEARCH_URLS_PATH),
                 COMPANY_HOLDS: read_hold_file_raw(HOLDS_PATH),
