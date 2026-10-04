@@ -9,6 +9,14 @@ depends: [030, 051, 061]
 
 # Spec 064: A backup can be taken while the container runs
 
+**Note, 2026-10-04: spec 061 was split.** Where this spec says "spec 061" about
+the class table, the `host-path` class, or delegation, read spec 074
+(`specs/074-host-commands-run-inside-the-container.md`). Spec 061 now covers
+the refusal alone. Spec 074's class table carries the amendment this spec
+made: `backup` without `--dest` is `database` and delegated, `backup --dest`
+is `host-path`. The open criterion below about applying that amendment to
+spec 061's working copy is met by spec 074's text.
+
 - Status: Draft
 - Depends on: 030 (backup and restore), 051 (container daily driver),
   061 (one kernel opens the tracker database)
