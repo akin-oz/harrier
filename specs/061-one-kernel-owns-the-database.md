@@ -301,7 +301,7 @@ otherwise.
       claims WAL is safe across the mount, ADR-011 exists with status
       proposed, and the README names `harrier doctor`
 - [x] each test above fails with its behavior removed: checked by removing
-      each behavior in turn (16 mutants, all failed a test). One check has no
+      each behavior in turn (16 mutants, all failed a test; 6 more for the review fixes on PR #110). One check has no
       test of its own; see "What the implementation decided"
 - [ ] by hand, on the daily driver: with the container up, `harrier export`
       and `harrier shortlist <id>` from the host exit 75; after `docker
@@ -336,11 +336,31 @@ Recorded here so the spec and the code agree.
   snapshot's check refuses first, and nothing is copied before the snapshot,
   so removing it changes no observable result. It stays as the backstop the
   spec asks for, should the order inside `create_backup` change.
-- **`harrier doctor --integrity` opens with `sqlite3` directly,** after the
-  ownership check and an existence check, not with `mode=ro`: a read-only open
-  of a WAL database fails when the `-shm` file is absent, which is the normal
-  state after the container stops. The logic is in
+- **`harrier doctor --integrity` never opens read-write** (review finding on
+  PR #110). A read-write connection, closed last, checkpoints a leftover WAL
+  into the database and deletes it, so the check changed the file it reported
+  on and destroyed the evidence of a crash; reproduced before the fix. With no
+  WAL it opens with `mode=ro&immutable=1`, which creates no files; with one,
+  `mode=ro`, which reads through the WAL and leaves it in place. The `-shm`
+  index can be rewritten by any reader and is not evidence. Proved by
+  `test_integrity_leaves_a_crashed_writers_wal_and_the_database_untouched`
+  and `test_integrity_on_a_clean_database_creates_no_files`. The logic is in
   `services/api/src/harrier/doctor.py`; the CLI only prints it.
+- **`harrier doctor` skips logging setup** (same finding). Logging setup opens
+  the database read-write for the redaction values, which would checkpoint
+  the WAL before `doctor` looked at it. `doctor` logs nothing.
+- **`harrier doctor` reports an unreadable database file** as `journal mode:
+  unreadable` and still gives its verdict, rather than failing before it
+  (review finding on PR #110,
+  `test_doctor_still_gives_a_verdict_when_the_database_cannot_be_read`).
+- **Engine reasons name a socket this user may not use,** as "the docker
+  engine socket is not accessible". Still refused, since an engine may be
+  running (review finding on PR #110,
+  `test_a_socket_this_user_may_not_use_is_named_as_such`).
+- **The logging warning names its cause:** "the harrier container owns the
+  database" or "cannot tell who owns the database" (review finding on PR
+  #110,
+  `test_logging_setup_does_not_blame_the_container_when_ownership_is_unknown`).
 - **Two test files outside the new one changed.** The `real_directory`
   fixture in `services/api/tests/test_test_isolation.py` points at the
   operator's data directory on purpose, so it now stubs the engine as

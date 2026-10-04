@@ -50,12 +50,16 @@ def real_directory(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """
     assert guard_is_live(), "the operator data guard is not installed; refusing to continue"
     existed = OPERATOR_DATA_DIR.exists()
+
     # The operator's directory is the live one spec 061 guards, so without
     # this its check would ask the real Docker engine first, and these tests
     # would answer differently depending on whether the container happens to
     # be running. They test spec 060's guard; "no engine" is the answer under
     # which spec 061's guard steps aside and lets that one be reached.
-    monkeypatch.setattr(container, "detect", lambda: ContainerState(engine=container.UNREACHABLE))
+    def no_engine(timeout: float = container.DEFAULT_TIMEOUT_SECONDS) -> ContainerState:
+        return ContainerState(engine=container.UNREACHABLE)
+
+    monkeypatch.setattr(container, "detect", no_engine)
     monkeypatch.delenv("HARRIER_DATA_DIR", raising=False)
     monkeypatch.delenv("HARRIER_DEMO", raising=False)
     assert Path(os.path.realpath(data_dir())) == OPERATOR_DATA_DIR

@@ -56,8 +56,13 @@ def running_in() -> str:
 def journal_mode(path: Path) -> str:
     if not path.is_file():
         return "no database"
-    with path.open("rb") as handle:
-        header = handle.read(20)
+    # An unreadable file is a finding, not a reason to lose the verdict that
+    # follows it (review finding on PR #110).
+    try:
+        with path.open("rb") as handle:
+            header = handle.read(20)
+    except OSError:
+        return "unreadable"
     if len(header) < 20 or not header.startswith(b"SQLite format 3\x00"):
         return "not a sqlite database"
     return _JOURNAL_BYTES.get(header[18:20], "unrecognised")
@@ -146,13 +151,16 @@ def _integrity(path: Path, owner: str, result: DoctorResult) -> None:
         result.lines.append("integrity: no database")
         result.exit_code = 1
         return
-    # sqlite3 directly, not `harrier.db.connect`, which would migrate the
-    # schema of the database being checked. The file exists (checked above),
-    # so this cannot create one, and integrity_check writes nothing. Not
-    # `mode=ro`: a read-only open of a WAL database fails when the -shm file
-    # is absent, which is the normal state after the container stops.
+    # Never a read-write connection. Closing the last one checkpoints a
+    # leftover WAL into the database and deletes it, so the check would change
+    # the file it reports on and destroy the evidence of a crash (review
+    # finding on PR #110). With no WAL, `immutable=1` reads the file and
+    # creates nothing; with one, `mode=ro` reads through it and leaves it in
+    # place. Not `harrier.db.connect`, which would also migrate the schema.
+    wal = path.with_name(f"{path.name}-wal")
+    options = "mode=ro" if wal.exists() else "mode=ro&immutable=1"
     try:
-        conn = sqlite3.connect(path)
+        conn = sqlite3.connect(f"{path.resolve().as_uri()}?{options}", uri=True)
         try:
             rows = [str(row[0]) for row in conn.execute("PRAGMA integrity_check")]
         finally:

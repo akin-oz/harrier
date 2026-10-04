@@ -9,6 +9,7 @@ of them needs Docker, and none of them reaches the operator's data directory:
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import http.server
 import json
@@ -16,6 +17,8 @@ import logging
 import socket
 import socketserver
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -358,6 +361,115 @@ def test_integrity_does_not_open_the_file_the_container_owns(
     assert opened == []
 
 
+def leave_a_crashed_writers_wal(path: Path) -> None:
+    """Commit a row in a child process that exits without closing, so its
+    WAL is never checkpointed: what a killed writer leaves behind."""
+    code = (
+        "import os, sqlite3, sys\n"
+        "conn = sqlite3.connect(sys.argv[1])\n"
+        "conn.execute('PRAGMA wal_autocheckpoint=0')\n"
+        'conn.execute("INSERT INTO jobs (company, title, url, status) '
+        "VALUES ('Late Co', 'Engineer', 'https://example.test/late', 'prospect')\")\n"
+        "conn.commit()\n"
+        "os._exit(0)\n"
+    )
+    subprocess.run([sys.executable, "-c", code, str(path)], check=True)
+    assert path.with_name(path.name + "-wal").stat().st_size > 0
+
+
+def snapshot_files(root: Path) -> dict[str, str]:
+    """The database and its WAL, by content; the -shm index by presence only.
+
+    The -shm file is SQLite's shared-memory index of the WAL, not data: every
+    reader, read-only ones included, rebuilds it from the WAL. The evidence a
+    crash leaves is the database and the WAL, and those must not change.
+    """
+    files: dict[str, str] = {}
+    for path in sorted(root.iterdir()):
+        if path.name.endswith("-shm"):
+            files[path.name] = "present"
+        elif path.name.startswith("tracker.db"):
+            files[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return files
+
+
+def test_integrity_leaves_a_crashed_writers_wal_and_the_database_untouched(
+    live: Path,
+    detector: Callable[[ContainerState], list[int]],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A read-write open closed last checkpoints the WAL into the database and
+    deletes it: the check would change the file it reports on and destroy the
+    evidence of the crash (review finding on PR #110)."""
+    make_database(live / "tracker.db")
+    leave_a_crashed_writers_wal(live / "tracker.db")
+    before = snapshot_files(live)
+    detector(UNREACHABLE)
+    # Through `main`, with logging not yet configured, so the proof covers
+    # logging setup too: it opened the database read-write before `doctor`
+    # ran and checkpointed it itself. `configure_logging` is idempotent, so
+    # without the reset an earlier test would have made that call a no-op.
+    monkeypatch.setattr(logsetup, "_configured", False)
+    try:
+        code, lines = doctor(capsys, "--integrity")
+    finally:
+        # A connection left open is closed, and checkpointed, when it is
+        # collected: at process exit for a real CLI run. Collect now so the
+        # comparison sees what a finished `harrier doctor` would leave.
+        gc.collect()
+    assert (code, lines[-1]) == (0, "integrity: ok")
+    assert snapshot_files(live) == before
+    logsetup.configure_logging(force=True)
+
+
+def test_integrity_on_a_clean_database_creates_no_files(
+    live: Path,
+    detector: Callable[[ContainerState], list[int]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    make_database(live / "tracker.db")
+    before = snapshot_files(live)
+    assert set(before) == {"tracker.db"}
+    detector(UNREACHABLE)
+    code, lines = doctor(capsys, "--integrity")
+    assert (code, lines[-1]) == (0, "integrity: ok")
+    assert snapshot_files(live) == before
+
+
+def test_doctor_still_gives_a_verdict_when_the_database_cannot_be_read(
+    live: Path,
+    detector: Callable[[ContainerState], list[int]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    make_database(live / "tracker.db")
+    detector(owned_by_container(live))
+    (live / "tracker.db").chmod(0)
+    try:
+        code, lines = doctor(capsys)
+    finally:
+        (live / "tracker.db").chmod(0o644)
+    assert code == 0
+    assert "journal mode: unreadable" in lines
+    assert lines[-1] == "host access: refused (container owns the database)"
+
+
+def test_logging_setup_does_not_blame_the_container_when_ownership_is_unknown(
+    live: Path,
+    detector: Callable[[ContainerState], list[int]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    detector(ENGINE_ERROR)
+    try:
+        logsetup.configure_logging(force=True)
+        err = capsys.readouterr().err
+        assert "container owns" not in err
+        assert "cannot tell who owns the database" in err
+    finally:
+        detector(UNREACHABLE)
+        logsetup.configure_logging(force=True)
+
+
 # --- the detector, against a fake engine on a real socket -------------------------
 
 
@@ -449,6 +561,28 @@ def test_a_socket_with_nothing_listening_is_unreachable(monkeypatch: pytest.Monk
         for path in directory.iterdir():
             path.unlink()
         directory.rmdir()
+
+
+def test_a_socket_this_user_may_not_use_is_named_as_such(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory = Path(tempfile.mkdtemp(prefix="hd", dir="/tmp"))
+    socket_path = directory / "locked.sock"
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(str(socket_path))
+    listener.listen(1)
+    socket_path.chmod(0)
+    monkeypatch.setenv("DOCKER_HOST", f"unix://{socket_path}")
+    try:
+        state = container.detect(timeout=0.3)
+    finally:
+        listener.close()
+        socket_path.unlink(missing_ok=True)
+        directory.rmdir()
+    # Still refused: an engine may be running behind it. But the reason says
+    # what to fix, not just that something failed.
+    assert state.engine == container.UNKNOWN
+    assert state.reason == "the docker engine socket is not accessible"
 
 
 def test_an_engine_that_never_answers_is_given_up_on_within_the_bound(

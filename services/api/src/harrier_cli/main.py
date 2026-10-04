@@ -1900,9 +1900,14 @@ def _refusal(subcommand: str, error: DatabaseOwnershipError) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     load_project_env()
-    configure_logging()
     parser = build_parser()
     args = parser.parse_args(argv)
+    # Logging setup opens the database read-write to load the redaction
+    # values, and closing that connection checkpoints any WAL left behind.
+    # `doctor` logs nothing and reports on that file, so it must not be the
+    # thing that changes it (review finding on PR #110).
+    if args.command != "doctor":
+        configure_logging()
     try:
         result: int = args.func(args)
     except TrackerError as error:

@@ -112,6 +112,13 @@ def _ask(path: Path, timeout: float) -> ContainerState:
             # A socket file with nobody behind it: Docker Desktop quit. No
             # engine, so no container.
             return ContainerState(engine=UNREACHABLE)
+        except PermissionError:
+            # Still unknown, because an engine may be running behind it, but
+            # named so `harrier doctor` says what to fix (review finding on
+            # PR #110).
+            return ContainerState(
+                engine=UNKNOWN, reason="the docker engine socket is not accessible"
+            )
         connection.request("GET", f"/containers/{CONTAINER_NAME}/json")
         response = connection.getresponse()
         body = response.read()

@@ -32,7 +32,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-from harrier.db import DatabaseOwnershipError, connect, data_dir
+from harrier.db import DatabaseOwnedByContainer, DatabaseOwnershipError, connect, data_dir
 
 LOG_DIR_NAME = "logs"
 LOG_FILE_NAME = "harrier.log"
@@ -88,11 +88,16 @@ def configure_logging(*, force: bool = False) -> None:
     # which refused every host command, `harrier doctor` included).
     try:
         values = _load_identity_values()
-    except DatabaseOwnershipError:
-        root.warning(
-            "the harrier container owns the database; logging to stderr only, "
-            "without identity redaction"
+    except DatabaseOwnershipError as error:
+        # Named by cause: "the container owns it" when ownership is only
+        # unknown sends the operator after the wrong problem (review finding
+        # on PR #110).
+        cause = (
+            "the harrier container owns the database"
+            if isinstance(error, DatabaseOwnedByContainer)
+            else "cannot tell who owns the database"
         )
+        root.warning("%s; logging to stderr only, without identity redaction", cause)
         _configured = True
         return
 
