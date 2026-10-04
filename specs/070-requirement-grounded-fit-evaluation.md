@@ -117,29 +117,29 @@ classification config's complement rule.
 
 | Criterion | Proof |
 |---|---|
-| X1 header lines are never rows | test_section_headers_are_never_rows |
-| X2 classifier labels each kind | test_classifier_labels_requirement_responsibility_benefit_and_context, parametrized |
-| X2 invitation and legal lines are company context anywhere | test_invitation_and_eeo_lines_are_company_context, test_text_before_the_first_header_is_company_context |
-| X3 a posting without headers still yields requirement rows | test_posting_without_headers_falls_back_to_requirements |
-| X5 a compound line splits per technology | test_compound_technology_line_splits_into_sub_requirements, test_compound_split_keeps_a_remainder_that_names_a_concept |
-| X6 one row per requirement | test_duplicate_requirement_lines_give_one_row |
-| X7 importance from wording and position | test_importance_core_from_must_and_first_three |
-| R1 to R7 each status rule | test_status_rules, parametrized over one case per rule |
-| R2 a family member is never Direct for the family | test_aws_lambda_is_partial_for_aws |
-| R6 a topical match is Adjacent at most | test_dimension_evidence_without_the_term_is_adjacent |
-| R8 confidence follows status | test_confidence_follows_status |
-| R9 the kind caps hold | test_backend_mention_is_capped_without_a_backend_role, test_absent_by_default_terms_are_never_covered, test_a_bullet_naming_an_absent_by_default_term_still_does_not_cover_it |
-| every evidence entry has a reason | test_every_evidence_entry_has_a_one_line_reason |
-| G1 section 4 holds every non-Direct row | test_section_four_lists_every_non_direct_row, test_section_four_says_so_when_everything_is_direct |
-| G2 one question per gap, by template | test_one_question_per_gap_row |
-| G3 a principal role without principal titles adds a seniority gap | test_principal_role_adds_seniority_gap, test_a_held_level_adds_no_seniority_gap |
-| G4 a compensation line naming nothing else is not a row | test_compensation_lines_are_not_matrix_rows |
-| G5 gap rows carry no claim | test_gap_rows_never_carry_a_claim |
-| X4 benefits are listed apart | test_weflow_benefits_are_listed_apart |
-| Weflow: zero company-blurb rows | test_weflow_has_no_company_context_rows |
-| Weflow: the three dropped requirements are rows | test_weflow_keeps_years_design_patterns_and_working_hours |
-| Weflow: AWS and PostgreSQL are not Direct | test_weflow_aws_and_postgresql_are_not_direct |
-| Weflow: section 4 non-empty, at least three questions | test_weflow_report_has_gaps_and_at_least_three_questions |
+| X1 header lines are never rows | `test_section_headers_are_never_rows` |
+| X2 classifier labels each kind | `test_classifier_labels_requirement_responsibility_benefit_and_context`, parametrized |
+| X2 invitation and legal lines are company context anywhere | `test_invitation_and_eeo_lines_are_company_context`, `test_text_before_the_first_header_is_company_context` |
+| X3 a posting without headers still yields requirement rows | `test_posting_without_headers_falls_back_to_requirements` |
+| X5 a compound line splits per technology | `test_compound_technology_line_splits_into_sub_requirements`, `test_compound_split_keeps_a_remainder_that_names_a_concept` |
+| X6 one row per requirement | `test_duplicate_requirement_lines_give_one_row` |
+| X7 importance from wording and position | `test_importance_core_from_must_and_first_three` |
+| R1 to R7 each status rule | `test_status_rules`, parametrized over one case per rule |
+| R2 a family member is never Direct for the family | `test_aws_lambda_is_partial_for_aws` |
+| R6 a topical match is Adjacent at most | `test_dimension_evidence_without_the_term_is_adjacent` |
+| R8 confidence follows status | `test_confidence_follows_status` |
+| R9 the kind caps hold | `test_backend_mention_is_capped_without_a_backend_role`, `test_absent_by_default_terms_are_never_covered`, `test_a_bullet_naming_an_absent_by_default_term_still_does_not_cover_it` |
+| every evidence entry has a reason | `test_every_evidence_entry_has_a_one_line_reason` |
+| G1 section 4 holds every non-Direct row | `test_section_four_lists_every_non_direct_row`, `test_section_four_says_so_when_everything_is_direct` |
+| G2 one question per gap, by template | `test_one_question_per_gap_row` |
+| G3 a principal role without principal titles adds a seniority gap | `test_principal_role_adds_seniority_gap`, `test_a_held_level_adds_no_seniority_gap` |
+| G4 a compensation line naming nothing else is not a row | `test_compensation_lines_are_not_matrix_rows` |
+| G5 gap rows carry no claim | `test_gap_rows_never_carry_a_claim` |
+| X4 benefits are listed apart | `test_weflow_benefits_are_listed_apart` |
+| Weflow: zero company-blurb rows | `test_weflow_has_no_company_context_rows` |
+| Weflow: the three dropped requirements are rows | `test_weflow_keeps_years_design_patterns_and_working_hours` |
+| Weflow: AWS and PostgreSQL are not Direct | `test_weflow_aws_and_postgresql_are_not_direct` |
+| Weflow: section 4 non-empty, at least three questions | `test_weflow_report_has_gaps_and_at_least_three_questions` |
 
 - [ ] the three existing fit-evaluation tests in
       `services/api/tests/test_resume.py` are updated to the new statuses,
@@ -181,7 +181,7 @@ Recorded here so the spec and the code agree.
 - **No alias is an ordinary word.** `vocabulary.py` names AWS services
   only with their vendor prefix ("AWS Lambda", "Amazon S3") and Rails only
   as "Ruby on Rails", so "lambda functions" and "guard rails" name nothing
-  (review of PR #95, test_an_ordinary_word_does_not_name_a_technology).
+  (review of PR #95, `test_an_ordinary_word_does_not_name_a_technology`).
   The bundle's own aliases are the operator's choice and are not filtered.
 - **`evaluate_resume_fit` takes `as_of`**, so R4 is testable on a fixed
   date. `harrier tailor` passes nothing and gets today.
