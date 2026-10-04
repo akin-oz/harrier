@@ -15,6 +15,11 @@ run that is a failure nobody is watching for.
 Real subprocesses rather than threads, because threads in one interpreter share
 a connection pool and a GIL and would prove something easier than the thing
 that actually happens.
+
+What this proves is two writers under one kernel, and only that. Across the
+bind mount the container and the host do not share WAL's memory, and the file
+was corrupted that way on 2026-09-18. Since spec 061 the two never have it
+open at once: the host is refused while the container runs (ADR-011).
 """
 
 from __future__ import annotations

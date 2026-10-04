@@ -204,8 +204,19 @@ If the container will not start with `address already in use`, a host process
 holds the port. `lsof -nP -iTCP:8000 -sTCP:LISTEN` names it.
 
 **launchd still owns the schedule**, on the host, as ADR-006 decided. The
-container is the interactive surface only. Discovery, the digest and the mail
-watch keep running whether or not Docker is up.
+container is the interactive surface only.
+
+**While the container runs, it owns the tracker database.** SQLite's WAL mode
+needs every process using the file to share one kernel, and the container runs
+under the Docker Desktop VM while the host runs macOS. That combination
+corrupted the database once. So a host command that would open
+`data/tracker.db` while the container runs is refused with exit status 75
+(spec 061, ADR-011, proven by `services/api/tests/test_database_ownership.py`).
+Run it inside the container instead, `docker exec harrier harrier <command>`,
+or stop the container first. `harrier doctor` says who owns the database right
+now, and `harrier doctor --integrity` checks it. Until spec 074 ships, a
+scheduled job that fires while the container runs is refused the same way, so
+keep the schedule uninstalled until then.
 
 `/health` reports the revision and build time the image was stamped with, so a
 container running older code than your checkout is visible rather than silent.

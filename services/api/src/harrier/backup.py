@@ -49,7 +49,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from harrier.db import DB_FILENAME, data_dir
+from harrier.db import DB_FILENAME, check_database_ownership, data_dir
 
 BACKUP_DIR_ENV = "HARRIER_BACKUP_DIR"
 ARCHIVE_PREFIX = "harrier-data-"
@@ -99,6 +99,10 @@ def snapshot_database(source: Path, destination: Path) -> None:
         raise BackupError(f"no database at {source}")
     if destination.exists():
         raise BackupError(f"refusing to overwrite {destination}")
+    # Opened with sqlite3 directly rather than `harrier.db.connect`, which
+    # would migrate the schema of the database it is meant to copy, so the
+    # ownership check that `connect` makes is made here (spec 061).
+    check_database_ownership(source)
     conn = sqlite3.connect(source)
     try:
         conn.execute("VACUUM INTO ?", (str(destination),))
@@ -118,6 +122,7 @@ def verify_database(path: Path) -> int:
     """
     if not path.is_file():
         raise BackupError(f"no database to verify at {path}")
+    check_database_ownership(path)
     conn = sqlite3.connect(path)
     try:
         integrity = conn.execute("PRAGMA integrity_check").fetchone()
@@ -198,6 +203,10 @@ def create_backup(
     documented.
     """
     source = source_dir if source_dir is not None else data_dir()
+    # Before anything is read. The snapshot makes the same check, but this
+    # function also copies every other file in the data directory, and the
+    # copy must not begin while another kernel has the database (spec 061).
+    check_database_ownership(source / DB_FILENAME)
     if not source.is_dir():
         raise BackupError(f"no data directory at {source}")
     target_dir = destination if destination is not None else backup_dir()
@@ -302,6 +311,10 @@ def restore_backup(archive: Path, target: Path | None = None, *, force: bool = F
     other.
     """
     into = target if target is not None else data_dir()
+    # A restore replaces the whole data directory, database and WAL included,
+    # without ever opening it through SQLite, so nothing else would stop it
+    # replacing the files under a running container (spec 061).
+    check_database_ownership(into / DB_FILENAME)
     # An existing file here used to reach `into.iterdir()` and raise
     # NotADirectoryError, which the CLI does not catch, so a mistyped path
     # produced a traceback instead of an answer.

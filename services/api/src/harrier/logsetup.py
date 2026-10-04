@@ -32,7 +32,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-from harrier.db import connect, data_dir
+from harrier.db import DatabaseOwnershipError, connect, data_dir
 
 LOG_DIR_NAME = "logs"
 LOG_FILE_NAME = "harrier.log"
@@ -78,6 +78,24 @@ def configure_logging(*, force: bool = False) -> None:
     stream.setFormatter(formatter)
     root.addHandler(stream)
 
+    # The redaction values come from the database, so they are loaded before
+    # the log file is opened. When the container owns the database this
+    # process may not read them, and a line it wrote to harrier.log would be
+    # unredacted in the one file the container also writes. So it writes no
+    # file at all and keeps stderr. The refusal itself is not swallowed: a
+    # command that opens the database is refused at its own open and exits
+    # 75 (spec 061, amended: the first text let the refusal out of here,
+    # which refused every host command, `harrier doctor` included).
+    try:
+        values = _load_identity_values()
+    except DatabaseOwnershipError:
+        root.warning(
+            "the harrier container owns the database; logging to stderr only, "
+            "without identity redaction"
+        )
+        _configured = True
+        return
+
     # A file handler is best effort. A read-only or missing data directory
     # must not stop the program from running: losing the log is bad, refusing
     # to work because the log cannot be opened is worse.
@@ -92,25 +110,37 @@ def configure_logging(*, force: bool = False) -> None:
     except OSError:
         root.warning("file logging is unavailable; logging to stderr only")
 
-    _install_identity_redaction(root)
+    _install_identity_redaction(root, values)
 
     _configured = True
 
 
-def _install_identity_redaction(root: logging.Logger) -> None:
-    """Load the identity values once and filter every handler (spec 045).
+def _load_identity_values() -> set[str] | None:
+    """The identity values, or None when the database cannot be read.
 
     Best effort for the same reason the file handler is: there is no database
     on a fresh clone, and refusing to log because the profile store is not
-    there yet would make the tool unusable before it is configured. A failure
-    here means no redaction, so it says so rather than passing silently.
+    there yet would make the tool unusable before it is configured. Raises
+    `DatabaseOwnershipError`, which is neither error caught here.
     """
-    from harrier.logredact import IdentityRedactionFilter, forget_all, identity_values, register
+    from harrier.logredact import identity_values
 
     try:
         with connect() as conn:
-            values = identity_values(conn)
+            return identity_values(conn)
     except (sqlite3.Error, OSError):
+        return None
+
+
+def _install_identity_redaction(root: logging.Logger, values: set[str] | None) -> None:
+    """Filter every handler with the identity values (spec 045).
+
+    A failure to load them means no redaction, so it says so rather than
+    passing silently.
+    """
+    from harrier.logredact import IdentityRedactionFilter, forget_all, register
+
+    if values is None:
         root.warning("identity redaction is unavailable; logs are not redacted")
         return
 
