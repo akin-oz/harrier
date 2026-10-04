@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
+from typing import cast
 
 import pytest
 from test_apply_claims import (
@@ -36,12 +37,20 @@ from test_apply_claims import (
 import harrier.apply.answers as answers_module
 import harrier.apply.letters as letters_module
 from harrier.apply import generate_answer_set, generate_cover_letter, write_cover_letter_artifacts
-from harrier.apply.brief import EMPTY_BRIEF, Brief, load_brief, parse_brief, store_brief
+from harrier.apply.brief import (
+    EMPTY_BRIEF,
+    Brief,
+    BriefError,
+    load_brief,
+    parse_brief,
+    store_brief,
+)
 from harrier.apply.claims import ClaimCheckError, NeedsInputError
 from harrier.apply.requirements import Flag
 from harrier.apply.review import Review
 from harrier.db import connect
-from harrier.profile.store import get_document
+from harrier.profile.store import get_document, put_document
+from harrier.resume.tailor import run_tailor
 from harrier.tracker.actions import add_manually
 from harrier_cli.main import main
 
@@ -107,7 +116,22 @@ def markdown_from(out: str) -> str:
 # --- storing the brief ------------------------------------------------------
 
 
+DOCKER_TRUTH_LINE = "Ran production services in Docker containers."
+
+
+def seed_resume(db: sqlite3.Connection) -> None:
+    """The synthetic resume bundle, with a truth document holding every
+    bullet and one line naming Docker, which the bundle's skills omit. That
+    is the example brief's confirmed skill (spec 071 O9)."""
+    raw = (REPO_ROOT / "config" / "resume-content.example.json").read_text(encoding="utf-8")
+    put_document(db, "resume_data", "resume-content.json", "json", raw)
+    pool = cast("dict[str, str]", json.loads(raw)["bullet_pool"])
+    truth = "\n".join([*pool.values(), DOCKER_TRUTH_LINE])
+    put_document(db, "resume_truth", "truth.md", "markdown", truth)
+
+
 def test_a_brief_round_trips_through_put_document(db: sqlite3.Connection) -> None:
+    seed_resume(db)
     text = (REPO_ROOT / "config" / "application-brief.example.json").read_text(encoding="utf-8")
     stored = store_brief(db, 7, text)
     assert get_document(db, "application_brief", "7") is not None
@@ -577,3 +601,59 @@ def test_cli_cover_letter_uses_the_brief_for_its_job(
     code, _, err = run_cli(["cover-letter", "--job-id", job_id, "--jd-file", str(posting)], capsys)
     assert code == 1
     assert "named a redacted name: Northwind Retail" in err
+
+
+# --- confirmed skills (spec 071 O9) -----------------------------------------
+
+
+def _fake_render(html_text: str, pdf_path: Path) -> None:
+    pdf_path.write_bytes(b"%PDF-1.4 fake")
+
+
+def _skills_line(markdown_path: Path) -> str:
+    text = markdown_path.read_text(encoding="utf-8")
+    return text.split("## TECHNICAL SKILLS\n", 1)[1].splitlines()[0]
+
+
+def test_confirmed_skill_enters_skills_for_its_job_only(
+    db: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(REPO_ROOT)
+    seed_resume(db)
+    confirmed = int(add_job(db, "https://example.com/jobs/confirmed"))
+    _, other_row = add_manually(
+        db, company="Other Example Co", title=ROLE, url="https://example.com/jobs/other"
+    )
+    assert other_row is not None
+    other = int(other_row["id"])
+    store_brief(db, confirmed, json.dumps({"confirmed_skills": ["Docker"]}))
+
+    def run(job_id: int) -> str:
+        result = run_tailor(
+            db,
+            job_id,
+            jd_text="React and TypeScript product role.",
+            no_ai=True,
+            render=_fake_render,
+            validate=lambda pdf_path, html_text: [],
+            output_dir=tmp_path / f"resumes-{job_id}",
+        )
+        return _skills_line(result.markdown_path)
+
+    assert "Docker" in run(confirmed)
+    assert "Docker" not in run(other)
+
+
+def test_confirmed_skill_without_source_is_refused(db: sqlite3.Connection) -> None:
+    seed_resume(db)
+    with pytest.raises(BriefError, match="not found in all_skills or the truth documents: Haskell"):
+        store_brief(db, 7, json.dumps({"confirmed_skills": ["Docker", "Haskell"]}))
+    assert get_document(db, "application_brief", "7") is None
+
+
+def test_a_confirmed_skill_must_be_a_whole_word_in_the_truth(db: sqlite3.Connection) -> None:
+    # "duct" sits inside "production" in the truth line. A substring match
+    # would accept a skill the candidate never named.
+    seed_resume(db)
+    with pytest.raises(BriefError, match="duct"):
+        store_brief(db, 7, json.dumps({"confirmed_skills": ["duct"]}))

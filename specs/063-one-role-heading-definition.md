@@ -215,8 +215,9 @@ named them.
   `main` and the branch; that is a check, not a criterion.
 - [ ] Spec 062's separator tests pass unedited:
   `test_organization_containing_the_title_separator_is_refused`,
-  `test_organization_ending_in_the_separators_dash_is_refused`,
-  `test_organization_made_of_dashes_elsewhere_still_splits_exactly`,
+  `test_organization_ending_in_a_dash_is_refused_as_punctuation`,
+  `test_organization_with_commas_elsewhere_still_splits_exactly`
+  (both renamed by spec 071, see "Amended by spec 071"),
   `test_title_containing_the_separator_stays_one_role`.
 - [ ] `render_html` on a markdown whose `## EXPERIENCE` section holds a
   `### ` line with no separator raises `ValueError` matching `role
@@ -275,6 +276,29 @@ bundle hash identically to `main`; the validator agrees with the old
 hand-written check on every string up to length 8 over `A`, space,
 U+2014, and tab; and each of the three sites, put back on its own copy
 of the separator, fails the drift test.
+
+## Amended by spec 071
+
+The separator is now `", "`, a comma and a space, not U+2014 with spaces.
+The resume carries no dash as punctuation (spec 071, O1 and O2). The one
+definition did what this spec built it for: the writer, the parser and
+the validator moved together with one edit in `heading.py`.
+
+Two verdicts changed with it:
+
+- The message for an organization containing the separator names it:
+  `roles[<i>].organization must not contain the title separator ', '`.
+  "Or end with its dash" is gone. An organization ending in a comma still
+  splits back exactly, because the split falls on the first comma that a
+  space follows.
+- An organization ending in a dash, the case the local review of PR #73
+  found, is now refused by spec 071 O3 as a dash used as punctuation,
+  naming the mark. `test_organization_ending_in_a_dash_is_refused_as_punctuation`
+  replaces the test that pinned the old message.
+
+The heading line now reads `### `, the organization, `, `, the title, and
+` (<type>)` when the role has an employment type
+(`test_role_heading_line_is_written_exactly_as_it_always_was`).
 
 ## Proof / origin
 

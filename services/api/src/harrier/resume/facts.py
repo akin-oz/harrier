@@ -77,4 +77,5 @@ def role_period_label(role: ResumeRole, as_of: date | None = None) -> str:
     start = role_start_date(role)
     end = role_end_date(role)
     end_label = format_month_year(end) if end else "Present"
-    return f"{format_month_year(start)} – {end_label}"  # noqa: RUF001 (parity: en dash)
+    # "to", not an en dash: the resume carries no dash as punctuation (spec 071).
+    return f"{format_month_year(start)} to {end_label}"

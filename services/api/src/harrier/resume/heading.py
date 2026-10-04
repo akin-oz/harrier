@@ -19,7 +19,8 @@ changing it moves every caller at once.
 
 from __future__ import annotations
 
-TITLE_SEPARATOR = " \u2014 "
+# A comma, not a dash: the resume carries no dash as punctuation (spec 071).
+TITLE_SEPARATOR = ", "
 
 
 def role_heading(organization: str, title: str, employment_type: str) -> str:

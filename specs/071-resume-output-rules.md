@@ -69,29 +69,70 @@ synthetic bundle and the spec 070 Weflow fixture.
 
 | Criterion | Proof |
 |---|---|
-| O1 generated CV text has no forbidden dash | test_generated_resume_text_has_no_dash_punctuation, over markdown and HTML for the Weflow fixture and a React posting |
-| O1 the check itself fails on each mark | test_dash_check_catches_each_mark, parametrized over em dash, en dash, `--`, spaced hyphen |
-| O2 title, heading and period formats | test_title_uses_comma_separator, test_role_heading_uses_comma_separator_and_splits_back, test_period_reads_to_present |
-| O3 a bundle bullet with an em dash is refused by path | test_bundle_string_with_dash_punctuation_is_refused_by_name |
-| O4 core Direct achievements lead | test_achievements_ordered_by_core_requirement_evidence |
-| O4 model order cannot move a core achievement down | test_ai_order_breaks_ties_only |
-| O5 a competing-framework achievement is demoted | test_vue_achievement_demoted_for_react_posting |
-| O6 a principal requested role never yields a principal title | test_principal_requested_role_keeps_canonical_title |
-| O6 a staff title without a record is refused | test_plan_refuses_unbacked_seniority_title |
-| O7 the statement replaces the derived phrase | test_experience_statement_replaces_derived_phrase |
-| O7 a statement claiming more years is refused | test_experience_statement_with_larger_years_is_refused |
-| O8 "10+ years" and "a decade" are refused | test_rendered_resume_refuses_inflated_years, parametrized |
-| O9 a confirmed skill in all_skills enters for that job only | test_confirmed_skill_enters_skills_for_its_job_only (in `test_apply_brief.py`) |
-| O9 a confirmed skill outside every source is refused on set | test_confirmed_skill_without_source_is_refused (in `test_apply_brief.py`) |
-| O10 the profile lead has no hedge word | test_profile_lead_has_no_hedge_words |
+| O1 generated CV text has no forbidden dash | `test_generated_resume_text_has_no_dash_punctuation`, over markdown and HTML for the Weflow fixture and a React posting |
+| O1 the check itself fails on each mark | `test_dash_check_catches_each_mark`, parametrized over em dash, en dash, `--`, spaced hyphen |
+| O2 title, heading and period formats | `test_title_uses_comma_separator`, `test_role_heading_uses_comma_separator_and_splits_back`, `test_period_reads_to_present` |
+| O3 a bundle string with a dash is refused by path | `test_bundle_string_with_dash_punctuation_is_refused_by_name`, `test_education_with_dash_punctuation_is_refused_by_name`, `test_organization_ending_in_a_dash_is_refused_as_punctuation` |
+| O4 core Direct achievements lead | `test_achievements_ordered_by_core_requirement_evidence` |
+| O4 model order cannot move a core achievement down | `test_ai_order_breaks_ties_only` |
+| O5 a competing-framework achievement is demoted | `test_vue_achievement_demoted_for_react_posting` |
+| O6 a principal requested role never yields a principal title | `test_principal_requested_role_keeps_canonical_title` |
+| O6 a staff title without a record is refused | `test_plan_refuses_unbacked_seniority_title` |
+| O7 the statement replaces the derived phrase | `test_experience_statement_replaces_derived_phrase` |
+| O7 a statement claiming more years is refused | `test_experience_statement_with_larger_years_is_refused` |
+| O8 "10+ years" and "a decade" are refused | `test_rendered_resume_refuses_inflated_years`, parametrized |
+| O9 a confirmed skill in all_skills enters for that job only | `test_confirmed_skill_enters_skills_for_its_job_only` (in `test_apply_brief.py`) |
+| O9 a confirmed skill outside every source is refused on set | `test_confirmed_skill_without_source_is_refused`, `test_a_confirmed_skill_must_be_a_whole_word_in_the_truth` (in `test_apply_brief.py`) |
+| O10 the profile lead has no hedge word | `test_profile_lead_has_no_hedge_words` |
 
-- [ ] the spec 063 tests move with the separator and stay green
-- [ ] spec 063's text is amended to name `", "` as the separator
-- [ ] `config/resume-content.example.json` and
+- [x] the spec 063 tests move with the separator and stay green
+- [x] spec 063's text is amended to name `", "` as the separator (section
+      "Amended by spec 071")
+- [x] `config/resume-content.example.json` and
       `config/application-brief.example.json` show the new optional keys
       with synthetic values
-- [ ] each criterion's test fails when its behavior is removed
+- [x] each criterion's test fails when its behavior is removed: checked by
+      disabling each behavior in turn (19 mutants, all failed a test)
 - [ ] `npx aie check` and `just check` green
+
+## What the implementation decided
+
+Recorded here so the spec and the code agree.
+
+- **The resume HTML template's `<title>`** read `{{name}} \u2014 Resume`
+  and is now `{{name}}, Resume` (`templates/resume-template.html`). The
+  template was not in Scope; O1 covers the HTML and PDF text, and the
+  title is part of both. The cover letter template carries the same em
+  dash and is left to the letter path (see Out of scope).
+- **O11 names resume text only.** The rule added to
+  `.ai/rules/product-invariants.md` says generated resume text. Letters
+  still carry an em dash in their template, so a rule naming them would be
+  false until the letter path changes.
+- **O7 wording.** With `experience_statement` set, the profile lead is
+  `<identity> building user-facing web products with <skills>.` followed
+  by the statement as its own sentence, first letter capitalized. The
+  plan and the rendered markdown check that the statement is present,
+  case-insensitively, in place of the derived label.
+- **O7 and O8 share one year counter** (`year_counts` in `content.py`).
+  The bundle parser counts against today, the plan and the markdown
+  against the plan's computed label, so a test on a fixed date and a run
+  today read the same rule.
+- **O3 covers education too.** `degree` and `school` are emitted and are
+  parsed apart from the other strings (spec 059), so they get the same
+  refusal there.
+- **O4 and O5 run inside `build_content_plan` as well as after the model.**
+  A run without AI gets the same order. Dated achievements also sort last
+  in O4's order, not only in selection.
+- **O9 matches whole words.** A confirmed skill found only inside another
+  word of the truth documents ("duct" in "production") is refused.
+- **Specs 062 and 063 cite the renamed separator tests.** Their
+  acceptance lists now name
+  `test_organization_ending_in_a_dash_is_refused_as_punctuation` and
+  `test_organization_with_commas_elsewhere_still_splits_exactly`, each with
+  a note that spec 071 renamed it.
+- **`plan` imports `evaluation` inside two functions.** At module level
+  the import closes a cycle through `harrier.apply` (the letters module
+  imports the markdown writer, which imports `plan`).
 
 ## Data and privacy
 

@@ -37,11 +37,15 @@ from harrier.resume import (
     validate_content_plan,
 )
 from harrier.resume.content import load_bundle
+from harrier.resume.dashes import dash_marks
+from harrier.resume.facts import role_period_label
+from harrier.resume.heading import role_heading, split_role_heading
 from harrier.resume.markdown import (
     UnverifiedClaimError,
     resolve_bullets,
     validate_rendered_markdown,
 )
+from harrier.resume.plan import HEDGE_WORDS
 from harrier.resume.ranking import rank_bullet_ids
 from harrier.resume.tailor import resume_paths_for, run_tailor
 from harrier.tracker import add_job, get_job
@@ -119,7 +123,7 @@ def test_markdown_header_uses_grounded_title_not_requested_identity(
     markdown = build_markdown(bundle, sources, plan)
     lines = [line for line in markdown.splitlines() if line.strip()]
     assert lines[0] == "# Deniz Örnek"
-    assert lines[1] == "Senior Frontend Engineer — TypeScript & Vue 3"
+    assert lines[1] == "Senior Frontend Engineer, TypeScript & Vue 3"
     assert lines[2] == "Exampleland | deniz@example.com | linkedin.com/in/deniz-ornek"
     assert "Tailored for" not in markdown
     # Against the CURRENT request. The old string named a role REQUESTED_ROLE
@@ -178,7 +182,7 @@ def test_html_header_uses_grounded_markdown_title(
     markdown = build_markdown(bundle, sources, plan)
     html = render_html(markdown, bundle, template_dir=REPO_ROOT / "templates")
     assert "Tailored for" not in html
-    assert ">Senior Frontend Engineer — TypeScript &amp; Vue 3<" in html
+    assert ">Senior Frontend Engineer, TypeScript &amp; Vue 3<" in html
     assert ">LinkedIn<" not in html
     assert ">linkedin.com/in/deniz-ornek<" in html
     assert 'href="https://linkedin.com/in/deniz-ornek"' in html
@@ -357,7 +361,9 @@ UNMARKED_LINE_STARTS = [
 ]
 
 LINE_BOUNDARY_CODES = (0x0A, 0x0D, 0x0B, 0x0C, 0x1C, 0x1D, 0x1E, 0x85, 0x2028, 0x2029)
-TITLE_SEPARATOR = " \u2014 "
+# The role heading separator, pinned here so changing it is deliberate. A
+# comma since spec 071: the resume carries no dash as punctuation.
+TITLE_SEPARATOR = ", "
 
 _PATH_STEP = re.compile(r"([a-z_]+)(?:\[([^\]]+)\])?")
 
@@ -525,35 +531,29 @@ def test_organization_containing_the_title_separator_is_refused() -> None:
     raw = _mutated(("roles[0].organization", f"Acme{TITLE_SEPARATOR}Talent"))
     with pytest.raises(
         ResumeBundleError,
-        match=(
-            r"roles\[0\]\.organization must not contain the title separator "
-            r"or end with its dash"
-        ),
+        match=r"roles\[0\]\.organization must not contain the title separator ', '",
     ):
         parse_bundle(raw)
 
 
-@pytest.mark.parametrize("tail", [" \u2014", " \u2014 ", " \u2014\t"])
-def test_organization_ending_in_the_separators_dash_is_refused(tail: str) -> None:
-    """The writer trims the organization and appends its own separator, so a
-    trailing dash made a doubled one: the split fell a dash early and the
-    title rendered with the organization's dash in front of it (local review
-    of PR #73)."""
+@pytest.mark.parametrize("tail", [" \u2014", " \u2014 ", " \u2013", " -- "])
+def test_organization_ending_in_a_dash_is_refused_as_punctuation(tail: str) -> None:
+    """Under the old em dash separator a trailing dash made a doubled one and
+    the split fell a dash early (local review of PR #73). Spec 071 refuses
+    any dash as punctuation in an emitted string, which covers that case and
+    names the mark."""
     raw = _mutated(("roles[0].organization", f"Acme Talent{tail}"))
     with pytest.raises(
         ResumeBundleError,
-        match=(
-            r"roles\[0\]\.organization must not contain the title separator "
-            r"or end with its dash"
-        ),
+        match=r"roles\[0\]\.organization must not use a dash as punctuation",
     ):
         parse_bundle(raw)
 
 
-def test_organization_made_of_dashes_elsewhere_still_splits_exactly() -> None:
+def test_organization_with_commas_elsewhere_still_splits_exactly() -> None:
     """The rule is about where the first separator falls, not about the
-    dash: a leading one, or one with no spaces around it, splits cleanly."""
-    for organization in ("\u2014 Acme", "Acme\u2014Talent", "Acme \u2014Talent"):
+    comma: one with no space after it splits cleanly."""
+    for organization in ("Acme,Talent", "Acme ,Talent"):
         html = _render(_mutated(("roles[0].organization", organization)))
         assert f'<p class="company">{organization}</p>' in html
 
@@ -584,7 +584,7 @@ def test_role_heading_line_is_written_exactly_as_it_always_was() -> None:
     the format is a visible, deliberate act and not a side effect of moving
     the code that builds it."""
     assert _role_heading_lines(load_raw_bundle())[0] == (
-        "### Acme Talent \u2014 Senior Frontend Engineer (Freelance)"
+        "### Acme Talent, Senior Frontend Engineer (Freelance)"
     )
 
 
@@ -593,7 +593,7 @@ def test_role_without_an_employment_type_has_no_suffix_and_splits_back() -> None
     role = cast("list[dict[str, object]]", raw["roles"])[1]
     assert role["employment_type"] == ""
 
-    assert _role_heading_lines(raw)[1] == f"### {role['organization']} \u2014 {role['title']}"
+    assert _role_heading_lines(raw)[1] == f"### {role['organization']}, {role['title']}"
     parts = _rendered_parts(_render(raw))
     assert parts["companies"][1] == role["organization"]
     assert parts["role_titles"][1] == role["title"]
@@ -654,7 +654,7 @@ def test_changing_the_one_separator_moves_writer_parser_and_validator(
     ("experience", "position"),
     [
         ("### Acme Talent\nOct 2023\n- did a thing", 1),
-        ("### Acme \u2014 Engineer\nOct 2023\n- did a thing\n\n### Exampleworks\nJan 2014", 2),
+        ("### Acme, Engineer\nOct 2023\n- did a thing\n\n### Exampleworks\nJan 2014", 2),
     ],
     ids=["first-heading", "second-heading"],
 )
@@ -810,7 +810,7 @@ def test_vue_target_prioritizes_vue_and_nuxt_over_react(bundle: ResumeBundle) ->
 
 def test_ended_client_engagement_never_renders_as_present(bundle: ResumeBundle) -> None:
     plan = build_content_plan(bundle, "React TypeScript", "Senior Frontend Engineer", AS_OF)
-    assert plan.role_periods["r1"] == "Oct 2023 – Mar 2025"  # noqa: RUF001
+    assert plan.role_periods["r1"] == "Oct 2023 to Mar 2025"
     assert "Present" not in plan.role_periods["r1"]
     assert validate_content_plan(plan, bundle) == []
 
@@ -1215,3 +1215,190 @@ def test_passing_pdf_gate_updates_tracker_and_writes_artifacts(tailor_env: int) 
     assert metadata["ai_tailored"] is False
     assert "Tailored for" not in result.markdown_path.read_text(encoding="utf-8")
     assert get_job(conn, tailor_env)["status"] == "tailored_cv_requested"
+
+
+# ---------------------------------------------------------------------------
+# Resume output rules (spec 071)
+# ---------------------------------------------------------------------------
+
+WEFLOW_POSTING = Path(__file__).parent / "fixtures" / "resume" / "weflow-senior-principal.txt"
+REACT_POSTING = "Requirements\n- Must have React and Next.js experience.\n"
+STORYBOOK_POSTING = (
+    "Requirements\n- Must have Storybook experience.\nNice to have\n- Lighthouse audits.\n"
+)
+
+
+def _visible_text(html_text: str) -> str:
+    """What a reader of the HTML or the PDF sees: no style, script, comment
+    or tag, entities decoded."""
+    import html as html_module
+
+    stripped = re.sub(r"<(style|script)\b.*?</\1>", " ", html_text, flags=re.DOTALL)
+    stripped = re.sub(r"<!--.*?-->", " ", stripped, flags=re.DOTALL)
+    return html_module.unescape(re.sub(r"<[^>]+>", " ", stripped))
+
+
+@pytest.mark.parametrize("posting", ["weflow", "react"])
+def test_generated_resume_text_has_no_dash_punctuation(
+    bundle: ResumeBundle, sources: TruthSources, posting: str
+) -> None:
+    jd = WEFLOW_POSTING.read_text(encoding="utf-8") if posting == "weflow" else REACT_POSTING
+    plan = build_content_plan(bundle, jd, "Senior/Principal Software Engineer", AS_OF)
+    markdown = build_markdown(bundle, sources, plan)
+    html = render_html(markdown, bundle, template_dir=REPO_ROOT / "templates")
+    assert dash_marks(markdown) == []
+    assert dash_marks(_visible_text(html)) == []
+
+
+@pytest.mark.parametrize(
+    "line", ["Extra \u2014 text", "Extra \u2013 text", "Extra -- text", "Extra - text"]
+)
+def test_dash_check_catches_each_mark(
+    bundle: ResumeBundle, sources: TruthSources, line: str
+) -> None:
+    plan = build_content_plan(bundle, REACT_POSTING, "Senior Frontend Engineer", AS_OF)
+    markdown = build_markdown(bundle, sources, plan) + f"\n{line}\n"
+    errors = validate_rendered_markdown(markdown, plan, bundle)
+    assert any("dash as punctuation" in error for error in errors)
+
+
+def test_title_uses_comma_separator(bundle: ResumeBundle) -> None:
+    title = build_presentation_title(bundle, "Senior Frontend Engineer", REACT_POSTING, AS_OF)
+    assert title.startswith(f"{bundle.primary_identity}, ")
+    assert dash_marks(title) == []
+
+
+def test_role_heading_uses_comma_separator_and_splits_back() -> None:
+    heading = role_heading("Acme Talent", "Senior Frontend Engineer", "Freelance")
+    assert heading == "Acme Talent, Senior Frontend Engineer (Freelance)"
+    assert split_role_heading(heading) == ("Acme Talent", "Senior Frontend Engineer (Freelance)")
+
+
+def test_period_reads_to_present() -> None:
+    raw = load_raw_bundle()
+    role = cast("list[dict[str, Any]]", raw["roles"])[0]
+    del role["period"]["end"]
+    current = parse_bundle(raw).roles[0]
+    assert role_period_label(current, AS_OF) == "Oct 2023 to Present"
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "named"),
+    [
+        ("bullet_pool[r1_b1]", "Took over \u2014 the platform.", "em dash"),
+        ("roles[0].title", "Senior \u2013 Frontend Engineer", "en dash"),
+        ("profile_summary", "Builds products -- carefully.", "double hyphen"),
+    ],
+)
+def test_bundle_string_with_dash_punctuation_is_refused_by_name(
+    path: str, value: str, named: str
+) -> None:
+    with pytest.raises(ResumeBundleError) as refused:
+        parse_bundle(_mutated((path, value)))
+    assert f"{path} must not use a dash as punctuation ({named})" in str(refused.value)
+
+
+def test_education_with_dash_punctuation_is_refused_by_name() -> None:
+    with pytest.raises(ResumeBundleError, match=r"education\[0\] degree must not use a dash"):
+        _bundle_with_education([{"degree": "MSc \u2014 X", "school": "U1"}])
+
+
+def test_achievements_ordered_by_core_requirement_evidence(bundle: ResumeBundle) -> None:
+    plan = build_content_plan(bundle, STORYBOOK_POSTING, "Senior Frontend Engineer", AS_OF)
+    # ach_5 names Storybook, the one core requirement. Ranking alone puts the
+    # quantified achievements first.
+    assert plan.selected_achievements[0] == "ach_5"
+
+
+def test_ai_order_breaks_ties_only(tailor_env: int, monkeypatch: pytest.MonkeyPatch) -> None:
+    conn = connect()
+    bundle = parse_bundle(load_raw_bundle())
+    planned = build_content_plan(bundle, STORYBOOK_POSTING, "Senior Frontend Engineer")
+
+    def reversed_order(*args: object, **kwargs: object) -> dict[str, list[str]]:
+        return {"selected_achievements": list(reversed(planned.selected_achievements))}
+
+    monkeypatch.setattr("harrier.resume.tailor.build_ai_tailored_content", reversed_order)
+    result = run_tailor(
+        conn,
+        tailor_env,
+        jd_text=STORYBOOK_POSTING,
+        render=_fake_render,
+        validate=lambda pdf_path, html_text: [],
+    )
+    markdown = result.markdown_path.read_text(encoding="utf-8")
+    achievements = markdown.split("## SELECTED ACHIEVEMENTS\n", 1)[1].split("\n\n", 1)[0]
+    assert achievements.splitlines()[0] == f"- {bundle.bullet_pool['ach_5']}"
+    # The rest follow the model's order.
+    rest = [line.removeprefix("- ") for line in achievements.splitlines()[1:]]
+    expected = [
+        bundle.bullet_pool[item]
+        for item in reversed(planned.selected_achievements)
+        if item != "ach_5"
+    ]
+    assert rest == expected
+
+
+def test_vue_achievement_demoted_for_react_posting(bundle: ResumeBundle) -> None:
+    # ach_4 is built on Nuxt and names nothing the posting asks for, while the
+    # posting names Next.js. Four other achievements qualify, so it drops.
+    plan = build_content_plan(bundle, REACT_POSTING, "Senior Frontend Engineer", AS_OF)
+    assert "ach_4" not in plan.selected_achievements
+    assert len(plan.selected_achievements) == 4
+
+
+def test_principal_requested_role_keeps_canonical_title(bundle: ResumeBundle) -> None:
+    jd = WEFLOW_POSTING.read_text(encoding="utf-8")
+    plan = build_content_plan(bundle, jd, "Senior/Principal Software Engineer", AS_OF)
+    assert "principal" not in plan.title.lower()
+    assert plan.title.startswith(bundle.primary_identity)
+
+
+def test_plan_refuses_unbacked_seniority_title(bundle: ResumeBundle) -> None:
+    plan = build_content_plan(bundle, REACT_POSTING, "Senior Frontend Engineer", AS_OF)
+    errors = validate_content_plan(replace(plan, title="Principal Frontend Engineer"), bundle)
+    assert "presentation title claims an unbacked principal level" in errors
+
+
+def test_experience_statement_replaces_derived_phrase() -> None:
+    raw = load_raw_bundle()
+    candidate = cast("dict[str, Any]", raw["candidate"])
+    candidate["experience_statement"] = "professional career since 2014, 12+ years in software"
+    with_statement = build_content_plan(parse_bundle(raw), REACT_POSTING, "Engineer", AS_OF)
+    del candidate["experience_statement"]
+    derived = build_content_plan(parse_bundle(raw), REACT_POSTING, "Engineer", AS_OF)
+
+    assert "Professional career since 2014, 12+ years in software." in with_statement.profile
+    assert "of professional experience" not in with_statement.profile
+    assert "12+ years of professional experience" in derived.profile
+
+
+def test_experience_statement_with_larger_years_is_refused() -> None:
+    raw = load_raw_bundle()
+    cast("dict[str, Any]", raw["candidate"])["experience_statement"] = "40+ years in software"
+    with pytest.raises(ResumeBundleError, match="experience_statement states 40 years"):
+        parse_bundle(raw)
+
+
+@pytest.mark.parametrize("claim", ["13+ years of experience", "over a decade", "two decades"])
+def test_rendered_resume_refuses_inflated_years(
+    bundle: ResumeBundle, sources: TruthSources, claim: str
+) -> None:
+    plan = build_content_plan(bundle, REACT_POSTING, "Senior Frontend Engineer", AS_OF)
+    markdown = build_markdown(bundle, sources, plan) + f"\nBuilt products for {claim}.\n"
+    errors = validate_rendered_markdown(markdown, plan, bundle)
+    assert any("years; the record holds 12" in error or "decades" in error for error in errors)
+
+
+def test_profile_lead_has_no_hedge_words() -> None:
+    raw = load_raw_bundle()
+    plan = build_content_plan(parse_bundle(raw), REACT_POSTING, "Engineer", AS_OF)
+    assert not any(re.search(rf"\b{word}\b", plan.profile, re.IGNORECASE) for word in HEDGE_WORDS)
+    cast("dict[str, Any]", raw["candidate"])["experience_statement"] = (
+        "perhaps a long professional career"
+    )
+    hedged = parse_bundle(raw)
+    errors = validate_content_plan(
+        build_content_plan(hedged, REACT_POSTING, "Engineer", AS_OF), hedged
+    )
+    assert "profile lead hedges: perhaps" in errors

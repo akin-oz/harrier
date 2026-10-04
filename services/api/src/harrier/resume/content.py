@@ -15,6 +15,8 @@ import sqlite3
 from dataclasses import dataclass, field
 from typing import cast
 
+from harrier.resume import heading as heading_module
+from harrier.resume.dashes import dash_marks, describe
 from harrier.resume.heading import role_heading, split_role_heading
 
 RESUME_DATA_KIND = "resume_data"
@@ -85,6 +87,9 @@ class ResumeBundle:
     education: tuple[EducationEntry, ...]
     certifications: tuple[str, ...]
     profile_summary: str = ""
+    # The operator's own wording for their experience, used in place of the
+    # derived "<N>+ years of professional experience" (spec 071 O7).
+    experience_statement: str = ""
     ownership_terms: tuple[str, ...] = field(
         default=("owned", "led", "designed", "established", "authored")
     )
@@ -234,6 +239,13 @@ def _parse_education(raw: object, errors: list[str]) -> tuple[EducationEntry, ..
             if not _is_single_line(value):
                 errors.append(f"education[{index}] {key} must be a single line")
                 continue
+            marks = dash_marks(value)
+            if marks:
+                errors.append(
+                    f"education[{index}] {key} must not use a dash as punctuation "
+                    f"({describe(marks)})"
+                )
+                continue
             if key == "school" and _starts_with_heading_marker(value):
                 errors.append(f"education[{index}] school must not start with a heading marker")
                 continue
@@ -275,6 +287,9 @@ def _check_emitted(
         return
     if not _is_single_line(value):
         errors.append(f"{path} must be a single line")
+    marks = dash_marks(value)
+    if marks:
+        errors.append(f"{path} must not use a dash as punctuation ({describe(marks)})")
     if begins_unmarked_line and _starts_with_heading_marker(value):
         errors.append(f"{path} must not start with a heading marker")
 
@@ -317,6 +332,9 @@ def _check_markdown_structure(data: dict[str, object], errors: list[str]) -> Non
             errors,
             begins_unmarked_line=True,
         )
+        _check_emitted(
+            "candidate.experience_statement", candidate.get("experience_statement"), errors
+        )
         _check_emitted_list(
             "candidate.positioning_technologies",
             candidate.get("positioning_technologies"),
@@ -338,7 +356,7 @@ def _check_markdown_structure(data: dict[str, object], errors: list[str]) -> Non
             ):
                 errors.append(
                     f"roles[{index}].organization must not contain the title separator "
-                    "or end with its dash"
+                    f"{heading_module.TITLE_SEPARATOR!r}"
                 )
 
     # Any entry can rank first and so begin the skills line. `verified_skills`
@@ -352,6 +370,34 @@ def _check_markdown_structure(data: dict[str, object], errors: list[str]) -> Non
     if isinstance(pool_raw, dict):
         for bullet_id, text in cast("dict[object, object]", pool_raw).items():
             _check_emitted(f"bullet_pool[{bullet_id}]", text, errors)
+
+
+_YEAR_COUNT = re.compile(r"\b(\d{1,3})\s*\+?\s*years?\b", re.IGNORECASE)
+
+
+def year_counts(text: str) -> list[int]:
+    """Every "<N> years" or "<N>+ years" the text states."""
+    return [int(match.group(1)) for match in _YEAR_COUNT.finditer(text)]
+
+
+def _check_experience_statement(bundle: ResumeBundle, errors: list[str]) -> None:
+    """The operator's wording may not state more years than the record
+    holds (spec 071 O7), counted to today."""
+    if not bundle.experience_statement or not bundle.roles:
+        return
+    # Imported here: facts reads the bundle type defined in this module.
+    from harrier.resume.facts import professional_experience_years
+
+    try:
+        computed = professional_experience_years(bundle)
+    except ValueError:
+        return
+    larger = [count for count in year_counts(bundle.experience_statement) if count > computed]
+    if larger:
+        errors.append(
+            f"candidate.experience_statement states {max(larger)} years; "
+            f"the record holds {computed}"
+        )
 
 
 def parse_bundle(raw: object) -> ResumeBundle:
@@ -444,7 +490,9 @@ def parse_bundle(raw: object) -> ResumeBundle:
         education=_parse_education(data.get("education"), errors),
         certifications=_str_tuple(data.get("certifications")),
         profile_summary=str(data.get("profile_summary") or ""),
+        experience_statement=str(candidate.get("experience_statement") or "").strip(),
     )
+    _check_experience_statement(bundle, errors)
     if not bundle.positioning_technologies:
         errors.append("candidate has no positioning_technologies")
     _check_markdown_structure(data, errors)
