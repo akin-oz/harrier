@@ -547,6 +547,26 @@ def test_a_delete_that_succeeds_is_never_reported_as_failed(
     assert "Example Co" in body["error"]
 
 
+def test_two_broken_kinds_each_carry_their_own_error(
+    client: TestClient, db: sqlite3.Connection, tmp_path: Path
+) -> None:
+    store_raw(db, FEEDS, json.dumps([7]))
+    write_holds(tmp_path, "Example Co,cooldown,soon,\n")
+    by_kind = {entry["kind"]: entry for entry in client.get("/config").json()}
+    assert "entries must be strings" in by_kind[FEEDS]["error"]
+    assert "Example Co" in by_kind[COMPANY_HOLDS]["error"]
+    assert by_kind[DISCOVERY]["error"] is None
+
+
+def test_a_delete_with_nothing_stored_and_a_broken_file_still_answers(
+    client: TestClient, tmp_path: Path
+) -> None:
+    write_holds(tmp_path, "Example Co,cooldown,soon,\n")
+    response = client.delete("/config/company_holds", headers=auth())
+    assert response.status_code == 200
+    assert "Example Co" in response.json()["error"]
+
+
 def test_put_repairs_a_broken_kind(client: TestClient, db: sqlite3.Connection) -> None:
     store_raw(db, FEEDS, json.dumps([7]))
     response = client.put("/config/feeds", json={"value": EXAMPLE_FEEDS}, headers=auth())

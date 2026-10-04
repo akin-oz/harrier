@@ -124,13 +124,15 @@ generated types, so a typed client sees it.
 
 - **Two kinds broken at once:** both are listed, each with its own `error`;
   the healthy kinds still read.
+  `test_two_broken_kinds_each_carry_their_own_error`.
 - **A stored row that is not valid JSON**, and one that is valid JSON of the
   wrong shape: both are `source: store` with `error`. The messages differ,
   as `get_config` writes them.
 - **A stored `company_holds` row with a malformed date**, written around
   `set_config`: `source: store` with the error naming the company.
 - **`DELETE` on a kind with no stored row and a broken fallback:** answers
-  200 with the fallback's `error`. It answers 500 today.
+  200 with the fallback's `error`. It answered 500 before this spec.
+  `test_a_delete_with_nothing_stored_and_a_broken_file_still_answers`.
 - **`PUT` on one kind while another is broken:** unaffected, as today.
 - **The kind is repaired:** the next read has `error: null` and the value.
   Nothing is cached.
