@@ -460,6 +460,129 @@ def test_the_api_shows_stored_holds_as_written_and_file_holds_as_active(
     assert from_store["value"] == written
 
 
+# --- a broken kind is described, not raised (spec 073) -------------------------
+
+
+def store_raw(db: sqlite3.Connection, kind: str, raw: str) -> None:
+    """A row written around set_config: a hand-edited database, a restored
+    backup, a future migration."""
+    db.execute("INSERT INTO user_config (kind, value) VALUES (?, ?)", (kind, raw))
+    db.commit()
+
+
+def test_one_broken_kind_does_not_hide_the_others(
+    client: TestClient, db: sqlite3.Connection
+) -> None:
+    store_raw(db, FEEDS, json.dumps([7]))
+    response = client.get("/config")
+    assert response.status_code == 200
+    by_kind = {entry["kind"]: entry for entry in response.json()}
+    assert set(by_kind) == set(KINDS)
+    broken = by_kind[FEEDS]
+    assert broken["source"] == "store"
+    assert broken["value"] is None
+    assert "entries must be strings" in broken["error"]
+    assert broken["updated_at"]
+    assert all(by_kind[kind]["error"] is None for kind in KINDS if kind != FEEDS)
+
+
+def test_a_broken_stored_kind_is_described_not_raised(
+    client: TestClient, db: sqlite3.Connection
+) -> None:
+    store_raw(db, FEEDS, json.dumps([7]))
+    response = client.get("/config/feeds")
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["source"], body["value"]) == ("store", None)
+    assert "entries must be strings" in body["error"]
+
+
+def test_a_stored_row_that_is_not_json_is_described(
+    client: TestClient, db: sqlite3.Connection
+) -> None:
+    store_raw(db, FEEDS, "not json [")
+    body = client.get("/config/feeds").json()
+    assert (body["source"], body["value"]) == ("store", None)
+    assert "not valid JSON" in body["error"]
+
+
+def test_a_broken_stored_row_does_not_fall_back_to_the_file(
+    client: TestClient, db: sqlite3.Connection, tmp_path: Path
+) -> None:
+    # Discovery reads the same row and fails on it, so showing the file's
+    # healthy value would describe configuration nothing uses.
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / "feeds.txt").write_text("https://boards.greenhouse.io/from-file\n", encoding="utf-8")
+    store_raw(db, FEEDS, json.dumps([7]))
+    body = client.get("/config/feeds").json()
+    assert body["source"] == "store"
+    assert body["value"] is None
+    assert body["error"]
+
+
+def test_a_broken_hold_file_is_described_with_the_company(
+    client: TestClient, tmp_path: Path
+) -> None:
+    write_holds(tmp_path, "Example Co,cooldown,soon,\n")
+    response = client.get("/config/company_holds")
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["source"], body["value"], body["updated_at"]) == ("file", None, None)
+    assert "Example Co" in body["error"]
+
+
+def test_a_delete_that_succeeds_is_never_reported_as_failed(
+    client: TestClient, db: sqlite3.Connection, tmp_path: Path
+) -> None:
+    write_holds(tmp_path, "Example Co,cooldown,soon,\n")
+    client.put("/config/company_holds", json={"value": ["Other Co"]}, headers=auth())
+
+    response = client.delete("/config/company_holds", headers=auth())
+
+    assert response.status_code == 200
+    assert get_config(db, COMPANY_HOLDS) is None
+    body = response.json()
+    assert body["source"] == "file"
+    assert "Example Co" in body["error"]
+
+
+def test_two_broken_kinds_each_carry_their_own_error(
+    client: TestClient, db: sqlite3.Connection, tmp_path: Path
+) -> None:
+    store_raw(db, FEEDS, json.dumps([7]))
+    write_holds(tmp_path, "Example Co,cooldown,soon,\n")
+    by_kind = {entry["kind"]: entry for entry in client.get("/config").json()}
+    assert "entries must be strings" in by_kind[FEEDS]["error"]
+    assert "Example Co" in by_kind[COMPANY_HOLDS]["error"]
+    assert by_kind[DISCOVERY]["error"] is None
+
+
+def test_a_delete_with_nothing_stored_and_a_broken_file_still_answers(
+    client: TestClient, tmp_path: Path
+) -> None:
+    write_holds(tmp_path, "Example Co,cooldown,soon,\n")
+    response = client.delete("/config/company_holds", headers=auth())
+    assert response.status_code == 200
+    assert "Example Co" in response.json()["error"]
+
+
+def test_put_repairs_a_broken_kind(client: TestClient, db: sqlite3.Connection) -> None:
+    store_raw(db, FEEDS, json.dumps([7]))
+    response = client.put("/config/feeds", json={"value": EXAMPLE_FEEDS}, headers=auth())
+    assert response.status_code == 200
+    assert response.json()["error"] is None
+    assert client.get("/config/feeds").json()["value"] == EXAMPLE_FEEDS
+
+
+def test_a_healthy_kind_has_no_error(client: TestClient) -> None:
+    client.put("/config/feeds", json={"value": EXAMPLE_FEEDS}, headers=auth())
+    stored = client.get("/config/feeds").json()
+    from_file = client.get("/config/linkedin_searches").json()
+    assert (stored["source"], stored["error"]) == ("store", None)
+    assert (from_file["source"], from_file["error"]) == ("file", None)
+
+
 def test_an_unknown_kind_is_a_404_on_every_verb(client: TestClient) -> None:
     assert client.get("/config/nonsense").status_code == 404
     assert client.put("/config/nonsense", json={"value": []}, headers=auth()).status_code == 404

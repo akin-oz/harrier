@@ -310,6 +310,17 @@
       "ConfigOut": {
         "description": "One configuration kind and where its current value comes from.\n\n`source` is the point of this endpoint: a reader has to be able to tell\na value someone set from a value that is still coming out of a file,\nbecause unsetting the first restores the second (spec 023).",
         "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
           "kind": {
             "title": "Kind",
             "type": "string"
@@ -341,7 +352,8 @@
           "kind",
           "value",
           "source",
-          "updated_at"
+          "updated_at",
+          "error"
         ],
         "title": "ConfigOut",
         "type": "object"
