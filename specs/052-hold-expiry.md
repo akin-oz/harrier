@@ -39,7 +39,11 @@ The read path and the config surfaces that carry hold entries:
 - `harrier config import`, `harrier config get company_holds`,
   `GET /config/company_holds`, `PUT /config/company_holds`.
 
-The screening pipeline is unchanged: it already consumes a set of names.
+- The seen check in `screen_jobs`
+  (services/api/src/harrier/screening/pipeline.py): a posting rejected for
+  a hold is judged again once the hold is no longer active (amendment below).
+
+The pipeline otherwise consumes a set of names, as before.
 No contract change: `value` stays untyped JSON.
 
 ## Behavior
@@ -91,6 +95,12 @@ Behavior changes by surface:
 
 If several entries name the same company, the company is held while any of
 them is active.
+
+A posting skipped because of a hold is recorded in the seen store with the
+reason `hold`. Once its company has no active hold, the next discovery run
+judges it like a posting never seen before, instead of skipping it as
+seen. Every other recorded decision is still skipped. A posting whose
+company is still held stays skipped as seen.
 
 ## Failure modes
 
@@ -155,6 +165,10 @@ otherwise.
 - A stored value written before this spec (list of bare names) reads back
   without error and holds every listed company.
   `test_a_hold_list_stored_before_expiry_existed_still_holds_everyone`.
+- A posting skipped for a hold on one run is judged on the first run after
+  the hold lapses and can reach the tracker; while the hold is active a
+  repeat run skips it as seen.
+  `tests/test_discovery.py::test_a_posting_skipped_for_a_hold_is_judged_again_once_the_hold_lapses`.
 - The config surface shows stored entries as written and file holds as
   active names.
   `test_the_api_shows_stored_holds_as_written_and_file_holds_as_active`.
@@ -165,6 +179,16 @@ otherwise.
 ## What the implementation decided
 
 Recorded here so the spec and the code agree.
+
+- **Amended in review (PR #104): a lapsed hold also releases postings it
+  already skipped.** The first version changed only which companies are
+  held. The seen store remembers every hold rejection, and `screen_jobs`
+  consults it before the hold, so a posting fetched during a hold stayed
+  skipped as seen after the hold ended. That broke the promise above that a
+  hold lapses "with no write, no import, and no other action". The seen
+  check now lets such a posting through when its company has no active
+  hold. Holds are not part of the screening policy version, so spec 031's
+  `reconsider` could not have released them either.
 
 - **An empty `hold_until` in the object form means no expiry,** as an empty
   CSV cell does. It is dropped on the way in, so

@@ -391,6 +391,61 @@ def test_a_lapsed_hold_is_not_counted_as_a_hold_skip(
     assert summaries[0]["skipped_hold"] == 1
 
 
+def test_a_posting_skipped_for_a_hold_is_judged_again_once_the_hold_lapses(
+    discovery_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec 052: a lapsed hold excludes nothing, including postings it
+    already excluded. The seen store remembers the hold rejection, and was
+    consulted before the hold, so a posting fetched during the hold stayed
+    skipped as seen after the hold ended (review finding on PR #104)."""
+    holds = Path.cwd() / "config" / "companies-hold.csv"
+
+    def hold_until(day: str) -> None:
+        holds.write_text(
+            f"company,reason,hold_until,notes\nHeld Co,cooldown,{day},\n", encoding="utf-8"
+        )
+
+    def one_posting(url: str) -> list[NormalizedJob]:
+        return [
+            make_normalized_job(
+                source="greenhouse",
+                company="Held Co",
+                title="Senior Frontend Engineer",
+                location="Remote, Europe",
+                url="https://example.com/greenhouse/held",
+                description=(
+                    "TypeScript React ownership testing ci/cd strong engineering culture"
+                    " remote Europe."
+                ),
+                external_id="greenhouse-held",
+            )
+        ]
+
+    monkeypatch.setattr(discovery_module, "load_ats_feeds", _fake_feeds)
+    monkeypatch.setattr(discovery_module, "fetch_greenhouse_jobs", one_posting)
+    options = DiscoveryOptions(notify=False, only_sources=frozenset({"greenhouse"}))
+    conn = connect()
+
+    hold_until("2999-12-31")
+    held = run_discovery(conn, options)
+    assert cast("list[dict[str, object]]", held["source_summaries"])[0]["skipped_hold"] == 1
+    assert list_jobs(conn) == []
+
+    # Still held on the next run: skipped as seen, not judged again.
+    still_held = run_discovery(conn, options)
+    assert cast("list[dict[str, object]]", still_held["source_summaries"])[0]["skipped_seen"] == 1
+    assert list_jobs(conn) == []
+
+    hold_until("2020-01-01")
+    lapsed = run_discovery(conn, options)
+    assert cast("list[dict[str, object]]", lapsed["source_summaries"])[0]["skipped_seen"] == 0
+    assert [job["company"] for job in list_jobs(conn)] == ["Held Co"]
+
+    # Once judged and tracked, the seen store skips it as before.
+    again = run_discovery(conn, options)
+    assert cast("list[dict[str, object]]", again["source_summaries"])[0]["skipped_seen"] == 1
+
+
 def test_notify_returns_2_without_config(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)

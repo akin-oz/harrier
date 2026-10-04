@@ -132,6 +132,11 @@ def build_tracker_row(
     }
 
 
+# The reason recorded when a posting is skipped because its company is on
+# hold. Named once because the seen check reads it back (spec 052).
+HOLD_REASON = "hold"
+
+
 def _build_rejected_debug_row(job: NormalizedJob, reject_reason: str) -> dict[str, str]:
     return {
         "source": job["source"],
@@ -186,18 +191,31 @@ def screen_jobs(
 
     for job in jobs:
         job_key = job["job_key"].strip()
-        if not job_key or job_key in source_seen:
+        company_norm = normalize(job["company"])
+        seen = source_seen.get(job_key)
+        # A posting rejected only because its company was on hold is judged
+        # again once that hold is no longer active. Holds lapse on their own
+        # date (spec 052), and the seen check runs before the hold check, so
+        # without this a posting fetched during a hold stayed skipped after
+        # it (review finding on PR #104). Every other recorded decision is
+        # skipped as before; spec 031's reconsider covers rule changes.
+        hold_lapsed = (
+            seen is not None
+            and seen.verdict == REJECTED
+            and seen.reason == HOLD_REASON
+            and company_norm not in hold_companies
+        )
+        if not job_key or (seen is not None and not hold_lapsed):
             result.skipped_seen += 1
             continue
 
-        company_norm = normalize(job["company"])
         title_norm = normalize(job["title"])
         url_norm = normalize(job["url"])
         external_id = (job["external_id"] or job["external_job_id"]).strip()
         external_key = normalize(f"{job['source']}:{external_id}") if external_id else ""
 
         if company_norm in hold_companies:
-            reject_reason = "hold"
+            reject_reason = HOLD_REASON
             record(job_key, REJECTED, reject_reason)
             result.rejected_counts[reject_reason] = result.rejected_counts.get(reject_reason, 0) + 1
             result.skipped_hold += 1
