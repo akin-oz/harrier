@@ -996,20 +996,17 @@ def test_bundle_validation_names_unknown_refs() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_fit_evaluation_marks_architecture_strong_and_backend_partial(
+def test_fit_evaluation_marks_architecture_direct_and_backend_partial(
     bundle: ResumeBundle,
 ) -> None:
-    jd = (
-        "Own architecture and code boundaries for a scalable React and TypeScript "
-        "product; backend API ownership is useful."
-    )
+    jd = "Strong software architecture skills.\nBackend API ownership is useful."
     evaluation = evaluate_resume_fit(bundle, jd, "Senior Product Engineer")
     dimensions = {
         str(item["dimension"]): item
         for item in cast("list[dict[str, object]]", evaluation["dimensions"])
     }
-    assert dimensions["architecture and code boundaries"]["evidence_status"] == "Strong evidence"
-    assert dimensions["backend/full-stack ownership"]["evidence_status"] == "Partial evidence"
+    assert dimensions["architecture and code boundaries"]["evidence_status"] == "Direct"
+    assert dimensions["backend/full-stack ownership"]["evidence_status"] == "Partial"
     assert "r1_b2" in cast(
         "list[str]", dimensions["architecture and code boundaries"]["evidence_refs"]
     )
@@ -1027,8 +1024,12 @@ def test_fit_evaluation_does_not_invent_game_or_ai_experience(
         str(item["dimension"]): item
         for item in cast("list[dict[str, object]]", evaluation["dimensions"])
     }
-    assert dimensions["domain motivation"]["evidence_status"] == "No evidence"
-    assert dimensions["AI fluency"]["evidence_status"] == "No evidence"
+    assert dimensions["domain motivation"]["evidence_status"] == "Unsupported"
+    assert dimensions["AI fluency"]["evidence_status"] == "Unsupported"
+    assert all(
+        item["evidence_status"] != "Direct"
+        for item in cast("list[dict[str, object]]", evaluation["evidence_matrix"])
+    )
     questions = cast("list[str]", evaluation["candidate_questions"])
     assert any("game/board-game" in question for question in questions)
 
@@ -1043,7 +1044,13 @@ def test_fit_evaluation_does_not_assume_salary_information(bundle: ResumeBundle)
         for item in cast("list[dict[str, object]]", evaluation["dimensions"])
         if item["dimension"] == "databases and APIs"
     )
-    assert database["evidence_status"] == "No evidence"
+    assert database["evidence_status"] == "Unsupported"
+    database_row = next(
+        item
+        for item in cast("list[dict[str, object]]", evaluation["evidence_matrix"])
+        if "relational database" in str(item["requirement"])
+    )
+    assert database_row["evidence_status"] == "Unsupported"
 
 
 # ---------------------------------------------------------------------------
