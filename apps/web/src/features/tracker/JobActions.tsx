@@ -36,11 +36,19 @@ function forwardVerb(status: string): { verb: string; label: string } | null {
 // belongs on one line.
 type Props = { job: Job; onApply?: (job: Job) => void };
 
-// The operator's four most frequent rejection reasons, submitted verbatim so
+// The operator's most frequent rejection reasons, submitted verbatim so
 // the stored values stay groupable. Shortcuts, not an enum: the API keeps
 // accepting any string and `other…` still reaches the free-text input
 // (spec 056).
-const FREQUENT_REASONS = ["hybrid", "onsite", "closed", "missing stack"] as const;
+const FREQUENT_REASONS = [
+  "hybrid",
+  "onsite",
+  "closed",
+  "missing stack",
+  "location",
+  "language",
+  "rejected by company",
+] as const;
 
 export function JobActions({ job, onApply }: Props) {
   const queryClient = useQueryClient();

@@ -205,7 +205,15 @@ test("a reason pill submits the rejection in one click", async () => {
 test("every pill submits its exact lowercase label as the reason", async () => {
   // The strings are the stored values; consistent spellings are what makes
   // rejection_reason groupable later (spec 056).
-  for (const why of ["hybrid", "onsite", "closed", "missing stack"]) {
+  for (const why of [
+    "hybrid",
+    "onsite",
+    "closed",
+    "missing stack",
+    "location",
+    "language",
+    "rejected by company",
+  ]) {
     cleanup();
     const calls = stubApi({ jobs: [job(1, "Northwind", "80")] });
     const user = userEvent.setup();
