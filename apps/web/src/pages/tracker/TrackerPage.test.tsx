@@ -257,6 +257,55 @@ test("cancelling the pills closes the picker without posting", async () => {
   expect(within(row).getByRole("button", { name: "Shortlist" })).toBeDefined();
 });
 
+// --- a rejected row can be reopened (spec 072) --------------------------------
+
+test("a rejected row offers Reopen, which shortlists it", async () => {
+  // The batch evaluator rejects rows on its own. When a recruiter writes
+  // about one later, the row needs a way back that the page offers.
+  const calls = stubApi({ jobs: [job(1, "Northwind", "80", "rejected")] });
+  const user = userEvent.setup();
+  renderPage();
+
+  const row = await rowFor("Northwind");
+  await user.click(within(row).getByRole("button", { name: "Reopen" }));
+
+  await waitFor(() => {
+    const sent = calls.find((call) => call.url === "/api/tracker/1/status");
+    expect(sent?.body).toEqual({ verb: "shortlist", reason: null });
+  });
+});
+
+test("a rejected row can move straight to interviewing", async () => {
+  const calls = stubApi({ jobs: [job(1, "Northwind", "80", "rejected")] });
+  const user = userEvent.setup();
+  renderPage();
+
+  const row = await rowFor("Northwind");
+  await user.click(within(row).getByRole("button", { name: /^More actions/ }));
+  await user.click(within(row).getByRole("button", { name: "Interviewing" }));
+
+  await waitFor(() => {
+    const sent = calls.find((call) => call.url === "/api/tracker/1/status");
+    expect(sent?.body).toEqual({ verb: "interviewing", reason: null });
+  });
+});
+
+test("a rejected row cannot be rejected again or applied to", async () => {
+  stubApi({ jobs: [job(1, "Northwind", "80", "rejected")] });
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <TrackerPage onApply={() => undefined} />
+    </QueryClientProvider>,
+  );
+
+  const row = await rowFor("Northwind");
+  const reject = within(row).getByRole("button", { name: "Reject" });
+  const apply = within(row).getByRole("button", { name: /^Apply to Northwind/ });
+  expect((reject as HTMLButtonElement).disabled).toBe(true);
+  expect((apply as HTMLButtonElement).disabled).toBe(true);
+});
+
 // --- the queue ordering is the domain's answer -------------------------------
 
 test("the queue view renders the server's ranking rather than re-sorting it", async () => {

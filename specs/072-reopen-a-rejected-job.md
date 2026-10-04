@@ -54,10 +54,10 @@ change.
 | R2 Interviewing is enabled on a rejected row and sends `interviewing` | `TrackerPage.test.tsx`: `a rejected row can move straight to interviewing` |
 | R3 Reject and Apply are disabled on a rejected row | `TrackerPage.test.tsx`: `a rejected row cannot be rejected again or applied to` |
 | R4 the reason is gone after reopening | existing `services/api/tests/test_tracker_invariants.py::test_leaving_rejected_clears_the_rejection_reason` |
-| R5 a reopened row is not re-evaluated | services/api/tests/test_offers.py: test_a_reopened_row_is_not_evaluated_again: a row rejected then shortlisted is skipped by `evaluate_prospects` |
+| R5 a reopened row is not re-evaluated | `services/api/tests/test_offers.py::test_a_reopened_row_is_not_evaluated_again`: a row rejected then shortlisted is skipped by `evaluate_prospects` |
 
-- [ ] each new test fails with its behavior removed
-- [ ] `pnpm type-check`, `pnpm lint`, `just check` green
+- [x] each new test fails with its behavior removed: checked by removing each behavior in turn (4 mutants, all failed a test)
+- [x] `pnpm type-check`, `pnpm lint`, `just check` green
 
 ## Data and privacy
 
