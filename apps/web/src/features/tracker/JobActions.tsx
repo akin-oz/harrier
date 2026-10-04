@@ -21,7 +21,12 @@ const VERBS = [
 // reachable behind a disclosure, which is what keeps the actions column
 // narrow enough that the table does not scroll sideways. Every verb is still
 // on the row; none is removed.
-function forwardVerb(status: string): (typeof VERBS)[number] | null {
+function forwardVerb(status: string): { verb: string; label: string } | null {
+  // A rejected row's way back is Reopen, which is the existing `shortlist`
+  // verb under another name rather than a sixth verb. Shortlisted, not
+  // prospect, because the batch evaluator reads only prospects and would
+  // reject the row again on its next refresh (spec 072).
+  if (status === "rejected") return { verb: "shortlist", label: "Reopen" };
   return VERBS.find((entry) => (entry.from as readonly string[]).includes(status)) ?? null;
 }
 
@@ -107,6 +112,9 @@ export function JobActions({ job, onApply }: Props) {
 
   const busy = change.isPending || rescore.isPending;
   const primary = forwardVerb(job.status);
+  // A rejected row can still move forward (Reopen and the verbs under More),
+  // but it cannot be rejected again or applied to until it is reopened
+  // (spec 072).
   const closed = job.status === "rejected";
   // Everything the row can do that is not the primary verb and not Reject,
   // which has its own control because it asks for a reason first.
@@ -126,7 +134,7 @@ export function JobActions({ job, onApply }: Props) {
             <button
               type="button"
               className="job-actions__primary"
-              disabled={busy || closed}
+              disabled={busy}
               onClick={() => {
                 change.mutate({ verb: primary.verb });
               }}
@@ -183,7 +191,7 @@ export function JobActions({ job, onApply }: Props) {
             <button
               key={entry.verb}
               type="button"
-              disabled={busy || closed}
+              disabled={busy}
               onClick={() => {
                 change.mutate({ verb: entry.verb });
               }}

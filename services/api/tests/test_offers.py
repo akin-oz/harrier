@@ -31,6 +31,7 @@ from harrier.offers import (
 from harrier.offers.stories import STORY_BANK_LIMIT, capture_stories
 from harrier.profile.store import put_document
 from harrier.tracker import add_job, get_job
+from harrier.tracker.actions import change_status
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -271,6 +272,44 @@ def test_skip_verdict_above_threshold_rejects_only_with_apply(
     assert entries[0]["verdict"] == "skip"
     assert entries[0]["job_id"] == job_id
     assert entries[0]["threshold"] == 0.8
+
+
+def test_a_reopened_row_is_not_evaluated_again(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec 072 R5: Reopen sends `shortlist`, which the batch never reads.
+
+    A reopened row left at prospect would be evaluated on the next refresh
+    and auto-rejected a second time for the reason the operator overruled.
+    """
+    job_id = add_prospect(db)
+    skip_verdict = Verdict(verdict="skip", confidence=0.95, reason="rate too low", deal_breakers=())
+    calls: list[str] = []
+
+    def fake_evaluate(
+        conn: sqlite3.Connection,
+        company: str,
+        role: str,
+        url: str,
+        jd_text: str,
+        output_dir: Path | None = None,
+    ) -> EvaluationResult:
+        calls.append(company)
+        return fake_result(company, role, skip_verdict)
+
+    monkeypatch.setattr(batch_module, "evaluate_offer", fake_evaluate)
+    evaluate_prospects(db, BatchOptions(apply=True))
+    assert get_job(db, job_id)["status"] == "rejected"
+
+    change_status(db, str(job_id), "shortlist")
+    calls.clear()
+    summary = evaluate_prospects(db, BatchOptions(apply=True, refresh=True))
+
+    assert calls == []
+    assert summary.auto_rejected == 0
+    row = get_job(db, job_id)
+    assert row["status"] == "shortlisted"
+    assert row["rejection_reason"] == ""
 
 
 def test_existing_report_gates_rerun_unless_refresh(
