@@ -22,6 +22,7 @@ from harrier.resume.content import EvaluationDimension, ResumeBundle
 from harrier.resume.facts import professional_experience_label, professional_experience_years
 from harrier.resume.vocabulary import (
     COMPANY_CONTEXT_PATTERNS,
+    COMPETING_TECHNOLOGIES,
     CONCEPTS,
     FAMILIES,
     NICE_TO_HAVE_HEADERS,
@@ -457,6 +458,55 @@ def _rate(
         if adjacent:
             return Rating("Adjacent", adjacent[:_MAX_CITED], terms, dimensions, NO_COVERAGE)
     return Rating("Unsupported", [], terms, dimensions, NO_COVERAGE)
+
+
+def core_support(
+    bundle: ResumeBundle, jd_text: str, role: str, bullet_ids: list[str]
+) -> dict[str, tuple[int, int]]:
+    """For each bullet, how many core requirements it is Direct and Partial
+    evidence for, by the same rules as the matrix (spec 071 O4)."""
+    vocabulary = build_vocabulary(bundle)
+    core_terms = [
+        terms
+        for item in extract_jd_requirements(bundle, jd_text, role)
+        if item["jd_importance"] == "core"
+        for terms in [vocabulary.terms(item["requirement"])]
+        if terms
+    ]
+    support: dict[str, tuple[int, int]] = {}
+    for bullet_id in bullet_ids:
+        direct = partial = 0
+        for terms in core_terms:
+            coverage = _coverage(bundle, vocabulary, terms, bundle.bullet_pool[bullet_id])
+            if coverage.direct and not coverage.missing and not coverage.partial:
+                direct += 1
+            elif coverage.direct or coverage.partial:
+                partial += 1
+        support[bullet_id] = (direct, partial)
+    return support
+
+
+def dated_bullets(bundle: ResumeBundle, jd_text: str, bullet_ids: list[str]) -> set[str]:
+    """Bullets built on a technology the posting passes over for a competitor
+    (spec 071 O5): the bullet names a member of a competing group, the
+    posting names another member, and the bullet names nothing the posting
+    names."""
+    vocabulary = build_vocabulary(bundle)
+
+    def technologies(text: str) -> set[str]:
+        return {term.label for term in vocabulary.terms(text) if term.kind == "technology"}
+
+    wanted = technologies(jd_text)
+    dated: set[str] = set()
+    for bullet_id in bullet_ids:
+        named = technologies(bundle.bullet_pool[bullet_id])
+        if named & wanted:
+            continue
+        for group in COMPETING_TECHNOLOGIES:
+            members = set(group)
+            if (named & members) - wanted and wanted & members:
+                dated.add(bullet_id)
+    return dated
 
 
 # --- gaps and questions (G1 to G5) ---

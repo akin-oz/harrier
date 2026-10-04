@@ -305,11 +305,14 @@ message for the named path.
   with its dash`:
   `test_organization_containing_the_title_separator_is_refused`.
 - [ ] An organization ending in space, U+2014, alone or followed by a
-  space or a tab, raises with the same message:
-  `test_organization_ending_in_the_separators_dash_is_refused`.
+  space or a tab, raises with the same message. Since spec 071 it is
+  refused as a dash used as punctuation, naming the mark:
+  `test_organization_ending_in_a_dash_is_refused_as_punctuation`.
 - [ ] An organization with a leading U+2014, or one without spaces on
-  both sides, parses and renders as the company unchanged:
-  `test_organization_made_of_dashes_elsewhere_still_splits_exactly`.
+  both sides, parses and renders as the company unchanged. Since spec 071
+  the separator is a comma and a dash is refused, so the case is a comma
+  without a following space:
+  `test_organization_with_commas_elsewhere_still_splits_exactly`.
 - [ ] A `title` containing the separator parses and renders with the
   company intact and the full title:
   `test_title_containing_the_separator_stays_one_role`.

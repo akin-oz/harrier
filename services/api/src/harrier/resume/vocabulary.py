@@ -146,6 +146,14 @@ FAMILIES: dict[str, tuple[str, ...]] = {
     "AWS": ("AWS Lambda", "Amazon S3", "Amazon EC2", "Amazon ECS", "DynamoDB", "CloudFormation"),
 }
 
+# Technologies that compete for the same place in a stack. An achievement
+# built on one reads dated for a posting that names another and none of
+# the achievement's own (spec 071 O5).
+COMPETING_TECHNOLOGIES: tuple[tuple[str, ...], ...] = (
+    ("React", "Vue", "Angular", "Svelte"),
+    ("Next.js", "Nuxt"),
+)
+
 # Concept terms a requirement can name without naming a technology. The
 # bundle's dimension signals are added at run time.
 CONCEPTS: tuple[str, ...] = (

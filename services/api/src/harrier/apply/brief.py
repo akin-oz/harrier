@@ -16,7 +16,12 @@ from dataclasses import dataclass, field
 from typing import cast
 
 from harrier.profile.store import get_document, put_document
-from harrier.resume.content import TruthSources
+from harrier.resume.content import (
+    ResumeBundleError,
+    TruthSources,
+    load_bundle,
+    load_truth_sources,
+)
 
 APPLICATION_BRIEF_KIND = "application_brief"
 
@@ -30,6 +35,7 @@ _TOP_KEYS = frozenset(
         "evidence",
         "views",
         "compensation_number",
+        "confirmed_skills",
     }
 )
 _LETTER_KEYS = frozenset({"max_words", "max_sentences", "paragraphs"})
@@ -57,6 +63,9 @@ class Brief:
     evidence: tuple[str, ...] = ()
     views: dict[str, str] = field(default_factory=dict[str, str])
     compensation_number: str = ""
+    # Skills the candidate confirmed for this application in answer to the
+    # fit evaluation's questions (spec 071 O9).
+    confirmed_skills: tuple[str, ...] = ()
 
     def view_for(self, question: str) -> str | None:
         wanted = _question_key(question)
@@ -138,6 +147,11 @@ def parse_brief(raw: object) -> Brief:
             if "compensation_number" in data
             else ""
         ),
+        confirmed_skills=(
+            _strings(data["confirmed_skills"], "confirmed_skills")
+            if "confirmed_skills" in data
+            else ()
+        ),
     )
 
 
@@ -148,6 +162,7 @@ def store_brief(conn: sqlite3.Connection, job_id: int, text: str) -> Brief:
     except json.JSONDecodeError as exc:
         raise BriefError(f"brief is not valid JSON: {exc}") from exc
     brief = parse_brief(raw)
+    _check_confirmed_skills(conn, brief.confirmed_skills)
     put_document(
         conn,
         APPLICATION_BRIEF_KIND,
@@ -156,6 +171,34 @@ def store_brief(conn: sqlite3.Connection, job_id: int, text: str) -> Brief:
         json.dumps(raw, ensure_ascii=False, indent=2),
     )
     return brief
+
+
+def _named_in(sources: TruthSources, skill: str) -> bool:
+    """A whole-word mention in a truth line, so "Go" is not found in "good"."""
+    pattern = re.compile(rf"(?<![A-Za-z0-9]){re.escape(skill)}(?![A-Za-z0-9])", flags=re.IGNORECASE)
+    return any(pattern.search(line) for line in sources.lines_containing(skill))
+
+
+def _check_confirmed_skills(conn: sqlite3.Connection, skills: tuple[str, ...]) -> None:
+    """A confirmed skill must already exist somewhere the candidate wrote it:
+    the bundle's `all_skills` or a line of the truth documents (spec 071 O9).
+    Confirming is permission to show it, not a new claim."""
+    if not skills:
+        return
+    try:
+        bundle = load_bundle(conn)
+        sources = load_truth_sources(conn)
+    except ResumeBundleError as exc:
+        raise BriefError(f"confirmed_skills cannot be checked: {exc}") from exc
+    unknown = [
+        skill
+        for skill in skills
+        if skill not in bundle.all_skills and not _named_in(sources, skill)
+    ]
+    if unknown:
+        raise BriefError(
+            "confirmed_skills not found in all_skills or the truth documents: " + ", ".join(unknown)
+        )
 
 
 def brief_text(conn: sqlite3.Connection, job_id: int) -> str | None:

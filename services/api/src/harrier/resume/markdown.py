@@ -10,7 +10,8 @@ import re
 from dataclasses import dataclass
 from datetime import date
 
-from harrier.resume.content import ResumeBundle, TruthSources, forbidden_hits
+from harrier.resume.content import ResumeBundle, TruthSources, forbidden_hits, year_counts
+from harrier.resume.dashes import dash_marks, describe
 from harrier.resume.facts import role_period_label
 from harrier.resume.heading import role_heading
 from harrier.resume.plan import ContentPlan, validate_content_plan
@@ -219,8 +220,20 @@ def validate_rendered_markdown(markdown: str, plan: ContentPlan, bundle: ResumeB
         errors.append("rendered resume contains replacement characters")
     if markdown.splitlines()[1] != plan.title:
         errors.append("rendered title differs from the grounded content plan")
-    if plan.experience_label not in markdown:
+    experience_text = bundle.experience_statement.rstrip(".") or plan.experience_label
+    if experience_text.lower() not in markdown.lower():
         errors.append("rendered resume is missing the calculated experience length")
+    marks = dash_marks(markdown)
+    if marks:
+        errors.append(f"rendered resume uses a dash as punctuation ({describe(marks)})")
+    computed_years = int(plan.experience_label.split("+", 1)[0])
+    inflated = [count for count in year_counts(markdown) if count > computed_years]
+    if inflated:
+        errors.append(
+            f"rendered resume states {max(inflated)} years; the record holds {computed_years}"
+        )
+    if re.search(r"\bdecades?\b", markdown, re.IGNORECASE):
+        errors.append("rendered resume counts experience in decades")
     for role in bundle.roles:
         if role_period_label(role) not in markdown:
             errors.append(f"rendered resume is missing canonical period for {role.id}")

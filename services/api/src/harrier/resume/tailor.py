@@ -13,6 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from harrier.apply.brief import load_brief
 from harrier.db import data_dir
 from harrier.resume.ai import build_ai_tailored_content
 from harrier.resume.content import load_bundle, load_truth_sources
@@ -20,7 +21,13 @@ from harrier.resume.evaluation import evaluate_resume_fit, format_fit_evaluation
 from harrier.resume.htmlrender import render_html
 from harrier.resume.markdown import build_internal_metadata, build_markdown, slugify
 from harrier.resume.pdf import render_pdf, render_validated_pdf, validate_rendered_pdf
-from harrier.resume.plan import apply_ai_bullet_order, build_content_plan, validate_content_plan
+from harrier.resume.plan import (
+    apply_ai_bullet_order,
+    build_content_plan,
+    order_achievements_by_core,
+    validate_content_plan,
+    with_confirmed_skills,
+)
 from harrier.screening.descriptions import load_cached_description
 from harrier.tracker import get_job, set_status
 
@@ -92,7 +99,9 @@ def run_tailor(
             jd_text = cached
             jd_source = "cache"
 
-    bundle = load_bundle(conn)
+    # Skills the candidate confirmed in this job's brief count for this job
+    # only (spec 071 O9).
+    bundle = with_confirmed_skills(load_bundle(conn), load_brief(conn, job_id).confirmed_skills)
     sources = load_truth_sources(conn)
 
     plan = build_content_plan(bundle, jd_text or "", requested_role)
@@ -104,6 +113,9 @@ def run_tailor(
         ai_content = build_ai_tailored_content(bundle, sources, jd_text, company, requested_role)
         if ai_content:
             plan = apply_ai_bullet_order(plan, bundle, ai_content)
+            # Core-requirement evidence leads whatever the model preferred;
+            # the model's order breaks ties (spec 071 O4).
+            plan = order_achievements_by_core(plan, bundle, jd_text, requested_role)
             ai_errors = validate_content_plan(plan, bundle)
             if ai_errors:
                 raise ValueError("invalid AI-ordered resume content plan: " + "; ".join(ai_errors))
