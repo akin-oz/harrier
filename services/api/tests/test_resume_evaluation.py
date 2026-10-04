@@ -252,6 +252,25 @@ def test_a_bullet_naming_an_absent_by_default_term_still_does_not_cover_it() -> 
 
 
 @pytest.mark.parametrize(
+    ("bullet", "jd"),
+    [
+        ("Wrote lambda functions in a functional style.", "Experience with AWS."),
+        ("Added guard rails to every deploy.", "Experience with Ruby on Rails."),
+    ],
+)
+def test_an_ordinary_word_does_not_name_a_technology(bullet: str, jd: str) -> None:
+    raw = json.loads(EXAMPLE_BUNDLE_PATH.read_text(encoding="utf-8"))
+    # Only the posting vocabulary is under test, so the bundle's own aliases
+    # for these technologies are taken out.
+    raw["technology_aliases"]["AWS Lambda"] = ["aws lambda"]
+    raw["bullet_pool"]["r1_b6"] = bullet
+    bundle = parse_bundle(raw)
+    (only,) = matrix(evaluate_resume_fit(bundle, jd, as_of=AS_OF))
+    cited = [entry["ref"] for entry in cast("list[dict[str, str]]", only["exact_cv_evidence"])]
+    assert "r1_b6" not in cited
+
+
+@pytest.mark.parametrize(
     "jd",
     [
         "Experience with Storybook.",

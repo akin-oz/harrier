@@ -178,6 +178,11 @@ Recorded here so the spec and the code agree.
 - **G5 for Partial rows.** The action is `Cite <refs> only for what each
   reason names.` followed by the gap action, because part of the row is
   backed.
+- **No alias is an ordinary word.** `vocabulary.py` names AWS services
+  only with their vendor prefix ("AWS Lambda", "Amazon S3") and Rails only
+  as "Ruby on Rails", so "lambda functions" and "guard rails" name nothing
+  (review of PR #95, `test_an_ordinary_word_does_not_name_a_technology`).
+  The bundle's own aliases are the operator's choice and are not filtered.
 - **`evaluate_resume_fit` takes `as_of`**, so R4 is testable on a fixed
   date. `harrier tailor` passes nothing and gets today.
 

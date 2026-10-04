@@ -85,7 +85,9 @@ COMPANY_CONTEXT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bwe(?:['\u2019]d| would) love to hear\b", re.IGNORECASE),
 )
 
-# Canonical technology name to the aliases that name it in text.
+# Canonical technology name to the aliases that name it in text. An alias
+# that is also an ordinary word ("lambda", "rails") is left out: it would
+# make "lambda functions" or "guard rails" evidence for a technology.
 TECHNOLOGIES: dict[str, tuple[str, ...]] = {
     "JavaScript": ("javascript",),
     "TypeScript": ("typescript",),
@@ -100,7 +102,7 @@ TECHNOLOGIES: dict[str, tuple[str, ...]] = {
     "Deno": ("deno",),
     "Python": ("python",),
     "Django": ("django",),
-    "Ruby on Rails": ("ruby on rails", "rails"),
+    "Ruby on Rails": ("ruby on rails",),
     "Ruby": ("ruby",),
     "Java": ("java",),
     "Kotlin": ("kotlin",),
@@ -116,10 +118,10 @@ TECHNOLOGIES: dict[str, tuple[str, ...]] = {
     "GraphQL": ("graphql",),
     "REST": ("rest api", "rest apis", "restful"),
     "AWS": ("aws", "amazon web services"),
-    "AWS Lambda": ("aws lambda", "lambda"),
-    "Amazon S3": ("amazon s3", "s3"),
-    "Amazon EC2": ("amazon ec2", "ec2"),
-    "Amazon ECS": ("amazon ecs", "ecs"),
+    "AWS Lambda": ("aws lambda", "amazon lambda"),
+    "Amazon S3": ("amazon s3", "aws s3"),
+    "Amazon EC2": ("amazon ec2", "aws ec2"),
+    "Amazon ECS": ("amazon ecs", "aws ecs"),
     "DynamoDB": ("dynamodb",),
     "CloudFormation": ("cloudformation",),
     "GCP": ("gcp", "google cloud"),
