@@ -99,6 +99,8 @@ rewrite. Changing any of them requires an explicit spec.
 - **Artifact gates.** Resume and cover letter generation succeed only if the PDF
   exists and validates. Internal tailoring labels never appear in recruiter-facing
   output; internal metadata lives in sidecar files only.
+  Generated resume text carries no em dash, en dash or double hyphen, and no
+  hyphen with spaces on both sides, as punctuation (spec 071).
 - **Verified content only.** Resume and answer content comes from the verified truth
   sources. AI selects and orders; it never invents claims.
 - **Local-first.** No cloud dependencies beyond Apify, the AI providers, Telegram,
@@ -991,6 +993,8 @@ rewrite. Changing any of them requires an explicit spec.
 - **Artifact gates.** Resume and cover letter generation succeed only if the PDF
   exists and validates. Internal tailoring labels never appear in recruiter-facing
   output; internal metadata lives in sidecar files only.
+  Generated resume text carries no em dash, en dash or double hyphen, and no
+  hyphen with spaces on both sides, as punctuation (spec 071).
 - **Verified content only.** Resume and answer content comes from the verified truth
   sources. AI selects and orders; it never invents claims.
 - **Local-first.** No cloud dependencies beyond Apify, the AI providers, Telegram,
