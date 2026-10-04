@@ -55,9 +55,8 @@ def requirements(bundle: ResumeBundle, jd: str) -> list[str]:
 
 def status_of(bundle: ResumeBundle, jd: str, role: str = "Engineer") -> str:
     evaluation = evaluate_resume_fit(bundle, jd, role, as_of=AS_OF)
-    rows = matrix(evaluation)
-    assert len(rows) == 1, rows
-    return str(rows[0]["evidence_status"])
+    (only,) = matrix(evaluation)
+    return str(only["evidence_status"])
 
 
 # --- extraction (X1 to X7) ---
