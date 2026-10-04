@@ -141,22 +141,35 @@ Tests in `services/api/tests/test_userconfig.py`.
 
 | Criterion | Proof |
 |---|---|
-| A corrupt stored `feeds` row leaves `GET /config` at 200 with all four kinds; `feeds` has `source: store`, `value: null` and the `ConfigError` text in `error`; the others have `error: null` | test_one_broken_kind_does_not_hide_the_others |
-| `GET /config/feeds` on that row answers 200 with the same description | test_a_broken_stored_kind_is_described_not_raised |
-| A stored row that is not valid JSON is described the same way, with the JSON message | test_a_stored_row_that_is_not_json_is_described |
-| A corrupt stored row is not replaced by a healthy file value | test_a_broken_stored_row_does_not_fall_back_to_the_file |
-| A holds CSV with a malformed date: `GET /config/company_holds` answers 200, `source: file`, `error` names the company | test_a_broken_hold_file_is_described_with_the_company |
-| `DELETE /config/company_holds` with a broken holds CSV answers 200, the row is gone, and the answer carries the file's `error` | test_a_delete_that_succeeds_is_never_reported_as_failed |
-| `PUT` with a valid value after a corrupt row answers 200 with `error: null` | test_put_repairs_a_broken_kind |
-| A healthy kind reads with `error: null` (no change for working installs) | test_a_healthy_kind_has_no_error |
+| A corrupt stored `feeds` row leaves `GET /config` at 200 with all four kinds; `feeds` has `source: store`, `value: null` and the `ConfigError` text in `error`; the others have `error: null` | `test_one_broken_kind_does_not_hide_the_others` |
+| `GET /config/feeds` on that row answers 200 with the same description | `test_a_broken_stored_kind_is_described_not_raised` |
+| A stored row that is not valid JSON is described the same way, with the JSON message | `test_a_stored_row_that_is_not_json_is_described` |
+| A corrupt stored row is not replaced by a healthy file value | `test_a_broken_stored_row_does_not_fall_back_to_the_file` |
+| A holds CSV with a malformed date: `GET /config/company_holds` answers 200, `source: file`, `error` names the company | `test_a_broken_hold_file_is_described_with_the_company` |
+| `DELETE /config/company_holds` with a broken holds CSV answers 200, the row is gone, and the answer carries the file's `error` | `test_a_delete_that_succeeds_is_never_reported_as_failed` |
+| `PUT` with a valid value after a corrupt row answers 200 with `error: null` | `test_put_repairs_a_broken_kind` |
+| A healthy kind reads with `error: null` (no change for working installs) | `test_a_healthy_kind_has_no_error` |
 
-- [ ] `just contract` regenerates `openapi.json` and `schema.d.ts`; the only
+- [x] `just contract` regenerates `openapi.json` and `schema.d.ts`; the only
       diff is the `error` property on `ConfigOut`
-- [ ] the existing config tests pass unchanged, including
+- [x] the existing config tests pass unchanged, including
       `test_a_corrupted_row_is_refused_rather_than_coerced` (the accessor
       still raises; only the API describes it)
-- [ ] each new test fails with its behavior removed
-- [ ] `pnpm type-check`, `pnpm lint`, `just check` green
+- [x] each new test fails with its behavior removed: checked by removing
+      each behavior in turn (4 mutants, all failed a test)
+- [x] `pnpm type-check`, `pnpm lint`, `just check` green
+
+## What the implementation decided
+
+Recorded here so the spec and the code agree.
+
+- **`error` is required and nullable, not optional.** The model declares it
+  without a default, so the generated type is `error: string | null` rather
+  than `error?: string | null`. A typed client has to handle it, which is
+  the answer this spec gives to the status-only-client limitation.
+- **A row that vanishes between the listing and the read** (a concurrent
+  DELETE) falls through to the file, as a kind with no row does. Not
+  tested: reproducing it needs a second writer between two statements.
 
 ## Data and privacy
 

@@ -573,6 +573,10 @@ class ConfigOut(BaseModel):
     value: object
     source: Literal["store", "file"]
     updated_at: str | None
+    # Null when the value was read. Otherwise the store's refusal, verbatim,
+    # and `value` is null. Required rather than defaulted, so a generated
+    # client cannot leave it unconsidered (spec 073).
+    error: str | None
 
 
 class ConfigIn(BaseModel):
@@ -606,13 +610,37 @@ config_router = APIRouter()
 
 
 def _config_out(conn: sqlite3.Connection, kind: str) -> ConfigOut:
-    from harrier.userconfig import get_config, list_config
+    """What is in effect for one kind, including when it cannot be read.
 
-    stored = get_config(conn, kind)
-    if stored is not None:
-        rows = {row["kind"]: row["updated_at"] for row in list_config(conn)}
-        return ConfigOut(kind=kind, value=stored, source="store", updated_at=rows.get(kind))
-    return ConfigOut(kind=kind, value=_file_value(kind), source="file", updated_at=None)
+    A kind whose value the store refuses is described rather than raised
+    (spec 073). Raising made one broken kind a 500 for the whole list, gave
+    the client no reason, and turned a DELETE that had already happened into
+    a reported failure, because the response reads the fallback afterwards.
+
+    The source is decided by whether a row exists, not by whether it
+    parses. A broken row is reported as the store's problem and never
+    replaced by the file's value: discovery reads the same row and fails on
+    it, so the file's value would describe configuration nothing uses.
+    """
+    from harrier.userconfig import ConfigError, get_config, list_config
+
+    rows = {row["kind"]: row["updated_at"] for row in list_config(conn)}
+    if kind in rows:
+        try:
+            stored = get_config(conn, kind)
+        except ConfigError as error:
+            return ConfigOut(
+                kind=kind, value=None, source="store", updated_at=rows[kind], error=str(error)
+            )
+        if stored is not None:
+            return ConfigOut(
+                kind=kind, value=stored, source="store", updated_at=rows[kind], error=None
+            )
+    try:
+        value = _file_value(kind)
+    except ConfigError as error:
+        return ConfigOut(kind=kind, value=None, source="file", updated_at=None, error=str(error))
+    return ConfigOut(kind=kind, value=value, source="file", updated_at=None, error=None)
 
 
 def _file_value(kind: str) -> object:

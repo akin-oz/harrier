@@ -939,6 +939,8 @@ export interface components {
          *     because unsetting the first restores the second (spec 023).
          */
         ConfigOut: {
+            /** Error */
+            error: string | null;
             /** Kind */
             kind: string;
             /**

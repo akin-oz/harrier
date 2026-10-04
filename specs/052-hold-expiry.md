@@ -214,11 +214,10 @@ Recorded here so the spec and the code agree.
 
 ## Limitations
 
-- **A malformed CSV date makes `GET /config` answer 500,** because the file
-  fallback raises `ConfigError` and the route does not map it. The same is
-  already true of a corrupted stored row. Discovery and import fail with a
-  message naming the file and the company, which is the path this spec
-  covers.
+- **A malformed CSV date made `GET /config` answer 500,** because the file
+  fallback raises `ConfigError` and the route did not map it. Spec 073
+  replaces the 500 with an `error` field on the kind. Discovery and import
+  still fail with a message naming the file and the company.
 
 ## Proof / origin
 
