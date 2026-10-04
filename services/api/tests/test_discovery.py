@@ -352,6 +352,45 @@ def test_dry_run_writes_nothing_and_notify_gate(
     assert sent == []
 
 
+def test_a_lapsed_hold_is_not_counted_as_a_hold_skip(
+    discovery_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec 052: only an active hold skips a posting.
+
+    Far past and far future dates, so the run's own "today" decides nothing.
+    """
+    (Path.cwd() / "config" / "companies-hold.csv").write_text(
+        "company,reason,hold_until,notes\n"
+        "Lapsed Co,cooldown,2020-01-01,\n"
+        "Held Co,cooldown,2999-12-31,\n",
+        encoding="utf-8",
+    )
+
+    def two_postings(url: str) -> list[NormalizedJob]:
+        return [
+            make_normalized_job(
+                source="greenhouse",
+                company=company,
+                title="Senior Frontend Engineer",
+                location="Remote, Europe",
+                url=f"https://example.com/greenhouse/{index}",
+                external_id=f"greenhouse-{index}",
+            )
+            for index, company in enumerate(("Lapsed Co", "Held Co"), start=1)
+        ]
+
+    monkeypatch.setattr(discovery_module, "load_ats_feeds", _fake_feeds)
+    monkeypatch.setattr(discovery_module, "fetch_greenhouse_jobs", two_postings)
+
+    aggregate = run_discovery(
+        connect(),
+        DiscoveryOptions(dry_run=True, notify=False, only_sources=frozenset({"greenhouse"})),
+    )
+    summaries = cast("list[dict[str, object]]", aggregate["source_summaries"])
+    # Held Co is skipped; Lapsed Co's hold ended in 2020 and skips nothing.
+    assert summaries[0]["skipped_hold"] == 1
+
+
 def test_notify_returns_2_without_config(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)

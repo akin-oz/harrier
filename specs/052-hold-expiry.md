@@ -127,28 +127,74 @@ otherwise.
 - A CSV row with `hold_until` before today does not exclude the company:
   `load_hold_companies` omits it, and a discovery run over a posting from
   that company does not increment `skipped_hold`.
+  `test_a_csv_hold_past_its_date_no_longer_excludes_the_company`;
+  `tests/test_discovery.py::test_a_lapsed_hold_is_not_counted_as_a_hold_skip`.
 - A CSV row with `hold_until` equal to today excludes the company
-  (inclusive boundary).
+  (inclusive boundary). `test_a_csv_hold_is_active_on_its_own_date`.
 - A CSV row with an empty `hold_until`, and a stored bare-string entry,
-  exclude the company indefinitely.
+  exclude the company indefinitely. `test_a_hold_with_no_date_never_lapses`.
 - A stored object entry with a past `hold_until` does not exclude the
   company; the same entry with a future date does.
+  `test_a_stored_dated_hold_lapses_after_its_date`; several entries for
+  one company: `test_a_company_is_held_while_any_of_its_holds_is_active`.
 - `harrier config import` over a CSV with dates, followed by
   `harrier config get company_holds`, shows entries with their
   `hold_until` values preserved, including rows already expired.
+  `test_import_keeps_hold_dates_including_expired_ones`.
 - `set_config` with `{"company": "X", "hold_until": "2026-6-1"}` raises
   `ConfigError`; `PUT /config/company_holds` with the same body answers
-  400 (services/api/tests, API test module for config routes).
+  400. `test_a_malformed_hold_date_is_refused_at_the_write`,
+  `test_the_api_refuses_a_malformed_hold_date`.
 - `set_config` with an entry object missing `company` or carrying an
   unknown key raises `ConfigError`.
+  `test_a_hold_entry_without_a_company_or_with_an_unknown_key_is_refused`.
 - Reading a CSV with a malformed `hold_until` raises an error that names
   the company; `harrier config import` over that file exits 1 with that
   message and stores nothing for `company_holds`.
+  `test_a_malformed_csv_date_refuses_the_read_and_the_import`.
 - A stored value written before this spec (list of bare names) reads back
   without error and holds every listed company.
+  `test_a_hold_list_stored_before_expiry_existed_still_holds_everyone`.
+- The config surface shows stored entries as written and file holds as
+  active names.
+  `test_the_api_shows_stored_holds_as_written_and_file_holds_as_active`.
 - `just contract` after the change produces no OpenAPI diff:
   `ConfigIn.value` and `ConfigOut.value` are already untyped JSON, so the
   contract does not move.
+
+## What the implementation decided
+
+Recorded here so the spec and the code agree.
+
+- **An empty `hold_until` in the object form means no expiry,** as an empty
+  CSV cell does. It is dropped on the way in, so
+  `{"company": "X", "hold_until": ""}` is stored as `{"company": "X"}`.
+- **The date shape is checked before the calendar.**
+  `date.fromisoformat` accepts `20260630`; the CSV column's format does not,
+  so it is refused. `2026-02-30` passes the shape and is refused by the
+  calendar.
+- **The import reads every file before storing anything.** A malformed
+  hold date therefore stores nothing for any kind, not only for
+  `company_holds`. This was already the order in `_cmd_config`; a comment
+  now says it is load-bearing.
+- **A CSV row with no date imports as a bare name,** the pre-052 shape, and
+  a dated row as the object form.
+- **`load_hold_companies` and `read_hold_file` take an optional `today`,**
+  so the boundary tests do not depend on the date the suite runs.
+- **`stored_list` no longer serves holds.** It casts to a list of strings,
+  which a hold list may no longer be; `load_hold_companies` reads the store
+  through `get_config` instead.
+- **The discovery criterion is proved in `tests/test_discovery.py`,**
+  through `run_discovery`, rather than in `test_userconfig.py`, so it uses
+  that module's isolated config fixture and no private helper.
+
+## Limitations
+
+- **A malformed CSV date makes `GET /config` answer 500,** because the file
+  fallback raises `ConfigError` and the route does not map it. The same is
+  already true of a corrupted stored row. Discovery and import fail with a
+  message naming the file and the company, which is the path this spec
+  covers.
 
 ## Proof / origin
 

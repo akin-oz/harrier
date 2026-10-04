@@ -10,6 +10,7 @@ from __future__ import annotations
 import csv
 import json
 import sqlite3
+from datetime import date
 from pathlib import Path
 from typing import cast
 
@@ -22,7 +23,10 @@ from harrier.userconfig.store import (
     FEEDS,
     LINKEDIN_SEARCHES,
     ConfigError,
+    HoldEntry,
     get_config,
+    hold_is_active,
+    parse_hold_until,
     stored_list,
 )
 
@@ -65,34 +69,69 @@ def load_discovery_settings(conn: sqlite3.Connection | None = None) -> dict[str,
     return cast("dict[str, object]", parsed) if isinstance(parsed, dict) else {}
 
 
-def load_hold_companies(conn: sqlite3.Connection | None = None) -> set[str]:
-    """Normalized company names on hold. The stored form drops the reason
-    column the CSV carries: the reason is personal operational commentary
-    and nothing reads it (ADR-008)."""
-    stored = stored_list(conn, COMPANY_HOLDS)
-    if stored is not None:
-        return {name for name in (normalize(item) for item in stored) if name}
-    return read_hold_file(resolve_config_path(HOLDS_PATH))
+def load_hold_companies(
+    conn: sqlite3.Connection | None = None, today: date | None = None
+) -> set[str]:
+    """Normalized names of the companies on an active hold.
+
+    A hold with no date is active indefinitely; a dated hold is active on and
+    before its date and lapses the day after, with nothing written (spec 052).
+    Expiry is decided here, on every read, so the store and the CSV fallback
+    apply the same rule. A company named by several holds is held while any
+    of them is active.
+
+    The stored form drops the reason column the CSV carries: the reason is
+    personal operational commentary and nothing reads it (ADR-008).
+    """
+    today = today or date.today()
+    if conn is not None:
+        stored = get_config(conn, COMPANY_HOLDS)
+        if stored is not None:
+            return _active_names(cast("list[HoldEntry]", stored), today)
+    return read_hold_file(resolve_config_path(HOLDS_PATH), today)
 
 
-def read_hold_file(path: Path) -> set[str]:
-    if not path.is_file():
-        return set()
-    with path.open("r", encoding="utf-8", newline="") as handle:
-        rows = list(csv.DictReader(handle))
-    companies: set[str] = set()
-    for row in rows:
-        company = normalize(row.get("company", "") or "")
-        if company:
-            companies.add(company)
-    return companies
+def _active_names(entries: list[HoldEntry], today: date) -> set[str]:
+    names: set[str] = set()
+    for entry in entries:
+        if isinstance(entry, str):
+            company, until = entry, None
+        else:
+            company = entry["company"]
+            until = parse_hold_until(entry.get("hold_until", ""), company)
+        name = normalize(company)
+        if name and hold_is_active(until, today):
+            names.add(name)
+    return names
 
 
-def read_hold_file_raw(path: Path) -> list[str]:
-    """Company names as written, for the import path. Normalization happens
-    at read time so the stored value stays legible to whoever edits it."""
+def read_hold_file(path: Path, today: date | None = None) -> set[str]:
+    """Active holds from the CSV fallback. A malformed date raises, naming
+    the file and the company, so discovery fails loudly rather than
+    screening against the wrong holds."""
+    return _active_names(read_hold_file_raw(path), today or date.today())
+
+
+def read_hold_file_raw(path: Path) -> list[HoldEntry]:
+    """Holds as written, for the import path. A row with a date becomes the
+    object form so the date survives the import; a row without one stays a
+    bare name, the shape every hold had before spec 052. Expired rows are
+    kept: expiry is applied when holds are read, not when they are imported.
+    Normalization happens at read time so the stored value stays legible to
+    whoever edits it."""
     if not path.is_file():
         return []
     with path.open("r", encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
-    return [str(row.get("company", "") or "").strip() for row in rows if row.get("company")]
+    entries: list[HoldEntry] = []
+    for row in rows:
+        company = str(row.get("company", "") or "").strip()
+        if not company:
+            continue
+        until = str(row.get("hold_until", "") or "").strip()
+        try:
+            parse_hold_until(until, company)
+        except ConfigError as error:
+            raise ConfigError(f"{path}: {error}") from error
+        entries.append({"company": company, "hold_until": until} if until else company)
+    return entries

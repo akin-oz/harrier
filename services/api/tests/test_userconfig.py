@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -198,6 +199,128 @@ def test_stored_json_that_is_not_a_list_is_reported(db: sqlite3.Connection) -> N
         load_feed_urls(db)
 
 
+# --- hold expiry (spec 052) -----------------------------------------------------
+
+TODAY = date(2026, 6, 30)
+
+
+def write_holds(tmp_path: Path, rows: str) -> Path:
+    config = tmp_path / "config"
+    config.mkdir(exist_ok=True)
+    path = config / "companies-hold.csv"
+    path.write_text("company,reason,hold_until,notes\n" + rows, encoding="utf-8")
+    return path
+
+
+def test_a_csv_hold_past_its_date_no_longer_excludes_the_company(
+    db: sqlite3.Connection, tmp_path: Path
+) -> None:
+    write_holds(tmp_path, "Lapsed Co,cooldown,2026-06-29,\nHeld Co,cooldown,2026-07-31,\n")
+    assert load_hold_companies(db, today=TODAY) == {"held co"}
+
+
+def test_a_csv_hold_is_active_on_its_own_date(db: sqlite3.Connection, tmp_path: Path) -> None:
+    write_holds(tmp_path, "Example Co,cooldown,2026-06-30,\n")
+    assert load_hold_companies(db, today=TODAY) == {"example co"}
+    assert load_hold_companies(db, today=date(2026, 7, 1)) == set()
+
+
+def test_a_hold_with_no_date_never_lapses(db: sqlite3.Connection, tmp_path: Path) -> None:
+    write_holds(tmp_path, "Example Co,cooldown,,\n")
+    assert load_hold_companies(db, today=date(2999, 1, 1)) == {"example co"}
+    set_config(db, COMPANY_HOLDS, ["Other Co"])
+    assert load_hold_companies(db, today=date(2999, 1, 1)) == {"other co"}
+
+
+def test_a_stored_dated_hold_lapses_after_its_date(db: sqlite3.Connection) -> None:
+    set_config(db, COMPANY_HOLDS, [{"company": "Example Co", "hold_until": "2026-06-29"}])
+    assert load_hold_companies(db, today=TODAY) == set()
+    set_config(db, COMPANY_HOLDS, [{"company": "Example Co", "hold_until": "2026-07-01"}])
+    assert load_hold_companies(db, today=TODAY) == {"example co"}
+
+
+def test_a_company_is_held_while_any_of_its_holds_is_active(db: sqlite3.Connection) -> None:
+    set_config(
+        db,
+        COMPANY_HOLDS,
+        [
+            {"company": "Example Co", "hold_until": "2026-01-01"},
+            {"company": "example co", "hold_until": "2026-12-31"},
+        ],
+    )
+    assert load_hold_companies(db, today=TODAY) == {"example co"}
+
+
+@pytest.mark.parametrize("bad", ["2026-6-1", "30-06-2026", "soon", "2026-02-30", "20260630"])
+def test_a_malformed_hold_date_is_refused_at_the_write(db: sqlite3.Connection, bad: str) -> None:
+    # Never read as "no expiry": that fallback is the permanent hold again.
+    with pytest.raises(ConfigError, match=r"'Example Co'.*malformed hold_until"):
+        set_config(db, COMPANY_HOLDS, [{"company": "Example Co", "hold_until": bad}])
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"hold_until": "2026-06-30"},
+        {"company": "   ", "hold_until": "2026-06-30"},
+        {"company": "Example Co", "hold_untill": "2026-06-30"},
+        7,
+    ],
+)
+def test_a_hold_entry_without_a_company_or_with_an_unknown_key_is_refused(
+    db: sqlite3.Connection, entry: object
+) -> None:
+    with pytest.raises(ConfigError):
+        set_config(db, COMPANY_HOLDS, [entry])
+
+
+def test_a_malformed_csv_date_refuses_the_read_and_the_import(
+    db: sqlite3.Connection, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = write_holds(tmp_path, "Example Co,cooldown,end of june,\n")
+    with pytest.raises(ConfigError) as raised:
+        load_hold_companies(db)
+    assert "Example Co" in str(raised.value)
+    assert str(path.relative_to(tmp_path)) in str(raised.value)
+
+    assert main(["config", "import"]) == 1
+    assert "Example Co" in capsys.readouterr().err
+    fresh = connect()
+    try:
+        assert get_config(fresh, COMPANY_HOLDS) is None
+    finally:
+        fresh.close()
+
+
+def test_import_keeps_hold_dates_including_expired_ones(
+    db: sqlite3.Connection, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_holds(
+        tmp_path,
+        "Lapsed Co,cooldown,2020-01-01,\nHeld Co,cooldown,2999-12-31,\nForever Co,,,\n",
+    )
+    assert main(["config", "import"]) == 0
+    capsys.readouterr()
+    assert main(["config", "get", "company_holds"]) == 0
+    assert json.loads(capsys.readouterr().out) == [
+        {"company": "Lapsed Co", "hold_until": "2020-01-01"},
+        {"company": "Held Co", "hold_until": "2999-12-31"},
+        "Forever Co",
+    ]
+
+
+def test_a_hold_list_stored_before_expiry_existed_still_holds_everyone(
+    db: sqlite3.Connection,
+) -> None:
+    db.execute(
+        "INSERT INTO user_config (kind, value) VALUES (?, ?)",
+        (COMPANY_HOLDS, json.dumps(["Example Co", "Other Co"])),
+    )
+    db.commit()
+    assert get_config(db, COMPANY_HOLDS) == ["Example Co", "Other Co"]
+    assert load_hold_companies(db, today=date(2999, 1, 1)) == {"example co", "other co"}
+
+
 # --- the CLI -----------------------------------------------------------------
 
 
@@ -308,6 +431,33 @@ def test_a_corrupted_row_is_refused_rather_than_coerced(
     db.commit()
     with pytest.raises(ConfigError, match="entries must be strings"):
         load_feed_urls(db)
+
+
+def test_the_api_refuses_a_malformed_hold_date(client: TestClient) -> None:
+    response = client.put(
+        "/config/company_holds",
+        json={"value": [{"company": "Example Co", "hold_until": "2026-6-1"}]},
+        headers=auth(),
+    )
+    assert response.status_code == 400
+    assert "malformed hold_until" in response.json()["detail"]
+
+
+def test_the_api_shows_stored_holds_as_written_and_file_holds_as_active(
+    client: TestClient, tmp_path: Path
+) -> None:
+    # The config surface shows what was written; screening applies what is
+    # active. The file fallback has always answered with active names.
+    write_holds(tmp_path, "Lapsed Co,cooldown,2020-01-01,\nHeld Co,cooldown,2999-12-31,\n")
+    from_file = client.get("/config/company_holds").json()
+    assert from_file["source"] == "file"
+    assert from_file["value"] == ["held co"]
+
+    written = [{"company": "Lapsed Co", "hold_until": "2020-01-01"}, "Held Co"]
+    client.put("/config/company_holds", json={"value": written}, headers=auth())
+    from_store = client.get("/config/company_holds").json()
+    assert from_store["source"] == "store"
+    assert from_store["value"] == written
 
 
 def test_an_unknown_kind_is_a_404_on_every_verb(client: TestClient) -> None:
