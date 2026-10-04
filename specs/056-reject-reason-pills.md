@@ -35,12 +35,13 @@ string, so the contract, the API, and the tracker schema do not move.
 Pressing Reject on a row replaces the bare text input with a reason
 picker:
 
-- Four pills, in this order: `hybrid`, `onsite`, `closed`,
-  `missing stack`. Clicking a pill submits the rejection immediately
-  with that exact string as the reason. One click, no confirm step: the
-  pill is the confirmation, and Cancel remains for a mis-press before
-  the click.
-- A fifth pill, `other…`, reveals the existing free-text input with its
+- Seven pills, in this order: `hybrid`, `onsite`, `closed`,
+  `missing stack`, `location`, `language`, `rejected by company`
+  (the last three added by the amendment below). Clicking a pill
+  submits the rejection immediately with that exact string as the
+  reason. One click, no confirm step: the pill is the confirmation, and
+  Cancel remains for a mis-press before the click.
+- A final pill, `other…`, reveals the existing free-text input with its
   Confirm button, exactly as today. Free-form reasons remain possible;
   they stop being the default path.
 - Cancel closes the picker (and the revealed input) without a change,
@@ -69,10 +70,10 @@ existing rows against the list.
 
 Proof lives in `apps/web/src/pages/tracker/TrackerPage.test.tsx`.
 
-- Pressing Reject shows the four pills and `other…`; clicking `hybrid`
+- Pressing Reject shows the seven pills and `other…`; clicking `hybrid`
   posts the status change with `verb: "reject"`, `reason: "hybrid"`, and
   no further confirmation step.
-- Each of the four pills submits its exact lowercase label as the
+- Each of the seven pills submits its exact lowercase label as the
   reason.
 - Clicking `other…` reveals the text input; typing a reason and
   confirming posts it, unchanged from today's behavior.
@@ -90,6 +91,24 @@ their most frequent reasons. The reject flow being changed is
 `JobActions.tsx` (spec 042 built the verb row; the reason input arrived
 with it), and the mid-decision rule this preserves is the review finding
 on PR #41.
+
+## Amendment: three more pills (2026-10-04)
+
+The operator added three reasons they now give often enough to want one
+click: `location`, `language`, and `rejected by company`. The last one
+records that the company declined the candidate, rather than the
+operator declining the job.
+
+They follow the original four, so the existing order and the muscle
+memory for it do not move. Everything else in this spec holds for them:
+lowercase stored values, one click, shortcuts rather than an enum.
+
+`rejected by company` is recorded in `rejection_reason` like the others.
+The tracker has one `rejected` status for both directions, and this
+amendment does not split it.
+
+Proof: `every pill submits its exact lowercase label as the reason` in
+`TrackerPage.test.tsx` iterates over all seven.
 
 ## Out of scope
 
