@@ -8,7 +8,14 @@ import os
 import sys
 from pathlib import Path
 
-from harrier.db import connect, default_db_path
+from harrier.container import CONTAINER_NAME
+from harrier.db import (
+    EXIT_DATABASE_OWNED,
+    DatabaseOwnedByContainer,
+    DatabaseOwnershipError,
+    connect,
+    default_db_path,
+)
 from harrier.logsetup import configure_logging
 from harrier.profile import export_to, import_from, list_documents
 from harrier.tracker.export import export_csv
@@ -1137,6 +1144,15 @@ def _cmd_verify_backup(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    from harrier.doctor import run_doctor
+
+    result = run_doctor(require_host_access=args.require_host_access, integrity=args.integrity)
+    for line in result.lines:
+        print(line)
+    return result.exit_code
+
+
 def _cmd_reconsider(args: argparse.Namespace) -> int:
     from harrier.discovery import SOURCE_ORDER
     from harrier.screening.config import load_candidate_config
@@ -1794,6 +1810,19 @@ def build_parser() -> argparse.ArgumentParser:
     verify_backup.add_argument("archive")
     verify_backup.set_defaults(func=_cmd_verify_backup)
 
+    doctor = sub.add_parser(
+        "doctor", help="who owns the tracker database right now, and is it intact (spec 061)"
+    )
+    doctor.add_argument(
+        "--require-host-access",
+        action="store_true",
+        help="exit 75 unless this process may open the database",
+    )
+    doctor.add_argument(
+        "--integrity", action="store_true", help="run PRAGMA integrity_check where it is safe"
+    )
+    doctor.set_defaults(func=_cmd_doctor)
+
     reconsider = sub.add_parser(
         "reconsider",
         help="re-open rejections made under screening rules that have since changed (spec 031)",
@@ -1843,16 +1872,52 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def subcommand_name(args: argparse.Namespace) -> str:
+    """The subcommand as the parser knows it, `contacts approve` for example.
+
+    Built from the parser's own destinations, never from argv, so it carries
+    no argument value: a refusal message lands in launchd's captured stderr,
+    and arguments carry contact names and free text (spec 061).
+    """
+    parts = [str(args.command)]
+    nested = getattr(args, f"{str(args.command).replace('-', '_')}_command", None)
+    if isinstance(nested, str):
+        parts.append(nested)
+    return " ".join(parts)
+
+
+def _refusal(subcommand: str, error: DatabaseOwnershipError) -> str:
+    if isinstance(error, DatabaseOwnedByContainer):
+        return (
+            f"harrier {subcommand}: refused, the {CONTAINER_NAME} container owns the tracker "
+            "database.\n"
+            f"Run it inside the container: docker exec {CONTAINER_NAME} harrier {subcommand} "
+            "<arguments>\n"
+            "Or stop the container first. See `harrier doctor`."
+        )
+    return f"harrier {subcommand}: refused, {error}"
+
+
 def main(argv: list[str] | None = None) -> int:
     load_project_env()
-    configure_logging()
     parser = build_parser()
     args = parser.parse_args(argv)
+    # Logging setup opens the database read-write to load the redaction
+    # values, and closing that connection checkpoints any WAL left behind.
+    # `doctor` logs nothing and reports on that file, so it must not be the
+    # thing that changes it (review finding on PR #110).
+    if args.command != "doctor":
+        configure_logging()
     try:
         result: int = args.func(args)
     except TrackerError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
+    except DatabaseOwnershipError as error:
+        # Its own exit status, so launchd's record and a shell script can tell
+        # "not now" from "wrong" (spec 061).
+        print(_refusal(subcommand_name(args), error), file=sys.stderr)
+        return EXIT_DATABASE_OWNED
     return result
 
 

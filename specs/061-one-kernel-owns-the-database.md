@@ -164,9 +164,18 @@ When the check refuses:
 - Ownership unknown: `DatabaseOwnershipUnknown`, with the engine error in the
   message.
 - The harrier CLI exits 75 for either, with the message on stderr.
-- The refusal is never swallowed. `logsetup` catches `sqlite3.Error` and
-  `OSError` today and carries on unredacted; the new errors are neither, and
-  `configure_logging` lets them through.
+- The refusal is never swallowed. The new errors are not `sqlite3.Error`,
+  `OSError`, `RuntimeError` or `ValueError`, which `logsetup` and the CLI
+  catch broadly.
+- **Amended at implementation: logging setup.** The approved text had
+  `configure_logging` let the refusal through. The CLI sets up logging
+  before it parses arguments, and logging setup opens the database to load
+  the redaction values, so that refused every host command while the
+  container ran, `harrier doctor` and `review-followup` included. Instead,
+  when the database is refused, `configure_logging` logs to stderr only,
+  without redaction, opens no `data/logs/harrier.log`, and carries on. The
+  refusal still happens: a command that opens the database is refused at its
+  own open and exits 75. Chosen by Akin on 2026-10-04.
 - There is no override flag or env var. The way to get host access is to stop
   the container.
 
@@ -239,37 +248,61 @@ Failure modes this must not introduce:
 Proving symbols are named at implementation. Every automated test uses a
 fake detector.
 
-- [ ] with a detector reporting "running, mounted here", `connect()` on the
+Tests in `services/api/tests/test_database_ownership.py` unless named
+otherwise.
+
+- [x] with a detector reporting "running, mounted here", `connect()` on the
       live path raises `DatabaseOwnedByContainer` and `sqlite3.connect` is
-      never called, asserted by a test that fails if the open happens
-- [ ] the same for `backup.snapshot_database` and `backup.verify_database` on
-      the live path
-- [ ] `create_backup` and `restore_backup` with that detector raise
+      never called, asserted by a test that fails if the open happens:
+      `test_connect_is_refused_before_sqlite_opens_anything`
+- [x] the same for `backup.snapshot_database` and `backup.verify_database` on
+      the live path:
+      `test_the_backup_snapshot_and_verify_are_refused_on_the_live_file`
+- [x] `create_backup` and `restore_backup` with that detector raise
       `DatabaseOwnedByContainer`, and the data directory is byte-identical
-      afterwards
-- [ ] with a detector reporting an engine error or timeout, the open raises
-      `DatabaseOwnershipUnknown`; with the engine unreachable, it succeeds
-- [ ] a path under `tmp_path`, a demo directory, or a different mount source
-      is never refused
-- [ ] `configure_logging` does not swallow either refusal, proven by a test
-      that exercises `configure_logging`, not by reading its source
-- [ ] a refused CLI command exits 75 and its stderr names the container,
-      the `docker exec` form, and `harrier doctor`
-- [ ] the detector's lookup gives up within its bound against an engine that
-      never answers, proven with a fake that blocks
-- [ ] `harrier doctor` prints each line listed above, exits 0 for both known
-      ownership states and 1 for unknown; no line contains an absolute path
-- [ ] `harrier doctor --require-host-access` exits 75 when the container owns
-      the file and 0 when the engine is unreachable
-- [ ] `harrier doctor --integrity` exits 1 against a copy of a database with a
+      afterwards: `test_create_and_restore_are_refused_and_touch_nothing`
+- [x] with a detector reporting an engine error or timeout, the open raises
+      `DatabaseOwnershipUnknown`; with the engine unreachable, it succeeds:
+      `test_an_engine_that_cannot_answer_refuses_and_no_engine_allows`
+- [x] a path under `tmp_path`, a demo directory, or a different mount source
+      is never refused:
+      `test_a_database_outside_the_mounted_directory_is_never_refused`
+- [x] (amended) under refusal, `configure_logging` adds no file handler and
+      writes no `harrier.log`, and the command's own open is still refused,
+      proven by a test that exercises `configure_logging`:
+      `test_logging_setup_under_refusal_writes_no_log_file_and_the_open_is_still_refused`
+- [x] a refused CLI command exits 75 and its stderr names the container,
+      the `docker exec` form, and `harrier doctor`, and no argument value:
+      `test_a_refused_command_exits_75_and_names_the_way_out_without_its_arguments`,
+      `test_a_nested_subcommand_is_named_in_full`,
+      `test_an_unknown_owner_refuses_with_the_reason`
+- [x] the detector's lookup gives up within its bound against an engine that
+      never answers, proven with a real socket that accepts and never replies:
+      `test_an_engine_that_never_answers_is_given_up_on_within_the_bound`;
+      the engine's answers are read from a fake engine on a real socket:
+      `test_the_detector_reads_the_engine_answer`,
+      `test_a_socket_with_nothing_listening_is_unreachable`
+- [x] `harrier doctor` prints each line listed above, exits 0 for both known
+      ownership states and 1 for unknown; no line contains an absolute path:
+      `test_doctor_reports_each_line_and_exits_0_whoever_owns_the_file`,
+      `test_doctor_exits_1_when_ownership_is_unknown`
+- [x] `harrier doctor --require-host-access` exits 75 when the container owns
+      the file and 0 when the engine is unreachable:
+      `test_require_host_access_exits_75_unless_access_is_allowed`
+- [x] `harrier doctor --integrity` exits 1 against a copy of a database with a
       deliberately damaged page and 0 against a good one (synthetic fixture,
       built in the test); with the container owning the file it exits 75 and
-      prints the `docker exec` form
-- [ ] `just gate` passes with the `harrier` container running, with no change
+      prints the `docker exec` form:
+      `test_integrity_exits_1_on_a_damaged_page_and_0_on_a_good_database`,
+      `test_integrity_does_not_open_the_file_the_container_owns`
+- [x] `just gate` passes with the `harrier` container running, with no change
       to `services/api/tests/conftest.py`
-- [ ] spec 051 carries the supersession note, `db.py`'s comment no longer
+- [x] spec 051 carries the supersession note, `db.py`'s comment no longer
       claims WAL is safe across the mount, ADR-011 exists with status
       proposed, and the README names `harrier doctor`
+- [x] each test above fails with its behavior removed: checked by removing
+      each behavior in turn (16 mutants, all failed a test; 6 more for the review fixes on PR #110). One check has no
+      test of its own; see "What the implementation decided"
 - [ ] by hand, on the daily driver: with the container up, `harrier export`
       and `harrier shortlist <id>` from the host exit 75; after `docker
       compose stop harrier` both run; `harrier doctor --integrity` then
@@ -277,6 +310,68 @@ fake detector.
       the verdict line only. No paths, no job output (the repository is
       public; spec 046 records pull request bodies as a past leak)
 - [ ] all gates green on the pull request
+
+## What the implementation decided
+
+Recorded here so the spec and the code agree.
+
+- **Logging setup** (amended above, in Behavior).
+- **The engine is asked over its unix socket,** not through the `docker`
+  binary: `DOCKER_HOST` when it names a unix socket, then
+  `/var/run/docker.sock`, then Docker Desktop's `~/.docker/run/docker.sock`.
+  No subprocess, and no dependence on launchd's `PATH`. The bound is 3
+  seconds. `services/api/src/harrier/container.py`.
+- **Only paths under this checkout's `data/` ask the engine** (`live_data_root`
+  in `db.py`). The compose file mounts `./data` of the checkout it runs from,
+  so nothing else can be the live file. This keeps every test database, demo
+  directory and extracted backup away from Docker, which is how the suite
+  stays independent of it.
+- **Inside the container,** the engine is unreachable and opens go through
+  with no special case, as Behavior says. Verified against the compose file;
+  the container's own behaviour is unchanged.
+- **Engine failure reasons are fixed phrases,** never an exception's text,
+  which would carry the socket path and a home directory into `harrier
+  doctor`.
+- **`create_backup`'s own check has no test that isolates it.** The
+  snapshot's check refuses first, and nothing is copied before the snapshot,
+  so removing it changes no observable result. It stays as the backstop the
+  spec asks for, should the order inside `create_backup` change.
+- **`harrier doctor --integrity` never opens read-write** (review finding on
+  PR #110). A read-write connection, closed last, checkpoints a leftover WAL
+  into the database and deletes it, so the check changed the file it reported
+  on and destroyed the evidence of a crash; reproduced before the fix. With no
+  WAL it opens with `mode=ro&immutable=1`, which creates no files; with one,
+  `mode=ro`, which reads through the WAL and leaves it in place. The `-shm`
+  index can be rewritten by any reader and is not evidence. Proved by
+  `test_integrity_leaves_a_crashed_writers_wal_and_the_database_untouched`
+  and `test_integrity_on_a_clean_database_creates_no_files`. The logic is in
+  `services/api/src/harrier/doctor.py`; the CLI only prints it.
+- **`harrier doctor` skips logging setup** (same finding). Logging setup opens
+  the database read-write for the redaction values, which would checkpoint
+  the WAL before `doctor` looked at it. `doctor` logs nothing.
+- **`harrier doctor` reports an unreadable database file** as `journal mode:
+  unreadable` and still gives its verdict, rather than failing before it
+  (review finding on PR #110,
+  `test_doctor_still_gives_a_verdict_when_the_database_cannot_be_read`).
+- **Engine reasons name a socket this user may not use,** as "the docker
+  engine socket is not accessible". Still refused, since an engine may be
+  running (review finding on PR #110,
+  `test_a_socket_this_user_may_not_use_is_named_as_such`).
+- **The logging warning names its cause:** "the harrier container owns the
+  database" or "cannot tell who owns the database" (review finding on PR
+  #110,
+  `test_logging_setup_does_not_blame_the_container_when_ownership_is_unknown`).
+- **Two test files outside the new one changed.** The `real_directory`
+  fixture in `services/api/tests/test_test_isolation.py` points at the
+  operator's data directory on purpose, so it now stubs the engine as
+  unreachable; otherwise those tests would depend on whether the container
+  happens to run. The docstring of
+  `services/api/tests/test_concurrent_writers.py` no longer implies the bind
+  mount is safe.
+- **Against the real engine,** with the container running on the daily
+  driver, `check_database_ownership(default_db_path())` raises
+  `DatabaseOwnedByContainer` without opening the file. The by-hand criterion
+  below is still the operator's.
 
 ## Data and privacy
 

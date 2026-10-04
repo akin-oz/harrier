@@ -161,6 +161,16 @@ prove Docker Desktop's bind mount honours the same locking. That was verified
 by hand on this machine and is not pinned by CI, because pinning it needs a
 container in the Python job.
 
+**Superseded, 2026-10-04, by spec 061.** The resolution above did not hold.
+`test_concurrent_writers.py` proved two writers under one kernel, and this
+section's own limitation said it did not prove the bind mount. On 2026-09-18
+the file was corrupted with the container and host processes both using it,
+which is that limitation arriving. Spec 061 replaces "WAL plus a busy
+timeout" with a rule: one kernel opens the database at a time, and while the
+container runs it is the container's. The host refuses (exit 75) and
+`harrier doctor` reports who owns the file. The acceptance criterion about one
+writer is left above as history. See ADR-011.
+
 ### Staleness must be legible
 
 The bug this spec exists to prevent is a server that answers correctly while
