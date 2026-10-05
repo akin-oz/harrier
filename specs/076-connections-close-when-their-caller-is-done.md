@@ -1,8 +1,8 @@
 ---
 spec: 076
 title: Every tracker connection closes when its caller is done
-status: draft
-approved: no
+status: accepted
+approved: yes
 milestone: M8
 depends: [029, 045, 061]
 ---
@@ -44,6 +44,16 @@ Who it hurts:
   closes its own". Three CLI commands (`check`, `check-feeds`, `reconsider`),
   `harrier_api/deps.py` and `harrier_api/demo.py` close in `finally`. The
   others look the same and are not.
+
+## Scope
+
+- `services/api/src/harrier/logsetup.py`: the connection opened for the
+  identity values.
+- `services/api/src/harrier_cli/main.py`: every command path that calls
+  `connect()` without closing it.
+- Tests under `services/api/tests/`: `test_logging.py`, a new
+  `test_cli_connections.py`, and the `gc.collect()` in
+  `test_database_ownership.py`.
 
 ## Behavior
 
@@ -125,6 +135,16 @@ Who it hurts:
 ## Migration
 
 None. No data, config or command-line change.
+
+## Proof / origin
+
+- Review on PR #110 (spec 061): the integrity test observed logging setup's
+  checkpoint only after `gc.collect()`.
+- Reproduced on CPython 3.12.12 in this session: a WAL connection left open
+  by a returning function keeps `-wal` until `gc.collect()`.
+- Call sites as of commit 2d318d7: `logsetup.py:134` and the `connect()`
+  calls in `harrier_cli/main.py` outside `check`, `check-feeds` and
+  `reconsider`.
 
 ## Proof map
 
