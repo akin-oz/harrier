@@ -19,22 +19,20 @@ import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from harrier import container
+from harrier import container, hostlease
 from harrier.db import (
     EXIT_DATABASE_OWNED,
     DatabaseOwnedByContainer,
     DatabaseOwnershipUnknown,
-    check_database_ownership,
     default_db_path,
+    lease_directory,
     live_data_root,
+    probe_database_ownership,
 )
 
 ALLOWED = "allowed"
 CONTAINER_OWNS = "container"
 UNKNOWN = "unknown"
-
-# Docker creates this file in every container it starts.
-DOCKERENV = Path("/.dockerenv")
 
 # The journal mode as SQLite records it in the header: bytes 18 and 19, the
 # file format write and read versions. 1 is a rollback journal, 2 is WAL.
@@ -47,10 +45,6 @@ _INTEGRITY_INSIDE = f"docker exec {container.CONTAINER_NAME} harrier doctor --in
 class DoctorResult:
     lines: list[str] = field(default_factory=list[str])
     exit_code: int = 0
-
-
-def running_in() -> str:
-    return "container" if DOCKERENV.exists() else "host"
 
 
 def journal_mode(path: Path) -> str:
@@ -69,9 +63,14 @@ def journal_mode(path: Path) -> str:
 
 
 def verdict(path: Path) -> tuple[str, str | None]:
-    """The guard's own answer for `path`, so the report cannot disagree with it."""
+    """The guard's own answer for `path`, so the report cannot disagree with it.
+
+    Probed, not checked: plain `doctor` opens nothing, so it takes no lease
+    (spec 075). `doctor --integrity` is a database command, and the CLI takes
+    its lease before it runs.
+    """
     try:
-        check_database_ownership(path)
+        probe_database_ownership(path)
     except DatabaseOwnedByContainer:
         return CONTAINER_OWNS, None
     except DatabaseOwnershipUnknown as error:
@@ -114,12 +113,14 @@ def _engine_lines(state: container.ContainerState) -> list[str]:
 def run_doctor(*, require_host_access: bool = False, integrity: bool = False) -> DoctorResult:
     path = default_db_path()
     result = DoctorResult()
-    result.lines.append(f"running in: {running_in()}")
+    result.lines.append(f"running in: {container.running_in()}")
     result.lines.extend(_engine_lines(container.detect()))
     result.lines.append(f"journal mode: {journal_mode(path)}")
     for suffix in ("wal", "shm"):
         present = path.with_name(f"{path.name}-{suffix}").exists()
         result.lines.append(f"{suffix} file: {'present' if present else 'absent'}")
+
+    leases_fault = _lease_lines(result)
 
     owner, reason = verdict(path)
     if owner == ALLOWED:
@@ -128,14 +129,49 @@ def run_doctor(*, require_host_access: bool = False, integrity: bool = False) ->
         result.lines.append("host access: refused (container owns the database)")
     else:
         result.lines.append(f"host access: refused (ownership unknown: {reason})")
-    # Consistent whichever side owns the file; only not knowing is a fault.
-    result.exit_code = 1 if owner == UNKNOWN else 0
+    # Consistent whichever side owns the file. A fault is not knowing, a lease
+    # whose process is gone, or a container running while a host process
+    # holds a lease (spec 075).
+    result.exit_code = 1 if owner == UNKNOWN or leases_fault else 0
 
     if require_host_access and owner != ALLOWED:
         result.exit_code = EXIT_DATABASE_OWNED
     if integrity:
         _integrity(path, owner, result)
     return result
+
+
+def _lease_lines(result: DoctorResult) -> bool:
+    """List host leases. Returns whether their state is a fault.
+
+    Liveness is judged on the host only; the container cannot see host pids
+    and says so rather than guessing (spec 075).
+    """
+    leases = [
+        lease
+        for lease in (
+            hostlease.read_lease(path) for path in hostlease.lease_files(lease_directory())
+        )
+        if lease is not None
+    ]
+    result.lines.append(f"host leases: {len(leases)}")
+    on_host = container.running_in() == "host"
+    any_dead = False
+    any_live = False
+    for lease in leases:
+        if on_host:
+            live = hostlease.is_live(lease)
+            any_dead = any_dead or not live
+            any_live = any_live or live
+            state = "live" if live else "dead"
+        else:
+            state = "not judged in the container"
+        result.lines.append(
+            f"host lease: pid {lease.pid}, {lease.subcommand}, since {lease.started}, {state}"
+        )
+    if not on_host or not any_live:
+        return any_dead
+    return any_dead or container.detect().running
 
 
 def _integrity(path: Path, owner: str, result: DoctorResult) -> None:

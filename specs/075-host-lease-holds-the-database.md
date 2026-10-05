@@ -155,43 +155,125 @@ Failure modes this must not introduce:
 
 ## Acceptance criteria
 
-Proving symbols are named at implementation. Every automated test uses a fake
-detector.
+Every automated test uses a fake detector, and the fake `docker exec` is
+autouse, so no test reaches a real container. Tests in
+`services/api/tests/test_host_lease.py` unless named otherwise.
 
-- [ ] a host open creates its lease before querying the engine, and removes it
-      on normal exit and on exception; a test asserts the order
-- [ ] a host open refused after taking its lease leaves no lease file behind
-- [ ] a lease written by a CLI invocation whose arguments contain a sentinel
+- [x] a host open creates its lease before querying the engine, and removes it
+      on normal exit and on exception; a test asserts the order:
+      `test_the_lease_comes_before_the_question_and_goes_with_the_command`,
+      `test_the_lease_goes_when_the_command_raises`
+- [x] a host open refused after taking its lease leaves no lease file behind:
+      `test_a_refused_open_leaves_no_lease`
+- [x] a lease written by a CLI invocation whose arguments contain a sentinel
       value holds the pid, the start time and the subcommand name, and the
       sentinel appears nowhere in the file, the 503 body, `/health`, or
-      `harrier doctor` output
-- [ ] the container starting between the first engine query and the first
+      `harrier doctor` output:
+      `test_a_lease_holds_the_pid_the_start_and_the_subcommand_only`
+- [x] the container starting between the first engine query and the first
       open (a detector answering "not running", then "running") ends in
-      delegation with no lease left behind
-- [ ] a delegated invocation creates no lease file at any point, proven with a
-      fake runner that lists `data/host-db-owners/` when it is called
-- [ ] in the container role, an open with any lease file present raises
+      delegation with no lease left behind:
+      `test_a_container_that_starts_after_the_first_question_gets_the_command`
+- [x] a delegated invocation creates no lease file at any point, proven with a
+      fake runner that lists `data/host-db-owners/` when it is called:
+      `test_a_handed_over_command_never_takes_a_lease`
+- [x] in the container role, an open with any lease file present raises
       `DatabaseOwnedByHost`, and the API returns 503 with a `DatabaseHeldOut`
-      body naming the subcommand and since when
-- [ ] with a lease present `/health` returns 200 with `database_hold` set and
+      body naming the subcommand and since when:
+      `test_inside_the_container_any_lease_refuses_the_open_and_the_api_answers_503`,
+      `test_an_unreadable_lease_still_holds_the_container_out`
+- [x] with a lease present `/health` returns 200 with `database_hold` set and
       `job_count` null, and `sqlite3.connect` is never called; with none it
-      returns `database_hold` null and an integer `job_count`
-- [ ] every route whose handler depends on `Conn` declares the 503, proven by a
-      test that walks the application's routes
-- [ ] a web-started run refused by a lease ends with exit code 75 and the
-      refusal sentence among its log lines; `RunOut` has no new field
-- [ ] a host invocation removes a lease whose pid is dead, removes one whose
+      returns `database_hold` null and an integer `job_count`:
+      `test_health_reports_the_hold_without_opening_the_database`,
+      `test_health_does_not_count_its_own_lease_as_a_hold`
+- [x] every route whose handler depends on `Conn` declares the 503, proven by a
+      test that walks the application's routes:
+      `test_every_route_that_opens_the_database_declares_the_503` (and no
+      other route declares it, judged on the generated OpenAPI document)
+- [x] a web-started run refused by a lease ends with exit code 75 and the
+      refusal sentence among its log lines; `RunOut` has no new field:
+      `test_a_web_run_refused_by_a_lease_ends_75_with_the_refusal_logged`
+      (a real subprocess running the real CLI under the real run manager);
+      `runs.py` and `runmodels.py` are unchanged
+- [x] a host invocation removes a lease whose pid is dead, removes one whose
       pid is alive with a different start time, and keeps one whose pid and
-      start time match
-- [ ] a process that finds a lease file carrying its own pid replaces it and
-      proceeds
-- [ ] `harrier doctor` lists leases and exits 1 for a dead lease and for the
-      container plus a live lease
-- [ ] `HealthBadge` renders the hold when `database_hold` is set and the job
-      count when it is not; `pnpm type-check` and `pnpm lint` pass
-- [ ] `just contract` shows the two models, the 503 on the `Conn` routes, and
-      the two `/health` fields, and nothing else
+      start time match:
+      `test_a_host_invocation_clears_dead_leases_and_keeps_live_ones`
+- [x] a process that finds a lease file carrying its own pid replaces it and
+      proceeds: `test_a_stale_lease_carrying_this_pid_is_replaced`
+- [x] `harrier doctor` lists leases and exits 1 for a dead lease and for the
+      container plus a live lease:
+      `test_doctor_lists_leases_and_flags_a_dead_one_and_a_contested_one`
+- [x] `HealthBadge` renders the hold when `database_hold` is set and the job
+      count when it is not; `pnpm type-check` and `pnpm lint` pass:
+      `HealthBadge.test.tsx`, "a held database shows the holding command
+      instead of a count" and "an unheld database shows the job count"
+- [x] `just contract` shows the two models, the 503 on the `Conn` routes, and
+      the two `/health` fields, and nothing else: 30 operations gain the 503,
+      `DatabaseHoldOut` and `DatabaseHeldOut` are added, `database_hold` is
+      added and `job_count` becomes nullable; the only removed lines are
+      `job_count`'s old type
+- [x] each test above fails with its behavior removed: checked by removing
+      each behavior in turn (17 mutants, all failed a test)
 - [ ] all gates green on the pull request
+
+## What the implementation decided
+
+Recorded here so the spec and the code agree.
+
+- **The lease files are handled by `services/api/src/harrier/hostlease.py`;**
+  `db.py` holds the decision (take, ask, give back) and the container-side
+  refusal, as Scope says. A lease is written to a temporary file and then
+  hard-linked to its name: `link` fails when the name exists, which makes the
+  create exclusive, and a reader never sees half a lease.
+- **The CLI takes the lease when it decides, not at the first open.** The
+  first question only probes (`probe_database_ownership`, no lease). The
+  second takes the lease and asks again (`check_database_ownership`). A
+  container that started between them is seen, the lease is given back, and
+  the command is handed over. This is the spec's "first open takes a lease"
+  moved to the one place every CLI run passes, before logging setup and
+  before the command's own opens. Host code that is not the CLI takes its
+  lease at its first open, in `connect`.
+- **Once a process holds a lease it owns the database** until it ends, and
+  later opens in it skip the engine: the container is the side refused.
+- **The 503 is declared by a route class,** `DatabaseRoute` in
+  `services/api/src/harrier_api/deps.py`, which finds the `Conn` dependency
+  and adds the response itself, rather than by merging a dictionary into each
+  decorator. A new route that opens the database cannot forget it, and one
+  that does not never claims it. FastAPI 0.141 keeps an included router whole
+  rather than copying its routes, so the test walks `original_router`.
+- **`/health` takes no `Conn`.** It reads the lease directory first and opens
+  the database only when there is no hold. Its own process's lease is not a
+  hold, so a host dev server does not report itself.
+- **A lease file that cannot be read is a hold** in the container (it may be
+  one being written) and is left in place by the host's dead-lease cleanup
+  (it may belong to something else). `harrier doctor` does not list it.
+- **The process role** is "container" when `/.dockerenv` exists
+  (`harrier.container.running_in`), which Docker creates in every container.
+- **Start times come from `ps -o lstart=`** in UTC, at one-second resolution.
+  That resolution is the tolerance the spec asked to record: a pid reused
+  within the same second its predecessor started would match.
+- **Plain `harrier doctor` probes and takes no lease;** it opens nothing.
+  `doctor --integrity` is a `database` command and the CLI takes its lease.
+  The lease lines come before the verdict, so the verdict stays last.
+- **Specs 061 and 074's tests changed with the behaviour.** Their fixtures now
+  default to "no engine", play the host, and give back any lease a test took,
+  because a process holding a lease is no longer refused. Spec 061's CLI
+  refusal test uses the host-path refusal, which is the one a container-owned
+  database still produces from the CLI.
+
+## Limitations found at implementation
+
+- **A lease lasts as long as its process.** A host command that opened the
+  database once, for logging setup, holds its lease until it ends, and a
+  container that starts meanwhile answers 503 until then. Releasing earlier
+  would be safe only once every connection is known to be closed, which is
+  spec 076's subject.
+- **The lease directory stays once created.** A host command run while the
+  container owns the database takes a lease, learns it is refused, and gives
+  it back, leaving `data/host-db-owners/` empty. An empty directory holds
+  nothing out.
 
 ## Data and privacy
 

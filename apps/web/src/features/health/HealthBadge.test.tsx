@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 
 import { HealthBadge } from "./HealthBadge";
 
 afterEach(() => {
+  cleanup();
   vi.unstubAllGlobals();
 });
 
@@ -18,6 +19,7 @@ function healthResponse(overrides: Record<string, unknown>) {
           demo: false,
           database: "/app/data/tracker.db",
           job_count: 3,
+          database_hold: null,
           revision: "unknown",
           built_at: "unknown",
           ...overrides,
@@ -59,4 +61,30 @@ test("an unstamped process reads as dev rather than as a fault", async () => {
   });
   expect(screen.getByTitle("not built from an image")).toBeDefined();
   expect(screen.queryByText("unknown")).toBeNull();
+});
+
+// While a host process holds the database there is no count; the badge says
+// which command holds it and since when (spec 075).
+test("a held database shows the holding command instead of a count", async () => {
+  vi.stubGlobal(
+    "fetch",
+    healthResponse({
+      job_count: null,
+      database_hold: { subcommand: "discover", since: "2026-10-05T07:00:00+00:00" },
+    }),
+  );
+  renderBadge();
+  await waitFor(() => {
+    expect(screen.getByText("held by host: discover since 07:00 UTC")).toBeDefined();
+  });
+  expect(screen.queryByText(/jobs$/)).toBeNull();
+});
+
+test("an unheld database shows the job count", async () => {
+  vi.stubGlobal("fetch", healthResponse({ job_count: 12 }));
+  renderBadge();
+  await waitFor(() => {
+    expect(screen.getByText("12 jobs")).toBeDefined();
+  });
+  expect(screen.queryByText(/held by host/)).toBeNull();
 });

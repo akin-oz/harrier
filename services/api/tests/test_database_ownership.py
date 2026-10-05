@@ -54,14 +54,19 @@ def no_real_docker(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
 
 
 @pytest.fixture()
-def live(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def live(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """A data directory that plays the part of the one the container mounts."""
     root = tmp_path / "live-data"
     root.mkdir()
     monkeypatch.setattr(db, "live_data_root", lambda: root)
     monkeypatch.setenv("HARRIER_DATA_DIR", str(root))
     monkeypatch.delenv("HARRIER_DEMO", raising=False)
-    return root
+    # No real engine is ever asked, and the test process plays the host.
+    monkeypatch.setattr(container, "detect", lambda timeout=0.0: UNREACHABLE)
+    monkeypatch.setattr(container, "running_in", lambda: "host")
+    yield root
+    # A lease this test took is this test's, not the next one's (spec 075).
+    db.release_host_lease()
 
 
 def owned_by_container(root: Path) -> ContainerState:
@@ -96,8 +101,13 @@ def no_sqlite_open(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def make_database(path: Path, rows: int = 3) -> None:
-    """A synthetic harrier-shaped database, built before any detector is set."""
+    """A synthetic harrier-shaped database, built as a host process would.
+
+    The lease that build takes is given back, so the test starts the way a
+    fresh process does: holding none (spec 075).
+    """
     conn = connect(path)
+    db.release_host_lease()
     try:
         for index in range(rows):
             conn.execute(
@@ -156,6 +166,7 @@ def test_create_and_restore_are_refused_and_touch_nothing(
     archives = tmp_path / "archives"
     detector(UNREACHABLE)
     taken = backup.create_backup(archives)
+    db.release_host_lease()
     before = tree_digest(live)
 
     detector(owned_by_container(live))
@@ -220,31 +231,22 @@ def test_logging_setup_under_refusal_writes_no_log_file_and_the_open_is_still_re
 
 def test_a_refused_command_exits_75_and_names_the_way_out_without_its_arguments(
     live: Path,
+    detector: Callable[[ContainerState], list[int]],
     capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
-    no_real_docker: list[list[str]],
 ) -> None:
-    """The guard inside a command: the container was down when the CLI
-    decided to run here, and up by the time the command opened the file.
-    Since spec 074 a command decided while the container is up is delegated,
-    so this race is where spec 061's refusal is still reached from the CLI."""
-    make_database(live / "tracker.db")
-    answers = iter([UNREACHABLE])
-
-    def detect(timeout: float = container.DEFAULT_TIMEOUT_SECONDS) -> ContainerState:
-        return next(answers, owned_by_container(live))
-
-    monkeypatch.setattr(container, "detect", detect)
+    """Since specs 074 and 075 the CLI hands a database command over, so the
+    one refusal it still prints for a container-owned database is the
+    host-path one; it names the way out and never an argument value."""
+    detector(owned_by_container(live))
     sentinel = "Sentinel Person 7f3a"
 
-    assert main(["shortlist", sentinel]) == 75
+    assert main(["export", "--dest", sentinel]) == 75
 
     err = capsys.readouterr().err
     assert "harrier container owns the tracker database" in err
-    assert "docker exec harrier harrier shortlist <arguments>" in err
+    assert "Stop the container" in err
     assert "harrier doctor" in err
     assert sentinel not in err
-    assert no_real_docker == []
 
 
 def test_a_nested_subcommand_is_named_in_full(
@@ -298,6 +300,7 @@ def test_doctor_reports_each_line_and_exits_0_whoever_owns_the_file(
         "journal mode: wal",
         "wal file: absent",
         "shm file: absent",
+        "host leases: 0",
         "host access: refused (container owns the database)",
     ]
 

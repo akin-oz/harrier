@@ -37,6 +37,9 @@ from typing import cast
 CONTAINER_NAME = "harrier"
 DATA_MOUNT = "/app/data"
 
+# Docker creates this file in every container it starts.
+DOCKERENV = Path("/.dockerenv")
+
 # Long enough for an engine that is merely busy, short enough that a scheduled
 # run against an engine resuming from sleep fails in seconds rather than
 # hanging until launchd fires the next one.
@@ -168,3 +171,8 @@ def _revision(data: dict[str, object]) -> str | None:
         if isinstance(entry, str) and entry.startswith("HARRIER_REVISION="):
             return entry.removeprefix("HARRIER_REVISION=") or None
     return None
+
+
+def running_in() -> str:
+    """ "container" inside a Docker container, "host" otherwise (spec 075)."""
+    return "container" if DOCKERENV.exists() else "host"

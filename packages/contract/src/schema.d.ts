@@ -211,7 +211,15 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Health */
+        /**
+         * Health
+         * @description Always 200 while the process runs, so the compose healthcheck never
+         *     marks the container unhealthy because a host run holds the database.
+         *
+         *     It looks for a host lease before it opens anything, and with one present
+         *     it does not open the database at all; that is why it takes no `Conn`
+         *     (spec 075). Its own lease, when it runs on the host, is not a hold.
+         */
         get: operations["getHealth"];
         put?: never;
         post?: never;
@@ -978,6 +986,23 @@ export interface components {
              */
             notes?: string;
         };
+        /** DatabaseHeldOut */
+        DatabaseHeldOut: {
+            /** Detail */
+            detail: string;
+            hold: components["schemas"]["DatabaseHoldOut"];
+        };
+        /**
+         * DatabaseHoldOut
+         * @description Which host process holds the database, and since when. The subcommand
+         *     name only, never an argument value.
+         */
+        DatabaseHoldOut: {
+            /** Since */
+            since: string;
+            /** Subcommand */
+            subcommand: string;
+        };
         /** DraftIn */
         DraftIn: {
             /**
@@ -1045,10 +1070,11 @@ export interface components {
             built_at: string;
             /** Database */
             database: string;
+            database_hold: components["schemas"]["DatabaseHoldOut"] | null;
             /** Demo */
             demo: boolean;
             /** Job Count */
-            job_count: number;
+            job_count: number | null;
             /** Name */
             name: string;
             /** Revision */
@@ -1399,6 +1425,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
         };
     };
     listArtifacts: {
@@ -1442,6 +1477,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
                 };
             };
         };
@@ -1488,6 +1532,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
                 };
             };
         };
@@ -1539,6 +1592,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
         };
     };
     evaluateOffer: {
@@ -1588,6 +1650,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
         };
     };
     tailorResume: {
@@ -1635,6 +1706,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
                 };
             };
         };
@@ -1738,6 +1818,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
         };
     };
     captureJobFromForm: {
@@ -1798,6 +1887,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
         };
     };
     listConfig: {
@@ -1816,6 +1914,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConfigOut"][];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
                 };
             };
         };
@@ -1856,6 +1963,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
                 };
             };
         };
@@ -1918,6 +2034,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
         };
     };
     deleteConfig: {
@@ -1963,6 +2088,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
                 };
             };
         };
@@ -2015,6 +2149,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
                 };
             };
         };
@@ -2155,6 +2298,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
         };
     };
     listOutreachDue: {
@@ -2182,6 +2334,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
         };
     };
     syncOutreach: {
@@ -2208,6 +2369,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
             };
         };
     };
@@ -2265,6 +2435,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
         };
     };
     listCandidates: {
@@ -2315,6 +2494,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
                 };
             };
         };
@@ -2373,6 +2561,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
         };
     };
     rejectCandidate: {
@@ -2427,6 +2624,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
                 };
             };
         };
@@ -2485,6 +2691,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
         };
     };
     findContacts: {
@@ -2539,6 +2754,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
                 };
             };
         };
@@ -2597,6 +2821,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
         };
     };
     markOutreachSent: {
@@ -2653,6 +2886,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
         };
     };
     snoozeOutreach: {
@@ -2707,6 +2949,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
                 };
             };
         };
@@ -2929,6 +3180,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
         };
     };
     trackerCounts: {
@@ -2949,6 +3209,15 @@ export interface operations {
                     "application/json": {
                         [key: string]: number;
                     };
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
                 };
             };
         };
@@ -2981,6 +3250,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
                 };
             };
         };
@@ -3033,6 +3311,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
                 };
             };
         };
@@ -3089,6 +3376,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
                 };
             };
         };

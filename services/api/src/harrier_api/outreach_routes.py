@@ -23,12 +23,12 @@ from pydantic import BaseModel
 
 from harrier.tracker.selector import SelectorError
 from harrier.tracker.store import TrackerError
-from harrier_api.deps import Conn
+from harrier_api.deps import Conn, DatabaseRoute
 from harrier_api.localauth import TOKEN_RESPONSES, require_token
 from harrier_api.runmodels import Manager, RunOut, run_out
 from harrier_api.runs import RunParams, write_run_input
 
-outreach_router = APIRouter()
+outreach_router = APIRouter(route_class=DatabaseRoute)
 
 
 # --- request and response shapes ---------------------------------------------

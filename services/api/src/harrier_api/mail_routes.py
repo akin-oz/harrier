@@ -18,11 +18,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
+from harrier_api.deps import DatabaseRoute
 from harrier_api.localauth import TOKEN_RESPONSES, require_token
 from harrier_api.runmodels import Manager, RunOut, run_out
 from harrier_api.runs import RunParams
 
-mail_router = APIRouter()
+mail_router = APIRouter(route_class=DatabaseRoute)
 
 
 class WatchIn(BaseModel):
