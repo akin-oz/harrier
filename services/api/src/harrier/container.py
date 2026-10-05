@@ -60,6 +60,9 @@ class ContainerState:
     running: bool = False
     data_source: Path | None = None
     reason: str | None = None
+    # The image's HARRIER_REVISION, stamped by `just container-up` (spec 051).
+    # Read so a delegated run can say when it runs older code (spec 074).
+    revision: str | None = None
 
 
 def socket_candidates() -> list[Path]:
@@ -146,9 +149,22 @@ def _parse(document: object) -> ContainerState:
     state = cast("dict[str, object]", data["State"])
     if state.get("Running") is not True:
         return ContainerState(engine=REACHABLE)
+    revision = _revision(data)
     for mount in cast("list[dict[str, object]]", data.get("Mounts") or []):
         if mount.get("Destination") == DATA_MOUNT:
             source = mount.get("Source")
             if isinstance(source, str) and source:
-                return ContainerState(engine=REACHABLE, running=True, data_source=Path(source))
-    return ContainerState(engine=REACHABLE, running=True)
+                return ContainerState(
+                    engine=REACHABLE, running=True, data_source=Path(source), revision=revision
+                )
+    return ContainerState(engine=REACHABLE, running=True, revision=revision)
+
+
+def _revision(data: dict[str, object]) -> str | None:
+    config = data.get("Config")
+    if not isinstance(config, dict):
+        return None
+    for entry in cast("list[object]", cast("dict[str, object]", config).get("Env") or []):
+        if isinstance(entry, str) and entry.startswith("HARRIER_REVISION="):
+            return entry.removeprefix("HARRIER_REVISION=") or None
+    return None
