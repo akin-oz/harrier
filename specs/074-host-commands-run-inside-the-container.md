@@ -188,7 +188,7 @@ autouse in both test files, so no test can reach a real container. Tests in
       `config/schedule.json` are unchanged by it, so the rendering is
       unchanged by construction
 - [x] each test above fails with its behavior removed: checked by removing
-      each behavior in turn (15 mutants, all failed a test)
+      each behavior in turn (15 mutants, all failed a test; 2 more for the review fixes on PR #112)
 - [ ] by hand, on the daily driver: with the container up, `harrier
       gmail-watch` and `harrier shortlist <id>` from the host run inside the
       container; `harrier export` exits 75; after `docker compose stop
@@ -209,6 +209,15 @@ Recorded here so the spec and the code agree.
   install paths. Without it the command exits 1 and nothing runs on the host
   (`test_without_a_docker_binary_nothing_runs_here_either`).
   `services/api/src/harrier/delegate.py`.
+- **A binary that cannot start is reported, not raised** (review finding on
+  PR #112). A wrong `HARRIER_DOCKER_BIN` made `subprocess.run` raise out of the
+  CLI as a traceback; it now exits 1 with the reason, never the path.
+  `test_a_docker_binary_that_cannot_start_is_reported_not_raised`.
+- **"Container stopped" is claimed only when known** (same review). The engine
+  answering "not running", or no engine at all, means the container stopped.
+  An engine that did not answer says nothing, and the command may have
+  failed for its own reasons, so nothing is claimed.
+  `test_a_stopped_container_is_claimed_only_when_the_engine_says_so`.
 - **Corrections to the class list,** from walking the parser:
   `demo-run` is `host-only`, not `database`: it never opens the database, and
   this spec's own failure modes say demo mode is never delegated.

@@ -360,3 +360,51 @@ def test_without_a_docker_binary_nothing_runs_here_either(
     assert main(["digest"]) == 1
     assert "cannot run inside the container" in capsys.readouterr().err
     assert runner.calls == []
+
+
+def test_a_docker_binary_that_cannot_start_is_reported_not_raised(
+    live: Path,
+    answers: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """The real spawn path, against a binary that does not exist: a
+    misconfigured HARRIER_DOCKER_BIN raised OSError out of the CLI as a
+    traceback (review finding on PR #112)."""
+    answers(owned(live))
+    missing = tmp_path / "no-docker-here"
+    monkeypatch.setattr(delegate, "run_process", delegate._run)  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(delegate, "docker_binary", lambda: str(missing))
+    assert main(["digest"]) == 1
+    err = capsys.readouterr().err
+    assert "cannot run inside the container" in err
+    assert str(tmp_path) not in err
+
+
+@pytest.mark.parametrize(
+    ("after", "says_stopped"),
+    [
+        # The engine answered: the container is not running.
+        (ContainerState(engine=container.REACHABLE), True),
+        # No engine at all: Docker Desktop quit, and the container with it.
+        (UNREACHABLE, True),
+        # The engine did not answer: nothing is known about the container,
+        # and the child may have failed for its own reasons (review finding
+        # on PR #112).
+        (ContainerState(engine=container.UNKNOWN, reason="timed out"), False),
+    ],
+)
+def test_a_stopped_container_is_claimed_only_when_the_engine_says_so(
+    live: Path,
+    answers: Callable[..., None],
+    runner: FakeDocker,
+    capsys: pytest.CaptureFixture[str],
+    after: ContainerState,
+    says_stopped: bool,
+) -> None:
+    answers(owned(live), owned(live), after)
+    runner.status = 3
+    assert main(["digest"]) == 3
+    err = capsys.readouterr().err
+    assert ("container stopped" in err) is says_stopped

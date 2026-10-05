@@ -130,8 +130,19 @@ def delegate(argv: Sequence[str], subcommand: str) -> int:
 
     # -i keeps stdin attached (`config set` reads it); no -t, so no TTY is
     # requested and the call behaves the same under launchd as in a terminal.
-    code = run_process([docker, "exec", "-i", container.CONTAINER_NAME, "harrier", *argv])
-    if code != 0 and not container.detect().running:
+    try:
+        code = run_process([docker, "exec", "-i", container.CONTAINER_NAME, "harrier", *argv])
+    except OSError as error:
+        # A binary that cannot start (a wrong HARRIER_DOCKER_BIN) used to
+        # escape as a traceback (review finding on PR #112). `strerror`, not
+        # the exception's text, which carries the configured path.
+        print(
+            f"harrier {subcommand}: cannot run inside the container: "
+            f"the docker binary could not start ({error.strerror or type(error).__name__})",
+            file=sys.stderr,
+        )
+        return 1
+    if code != 0 and _container_stopped():
         # Not retried on the host: the container may be coming back, and a
         # host run now would be the two-kernel access this exists to prevent.
         print(
@@ -139,3 +150,17 @@ def delegate(argv: Sequence[str], subcommand: str) -> int:
             file=sys.stderr,
         )
     return code
+
+
+def _container_stopped() -> bool:
+    """Whether the container is known to have stopped.
+
+    Known when the engine answers that it is not running, or when there is no
+    engine, which takes the container with it. An engine that did not answer
+    says nothing about the container, and a delegated command can fail for
+    its own reasons (review finding on PR #112).
+    """
+    after = container.detect()
+    if after.engine == container.UNREACHABLE:
+        return True
+    return after.engine == container.REACHABLE and not after.running
