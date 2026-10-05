@@ -13,8 +13,10 @@ keeps hitting.
 
 from __future__ import annotations
 
+import gc
 import logging
 import sqlite3
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -216,3 +218,60 @@ def test_a_cached_exception_text_is_redacted() -> None:
     record.exc_text = f"Traceback: contact {CANDIDATE['name']} unreachable"
     IdentityRedactionFilter({CANDIDATE["name"]}).filter(record)
     assert CANDIDATE["name"] not in (record.exc_text or "")
+
+
+# --- the connection logging setup opens (spec 076) ---------------------------
+
+
+def _wal_files(path: Path) -> set[str]:
+    return {
+        sibling.name
+        for sibling in path.parent.iterdir()
+        if sibling.name in {f"{path.name}-wal", f"{path.name}-shm"}
+    }
+
+
+@pytest.fixture()
+def quiet_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """A WAL database nothing holds open, with gc off.
+
+    gc is off because an unclosed connection is closed, and the WAL
+    checkpointed, when it is collected; with gc on, a collection between the
+    call and the assertion would pass a leak.
+    """
+    monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("HARRIER_DEMO", raising=False)
+    conn = connect()
+    path = Path(conn.execute("PRAGMA database_list").fetchone()["file"])
+    conn.close()
+    assert _wal_files(path) == set()
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        yield path
+    finally:
+        if was_enabled:
+            gc.enable()
+
+
+def test_configure_logging_closes_its_connection(quiet_database: Path) -> None:
+    configure_logging(force=True)
+    assert _wal_files(quiet_database) == set()
+
+
+def test_configure_logging_closes_its_connection_when_identity_values_fails(
+    quiet_database: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import harrier.logredact
+
+    def broken(_conn: sqlite3.Connection) -> set[str]:
+        raise sqlite3.OperationalError("unreadable")
+
+    monkeypatch.setattr(harrier.logredact, "identity_values", broken)
+    # configure_logging replaces the root handlers, caplog's included, so the
+    # warning is read from the stderr handler it installs.
+    configure_logging(force=True)
+    assert _wal_files(quiet_database) == set()
+    assert "identity redaction is unavailable" in capsys.readouterr().err

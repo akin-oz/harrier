@@ -30,6 +30,7 @@ import logging
 import logging.handlers
 import os
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 from harrier.db import DatabaseOwnedByContainer, DatabaseOwnershipError, connect, data_dir
@@ -130,8 +131,11 @@ def _load_identity_values() -> set[str] | None:
     """
     from harrier.logredact import identity_values
 
+    # closing(), not the connection as its own context manager: that one
+    # commits but does not close, and an unclosed connection lives until gc
+    # and checkpoints the WAL whenever that happens (spec 076).
     try:
-        with connect() as conn:
+        with closing(connect()) as conn:
             return identity_values(conn)
     except (sqlite3.Error, OSError):
         return None

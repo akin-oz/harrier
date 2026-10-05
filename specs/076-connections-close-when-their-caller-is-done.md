@@ -34,15 +34,15 @@ Who it hurts:
   on a `sqlite3.Connection` commits or rolls back. It does not close. The
   connection lives on inside the server until some later gc pass, then
   checkpoints the live database mid-request from an unrelated thread.
-- **Every host CLI run.** 22 command paths in
+- **Every host CLI run.** 21 command paths in
   `services/api/src/harrier_cli/main.py` open with `conn = connect()` (or pass
   `connect()` inline) and never close. The connection is still open while the
   command prints, returns its exit code, and the process tears down. Spec 075
   removes the host lease "on exit"; a connection that outlives the code that
   removes the lease holds the file with no lease protecting it.
 - **Readers of the code.** `db.py` already says each API request "opens and
-  closes its own". Three CLI commands (`check`, `check-feeds`, `reconsider`),
-  `harrier_api/deps.py` and `harrier_api/demo.py` close in `finally`. The
+  closes its own". Six CLI commands (`check`, `cutover`, the tracker verbs,
+  `config`, `check-feeds`, `reconsider`), `harrier_api/deps.py` and `harrier_api/demo.py` close in `finally`. The
   others look the same and are not.
 
 ## Scope
@@ -95,21 +95,22 @@ Who it hurts:
 
 ## Acceptance criteria
 
-- A new test in `services/api/tests/test_logging.py`:
+- `services/api/tests/test_logging.py::test_configure_logging_closes_its_connection`:
   a temporary WAL database with no other open connection; `gc.disable()`;
   `configure_logging(force=True)`; afterwards `-wal` and `-shm` do not exist.
   Fails on `main` today (both files exist until `gc.collect()`).
-- A new test in `services/api/tests/test_logging.py`, for the error path:
+- `services/api/tests/test_logging.py::test_configure_logging_closes_its_connection_when_identity_values_fails`:
   same setup with `identity_values` patched to raise `sqlite3.OperationalError`;
   no `-wal` or `-shm` after the call, and the "identity redaction is
   unavailable" warning is logged.
 - `services/api/tests/test_cli_connections.py`: `harrier.db.connect` (as
   imported by `harrier_cli.main`) wrapped to record every connection it
-  returns, with gc disabled. For at least one read command (`profile list`),
-  one write command (`tracker` verb), and one command that fails mid-run
-  (`migrate-legacy` with an input that raises `MigrationError`), every
-  recorded connection raises `sqlite3.ProgrammingError` on `execute` after
-  `main()` returns. Each case fails on `main` today.
+  returns, with gc disabled. For a read command (`profile list`), a command
+  that returns early (`brief show` with no brief), a command that fails
+  mid-run (`migrate-legacy` into a tracker with rows, `MigrationError`), and
+  a command whose store call raises, every recorded connection raises
+  `sqlite3.ProgrammingError` on `execute` after `main()` returns. Each case
+  fails on `main` today.
 - `test_integrity_leaves_a_crashed_writers_wal_and_the_database_untouched`
   in `services/api/tests/test_database_ownership.py` no longer needs
   `gc.collect()` to observe logging setup's close. The call is removed or
@@ -143,17 +144,27 @@ None. No data, config or command-line change.
 - Reproduced on CPython 3.12.12 in this session: a WAL connection left open
   by a returning function keeps `-wal` until `gc.collect()`.
 - Call sites as of commit 2d318d7: `logsetup.py:134` and the `connect()`
-  calls in `harrier_cli/main.py` outside `check`, `check-feeds` and
-  `reconsider`.
+  calls in `harrier_cli/main.py` outside the six commands that already
+  closed in `finally`.
+
+## Amendment (2026-10-05, during implementation)
+
+- The draft counted 22 leaking CLI paths and named three that close. The
+  tracker verbs, `cutover` and `config` also close in `finally`; the earlier
+  count looked only 40 lines past each open. The leaking paths are 21: 20
+  `conn = connect()` handlers and the inline `connect()` in `brief show`.
+- The draft's CLI acceptance case "one write command (`tracker` verb)"
+  named a handler that already closed, so it could not fail before the fix.
+  It is replaced by `brief show`, the inline open, and by a command whose
+  store call raises.
+- The fix is `contextlib.closing(connect())` at each site, the stdlib form
+  of the per-site close this spec asks for. No helper in `harrier.db`.
 
 ## Proof map
 
-Test names are given in prose here because the tests land with the
-implementation; the implementing change cites them by name.
-
 | Claim | Proof |
 | --- | --- |
-| logging setup closes its connection | new test in `services/api/tests/test_logging.py` |
-| it closes on the error path too | new test in `services/api/tests/test_logging.py` (error path) |
-| CLI commands close on success and failure | `test_cli_connections.py` |
+| logging setup closes its connection | `services/api/tests/test_logging.py::test_configure_logging_closes_its_connection` |
+| it closes on the error path too | `services/api/tests/test_logging.py::test_configure_logging_closes_its_connection_when_identity_values_fails` |
+| CLI commands close on success and failure | `services/api/tests/test_cli_connections.py` |
 | no `with connect()` remains | the grep in Acceptance criteria |
