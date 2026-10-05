@@ -412,6 +412,42 @@
         "title": "CoverLetterIn",
         "type": "object"
       },
+      "DatabaseHeldOut": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "hold": {
+            "$ref": "#/components/schemas/DatabaseHoldOut"
+          }
+        },
+        "required": [
+          "detail",
+          "hold"
+        ],
+        "title": "DatabaseHeldOut",
+        "type": "object"
+      },
+      "DatabaseHoldOut": {
+        "description": "Which host process holds the database, and since when. The subcommand\nname only, never an argument value.",
+        "properties": {
+          "since": {
+            "title": "Since",
+            "type": "string"
+          },
+          "subcommand": {
+            "title": "Subcommand",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subcommand",
+          "since"
+        ],
+        "title": "DatabaseHoldOut",
+        "type": "object"
+      },
       "DraftIn": {
         "properties": {
           "ai": {
@@ -509,13 +545,30 @@
             "title": "Database",
             "type": "string"
           },
+          "database_hold": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DatabaseHoldOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "demo": {
             "title": "Demo",
             "type": "boolean"
           },
           "job_count": {
-            "title": "Job Count",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Count"
           },
           "name": {
             "title": "Name",
@@ -536,6 +589,7 @@
           "demo",
           "database",
           "job_count",
+          "database_hold",
           "revision",
           "built_at"
         ],
@@ -1231,6 +1285,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "Draft Answers"
@@ -1281,6 +1345,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "List Artifacts"
@@ -1333,6 +1407,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "Read Artifact"
@@ -1388,6 +1472,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "Draft Cover Letter"
@@ -1443,6 +1537,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "Evaluate Offer Route"
@@ -1499,6 +1603,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "Tailor Resume"
@@ -1652,6 +1766,16 @@
           },
           "500": {
             "description": "unexpected error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "Capture Via Post"
@@ -1708,6 +1832,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "Capture From Form"
@@ -1730,6 +1864,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "List Configuration"
@@ -1783,6 +1927,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "Delete Configuration"
@@ -1830,6 +1984,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "Get Configuration"
@@ -1900,6 +2064,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "Put Configuration"
@@ -1907,6 +2081,7 @@
     },
     "/health": {
       "get": {
+        "description": "Always 200 while the process runs, so the compose healthcheck never\nmarks the container unhealthy because a host run holds the database.\n\nIt looks for a host lease before it opens anything, and with one present\nit does not open the database at all; that is why it takes no `Conn`\n(spec 075). Its own lease, when it runs on the host, is not a hold.",
         "operationId": "getHealth",
         "responses": {
           "200": {
@@ -1992,6 +2167,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "Jobs"
@@ -2150,6 +2335,16 @@
           },
           "403": {
             "description": "missing or wrong local API token"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "List Outreach Contacts"
@@ -2175,6 +2370,16 @@
           },
           "403": {
             "description": "missing or wrong local API token"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "List Outreach Due"
@@ -2200,6 +2405,16 @@
           },
           "403": {
             "description": "missing or wrong local API token"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "Sync Outreach"
@@ -2258,6 +2473,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "Set Best Contact"
@@ -2311,6 +2536,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "List Candidates"
@@ -2370,6 +2605,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "Approve"
@@ -2428,6 +2673,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "Reject"
@@ -2487,6 +2742,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "Draft Outreach"
@@ -2546,6 +2811,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "Find Contacts"
@@ -2604,6 +2879,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "Mark Replied"
@@ -2663,6 +2948,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "Mark Sent"
@@ -2721,6 +3016,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "Snooze"
@@ -2962,6 +3267,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "Add Job By Hand"
@@ -2984,6 +3299,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "Tracker Counts"
@@ -3047,6 +3372,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "List Queue"
@@ -3095,6 +3430,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "Rescore Job"
@@ -3154,6 +3499,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "Change Job Status"

@@ -29,3 +29,9 @@
   font-family: var(--font-mono);
   color: var(--color-text-tertiary);
 }
+/* A host process holds the database (spec 075). The pages that read it are
+   waiting, not broken, so this is emphasis rather than the danger colour. */
+.health-badge__hold {
+  color: var(--color-text-secondary);
+  font-weight: 600;
+}

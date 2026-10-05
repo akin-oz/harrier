@@ -11,17 +11,21 @@ from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
-from harrier.container import CONTAINER_NAME
+from harrier.container import CONTAINER_NAME, running_in
 from harrier.db import (
     EXIT_DATABASE_OWNED,
     DatabaseOwnedByContainer,
     DatabaseOwnershipError,
-    DatabaseOwnershipUnknown,
     check_database_ownership,
     connect,
     default_db_path,
+    lease_directory,
+    probe_database_ownership,
+    release_host_lease,
+    set_lease_subcommand,
 )
 from harrier.delegate import delegate
+from harrier.hostlease import remove_dead
 from harrier.logsetup import configure_logging
 from harrier.profile import export_to, import_from, list_documents
 from harrier.tracker.export import export_csv
@@ -2047,36 +2051,48 @@ def _refresh_gmail_token() -> bool:
 _BEFORE_DELEGATING: dict[str, Callable[[], bool]] = {"gmail-watch": _refresh_gmail_token}
 
 
+def _hand_over(kind: str, subcommand: str, argv: list[str]) -> int:
+    """The container owns the database: delegate, or refuse a host-path command."""
+    if kind == HOST_PATH:
+        print(
+            f"harrier {subcommand}: refused, it names a file on this machine and the "
+            f"{CONTAINER_NAME} container owns the tracker database. Stop the container, "
+            "or use the web app. See `harrier doctor`.",
+            file=sys.stderr,
+        )
+        return EXIT_DATABASE_OWNED
+    before = _BEFORE_DELEGATING.get(subcommand)
+    if before is not None and not before():
+        return 1
+    return delegate(argv, subcommand)
+
+
 def _run_or_hand_over(args: argparse.Namespace, argv: list[str]) -> int | None:
-    """Delegate or refuse while the container owns the database (spec 074).
+    """Run here, delegate, or refuse (specs 074, 075).
 
     Returns an exit status when the command was handed over or refused, and
     None when it should run here. Decided before logging setup, because a
     process that delegates may not open the database to load the redaction
     values, and so writes nothing to the shared log.
+
+    Two questions, in order. The first only probes, so a command that is
+    handed over never takes a lease. The second takes this process's lease
+    and asks again: a container that started in between is seen now, the
+    lease is given back, and the command is handed over after all. From then
+    on the container is the one refused, until this process ends.
     """
     kind = command_class(args)
     if kind == HOST_ONLY:
         return None
     subcommand = subcommand_name(args)
-    try:
-        check_database_ownership(default_db_path())
-    except DatabaseOwnedByContainer:
-        if kind == HOST_PATH:
-            print(
-                f"harrier {subcommand}: refused, it names a file on this machine and the "
-                f"{CONTAINER_NAME} container owns the tracker database. Stop the container, "
-                "or use the web app. See `harrier doctor`.",
-                file=sys.stderr,
-            )
+    for ask in (probe_database_ownership, check_database_ownership):
+        try:
+            ask(default_db_path())
+        except DatabaseOwnedByContainer:
+            return _hand_over(kind, subcommand, argv)
+        except DatabaseOwnershipError as error:
+            print(_refusal(subcommand, error), file=sys.stderr)
             return EXIT_DATABASE_OWNED
-        before = _BEFORE_DELEGATING.get(subcommand)
-        if before is not None and not before():
-            return 1
-        return delegate(argv, subcommand)
-    except DatabaseOwnershipUnknown as error:
-        print(_refusal(subcommand, error), file=sys.stderr)
-        return EXIT_DATABASE_OWNED
     return None
 
 
@@ -2085,26 +2101,37 @@ def main(argv: list[str] | None = None) -> int:
     vector = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
     args = parser.parse_args(vector)
-    handed_over = _run_or_hand_over(args, vector)
-    if handed_over is not None:
-        return handed_over
-    # Logging setup opens the database read-write to load the redaction
-    # values, and closing that connection checkpoints any WAL left behind.
-    # `doctor` logs nothing and reports on that file, so it must not be the
-    # thing that changes it (review finding on PR #110).
-    if args.command != "doctor":
-        configure_logging()
+    if running_in() == "host":
+        # Before anything is decided, so a lease left by a crashed host
+        # process stops refusing the container at the next host invocation
+        # (spec 075).
+        remove_dead(lease_directory())
+    set_lease_subcommand(subcommand_name(args))
     try:
-        result: int = args.func(args)
-    except TrackerError as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 1
-    except DatabaseOwnershipError as error:
-        # Its own exit status, so launchd's record and a shell script can tell
-        # "not now" from "wrong" (spec 061).
-        print(_refusal(subcommand_name(args), error), file=sys.stderr)
-        return EXIT_DATABASE_OWNED
-    return result
+        handed_over = _run_or_hand_over(args, vector)
+        if handed_over is not None:
+            return handed_over
+        # Logging setup opens the database read-write to load the redaction
+        # values, and closing that connection checkpoints any WAL left behind.
+        # `doctor` logs nothing and reports on that file, so it must not be the
+        # thing that changes it (review finding on PR #110).
+        if args.command != "doctor":
+            configure_logging()
+        try:
+            result: int = args.func(args)
+        except TrackerError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 1
+        except DatabaseOwnershipError as error:
+            # Its own exit status, so launchd's record and a shell script can
+            # tell "not now" from "wrong" (spec 061).
+            print(_refusal(subcommand_name(args), error), file=sys.stderr)
+            return EXIT_DATABASE_OWNED
+        return result
+    finally:
+        # Normal return or exception, the lease goes with the command, not
+        # with the interpreter (spec 075).
+        release_host_lease()
 
 
 if __name__ == "__main__":

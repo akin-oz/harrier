@@ -13,21 +13,28 @@ from pathlib import Path
 from typing import Annotated, Literal, cast
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from harrier.db import default_db_path
+from harrier.db import DatabaseOwnedByHost, connect, default_db_path, lease_directory
 from harrier.demo import repo_root
+from harrier.hostlease import oldest_hold
 from harrier.logsetup import configure_logging
 from harrier.tracker import list_jobs
 from harrier.tracker.selector import SelectorError
 from harrier.tracker.store import TrackerError
 from harrier_api.capture_routes import capture_router
 from harrier_api.demo import demo_db_path, is_demo_mode, seed_demo_db
-from harrier_api.deps import Conn
+from harrier_api.deps import (
+    DATABASE_HELD_DETAIL,
+    Conn,
+    DatabaseHeldOut,
+    DatabaseHoldOut,
+    DatabaseRoute,
+)
 from harrier_api.localauth import (
     TOKEN_RESPONSES,
     TRUSTED_HOSTS,
@@ -105,7 +112,10 @@ class HealthOut(BaseModel):
     version: str
     demo: bool
     database: str
-    job_count: int
+    # Null exactly when `database_hold` is set: the count needs the database,
+    # and a host process holds it (spec 075).
+    job_count: int | None
+    database_hold: DatabaseHoldOut | None
     # What is actually running. A process started from an old tree, or a
     # container built from one, answers every request correctly while serving
     # code nobody is looking at, and that is the failure spec 051 exists to
@@ -116,18 +126,33 @@ class HealthOut(BaseModel):
     built_at: str
 
 
-router = APIRouter()
+router = APIRouter(route_class=DatabaseRoute)
 
 
 @router.get("/health", operation_id="getHealth")
-def health(conn: Conn) -> HealthOut:
-    count = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()
+def health() -> HealthOut:
+    """Always 200 while the process runs, so the compose healthcheck never
+    marks the container unhealthy because a host run holds the database.
+
+    It looks for a host lease before it opens anything, and with one present
+    it does not open the database at all; that is why it takes no `Conn`
+    (spec 075). Its own lease, when it runs on the host, is not a hold.
+    """
+    hold = None if is_demo_mode() else oldest_hold(lease_directory(), ignore_pid=os.getpid())
+    job_count: int | None = None
+    if hold is None:
+        conn = connect(demo_db_path() if is_demo_mode() else None, same_thread=False)
+        try:
+            job_count = int(conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0])
+        finally:
+            conn.close()
     return HealthOut(
         name="harrier",
         version=API_VERSION,
         demo=is_demo_mode(),
         database=str(demo_db_path() if is_demo_mode() else default_db_path()),
-        job_count=int(count[0]),
+        job_count=job_count,
+        database_hold=None if hold is None else DatabaseHoldOut(subcommand=hold[0], since=hold[1]),
         revision=build_revision(),
         built_at=build_timestamp(),
     )
@@ -183,7 +208,7 @@ class RunEventOut(BaseModel):
     exit_code: int | None = None
 
 
-tracker_router = APIRouter()
+tracker_router = APIRouter(route_class=DatabaseRoute)
 
 
 class StatusChangeIn(BaseModel):
@@ -317,7 +342,7 @@ def tracker_counts(conn: Conn) -> dict[str, int]:
 
 # --- apply: artifacts for one job (spec 047) ---
 
-apply_router = APIRouter()
+apply_router = APIRouter(route_class=DatabaseRoute)
 
 
 class TailorIn(BaseModel):
@@ -492,7 +517,7 @@ def read_artifact(selector: str, kind: str, conn: Conn) -> FileResponse:
     )
 
 
-runs_router = APIRouter()
+runs_router = APIRouter(route_class=DatabaseRoute)
 
 
 @runs_router.post(
@@ -606,7 +631,7 @@ CONFIG_ERRORS: dict[int | str, dict[str, object]] = {
     404: {"model": ConfigErrorOut, "description": "No such configuration kind."},
 }
 
-config_router = APIRouter()
+config_router = APIRouter(route_class=DatabaseRoute)
 
 
 def _config_out(conn: sqlite3.Connection, kind: str) -> ConfigOut:
@@ -757,6 +782,17 @@ def create_app(run_manager: RunManager | None = None, spa_dir: Path | None = Non
         description="Local-first job search automation API.",
     )
     app.state.run_manager = run_manager if run_manager is not None else RunManager()
+
+    @app.exception_handler(DatabaseOwnedByHost)
+    async def database_held(request: Request, error: DatabaseOwnedByHost) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
+        # Raised by `get_conn` inside the container while a host lease exists
+        # (spec 075). Every route that depends on `Conn` declares it.
+        body = DatabaseHeldOut(
+            detail=DATABASE_HELD_DETAIL,
+            hold=DatabaseHoldOut(subcommand=error.subcommand, since=error.since),
+        )
+        return JSONResponse(status_code=503, content=body.model_dump())
+
     app.include_router(router)
     app.include_router(runs_router)
     app.include_router(capture_router)

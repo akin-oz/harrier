@@ -25,7 +25,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from harrier.capture import CaptureResult, add_captured_job
-from harrier_api.deps import Conn
+from harrier_api.deps import Conn, DatabaseRoute
 from harrier_api.localauth import (
     TOKEN_RESPONSES,
     load_or_create_token,
@@ -33,7 +33,7 @@ from harrier_api.localauth import (
     token_matches,
 )
 
-capture_router = APIRouter()
+capture_router = APIRouter(route_class=DatabaseRoute)
 
 _STATUS_CODES = {"added": 200, "invalid": 400, "duplicate": 409}
 

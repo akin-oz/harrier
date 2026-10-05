@@ -13,11 +13,12 @@ it first (spec 061, ADR-011).
 
 from __future__ import annotations
 
+import atexit
 import os
 import sqlite3
 from pathlib import Path
 
-from harrier import container
+from harrier import container, hostlease
 from harrier.demo import demo_data_dir, is_demo_mode
 from harrier.paths import repo_root
 
@@ -74,6 +75,68 @@ class DatabaseOwnershipUnknown(DatabaseOwnershipError):
     """The Docker engine could not say whether the container has it."""
 
 
+class DatabaseOwnedByHost(DatabaseOwnershipError):
+    """Inside the container: a host process holds a lease on the database.
+
+    `subcommand` and `since` describe the oldest lease, and are what the API
+    answers with (spec 075). Neither carries an argument value.
+    """
+
+    def __init__(self, subcommand: str, since: str) -> None:
+        super().__init__(
+            f"a host process ({subcommand}, since {since}) holds the tracker database; "
+            "it is refused here until that process ends. See `harrier doctor`."
+        )
+        self.subcommand = subcommand
+        self.since = since
+
+
+# The subcommand a lease records. The CLI sets it; any other host process
+# that opens the database (`uv run python`, a host uvicorn) is "python".
+_lease_subcommand = "python"
+_held_lease: Path | None = None
+_release_registered = False
+
+
+def lease_directory() -> Path:
+    return live_data_root() / hostlease.LEASE_DIRNAME
+
+
+def set_lease_subcommand(subcommand: str) -> None:
+    global _lease_subcommand
+    _lease_subcommand = subcommand
+
+
+def holds_host_lease() -> bool:
+    """Whether this process holds a lease on the live database it would open.
+
+    Compared by directory as well as existence: a lease held on some other
+    data directory is no lease on this one.
+    """
+    return (
+        _held_lease is not None and _held_lease.parent == lease_directory() and _held_lease.exists()
+    )
+
+
+def acquire_host_lease() -> None:
+    """Write this process's lease, once, and drop it when the process ends."""
+    global _held_lease, _release_registered
+    if holds_host_lease():
+        return
+    release_host_lease()
+    _held_lease = hostlease.write_lease(lease_directory(), os.getpid(), _lease_subcommand)
+    if not _release_registered:
+        atexit.register(release_host_lease)
+        _release_registered = True
+
+
+def release_host_lease() -> None:
+    global _held_lease
+    if _held_lease is not None:
+        _held_lease.unlink(missing_ok=True)
+    _held_lease = None
+
+
 def live_data_root() -> Path:
     """The directory the container mounts at /app/data: this checkout's data/.
 
@@ -86,19 +149,60 @@ def live_data_root() -> Path:
     return repo_root() / "data"
 
 
-def check_database_ownership(path: Path) -> None:
-    """Raise unless this process may open, copy or replace `path` (spec 061).
+def _is_live(path: Path) -> bool:
+    return path.resolve().is_relative_to(live_data_root().resolve())
 
-    Refuses when the running harrier container has mounted a directory that
-    contains `path`, and when the engine cannot say. Callers are `connect`,
-    the backup snapshot and verify, and `create_backup` and `restore_backup`,
-    which copy and replace the data directory without opening it through
-    SQLite. Inside the container no engine socket is mounted, so the answer
-    there is "unreachable" and the container's own opens go through.
+
+def probe_database_ownership(path: Path) -> None:
+    """Raise unless this process may open `path`, without taking a lease.
+
+    The question alone, for a caller that only decides: the CLI asking
+    whether to run a command here or hand it to the container. A process that
+    hands its command over never opens the database, so it never takes a
+    lease (spec 075).
     """
-    resolved = path.resolve()
-    if not resolved.is_relative_to(live_data_root().resolve()):
+    if not _is_live(path):
         return
+    if container.running_in() == "container":
+        hold = hostlease.oldest_hold(lease_directory())
+        if hold is not None:
+            raise DatabaseOwnedByHost(*hold)
+    _engine_verdict(path.resolve())
+
+
+def check_database_ownership(path: Path) -> None:
+    """Raise unless this process may open, copy or replace `path` (specs 061, 075).
+
+    Inside the container, any host lease refuses the open. On the host, the
+    process takes its lease first and asks the engine second, so a container
+    that starts between the two sees the lease, and one that started before
+    is seen by the engine. Refused, it gives the lease back: a refusal never
+    leaves one behind. Once this process holds a lease the container is the
+    one refused, so later opens here go through.
+
+    Callers are `connect`, the backup snapshot and verify, and
+    `create_backup` and `restore_backup`, which copy and replace the data
+    directory without opening it through SQLite.
+    """
+    if not _is_live(path):
+        return
+    if container.running_in() == "container":
+        probe_database_ownership(path)
+        return
+    if holds_host_lease():
+        return
+    acquire_host_lease()
+    try:
+        _engine_verdict(path.resolve())
+    except DatabaseOwnershipError:
+        release_host_lease()
+        raise
+
+
+def _engine_verdict(resolved: Path) -> None:
+    """Refuse when the running container has `resolved` mounted, or when the
+    engine cannot say (spec 061). Inside the container no engine socket is
+    mounted, so the answer there is "unreachable"."""
     state = container.detect()
     if state.engine == container.UNKNOWN:
         raise DatabaseOwnershipUnknown(

@@ -12,7 +12,7 @@ import argparse
 import gc
 import logging
 import sqlite3
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import cast
 
@@ -37,14 +37,19 @@ UNREACHABLE = ContainerState(engine=container.UNREACHABLE)
 
 
 @pytest.fixture()
-def live(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def live(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """A data directory standing in for the one the container mounts."""
     root = tmp_path / "live-data"
     root.mkdir()
     monkeypatch.setattr(db, "live_data_root", lambda: root)
     monkeypatch.setenv("HARRIER_DATA_DIR", str(root))
     monkeypatch.delenv("HARRIER_DEMO", raising=False)
-    return root
+    # No real engine is ever asked, and the test process plays the host.
+    monkeypatch.setattr(container, "detect", lambda timeout=0.0: UNREACHABLE)
+    monkeypatch.setattr(container, "running_in", lambda: "host")
+    yield root
+    # A lease this test took is this test's, not the next one's (spec 075).
+    db.release_host_lease()
 
 
 def owned(root: Path, revision: str | None = None) -> ContainerState:
