@@ -95,11 +95,11 @@ Who it hurts:
 
 ## Acceptance criteria
 
-- `services/api/tests/test_logging.py::test_configure_logging_closes_its_connection`:
+- A new test in `services/api/tests/test_logging.py`:
   a temporary WAL database with no other open connection; `gc.disable()`;
   `configure_logging(force=True)`; afterwards `-wal` and `-shm` do not exist.
   Fails on `main` today (both files exist until `gc.collect()`).
-- `services/api/tests/test_logging.py::test_configure_logging_closes_its_connection_when_identity_values_fails`:
+- A new test in `services/api/tests/test_logging.py`, for the error path:
   same setup with `identity_values` patched to raise `sqlite3.OperationalError`;
   no `-wal` or `-shm` after the call, and the "identity redaction is
   unavailable" warning is logged.
@@ -148,9 +148,12 @@ None. No data, config or command-line change.
 
 ## Proof map
 
+Test names are given in prose here because the tests land with the
+implementation; the implementing change cites them by name.
+
 | Claim | Proof |
 | --- | --- |
-| logging setup closes its connection | `test_logging.py::test_configure_logging_closes_its_connection` |
-| it closes on the error path too | `test_logging.py::test_configure_logging_closes_its_connection_when_identity_values_fails` |
+| logging setup closes its connection | new test in `services/api/tests/test_logging.py` |
+| it closes on the error path too | new test in `services/api/tests/test_logging.py` (error path) |
 | CLI commands close on success and failure | `test_cli_connections.py` |
 | no `with connect()` remains | the grep in Acceptance criteria |
