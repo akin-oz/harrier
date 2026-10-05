@@ -6,7 +6,9 @@ import argparse
 import json
 import os
 import sys
+from collections.abc import Callable
 from contextlib import closing
+from dataclasses import dataclass
 from pathlib import Path
 
 from harrier.container import CONTAINER_NAME
@@ -14,9 +16,12 @@ from harrier.db import (
     EXIT_DATABASE_OWNED,
     DatabaseOwnedByContainer,
     DatabaseOwnershipError,
+    DatabaseOwnershipUnknown,
+    check_database_ownership,
     connect,
     default_db_path,
 )
+from harrier.delegate import delegate
 from harrier.logsetup import configure_logging
 from harrier.profile import export_to, import_from, list_documents
 from harrier.tracker.export import export_csv
@@ -1460,6 +1465,122 @@ def _cmd_demo_run(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- where each command may run (spec 074) ---
+
+DATABASE = "database"
+HOST_PATH = "host-path"
+HOST_ONLY = "host-only"
+
+
+@dataclass(frozen=True)
+class CommandClass:
+    """Where a subcommand may run while the container owns the database.
+
+    `database` commands are delegated into the container. `host-path` ones
+    name a host file the container cannot see, so they are refused. A
+    `database` command becomes `host-path` when any of `path_options` is
+    given; a `host-only` command becomes `database` when any of
+    `database_options` is (`doctor --integrity`, which opens the file).
+    """
+
+    kind: str
+    path_options: tuple[str, ...] = ()
+    database_options: tuple[str, ...] = ()
+
+
+_DB = CommandClass(DATABASE)
+_HOST = CommandClass(HOST_ONLY)
+_PATH = CommandClass(HOST_PATH)
+
+# Every subcommand, by the name `subcommand_name` gives it. A test walks the
+# parser and fails on a command missing here, so a new one cannot land without
+# a decision (spec 074).
+COMMAND_CLASSES: dict[str, CommandClass] = {
+    # Never open the live database.
+    "gmail-oauth": _HOST,
+    "schedule install": _HOST,
+    "schedule status": _HOST,
+    "schedule uninstall": _HOST,
+    "review-followup": _HOST,
+    "parity checklist": _HOST,
+    "parity status": _HOST,
+    "parity diff": _HOST,
+    "verify-backup": _HOST,
+    "demo-run": _HOST,
+    "doctor": CommandClass(HOST_ONLY, database_options=("integrity",)),
+    # Always name a host path, explicit or defaulted.
+    "migrate-legacy": _PATH,
+    "profile import": _PATH,
+    "profile export": _PATH,
+    "export": _PATH,
+    "cutover preflight": _PATH,
+    "cutover run": _PATH,
+    "gmail-migrate-state": _PATH,
+    "restore": _PATH,
+    # Name a host path only when one of these is given.
+    "config set": CommandClass(DATABASE, path_options=("file",)),
+    "discover": CommandClass(
+        DATABASE, path_options=("dataset_file", "wellfound_file", "wttj_file")
+    ),
+    "tailor": CommandClass(DATABASE, path_options=("jd_file",)),
+    "cover-letter": CommandClass(DATABASE, path_options=("jd_file", "notes_file")),
+    "answers": CommandClass(DATABASE, path_options=("questions_file", "jd_file")),
+    "evaluate": CommandClass(DATABASE, path_options=("jd_file",)),
+    "outreach-draft": CommandClass(DATABASE, path_options=("jd_file", "input_file")),
+    "brief set": CommandClass(DATABASE, path_options=("file",)),
+    # Its default destination is mounted at /app/backups (spec 064).
+    "backup": CommandClass(DATABASE, path_options=("dest",)),
+    # The database, data/, config/, env and network only.
+    "check": _DB,
+    "profile list": _DB,
+    "brief show": _DB,
+    "evaluate-prospects": _DB,
+    "find-contacts": _DB,
+    "contacts list": _DB,
+    "contacts approve": _DB,
+    "contacts reject": _DB,
+    "contacts set-best": _DB,
+    "outreach sync": _DB,
+    "outreach due": _DB,
+    "outreach mark-sent": _DB,
+    "outreach mark-replied": _DB,
+    "outreach snooze": _DB,
+    "backfill-posters": _DB,
+    "gmail-watch": _DB,
+    "digest": _DB,
+    "shortlist": _DB,
+    "track": _DB,
+    "interviewing": _DB,
+    "reevaluate": _DB,
+    "applied": _DB,
+    "reject": _DB,
+    "add": _DB,
+    "next": _DB,
+    "review": _DB,
+    "config list": _DB,
+    "config get": _DB,
+    "config unset": _DB,
+    "config import": _DB,
+    "config check-feeds": _DB,
+    "reconsider": _DB,
+}
+
+
+def _given(value: object) -> bool:
+    return value not in (None, False, [], "")
+
+
+def command_class(args: argparse.Namespace) -> str:
+    entry = COMMAND_CLASSES[subcommand_name(args)]
+    if entry.kind == DATABASE and any(_given(getattr(args, o, None)) for o in entry.path_options):
+        return HOST_PATH
+    if entry.kind == HOST_ONLY and any(
+        _given(getattr(args, o, None)) for o in entry.database_options
+    ):
+        return DATABASE
+    return entry.kind
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="harrier", description="Harrier CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1905,10 +2026,68 @@ def _refusal(subcommand: str, error: DatabaseOwnershipError) -> str:
     return f"harrier {subcommand}: refused, {error}"
 
 
+def _refresh_gmail_token() -> bool:
+    """Refresh the Gmail access token on the host, where secrets/ is writable.
+
+    Inside the container secrets/ is mounted read-only (spec 050), so a token
+    that expires there cannot be written back. A delegated gmail-watch gets a
+    fresh one first. Opens no database (spec 074).
+    """
+    from harrier.mail.watch import load_gmail_credentials
+
+    try:
+        load_gmail_credentials()
+    except RuntimeError as error:
+        print(f"harrier gmail-watch: token refresh failed on the host: {error}", file=sys.stderr)
+        return False
+    return True
+
+
+# Steps a command needs on the host before it is handed to the container.
+_BEFORE_DELEGATING: dict[str, Callable[[], bool]] = {"gmail-watch": _refresh_gmail_token}
+
+
+def _run_or_hand_over(args: argparse.Namespace, argv: list[str]) -> int | None:
+    """Delegate or refuse while the container owns the database (spec 074).
+
+    Returns an exit status when the command was handed over or refused, and
+    None when it should run here. Decided before logging setup, because a
+    process that delegates may not open the database to load the redaction
+    values, and so writes nothing to the shared log.
+    """
+    kind = command_class(args)
+    if kind == HOST_ONLY:
+        return None
+    subcommand = subcommand_name(args)
+    try:
+        check_database_ownership(default_db_path())
+    except DatabaseOwnedByContainer:
+        if kind == HOST_PATH:
+            print(
+                f"harrier {subcommand}: refused, it names a file on this machine and the "
+                f"{CONTAINER_NAME} container owns the tracker database. Stop the container, "
+                "or use the web app. See `harrier doctor`.",
+                file=sys.stderr,
+            )
+            return EXIT_DATABASE_OWNED
+        before = _BEFORE_DELEGATING.get(subcommand)
+        if before is not None and not before():
+            return 1
+        return delegate(argv, subcommand)
+    except DatabaseOwnershipUnknown as error:
+        print(_refusal(subcommand, error), file=sys.stderr)
+        return EXIT_DATABASE_OWNED
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     load_project_env()
+    vector = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(vector)
+    handed_over = _run_or_hand_over(args, vector)
+    if handed_over is not None:
+        return handed_over
     # Logging setup opens the database read-write to load the redaction
     # values, and closing that connection checkpoints any WAL left behind.
     # `doctor` logs nothing and reports on that file, so it must not be the

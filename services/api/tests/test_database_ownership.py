@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from harrier import backup, container, db, logsetup
+from harrier import backup, container, db, delegate, logsetup
 from harrier.container import ContainerState
 from harrier.db import DatabaseOwnedByContainer, DatabaseOwnershipUnknown, connect
 from harrier_cli.main import main
@@ -34,6 +34,22 @@ from harrier_cli.main import main
 UNREACHABLE = ContainerState(engine=container.UNREACHABLE)
 NOT_RUNNING = ContainerState(engine=container.REACHABLE)
 ENGINE_ERROR = ContainerState(engine=container.UNKNOWN, reason="the docker engine did not answer")
+
+
+@pytest.fixture(autouse=True)
+def no_real_docker(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+    """No test here may run the real `docker exec`: these tests fake a running
+    container, and the real one may be running too. Delegated commands are
+    recorded instead, and answer 0 (spec 074)."""
+    calls: list[list[str]] = []
+
+    def record(command: object) -> int:
+        calls.append(list(command))  # type: ignore[call-overload]
+        return 0
+
+    monkeypatch.setattr(delegate, "run_process", record)
+    monkeypatch.setattr(delegate, "docker_binary", lambda: "docker")
+    return calls
 
 
 @pytest.fixture()
@@ -203,11 +219,21 @@ def test_logging_setup_under_refusal_writes_no_log_file_and_the_open_is_still_re
 
 def test_a_refused_command_exits_75_and_names_the_way_out_without_its_arguments(
     live: Path,
-    detector: Callable[[ContainerState], list[int]],
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    no_real_docker: list[list[str]],
 ) -> None:
+    """The guard inside a command: the container was down when the CLI
+    decided to run here, and up by the time the command opened the file.
+    Since spec 074 a command decided while the container is up is delegated,
+    so this race is where spec 061's refusal is still reached from the CLI."""
     make_database(live / "tracker.db")
-    detector(owned_by_container(live))
+    answers = iter([UNREACHABLE])
+
+    def detect(timeout: float = container.DEFAULT_TIMEOUT_SECONDS) -> ContainerState:
+        return next(answers, owned_by_container(live))
+
+    monkeypatch.setattr(container, "detect", detect)
     sentinel = "Sentinel Person 7f3a"
 
     assert main(["shortlist", sentinel]) == 75
@@ -217,16 +243,20 @@ def test_a_refused_command_exits_75_and_names_the_way_out_without_its_arguments(
     assert "docker exec harrier harrier shortlist <arguments>" in err
     assert "harrier doctor" in err
     assert sentinel not in err
+    assert no_real_docker == []
 
 
 def test_a_nested_subcommand_is_named_in_full(
     live: Path,
     detector: Callable[[ContainerState], list[int]],
     capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
 ) -> None:
     detector(owned_by_container(live))
-    assert main(["config", "list"]) == 75
-    assert "docker exec harrier harrier config list <arguments>" in capsys.readouterr().err
+    assert main(["config", "set", "feeds", "--file", str(tmp_path / "feeds.json")]) == 75
+    err = capsys.readouterr().err
+    assert err.startswith("harrier config set: refused")
+    assert str(tmp_path) not in err
 
 
 def test_an_unknown_owner_refuses_with_the_reason(
@@ -343,7 +373,10 @@ def test_integrity_does_not_open_the_file_the_container_owns(
     detector: Callable[[ContainerState], list[int]],
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
+    no_real_docker: list[list[str]],
 ) -> None:
+    """Since spec 074 the check runs inside the container instead; the host
+    still never opens the file."""
     make_database(live / "tracker.db")
     detector(owned_by_container(live))
     opened: list[object] = []
@@ -354,9 +387,10 @@ def test_integrity_does_not_open_the_file_the_container_owns(
         return real_connect(*args, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr(sqlite3, "connect", watch)
-    code, lines = doctor(capsys, "--integrity")
-    assert code == 75
-    assert lines[-1].endswith("docker exec harrier harrier doctor --integrity")
+    assert main(["doctor", "--integrity"]) == 0
+    assert no_real_docker == [
+        ["docker", "exec", "-i", "harrier", "harrier", "doctor", "--integrity"]
+    ]
     assert opened == []
 
 
@@ -536,6 +570,22 @@ def test_the_detector_reads_the_engine_answer(engine: Callable[[int, object], No
         container.UNKNOWN,
         "the docker engine answered HTTP 500",
     )
+
+
+def test_the_detector_reads_the_image_revision(engine: Callable[[int, object], None]) -> None:
+    """Spec 074 names a stale image on a delegated run's first line."""
+    engine(
+        200,
+        {
+            "State": {"Running": True},
+            "Config": {"Env": ["PATH=/usr/bin", "HARRIER_REVISION=abc1234-dirty"]},
+            "Mounts": [{"Destination": "/app/data", "Source": "/host/repo/data"}],
+        },
+    )
+    assert container.detect().revision == "abc1234-dirty"
+
+    engine(200, {"State": {"Running": True}, "Config": {"Env": []}, "Mounts": []})
+    assert container.detect().revision is None
 
 
 def test_a_socket_with_nothing_listening_is_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
