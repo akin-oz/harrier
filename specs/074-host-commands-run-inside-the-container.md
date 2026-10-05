@@ -141,40 +141,99 @@ Failure modes this must not introduce:
 
 ## Acceptance criteria
 
-Proving symbols are named at implementation. Every automated test uses a fake
-detector and a fake runner.
+Every automated test uses a fake detector and a fake runner; the runner is
+autouse in both test files, so no test can reach a real container. Tests in
+`services/api/tests/test_delegation.py` unless named otherwise.
 
-- [ ] every subcommand in `build_parser` has exactly one class, proven by a
-      test that walks the parser, so a new command cannot land unclassified
-- [ ] a `database` command with the container owning the database produces a
+- [x] every subcommand in `build_parser` has exactly one class, proven by a
+      test that walks the parser, so a new command cannot land unclassified:
+      `test_every_subcommand_has_exactly_one_class` (it also fails on a path
+      option whose destination does not exist);
+      `test_a_command_is_classed_by_its_arguments`
+- [x] a `database` command with the container owning the database produces a
       `docker exec` of the identical argument vector, as a vector, without a
-      TTY, and returns the child's exit code, stdout and stderr
-- [ ] a delegated invocation never opens the database on the host, including
+      TTY, and returns the child's exit code, stdout and stderr:
+      `test_a_database_command_is_run_inside_the_container_as_the_same_vector`
+- [x] a delegated invocation never opens the database on the host, including
       through logging setup, proven by a test that fails on any
-      `sqlite3.connect`
-- [ ] a delegating or refusing invocation adds no file handler for
-      `data/logs/harrier.log` and leaves that file's size unchanged
-- [ ] `discover --dataset-file <path>` with the container running exits 75
-      before doing any work; `discover --scheduled` is delegated
-- [ ] a `host-path` invocation with the engine unreachable runs on the host
-- [ ] delegated `gmail-watch` refreshes the token on the host first; a test
+      `sqlite3.connect`:
+      `test_a_delegated_command_never_opens_the_database_here`
+- [x] a delegating or refusing invocation adds no file handler for
+      `data/logs/harrier.log` and leaves that file's size unchanged:
+      `test_a_delegating_or_refusing_command_writes_no_log`
+- [x] `discover --dataset-file <path>` with the container running exits 75
+      before doing any work; `discover --scheduled` is delegated:
+      `test_a_command_naming_a_host_file_is_refused_before_any_work`
+- [x] a `host-path` invocation with the engine unreachable runs on the host:
+      `test_a_host_path_command_runs_here_when_there_is_no_engine`;
+      a `host-only` one runs on the host while the container runs:
+      `test_a_host_only_command_runs_here_while_the_container_runs`
+- [x] delegated `gmail-watch` refreshes the token on the host first; a test
       asserts the refresh precedes the exec and opens no database; a failed
-      refresh means no exec
-- [ ] a delegated run whose container stops mid-run reports the interruption
-      and exits non-zero, with no host retry
-- [ ] the revision mismatch line appears when the fake container's revision
-      differs, and not when it matches
-- [ ] `harrier doctor --integrity` with the container owning the database is
-      delegated
-- [ ] `harrier schedule install` renders byte-identical plists before and
-      after this change
+      refresh means no exec:
+      `test_gmail_watch_refreshes_the_token_here_before_it_is_handed_over`,
+      `test_a_failed_token_refresh_hands_nothing_over`
+- [x] a delegated run whose container stops mid-run reports the interruption
+      and exits non-zero, with no host retry:
+      `test_a_run_whose_container_stops_is_reported_and_not_retried_here`
+- [x] the revision mismatch line appears when the fake container's revision
+      differs, and not when it matches:
+      `test_a_stale_image_is_named_on_the_first_line`; the revision is read
+      from the engine's answer:
+      `services/api/tests/test_database_ownership.py::test_the_detector_reads_the_image_revision`
+- [x] `harrier doctor --integrity` with the container owning the database is
+      delegated: `test_doctor_integrity_is_handed_over`
+- [x] `harrier schedule install` renders byte-identical plists before and
+      after this change: `services/api/src/harrier/schedule.py` and
+      `config/schedule.json` are unchanged by it, so the rendering is
+      unchanged by construction
+- [x] each test above fails with its behavior removed: checked by removing
+      each behavior in turn (15 mutants, all failed a test)
 - [ ] by hand, on the daily driver: with the container up, `harrier
       gmail-watch` and `harrier shortlist <id>` from the host run inside the
       container; `harrier export` exits 75; after `docker compose stop
       harrier` all three run on the host. The pull request records each
       command, its exit code, and whether it was delegated. No paths, no job
-      or mail output
+      or mail output. gmail-watch needs the token moved first (Migration)
 - [ ] all gates green on the pull request
+
+## What the implementation decided
+
+Recorded here so the spec and the code agree.
+
+- **`docker exec`, through the binary.** Not the engine's exec API over the
+  socket, which multiplexes stdout and stderr into one framed stream and
+  needs its own stdin plumbing. The binary passes the exit status through
+  and forwards stdin with `-i` (`config set` reads it). It is resolved without
+  PATH: `HARRIER_DOCKER_BIN`, then PATH, then Docker Desktop's and Homebrew's
+  install paths. Without it the command exits 1 and nothing runs on the host
+  (`test_without_a_docker_binary_nothing_runs_here_either`).
+  `services/api/src/harrier/delegate.py`.
+- **Corrections to the class list,** from walking the parser:
+  `demo-run` is `host-only`, not `database`: it never opens the database, and
+  this spec's own failure modes say demo mode is never delegated.
+  `brief set --file` and `outreach-draft --input-file` name host files and
+  make their commands `host-path`; the first list missed them. `restore` is
+  always `host-path` (its archive is a host path). `check` is `database`.
+- **Spec 061's tests changed with the behaviour.** A database command
+  decided while the container is up is now delegated, so spec 061's refusal
+  test drives the race in step 4 instead (container down at the decision, up
+  at the open), which is where that refusal is still reached from the CLI.
+  Its nested-name test uses a `host-path` command, and its integrity test
+  asserts delegation. All three still prove the host never opens the file.
+- **The host-path refusal names neither the path nor `docker exec`.** The
+  container cannot see the file, so the `docker exec` form would not work;
+  the message says to stop the container or use the web app.
+- **The revision comparison** uses the form `just container-up` stamps,
+  `<short sha>` plus `-dirty`, read from the container's environment in the
+  engine's inspect answer, with no extra `docker exec`.
+- **The gmail token must be in this checkout's `secrets/`.** Found at
+  implementation: the operator's `GMAIL_OAUTH_TOKEN_FILE` pointed outside the
+  checkout, so the container, which shares `.env`, received a host path it
+  cannot see. With the relative path `.env.example` documents,
+  `secrets/google-oauth-token.json`, the host (launchd runs from the repo
+  root) and the container (which runs from `/app`) resolve the same file
+  through the mount. No code change; a Migration step.
 
 ## Data and privacy
 
@@ -219,7 +278,13 @@ synthetic argument values.
 
 ## Migration
 
-1. `just container-up`, so the image carries the current CLI.
-2. `harrier schedule install`, if the schedule is to run. The plists are
+1. Put the Gmail OAuth token in this checkout's `secrets/` and set
+   `GMAIL_OAUTH_TOKEN_FILE=secrets/google-oauth-token.json` in `.env`, as
+   `.env.example` documents. A token anywhere else is unreachable from the
+   container, and delegated gmail-watch fails with "missing Gmail OAuth token
+   file". Copy it; do not move it out of a directory another system still
+   reads from.
+2. `just container-up`, so the image carries the current CLI.
+3. `harrier schedule install`, if the schedule is to run. The plists are
    unchanged.
-3. No schema change. No data change.
+4. No schema change. No data change.

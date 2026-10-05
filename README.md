@@ -209,14 +209,22 @@ container is the interactive surface only.
 **While the container runs, it owns the tracker database.** SQLite's WAL mode
 needs every process using the file to share one kernel, and the container runs
 under the Docker Desktop VM while the host runs macOS. That combination
-corrupted the database once. So a host command that would open
-`data/tracker.db` while the container runs is refused with exit status 75
-(spec 061, ADR-011, proven by `services/api/tests/test_database_ownership.py`).
-Run it inside the container instead, `docker exec harrier harrier <command>`,
-or stop the container first. `harrier doctor` says who owns the database right
-now, and `harrier doctor --integrity` checks it. Until spec 074 ships, a
-scheduled job that fires while the container runs is refused the same way, so
-keep the schedule uninstalled until then.
+corrupted the database once. So while the container runs, a host command that
+opens `data/tracker.db` runs inside it instead: the host CLI hands the same
+arguments to `docker exec harrier harrier ...` and returns its exit status
+(spec 074, proven by `services/api/tests/test_delegation.py`). That includes the
+launchd schedule. A command that names a file on this machine (`export`,
+`discover --dataset-file`, `tailor --jd-file`) is refused with exit status 75
+instead, because the container cannot see the file; stop the container, or use
+the web app (spec 061, ADR-011, `services/api/tests/test_database_ownership.py`).
+`harrier doctor` says who owns the database right now, and `harrier doctor
+--integrity` checks it. A delegated run prints a warning when the container's
+image is older than this checkout; `just container-up` rebuilds it.
+
+The mail watch refreshes its Gmail token on the host before handing over,
+because `secrets/` is read-only inside the container. For that to reach the
+container, the token has to live in this checkout's `secrets/`, at the
+relative path `.env.example` documents, `secrets/google-oauth-token.json`.
 
 `/health` reports the revision and build time the image was stamped with, so a
 container running older code than your checkout is visible rather than silent.
