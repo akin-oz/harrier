@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import sys
+from contextlib import closing
 from pathlib import Path
 
 from harrier.container import CONTAINER_NAME
@@ -89,53 +90,53 @@ def _cmd_discover(args: argparse.Namespace) -> int:
         print(f"::harrier::{json.dumps(payload)}", flush=True)
         print(f"{source}: {stage}", flush=True)
 
-    conn = connect()
-    aggregate = run_discovery(
-        conn,
-        DiscoveryOptions(
-            dry_run=args.dry_run,
-            notify=not args.no_notify,
-            only_sources=only,
-            apify_count=int(args.apify_count),
-            dataset_files=list(args.dataset_file),
-            wellfound_files=list(args.wellfound_file),
-            wttj_files=list(args.wttj_file),
-            shadow=args.shadow,
-            scheduled=args.scheduled,
-        ),
-        progress,
-    )
-    print(json.dumps(aggregate, indent=2, ensure_ascii=False))
+    with closing(connect()) as conn:
+        aggregate = run_discovery(
+            conn,
+            DiscoveryOptions(
+                dry_run=args.dry_run,
+                notify=not args.no_notify,
+                only_sources=only,
+                apify_count=int(args.apify_count),
+                dataset_files=list(args.dataset_file),
+                wellfound_files=list(args.wellfound_file),
+                wttj_files=list(args.wttj_file),
+                shadow=args.shadow,
+                scheduled=args.scheduled,
+            ),
+            progress,
+        )
+        print(json.dumps(aggregate, indent=2, ensure_ascii=False))
 
-    # The exit status is the whole point of spec 029. Partial failure stays
-    # zero: a day where one board is down and four are fine is a normal day,
-    # and a status that fails a run the operator would call fine gets ignored
-    # within a week. Total failure, and a run that attempted nothing, are the
-    # only shapes that are never normal.
-    outcome = classify_run(aggregate)
-    if outcome.total_failure:
-        print(f"discovery failed: {outcome.describe()}", file=sys.stderr)
-        return outcome.exit_code
-    if outcome.failed:
-        print(f"discovery: {outcome.describe()}", file=sys.stderr)
-    return 0
+        # The exit status is the whole point of spec 029. Partial failure stays
+        # zero: a day where one board is down and four are fine is a normal day,
+        # and a status that fails a run the operator would call fine gets ignored
+        # within a week. Total failure, and a run that attempted nothing, are the
+        # only shapes that are never normal.
+        outcome = classify_run(aggregate)
+        if outcome.total_failure:
+            print(f"discovery failed: {outcome.describe()}", file=sys.stderr)
+            return outcome.exit_code
+        if outcome.failed:
+            print(f"discovery: {outcome.describe()}", file=sys.stderr)
+        return 0
 
 
 def _cmd_migrate_legacy(args: argparse.Namespace) -> int:
-    conn = connect()
-    try:
-        report = migrate(
-            conn,
-            Path(args.jobs),
-            Path(args.contacts) if args.contacts else None,
-            replace=args.replace,
-        )
-    except MigrationError as error:
-        print(f"migration aborted: {error}", file=sys.stderr)
-        return 1
-    print(report.summary())
-    print(f"database: {default_db_path()}")
-    return 0
+    with closing(connect()) as conn:
+        try:
+            report = migrate(
+                conn,
+                Path(args.jobs),
+                Path(args.contacts) if args.contacts else None,
+                replace=args.replace,
+            )
+        except MigrationError as error:
+            print(f"migration aborted: {error}", file=sys.stderr)
+            return 1
+        print(report.summary())
+        print(f"database: {default_db_path()}")
+        return 0
 
 
 def _cmd_check(args: argparse.Namespace) -> int:
@@ -183,11 +184,11 @@ def _cmd_check(args: argparse.Namespace) -> int:
 
 
 def _cmd_export(args: argparse.Namespace) -> int:
-    conn = connect()
-    jobs_path, contacts_path = export_csv(conn, Path(args.dest))
-    print(f"exported: {jobs_path}")
-    print(f"exported: {contacts_path}")
-    return 0
+    with closing(connect()) as conn:
+        jobs_path, contacts_path = export_csv(conn, Path(args.dest))
+        print(f"exported: {jobs_path}")
+        print(f"exported: {contacts_path}")
+        return 0
 
 
 def _cmd_profile_import(args: argparse.Namespace) -> int:
@@ -195,32 +196,32 @@ def _cmd_profile_import(args: argparse.Namespace) -> int:
     if not old_root.is_dir():
         print(f"not a directory: {old_root}", file=sys.stderr)
         return 1
-    conn = connect()
-    imported, missing = import_from(conn, old_root)
-    for line in imported:
-        print(f"imported: {line}")
-    for path in missing:
-        print(f"missing (skipped): {path}")
-    print(f"{len(imported)} documents imported into {default_db_path()}")
-    return 0
+    with closing(connect()) as conn:
+        imported, missing = import_from(conn, old_root)
+        for line in imported:
+            print(f"imported: {line}")
+        for path in missing:
+            print(f"missing (skipped): {path}")
+        print(f"{len(imported)} documents imported into {default_db_path()}")
+        return 0
 
 
 def _cmd_profile_export(args: argparse.Namespace) -> int:
-    conn = connect()
-    written = export_to(conn, Path(args.to))
-    for path in written:
-        print(f"wrote: {path}")
-    print(f"{len(written)} documents exported")
-    return 0
+    with closing(connect()) as conn:
+        written = export_to(conn, Path(args.to))
+        for path in written:
+            print(f"wrote: {path}")
+        print(f"{len(written)} documents exported")
+        return 0
 
 
 def _cmd_profile_list(_args: argparse.Namespace) -> int:
-    conn = connect()
-    documents = list_documents(conn)
-    for doc in documents:
-        print(f"{doc['kind']}/{doc['name']} ({doc['format']}, updated {doc['updated_at']})")
-    print(f"{len(documents)} documents")
-    return 0
+    with closing(connect()) as conn:
+        documents = list_documents(conn)
+        for doc in documents:
+            print(f"{doc['kind']}/{doc['name']} ({doc['format']}, updated {doc['updated_at']})")
+        print(f"{len(documents)} documents")
+        return 0
 
 
 def _cmd_tailor(args: argparse.Namespace) -> int:
@@ -237,18 +238,18 @@ def _cmd_tailor(args: argparse.Namespace) -> int:
             print(f"tailor failed: cannot read --jd-file: {error}", file=sys.stderr)
             return 1
 
-    conn = connect()
-    try:
-        result = run_tailor(conn, args.job_id, jd_text=jd_text, no_ai=args.no_ai)
-    except (ResumeBundleError, ValueError, RuntimeError) as error:
-        print(f"tailor failed: {error}", file=sys.stderr)
-        return 1
-    print(f"tailored_pdf={result.pdf_path}")
-    print(f"metadata={result.metadata_path}")
-    if result.evaluation_path is not None:
-        print(f"evaluation_report={result.evaluation_path}")
-    print(f"ai_tailored={'yes' if result.ai_tailored else 'no'}")
-    return 0
+    with closing(connect()) as conn:
+        try:
+            result = run_tailor(conn, args.job_id, jd_text=jd_text, no_ai=args.no_ai)
+        except (ResumeBundleError, ValueError, RuntimeError) as error:
+            print(f"tailor failed: {error}", file=sys.stderr)
+            return 1
+        print(f"tailored_pdf={result.pdf_path}")
+        print(f"metadata={result.metadata_path}")
+        if result.evaluation_path is not None:
+            print(f"evaluation_report={result.evaluation_path}")
+        print(f"ai_tailored={'yes' if result.ai_tailored else 'no'}")
+        return 0
 
 
 def _read_jd_file(path_value: str | None) -> tuple[str | None, int | None]:
@@ -281,47 +282,47 @@ def _cmd_cover_letter(args: argparse.Namespace) -> int:
         except (OSError, UnicodeError) as error:
             print(f"cover letter failed: cannot read --notes-file: {error}", file=sys.stderr)
             return 1
-    conn = connect()
-    try:
-        row = get_job(conn, args.job_id)
-        if not jd_text:
-            jd_text = load_cached_description(row.get("url", "")) or None
-        brief = load_brief(conn, args.job_id)
-        letter = generate_cover_letter(
-            conn,
-            row.get("company", ""),
-            row.get("title", ""),
-            job_url=row.get("url", ""),
-            tracker_row=row,
-            jd_text=jd_text,
-            extra_notes=notes,
-            brief=brief,
-        )
-        artifacts = write_cover_letter_artifacts(
-            conn,
-            row.get("company", ""),
-            row.get("title", ""),
-            row.get("url", ""),
-            letter.short_version,
-            letter.full_version,
-            review=Review(
-                claims=letter.claims,
-                flags=tuple(requirement_flags(jd_text or "", brief.employer_guidance)),
-            ),
-        )
-    except NeedsInputError as needs:
-        # The draft is written and only the operator can finish it. Its own
-        # exit code, so it reads as neither success nor failure (spec 065).
-        print(f"markdown={needs.markdown_path}")
-        for placeholder in needs.placeholders:
-            print(f"needs_input={placeholder}")
-        return 3
-    except (ApplicationProfileError, TrackerError, ValueError, RuntimeError) as error:
-        print(f"cover letter failed: {error}", file=sys.stderr)
-        return 1
-    for kind, path in artifacts.items():
-        print(f"{kind}={path}")
-    return 0
+    with closing(connect()) as conn:
+        try:
+            row = get_job(conn, args.job_id)
+            if not jd_text:
+                jd_text = load_cached_description(row.get("url", "")) or None
+            brief = load_brief(conn, args.job_id)
+            letter = generate_cover_letter(
+                conn,
+                row.get("company", ""),
+                row.get("title", ""),
+                job_url=row.get("url", ""),
+                tracker_row=row,
+                jd_text=jd_text,
+                extra_notes=notes,
+                brief=brief,
+            )
+            artifacts = write_cover_letter_artifacts(
+                conn,
+                row.get("company", ""),
+                row.get("title", ""),
+                row.get("url", ""),
+                letter.short_version,
+                letter.full_version,
+                review=Review(
+                    claims=letter.claims,
+                    flags=tuple(requirement_flags(jd_text or "", brief.employer_guidance)),
+                ),
+            )
+        except NeedsInputError as needs:
+            # The draft is written and only the operator can finish it. Its own
+            # exit code, so it reads as neither success nor failure (spec 065).
+            print(f"markdown={needs.markdown_path}")
+            for placeholder in needs.placeholders:
+                print(f"needs_input={placeholder}")
+            return 3
+        except (ApplicationProfileError, TrackerError, ValueError, RuntimeError) as error:
+            print(f"cover letter failed: {error}", file=sys.stderr)
+            return 1
+        for kind, path in artifacts.items():
+            print(f"{kind}={path}")
+        return 0
 
 
 def _cmd_answers(args: argparse.Namespace) -> int:
@@ -337,45 +338,46 @@ def _cmd_answers(args: argparse.Namespace) -> int:
     jd_text, error_code = _read_jd_file(args.jd_file)
     if error_code is not None:
         return error_code
-    conn = connect()
-    try:
-        row = get_job(conn, args.job_id)
-        if not jd_text:
-            jd_text = load_cached_description(row.get("url", "")) or None
-        questions = parse_questions(args.question, args.questions_file)
-        brief = load_brief(conn, args.job_id)
-        drafts = generate_answer_set(
-            conn,
-            row.get("company", ""),
-            row.get("title", ""),
-            questions,
-            job_url=row.get("url", ""),
-            tracker_row=row,
-            jd_text=jd_text,
-            brief=brief,
+    with closing(connect()) as conn:
+        try:
+            row = get_job(conn, args.job_id)
+            if not jd_text:
+                jd_text = load_cached_description(row.get("url", "")) or None
+            questions = parse_questions(args.question, args.questions_file)
+            brief = load_brief(conn, args.job_id)
+            drafts = generate_answer_set(
+                conn,
+                row.get("company", ""),
+                row.get("title", ""),
+                questions,
+                job_url=row.get("url", ""),
+                tracker_row=row,
+                jd_text=jd_text,
+                brief=brief,
+            )
+            content = render_markdown(
+                row.get("company", ""),
+                row.get("title", ""),
+                row.get("url", ""),
+                row,
+                drafts,
+                review_path=answers_path_for(row.get("company", ""), row.get("title", "")),
+                flags=requirement_flags(jd_text or "", brief.employer_guidance),
+            )
+            output_path = write_output(row.get("company", ""), row.get("title", ""), content)
+        except (ApplicationProfileError, TrackerError, OSError, ValueError, RuntimeError) as error:
+            print(f"answers failed: {error}", file=sys.stderr)
+            return 1
+        print(f"answers={output_path}")
+        placeholders = find_placeholders(
+            "\n".join(
+                "\n".join([draft.short_answer, draft.medium_answer, *draft.notes])
+                for draft in drafts
+            )
         )
-        content = render_markdown(
-            row.get("company", ""),
-            row.get("title", ""),
-            row.get("url", ""),
-            row,
-            drafts,
-            review_path=answers_path_for(row.get("company", ""), row.get("title", "")),
-            flags=requirement_flags(jd_text or "", brief.employer_guidance),
-        )
-        output_path = write_output(row.get("company", ""), row.get("title", ""), content)
-    except (ApplicationProfileError, TrackerError, OSError, ValueError, RuntimeError) as error:
-        print(f"answers failed: {error}", file=sys.stderr)
-        return 1
-    print(f"answers={output_path}")
-    placeholders = find_placeholders(
-        "\n".join(
-            "\n".join([draft.short_answer, draft.medium_answer, *draft.notes]) for draft in drafts
-        )
-    )
-    for placeholder in placeholders:
-        print(f"needs_input={placeholder}")
-    return 3 if placeholders else 0
+        for placeholder in placeholders:
+            print(f"needs_input={placeholder}")
+        return 3 if placeholders else 0
 
 
 def _cmd_brief_set(args: argparse.Namespace) -> int:
@@ -388,21 +390,22 @@ def _cmd_brief_set(args: argparse.Namespace) -> int:
     except (OSError, UnicodeError) as error:
         print(f"brief failed: cannot read --file: {error}", file=sys.stderr)
         return 1
-    conn = connect()
-    try:
-        get_job(conn, args.job_id)
-        store_brief(conn, args.job_id, text)
-    except (BriefError, TrackerError) as error:
-        print(f"brief failed: {error}", file=sys.stderr)
-        return 1
-    print(f"brief stored for job {args.job_id}")
-    return 0
+    with closing(connect()) as conn:
+        try:
+            get_job(conn, args.job_id)
+            store_brief(conn, args.job_id, text)
+        except (BriefError, TrackerError) as error:
+            print(f"brief failed: {error}", file=sys.stderr)
+            return 1
+        print(f"brief stored for job {args.job_id}")
+        return 0
 
 
 def _cmd_brief_show(args: argparse.Namespace) -> int:
     from harrier.apply.brief import brief_text
 
-    content = brief_text(connect(), args.job_id)
+    with closing(connect()) as conn:
+        content = brief_text(conn, args.job_id)
     if content is None:
         print(f"no brief for job {args.job_id}", file=sys.stderr)
         return 1
@@ -420,85 +423,88 @@ def _cmd_evaluate(args: argparse.Namespace) -> int:
         return error_code
     if args.jd_text:
         jd_text = args.jd_text
-    conn = connect()
-    try:
-        row = get_job(conn, args.job_id)
-        if not jd_text:
-            jd_text = load_cached_description(row.get("url", ""))
-        result = evaluate_offer(
-            conn,
-            row.get("company", ""),
-            row.get("title", ""),
-            row.get("url", ""),
-            jd_text or "",
-        )
-    except (EvaluationError, TrackerError, ValueError) as error:
-        print(f"evaluate failed: {error}", file=sys.stderr)
-        return 1
-    print(f"evaluation_report={result.report_path}")
-    print(f"verdict={result.verdict.verdict}")
-    print(f"confidence={result.verdict.confidence}")
-    print(f"reason={result.verdict.reason}")
-    return 0
+    with closing(connect()) as conn:
+        try:
+            row = get_job(conn, args.job_id)
+            if not jd_text:
+                jd_text = load_cached_description(row.get("url", ""))
+            result = evaluate_offer(
+                conn,
+                row.get("company", ""),
+                row.get("title", ""),
+                row.get("url", ""),
+                jd_text or "",
+            )
+        except (EvaluationError, TrackerError, ValueError) as error:
+            print(f"evaluate failed: {error}", file=sys.stderr)
+            return 1
+        print(f"evaluation_report={result.report_path}")
+        print(f"verdict={result.verdict.verdict}")
+        print(f"confidence={result.verdict.confidence}")
+        print(f"reason={result.verdict.reason}")
+        return 0
 
 
 def _cmd_evaluate_prospects(args: argparse.Namespace) -> int:
     from harrier.offers import BatchOptions, evaluate_prospects
 
-    conn = connect()
-    summary = evaluate_prospects(
-        conn,
-        BatchOptions(
-            apply=args.apply,
-            threshold=args.threshold,
-            limit=args.limit,
-            refresh=args.refresh,
-            include_borderline=args.include_borderline,
-        ),
-    )
-    for line in summary.lines:
-        print(line)
-    print(f"processed={summary.processed}")
-    print(f"skipped_existing={summary.skipped_existing}")
-    print(f"errors={summary.errors}")
-    print(f"verdict_counts={json.dumps(summary.verdict_counts)}")
-    label = "auto_rejected" if args.apply else "would_reject"
-    print(f"{label}={summary.auto_rejected if args.apply else summary.would_reject}")
-    if not args.apply and summary.would_reject:
-        print("re-run with --apply to commit the rejections")
-    return 0
+    with closing(connect()) as conn:
+        summary = evaluate_prospects(
+            conn,
+            BatchOptions(
+                apply=args.apply,
+                threshold=args.threshold,
+                limit=args.limit,
+                refresh=args.refresh,
+                include_borderline=args.include_borderline,
+            ),
+        )
+        for line in summary.lines:
+            print(line)
+        print(f"processed={summary.processed}")
+        print(f"skipped_existing={summary.skipped_existing}")
+        print(f"errors={summary.errors}")
+        print(f"verdict_counts={json.dumps(summary.verdict_counts)}")
+        label = "auto_rejected" if args.apply else "would_reject"
+        print(f"{label}={summary.auto_rejected if args.apply else summary.would_reject}")
+        if not args.apply and summary.would_reject:
+            print("re-run with --apply to commit the rejections")
+        return 0
 
 
 def _cmd_find_contacts(args: argparse.Namespace) -> int:
     from harrier.outreach import find_best_contacts_for_job, find_contacts_for_job
     from harrier.tracker import get_job
 
-    conn = connect()
-    try:
-        row = get_job(conn, args.job_id)
-        finder = find_best_contacts_for_job if args.best_only else find_contacts_for_job
-        summary = finder(
-            company=row.get("company", ""),
-            role=row.get("title", ""),
-            job_url=row.get("url", ""),
-            max_items=args.max_items,
-        )
-    except (TrackerError, RuntimeError) as error:
-        print(f"find-contacts failed: {error}", file=sys.stderr)
-        return 1
-    from typing import cast
+    with closing(connect()) as conn:
+        try:
+            row = get_job(conn, args.job_id)
+            finder = find_best_contacts_for_job if args.best_only else find_contacts_for_job
+            summary = finder(
+                company=row.get("company", ""),
+                role=row.get("title", ""),
+                job_url=row.get("url", ""),
+                max_items=args.max_items,
+            )
+        except (TrackerError, RuntimeError) as error:
+            print(f"find-contacts failed: {error}", file=sys.stderr)
+            return 1
+        from typing import cast
 
-    print(json.dumps({k: v for k, v in summary.items() if k != "candidates"}, indent=2))
-    candidates_raw = summary.get("candidates")
-    candidates = cast("list[object]", candidates_raw) if isinstance(candidates_raw, list) else []
-    for index, item in enumerate(candidates[:8], start=1):
-        row_data = cast("dict[str, str]", item) if isinstance(item, dict) else {}
-        print(
-            f"{index}. {row_data.get('person_name', '')} | {row_data.get('person_title', '')} | "
-            f"{row_data.get('relevance', '')} | fit={row_data.get('fit_score', '')} | "
-            f"{row_data.get('linkedin_url', '')}"
+        print(json.dumps({k: v for k, v in summary.items() if k != "candidates"}, indent=2))
+        candidates_raw = summary.get("candidates")
+        candidates = (
+            cast("list[object]", candidates_raw) if isinstance(candidates_raw, list) else []
         )
-    return 0
+        for index, item in enumerate(candidates[:8], start=1):
+            row_data = cast("dict[str, str]", item) if isinstance(item, dict) else {}
+            print(
+                f"{index}. {row_data.get('person_name', '')} | "
+                f"{row_data.get('person_title', '')} | "
+                f"{row_data.get('relevance', '')} | fit={row_data.get('fit_score', '')} | "
+                f"{row_data.get('linkedin_url', '')}"
+            )
+        return 0
 
 
 def _cmd_contacts(args: argparse.Namespace) -> int:
@@ -510,43 +516,43 @@ def _cmd_contacts(args: argparse.Namespace) -> int:
     )
     from harrier.tracker import get_job, list_contacts
 
-    conn = connect()
-    if args.contacts_command == "list":
-        for contact in list_contacts(conn):
-            print(
-                f"{contact['id']}. {contact.get('person_name', '')} | "
-                f"{contact.get('person_title', '')} | {contact.get('relevance', '')} | "
-                f"{contact.get('company', '')} | {contact.get('contact_status', '')}"
-            )
-        return 0
-    try:
-        row = get_job(conn, args.job_id)
-    except TrackerError as error:
-        print(f"contacts failed: {error}", file=sys.stderr)
-        return 1
-    company = row.get("company", "")
-    role = row.get("title", "")
-    if args.contacts_command == "set-best":
-        updated_row = set_best_contact_for_job(conn, args.job_id, args.linkedin_url)
-        if updated_row is None:
-            print("contact is not linked to this job", file=sys.stderr)
+    with closing(connect()) as conn:
+        if args.contacts_command == "list":
+            for contact in list_contacts(conn):
+                print(
+                    f"{contact['id']}. {contact.get('person_name', '')} | "
+                    f"{contact.get('person_title', '')} | {contact.get('relevance', '')} | "
+                    f"{contact.get('company', '')} | {contact.get('contact_status', '')}"
+                )
+            return 0
+        try:
+            row = get_job(conn, args.job_id)
+        except TrackerError as error:
+            print(f"contacts failed: {error}", file=sys.stderr)
             return 1
-        print(f"best_contact={updated_row.get('best_contact_name', '')}")
-        return 0
-    if args.contacts_command == "approve":
-        added = approve_candidate(conn, company, role, row.get("url", ""), args.linkedin_url)
-        if added is None:
+        company = row.get("company", "")
+        role = row.get("title", "")
+        if args.contacts_command == "set-best":
+            updated_row = set_best_contact_for_job(conn, args.job_id, args.linkedin_url)
+            if updated_row is None:
+                print("contact is not linked to this job", file=sys.stderr)
+                return 1
+            print(f"best_contact={updated_row.get('best_contact_name', '')}")
+            return 0
+        if args.contacts_command == "approve":
+            added = approve_candidate(conn, company, role, row.get("url", ""), args.linkedin_url)
+            if added is None:
+                print("candidate not found in the staged artifact", file=sys.stderr)
+                return 1
+            sync_tracker_outreach(conn)
+            print(f"approved: {added.get('person_name', '')} ({added.get('linkedin_url', '')})")
+            return 0
+        updated = update_candidate_review_status(company, role, args.linkedin_url, "rejected")
+        if updated is None:
             print("candidate not found in the staged artifact", file=sys.stderr)
             return 1
-        sync_tracker_outreach(conn)
-        print(f"approved: {added.get('person_name', '')} ({added.get('linkedin_url', '')})")
+        print(f"rejected: {updated.get('person_name', '')}")
         return 0
-    updated = update_candidate_review_status(company, role, args.linkedin_url, "rejected")
-    if updated is None:
-        print("candidate not found in the staged artifact", file=sys.stderr)
-        return 1
-    print(f"rejected: {updated.get('person_name', '')}")
-    return 0
 
 
 def _cmd_outreach(args: argparse.Namespace) -> int:
@@ -558,54 +564,54 @@ def _cmd_outreach(args: argparse.Namespace) -> int:
         sync_tracker_outreach,
     )
 
-    conn = connect()
-    try:
-        if args.outreach_command == "sync":
-            rows = sync_tracker_outreach(conn)
-            print(f"synced {len(rows)} rows")
-        elif args.outreach_command == "due":
-            for row in outreach_due_rows(conn):
-                print(
-                    f"{row['id']}. {row.get('company', '')} | {row.get('title', '')} | "
-                    f"{row.get('next_outreach_action', '')} | "
-                    f"best={row.get('best_contact_name', '')}"
-                )
-        elif args.outreach_command == "mark-sent":
-            row = mark_job_outreach_sent(conn, args.job_id, sent_at=args.date)
-            print(f"outreach_status={row['outreach_status']}")
-        elif args.outreach_command == "mark-replied":
-            row = mark_job_outreach_replied(conn, args.job_id, replied_at=args.date)
-            print(f"outreach_status={row['outreach_status']}")
-        else:
-            row = snooze_job_outreach(conn, args.job_id, args.until)
-            print(f"next_outreach_action={row['next_outreach_action']}")
-    except (TrackerError, ValueError) as error:
-        print(f"outreach failed: {error}", file=sys.stderr)
-        return 1
-    return 0
+    with closing(connect()) as conn:
+        try:
+            if args.outreach_command == "sync":
+                rows = sync_tracker_outreach(conn)
+                print(f"synced {len(rows)} rows")
+            elif args.outreach_command == "due":
+                for row in outreach_due_rows(conn):
+                    print(
+                        f"{row['id']}. {row.get('company', '')} | {row.get('title', '')} | "
+                        f"{row.get('next_outreach_action', '')} | "
+                        f"best={row.get('best_contact_name', '')}"
+                    )
+            elif args.outreach_command == "mark-sent":
+                row = mark_job_outreach_sent(conn, args.job_id, sent_at=args.date)
+                print(f"outreach_status={row['outreach_status']}")
+            elif args.outreach_command == "mark-replied":
+                row = mark_job_outreach_replied(conn, args.job_id, replied_at=args.date)
+                print(f"outreach_status={row['outreach_status']}")
+            else:
+                row = snooze_job_outreach(conn, args.job_id, args.until)
+                print(f"next_outreach_action={row['next_outreach_action']}")
+        except (TrackerError, ValueError) as error:
+            print(f"outreach failed: {error}", file=sys.stderr)
+            return 1
+        return 0
 
 
 def _cmd_backfill_posters(args: argparse.Namespace) -> int:
     from harrier.outreach import backfill_posters
 
-    conn = connect()
-    summary = backfill_posters(conn, limit=args.limit, dry_run=args.dry_run)
-    for line in summary.lines:
-        print(line)
-    print(
-        json.dumps(
-            {
-                "checked": summary.checked,
-                "staged": summary.staged,
-                "skipped_existing": summary.skipped_existing,
-                "no_poster": summary.no_poster,
-                "errors": summary.errors,
-            },
-            indent=2,
-            ensure_ascii=False,
+    with closing(connect()) as conn:
+        summary = backfill_posters(conn, limit=args.limit, dry_run=args.dry_run)
+        for line in summary.lines:
+            print(line)
+        print(
+            json.dumps(
+                {
+                    "checked": summary.checked,
+                    "staged": summary.staged,
+                    "skipped_existing": summary.skipped_existing,
+                    "no_poster": summary.no_poster,
+                    "errors": summary.errors,
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
         )
-    )
-    return 0
+        return 0
 
 
 def _cmd_outreach_draft(args: argparse.Namespace) -> int:
@@ -633,75 +639,76 @@ def _cmd_outreach_draft(args: argparse.Namespace) -> int:
         value = supplied.get(key)
         return str(value) if isinstance(value, str) and value else fallback
 
-    conn = connect()
-    try:
-        row = get_job(conn, args.job_id)
-        contact_name = supplied_text("contact_name", args.contact_name or "")
-        contact_role = supplied_text("contact_role", args.contact_role or "")
-        contact_linkedin = supplied_text("contact_linkedin", args.contact_linkedin or "")
-        jd_text = supplied_text("jd_text", jd_text or "") or None
-        if contact_linkedin:
-            # A supplied identifier always resolves; explicit manual fields
-            # take precedence over the stored values (review finding: an
-            # unknown identifier must not silently continue).
-            contact = find_contact(conn, contact_linkedin)
-            if contact is None:
-                print(
-                    f"no stored contact matches {contact_linkedin!r}; "
-                    "add it via contacts approve or pass --contact-name",
-                    file=sys.stderr,
-                )
-                return 1
-            contact_name = contact_name or contact.get("person_name", "")
-            contact_role = contact_role or contact.get("person_title", "")
-        drafts = generate_outreach(
-            conn,
-            company=row.get("company", ""),
-            role=row.get("title", ""),
-            job_url=row.get("url", ""),
-            contact_name=contact_name,
-            contact_role=contact_role,
-            contact_linkedin=contact_linkedin,
-            jd_text=jd_text or "",
-            audience=supplied_text("audience", args.audience or ""),
-            tone=supplied_text("tone", args.tone),
-            ai=args.ai,
-        )
-        paths = write_outreach_draft(row.get("company", ""), row.get("title", ""), drafts)
-    except (TrackerError, ValueError, RuntimeError, OSError) as error:
-        print(f"outreach-draft failed: {error}", file=sys.stderr)
-        return 1
-    for kind, path in paths.items():
-        print(f"{kind}={path}")
-    return 0
+    with closing(connect()) as conn:
+        try:
+            row = get_job(conn, args.job_id)
+            contact_name = supplied_text("contact_name", args.contact_name or "")
+            contact_role = supplied_text("contact_role", args.contact_role or "")
+            contact_linkedin = supplied_text("contact_linkedin", args.contact_linkedin or "")
+            jd_text = supplied_text("jd_text", jd_text or "") or None
+            if contact_linkedin:
+                # A supplied identifier always resolves; explicit manual fields
+                # take precedence over the stored values (review finding: an
+                # unknown identifier must not silently continue).
+                contact = find_contact(conn, contact_linkedin)
+                if contact is None:
+                    print(
+                        f"no stored contact matches {contact_linkedin!r}; "
+                        "add it via contacts approve or pass --contact-name",
+                        file=sys.stderr,
+                    )
+                    return 1
+                contact_name = contact_name or contact.get("person_name", "")
+                contact_role = contact_role or contact.get("person_title", "")
+            drafts = generate_outreach(
+                conn,
+                company=row.get("company", ""),
+                role=row.get("title", ""),
+                job_url=row.get("url", ""),
+                contact_name=contact_name,
+                contact_role=contact_role,
+                contact_linkedin=contact_linkedin,
+                jd_text=jd_text or "",
+                audience=supplied_text("audience", args.audience or ""),
+                tone=supplied_text("tone", args.tone),
+                ai=args.ai,
+            )
+            paths = write_outreach_draft(row.get("company", ""), row.get("title", ""), drafts)
+        except (TrackerError, ValueError, RuntimeError, OSError) as error:
+            print(f"outreach-draft failed: {error}", file=sys.stderr)
+            return 1
+        for kind, path in paths.items():
+            print(f"{kind}={path}")
+        return 0
 
 
 def _cmd_gmail_watch(args: argparse.Namespace) -> int:
     from harrier.mail import run_watch
 
-    conn = connect()
-    try:
-        summary = run_watch(conn, dry_run=args.dry_run)
-    except RuntimeError as error:
-        print(f"gmail watch failed: {error}", file=sys.stderr)
-        return 1
-    for line in summary.lines:
-        print(line)
-    if summary.send_failure:
-        # Two different failures wore one face: the mail was classified and
-        # archived, and only the Telegram delivery failed. Saying so is what
-        # lets the operator tell "the watch is broken" from "the watch worked
-        # and my notifier did not" (spec 049).
-        print(
-            f"gmail_watch=classified_but_not_delivered actionable_count={summary.actionable_count}",
-            file=sys.stderr,
-        )
-        # Clamp: POSIX exit statuses are modulo 256, so a raw helper value
-        # like 256 would read as success (review finding).
-        return min(max(1, summary.send_failure), 255)
-    if not args.dry_run and summary.actionable_count == 0:
-        print("gmail_watch=no_new_actionable_messages")
-    return 0
+    with closing(connect()) as conn:
+        try:
+            summary = run_watch(conn, dry_run=args.dry_run)
+        except RuntimeError as error:
+            print(f"gmail watch failed: {error}", file=sys.stderr)
+            return 1
+        for line in summary.lines:
+            print(line)
+        if summary.send_failure:
+            # Two different failures wore one face: the mail was classified and
+            # archived, and only the Telegram delivery failed. Saying so is what
+            # lets the operator tell "the watch is broken" from "the watch worked
+            # and my notifier did not" (spec 049).
+            print(
+                "gmail_watch=classified_but_not_delivered "
+                f"actionable_count={summary.actionable_count}",
+                file=sys.stderr,
+            )
+            # Clamp: POSIX exit statuses are modulo 256, so a raw helper value
+            # like 256 would read as success (review finding).
+            return min(max(1, summary.send_failure), 255)
+        if not args.dry_run and summary.actionable_count == 0:
+            print("gmail_watch=no_new_actionable_messages")
+        return 0
 
 
 def _cmd_gmail_oauth(args: argparse.Namespace) -> int:
@@ -766,10 +773,10 @@ def _cmd_digest(args: argparse.Namespace) -> int:
     except ValueError as error:
         print(f"digest failed: invalid --date: {error}", file=sys.stderr)
         return 2
-    conn = connect()
-    digest, rc = run_digest(conn, target_date, dry_run=args.dry_run)
-    print(digest)
-    return rc
+    with closing(connect()) as conn:
+        digest, rc = run_digest(conn, target_date, dry_run=args.dry_run)
+        print(digest)
+        return rc
 
 
 def cutover_installer() -> list[str]:

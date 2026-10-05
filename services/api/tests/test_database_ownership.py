@@ -9,7 +9,6 @@ of them needs Docker, and none of them reaches the operator's data directory:
 
 from __future__ import annotations
 
-import gc
 import hashlib
 import http.server
 import json
@@ -411,13 +410,7 @@ def test_integrity_leaves_a_crashed_writers_wal_and_the_database_untouched(
     # ran and checkpointed it itself. `configure_logging` is idempotent, so
     # without the reset an earlier test would have made that call a no-op.
     monkeypatch.setattr(logsetup, "_configured", False)
-    try:
-        code, lines = doctor(capsys, "--integrity")
-    finally:
-        # A connection left open is closed, and checkpointed, when it is
-        # collected: at process exit for a real CLI run. Collect now so the
-        # comparison sees what a finished `harrier doctor` would leave.
-        gc.collect()
+    code, lines = doctor(capsys, "--integrity")
     assert (code, lines[-1]) == (0, "integrity: ok")
     assert snapshot_files(live) == before
     logsetup.configure_logging(force=True)
