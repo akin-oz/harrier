@@ -174,6 +174,7 @@ Proven by services/api/tests/test_review_followup.py:
 | no notice means nothing is posted | `test_no_notice_means_none`, `test_a_notice_without_a_wait_is_reported_not_guessed` |
 | an unchanged head is not re-requested | `test_a_reviewed_pull_request_at_the_same_head_is_left_alone`, `test_a_moved_head_is_asked_again` |
 | a reply in a thread is not a review of the commit it names (amendment below) | `test_a_reply_in_a_thread_is_not_a_review`, `test_the_reviewed_sha_is_read_from_the_reviews` |
+| replies do not crowd a review out of the window (amendment below) | `test_replies_past_the_window_do_not_hide_the_review`, `test_an_unread_review_past_the_window_is_still_found`, `test_an_earlier_page_with_no_cursor_fails_closed`, `test_reading_back_stops_at_the_page_bound`, `test_gh_failing_on_an_earlier_page_is_reported` |
 | the daily bound stops the loop | `test_the_daily_bound_stops_the_loop`, `test_the_bound_wins_over_everything_else` |
 | rate limited is distinguishable from reviewed | `test_a_rate_limited_pull_request_reports_as_not_reviewed`, `test_a_reviewed_pull_request_reports_as_reviewed`, `test_a_pull_request_with_neither_is_still_not_reviewed` |
 | `gh` failing is reported | `test_gh_failing_is_reported_not_swallowed`, `test_an_unreadable_payload_is_reported` |
@@ -220,6 +221,10 @@ protect a counter would have been the wrong trade.
       the reviewer has only replied on is asked for its review (the
       amendment below on replies;
       `test_a_reply_in_a_thread_is_not_a_review`)
+- [x] replies past the newest twenty review nodes do not leave a pull
+      request outstanding on every run, and a review behind them is still
+      read (the amendment below on the review window;
+      `test_replies_past_the_window_do_not_hide_the_review`)
 - [ ] All gates green on PR
 
 ## Proof / origin
@@ -407,9 +412,87 @@ and again by this test before the fix.
   every reply, ours or the reviewer's, is one. Past twenty, the query has
   another page, and the command reports "a bounded query had another page"
   and exits 3 on every run. That fails closed, so nothing is missed, but
-  replies bring it sooner. It is left to its own change.
+  replies bring it sooner. It is left to its own change: the amendment
+  below on the review window.
 
 ### Limitations
 
 - A reply posted with a body of its own would still count as a review. None
   has been seen: all four replies on PR #147 have empty bodies.
+
+## Amendment (2026-10-06): the review window
+
+Recorded as out of scope by the amendment above, and fixed here. `gather`
+read `reviews(last:20)`. A reply in a review thread is a review node, ours or
+the reviewer's, so a pull request with enough conversation fills those twenty
+with replies. The query then reports an earlier page, `truncated` is set, and
+`outstanding` is true on every run: "a bounded query had another page" and
+exit 3, with every finding answered. The review the replies answer is on that
+earlier page, so its body and the commit it names are not read either.
+
+This was inferred from the query and reproduced through `gather` by the
+tests below, not observed on a live pull request.
+
+### Behavior after the change
+
+- When the newest page of reviews reports an earlier one, `gather` asks for
+  it by its `startCursor`, a hundred nodes at a time, and keeps going until
+  no earlier page is left. The nodes are read oldest first, as before, so the
+  newest review with a body still names the reviewed commit.
+- A pull request whose review nodes all fit in what was read is not
+  truncated by its reviews. Thread truncation (`reviewThreads(first:100)`)
+  is unchanged and still fails closed.
+- It still fails closed when reading back cannot finish: a page that reports
+  an earlier one with no cursor, or more than ten earlier pages
+  (`REVIEW_PAGE_LIMIT`). Those set `truncated`, and the report line and exit
+  code are what spec 045 already says.
+- `gh` failing on an earlier page, or returning something that is not JSON,
+  is reported as it is for the first query.
+
+Paging was chosen over filtering because the API cannot filter replies out:
+a reply and a review with findings both have state COMMENTED, and the
+difference the amendment above relies on, the body, is not a filter the
+reviews connection takes.
+
+### What changes
+
+- `services/api/src/harrier/reviewfollowup.py`: the reviews fields move to
+  `REVIEW_FIELDS` and gain `startCursor`; `_earlier_reviews` reads the earlier
+  pages; `gather` prepends them and takes review truncation from it.
+- `services/api/tests/test_review_followup.py`: the five tests below, and
+  two helpers that build paged answers.
+
+No new file, so `config/data-classification.json` does not change. The
+command's output lines and exit codes do not change.
+
+### How to know it worked
+
+- `test_replies_past_the_window_do_not_hide_the_review`: a review with
+  findings at commit A, then twenty five replies at B, every finding read.
+  The newest page holds twenty replies and a cursor; the earlier page holds
+  the review and five replies. It asserts not truncated, not outstanding,
+  and reviewed at A. Before the change it failed: truncated and outstanding.
+- `test_an_unread_review_past_the_window_is_still_found`: an unanswered
+  review behind twenty replies is reported as unread. Before the change it
+  was not read at all.
+- `test_an_earlier_page_with_no_cursor_fails_closed`: an earlier page with no
+  way to ask for it still reads as truncated. This held before the change
+  and is kept so paging cannot turn it into a pass.
+
+- `test_reading_back_stops_at_the_page_bound`: every page reports another;
+  reading stops at the bound and reads as truncated.
+- `test_gh_failing_on_an_earlier_page_is_reported`: a `gh` failure on an
+  earlier page raises the same error as one on the first query.
+
+### Failure modes this must not introduce
+
+- A loop that never ends. The page bound stops it, and stopping fails
+  closed (`test_reading_back_stops_at_the_page_bound`).
+- A missed finding. Every node read is read exactly as before; paging only
+  reads more of them.
+
+### Limitations
+
+- Each earlier page is one more `gh` call. A pull request with a hundred
+  nodes beyond the newest twenty costs one; past the bound it costs ten and
+  still reports truncated.
