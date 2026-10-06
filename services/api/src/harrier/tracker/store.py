@@ -12,7 +12,8 @@ import logging
 import re
 import sqlite3
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -28,6 +29,7 @@ from harrier.tracker.reasons import (
     SYSTEM,
     ReasonError,
     classify_move,
+    company_engaged,
 )
 from harrier.tracker.schema import (
     CONTACT_FIELDS,
@@ -176,6 +178,44 @@ def list_jobs(
     return [_job_row_to_dict(row) for row in rows]
 
 
+@contextmanager
+def _write_lock(conn: sqlite3.Connection) -> Generator[None, None, None]:
+    """The write lock, taken before reading what a write depends on.
+
+    A writer that read a row, decided, and only then opened its transaction
+    let a second writer read the same row in between. On a job with no events
+    both wrote its reconstructed history, permanently under the append-only
+    trigger, and the later live event recorded a status the row no longer had
+    (spec 079 amendment). BEGIN IMMEDIATE takes the lock at once, so a second
+    writer waits for the first and reads what it wrote. A caller already
+    inside a transaction keeps the lock it holds.
+    """
+    if conn.in_transaction:
+        yield
+        return
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+    except BaseException:
+        conn.rollback()
+        raise
+    conn.commit()
+
+
+def company_has_responded(conn: sqlite3.Connection, job_id: int) -> bool:
+    """Whether a company outcome is recorded for this job (spec 079).
+
+    The row forgets an invited interview once the company's first response
+    closes it, and the events do not.
+    """
+    row = conn.execute(
+        "SELECT 1 FROM job_events WHERE job_id = ? AND kind = 'outcome' AND actor = 'company' "
+        "LIMIT 1",
+        (job_id,),
+    ).fetchone()
+    return row is not None
+
+
 def set_status(
     conn: sqlite3.Connection,
     job_id: int,
@@ -195,93 +235,97 @@ def set_status(
     `harrier.tracker.transitions`, and what a move must clear comes from the
     same place, so a new status cannot gain a rule in one and not the other.
 
-    Every move also appends one event, in the same transaction (spec 079).
-    Who made it and why is decided by `harrier.tracker.reasons.classify_move`
-    from the row as it was, so a company's verdict is kept out of the
-    candidate's decisions on every path that reaches here. `note` is free
-    text for the event alone, for a move whose row has no field for it.
+    Every move also appends its event, in the same transaction (spec 079),
+    after the reconstructed history of a job that had none. Who made it and
+    why is decided by `harrier.tracker.reasons.classify_move` from the row as
+    it was, so a company's verdict is kept out of the candidate's decisions
+    on every path that reaches here. `note` is free text for the event alone,
+    for a move whose row has no field for it. The row is read under the
+    write lock, so what the move is decided from is what it writes over.
     """
     if status not in STATUSES:
         raise UnknownStatusError(f"unknown status {status!r}; legal: {', '.join(STATUSES)}")
-    job = get_job(conn, job_id)
-    check_transition(job["status"], status)
-    try:
-        move = classify_move(
-            job,
-            status,
-            reason_code=reason_code,
-            reason_text=rejection_reason if status == "rejected" else None,
-            actor=actor,
-        )
-    except ReasonError as error:
-        raise TrackerError(str(error)) from error
-    if note is not None:
-        reason_text = note
-    else:
-        reason_text = (rejection_reason or "") if status == "rejected" else ""
-    description_sha256 = _description_sha256(job["url"])
-    # A job decided before spec 079 has no events. Its first live event used
-    # to make it look backfilled, so `harrier events backfill` skipped it and
-    # its earlier history was lost for good under the append-only trigger
-    # (spec 079 amendment). Its reconstruction now comes first, in
-    # the same transaction, so a partial history cannot exist.
-    history = [] if _has_events(conn, job_id) else _plan_backfill(job)
+    with _write_lock(conn):
+        job = get_job(conn, job_id)
+        check_transition(job["status"], status)
+        try:
+            move = classify_move(
+                job,
+                status,
+                reason_code=reason_code,
+                reason_text=rejection_reason if status == "rejected" else None,
+                actor=actor,
+                engaged=company_engaged(job) or company_has_responded(conn, job_id),
+            )
+        except ReasonError as error:
+            raise TrackerError(str(error)) from error
+        if note is not None:
+            reason_text = note
+        else:
+            reason_text = (rejection_reason or "") if status == "rejected" else ""
+        description_sha256 = _description_sha256(job["url"])
+        # A job decided before spec 079 has no events. Its first live event used
+        # to make it look backfilled, so `harrier events backfill` skipped it and
+        # its earlier history was lost for good under the append-only trigger
+        # (spec 079 amendment). Its reconstruction now comes first, in
+        # the same transaction, so a partial history cannot exist.
+        history = [] if _has_events(conn, job_id) else _plan_backfill(job)
 
-    updates: dict[str, str] = {"status": status}
-    updates.update(fields_a_move_clears(job["status"], status))
-    if status == "applied":
-        applied = applied_date or date.today().isoformat()
-        follow_up = (date.fromisoformat(applied) + timedelta(days=7)).isoformat()
-        updates["applied_date"] = applied
-        updates["last_contact"] = applied
-        updates["next_action"] = f"follow up if no reply by {follow_up}"
-        # Seed the outreach block, filling only blanks (old repo: command_applied).
-        updates["outreach_status"] = job["outreach_status"].strip() or "needs_contacts"
-        updates["next_outreach_action"] = job["next_outreach_action"].strip() or "find contacts"
-        updates["contacts_found"] = job["contacts_found"].strip() or "0"
-        updates["outreach_priority"] = job["outreach_priority"].strip() or "high"
-    elif status == "rejected":
-        updates["next_action"] = NEXT_ACTION_DEFAULTS[status]
-        if rejection_reason:
-            updates["rejection_reason"] = rejection_reason
-    else:
-        updates["next_action"] = NEXT_ACTION_DEFAULTS[status]
+        updates: dict[str, str] = {"status": status}
+        updates.update(fields_a_move_clears(job["status"], status))
+        if status == "applied":
+            applied = applied_date or date.today().isoformat()
+            follow_up = (date.fromisoformat(applied) + timedelta(days=7)).isoformat()
+            updates["applied_date"] = applied
+            updates["last_contact"] = applied
+            updates["next_action"] = f"follow up if no reply by {follow_up}"
+            # Seed the outreach block, filling only blanks (old repo: command_applied).
+            updates["outreach_status"] = job["outreach_status"].strip() or "needs_contacts"
+            updates["next_outreach_action"] = job["next_outreach_action"].strip() or "find contacts"
+            updates["contacts_found"] = job["contacts_found"].strip() or "0"
+            updates["outreach_priority"] = job["outreach_priority"].strip() or "high"
+        elif status == "rejected":
+            updates["next_action"] = NEXT_ACTION_DEFAULTS[status]
+            if rejection_reason:
+                updates["rejection_reason"] = rejection_reason
+        else:
+            updates["next_action"] = NEXT_ACTION_DEFAULTS[status]
 
-    assignments = ", ".join(f"{name} = ?" for name in updates)
-    with conn:
-        for event in history:
+        assignments = ", ".join(f"{name} = ?" for name in updates)
+        with conn:
+            for event in history:
+                _append_event(
+                    conn,
+                    job_id=job_id,
+                    kind=event.kind,
+                    actor=event.actor,
+                    from_status=event.from_status,
+                    to_status=event.to_status,
+                    reason_code=event.code,
+                    reason_text=event.text,
+                    at=event.at,
+                    backfilled=True,
+                )
+            conn.execute(
+                f"UPDATE jobs SET {assignments}, updated_at = datetime('now') WHERE id = ?",
+                [*updates.values(), job_id],
+            )
+            # What the candidate was looking at when they decided: the score and
+            # version from before this write, which a later rescore overwrites on
+            # the row but never here.
             _append_event(
                 conn,
                 job_id=job_id,
-                kind=event.kind,
-                actor=event.actor,
-                from_status=event.from_status,
-                to_status=event.to_status,
-                reason_code=event.code,
-                reason_text=event.text,
-                at=event.at,
-                backfilled=True,
+                kind=move.kind,
+                actor=move.actor,
+                from_status=job["status"],
+                to_status=status,
+                reason_code=move.code,
+                reason_text=reason_text,
+                fit_score=job["fit_score"],
+                scoring_version=job.get("scoring_version", ""),
+                description_sha256=description_sha256,
             )
-        conn.execute(
-            f"UPDATE jobs SET {assignments}, updated_at = datetime('now') WHERE id = ?",
-            [*updates.values(), job_id],
-        )
-        # What the candidate was looking at when they decided: the score and
-        # version from before this write, which a later rescore overwrites on
-        # the row but never here.
-        _append_event(
-            conn,
-            job_id=job_id,
-            kind=move.kind,
-            actor=move.actor,
-            from_status=job["status"],
-            to_status=status,
-            reason_code=move.code,
-            reason_text=reason_text,
-            fit_score=job["fit_score"],
-            scoring_version=job.get("scoring_version", ""),
-            description_sha256=description_sha256,
-        )
     return get_job(conn, job_id)
 
 
@@ -306,22 +350,25 @@ def update_fields(
         )
     if not fields:
         return get_job(conn, job_id)
-    current = get_job(conn, job_id)
-    # Only a breach this write introduces. Refusing every write to a row that
-    # already breaks a rule would make rows written before these rules
-    # unrepairable, and the spec is explicit that they are reported and left
-    # alone rather than rewritten. `harrier check` is how they are found.
-    before = set(all_breaches(current))
-    after = all_breaches({**current, **{k: str(v) for k, v in fields.items()}})
-    introduced = [breach for breach in after if breach not in before]
-    if introduced:
-        raise TrackerError(introduced[0])
-    assignments = ", ".join(f"{name} = ?" for name in fields)
-    with conn:
-        conn.execute(
-            f"UPDATE jobs SET {assignments}, updated_at = datetime('now') WHERE id = ?",
-            [*[str(v) for v in fields.values()], job_id],
-        )
+    # Read under the write lock, so the invariants are checked against the
+    # row this write lands on (spec 079 amendment).
+    with _write_lock(conn):
+        current = get_job(conn, job_id)
+        # Only a breach this write introduces. Refusing every write to a row that
+        # already breaks a rule would make rows written before these rules
+        # unrepairable, and the spec is explicit that they are reported and left
+        # alone rather than rewritten. `harrier check` is how they are found.
+        before = set(all_breaches(current))
+        after = all_breaches({**current, **{k: str(v) for k, v in fields.items()}})
+        introduced = [breach for breach in after if breach not in before]
+        if introduced:
+            raise TrackerError(introduced[0])
+        assignments = ", ".join(f"{name} = ?" for name in fields)
+        with conn:
+            conn.execute(
+                f"UPDATE jobs SET {assignments}, updated_at = datetime('now') WHERE id = ?",
+                [*[str(v) for v in fields.values()], job_id],
+            )
     return get_job(conn, job_id)
 
 
@@ -481,30 +528,33 @@ def backfill_events(
     nothing. Returns the count per kind, actor and code, which `--dry-run`
     prints without writing.
     """
-    rows = conn.execute(
-        "SELECT * FROM jobs WHERE id NOT IN (SELECT job_id FROM job_events) ORDER BY id"
-    ).fetchall()
-    plans = [(int(row["id"]), _plan_backfill(_job_row_to_dict(row))) for row in rows]
-    counts: Counter[tuple[str, str, str]] = Counter(
-        (event.kind, event.actor, event.code) for _, events in plans for event in events
-    )
-    if dry_run:
-        return counts
-    with conn:
-        for job_id, events in plans:
-            for event in events:
-                _append_event(
-                    conn,
-                    job_id=job_id,
-                    kind=event.kind,
-                    actor=event.actor,
-                    from_status=event.from_status,
-                    to_status=event.to_status,
-                    reason_code=event.code,
-                    reason_text=event.text,
-                    at=event.at,
-                    backfilled=True,
-                )
+    # Selected under the write lock, so a live first move cannot write the
+    # same history in between (spec 079 amendment). A dry run writes nothing.
+    with nullcontext() if dry_run else _write_lock(conn):
+        rows = conn.execute(
+            "SELECT * FROM jobs WHERE id NOT IN (SELECT job_id FROM job_events) ORDER BY id"
+        ).fetchall()
+        plans = [(int(row["id"]), _plan_backfill(_job_row_to_dict(row))) for row in rows]
+        counts: Counter[tuple[str, str, str]] = Counter(
+            (event.kind, event.actor, event.code) for _, events in plans for event in events
+        )
+        if dry_run:
+            return counts
+        with conn:
+            for job_id, events in plans:
+                for event in events:
+                    _append_event(
+                        conn,
+                        job_id=job_id,
+                        kind=event.kind,
+                        actor=event.actor,
+                        from_status=event.from_status,
+                        to_status=event.to_status,
+                        reason_code=event.code,
+                        reason_text=event.text,
+                        at=event.at,
+                        backfilled=True,
+                    )
     return counts
 
 

@@ -195,6 +195,7 @@ def classify_move(
     reason_code: str | None = None,
     reason_text: str | None = None,
     actor: str | None = None,
+    engaged: bool | None = None,
 ) -> Move:
     """Decide the event a move to `target` records, from the row before it.
 
@@ -213,6 +214,10 @@ def classify_move(
 
     A caller that names an actor the code contradicts is refused: the pair is
     what makes the record trustworthy, so it is never silently corrected.
+
+    `engaged` is the caller's finding when it can see more than the row: the
+    status writer also counts a company response recorded in the events.
+    Without it, engagement is read from the row alone.
     """
     if reason_code is not None and reason_code not in REASON_CODES:
         raise ReasonError(f"unknown reason code {reason_code!r}; known: {', '.join(REASON_CODES)}")
@@ -230,7 +235,7 @@ def classify_move(
         if owner == COMPANY:
             if code == INTERVIEW_INVITED:
                 raise ReasonError("an interview invitation does not reject a job")
-            if company_engaged(before):
+            if company_engaged(before) if engaged is None else engaged:
                 move = Move(OUTCOME, COMPANY, code)
             else:
                 # A company cannot respond to a job it never received an
