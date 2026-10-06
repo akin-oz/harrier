@@ -195,6 +195,11 @@ def _positive_probability(model: LogisticRegression, features: FloatArray) -> Fl
     return probabilities[:, 1]
 
 
+def shipped_scores(probabilities: FloatArray) -> FloatArray:
+    """The integer scores a model would write, as `fit_score_for` rounds them."""
+    return np.round(100 * probabilities)
+
+
 def choose_strength(features: FloatArray, labels: IntArray) -> float:
     """Forward-chaining cross-validation inside the training window: each fold
     trains on earlier rows and validates on the next ones, as the model will
@@ -276,6 +281,13 @@ def evaluate(labels: IntArray, model_scores: FloatArray, baseline: FloatArray) -
     }
 
 
+def _band(score: float, cut_low: float, cut_high: float) -> str:
+    """Which third of a score range a value falls in, cut by value."""
+    if score <= cut_low:
+        return "low"
+    return "middle" if score <= cut_high else "high"
+
+
 def selection_bias(rows: Sequence[Row]) -> list[dict[str, Any]]:
     """For live decisions: the acted-on rate in each third of the score the
     row carried when it was decided, per scoring version. How much the shown
@@ -291,19 +303,19 @@ def selection_bias(rows: Sequence[Row]) -> list[dict[str, Any]]:
         by_version.setdefault(row.shown_version or "unknown", []).append((shown, row.label))
     table: list[dict[str, Any]] = []
     for version, pairs in sorted(by_version.items()):
-        ordered = sorted(pairs)
-        size = len(ordered)
-        for band, part in (
-            ("low", ordered[: size // 3]),
-            ("middle", ordered[size // 3 : 2 * size // 3]),
-            ("high", ordered[2 * size // 3 :]),
-        ):
+        # Cut by score value, as `evaluate` cuts its terciles. Cutting a
+        # sorted list by position split tied scores by label, which put the
+        # skips in the lower band and the acted-on rows in the higher one.
+        scores = np.array([score for score, _ in pairs], dtype=np.float64)
+        cut_low, cut_high = (float(cut) for cut in np.quantile(scores, [1 / 3, 2 / 3]))
+        for band in ("low", "middle", "high"):
+            part = [label for score, label in pairs if _band(score, cut_low, cut_high) == band]
             table.append(
                 {
                     "version": version,
                     "band": band,
                     "rows": len(part),
-                    "acted_on_rate": sum(label for _, label in part) / len(part) if part else None,
+                    "acted_on_rate": sum(part) / len(part) if part else None,
                 }
             )
     return table
@@ -384,7 +396,10 @@ def train(
         float(value) for value in np.asarray(fitted.coef_, dtype=np.float64).reshape(-1)
     ]
     intercept = float(np.asarray(fitted.intercept_, dtype=np.float64).reshape(-1)[0])
-    model_scores = _positive_probability(fitted, test_features)
+    # Judged as it would ship: the queue ranks by the integer `fit_score`,
+    # `round(100 * p)`, and ties it creates are part of the ranking the rules
+    # are compared with.
+    model_scores = shipped_scores(_positive_probability(fitted, test_features))
     baseline = np.array([row.baseline for row in testing], dtype=np.float64)
     metrics = evaluate(test_labels, model_scores, baseline)
 

@@ -102,7 +102,9 @@ def normalize_values(values: Mapping[str, float], p92: Mapping[str, float]) -> l
     for name in FEATURE_ORDER:
         value = float(values[name])
         if name in NUMERIC_FEATURES:
-            value = min(1.0, max(0.0, value / p92[name]))
+            # Clipped to 1 and no further (spec 077): a configured negative
+            # weight can make a count negative, and that is information.
+            value = min(1.0, value / p92[name])
         vector.append(value)
     return vector
 
@@ -135,7 +137,11 @@ class Model:
 def _finite(value: object, what: str) -> float:
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise ModelInvalidError(f"{what} is not a number")
-    number = float(value)
+    try:
+        number = float(value)
+    except OverflowError as error:
+        # An integer too large for a float is valid JSON and no weight.
+        raise ModelInvalidError(f"{what} is not finite") from error
     if not math.isfinite(number):
         raise ModelInvalidError(f"{what} is not finite")
     return number
@@ -146,8 +152,10 @@ def parse_model(raw: bytes) -> Model:
     honour. Every refusal names its check."""
     try:
         parsed: object = json.loads(raw)
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise ModelInvalidError(f"not JSON: {error}") from error
+    except (UnicodeDecodeError, ValueError, RecursionError) as error:
+        # ValueError covers malformed JSON and an integer too long to convert;
+        # a refusal of either is a refused model, never a crashed run.
+        raise ModelInvalidError(f"not JSON: {type(error).__name__}") from error
     if not isinstance(parsed, dict):
         raise ModelInvalidError("not a JSON object")
     document = cast("dict[str, Any]", parsed)
@@ -291,7 +299,11 @@ def load_active_model() -> tuple[Model | None, str | None]:
         except ModelInvalidError as error:
             result = error
         except OSError as error:
-            result = ModelInvalidError(f"unreadable ({error.strerror})")
+            # A read that failed is not a verdict on the file, so it is not
+            # cached: the next call reads again. Cached, one transient error
+            # kept a long-running API on the rules until the file changed.
+            _warn_once(MODEL_INVALID, path, f"unreadable ({error.strerror})", None)
+            return None, MODEL_INVALID
         _cache[str(path)] = (key, result)
     if isinstance(result, ModelInvalidError):
         _warn_once(MODEL_INVALID, path, str(result), key)

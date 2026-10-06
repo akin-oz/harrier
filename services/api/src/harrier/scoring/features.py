@@ -58,9 +58,11 @@ DESCRIPTION_MISSING = "description-missing"
 
 # A stated requirement: "5+ years of experience", "3-5 years of professional
 # experience", "at least 4 yrs experience". The lower bound of a range is the
-# requirement. A number in another sentence ("founded 10 years ago") is not.
+# requirement, whether the range is written with a hyphen, an en or em dash
+# (escaped below; they look alike) or "to". A number in another sentence
+# ("founded 10 years ago") is not.
 _REQUIRED_YEARS = re.compile(
-    r"\b(\d{1,2})\s*\+?\s*(?:(?:-|to)\s*\d{1,2}\s*\+?\s*)?(?:years?|yrs?)\b"
+    r"\b(\d{1,2})\s*\+?\s*(?:(?:[-\u2013\u2014]|to)\s*\d{1,2}\s*\+?\s*)?(?:years?|yrs?)\b"
     r"(?:\s+of)?(?:\s+[a-z/-]+){0,3}?\s+experience\b"
 )
 _PLAUSIBLE_YEARS = range(1, 31)
