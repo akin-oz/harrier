@@ -244,6 +244,11 @@ file is named.
 - [x] no personal data enters a committed fixture, a test name, or a
       screenshot. Every fixture is an invented company. Limitation: this is a
       property of the diff, and no test asserts it
+- [ ] in a browser, each resting row's forward control carries a stronger
+      border and a medium weight, and no other control on the row does
+      (`apps/web/src/pages/tracker/TrackerPage.test.tsx`: planned "the
+      forward control's look outranks the shared button rule", which fails
+      without the fix). Added by the amendment of 2026-10-06 below
 - [x] all gates green on PR (`just check` passes: 1009 Python tests, 33 web
       tests, contract regenerated with no unexpected diff)
 
@@ -276,3 +281,46 @@ their journal records stay readable; the loader treats a missing parameter set
 as empty. Milestone M8 does not appear in `specs/README.md`, which lists
 milestones through M7. That line is a documentation change this spec does not
 make, and it should land with whichever of these four specs is approved first.
+
+## Amendment: the forward control's look applies in a browser (2026-10-06)
+
+The Tracker redesign landed under this spec (commit 8e689a8). It gave each
+resting row one forward control, the verb for what to do next, and styled it
+apart from the rest of the row. This spec never said so, and until this
+amendment no browser showed it.
+
+- **The look.** By status, the forward control is Shortlist, Request CV,
+  Applied, Company replied or Reopen. Its border is `--color-border-strong`
+  and its weight is 500, set by `.job-actions__primary` in
+  `apps/web/src/features/tracker/JobActions.css`. The comment above that
+  rule gives the reason: it is what to do next, so it is the one control on
+  the row that does not look like the others. Reject or Withdraw, Apply and
+  More keep the shared look.
+- **Why no browser showed it.** `.job-actions button` sets the border and
+  the font of every control in the block, and it outranks a bare class
+  selector. It already did on the day the redesign landed. In a browser in
+  demo mode, every forward control computed `--color-border` and weight
+  400, the same as Apply and More. jsdom applies matching rules in source
+  order and does not rank them by specificity, so a rendered test sees the
+  look and passes. Spec 080 found this in its review of the merged range
+  and left it to its own change.
+- **The fix.** The rule is scoped under `.job-actions button`, as the danger
+  hovers and Cancel already are, so it outranks the shared rule.
+
+Files: `apps/web/src/features/tracker/JobActions.css` and
+`apps/web/src/pages/tracker/TrackerPage.test.tsx`.
+
+Proof: planned "the forward control's look outranks the shared button rule"
+in `TrackerPage.test.tsx`. It renders a row for each status, opens More, and
+finds the look by what it declares. On each row the look must match the
+forward control and nothing else. It then reads the cascade from the
+stylesheet as parsed, as "a danger hover outranks the ordinary hover" does,
+and fails if any rule that styles these buttons at rest loses to
+`.job-actions button`. Without the fix it names `.job-actions__primary`. The
+implementing change also checks the computed styles in a browser in demo
+mode.
+
+Limitation: the test compares selectors, not computed styles, because jsdom
+does not rank rules by specificity. Its specificity count covers the plain
+selectors `JobActions.css` uses, and would miscount `:is()`, `:where()` or
+nesting.
