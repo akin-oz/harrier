@@ -271,7 +271,7 @@ def test_every_reason_code_has_one_actor() -> None:
         ("rejected by company", "company_rejected"),
         ("Rejected without an offer", "company_rejected"),
         ("ghosted", "ghosted"),
-        ("no response after two weeks", "no_response"),
+        ("no response from the recruiter", "no_response"),
         ("failed the take-home assignment", "assessment_failed"),
         ("vacancy closed", "vacancy_closed"),
         ("the vacancy is closed", "vacancy_closed"),
