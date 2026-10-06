@@ -63,19 +63,19 @@ limit of its own).
 ## Acceptance criteria
 
 - [x] The digest over fixtures renders all five sections
-      (test_digest_renders_all_five_sections)
-- [x] Dry-run sends nothing (test_dry_run_sends_nothing: the send
+      (`test_digest_renders_all_five_sections`)
+- [x] Dry-run sends nothing (`test_dry_run_sends_nothing`: the send
       function raises if called)
 - [x] Ghosted uses the 21-day cutoff inclusively at the boundary, and
       the rendered label says at-least rather than more-than
-      (test_ghosted_cutoff_boundary)
+      (`test_ghosted_cutoff_boundary`)
 - [x] A migrated row without added_at still lands in the new-prospects
       section via its auto_added or tier_a_seed note
-      (test_legacy_auto_added_note_counts_as_added_at)
+      (`test_legacy_auto_added_note_counts_as_added_at`)
 - [x] A malformed event kind is skipped rather than aborting the digest
-      (test_malformed_event_kind_is_skipped)
+      (`test_malformed_event_kind_is_skipped`)
 - [x] Updates are date-filtered, deduplicated, and newest first
-      (test_updates_filter_dedupe_and_order)
+      (`test_updates_filter_dedupe_and_order`)
 - [x] All gates green on PR (PR #16)
 
 ## Proof / origin

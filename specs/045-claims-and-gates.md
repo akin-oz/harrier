@@ -160,6 +160,11 @@ spec 044.
       056 and 080, and
       `services/api/tests/test_spec_structure.py::test_every_test_a_spec_names_actually_exists`
       passes over every committed spec
+- [x] every Python test that specs 016 and 018 to 026 cite outside a code
+      span is cited in one, and spec 023's citation of a removed test says
+      what replaced it (the amendment below on Python citations;
+      `services/api/tests/test_spec_structure.py::test_every_test_a_spec_names_actually_exists`
+      passes over every committed spec)
 - [ ] All gates green on PR
 
 ## Proof / origin
@@ -287,3 +292,41 @@ in a Scope list, is not a citation.
   that: a planned name is left out of a code span so the check skips it. A
   rule for Python like the one on quoted web names would need those specs
   edited first, so it is not part of this amendment.
+
+## Amendment (2026-10-06): Python citations in specs 016 to 026 are read
+
+The last limitation above is this amendment. Specs 016 and 018 to 026 cite
+Python tests outside code spans, so the check reads none of those citations,
+and a renamed test breaks their proof without a failure. One already has:
+spec 023 cites test_the_schema_carries_a_scope_column_for_later_tenancy,
+which commit 3defbdf (spec 041) removed along with the scope column. The test
+that replaced it, `test_the_schema_carries_no_scope_column`, asserts the
+opposite.
+
+### What changes
+
+- Specs 016 and 018 to 026: each Python test cited outside a code span moves
+  into one, in the form it already has: a bare symbol, a path and symbol, or
+  a continuation. Spec 026 splits a path and symbol across two lines after
+  the `::`, and those join. No other text changes.
+- Spec 023: the scope column criterion stays ticked, because it held when the
+  spec shipped. It gains a sentence saying spec 041 removed the column, and
+  it cites the replacing test in a code span. The removed name stays out of
+  one, the way spec 065 writes a removed test.
+- A name marked planned stays out of a code span, as before. Specs 016 to
+  026 mark none.
+
+No code changes and no new file.
+
+**How to know it worked.** The check passes over every committed spec.
+Renaming a test that one of these specs cited only outside a code span makes
+it fail and name the spec; before this change the same rename passed.
+
+### Limitations
+
+- Nothing fails a Python test cited outside a code span, so a new spec can
+  repeat the gap. A rule like the one on quoted web names would catch it. It
+  can be written once these specs are edited, and it is its own change.
+- Spec 023's other sentences about the scope column, in its Problem, Scope
+  and honest limitations, have been stale since spec 041. Correcting them is
+  not a citation change, so it is left to its own change.

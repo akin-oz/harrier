@@ -134,8 +134,7 @@ the header's health request made the app fetch twice concurrently, and
 `/jobs` returned 500 with `sqlite3.ProgrammingError`. FastAPI runs a sync
 dependency and its endpoint on different threadpool threads, so the
 per-request connection was created in one and used in the other. Proven by
-services/api/tests/test_api_jobs.py::
-test_concurrent_requests_do_not_trip_the_sqlite_thread_check.
+`services/api/tests/test_api_jobs.py::test_concurrent_requests_do_not_trip_the_sqlite_thread_check`.
 
 ## Proof / origin
 
