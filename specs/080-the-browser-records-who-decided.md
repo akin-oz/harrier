@@ -182,15 +182,15 @@ way:
   unmounts when the pills appear and focus is lost; the same defect would
   repeat in the new takeover, so the shared pattern fixes it once.
 - Escape, or Cancel, closes the takeover and returns focus to the control
-  that opened it. So does a refusal from the outcome route, which closes the
-  company takeover while the row is fetched again (amended below).
+  that opened it. A refused write, from a takeover or from More, moves focus
+  to the message that explains it instead (amended below).
 - Each takeover is a `role="group"` named by its label (`Reject`, `Withdraw`,
   `Company response`), so a screen reader announces whose decision it is.
 
 ### Errors
 
-- A company outcome on a row no company engaged with (spec 079: no
-  `applied_date`, and not `interviewing`): 409 with spec 079's message,
+- A company outcome on a row no company engaged with, as spec 079 defines
+  engagement: 409 with spec 079's message,
   shown verbatim in the row's existing status line. The browser
   never offers the control there, so this is reached only by a stale page or
   a hand-written request; the row then refetches.
@@ -256,9 +256,14 @@ Spec 079 is amended to say so before either is approved.
 - [x] Opening any takeover focuses its first pill; Escape and Cancel close it
       and return focus to its opener
       (`TrackerPage.test.tsx`: "a takeover keeps keyboard focus")
-- [x] A refused company response closes the takeover and returns focus to
-      Company replied (`TrackerPage.test.tsx`: "a refused company response
-      hands focus back to its opener")
+- [x] A refused write moves focus to the message that explains it: a refused
+      company response, which closes its takeover, a refused rejection, and
+      a refused action from More (`TrackerPage.test.tsx`: "a refused company
+      response takes focus to its reason", "a refusal keeps focus where a
+      browser drops it")
+- [x] A status change mounts a new control in the forward slot rather than
+      relabelling the focused one (`TrackerPage.test.tsx`: "a status change
+      mounts a new control instead of relabelling the focused one")
 - [x] Every danger hover outranks the ordinary hover in the cascade, so it
       shows in a browser (`TrackerPage.test.tsx`: "a danger hover outranks the
       ordinary hover")
@@ -362,7 +367,9 @@ Cancel handed it back. It now returns to Company replied, as on Escape and
 Cancel. A refused rejection from the exit pills keeps its takeover open, so
 focus stays on the pill and needed no change. Proof: "a refused company
 response hands focus back to its opener" in `TrackerPage.test.tsx`, which
-fails without the fix.
+fails without the fix. (Superseded by the last amendment: focus now goes to
+the refusal's message, and the claim about the exit pills does not hold in
+a browser.)
 
 ## Amendment (2026-10-06, review of the merged range)
 
@@ -401,3 +408,31 @@ Out of scope, recorded for its own change: two more rules in
 `JobActions.css` lose to `.job-actions button` the same way.
 `.job-actions__primary` (spec 047) never applies its border or weight, and
 `.job-actions__pill-other` (spec 056) never applies its muted color.
+
+## Amendment (2026-10-06, review of the fixes)
+
+A review of the merged fixes above, partly in a real browser, found two
+focus defects. Each fix carries a test that fails without it.
+
+- **Focus could land on a control nobody chose.** A refused company response
+  returned focus to Company replied, but the refusal also refetches the row,
+  and on a stale page the row is no longer applied or interviewing. Company
+  replied and the forward verb share a slot and were not keyed, so React
+  relabelled the focused button: it read Reopen, and Enter sent a verb
+  nobody chose. A refusal now moves focus to its message instead, which is
+  there before and after the refetch. The slot's two controls are keyed
+  apart, so a status change mounts a new control rather than relabelling a
+  focused one. "a refused company response takes focus to its reason"
+  (renamed from "a refused company response hands focus back to its
+  opener"), "a status change mounts a new control instead of relabelling
+  the focused one".
+- **A disabled control drops focus.** While a write runs, its controls are
+  disabled, and a browser moves focus off a disabled control to the page.
+  So a refused rejection left focus on the page with the pills still open,
+  and so did a refused action from More. The amendment above said neither
+  needed handling, which held in jsdom only. Every refusal now moves focus
+  to its message. The test blurs the control while the request is pending,
+  as the browser does: "a refusal keeps focus where a browser drops it".
+
+The Errors bullet now defers to spec 079 for what counts as engagement,
+which a separate change widens to a company that has already responded.

@@ -3,7 +3,9 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 
+import type { Job } from "../../entities/job";
 import jobActionsCss from "../../features/tracker/JobActions.css?raw";
+import { JobActions } from "../../features/tracker/JobActions";
 import { TrackerPage } from "./TrackerPage";
 
 /**
@@ -51,8 +53,14 @@ function stubApi(options: {
   status?: { code: number; body: unknown };
   outcome?: { code: number; body: unknown };
   add?: { code: number; body: unknown };
+  // What a refetch returns once any write has been answered: a stale page.
+  jobsAfterWrite?: Row[];
+  // Holds every write open until it resolves, so a test can act while the
+  // request is pending.
+  hold?: Promise<void>;
 }): Call[] {
   const calls: Call[] = [];
+  let jobs = options.jobs ?? [];
   vi.stubGlobal(
     "fetch",
     vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -76,15 +84,18 @@ function stubApi(options: {
         );
 
       if (url.pathname === "/api/session") return reply(200, { token: "test-token" });
-      if (url.pathname === "/api/jobs") return reply(200, options.jobs ?? []);
+      if (url.pathname === "/api/jobs") return reply(200, jobs);
+      const answered = (answer: { code: number; body: unknown }): Promise<Response> =>
+        (options.hold ?? Promise.resolve()).then(() => {
+          if (options.jobsAfterWrite !== undefined) jobs = options.jobsAfterWrite;
+          return reply(answer.code, answer.body);
+        });
       if (url.pathname === "/api/tracker/queue") return reply(200, options.queue ?? []);
       if (url.pathname.endsWith("/status")) {
-        const answer = options.status ?? { code: 200, body: job(1, "Northwind", "80") };
-        return reply(answer.code, answer.body);
+        return answered(options.status ?? { code: 200, body: job(1, "Northwind", "80") });
       }
       if (url.pathname.endsWith("/outcome")) {
-        const answer = options.outcome ?? { code: 200, body: job(1, "Northwind", "80") };
-        return reply(answer.code, answer.body);
+        return answered(options.outcome ?? { code: 200, body: job(1, "Northwind", "80") });
       }
       if (url.pathname === "/api/tracker") {
         const answer = options.add ?? {
@@ -900,13 +911,15 @@ test("a takeover keeps keyboard focus", async () => {
   });
 });
 
-test("a refused company response hands focus back to its opener", async () => {
+test("a refused company response takes focus to its reason", async () => {
   // A stale page can offer Company replied on a row that has since changed.
-  // The refusal closes the takeover and refetches the row; keyboard focus
-  // goes back to the control that opened it, as Escape and Cancel do,
-  // rather than to nothing (review finding on PR #122).
+  // The refusal closes the takeover and refetches the row, and focus goes to
+  // the words that explain it. It went back to Company replied once (review
+  // finding on PR #122), but the refetch can turn that very button into
+  // Reopen, and Enter then sent a verb nobody chose.
   stubApi({
     jobs: [job(1, "Northwind", "80", "applied")],
+    jobsAfterWrite: [job(1, "Northwind", "80", "rejected")],
     outcome: { code: 409, body: { detail: "no application was recorded for this job" } },
   });
   const user = userEvent.setup();
@@ -916,10 +929,58 @@ test("a refused company response hands focus back to its opener", async () => {
   await user.click(within(row).getByRole("button", { name: "Company replied" }));
   await user.click(within(row).getByRole("button", { name: "ghosted" }));
 
-  expect(await screen.findByText("no application was recorded for this job")).toBeDefined();
+  const reason = await screen.findByText("no application was recorded for this job");
+  await within(row).findByRole("button", { name: "Reopen" });
   await waitFor(() => {
-    expect(document.activeElement).toBe(
-      within(row).getByRole("button", { name: "Company replied" }),
-    );
+    expect(document.activeElement).toBe(reason);
   });
+});
+
+test("a status change mounts a new control instead of relabelling the focused one", () => {
+  // Company replied and the forward verb share a slot. Unkeyed, React reused
+  // the node, so a focused Company replied became Reopen after a refetch and
+  // Enter sent a verb nobody chose (review of the merged range, spec 080).
+  const queryClient = new QueryClient();
+  const view = (status: string) => (
+    <QueryClientProvider client={queryClient}>
+      <JobActions job={job(1, "Northwind", "80", status) as unknown as Job} />
+    </QueryClientProvider>
+  );
+  const { rerender } = render(view("applied"));
+  const replied = screen.getByRole("button", { name: "Company replied" });
+  rerender(view("rejected"));
+  expect(screen.getByRole("button", { name: "Reopen" })).not.toBe(replied);
+});
+
+test("a refusal keeps focus where a browser drops it", async () => {
+  // While a write runs its controls are disabled, and a browser moves focus
+  // off a disabled control to the page; jsdom does not, so the test does
+  // what the browser does. A refused rejection keeps its takeover open, and
+  // a refused action from More opens none: either way the refusal is where
+  // focus lands (review of the merged range, spec 080).
+  for (const [status, open, send] of [
+    ["prospect", "Reject", "hybrid"],
+    ["prospect", /^More actions/, "Interview invite"],
+  ] as const) {
+    cleanup();
+    let release = (): void => undefined;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const refusal = { code: 409, body: { detail: "the tracker declined this" } };
+    stubApi({ jobs: [job(1, "Northwind", "80", status)], status: refusal, outcome: refusal, hold });
+    const user = userEvent.setup();
+    renderPage();
+
+    const row = await rowFor("Northwind");
+    await user.click(within(row).getByRole("button", { name: open }));
+    await user.click(within(row).getByRole("button", { name: send }));
+    (document.activeElement as HTMLElement | null)?.blur();
+    release();
+
+    const reason = await screen.findByText("the tracker declined this");
+    await waitFor(() => {
+      expect(document.activeElement, send).toBe(reason);
+    });
+  }
 });
