@@ -9,7 +9,7 @@ is about the archive being *usable* rather than about it existing.
 
 from __future__ import annotations
 
-import os
+import errno
 import sqlite3
 import tarfile
 import tempfile
@@ -483,28 +483,33 @@ def test_a_missing_database_fails(tmp_path: Path) -> None:
 # `/Backups/harrier` and `mkdir` raised a PermissionError that `_cmd_backup`
 # did not catch: a traceback instead of an exit code. These run the CLI entry
 # point, because the defect was in what the operator sees, not in the helper.
+#
+# Each refuses the call `create_backup` makes, not the directory's permission
+# bits: root creates and writes whatever a directory's mode says, and the
+# suite runs as root in cloud sessions, where these used to be skipped.
 
-needs_permissions = pytest.mark.skipif(
-    hasattr(os, "geteuid") and os.geteuid() == 0,
-    reason="root ignores directory permissions, so nothing here can be unwritable",
-)
 
-
-@needs_permissions
 def test_an_uncreatable_backup_directory_fails_with_one_line(
     data: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from harrier_cli.main import main
 
-    locked = tmp_path / "locked"
-    locked.mkdir()
-    locked.chmod(0o500)
-    target = locked / "harrier"
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    target = parent / "harrier"
     monkeypatch.setenv("HARRIER_BACKUP_DIR", str(target))
-    try:
+    real_mkdir = Path.mkdir
+
+    def refuse(
+        self: Path, mode: int = 0o777, parents: bool = False, exist_ok: bool = False
+    ) -> None:
+        if self == target:
+            raise PermissionError(errno.EACCES, "Permission denied", str(self))
+        real_mkdir(self, mode, parents, exist_ok)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "mkdir", refuse)
         assert main(["backup"]) == 1
-    finally:
-        locked.chmod(0o700)
     err = capsys.readouterr().err.strip().splitlines()
     assert err == [
         f"backup failed: cannot create backup directory {target}: "
@@ -514,7 +519,6 @@ def test_an_uncreatable_backup_directory_fails_with_one_line(
     assert not target.exists()
 
 
-@needs_permissions
 def test_an_unwritable_backup_directory_leaves_nothing_and_prunes_nothing(
     data: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -524,12 +528,20 @@ def test_an_unwritable_backup_directory_leaves_nothing_and_prunes_nothing(
     target.mkdir()
     older = target / f"{ARCHIVE_PREFIX}2020-01-07-000000{ARCHIVE_SUFFIX}"
     older.write_text("x")
-    target.chmod(0o500)
     monkeypatch.setenv("HARRIER_BACKUP_DIR", str(target))
-    try:
+    real_open = tarfile.open
+
+    # A tar opened for writing in the directory, not one file name: the
+    # archive's name carries the time it is taken. Reads still succeed, as they
+    # do in a directory without write permission.
+    def refuse(name: object, mode: str = "r", *args: object, **kwargs: object) -> tarfile.TarFile:
+        if mode.startswith("w") and Path(str(name)).parent == target:
+            raise PermissionError(errno.EACCES, "Permission denied", str(name))
+        return cast("tarfile.TarFile", real_open(name, mode, *args, **kwargs))  # pyright: ignore[reportCallIssue, reportArgumentType]
+
+    with monkeypatch.context() as patch:
+        patch.setattr(tarfile, "open", refuse)
         assert main(["backup", "--keep", "1"]) == 1
-    finally:
-        target.chmod(0o700)
     err = capsys.readouterr().err.strip().splitlines()
     assert len(err) == 1
     assert err[0].startswith(f"backup failed: cannot write to backup directory {target}: ")
