@@ -122,3 +122,21 @@ Proof: `every pill submits its exact lowercase label as the reason` in
 ## Migration
 
 None.
+
+## Amendment: the pill list is spec 080's (2026-10-06)
+
+`rejected by company` is no longer a pill. It recorded a company's verdict
+through the candidate's Reject control, which is the confusion spec 079
+exists to end. A company's response now has its own control, Company
+replied, in the same one-click pattern this spec established (spec 080).
+
+The six remaining pills keep this spec's exact strings, so
+`rejection_reason` stays groupable across old and new rows. Each pill also
+sends a reason code alongside its text. The text stays a free string; the
+code is a separate field the contract declares (spec 080), which supersedes
+the "no enum in the contract" line under Out of scope for that field only.
+
+The pill list, its codes, and the `other…` select are specified in spec 080
+from here on. Proof: `every pill submits its exact lowercase label as the
+reason` in `TrackerPage.test.tsx` still iterates over every pill, now six,
+and "each pill sends its code and text" covers the codes.

@@ -81,3 +81,14 @@ reopen it. `closed` in `JobActions.tsx` as of commit fb49497.
 Postings rejected by screening never reach the tracker; `Add job` on the
 tracker page (spec 042) already adds those by hand. Bulk reopen. A
 reopen reason field.
+
+## Amendment: Interviewing is the company's invitation (2026-10-06)
+
+R2's recruiter path is unchanged in effect: a rejected row can still move
+straight to `interviewing` from the browser. The control under More is now
+named **Interview invite** and records the company's `interview_invited`
+outcome through the outcome route, because an interview is something the
+company did (specs 079, 080). The `interviewing` verb itself is recorded the
+same way by the domain. Proof: `a rejected row can move straight to
+interviewing` in `TrackerPage.test.tsx`, updated to click Interview invite
+and assert the outcome request.

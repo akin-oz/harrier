@@ -220,49 +220,45 @@ Spec 079 is amended to say so before either is approved.
 
 ## Acceptance criteria
 
-Tests marked planned do not exist yet. They are named here so the
-implementation has a target; the implementing change cites each one in
-backticks, where `tests/test_spec_structure.py` checks it exists.
-
-- [ ] `reason_code` on a status change is stored on the event; a company code
+- [x] `reason_code` on a status change is stored on the event; a company code
       is refused with 422; no code still infers from text
-      (planned services/api/tests/test_ui_tracker.py::test_status_change_carries_a_reason_code,
-      planned test_a_company_code_is_not_a_rejection_code,
-      planned test_a_status_change_without_a_code_still_infers)
-- [ ] `recordCompanyOutcome` records a `company` outcome with the given code
+      (`services/api/tests/test_ui_tracker.py::test_status_change_carries_a_reason_code`,
+      `test_a_company_code_is_not_a_rejection_code`,
+      `test_a_status_change_without_a_code_still_infers`)
+- [x] `recordCompanyOutcome` records a `company` outcome with the given code
       and note, moves the status as spec 079 says, and returns 409 on a row
       with no `applied_date`
-      (planned services/api/tests/test_ui_tracker.py::test_company_outcome_route,
-      planned test_company_outcome_refuses_an_unapplied_row)
-- [ ] Both enums equal the actor partitions of `harrier.tracker.reasons`
-      (planned services/api/tests/test_ui_tracker.py::test_api_enums_come_from_the_reason_table)
-- [ ] The contract is regenerated and `just contract` leaves no diff
+      (`services/api/tests/test_ui_tracker.py::test_company_outcome_route`,
+      `test_company_outcome_refuses_an_unapplied_row`)
+- [x] Both enums equal the actor partitions of `harrier.tracker.reasons`
+      (`services/api/tests/test_ui_tracker.py::test_api_enums_come_from_the_reason_table`)
+- [x] The contract is regenerated and `just contract` leaves no diff
       (CI contract check)
-- [ ] Each exit pill sends its code and its exact text; there is no
+- [x] Each exit pill sends its code and its exact text; there is no
       `rejected by company` pill; `other…` sends the code chosen in its
       select, defaulting to `other`, and the select lists no company code
-      (`apps/web/src/pages/tracker/TrackerPage.test.tsx`: planned "each pill sends its code and text",
-      planned "the exit controls offer no company verdict",
-      planned "other sends the selected code")
-- [ ] Applied and interviewing rows show Company replied and Withdraw, other
+      (`apps/web/src/pages/tracker/TrackerPage.test.tsx`: "each pill sends its code and text",
+      "the exit controls offer no company verdict",
+      "other sends the selected code")
+- [x] Applied and interviewing rows show Company replied and Withdraw, other
       rows show Reject, and the resting row has no more controls than before
-      (`TrackerPage.test.tsx`: planned "the exit word names who acted",
-      planned "the resting row does not grow")
-- [ ] Company replied offers the pills for the row's status and calls
+      (`TrackerPage.test.tsx`: "the exit word names who acted",
+      "the resting row does not grow")
+- [x] Company replied offers the pills for the row's status and calls
       `recordCompanyOutcome`; interview does not carry the danger class and
       the closing pills do
-      (`TrackerPage.test.tsx`: planned "company replied submits the company outcome",
-      planned "danger marks the pills that close the row")
-- [ ] Interviewing is no longer a candidate verb or a More item
-      (`TrackerPage.test.tsx`: planned "interviewing is a company outcome, not a verb")
-- [ ] Opening any takeover focuses its first pill; Escape and Cancel close it
+      (`TrackerPage.test.tsx`: "company replied submits the company outcome",
+      "danger marks the pills that close the row")
+- [x] Interviewing is no longer a candidate verb or a More item
+      (`TrackerPage.test.tsx`: "interviewing is a company outcome, not a verb")
+- [x] Opening any takeover focuses its first pill; Escape and Cancel close it
       and return focus to its opener
-      (`TrackerPage.test.tsx`: planned "a takeover keeps keyboard focus")
-- [ ] Spec 056 is amended to point to this spec for the pill list, and its
+      (`TrackerPage.test.tsx`: "a takeover keeps keyboard focus")
+- [x] Spec 056 is amended to point to this spec for the pill list, and its
       existing pill tests are updated rather than deleted
-- [ ] `pnpm type-check`, `pnpm lint`, `uv run ruff check`, `uv run pyright`
+- [x] `pnpm type-check`, `pnpm lint`, `uv run ruff check`, `uv run pyright`
       pass
-- [ ] No real tracker row appears in a fixture (ADR-008)
+- [x] No real tracker row appears in a fixture (ADR-008)
 - [ ] All gates green on PR
 
 ## Honest limitations
@@ -296,3 +292,51 @@ backticks, where `tests/test_spec_structure.py` checks it exists.
 - Spec 056: the pill control this changes. Spec 042: the browser calls the
   same domain functions as the CLI. ADR-005: the browser speaks only in
   generated types.
+
+## Amendment (2026-10-06, during implementation)
+
+What implementation found, each with the test that proves it:
+
+- **Spec 072's recruiter path is kept, as Interview invite.** Spec 072 R2
+  promises that a rejected row can move straight to `interviewing` from the
+  browser, because a recruiter can write after a rejection. Taking
+  `Interviewing` out of More, with Company replied offered only on applied
+  rows, would have removed that path, and with it the case spec 079's
+  amendment keeps legal: an invitation needs no application. So More carries
+  one item, **Interview invite**, on every row that is not applied or
+  interviewing. It records the company's `interview_invited` through
+  `recordCompanyOutcome`, so the word still names who acted and the resting
+  row does not change. Spec 072 is amended to match.
+  `apps/web/src/pages/tracker/TrackerPage.test.tsx`: "a rejected row can
+  move straight to interviewing", "every verb the CLI has is reachable on
+  the page".
+- **"No more controls than before" is the shape, not each row's old count.**
+  An interviewing row used to show no forward control at all, because no
+  candidate verb leads on from it. It now shows Company replied in that
+  slot. The width budget is the shape the column was narrowed to: one
+  forward control, the exit, Apply and More, at most four, and no pill until
+  a takeover opens. "the resting row does not grow" holds every status to
+  that.
+- **A chosen code does not need words.** Confirm behind `other…` waits for
+  text only when the code is `other`, which says nothing without it. Any
+  other code with no text stores the code's own label as the row's reason,
+  so the row still reads as one. "other sends the selected code".
+- **The select sits on its own line above the input.** Side by side, the
+  actions column squeezed the reason input to a sliver and truncated the
+  select (found by checking the page in a browser, demo mode). On its own
+  line the select shows its labels in full and the input keeps the width it
+  had before the select arrived. `JobActions.css`.
+- **Every rejection code has a label in the browser.** The labels are a
+  `Record` over the generated `RejectionCode` union, so a code added to
+  `harrier.tracker.reasons` fails `pnpm type-check` until it has one. The
+  select still offers only the candidate's codes; the system's are labelled
+  but not offered.
+- **The enums are built at import, and type checkers see a stub.** Pyright
+  cannot follow an enum built at runtime, so `app.py` shows it an empty
+  `StrEnum` under `TYPE_CHECKING`, while pydantic, FastAPI and the OpenAPI
+  document get the class built from the reason table.
+  `services/api/tests/test_ui_tracker.py::test_api_enums_come_from_the_reason_table`.
+- **The outcome route is held to spec 042's pairing and to the token**, like
+  every other tracker write:
+  `services/api/tests/test_ui_tracker.py::test_the_outcome_route_and_the_cli_call_the_same_function`
+  and the outcome row in `::test_a_tracker_write_without_the_token_is_refused`.
