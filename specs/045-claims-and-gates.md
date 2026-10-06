@@ -174,7 +174,7 @@ spec 044.
 - [x] spec 023's honest limitations say that config writes through the API
       need the local API token and a trusted Host header since spec 035,
       without calling the token authentication, and name the tests that
-      prove it (the amendment below on the API write path;
+      prove it (the amendment below on API auth;
       `services/api/tests/test_api_exposure.py::test_a_state_changing_request_without_the_token_is_refused`,
       `::test_a_request_with_a_foreign_host_is_refused`)
 - [ ] All gates green on PR
@@ -384,7 +384,7 @@ passes over every committed spec, so each test the corrections cite exists.
   (`services/api/tests/test_api_exposure.py::test_a_state_changing_request_without_the_token_is_refused`).
   It is not about the scope column, so it is left to its own change.
 
-## Amendment (2026-10-06): spec 023's sentence on the API write path
+## Amendment (2026-10-06): spec 023 and the architecture doc on API auth
 
 The second limitation of the amendment "spec 023 describes the table
 spec 041 left" is this amendment. Spec 023's honest limitations say "The
@@ -402,10 +402,14 @@ The token is not authentication, and the correction does not call it that.
 creates one token per install and stores it readable only by its owner. It
 tells the harrier UI apart from a page on another origin, not one user from
 another. The README's honest limitations call this a same-machine boundary,
-not a user model, and the correction uses the same words. Spec 035 says the
-token is "bound to the local session", and that limitation calls it the
-session token. The code creates it once per install and keeps it in a file,
-so the correction says per install.
+not a user model, and spec 023's correction uses the same words. Spec 035
+says the token is "bound to the local session", and that limitation calls
+it the session token. The code creates it once per install and keeps it in
+a file, so spec 023's correction says per install.
+
+`docs/architecture.md` makes the same claim in its honest limitations: "No
+auth on the API; it binds to localhost." This spec's Problem already lists
+architecture statements about auth among the claims to correct.
 
 ### What changes
 
@@ -416,16 +420,22 @@ so the correction says per install.
   authentication. The paragraph's sentence "There is no authentication, no
   tenant resolution, and no isolation" does not change: it is about user
   accounts, and there are none.
+- `docs/architecture.md`: that line is corrected against the same code. It
+  keeps "Single user, single machine", says there are no user accounts, and
+  says the local API token and the trusted-host check stop a web page in
+  another tab from driving the API, but not a process running as the
+  operator. It names `services/api/tests/test_api_exposure.py` as the proof,
+  as the criterion on corrected claims requires.
 
 No code changes and no new file.
 
-**How to know it worked.** `grep -n "binds to localhost" specs/023-user-configuration-in-db.md`
+**How to know it worked.** `grep -n "binds to localhost" specs/023-user-configuration-in-db.md docs/architecture.md`
 finds nothing, and
 `services/api/tests/test_spec_structure.py::test_every_test_a_spec_names_actually_exists`
 passes over every committed spec, so each test the correction cites exists.
 
 ### Limitations
 
-- `docs/architecture.md` says "No auth on the API; it binds to localhost."
-  It is stale the same way. It is not a spec, so it is left to its own
-  change.
+- Nothing reads `docs/architecture.md` or a spec's prose against the code,
+  so either can go stale again without a failure, the way these two did
+  after spec 035.
