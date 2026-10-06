@@ -163,6 +163,18 @@ def infer_code(text: str | None) -> str:
     return UNCLASSIFIED
 
 
+def company_engaged(job: Mapping[str, str]) -> bool:
+    """Whether a company can have responded to this job at all.
+
+    An application it received, or an interview it invited. A recruiter can
+    invite about a job nobody applied to, and the company can then reject,
+    ghost or fail the candidate like any other. A rule that asked for an
+    application alone refused every such response, though the browser offers
+    it on an interviewing row (spec 079 amendment).
+    """
+    return bool((job.get("applied_date") or "").strip()) or job.get("status") == "interviewing"
+
+
 class ReasonError(ValueError):
     """A code and an actor that cannot describe the same move."""
 
@@ -192,10 +204,10 @@ def classify_move(
 
     - A move to `interviewing` is the company's outcome, whatever verb asked
       for it. An interview is something the company did.
-    - A rejection takes its actor from its code. A company code on a row that
-      was applied to is the company's outcome; on a row never applied to it
-      cannot be, and it is recorded as `unknown` rather than as a candidate
-      decision.
+    - A rejection takes its actor from its code. A company code on a row the
+      company engaged with (an application, or an interview it invited) is
+      the company's outcome; on any other row it cannot be, and it is
+      recorded as `unknown` rather than as a candidate decision.
     - Every other move is the candidate's decision unless a caller names the
       system.
 
@@ -218,13 +230,14 @@ def classify_move(
         if owner == COMPANY:
             if code == INTERVIEW_INVITED:
                 raise ReasonError("an interview invitation does not reject a job")
-            if (before.get("applied_date") or "").strip():
+            if company_engaged(before):
                 move = Move(OUTCOME, COMPANY, code)
             else:
-                # A company cannot reject an application that was never
-                # sent. Filed as unknown rather than refused, because the
-                # free text arrived from a caller that cannot be asked again;
-                # the command line refuses before it gets here.
+                # A company cannot respond to a job it never received an
+                # application for or invited an interview about. Filed as
+                # unknown rather than refused, because the free text arrived
+                # from a caller that cannot be asked again; the command line
+                # refuses before it gets here.
                 move = Move(DECISION, UNKNOWN, UNCLASSIFIED)
         else:
             move = Move(DECISION, owner, code)

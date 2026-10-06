@@ -342,7 +342,7 @@ def test_company_outcome_refuses_an_unapplied_row(job_id: int, client: TestClien
         f"/tracker/{job_id}/outcome", json={"code": "company_rejected"}, headers=auth()
     )
     assert response.status_code == 409
-    assert "no application was recorded" in response.json()["detail"]
+    assert "no application or invited interview was recorded" in response.json()["detail"]
     assert get_job(connect(), job_id)["status"] == "prospect"
     assert _event_count() == before
 

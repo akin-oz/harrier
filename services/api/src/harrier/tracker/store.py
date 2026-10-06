@@ -220,6 +220,12 @@ def set_status(
     else:
         reason_text = (rejection_reason or "") if status == "rejected" else ""
     description_sha256 = _description_sha256(job["url"])
+    # A job decided before spec 079 has no events. Its first live event used
+    # to make it look backfilled, so `harrier events backfill` skipped it and
+    # its earlier history was lost for good under the append-only trigger
+    # (spec 079 amendment). Its reconstruction now comes first, in
+    # the same transaction, so a partial history cannot exist.
+    history = [] if _has_events(conn, job_id) else _plan_backfill(job)
 
     updates: dict[str, str] = {"status": status}
     updates.update(fields_a_move_clears(job["status"], status))
@@ -243,6 +249,19 @@ def set_status(
 
     assignments = ", ".join(f"{name} = ?" for name in updates)
     with conn:
+        for event in history:
+            _append_event(
+                conn,
+                job_id=job_id,
+                kind=event.kind,
+                actor=event.actor,
+                from_status=event.from_status,
+                to_status=event.to_status,
+                reason_code=event.code,
+                reason_text=event.text,
+                at=event.at,
+                backfilled=True,
+            )
         conn.execute(
             f"UPDATE jobs SET {assignments}, updated_at = datetime('now') WHERE id = ?",
             [*updates.values(), job_id],
@@ -368,6 +387,11 @@ def _append_event(
         list(fields.values()),
     )
     logger.debug("job event: job=%s kind=%s actor=%s code=%s", job_id, kind, actor, reason_code)
+
+
+def _has_events(conn: sqlite3.Connection, job_id: int) -> bool:
+    row = conn.execute("SELECT 1 FROM job_events WHERE job_id = ? LIMIT 1", (job_id,)).fetchone()
+    return row is not None
 
 
 def list_events(conn: sqlite3.Connection, job_id: int) -> list[dict[str, str]]:

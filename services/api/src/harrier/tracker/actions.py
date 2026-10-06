@@ -29,6 +29,7 @@ from harrier.tracker.reasons import (
     REASON_CODES,
     actor_of,
     codes_for,
+    company_engaged,
     infer_code,
     label_of,
 )
@@ -122,10 +123,10 @@ def record_company_outcome(
     """Record what a company did with an application (spec 079).
 
     Only company codes, so the candidate's own reasons cannot be filed here;
-    and a rejection only for a job that was applied to, because a company
-    cannot reject an application that was never sent. An interview invitation
-    needs no application: a recruiter can approach about a job nobody applied
-    to, which `harrier.tracker.transitions` keeps legal on purpose.
+    and a rejection only for a job the company engaged with, by receiving an
+    application or inviting an interview. An interview invitation needs no
+    application: a recruiter can approach about a job nobody applied to,
+    which `harrier.tracker.transitions` keeps legal on purpose.
     """
     if code not in REASON_CODES:
         raise TrackerActionError(
@@ -138,11 +139,11 @@ def record_company_outcome(
             f"record it with: harrier reject {selector} --code {code}"
         )
     job = resolve_selector(conn, selector)
-    if code != INTERVIEW_INVITED and not job["applied_date"].strip():
+    if code != INTERVIEW_INVITED and not company_engaged(job):
         raise TrackerActionError(
-            "no application was recorded for this job, so a company cannot have "
-            "rejected it. Mark it applied first, or reject it yourself with: "
-            f"harrier reject {selector}"
+            "no application or invited interview was recorded for this job, so a "
+            "company cannot have responded to it. Mark it applied first; if you are "
+            f"closing it yourself, that is: harrier reject {selector}"
         )
     text = (note or "").strip()
     if code == INTERVIEW_INVITED:

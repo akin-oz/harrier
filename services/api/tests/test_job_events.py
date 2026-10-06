@@ -40,6 +40,7 @@ from harrier.tracker.reasons import (
 )
 from harrier.tracker.score import score_fields
 from harrier.tracker.store import (
+    TrackerError,
     add_job,
     backfill_events,
     get_job,
@@ -116,6 +117,23 @@ def test_an_event_records_the_score_the_candidate_saw(conn: sqlite3.Connection) 
     assert events[-2]["fit_score"] == "90", "a rescore rewrote history"
     assert events[-1]["fit_score"] == "40"
     assert events[-1]["scoring_version"] == "ffffffffffff"
+
+
+def test_a_damaged_description_file_does_not_block_a_decision(
+    conn: sqlite3.Connection, tmp_path: Path
+) -> None:
+    """A cache write cut off mid-character leaves bytes that are not UTF-8.
+    The entry reads as missing, as malformed JSON already did, so the move is
+    recorded without a digest instead of being refused (spec 079 amendment)."""
+    job_id = _job(conn)
+    save_description_cache(get_job(conn, job_id)["url"], "Ship the caf\u00e9 ordering app. " * 4)
+    [path] = (tmp_path / "data" / "descriptions").glob("*.json")
+    written = path.read_bytes()
+    path.write_bytes(written[: written.index("\u00e9".encode()) + 1])
+
+    set_status(conn, job_id, "shortlisted")
+    assert get_job(conn, job_id)["status"] == "shortlisted"
+    assert list_events(conn, job_id)[-1]["description_sha256"] == ""
 
 
 def test_a_status_change_and_its_event_commit_together(conn: sqlite3.Connection) -> None:
@@ -224,13 +242,22 @@ def test_a_company_cannot_reject_an_application_never_sent(
     job_id = _job(conn)
     events_before = _count(conn)
     assert main(["company-outcome", str(job_id), "company_rejected"]) == 2
-    assert "no application was recorded" in capsys.readouterr().err
+    assert "no application or invited interview was recorded" in capsys.readouterr().err
     assert get_job(conn, job_id)["status"] == "prospect"
     assert _count(conn) == events_before
 
-    # The candidate's own reason is not a company's response either.
-    assert main(["company-outcome", str(job_id), "stack"]) == 2
+    # The candidate's own reason is not a company's response either. Asked on
+    # a row the company did engage with, so only the actor check can refuse.
+    applied = _job(conn, 2)
+    assert main(["applied", str(applied)]) == 0
+    capsys.readouterr()
+    events_before = _count(conn)
+    assert main(["company-outcome", str(applied), "stack"]) == 2
     assert "harrier reject" in capsys.readouterr().err
+    assert get_job(conn, applied)["status"] == "applied"
+    # Beneath the command, the one writer refuses the same pair.
+    with pytest.raises(TrackerError, match="stack is recorded as candidate"):
+        set_status(conn, applied, "rejected", reason_code="stack", actor=COMPANY)
     assert _count(conn) == events_before
 
 
@@ -251,6 +278,25 @@ def test_an_interview_invitation_needs_no_application(conn: sqlite3.Connection) 
 
 
 # --- the reason table -----------------------------------------------------------
+
+
+def test_a_company_can_answer_the_interview_it_invited(conn: sqlite3.Connection) -> None:
+    """An invited interview is engagement, like an application: after a
+    recruiter's approach the company can still turn the candidate down, and
+    that is its outcome on every path that records it (spec 079 amendment).
+    The browser offers this response on an interviewing row (spec 080)."""
+    by_verb = _job(conn, 1)
+    by_status = _job(conn, 2)
+    for job_id in (by_verb, by_status):
+        record_company_outcome(conn, str(job_id), "interview_invited")
+        assert get_job(conn, job_id)["applied_date"] == ""
+
+    record_company_outcome(conn, str(by_verb), "assessment_failed")
+    set_status(conn, by_status, "rejected", reason_code="ghosted")
+    for job_id, code in ((by_verb, "assessment_failed"), (by_status, "ghosted")):
+        last = list_events(conn, job_id)[-1]
+        assert (last["kind"], last["actor"], last["reason_code"]) == ("outcome", "company", code)
+        assert get_job(conn, job_id)["status"] == "rejected"
 
 
 def test_every_reason_code_has_one_actor() -> None:
@@ -445,6 +491,23 @@ def test_backfill_reconstructs_what_the_row_still_holds(conn: sqlite3.Connection
         assert row["backfilled"] == 1
         assert row["fit_score"] == row["scoring_version"] == row["description_sha256"] == ""
     assert list_events(conn, skipped)[-1]["reason_text"] == "hybrid"
+
+
+def test_a_legacy_row_decided_live_keeps_its_history(conn: sqlite3.Connection) -> None:
+    """Backfill skips a job with any event, so a pre-079 row's first live move
+    used to cost it everything before that move, for good under the
+    append-only trigger. Its history is now written first, in the same
+    transaction (spec 079 amendment)."""
+    job_id = _legacy_row(conn, 1, status="shortlisted")
+    assert main(["applied", str(job_id)]) == 0
+    assert [
+        (e["kind"], e["actor"], e["to_status"], e["backfilled"]) for e in list_events(conn, job_id)
+    ] == [
+        ("created", "system", "prospect", "1"),
+        ("decision", "candidate", "shortlisted", "1"),
+        ("decision", "candidate", "applied", "0"),
+    ]
+    assert not backfill_events(conn), "the live move left history for backfill to find"
 
 
 def test_backfill_is_idempotent(conn: sqlite3.Connection) -> None:
