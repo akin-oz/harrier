@@ -7,9 +7,9 @@ and the container image does not install them (`--no-dev`), which is why
 
 A model is written only when there is enough to learn from, and activated
 only when it earns it: its ranking must beat the rule score on held-out rows
-that came after everything it trained on, and it must have learned that a
-blocker is a reason to rank a posting lower. Everything else is reported and
-refused, and the rules keep scoring.
+that came after everything it trained on. Everything else is reported and
+refused, and the rules keep scoring. Blockers are not the model's to learn:
+the scorer floors a blocked posting by rule (spec 081).
 """
 
 # scikit-learn ships without type information; numpy's is complete. The
@@ -68,7 +68,6 @@ TOP_K = 10
 # The old score and anything derived from it are never features: the queue
 # ranked by them, so a model reading them would learn its own selection bias.
 FORBIDDEN_FEATURES: frozenset[str] = frozenset({"fit_score", "score", "signals", "scoring_version"})
-BLOCKER_FEATURES: tuple[str, ...] = ("us_scope", "employment_blocker")
 
 EXIT_OK = 0
 EXIT_UNUSABLE = 2
@@ -400,17 +399,11 @@ def train(
 
     by_name = dict(zip(FEATURE_ORDER, coefficients, strict=True))
     beats_rules = metrics["delta_ci95"][0] > 0
-    blockers_negative = all(by_name[name] < 0 for name in BLOCKER_FEATURES)
     refusals: list[str] = []
     if not beats_rules:
         refusals.append(
             "does not beat the rules: the 95 percent interval of the average precision "
             "difference reaches zero"
-        )
-    if not blockers_negative:
-        refusals.append(
-            "a blocker coefficient is not negative, so the model would not rank a posting "
-            "the candidate cannot take below one they can"
         )
 
     document = model_document(
@@ -455,11 +448,7 @@ def train(
             "metrics": metrics,
             "coefficients": by_name,
             "intercept": intercept,
-            "ship": {
-                "beats_rules": beats_rules,
-                "blockers_negative": blockers_negative,
-                "minimum_met": True,
-            },
+            "ship": {"beats_rules": beats_rules, "minimum_met": True},
             "selection_bias": selection_bias(rows),
             "model": {"path": model_path.name, "identity": identity},
             "activated": activated,
