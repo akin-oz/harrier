@@ -95,16 +95,18 @@ def _sigmoid(z: float) -> float:
 
 def normalize_values(values: Mapping[str, float], p92: Mapping[str, float]) -> list[float]:
     """The vector the coefficients apply to, in `FEATURE_ORDER`: unbounded
-    counts divided by their training 92nd percentile and clipped to 1, the
-    rest as given. One function for the trainer and the scorer, so the two
-    cannot normalize differently."""
+    counts divided by their training 92nd percentile and clipped to between
+    -1 and 1, the rest as given. One function for the trainer and the scorer,
+    so the two cannot normalize differently."""
     vector: list[float] = []
     for name in FEATURE_ORDER:
         value = float(values[name])
         if name in NUMERIC_FEATURES:
-            # Clipped to 1 and no further (spec 077): a configured negative
-            # weight can make a count negative, and that is information.
-            value = min(1.0, value / p92[name])
+            # A configured negative weight can make a count negative, and the
+            # sign is information. Unbounded below, one such weight outweighed
+            # every other feature, and a negative coefficient turned it into a
+            # promotion to the top of the queue (spec 077 amendment).
+            value = max(-1.0, min(1.0, value / p92[name]))
         vector.append(value)
     return vector
 
@@ -304,6 +306,10 @@ def load_active_model() -> tuple[Model | None, str | None]:
             # kept a long-running API on the rules until the file changed.
             _warn_once(MODEL_INVALID, path, f"unreadable ({error.strerror})", None)
             return None, MODEL_INVALID
+        # The file was read, so the next failure is a new episode and is said
+        # again. The marker outlived the outage, and a later one was silent
+        # (spec 077 amendment).
+        _warned.discard((MODEL_INVALID, str(path), None))
         _cache[str(path)] = (key, result)
     if isinstance(result, ModelInvalidError):
         _warn_once(MODEL_INVALID, path, str(result), key)

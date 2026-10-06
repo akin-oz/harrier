@@ -197,8 +197,11 @@ There is deliberately no source feature (the ingestion-only invariant: no
 per-source scoring) and no description-length feature (length is the defect).
 
 **Normalization.** Numeric features are divided by their 92nd percentile over
-the training rows and clipped to 1, and only to 1: a negative count, which a
-configured negative weight can produce, keeps its sign. The percentiles are computed from
+the training rows and clipped to between -1 and 1: a negative count, which a
+configured negative weight can produce, keeps its sign and is bounded as a
+positive count is, so one configured weight cannot carry the score alone
+(`test_one_configured_weight_cannot_carry_the_learned_score`). The
+percentiles are computed from
 training rows only and stored in the model file, so test rows never inform
 their own scaling (`test_p92_stats_come_from_training_rows_only`). A
 percentile of 0 stores as 1, so a feature that never fired in training
@@ -513,10 +516,13 @@ otherwise. Every fixture is synthetic.
       report cuts its bands by score value
       (`test_the_ship_rule_judges_the_scores_that_ship`,
       `test_selection_bias_bands_by_score_value`)
-- [x] Normalization clips at 1 only; an unreadable model file is not
-      remembered; a number too large for a float is `model-invalid`, not an
-      error (`test_normalization_clips_only_at_one`,
+- [x] Normalization clips to between -1 and 1; an unreadable model file is
+      not remembered, and each outage warns; a number too large for a float
+      is `model-invalid`, not an error
+      (`test_normalization_bounds_a_count_both_ways`,
+      `test_one_configured_weight_cannot_carry_the_learned_score`,
       `test_a_failed_read_is_not_cached`,
+      `test_each_unreadable_episode_is_said`,
       `test_an_absurd_number_is_refused_not_raised`)
 - [x] `tests/test_scoring.py::test_every_score_field_is_written_together` and
       `::test_no_reader_takes_a_field_the_writer_does_not_fill` pass unchanged
@@ -546,6 +552,11 @@ otherwise. Every fixture is synthetic.
   covers a short stretch of one person's search. A held-out window that short
   can confirm a gain; it cannot show the gain survives a change in the market
   or in the candidate's preferences. Retraining is manual.
+- **A model is tied to the feature order, not to what each feature means.**
+  A rules change that alters what a feature reads, as spec 078's review fixes
+  did for `explicit_emea_remote` on GMT offsets and EU-permit locations,
+  leaves an earlier model file valid. Retrain after such a change; retraining
+  is manual.
 - **Pattern features have pattern blind spots.** A blocker phrased in a way
   the tables do not list is invisible to the model, exactly as it is to the
   rules today. The model can weigh a signal; it cannot discover one.
@@ -729,11 +740,14 @@ a test that fails without it.
   run never fails because the model did". It is `model-invalid`.
   `test_an_absurd_number_is_refused_not_raised`.
 - **Normalization clipped at 0 too.** The spec says clipped to 1; a negative
-  count is information. `test_normalization_clips_only_at_one`.
-- **A range written with an en or em dash read as no requirement.** Many
+  count is information. Superseded in part below: the sign survives, and so
+  does a bound at -1. `test_normalization_bounds_a_count_both_ways`.
+- **A range written with an en or em dash read as its upper bound.** Many
   postings join the two numbers of a range with one of those dashes rather
-  than a hyphen. The range separator accepts both, beside the hyphen and
-  "to". `test_required_years_reads_the_stated_requirement`.
+  than a hyphen, and the requirement read as the second number, not the
+  first (corrected below: this said "as no requirement"). The range
+  separator accepts both, beside the hyphen and "to".
+  `test_required_years_reads_the_stated_requirement`.
 - **Tests that could not fail.** Each was checked by running the mutation it
   should catch:
   - the training minimum: `test_the_minimum_follows_the_feature_count` now
@@ -761,3 +775,30 @@ Declined, as a limitation rather than a fix: a number of years that
 describes the company reads as a requirement (see Honest limitations). Any
 rule that told the two apart would be another phrase list with its own
 misses.
+
+## Amendment (2026-10-06, review of the fixes)
+
+A review of the merged fixes above found two more defects and one wrong
+statement. Each fix carries a test that fails without it.
+
+- **Clipping only at 1 let one configured weight carry the score.** A
+  configured negative weight makes a count negative, and unbounded below,
+  one mention outweighed every other feature. With a positive coefficient it
+  sank a strong posting to the bottom. With a negative one it lifted the
+  posting to the top of the queue. Counts are now clipped to between -1 and
+  1: the sign survives, and negative evidence is bounded as positive
+  evidence always was. `test_normalization_bounds_a_count_both_ways`,
+  `test_one_configured_weight_cannot_carry_the_learned_score`.
+- **A second outage was silent.** Read failures are no longer cached, but
+  the warning marker for "unreadable" outlived the first outage. After the
+  file was read again and later failed again, nothing was logged, against
+  `_warn_once`'s own promise of once per file state. A successful read now
+  clears the marker. `test_each_unreadable_episode_is_said`.
+- **The dash fix was described wrongly.** The amendment above said a range
+  written with an en or em dash "read as no requirement". It read as its
+  upper bound, so the years gap was overstated, not missed. The code was
+  right; the sentence is corrected above.
+
+Recorded as a limitation, not changed: a model file is checked against the
+feature order, not against what each feature reads. See Honest
+limitations.

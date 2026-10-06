@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import logging
 import math
 import random
 import sqlite3
@@ -999,11 +1000,60 @@ def test_an_absurd_number_is_refused_not_raised(cfg: dict[str, object], digits: 
     assert fit_score_for(job, cfg).reasons[:2] == ["scorer=rules", "fallback=model-invalid"]
 
 
-def test_normalization_clips_only_at_one() -> None:
-    """Spec 077: counts are divided by their percentile and clipped to 1. A
-    configured negative weight can make a count negative, and that survives."""
-    values = dict.fromkeys(FEATURE_ORDER, 0.0) | {"skill_signal": -40.0, "years_gap": 9.0}
+def test_normalization_bounds_a_count_both_ways() -> None:
+    """Spec 077: counts are divided by their percentile and clipped to between
+    -1 and 1. A configured negative weight can make a count negative; the sign
+    survives, and so does the bound."""
+    values = dict.fromkeys(FEATURE_ORDER, 0.0) | {
+        "skill_signal": -40.0,
+        "preferred_signal": -0.5,
+        "years_gap": 9.0,
+    }
     p92 = {"skill_signal": 20.0, "preferred_signal": 1.0, "years_gap": 3.0}
     vector = dict(zip(FEATURE_ORDER, normalize_values(values, p92), strict=True))
-    assert vector["skill_signal"] == -2.0
+    assert (vector["skill_signal"], vector["preferred_signal"]) == (-1.0, -0.5)
     assert vector["years_gap"] == 1.0
+
+
+def test_one_configured_weight_cannot_carry_the_learned_score(cfg: dict[str, object]) -> None:
+    """A negative weight in the configuration, one mention, and a negative
+    learned coefficient: unbounded, the count outweighed everything and lifted
+    the posting to the top of the queue. Bounded, it moves the score no
+    further than a full positive count would (spec 077 amendment)."""
+    weighted = json.loads(json.dumps(cfg))
+    cast("dict[str, object]", weighted["scoring"])["skill_signals"] = {"php": -200}
+    _activate(_document(dict.fromkeys(FEATURE_ORDER, 0.0) | {"skill_signal": -0.6}, 0.0))
+    job = _posting("Senior Frontend Engineer", "Remote, Europe", f"Remote, Europe. PHP. {BODY}")
+    assert extract(job, weighted).values["skill_signal"] < -FIXTURE_P92["skill_signal"]
+    assert fit_score_for(job, weighted).score == round(100 / (1 + math.exp(-0.6)))
+
+
+def test_each_unreadable_episode_is_said(
+    cfg: dict[str, object], monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An outage warns, and so does the next one after the file was read
+    again. The marker for "unreadable" outlived the first, so a second outage
+    on a changed file logged nothing (spec 077 amendment)."""
+    _activate()
+    job = _posting("Senior Frontend Engineer", "Remote, Europe", f"Remote, Europe. {BODY}")
+    real = Path.read_bytes
+    failing = [True]
+
+    def flaky(self: Path) -> bytes:
+        if self == active_model_path() and failing[0]:
+            raise OSError(24, "Too many open files")
+        return real(self)
+
+    def said() -> int:
+        return sum("unreadable" in record.getMessage() for record in caplog.records)
+
+    monkeypatch.setattr(Path, "read_bytes", flaky)
+    caplog.set_level(logging.WARNING, logger="harrier.scoring.model")
+    fit_score_for(job, cfg)
+    assert said() == 1
+    failing[0] = False
+    assert fit_score_for(job, cfg).reasons[0].startswith("scorer=model:")
+    _activate(_document(intercept=-0.25))
+    failing[0] = True
+    fit_score_for(job, cfg)
+    assert said() == 2
