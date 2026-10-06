@@ -1073,6 +1073,14 @@ export interface components {
              */
             tone?: string;
         };
+        /**
+         * ErrorOut
+         * @description The body of a refusal: the message the domain wrote, verbatim.
+         */
+        ErrorOut: {
+            /** Detail */
+            detail: string;
+        };
         /** EvaluateIn */
         EvaluateIn: {
             /**
@@ -3332,19 +3340,23 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description no job matched the selector */
+            /** @description the selector named no job, or more than one */
             404: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
             };
             /** @description the tracker refused the change */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -3393,19 +3405,23 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description no job matched the selector */
+            /** @description the selector named no job, or more than one */
             404: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
             };
             /** @description the tracker refused the change */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -3458,19 +3474,23 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description no job matched the selector */
+            /** @description the selector named no job, or more than one */
             404: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
             };
             /** @description the tracker refused the change */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
             };
             /** @description Validation Error */
             422: {
