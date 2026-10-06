@@ -144,33 +144,37 @@ the gates are unchanged, so reconsideration reaches the same verdicts.
 
 ## Acceptance criteria
 
+Tests marked planned do not exist yet. They are named here so the
+implementation has a target; the implementing change cites each one in
+backticks, where `tests/test_spec_structure.py` checks it exists.
+
 Tests in `services/api/tests/test_scoring.py` unless named otherwise. Every
 posting is synthetic, with an invented company.
 
 - [ ] A synthetic US-only W-2 posting ("anywhere in the US", W-2, no
       sponsorship) ranks below a synthetic EMEA-remote posting with the same
       skill keywords, and its `signals` name both blockers with the matched
-      phrases (`::test_a_us_only_w2_posting_ranks_below_an_emea_remote_one`)
+      phrases (planned test_a_us_only_w2_posting_ranks_below_an_emea_remote_one)
 - [ ] The strongest unblocked posting the configuration allows, blocked by one
       phrase, scores below the weakest unblocked posting that passes the
       gates; the penalty is computed from `score_bounds`, not restated
-      (`::test_the_blocker_penalty_is_derived_from_the_rules`)
-- [ ] Two blockers apply one penalty (`::test_blockers_do_not_stack`)
+      (planned test_the_blocker_penalty_is_derived_from_the_rules)
+- [ ] Two blockers apply one penalty (planned test_blockers_do_not_stack)
 - [ ] "Remote, Europe" in the location suppresses `us_scope` from the
       description, and does not suppress `employment`
-      (`::test_an_explicit_emea_location_overrides_us_scope`)
+      (planned test_an_explicit_emea_location_overrides_us_scope)
 - [ ] EU-permit phrases never fire a blocker ("must be based in the EU",
       "EU work permit required", "EU-based contractor")
-      (`::test_eu_permit_phrases_are_never_blockers`)
+      (planned test_eu_permit_phrases_are_never_blockers)
 - [ ] False-positive fixtures do not fire: "we sponsor visas", "unlike US-only
       roles, this one is open across Europe" with a European location,
       "US" inside an unrelated word, "W2" inside a product name
-      (`::test_blocker_tables_do_not_fire_on_eligible_postings`)
+      (planned test_blocker_tables_do_not_fire_on_eligible_postings)
 - [ ] A blocker never changes a gate verdict
-      (`tests/test_screening.py::test_a_blocker_never_changes_a_gate_verdict`);
+      (planned tests/test_screening.py::test_a_blocker_never_changes_a_gate_verdict);
       the rest of `tests/test_screening.py` passes unchanged
 - [ ] `policy_version` changes when either table changes
-      (`tests/test_seen_policy.py::test_the_blocker_tables_move_the_policy_version`)
+      (planned tests/test_seen_policy.py::test_the_blocker_tables_move_the_policy_version)
 - [ ] `test_every_score_field_is_written_together`,
       `test_no_reader_takes_a_field_the_writer_does_not_fill` and
       `test_the_arithmetic_floor_is_derived_from_the_rules` pass unchanged
