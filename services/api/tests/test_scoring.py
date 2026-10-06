@@ -477,11 +477,18 @@ def test_a_us_only_w2_posting_ranks_below_an_emea_remote_one(cfg: dict[str, obje
     assert not [reason for reason in emea_reasons if reason.startswith("blocker=")]
 
 
-def test_the_blocker_penalty_is_derived_from_the_rules(cfg: dict[str, object]) -> None:
+@pytest.mark.parametrize("include_cap", [None, 100])
+def test_the_blocker_penalty_is_derived_from_the_rules(
+    cfg: dict[str, object], include_cap: int | None
+) -> None:
     """Computed from `score_bounds`, not restated. The strongest posting this
     configuration allows proves the upper bound is reachable, and blocking it
     with one phrase must still land it below the weakest posting the gates let
-    through."""
+    through. A cap above what the keywords can earn shows the bound counts
+    the include bonus as `score_job` does, not as the bare cap."""
+    if include_cap is not None:
+        cfg = json.loads(json.dumps(cfg))
+        cast("dict[str, object]", cfg["scoring"])["include_keyword_bonus_cap"] = include_cap
     low, high = rules.score_bounds(cfg)
     assert rules.blocker_penalty(cfg) == high - low + 1
 
@@ -616,6 +623,13 @@ def test_blocker_tables_do_not_fire_on_eligible_postings(location: str, descript
         "Open to candidates anywhere in the US or EMEA.",
         "Must be based in the US/EU.",
         "Must be based in the US and the EU.",
+        # Spellings the first version of the rule missed.
+        "Must be based in the U.S. or the EU.",
+        "Remote anywhere in the US, Canada, or Europe.",
+        "Must be based in the US, or the EU.",
+        "Must be based in the US or in Europe.",
+        "Must be based in the US or the EU or Canada.",
+        "Must be based in the US or the EU, and speak fluent English.",
     ],
 )
 def test_a_us_phrase_with_an_emea_alternative_is_not_a_blocker(description: str) -> None:
@@ -629,6 +643,24 @@ def test_a_us_phrase_with_an_emea_alternative_is_not_a_blocker(description: str)
     ["Must be based in the US or Canada.", "Anywhere in the US or anywhere else we choose."],
 )
 def test_a_non_emea_alternative_still_blocks(description: str) -> None:
+    found = rules.blockers(_job("Frontend Engineer", "Remote", f"{description} {_SKILLS}"))
+    assert [kind for kind, _ in found] == ["us_scope"]
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "Candidates must be authorized to work in the US, EU candidates are not eligible.",
+        "This role is US-only, EMEA applicants please see our other openings.",
+        "US time zones only, CET overlap is not possible.",
+        "Must be located in the US and EU applicants will not be considered.",
+    ],
+)
+def test_a_region_opening_the_next_clause_offers_nothing(description: str) -> None:
+    """A US-only posting that goes on to mention Europe is still US-only. The
+    first version of the alternative rule read the next word alone, so each
+    of these escaped the floor and ranked with the postings open to Europe
+    (spec 078 amendment)."""
     found = rules.blockers(_job("Frontend Engineer", "Remote", f"{description} {_SKILLS}"))
     assert [kind for kind, _ in found] == ["us_scope"]
 
@@ -683,22 +715,37 @@ def test_the_floor_holds_for_a_remote_only_board_posting(cfg: dict[str, object])
     assert rules.score_job(blocked, with_keyword)[0] < rules.score_job(weak, with_keyword)[0]
 
 
-@pytest.mark.parametrize("negative", ["bonus", "signal weight"])
+@pytest.mark.parametrize(
+    "negative",
+    [
+        "preferred_region_bonus",
+        "exact_title_bonus",
+        "include_keyword_bonus",
+        "domain bonus",
+        "signal weight",
+    ],
+)
 def test_the_floor_holds_with_a_negative_contribution(
     cfg: dict[str, object], negative: str
 ) -> None:
-    """A configuration may set a bonus or a signal weight below zero, and the
-    lower bound counts either. Large enough that the posting's other bonuses
-    cannot cover it, so a bound that left it out would sit above the posting."""
+    """A configuration may set any bonus or signal weight below zero, and the
+    lower bound counts each. Large enough that the posting's other bonuses
+    cannot cover it, so a bound that left one out would sit above a posting
+    that earns it."""
     penalized = json.loads(json.dumps(cfg))
     scoring = cast("dict[str, object]", penalized["scoring"])
-    if negative == "bonus":
-        scoring["preferred_region_bonus"] = -200
-    else:
+    if negative == "signal weight":
         scoring["skill_signals"] = {"europe": -200}
+    elif negative == "domain bonus":
+        scoring["domain_bonus"] = {"primary": -200, "secondary": 3}
+    else:
+        scoring[negative] = -200
     low, high = rules.score_bounds(penalized)
-    eligible = _job("Frontend Engineer", "Remote, Europe", "Remote across Europe.")
+    # Earns every bonus: an exact title with an include keyword, remote,
+    # region, and a preferred domain.
+    text = "Remote across Europe. We build developer tools."
+    eligible = _job("Senior Frontend Engineer", "Remote, Europe", text)
     assert rules.score_job(eligible, penalized)[0] >= low
-    blocked = _job("Frontend Engineer", "Remote, Europe", "Remote across Europe. W-2 only.")
+    blocked = _job("Senior Frontend Engineer", "Remote, Europe", f"{text} W-2 only.")
     assert rules.score_job(blocked, penalized)[0] < low
     assert rules.blocker_penalty(penalized) == high - low + 1

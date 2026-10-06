@@ -633,9 +633,27 @@ def location_names_explicit_emea(location: str) -> bool:
     return text_matches_any_pattern(normalize(location), _explicit_region_patterns())
 
 
-# What joins two places offered as alternatives: "based in the US or the EU",
-# "US/EU", "the US and Europe".
-_ALTERNATIVE = r"\s*(?:,|/|\bor\b|\band\b)\s*(?:the\s+)?"
+# What joins places offered as alternatives: "the US or the EU", "US/EU",
+# "the US, or Europe", "the U.S. or in Europe". The optional full stop is the
+# one a pattern leaves behind when it stops before "U.S.".
+_JOIN = r"\.?\s*(?:,\s*(?:or|and)\b|,|/|\bor\b|\band\b)\s*(?:in\s+)?(?:the\s+)?"
+# Another place in the same list, "the US, Canada, or Europe": a word or two.
+_PLACE = r"[a-z][a-z.\-]*(?:\s+[a-z][a-z.\-]*)?"
+# An offer of alternatives ends its clause. A region word that opens the
+# next clause instead ("the US, EU candidates are not eligible") offers
+# nothing (spec 078 amendment).
+_CLAUSE_END = r"\s*(?:$|[.,;:!?)\n]|time\s*zones?\b|timezones?\b|hours\b)"
+
+
+def _offers_emea(rest: str) -> bool:
+    """Whether the text after a US phrase offers an explicit EMEA region as
+    an alternative to it: joined to it, perhaps among other places, with the
+    list ending the clause."""
+    places = rf"(?:{_JOIN}{_PLACE}){{0,3}}?"
+    return any(
+        re.match(rf"{places}{_JOIN}(?:{region}){places}{_CLAUSE_END}", rest)
+        for region in _explicit_region_patterns()
+    )
 
 
 def _us_scope_phrase(text: str) -> str | None:
@@ -644,14 +662,12 @@ def _us_scope_phrase(text: str) -> str | None:
     A US phrase offered with an explicit EMEA alternative ("must be based in
     the US or the EU") is a posting open to Europe, and flooring it buried a
     job the candidate can take (spec 078 amendment). An ambiguous
-    or non-EMEA alternative ("or anywhere", "or Canada") is no such offer.
+    or non-EMEA alternative ("or anywhere", "or Canada") is no such offer,
+    and neither is a region word that starts the next clause.
     """
-    explicit = _explicit_region_patterns()
     for pattern in US_SCOPE_PATTERNS:
         for found in re.finditer(pattern, text):
-            rest = text[found.end() :]
-            joined = re.match(_ALTERNATIVE, rest)
-            if joined and any(re.match(region, rest[joined.end() :]) for region in explicit):
+            if _offers_emea(text[found.end() :]):
                 continue
             return found.group(0)
     return None
