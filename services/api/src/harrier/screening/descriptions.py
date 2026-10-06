@@ -85,7 +85,11 @@ def load_cached_description(url: str) -> str:
         return ""
     try:
         parsed: object = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):
+        # ValueError covers malformed JSON and bytes that are not UTF-8, as a
+        # write cut off mid-character leaves them. A damaged entry reads as
+        # missing; it must never refuse the status change that hashes it
+        # (spec 079 amendment).
         return ""
     if isinstance(parsed, dict):
         return str(parsed.get("description", ""))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
