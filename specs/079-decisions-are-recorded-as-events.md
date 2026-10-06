@@ -84,6 +84,13 @@ spec exists to enforce, and it holds at entry, in storage and on read:
   never sent). The status it sets follows from the code: `interview_invited`
   moves the job to `interviewing`, every other company code to `rejected`,
   both through the existing transition rules.
+- **The `interviewing` verb is a company outcome.** `harrier interviewing`
+  and the API verb `interviewing` already exist and move an applied job to
+  `interviewing`. They record a `company` outcome with code
+  `interview_invited`, exactly as `company-outcome <selector>
+  interview_invited` does. An interview is something the company did; left
+  as a candidate decision, the old verb would be a back door that files a
+  company action under the candidate (found while writing spec 080).
 - **In storage.** Every code in `reasons.py` belongs to exactly one actor, and
   the event row stores both, so the pair cannot disagree: a CHECK constraint
   ties `kind = 'outcome'` to `actor = 'company'`.
@@ -228,6 +235,9 @@ rows are synthetic.
       `company-outcome`; the CHECK constraint refuses a hand-built row that
       pairs `outcome` with any other actor
       (`::test_a_company_verdict_is_never_a_candidate_decision`)
+- [ ] The `interviewing` verb, from the CLI and from the API, records a
+      `company` outcome with code `interview_invited`
+      (`::test_the_interviewing_verb_is_a_company_outcome`)
 - [ ] `company-outcome` refuses a row with no `applied_date`
       (`::test_a_company_cannot_reject_an_application_never_sent`)
 - [ ] Every code belongs to exactly one actor, and `infer_code` maps each
@@ -322,3 +332,12 @@ lands.
   which now leaves history instead of erasing it.
 - ADR-003: one tracker write path, which the event writes join rather than
   bypass. ADR-008: events live in the database, never in git.
+
+## Amendment (2026-10-06, before approval)
+
+The existing `interviewing` verb records a company outcome
+(`interview_invited`), not a candidate decision. Spec 080, which moves the
+browser's Interviewing button into a Company replied control, found that the
+verb would otherwise remain a way to record a company action as the
+candidate's. Stated under Behavior and proved by
+`::test_the_interviewing_verb_is_a_company_outcome`.
