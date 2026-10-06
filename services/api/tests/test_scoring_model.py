@@ -59,6 +59,7 @@ from harrier.scoring.model import (
     model_blocker_penalty,
     model_document,
     model_identity,
+    normalize_values,
     parse_model,
 )
 from harrier.scoring.train import (
@@ -68,6 +69,7 @@ from harrier.scoring.train import (
     models_dir,
     p92_from,
     read_export,
+    selection_bias,
     split,
     train,
 )
@@ -161,6 +163,9 @@ def test_us_only_w2_posting_ranks_below_emea_remote_with_same_keywords(
 
     blocked, eligible = fit_score_for(us_only, cfg), fit_score_for(emea, cfg)
     assert blocked.score < eligible.score
+    # Below every unblocked model score, not merely below this one, which
+    # `explicit_emea_remote` alone would explain.
+    assert blocked.score < 0
     assert blocked.reasons[0].startswith("scorer=model:")
     assert 'blocker=us_scope "anywhere in the us"' in blocked.reasons
     assert 'blocker=employment "w-2"' in blocked.reasons
@@ -251,9 +256,15 @@ def test_feature_extraction_is_deterministic(cfg: dict[str, object]) -> None:
     "phrase",
     ["Must be based in the EU.", "EU work permit required.", "EU-based contractor welcome."],
 )
-def test_eu_permit_phrases_are_never_blockers(cfg: dict[str, object], phrase: str) -> None:
+def test_eu_permit_phrases_are_never_blockers(
+    cfg: dict[str, object], phrase: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The product invariant holds under the learned score too: an EU-permit
-    phrase never floors a posting (specs 078, 081)."""
+    phrase never floors a posting (specs 078, 081). No table entry matches
+    inside these phrases today, so a planted one does: the phrases must be
+    gone before any table reads the text."""
+    planted = (*rules.EMPLOYMENT_BLOCKER_PATTERNS, r"\beu\b")
+    monkeypatch.setattr(rules, "EMPLOYMENT_BLOCKER_PATTERNS", planted)
     _activate()
     fit = fit_score_for(_posting("Frontend Engineer", "Remote", f"{phrase} {BODY}"), cfg)
     assert fit.reasons[0].startswith("scorer=model:")
@@ -282,6 +293,9 @@ def test_blocker_features_reuse_the_rule_tables(
 def test_required_years_reads_the_stated_requirement() -> None:
     assert required_years("5+ years of professional experience with react") == 5
     assert required_years("3-5 years of hands-on experience") == 3
+    # An en or em dash is a range too, and its lower bound is the requirement.
+    assert required_years("3\u20135 years of experience") == 3
+    assert required_years("4\u20146 years of experience") == 4
     assert required_years("founded 10 years ago, we value experience") is None
     assert required_years("at least 4 yrs experience and 7 years of experience leading") == 7
 
@@ -406,10 +420,12 @@ def test_scoring_version_names_the_scorer_that_was_used(cfg: dict[str, object]) 
 
 def test_signals_name_the_top_contributions_with_signs(cfg: dict[str, object]) -> None:
     identity = _activate()
+    # Every feature fires, one more than the five that are shown, so the cap
+    # is what decides; W-2 floors it whatever the location says.
     job = _posting(
         "Senior Frontend Engineer",
-        "Remote",
-        f"Anywhere in the US. 8+ years of experience. {BODY}",
+        "Remote, Europe",
+        f"W-2 position. 8+ years of experience. {BODY}",
     )
     fit = fit_score_for(job, cfg)
     model = parse_model(active_model_path().read_bytes())
@@ -418,10 +434,9 @@ def test_signals_name_the_top_contributions_with_signs(cfg: dict[str, object]) -
 
     assert fit.reasons[0] == f"scorer=model:{identity}"
     assert fit.reasons[1] == f"p={probability:.2f}"
-    ranked = sorted(
-        (item for item in model.contributions(extraction.values) if item[1] != 0.0),
-        key=lambda item: (-abs(item[1]), item[0]),
-    )[:5]
+    nonzero = [item for item in model.contributions(extraction.values) if item[1] != 0.0]
+    assert len(nonzero) > 5, "the posting no longer exercises the cap"
+    ranked = sorted(nonzero, key=lambda item: (-abs(item[1]), item[0]))[:5]
     entries = fit.reasons[2 : 2 + len(ranked)]
     assert [entry.split("(")[0] for entry in entries] == [
         f"{'+' if value > 0 else '-'}{name}" for name, value in ranked
@@ -429,7 +444,7 @@ def test_signals_name_the_top_contributions_with_signs(cfg: dict[str, object]) -
     for entry, (_, value) in zip(entries, ranked, strict=True):
         assert f"({value:+.2f})" in entry
     # The blocker follows the contributions, and the score is floored.
-    assert fit.reasons[2 + len(ranked)] == 'blocker=us_scope "anywhere in the us"'
+    assert fit.reasons[2 + len(ranked)] == 'blocker=employment "w-2"'
     assert fit.score == round(100 * probability) - model_blocker_penalty()
 
 
@@ -475,9 +490,18 @@ def test_labels_come_from_candidate_decisions(conn: sqlite3.Connection) -> None:
     change_status(conn, str(unknown), "reject", reason="a reason nobody wrote a pattern for")
     undescribed = _tracked(conn, 6, described=False)
     change_status(conn, str(undescribed), "shortlist")
+    reopened = _tracked(conn, 7)
+    change_status(conn, str(reopened), "reject", reason="missing stack")
+    change_status(conn, str(reopened), "shortlist")
 
     acted_label = _label(conn, acted)
     assert isinstance(acted_label, Labelled) and acted_label.label == 1 and acted_label.live
+    # A live decision orders by its own time, not by the day the job arrived.
+    assert acted_label.decided_at == list_events(conn, acted)[-1]["at"]
+    assert acted_label.decided_at != get_job(conn, acted)["added_at"]
+    # Rejected and then reopened: the forward decision is the judgement.
+    reopened_label = _label(conn, reopened)
+    assert isinstance(reopened_label, Labelled) and reopened_label.label == 1
     skipped_label = _label(conn, skipped)
     assert isinstance(skipped_label, Labelled) and skipped_label.label == 0
     withdrawn_label = _label(conn, withdrawn)
@@ -549,12 +573,25 @@ def test_a_decision_on_a_different_description_is_excluded(conn: sqlite3.Connect
 
 
 def test_the_export_carries_no_text(conn: sqlite3.Connection) -> None:
-    """An export is a file that travels: ids, labels and numbers only."""
+    """An export is a file that travels: ids, labels and numbers only.
+
+    A skipped job with a planted reason is exported too, so reason text has
+    a way in that the assertion would catch (privacy review of the spec 077
+    range: the first version planted none)."""
     job_id = _tracked(conn, 1)
     change_status(conn, str(job_id), "shortlist")
+    skipped = _tracked(conn, 2)
+    change_status(conn, str(skipped), "reject", reason="missing stack, planted reason wording")
     result = export_features(conn, today="2026-10-06")
+    assert result.rows == 2, "the skipped job was not exported, so its reason was never at risk"
     text = result.path.read_text(encoding="utf-8")
-    for secret in ("Quillfeather", "Senior Frontend Engineer", "boards.example.com", "TypeScript"):
+    for secret in (
+        "Quillfeather",
+        "Senior Frontend Engineer",
+        "boards.example.com",
+        "TypeScript",
+        "planted reason wording",
+    ):
         assert secret not in text, secret
 
 
@@ -726,6 +763,27 @@ def test_train_refuses_a_model_that_does_not_beat_the_rules(quick_bootstrap: Non
     assert _report(outcome.report_path)["ship"]["beats_rules"] is False
 
 
+def test_only_the_lower_bound_ships_a_model(
+    quick_bootstrap: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ahead on the point estimate, with an interval that still reaches zero:
+    refused. Every synthetic world here is lopsided, so without this the
+    lower bound never decided anything (spec 077, the ship rule)."""
+    real = train_module.evaluate
+
+    def straddling(labels: Any, model_scores: Any, baseline: Any) -> dict[str, Any]:
+        metrics = real(labels, model_scores, baseline)
+        return {**metrics, "model": metrics["baseline"] + 0.05, "delta_ci95": [-0.01, 0.2]}
+
+    monkeypatch.setattr(train_module, "evaluate", straddling)
+    _write_export(_synthetic_rows(800, seed=5, scenario="learnable"))
+    outcome = train(activate=True)
+    assert outcome.exit_code == 3
+    assert any("does not beat the rules" in message for message in outcome.messages)
+    assert not active_model_path().exists()
+    assert _report(outcome.report_path)["ship"]["beats_rules"] is False
+
+
 def test_train_ships_without_a_blocker_condition(quick_bootstrap: None) -> None:
     """Spec 081 replaced spec 077's blocker-weight refusal with a floor: a
     model that beats the rules ships whatever sign its weights take."""
@@ -739,10 +797,27 @@ def test_train_ships_without_a_blocker_condition(quick_bootstrap: None) -> None:
     assert not [message for message in outcome.messages if "blocker" in message]
 
 
-def test_the_minimum_follows_the_feature_count() -> None:
-    _write_export(_synthetic_rows(120, seed=9, scenario="learnable"))
-    report = _report(train().report_path)
-    assert report["minimum"]["train_positives"] == 10 * len(FEATURE_ORDER)
+@pytest.mark.parametrize("offset", [-1, 0])
+def test_the_minimum_follows_the_feature_count(quick_bootstrap: None, offset: int) -> None:
+    """Ten training positives per feature of the current order, judged on its
+    own: the test window holds exactly its minimum either way, so only the
+    training count can move the verdict."""
+    wanted = 10 * len(FEATURE_ORDER) + offset
+    rows = _synthetic_rows(200, seed=9, scenario="learnable")
+    # Generated in time order, so the earliest share trains. Positives on
+    # alternate rows keep both classes in every cross-validation fold.
+    cut = int(len(rows) * train_module.TRAIN_SHARE)
+    for index, row in enumerate(rows):
+        window_has_room = index >= cut or index < 2 * wanted
+        row["label"] = int(index % 2 == 0 and window_has_room)
+    _write_export(rows)
+    outcome = train()
+    report = _report(outcome.report_path)
+    assert report["counts"]["train_positives"] == wanted
+    assert report["counts"]["test_positives"] == train_module.MIN_TEST_POSITIVES
+    assert report["minimum"]["met"] is (offset == 0)
+    refused = any(message.startswith("insufficient labels") for message in outcome.messages)
+    assert refused is (offset < 0)
 
 
 def test_a_model_that_earns_it_is_activated_and_scores(
@@ -767,8 +842,13 @@ def test_live_only_drops_backfilled_events(quick_bootstrap: None) -> None:
 
     everything = _report(train().report_path)
     assert everything["counts"]["rows"] == 800
-    # Reported apart, so live decisions can be judged on their own.
-    assert "live_metrics" in everything
+    # Reported apart, so live decisions can be judged on their own: computed,
+    # not skipped, and over the live test rows only.
+    live_metrics = everything["live_metrics"]
+    assert "model" in live_metrics, live_metrics
+    _, testing = split(read_export(exports_dir() / "features-20261006.jsonl")[1])
+    judged = sum(band["rows"] for band in live_metrics["baseline_terciles"])
+    assert judged == sum(1 for row in testing if row.live) < len(testing)
 
     only_live = _report(train(live_only=True).report_path)
     assert only_live["counts"]["rows"] == live
@@ -837,3 +917,93 @@ def test_the_scoring_commands_run(
     assert main(["scoring", "train"]) == 3
     assert "insufficient labels" in capsys.readouterr().err
     assert not active_model_path().exists()
+
+
+# --- review of the spec 077 range ----------------------------------------------------
+
+
+def test_selection_bias_bands_by_score_value() -> None:
+    """Every row shown the same score, half acted on: no third of the range can
+    differ from another. Cut by position, ties split by label and reported
+    0.0 / 0.5 / 1.0 for a rate that is 0.5 everywhere."""
+    rows = [
+        Row(
+            index,
+            f"2026-08-01T00:{index:02d}:00Z",
+            True,
+            index % 2,
+            dict.fromkeys(FEATURE_ORDER, 0.0),
+            0.0,
+            "50",
+            "0a1b2c3d4e5f",
+        )
+        for index in range(60)
+    ]
+    rates = [band["acted_on_rate"] for band in selection_bias(rows)]
+    assert [rate for rate in rates if rate is not None] == [0.5]
+
+
+def test_the_ship_rule_judges_the_scores_that_ship(
+    quick_bootstrap: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The queue ranks by `round(100 * p)`, so that is the ranking the rules
+    must lose to, ties and all, not the raw probability."""
+    seen: list[Any] = []
+    real = train_module.evaluate
+
+    def spy(labels: Any, model_scores: Any, baseline: Any) -> dict[str, Any]:
+        seen.append(model_scores)
+        return real(labels, model_scores, baseline)
+
+    monkeypatch.setattr(train_module, "evaluate", spy)
+    _write_export(_synthetic_rows(800, seed=12, scenario="learnable"))
+    train()
+    assert seen, "the trainer never evaluated"
+    for scores in seen:
+        assert np.all(scores == np.round(scores)), "a raw probability was judged"
+        assert scores.min() >= 0 and scores.max() <= 100
+
+
+def test_a_failed_read_is_not_cached(
+    cfg: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One read that fails is not a verdict on the file: the next call reads
+    it again. Cached, it kept a long-running API on the rules until the file
+    changed."""
+    _activate()
+    job = _posting("Senior Frontend Engineer", "Remote, Europe", f"Remote, Europe. {BODY}")
+    real = Path.read_bytes
+    failures = [OSError(24, "Too many open files")]
+
+    def flaky(self: Path) -> bytes:
+        if self == active_model_path() and failures:
+            raise failures.pop()
+        return real(self)
+
+    monkeypatch.setattr(Path, "read_bytes", flaky)
+    assert fit_score_for(job, cfg).reasons[:2] == ["scorer=rules", "fallback=model-invalid"]
+    assert fit_score_for(job, cfg).reasons[0].startswith("scorer=model:")
+
+
+@pytest.mark.parametrize("digits", [400, 5000])
+def test_an_absurd_number_is_refused_not_raised(cfg: dict[str, object], digits: int) -> None:
+    """Valid JSON, no weight: too large for a float, or too long to convert.
+    Either is a refused model and the rules score; neither crashes a run."""
+    text = dump_model(_document()).decode("utf-8")
+    assert '"intercept": -1.0' in text
+    broken = text.replace('"intercept": -1.0', '"intercept": ' + "9" * digits).encode("utf-8")
+    with pytest.raises(ModelInvalidError):
+        parse_model(broken)
+    write_bytes_atomic(active_model_path(), broken)
+    job = _posting("Senior Frontend Engineer", "Remote, Europe", f"Remote, Europe. {BODY}")
+    assert fit_score_for(job, cfg).reasons[:2] == ["scorer=rules", "fallback=model-invalid"]
+
+
+def test_normalization_clips_only_at_one() -> None:
+    """Spec 077: counts are divided by their percentile and clipped to 1. A
+    configured negative weight can make a count negative, and that survives."""
+    values = dict.fromkeys(FEATURE_ORDER, 0.0) | {"skill_signal": -40.0, "years_gap": 9.0}
+    p92 = {"skill_signal": 20.0, "preferred_signal": 1.0, "years_gap": 3.0}
+    vector = dict(zip(FEATURE_ORDER, normalize_values(values, p92), strict=True))
+    assert vector["skill_signal"] == -2.0
+    assert vector["years_gap"] == 1.0
