@@ -13,6 +13,7 @@ import logging
 from pathlib import Path
 from urllib.parse import urlparse
 
+from harrier.atomicio import write_bytes_atomic
 from harrier.db import data_dir
 from harrier.screening import http
 from harrier.screening.normalized import NormalizedJob
@@ -68,13 +69,20 @@ def _description_cache_path(url: str) -> Path:
 
 
 def save_description_cache(url: str, description: str) -> None:
+    """Replace the entry whole or not at all (spec 007 amendment).
+
+    Written in place, a save cut off between truncate and write left part of
+    an entry, and a description no encoding can write left it empty: either
+    way the previous description read as missing. The bytes are encoded
+    before any file is touched, written beside the entry and renamed over
+    it, so a failed save raises and leaves the previous entry as it was. The
+    JSON is unindented, as it always was, which is why this does not go
+    through write_json_atomic.
+    """
     if not url or not description:
         return
-    _cache_dir().mkdir(parents=True, exist_ok=True)
-    _description_cache_path(url).write_text(
-        json.dumps({"url": url, "description": description}, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    payload = json.dumps({"url": url, "description": description}, ensure_ascii=False)
+    write_bytes_atomic(_description_cache_path(url), payload.encode("utf-8"))
 
 
 def load_cached_description(url: str) -> str:
