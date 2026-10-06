@@ -125,6 +125,9 @@ export function JobActions({ job, onApply }: Props) {
   // unmounted while the takeover shows, so it can only be focused after the
   // render that brings it back.
   const [returnFocus, setReturnFocus] = useState<Takeover | null>(null);
+  // A refusal moves focus to the message that explains it, once it renders.
+  const [focusFailure, setFocusFailure] = useState(false);
+  const failureRef = useRef<HTMLParagraphElement | null>(null);
   const reasonInputRef = useRef<HTMLInputElement | null>(null);
   const firstPillRef = useRef<HTMLButtonElement | null>(null);
   const exitRef = useRef<HTMLButtonElement | null>(null);
@@ -147,6 +150,22 @@ export function JobActions({ job, onApply }: Props) {
     (returnFocus === "exit" ? exitRef : companyRef).current?.focus();
     setReturnFocus(null);
   }, [returnFocus]);
+
+  useEffect(() => {
+    if (!focusFailure) return;
+    failureRef.current?.focus();
+    setFocusFailure(false);
+  }, [focusFailure]);
+
+  // A refused write keeps its words on the row and takes focus there. The
+  // control that sent it was disabled while the request ran, and a browser
+  // drops focus from a disabled control; a stale page can also refetch into
+  // a row whose controls are different ones. The message is the one element
+  // that is there before and after (review of the merged range, spec 080).
+  function refused(message: string): void {
+    setFailure(message);
+    setFocusFailure(true);
+  }
 
   function reset(): void {
     setTakeover(null);
@@ -207,7 +226,7 @@ export function JobActions({ job, onApply }: Props) {
     },
     onSuccess: settled,
     onError: (error: Error) => {
-      setFailure(error.message);
+      refused(error.message);
     },
   });
 
@@ -226,13 +245,11 @@ export function JobActions({ job, onApply }: Props) {
     onSuccess: settled,
     onError: (error: Error) => {
       // A stale page can offer this on a row that has since changed. The
-      // refusal is shown in the domain's words and the row is fetched again,
-      // so what it offers next matches what it is. Closing the takeover
-      // unmounts the pill that had focus, so focus goes back to the control
-      // that opened it, as it does on Escape and Cancel (review finding on
-      // PR #122). Outcomes sent from More open no takeover and need none.
-      setFailure(error.message);
-      setReturnFocus(takeover);
+      // refusal is shown in the domain's words, focus goes to it, and the
+      // row is fetched again, so what it offers next matches what it is.
+      // Focus went back to Company replied once (review finding on PR #122),
+      // but the refetch can turn that very button into Reopen.
+      refused(error.message);
       reset();
       void queryClient.invalidateQueries({ queryKey: ["jobs"] });
     },
@@ -255,7 +272,7 @@ export function JobActions({ job, onApply }: Props) {
       }
     },
     onError: (error: Error) => {
-      setFailure(error.message);
+      refused(error.message);
     },
   });
 
@@ -288,8 +305,11 @@ export function JobActions({ job, onApply }: Props) {
           (review finding on PR #41). */}
       {takeover === null && (
         <div className="job-actions__row">
+          {/* Keyed apart, so a refetch that changes the status mounts a new
+              control instead of relabelling the focused one. */}
           {afterApplying ? (
             <button
+              key="company-replied"
               ref={companyRef}
               type="button"
               className="job-actions__primary"
@@ -303,6 +323,7 @@ export function JobActions({ job, onApply }: Props) {
           ) : (
             primary !== null && (
               <button
+                key="forward"
                 type="button"
                 className="job-actions__primary"
                 disabled={busy}
@@ -525,7 +546,7 @@ export function JobActions({ job, onApply }: Props) {
       )}
 
       {failure !== null && (
-        <p className="job-actions__failure" role="status">
+        <p className="job-actions__failure" role="status" ref={failureRef} tabIndex={-1}>
           {failure}
         </p>
       )}
