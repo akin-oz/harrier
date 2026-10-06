@@ -56,7 +56,9 @@
   cursor: not-allowed;
 }
 
-.job-actions__reject:hover:not(:disabled) {
+/* Scoped like the ordinary hover above, which a bare class selector loses to
+   on specificity: the danger color never showed (review of PR #122). */
+.job-actions button.job-actions__reject:hover:not(:disabled) {
   border-color: var(--color-danger);
   color: var(--color-danger);
 }
@@ -86,7 +88,7 @@
 /* Danger means consequence, not actor: every pill that closes the row
    carries it, the candidate's or the company's, and an interview invitation,
    which moves the row forward, keeps the ordinary hover (spec 080). */
-.job-actions__pill--closes:hover:not(:disabled) {
+.job-actions button.job-actions__pill--closes:hover:not(:disabled) {
   border-color: var(--color-danger);
   color: var(--color-danger);
 }

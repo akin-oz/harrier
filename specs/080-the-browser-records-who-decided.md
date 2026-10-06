@@ -182,14 +182,16 @@ way:
   unmounts when the pills appear and focus is lost; the same defect would
   repeat in the new takeover, so the shared pattern fixes it once.
 - Escape, or Cancel, closes the takeover and returns focus to the control
-  that opened it.
+  that opened it. So does a refusal from the outcome route, which closes the
+  company takeover while the row is fetched again (amended below).
 - Each takeover is a `role="group"` named by its label (`Reject`, `Withdraw`,
   `Company response`), so a screen reader announces whose decision it is.
 
 ### Errors
 
-- A company outcome on a row with no `applied_date`: 409 with spec 079's
-  message, shown verbatim in the row's existing status line. The browser
+- A company outcome on a row no company engaged with (spec 079: no
+  `applied_date`, and not `interviewing`): 409 with spec 079's message,
+  shown verbatim in the row's existing status line. The browser
   never offers the control there, so this is reached only by a stale page or
   a hand-written request; the row then refetches.
 - An unknown or company code on a status change: 422 from the schema.
@@ -227,7 +229,7 @@ Spec 079 is amended to say so before either is approved.
       `test_a_status_change_without_a_code_still_infers`)
 - [x] `recordCompanyOutcome` records a `company` outcome with the given code
       and note, moves the status as spec 079 says, and returns 409 on a row
-      with no `applied_date`
+      no company engaged with
       (`services/api/tests/test_ui_tracker.py::test_company_outcome_route`,
       `test_company_outcome_refuses_an_unapplied_row`)
 - [x] Both enums equal the actor partitions of `harrier.tracker.reasons`
@@ -254,6 +256,17 @@ Spec 079 is amended to say so before either is approved.
 - [x] Opening any takeover focuses its first pill; Escape and Cancel close it
       and return focus to its opener
       (`TrackerPage.test.tsx`: "a takeover keeps keyboard focus")
+- [x] A refused company response closes the takeover and returns focus to
+      Company replied (`TrackerPage.test.tsx`: "a refused company response
+      hands focus back to its opener")
+- [x] Every danger hover outranks the ordinary hover in the cascade, so it
+      shows in a browser (`TrackerPage.test.tsx`: "a danger hover outranks the
+      ordinary hover")
+- [x] The reason form behind `other…` is still the exit takeover's group,
+      named by its word (`TrackerPage.test.tsx`: "other… stays a group named
+      by its exit word")
+- [x] A code other than `other` confirms without words and sends its label
+      (`TrackerPage.test.tsx`: "a chosen code needs no words")
 - [x] Spec 056 is amended to point to this spec for the pill list, and its
       existing pill tests are updated rather than deleted
 - [x] `pnpm type-check`, `pnpm lint`, `uv run ruff check`, `uv run pyright`
@@ -320,7 +333,7 @@ What implementation found, each with the test that proves it:
 - **A chosen code does not need words.** Confirm behind `other…` waits for
   text only when the code is `other`, which says nothing without it. Any
   other code with no text stores the code's own label as the row's reason,
-  so the row still reads as one. "other sends the selected code".
+  so the row still reads as one. "a chosen code needs no words".
 - **The select sits on its own line above the input.** Side by side, the
   actions column squeezed the reason input to a sliver and truncated the
   select (found by checking the page in a browser, demo mode). On its own
@@ -340,3 +353,51 @@ What implementation found, each with the test that proves it:
   every other tracker write:
   `services/api/tests/test_ui_tracker.py::test_the_outcome_route_and_the_cli_call_the_same_function`
   and the outcome row in `::test_a_tracker_write_without_the_token_is_refused`.
+
+## Amendment (2026-10-06, review of PR #122)
+
+A refusal from the outcome route closes the company takeover, so the pill
+that had focus unmounts. Focus went to nothing, because only Escape and
+Cancel handed it back. It now returns to Company replied, as on Escape and
+Cancel. A refused rejection from the exit pills keeps its takeover open, so
+focus stays on the pill and needed no change. Proof: "a refused company
+response hands focus back to its opener" in `TrackerPage.test.tsx`, which
+fails without the fix.
+
+## Amendment (2026-10-06, review of the merged range)
+
+A review of the merged spec 077 to 081 range found two defects in this
+spec's browser code and one claim its test did not prove.
+
+- **The danger hover never showed.** `.job-actions button:hover:not(:disabled)`
+  outranks a bare class selector, so Reject, Withdraw and every closing pill
+  hovered in the ordinary accent. Principle 3 held in the markup ("danger
+  marks the pills that close the row" checks the class) and failed in the
+  browser. Both danger rules are now scoped like the ordinary hover, the way
+  `.job-actions button.job-actions__cancel` already was. jsdom applies rules
+  in source order and ignores specificity, so no rendered test sees this.
+  The proof reads the cascade from the stylesheet as parsed: "a danger hover
+  outranks the ordinary hover", which fails without the fix. It imports the
+  stylesheet with `?raw`, which vitest stubs to an empty string unless
+  `apps/web/vitest.config.ts` lets it through, so that file gains one line.
+  Checked in a browser too (demo mode): Reject and a closing pill now hover
+  in the danger color.
+- **`other…` dropped the group.** The reason form replaced the pills' named
+  group with an unnamed span, so a screen reader lost whose decision it was
+  part way through. It is now the same `role="group"`, named by the exit
+  word. "other… stays a group named by its exit word".
+- **A claim cited a test that could not fail.** "A chosen code does not need
+  words" cited "other sends the selected code", which always types words.
+  "a chosen code needs no words" now proves it; requiring text for every code,
+  or dropping the label fallback, fails it.
+- **Company replied on an invited row.** The browser offers Company replied
+  on every `interviewing` row, including one a recruiter invited before
+  anyone applied. Spec 079 refused every response there until its own
+  amendment of the same date, which counts an `interviewing` row as engaged.
+  The Errors bullet and its criterion now name that rule rather than the
+  `applied_date` column.
+
+Out of scope, recorded for its own change: two more rules in
+`JobActions.css` lose to `.job-actions button` the same way.
+`.job-actions__primary` (spec 047) never applies its border or weight, and
+`.job-actions__pill-other` (spec 056) never applies its muted color.
