@@ -792,12 +792,8 @@ function outranks(a: number[], b: number[]): boolean {
   return index !== -1 && (a[index] ?? 0) > (b[index] ?? 0);
 }
 
-test("a danger hover outranks the ordinary hover", () => {
-  // jsdom applies matching rules in source order and ignores specificity,
-  // so no rendered test can see this, and "danger marks the pills that close
-  // the row" passed while a browser showed the ordinary accent on every one
-  // of them. The cascade is checked on the stylesheet's own rules, as jsdom
-  // parses them (review of PR #122).
+/** JobActions.css as jsdom parses it: its rules, not what they compute to. */
+function jobActionsRules(): CSSStyleRule[] {
   const style = document.createElement("style");
   style.textContent = jobActionsCss;
   document.head.append(style);
@@ -805,6 +801,40 @@ test("a danger hover outranks the ordinary hover", () => {
     (rule): rule is CSSStyleRule => "selectorText" in rule,
   );
   style.remove();
+  return rules;
+}
+
+/**
+ * The selectors in JobActions.css that style a button in `scope` at rest but
+ * lose to `.job-actions button`, which sets the border, font and color of
+ * every one of them. A browser never applies such a rule, whatever jsdom
+ * computes. A selector with a pseudo-class styles a state rather than the
+ * rest and is left out; the hovers are held by "a danger hover outranks the
+ * ordinary hover".
+ */
+function restingRulesThatLose(scope: HTMLElement): string[] {
+  const rules = jobActionsRules();
+  const shared = rules.find((rule) => rule.selectorText === ".job-actions button");
+  if (shared === undefined) throw new Error("the shared button rule is gone");
+  const buttons = Array.from(scope.querySelectorAll(".job-actions button"));
+  return rules
+    .filter((rule) => rule !== shared)
+    .flatMap((rule) => rule.selectorText.split(",").map((selector) => selector.trim()))
+    .filter(
+      (selector) =>
+        !selector.includes(":") &&
+        buttons.some((button) => button.matches(selector)) &&
+        !outranks(specificity(selector), specificity(shared.selectorText)),
+    );
+}
+
+test("a danger hover outranks the ordinary hover", () => {
+  // jsdom applies matching rules in source order and ignores specificity,
+  // so no rendered test can see this, and "danger marks the pills that close
+  // the row" passed while a browser showed the ordinary accent on every one
+  // of them. The cascade is checked on the stylesheet's own rules, as jsdom
+  // parses them (review of PR #122).
+  const rules = jobActionsRules();
 
   const ordinary = rules.find(
     (rule) => rule.selectorText === ".job-actions button:hover:not(:disabled)",
@@ -823,6 +853,79 @@ test("a danger hover outranks the ordinary hover", () => {
       rule.selectorText,
     ).toBe(true);
   }
+});
+
+// The forward control each status shows on its resting row.
+const FORWARD_CONTROLS: readonly (readonly [string, string])[] = [
+  ["prospect", "Shortlist"],
+  ["shortlisted", "Request CV"],
+  ["tailored_cv_requested", "Applied"],
+  ["applied", "Company replied"],
+  ["interviewing", "Company replied"],
+  ["rejected", "Reopen"],
+];
+
+test("the forward control's look outranks the shared button rule", async () => {
+  // jsdom applied the look and a browser never did: `.job-actions button`
+  // outranks a bare class selector, so the forward control looked like every
+  // other control on the row (spec 047). The look is found by what it
+  // declares, so a renamed selector is held to the same rule.
+  const look = jobActionsRules().find(
+    (rule) =>
+      rule.style.getPropertyValue("font-weight") === "500" &&
+      rule.style.getPropertyValue("border-color").includes("--color-border-strong"),
+  );
+  if (look === undefined) throw new Error("the forward control's look is gone");
+
+  for (const [status, forward] of FORWARD_CONTROLS) {
+    cleanup();
+    stubApi({ jobs: [job(1, "Northwind", "80", status)] });
+    const user = userEvent.setup();
+    renderWithApply();
+
+    const row = await rowFor("Northwind");
+    const marked = within(row)
+      .getAllByRole("button")
+      .filter((button) => button.matches(look.selectorText))
+      .map((button) => button.textContent);
+    expect(marked, status).toEqual([forward]);
+
+    // With More open, every button a resting row can show is on the page.
+    await user.click(within(row).getByRole("button", { name: /^More actions/ }));
+    expect(restingRulesThatLose(row), status).toEqual([]);
+  }
+});
+
+test("other…'s muted color outranks the shared button rule", async () => {
+  // jsdom applied the muted color and a browser never did: `.job-actions
+  // button` outranks a bare class selector, so other… read in the pills' own
+  // color (spec 056). The rule is found by what it declares, and it mutes
+  // other… alone, not a pill.
+  stubApi({ jobs: [job(1, "Northwind", "80")] });
+  const user = userEvent.setup();
+  renderPage();
+
+  const row = await rowFor("Northwind");
+  await user.click(within(row).getByRole("button", { name: "Reject" }));
+  const takeover = within(row).getByRole("group", { name: "Reject" });
+  const other = within(takeover).getByRole("button", { name: "other…" });
+  const muted = jobActionsRules().find(
+    (rule) =>
+      rule.style.getPropertyValue("color").includes("--color-text-secondary") &&
+      other.matches(rule.selectorText),
+  );
+  if (muted === undefined) throw new Error("other…'s muted color is gone");
+  expect(
+    within(takeover)
+      .getAllByRole("button")
+      .filter((button) => button.matches(muted.selectorText))
+      .map((button) => button.textContent),
+  ).toEqual(["other…"]);
+  expect(restingRulesThatLose(takeover)).toEqual([]);
+
+  // The reason form behind other… holds the rest of the takeover's buttons.
+  await user.click(other);
+  expect(restingRulesThatLose(within(row).getByRole("group", { name: "Reject" }))).toEqual([]);
 });
 
 test("other… stays a group named by its exit word", async () => {

@@ -80,6 +80,10 @@ Proof lives in `apps/web/src/pages/tracker/TrackerPage.test.tsx`.
 - While the picker is open, the row's other verbs are not in the
   document (the existing mid-decision test keeps passing).
 - Cancel closes the picker without posting.
+- In a browser, `other…` shows in the muted text color and the pills keep
+  the ordinary one ("other…'s muted color outranks the shared button
+  rule", which fails without the fix). See "Amendment: `other…` is muted
+  in a browser too" below.
 - `pnpm type-check` and `pnpm lint` pass; the vitest suite passes.
 
 ## Proof / origin
@@ -140,3 +144,42 @@ The pill list, its codes, and the `other…` select are specified in spec 080
 from here on. Proof: `every pill submits its exact lowercase label as the
 reason` in `TrackerPage.test.tsx` still iterates over every pill, now six,
 and "each pill sends its code and text" covers the codes.
+
+## Amendment: `other…` is muted in a browser too (2026-10-06)
+
+This spec's implementation (commit e19c604) gave `other…` the muted text
+color, `--color-text-secondary`, and left the pills in the ordinary text
+color. It is the visual half of what Behavior says of free-form reasons:
+they remain possible, and they stop being the default path. This spec never
+said so, and until this amendment no browser showed it.
+
+- **Why no browser showed it.** `.job-actions button` sets the color of
+  every control in the block, and it outranks the bare
+  `.job-actions__pill-other` in `apps/web/src/features/tracker/JobActions.css`.
+  In a browser in demo mode, `other…` computed `--color-text`, the pills'
+  color, while Cancel, whose rule was already scoped, computed
+  `--color-text-secondary`. jsdom does not rank rules by specificity, so a
+  rendered test sees the muted color and passes. Spec 080 found this in its
+  review of the merged range and left it to its own change.
+- **The fix.** The rule is scoped under `.job-actions button`, as Cancel's
+  is, so it outranks the shared rule.
+- **Whose rule this is.** The amendment above hands the pill list, the codes
+  and the `other…` select to spec 080. How `other…` looks stays with this
+  spec, whose implementation set it.
+
+Files: `JobActions.css` and `TrackerPage.test.tsx`, both already in this
+spec's scope.
+
+Proof: "other…'s muted color outranks the shared button rule" in
+`TrackerPage.test.tsx`. It opens Reject and finds the rule that mutes
+`other…` by what it declares; that rule must match `other…` and no pill. It
+then reads the cascade from the stylesheet as parsed, and fails if any rule
+that styles the takeover's buttons at rest, or the buttons of the reason
+form behind `other…`, loses to `.job-actions button`. Without the fix it
+names `.job-actions__pill-other`; without the class on `other…`, it finds
+no muted rule. Checked in a browser in demo mode as well: `other…` and
+Cancel compute `--color-text-secondary`, the pills `--color-text`, and a
+hovered `other…` shows the ordinary accent, not the danger color.
+
+Limitation: as in spec 047's amendment of the same date, the test compares
+selectors rather than computed styles, because jsdom cannot rank rules.
