@@ -486,7 +486,9 @@ def test_a_missing_database_fails(tmp_path: Path) -> None:
 #
 # Each refuses the call `create_backup` makes, not the directory's permission
 # bits: root creates and writes whatever a directory's mode says, and the
-# suite runs as root in cloud sessions, where these used to be skipped.
+# suite runs as root in cloud sessions, where these used to be skipped. Each
+# also records the refusal and asserts it happened, so another error that
+# prints the same line cannot pass them (review finding on PR #152).
 
 
 def test_an_uncreatable_backup_directory_fails_with_one_line(
@@ -499,17 +501,20 @@ def test_an_uncreatable_backup_directory_fails_with_one_line(
     target = parent / "harrier"
     monkeypatch.setenv("HARRIER_BACKUP_DIR", str(target))
     real_mkdir = Path.mkdir
+    refused: list[str] = []
 
     def refuse(
         self: Path, mode: int = 0o777, parents: bool = False, exist_ok: bool = False
     ) -> None:
         if self == target:
+            refused.append(str(self))
             raise PermissionError(errno.EACCES, "Permission denied", str(self))
         real_mkdir(self, mode, parents, exist_ok)
 
     with monkeypatch.context() as patch:
         patch.setattr(Path, "mkdir", refuse)
         assert main(["backup"]) == 1
+    assert refused == [str(target)]
     err = capsys.readouterr().err.strip().splitlines()
     assert err == [
         f"backup failed: cannot create backup directory {target}: "
@@ -530,18 +535,21 @@ def test_an_unwritable_backup_directory_leaves_nothing_and_prunes_nothing(
     older.write_text("x")
     monkeypatch.setenv("HARRIER_BACKUP_DIR", str(target))
     real_open = tarfile.open
+    refused: list[str] = []
 
     # A tar opened for writing in the directory, not one file name: the
     # archive's name carries the time it is taken. Reads still succeed, as they
     # do in a directory without write permission.
     def refuse(name: object, mode: str = "r", *args: object, **kwargs: object) -> tarfile.TarFile:
         if mode.startswith("w") and Path(str(name)).parent == target:
+            refused.append(str(name))
             raise PermissionError(errno.EACCES, "Permission denied", str(name))
         return cast("tarfile.TarFile", real_open(name, mode, *args, **kwargs))  # pyright: ignore[reportCallIssue, reportArgumentType]
 
     with monkeypatch.context() as patch:
         patch.setattr(tarfile, "open", refuse)
         assert main(["backup", "--keep", "1"]) == 1
+    assert len(refused) == 1
     err = capsys.readouterr().err.strip().splitlines()
     assert len(err) == 1
     assert err[0].startswith(f"backup failed: cannot write to backup directory {target}: ")
