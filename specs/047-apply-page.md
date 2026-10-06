@@ -244,11 +244,11 @@ file is named.
 - [x] no personal data enters a committed fixture, a test name, or a
       screenshot. Every fixture is an invented company. Limitation: this is a
       property of the diff, and no test asserts it
-- [ ] in a browser, each resting row's forward control carries a stronger
+- [x] in a browser, each resting row's forward control carries a stronger
       border and a medium weight, and no other control on the row does
-      (`apps/web/src/pages/tracker/TrackerPage.test.tsx`: planned "the
-      forward control's look outranks the shared button rule", which fails
-      without the fix). Added by the amendment of 2026-10-06 below
+      (`apps/web/src/pages/tracker/TrackerPage.test.tsx`: "the forward
+      control's look outranks the shared button rule", which fails without
+      the fix). Added by the amendment of 2026-10-06 below
 - [x] all gates green on PR (`just check` passes: 1009 Python tests, 33 web
       tests, contract regenerated with no unexpected diff)
 
@@ -310,15 +310,18 @@ amendment no browser showed it.
 Files: `apps/web/src/features/tracker/JobActions.css` and
 `apps/web/src/pages/tracker/TrackerPage.test.tsx`.
 
-Proof: planned "the forward control's look outranks the shared button rule"
-in `TrackerPage.test.tsx`. It renders a row for each status, opens More, and
+Proof: "the forward control's look outranks the shared button rule" in
+`TrackerPage.test.tsx`. It renders a row for each status, opens More, and
 finds the look by what it declares. On each row the look must match the
 forward control and nothing else. It then reads the cascade from the
 stylesheet as parsed, as "a danger hover outranks the ordinary hover" does,
 and fails if any rule that styles these buttons at rest loses to
-`.job-actions button`. Without the fix it names `.job-actions__primary`. The
-implementing change also checks the computed styles in a browser in demo
-mode.
+`.job-actions button`. Without the fix it names `.job-actions__primary`;
+without the class on the forward control, the look matches nothing. Checked
+in a browser in demo mode as well: each forward control computes
+`--color-border-strong` and weight 500, every other control on the row
+`--color-border` and 400, and a hovered forward control still shows the
+accent.
 
 Limitation: the test compares selectors, not computed styles, because jsdom
 does not rank rules by specificity. Its specificity count covers the plain
