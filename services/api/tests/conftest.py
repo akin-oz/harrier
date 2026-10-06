@@ -22,6 +22,11 @@ on the operator's log for the whole session, because `configure_logging` is
 idempotent. A fixture alone could not have fixed it, so the session default is
 set here at import, which pytest guarantees happens before it imports a test
 module in this directory.
+
+The test client's host (spec 083) is set at import for the same reason.
+Starlette's `TestClient` sends Host `testserver` unless told otherwise, and the
+API no longer trusts that name, so the client's default becomes `localhost`
+before any test module builds one.
 """
 
 from __future__ import annotations
@@ -37,10 +42,36 @@ from typing import Any, cast
 from urllib.parse import unquote, urlsplit
 
 import pytest
+from fastapi.testclient import TestClient
+from starlette.types import ASGIApp
 
 from harrier.paths import repo_root
 
 TEST_TOKEN = "test-token-not-a-secret"
+
+# --- test client host (spec 083) ---
+
+# Replaced at import, the way the data directory is below, so every client the
+# suite builds reaches the app on a host it trusts without each construction
+# site naming one, and a new test cannot forget it. A test that passes its own
+# base URL still gets it.
+TEST_CLIENT_BASE_URL = "http://localhost"
+# Pyright strict cannot resolve the httpx cookie type in this signature, the
+# same gap every API test file switches off for the whole file.
+_starlette_test_client_init = TestClient.__init__  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+
+
+def _init_on_a_trusted_host(
+    self: TestClient,
+    app: ASGIApp,
+    base_url: str = TEST_CLIENT_BASE_URL,
+    *args: Any,
+    **kwargs: Any,
+) -> None:
+    _starlette_test_client_init(self, app, base_url, *args, **kwargs)
+
+
+TestClient.__init__ = _init_on_a_trusted_host
 
 # --- operator data guard (spec 060) ---
 
