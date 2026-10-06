@@ -437,5 +437,5 @@ code. Each fix carries a test that fails without it.
   missing. `test_a_damaged_description_file_does_not_block_a_decision`.
 
 Limitation: a job that already holds live events without the history
-before them is not repaired here. A read-only query finds one: its first
-event is not `created`.
+before them is not repaired here. Such a job can be found with a read-only
+query: its first event is not `created`.

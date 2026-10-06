@@ -22,8 +22,8 @@ spec 078 the rule score sinks the rest to the bottom of the queue, where few
 are ever decided. The two blocker weights therefore rest on a handful of
 rows: regularization pulls them to near zero, either sign is noise, and
 condition 2 refuses every model however well it ranks everything else. A
-read-only trial against a copy of the local tracker showed exactly this; its
-results were reported in the session, not here (ADR-008).
+read-only trial against a copy of the local tracker was run before this spec
+was written; its outcome was reported in the session, not here (ADR-008).
 
 The condition also guards the wrong thing. What matters is that a posting the
 candidate cannot take ranks below every posting they can. Spec 078 guarantees
