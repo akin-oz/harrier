@@ -166,7 +166,13 @@ SPEC_TOKEN = re.compile(
     + rf"|(?P<bare>{WEB_FILE})(?=::)"
     + r'|(?P<colons>::)(?=")'
 )
-FENCED = re.compile(r"^```.*?^```", re.DOTALL | re.MULTILINE)
+# A fenced code block, as in markdown: three or more backticks or tildes, which
+# may be indented, closed by a line of the same marker at least as long.
+FENCED = re.compile(
+    r"^[ \t]*(?P<fence>(?P<mark>[`~])(?P=mark){2,})[^\n]*\n"
+    r".*?^[ \t]*(?P=fence)(?P=mark)*[ \t]*$",
+    re.DOTALL | re.MULTILINE,
+)
 ONLY_FILE = re.compile(WEB_FILE)
 JOINED = re.compile(rf"(?P<file>{WEB_FILE})::(?P<name>.+)", re.DOTALL)
 CONTINUED = re.compile(r"::(?P<name>.+)", re.DOTALL)
@@ -377,11 +383,13 @@ def python_names_outside_code_spans(spec: str, text: str, defined: set[str]) -> 
             reason = "is a Python test named outside a code span"
         problems.append(f"{where(word.start())}: {name} {reason}")
     # Planned before a code span: the span is read as a citation, so once its
-    # test exists the word has outlived its reason.
-    for citation in PYTHON_CITATION.finditer(text):
-        name = citation["symbol"]
-        if name in defined and planned(citation.start()):
-            problems.append(f"{where(citation.start())}: {name} is marked planned but exists")
+    # test exists the word has outlived its reason. A span may open with more
+    # than one backtick, so planned is looked for before the first.
+    for span in re.finditer(CODE_SPAN, text):
+        cited = PYTHON_CITATION.fullmatch(f"`{span['code']}`")
+        name = cited["symbol"] if cited else ""
+        if name in defined and planned(span.start()):
+            problems.append(f"{where(span.start())}: {name} is marked planned but exists")
     return problems
 
 
@@ -625,7 +633,6 @@ OUTSIDE = "test_here is a Python test named outside a code span"
         ("The module is tests.test_here.", None),
         ("The value is latest_here.", None),
         ("The proof was test_here_and_more.", None),
-        ("```text\nThe proof is test_here.\n\nA code span stops at a blank line.\n```", None),
         ("The proof was test_gone, removed with its rule.", None),
     ],
     ids=[
@@ -640,7 +647,6 @@ OUTSIDE = "test_here is a Python test named outside a code span"
         "a dotted path",
         "inside a longer word",
         "a longer name",
-        "a fenced example",
         "a removed test",
     ],
 )
@@ -649,8 +655,8 @@ def test_a_python_test_named_outside_a_code_span_fails(
 ) -> None:
     """A Python citation outside a code span would stay unread until its test
     was renamed. Only the whole name of a test that exists counts, and never
-    as part of a path, a file name or an example. The fixture's test shares
-    its file's name, so a file name that tripped the rule would fail here."""
+    as part of a path or a file name. The fixture's test shares its file's
+    name, so a file name that tripped the rule would fail here."""
     problems = unproven_citations(repository(tmp_path, text + "\n"))
     assert problems == ([] if problem is None else [problem])
 
@@ -667,6 +673,7 @@ def test_a_python_test_named_outside_a_code_span_fails(
         ),
         ("planned\n      test_here", "099-cites.md:2: test_here is marked planned but exists"),
         ("planned `test_here`", "099-cites.md:1: test_here is marked planned but exists"),
+        ("planned ``test_here``", "099-cites.md:1: test_here is marked planned but exists"),
         ("planned `test_not_written_yet`", "099-cites.md: test_not_written_yet"),
     ],
     ids=[
@@ -676,6 +683,7 @@ def test_a_python_test_named_outside_a_code_span_fails(
         "stale before a path",
         "stale across a line",
         "stale before a code span",
+        "stale before a span opened by two backticks",
         "in a code span before its test",
     ],
 )
@@ -688,3 +696,28 @@ def test_planned_exempts_a_python_test_only_until_it_exists(
     span would go unread."""
     problems = unproven_citations(repository(tmp_path, f"- [ ] it will work ({citation})\n"))
     assert problems == ([] if problem is None else [problem])
+
+
+# A fenced example in each form markdown allows. The two rules share FENCED,
+# so each fence holds a name of each kind in turn.
+FENCES = {
+    "backticks": "```text\n{body}\n\nA code span stops at a blank line.\n```",
+    "tildes": "~~~text\n{body}\n~~~",
+    "a longer fence around a shorter one": "````text\n```\n{body}\n```\n````",
+    "indented in a list item": "- An example:\n\n  ```text\n  {body}\n\n  More.\n  ```",
+}
+
+
+@pytest.mark.parametrize(
+    "body",
+    ["The proof is test_here.", 'The proof is "a thing happens".'],
+    ids=["a Python test", "a web test"],
+)
+@pytest.mark.parametrize("fence", FENCES.values(), ids=list(FENCES))
+def test_a_fenced_example_is_never_a_citation(fence: str, body: str, tmp_path: Path) -> None:
+    """A fenced block is an example, whichever marker opens it. Only backtick
+    fences at the start of a line were blanked, so an example in tildes, in a
+    list item, or holding a shorter fence read as a citation (review of PR
+    #147)."""
+    spec = fence.format(body=body) + "\n"
+    assert unproven_citations(repository(tmp_path, spec)) == []

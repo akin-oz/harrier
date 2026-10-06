@@ -176,7 +176,8 @@ spec 044.
       paths, longer words, fenced examples and names no test has pass (the
       amendment below on Python tests named outside a code span;
       `services/api/tests/test_spec_structure.py::test_a_python_test_named_outside_a_code_span_fails`,
-      `::test_planned_exempts_a_python_test_only_until_it_exists`)
+      `::test_planned_exempts_a_python_test_only_until_it_exists`,
+      `::test_a_fenced_example_is_never_a_citation`)
 - [x] the committed specs name no existing Python test outside a code span,
       and
       `services/api/tests/test_spec_structure.py::test_every_test_a_spec_names_actually_exists`
