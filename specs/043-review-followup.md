@@ -173,7 +173,7 @@ Proven by services/api/tests/test_review_followup.py:
 | a clean review counts, and a review in progress is not asked again (amendment below) | `test_a_clean_review_counts_as_reviewed`, `test_a_notice_carrying_a_commit_range_is_not_a_review`, `test_a_review_in_progress_is_not_asked_again` |
 | no notice means nothing is posted | `test_no_notice_means_none`, `test_a_notice_without_a_wait_is_reported_not_guessed` |
 | an unchanged head is not re-requested | `test_a_reviewed_pull_request_at_the_same_head_is_left_alone`, `test_a_moved_head_is_asked_again` |
-| a reply in a thread is not a review of the commit it names (amendment below) | planned test_a_reply_in_a_thread_is_not_a_review, `test_the_reviewed_sha_is_read_from_the_reviews` |
+| a reply in a thread is not a review of the commit it names (amendment below) | `test_a_reply_in_a_thread_is_not_a_review`, `test_the_reviewed_sha_is_read_from_the_reviews` |
 | the daily bound stops the loop | `test_the_daily_bound_stops_the_loop`, `test_the_bound_wins_over_everything_else` |
 | rate limited is distinguishable from reviewed | `test_a_rate_limited_pull_request_reports_as_not_reviewed`, `test_a_reviewed_pull_request_reports_as_reviewed`, `test_a_pull_request_with_neither_is_still_not_reviewed` |
 | `gh` failing is reported | `test_gh_failing_is_reported_not_swallowed`, `test_an_unreadable_payload_is_reported` |
@@ -216,10 +216,10 @@ protect a counter would have been the wrong trade.
       clean
 - [x] no pull request title, branch name, or comment body is written to a
       committed file (ADR-008)
-- [ ] a reply in a thread is not a review of the commit it names, so a head
+- [x] a reply in a thread is not a review of the commit it names, so a head
       the reviewer has only replied on is asked for its review (the
-      amendment below on replies; planned
-      test_a_reply_in_a_thread_is_not_a_review)
+      amendment below on replies;
+      `test_a_reply_in_a_thread_is_not_a_review`)
 - [ ] All gates green on PR
 
 ## Proof / origin
@@ -360,8 +360,8 @@ mean reading every review's comments as well.
 
 - `services/api/src/harrier/reviewfollowup.py`: `gather` applies the rule
   where it sets the reviewed commit. Nothing else in the module changes.
-- `services/api/tests/test_review_followup.py`: planned
-  test_a_reply_in_a_thread_is_not_a_review drives the PR #147 shape through
+- `services/api/tests/test_review_followup.py`:
+  `test_a_reply_in_a_thread_is_not_a_review` drives the PR #147 shape through
   `gather`. `test_the_reviewed_sha_is_read_from_the_reviews` built its review
   with an empty body, which this amendment reads as a reply, so its review
   gains a body. What it proves is unchanged.
@@ -371,17 +371,17 @@ command's output lines and exit codes do not change.
 
 ### How to know it worked
 
-A new test, planned test_a_reply_in_a_thread_is_not_a_review, builds what
-PR #147 held and runs it through `gather`, because this spec has twice
-recorded a defect that tests bypassing `gather` could not see. It holds a
-review with findings at commit A, recorded as read; two threads, each ending
-in the reviewer's acknowledgement, also recorded as read; then four review
-nodes with empty bodies at commit B, two ours and two the reviewer's, with B
-as the head. It asserts that the reviewed commit is A and that the decision is a
-request because the head has moved. Before this change it fails: the
-reviewed commit reads as B and the decision as "already reviewed at the
-current head". That failure was reproduced through `gather`, against the
-code as it stands, before this amendment was written.
+`test_a_reply_in_a_thread_is_not_a_review` builds what PR #147 held and runs
+it through `gather`, because this spec has twice recorded a defect that tests
+bypassing `gather` could not see. It holds a review with findings at commit
+A, recorded as read; two threads, each ending in the reviewer's
+acknowledgement, also recorded as read; then four review nodes with empty
+bodies at commit B, two ours and two the reviewer's, with B as the head. It
+asserts that the reviewed commit is A and that the decision is a request
+because the head has moved. Before this change it fails: the reviewed commit
+reads as B and the decision as "already reviewed at the current head". That
+failure was reproduced through `gather` before this amendment was written,
+and again by this test before the fix.
 
 ### Failure modes this must not introduce
 
