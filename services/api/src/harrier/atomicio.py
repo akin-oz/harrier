@@ -59,6 +59,28 @@ def write_json_atomic(path: Path, payload: object) -> None:
         raise
 
 
+def write_bytes_atomic(path: Path, data: bytes) -> None:
+    """The same write-then-rename, for a file whose exact bytes matter.
+
+    A learned-score model is identified by the digest of its bytes (spec 077),
+    so it cannot go through `write_json_atomic`, which serializes for it. And
+    the container may be scoring while the host activates a model, so a
+    reader must see the old file or the new one, never half of either.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
 def read_json_mapping(path: Path) -> dict[str, Any] | None:
     """The object in this file, None if there is no file, or raise.
 

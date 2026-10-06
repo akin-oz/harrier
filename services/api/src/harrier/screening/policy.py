@@ -50,7 +50,8 @@ VERSION_LENGTH = 12
 # which is what turns this list from a guess into a claim.
 DECIDING_PATHS: dict[str, tuple[str, ...]] = {
     "targets": ("titles", "title_keywords_include", "title_keywords_exclude"),
-    "candidate": ("preferred_regions", "preferred_countries"),
+    # `years_experience` decides the learned score's `years_gap` (spec 077).
+    "candidate": ("preferred_regions", "preferred_countries", "years_experience"),
     "preferences": ("domains_preferred", "domains_secondary"),
 }
 
@@ -103,6 +104,11 @@ def _rule_fingerprint() -> dict[str, Any]:
         "us_scope_patterns": list(rules.US_SCOPE_PATTERNS),
         "employment_blocker_patterns": list(rules.EMPLOYMENT_BLOCKER_PATTERNS),
         "ambiguous_region_patterns": sorted(rules.AMBIGUOUS_REGION_PATTERNS),
+        # The learned score reads these as `frontend_share` (spec 077). A
+        # model scores what the extractor gives it, so a changed table must
+        # move the version just as a changed model does.
+        "frontend_terms": list(rules.FRONTEND_TERMS),
+        "backend_terms": list(rules.BACKEND_TERMS),
         # The score cutoff used to be fingerprinted here. It is gone (spec
         # 033): it decided nothing on the ATS path and decided the wrong
         # thing on the LinkedIn one, so there is no longer a threshold whose
@@ -118,13 +124,27 @@ def _rule_fingerprint() -> dict[str, Any]:
     }
 
 
-def policy_version(candidate_cfg: CandidateConfig) -> str:
+def policy_version(candidate_cfg: CandidateConfig, *, model: str | None = None) -> str:
     """A short stable digest of everything a screening decision depends on.
 
     Stable across runs and machines: the payload is sorted and serialized
     deterministically, so two installations with the same configuration agree
     and a stored decision can be compared with a fresh one.
+
+    The learned score is part of it (spec 077): `model` is the identity of
+    the model that scored, or "none" when the rules did. Left out, it is the
+    active model's identity, so activating, retraining or removing a model
+    moves the version of everything decided afterwards.
     """
-    payload = {"config": _config_fingerprint(candidate_cfg), "rules": _rule_fingerprint()}
+    if model is None:
+        # Imported here: the scoring package reads this module's version.
+        from harrier.scoring.model import active_model_identity
+
+        model = active_model_identity()
+    payload = {
+        "config": _config_fingerprint(candidate_cfg),
+        "rules": _rule_fingerprint(),
+        "model": model,
+    }
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=True, default=str)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:VERSION_LENGTH]
