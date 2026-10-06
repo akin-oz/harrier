@@ -17,9 +17,12 @@ Every row here is synthetic: invented companies, invented postings.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import sqlite3
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from conftest import auth
@@ -27,7 +30,8 @@ from fastapi.testclient import TestClient
 
 from harrier.db import connect
 from harrier.screening.descriptions import save_description_cache
-from harrier.tracker.actions import change_status, record_company_outcome
+from harrier.tracker import store as tracker_store
+from harrier.tracker.actions import TrackerActionError, change_status, record_company_outcome
 from harrier.tracker.reasons import (
     ACTORS,
     COMPANY,
@@ -569,3 +573,141 @@ def test_event_writes_log_no_reason_text(
         "Ironbark",
     ):
         assert secret not in caplog.text, secret
+
+
+# --- review of the fixes (spec 079 amendment) -------------------------------------
+
+
+@pytest.fixture
+def rival(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
+    """A second connection to the same database, one that will not wait."""
+    other = connect()
+    other.execute("PRAGMA busy_timeout=0")
+    yield other
+    other.close()
+
+
+def _race_once(rival: sqlite3.Connection, job_id: int, outcome: list[str]) -> None:
+    """One competing move from the rival, recorded as getting in or waiting."""
+    if outcome:
+        return
+    outcome.append("started")
+    try:
+        set_status(rival, job_id, "shortlisted")
+        outcome[0] = "interleaved"
+    except sqlite3.OperationalError:
+        outcome[0] = "waited"
+
+
+def test_a_first_move_holds_the_lock_from_read_to_write(
+    conn: sqlite3.Connection, rival: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two writers on a job with no events both read "no events" and both
+    wrote its history, for good under the append-only trigger. The row is now
+    read under the write lock, so a rival waits for the move; allowed no wait,
+    it is turned away."""
+    job_id = _legacy_row(conn, 1)
+    outcome: list[str] = []
+    real = tracker_store._plan_backfill  # pyright: ignore[reportPrivateUsage]
+
+    def racing(job: Any) -> Any:
+        _race_once(rival, job_id, outcome)
+        return real(job)
+
+    monkeypatch.setattr(tracker_store, "_plan_backfill", racing)
+    set_status(conn, job_id, "rejected", rejection_reason="hybrid")
+    assert outcome == ["waited"]
+    assert [event["kind"] for event in list_events(conn, job_id)].count("created") == 1
+
+
+def test_backfill_holds_the_lock_from_read_to_write(
+    conn: sqlite3.Connection, rival: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same race from the other side: a live first move landing while
+    backfill plans the same job."""
+    job_id = _legacy_row(conn, 1)
+    outcome: list[str] = []
+    real = tracker_store._plan_backfill  # pyright: ignore[reportPrivateUsage]
+
+    def racing(job: Any) -> Any:
+        _race_once(rival, job_id, outcome)
+        return real(job)
+
+    monkeypatch.setattr(tracker_store, "_plan_backfill", racing)
+    backfill_events(conn)
+    assert outcome == ["waited"]
+    assert [event["kind"] for event in list_events(conn, job_id)].count("created") == 1
+
+
+def test_a_field_update_holds_the_lock_from_read_to_write(
+    conn: sqlite3.Connection, rival: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The invariants a field write is checked against are read under the
+    same lock, so they are the row the write lands on."""
+    job_id = _job(conn)
+    outcome: list[str] = []
+    real = tracker_store.all_breaches
+
+    def racing(row: Any) -> Any:
+        _race_once(rival, job_id, outcome)
+        return real(row)
+
+    monkeypatch.setattr(tracker_store, "all_breaches", racing)
+    update_fields(conn, job_id, {"next_action": "call back"})
+    assert outcome == ["waited"]
+
+
+def test_a_company_that_has_responded_has_engaged(conn: sqlite3.Connection) -> None:
+    """A recruiter's invite, then the company's first response: the row now
+    holds neither an application nor the interviewing status, but the events
+    show the company engaged, so a later response is still its outcome, on
+    every path."""
+    by_verb = _job(conn, 1)
+    by_status = _job(conn, 2)
+    for job_id in (by_verb, by_status):
+        record_company_outcome(conn, str(job_id), "interview_invited")
+        record_company_outcome(conn, str(job_id), "ghosted")
+    record_company_outcome(conn, str(by_verb), "company_rejected")
+    set_status(conn, by_status, "rejected", reason_code="assessment_failed")
+    for job_id, code in ((by_verb, "company_rejected"), (by_status, "assessment_failed")):
+        last = list_events(conn, job_id)[-1]
+        assert (last["kind"], last["actor"], last["reason_code"]) == ("outcome", "company", code)
+
+
+@pytest.mark.parametrize("steps", [[], ["shortlisted"], ["shortlisted", "tailored_cv_requested"]])
+def test_the_candidate_moving_a_job_is_not_the_company_engaging(
+    conn: sqlite3.Connection, steps: list[str]
+) -> None:
+    """Shortlisting and asking for a tailored CV are the candidate's side.
+    With no application, invited interview or earlier response, no company
+    has seen the job: its verdict is refused by the command and filed as
+    unknown by the status writer."""
+    job_id = _job(conn)
+    for status in steps:
+        set_status(conn, job_id, status)
+    events_before = _count(conn)
+    with pytest.raises(TrackerActionError):
+        record_company_outcome(conn, str(job_id), "ghosted")
+    assert _count(conn) == events_before
+    set_status(conn, job_id, "rejected", reason_code="ghosted")
+    last = list_events(conn, job_id)[-1]
+    assert (last["kind"], last["actor"], last["reason_code"]) == (
+        "decision",
+        "unknown",
+        UNCLASSIFIED,
+    )
+
+
+def test_a_description_no_encoding_can_write_reads_as_missing(
+    conn: sqlite3.Connection, tmp_path: Path
+) -> None:
+    """Valid JSON can carry a lone surrogate, which no text encodes, and
+    hashing it raised inside the status writer. Only an outside writer can
+    leave one; it reads as missing, like any other damage."""
+    job_id = _job(conn)
+    url = get_job(conn, job_id)["url"]
+    save_description_cache(url, "A posting long enough to be cached here.")
+    [path] = (tmp_path / "data" / "descriptions").glob("*.json")
+    path.write_text(json.dumps({"url": url, "description": "Broken \ud83d text"}))
+    set_status(conn, job_id, "shortlisted")
+    assert list_events(conn, job_id)[-1]["description_sha256"] == ""

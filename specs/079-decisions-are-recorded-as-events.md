@@ -81,8 +81,9 @@ spec exists to enforce, and it holds at entry, in storage and on read:
   and names `company-outcome`. `harrier company-outcome <selector> <code>`
   records a `company` outcome, accepts only company codes, and refuses a
   response from a company that never engaged with the row: one with no
-  `applied_date` that is not `interviewing` (a company cannot turn down an
-  application never sent or an interview it never offered). The status it
+  `applied_date`, not `interviewing`, and no company outcome among its
+  events (a company cannot turn down an application never sent or an
+  interview it never offered). The status it
   sets follows from the code: `interview_invited`
   moves the job to `interviewing`, every other company code to `rejected`,
   both through the existing transition rules.
@@ -172,7 +173,8 @@ candidate verb is the separation rule meeting old habits: `harrier reject 12
 "rejected by company"` is how company rejections were recorded until now.
 The CLI refuses it and names `company-outcome`. The API, which cannot be
 changed here, records it as a `company` outcome when the company engaged
-with the row (it has an `applied_date`, or it is `interviewing`), and as
+with the row (it has an `applied_date`, it is `interviewing`, or a company
+outcome is already recorded for it), and as
 `unknown` / `unclassified` when it did not. It never records a company
 verdict as a candidate decision.
 
@@ -216,8 +218,11 @@ digest and API keep reading the `jobs` row; nothing that exists today reads
   transaction, both or neither (`test_a_status_change_and_its_event_commit_together`).
 - A company code on `reject`, or a candidate code on `company-outcome`: exit
   2, nothing written, the message names the right verb.
-- `company-outcome` with a rejection code on a row with no `applied_date`
-  that is not `interviewing`: exit 2, nothing written.
+- `company-outcome` with a rejection code on a row with no `applied_date`,
+  not `interviewing`, and no earlier company outcome: exit 2, nothing
+  written.
+- Two writers on one job: the second waits for the first and reads what it
+  wrote, because the row is read under the write lock.
 - A description cache file that is not UTF-8 JSON: the move is recorded with
   an empty `description_sha256`
   (`test_a_damaged_description_file_does_not_block_a_decision`).
@@ -232,7 +237,8 @@ digest and API keep reading the `jobs` row; nothing that exists today reads
 Tests in `services/api/tests/test_job_events.py` unless named otherwise. All
 rows are synthetic.
 
-- [x] Every `set_status` call appends exactly one event, with the row's
+- [x] Every `set_status` call appends exactly one live event (after the
+      reconstructed history of a job that had none), with the row's
       `fit_score` and `scoring_version` from before the write, and `add_job`
       appends one `created` event
       (`test_every_status_change_appends_one_event`,
@@ -388,7 +394,9 @@ What implementation found, each with the test that proves it:
   covers. A recruiter approaching about a job nobody applied to is the case
   `harrier.tracker.transitions` keeps legal on purpose (spec 036), so
   `interview_invited` is recorded without one.
-  `test_an_interview_invitation_needs_no_application`.
+  `test_an_interview_invitation_needs_no_application`. (Widened by the
+  amendments below: an `interviewing` row, or a company that has already
+  responded, counts as engaged.)
 - **One more system code, `auto_reject`.** The old pipeline wrote its own
   rejections as `auto_reject:<rule>`. A rule made those decisions, so
   "auto_reject:hybrid" is a system decision, not the candidate's
@@ -437,5 +445,39 @@ code. Each fix carries a test that fails without it.
   missing. `test_a_damaged_description_file_does_not_block_a_decision`.
 
 Limitation: a job that already holds live events without the history
-before them is not repaired here. A read-only query finds one: its first
-event is not `created`.
+before them is not repaired here. Such a job can be found with a read-only
+query: its first event is not `created`.
+
+## Amendment (2026-10-06, review of the fixes)
+
+A review of the merged fixes above found five more defects, each minor.
+Each fix carries a test that fails without it.
+
+- **Two writers could both write a job's history.** `set_status` read the
+  row and checked for events, then wrote in a transaction of its own. Two
+  writers on a job with no events could both see none, and both write its
+  reconstructed history, permanently. The later live event also recorded a
+  status the row no longer had. The row is now read under the write lock
+  (`BEGIN IMMEDIATE`), so a second writer waits and reads what the first
+  wrote. `update_fields` and `backfill_events` had the same shape and take
+  the same lock. `test_a_first_move_holds_the_lock_from_read_to_write`,
+  `test_backfill_holds_the_lock_from_read_to_write`,
+  `test_a_field_update_holds_the_lock_from_read_to_write`.
+- **An invited interview was forgotten after the first response.** After a
+  recruiter's invite and a first company response, the row holds neither an
+  application nor `interviewing`. A later company response was then refused
+  by `company-outcome` and filed as `unknown` by `set_status`, while the
+  events showed the company engaged. A company outcome among the job's
+  events now counts as engagement, on both paths.
+  `test_a_company_that_has_responded_has_engaged`.
+- **The rule's exclusion side was unpinned.** Counting `shortlisted` or
+  `tailored_cv_requested` as engaged passed every test. They are the
+  candidate's own moves, and a company verdict on them is now tested as
+  refused. `test_the_candidate_moving_a_job_is_not_the_company_engaging`.
+- **One kind of damaged cache entry still raised.** Valid JSON can carry a
+  lone surrogate, which no text encodes, and hashing it raised inside
+  `set_status`. Only an outside writer can leave one. It now reads as
+  missing. `test_a_description_no_encoding_can_write_reads_as_missing`.
+- **Text drift.** The one-event criterion, the `set_status` docstring and
+  the implementation note on interview invitations now say what the code
+  does.

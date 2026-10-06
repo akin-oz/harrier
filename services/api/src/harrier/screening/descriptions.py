@@ -92,7 +92,15 @@ def load_cached_description(url: str) -> str:
         # (spec 079 amendment).
         return ""
     if isinstance(parsed, dict):
-        return str(parsed.get("description", ""))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+        description = str(parsed.get("description", ""))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+        try:
+            description.encode("utf-8")
+        except UnicodeEncodeError:
+            # Valid JSON can still carry a lone surrogate, which no text
+            # encodes; hashing it raised inside the status writer. Damage of
+            # any kind reads as missing (spec 079 amendment).
+            return ""
+        return description
     return ""
 
 

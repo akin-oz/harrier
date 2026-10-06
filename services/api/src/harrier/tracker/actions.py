@@ -35,7 +35,13 @@ from harrier.tracker.reasons import (
 )
 from harrier.tracker.score import score_fields, stored_score
 from harrier.tracker.selector import resolve_selector
-from harrier.tracker.store import get_job, list_jobs, set_status, update_fields
+from harrier.tracker.store import (
+    company_has_responded,
+    get_job,
+    list_jobs,
+    set_status,
+    update_fields,
+)
 
 # The CLI verb each status change is spelled as, and the status it produces.
 # One mapping, so the browser cannot invent a sixth transition the command
@@ -124,7 +130,7 @@ def record_company_outcome(
 
     Only company codes, so the candidate's own reasons cannot be filed here;
     and a rejection only for a job the company engaged with, by receiving an
-    application or inviting an interview. An interview invitation needs no
+    application, inviting an interview, or responding before. An interview invitation needs no
     application: a recruiter can approach about a job nobody applied to,
     which `harrier.tracker.transitions` keeps legal on purpose.
     """
@@ -139,7 +145,8 @@ def record_company_outcome(
             f"record it with: harrier reject {selector} --code {code}"
         )
     job = resolve_selector(conn, selector)
-    if code != INTERVIEW_INVITED and not company_engaged(job):
+    engaged = company_engaged(job) or company_has_responded(conn, int(job["id"]))
+    if code != INTERVIEW_INVITED and not engaged:
         raise TrackerActionError(
             "no application or invited interview was recorded for this job, so a "
             "company cannot have responded to it. Mark it applied first; if you are "
