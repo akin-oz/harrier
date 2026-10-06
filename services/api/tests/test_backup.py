@@ -526,8 +526,13 @@ def test_an_unwritable_backup_directory_leaves_nothing_and_prunes_nothing(
 
     target = tmp_path / "backups"
     target.mkdir()
+    # Two archives from one ISO week, so `--keep 1` gives a prune something to
+    # delete: the older one. With one archive, a backup that pruned on failure
+    # still passed, because the prune spared it anyway.
     older = target / f"{ARCHIVE_PREFIX}2020-01-07-000000{ARCHIVE_SUFFIX}"
+    newer = target / f"{ARCHIVE_PREFIX}2020-01-08-000000{ARCHIVE_SUFFIX}"
     older.write_text("x")
+    newer.write_text("x")
     monkeypatch.setenv("HARRIER_BACKUP_DIR", str(target))
     real_open = tarfile.open
 
@@ -546,4 +551,4 @@ def test_an_unwritable_backup_directory_leaves_nothing_and_prunes_nothing(
     assert len(err) == 1
     assert err[0].startswith(f"backup failed: cannot write to backup directory {target}: ")
     assert err[0].endswith(". Set HARRIER_BACKUP_DIR or pass --dest.")
-    assert sorted(path.name for path in target.iterdir()) == [older.name]
+    assert sorted(path.name for path in target.iterdir()) == [older.name, newer.name]

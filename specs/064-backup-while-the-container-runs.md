@@ -189,7 +189,21 @@ applied to spec 051 in the same change.
       read-only parent. Root ignores directory modes, so the test skipped as
       root and this criterion went unproved there. It now refuses the call
       itself, as root and as any other user.
-- [x] The same failure leaves no partial archive and prunes nothing. Same test.
+- [x] A backup directory that exists but cannot be written makes
+      `harrier backup` exit 1 with the one-line `backup failed: cannot write
+      to backup directory ...` message. It leaves no partial archive and
+      prunes nothing. Proved by
+      `services/api/tests/test_backup.py::test_an_unwritable_backup_directory_leaves_nothing_and_prunes_nothing`,
+      which refuses a tar opened for writing in that directory with
+      `PermissionError`. The directory holds two archives from one ISO week
+      and the run passes `--keep 1`, so a prune would delete the older one.
+
+      **Amended 2026-10-06.** As approved, this read "The same failure leaves
+      no partial archive and prunes nothing. Same test." That pointed at the
+      uncreatable-directory test, where no directory is created, so nothing
+      could be pruned, and no criterion cited the `cannot write` line. The
+      test named here held one archive, which a prune keeps anyway, so a
+      backup that pruned on failure still passed.
 - [ ] Spec 061's class table text is amended as stated above, in the same
       change. Open: spec 061 is not yet in git, so the amendment is applied
       to its working copy and lands when spec 061 is committed.
