@@ -371,6 +371,7 @@ this change, and the pairing test now proves every row of it.
   the six bodies resolving to `never`.
 - **The split the spec predicted holds.** With the reader put back to
   `unknown`, `pnpm type-check` fails at "a tracker refusal is read through
-  the contract's types", while every rendered refusal test still passes.
+  the contract's types" in `TrackerPage.test.tsx`, while every rendered
+  refusal test still passes.
   With `rescoreJob`'s 409 sending a dict `detail`, only that pairing case
   fails. Both were temporary edits, run and reverted.
