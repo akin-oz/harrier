@@ -171,14 +171,13 @@ spec 044.
       proves it (the amendment below on spec 023;
       `services/api/tests/test_userconfig.py::test_the_schema_carries_no_scope_column`,
       `::test_a_kind_is_unique_on_its_own`)
-- [ ] an existing Python test named outside a code span fails the check, and
+- [x] an existing Python test named outside a code span fails the check, and
       so does a name marked planned once its test exists, while file names,
       paths, longer words, fenced examples and names no test has pass (the
-      amendment below on Python tests named outside a code span; planned
-      test_a_python_test_named_outside_a_code_span_fails and planned
-      test_planned_exempts_a_python_test_only_until_it_exists, in
-      `services/api/tests/test_spec_structure.py`)
-- [ ] the committed specs name no existing Python test outside a code span,
+      amendment below on Python tests named outside a code span;
+      `services/api/tests/test_spec_structure.py::test_a_python_test_named_outside_a_code_span_fails`,
+      `::test_planned_exempts_a_python_test_only_until_it_exists`)
+- [x] the committed specs name no existing Python test outside a code span,
       and
       `services/api/tests/test_spec_structure.py::test_every_test_a_spec_names_actually_exists`
       passes over every committed spec

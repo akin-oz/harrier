@@ -154,14 +154,17 @@ WEB_TEST = re.compile(r"""(?<![\w.$])(?:it|test)\(\s*(["'`])((?:(?!\1)[^\\]|\\.)
 # A web test file, as a path from the repository root or as a bare file name.
 WEB_FILE = r"[A-Za-z0-9_./-]*[A-Za-z0-9_]\.test\.tsx?(?![A-Za-z0-9_])"
 
+# A code span. Spans wrap across lines but never across a blank line, as in
+# markdown.
+CODE_SPAN = r"(?P<ticks>`+)(?P<code>(?:[^\n]|\n(?![ \t]*\n))+?)(?<!`)(?P=ticks)(?!`)"
+
 # A code span, a double-quoted string, a web test file joined to `::`, or `::`
-# joined to a double-quoted name. Spans wrap across lines but never across a
-# blank line, as in markdown.
+# joined to a double-quoted name. A quoted string wraps the way a span does.
 SPEC_TOKEN = re.compile(
-    r"(?P<ticks>`+)(?P<code>(?:[^\n]|\n(?![ \t]*\n))+?)(?<!`)(?P=ticks)(?!`)"
-    r'|"(?P<quoted>(?:[^"\n]|\n(?![ \t]*\n))*)"'
-    rf"|(?P<bare>{WEB_FILE})(?=::)"
-    r'|(?P<colons>::)(?=")'
+    CODE_SPAN
+    + r'|"(?P<quoted>(?:[^"\n]|\n(?![ \t]*\n))*)"'
+    + rf"|(?P<bare>{WEB_FILE})(?=::)"
+    + r'|(?P<colons>::)(?=")'
 )
 FENCED = re.compile(r"^```.*?^```", re.DOTALL | re.MULTILINE)
 ONLY_FILE = re.compile(WEB_FILE)
@@ -171,6 +174,11 @@ LIST_OPENS = re.compile(r"\s*[:,]\s*(?:planned\s+)?")
 LIST_GOES_ON = re.compile(r"\s*(?:,\s*(?:and\s+)?|and\s+)(?:planned\s+)?")
 NAME_IN = re.compile(r"\s+in\s+")
 PLANNED = re.compile(r"\bplanned\s+\Z")
+
+# A Python test named outside a code span is a whole word, and planned may
+# stand before it or before the path and `::` joined to it.
+WORD = re.compile(r"[A-Za-z0-9_]+")
+PLANNED_PYTHON = re.compile(r"\bplanned\s+(?:(?:[A-Za-z0-9_./-]+\.py)?::)?\Z")
 
 
 @dataclass(frozen=True)
@@ -318,6 +326,65 @@ def python_problems(spec: str, text: str, root: Path, defined: set[str]) -> list
     return problems
 
 
+def joined_to_a_path(text: str, word: re.Match[str]) -> bool:
+    """A `/` or a `.` joins a word to a path or a file name.
+
+    A full stop after a word joins it only when a character follows, as in an
+    extension, so one that ends a sentence joins nothing.
+    """
+    before = text[word.start() - 1 : word.start()]
+    after = text[word.end() : word.end() + 2]
+    return (
+        before in ("/", ".")
+        or after.startswith("/")
+        or re.fullmatch(r"\.[A-Za-z0-9_]", after) is not None
+    )
+
+
+def python_names_outside_code_spans(spec: str, text: str, defined: set[str]) -> list[str]:
+    """Every existing Python test a spec names outside a code span, and every
+    one still marked planned.
+
+    Only a code span is read as a Python citation, so a name anywhere else
+    would go unread until its test was renamed (spec 045's amendment on Python
+    tests named outside a code span). Fenced code blocks and code spans are
+    blanked, keeping their lines, so an example is not a citation and line
+    numbers still match the file.
+    """
+
+    def blank(found: re.Match[str]) -> str:
+        return re.sub(r"[^\n]", " ", found.group(0))
+
+    text = FENCED.sub(blank, text)
+    prose = re.sub(CODE_SPAN, blank, text)
+
+    def where(at: int) -> str:
+        line = text.count("\n", 0, at) + 1
+        return f"{spec}:{line}"
+
+    def planned(at: int) -> bool:
+        # The word, then whitespace and perhaps a path: inside 200 characters.
+        return PLANNED_PYTHON.search(text[max(0, at - 200) : at]) is not None
+
+    problems: list[str] = []
+    for word in WORD.finditer(prose):
+        name = word.group(0)
+        if name not in defined or joined_to_a_path(prose, word):
+            continue
+        if planned(word.start()):
+            reason = "is marked planned but exists"
+        else:
+            reason = "is a Python test named outside a code span"
+        problems.append(f"{where(word.start())}: {name} {reason}")
+    # Planned before a code span: the span is read as a citation, so once its
+    # test exists the word has outlived its reason.
+    for citation in PYTHON_CITATION.finditer(text):
+        name = citation["symbol"]
+        if name in defined and planned(citation.start()):
+            problems.append(f"{where(citation.start())}: {name} is marked planned but exists")
+    return problems
+
+
 def web_problems(spec: str, text: str, root: Path, defined: dict[Path, set[str]]) -> list[str]:
     anywhere = {name for names in defined.values() for name in names}
     found, unread = web_citations(text)
@@ -367,6 +434,7 @@ def unproven_citations(root: Path) -> list[str]:
     for spec in sorted((root / "specs").rglob("*.md")):
         text = spec.read_text(encoding="utf-8")
         problems += python_problems(spec.name, text, root, python)
+        problems += python_names_outside_code_spans(spec.name, text, python)
         problems += web_problems(spec.name, text, root, web)
     return problems
 
@@ -538,3 +606,85 @@ def test_a_python_continuation_is_checked(tmp_path: Path) -> None:
     it, and spec 047 cited a renamed test that way."""
     spec = "(`services/api/tests/test_here.py::test_here`, `::test_here`, `::test_gone`)\n"
     assert unproven_citations(repository(tmp_path, spec)) == ["099-cites.md: test_gone"]
+
+
+OUTSIDE = "test_here is a Python test named outside a code span"
+
+
+@pytest.mark.parametrize(
+    ("text", "problem"),
+    [
+        ("The proof is test_here, which fails without the fix.", f"099-cites.md:1: {OUTSIDE}"),
+        ("The proof is test_here.", f"099-cites.md:1: {OUTSIDE}"),
+        ("The proof is services/api/tests/test_here.py::test_here.", f"099-cites.md:1: {OUTSIDE}"),
+        ("A first line.\n\nThe proof is test_here.", f"099-cites.md:3: {OUTSIDE}"),
+        ("The proof is `test_here`.", None),
+        ("The proof is in test_here.py.", None),
+        ("The proof is under services/api/tests/test_here", None),
+        ("Its fixtures are in test_here/fixtures.json.", None),
+        ("The module is tests.test_here.", None),
+        ("The value is latest_here.", None),
+        ("The proof was test_here_and_more.", None),
+        ("```text\nThe proof is test_here.\n\nA code span stops at a blank line.\n```", None),
+        ("The proof was test_gone, removed with its rule.", None),
+    ],
+    ids=[
+        "prose",
+        "before a full stop",
+        "after its path",
+        "on a later line",
+        "in a code span",
+        "a file name",
+        "the end of a path",
+        "a directory",
+        "a dotted path",
+        "inside a longer word",
+        "a longer name",
+        "a fenced example",
+        "a removed test",
+    ],
+)
+def test_a_python_test_named_outside_a_code_span_fails(
+    text: str, problem: str | None, tmp_path: Path
+) -> None:
+    """A Python citation outside a code span would stay unread until its test
+    was renamed. Only the whole name of a test that exists counts, and never
+    as part of a path, a file name or an example. The fixture's test shares
+    its file's name, so a file name that tripped the rule would fail here."""
+    problems = unproven_citations(repository(tmp_path, text + "\n"))
+    assert problems == ([] if problem is None else [problem])
+
+
+@pytest.mark.parametrize(
+    ("citation", "problem"),
+    [
+        ("planned test_not_written_yet", None),
+        ("planned services/api/tests/test_new.py::test_not_written_yet", None),
+        ("planned test_here", "099-cites.md:1: test_here is marked planned but exists"),
+        (
+            "planned services/api/tests/test_here.py::test_here",
+            "099-cites.md:1: test_here is marked planned but exists",
+        ),
+        ("planned\n      test_here", "099-cites.md:2: test_here is marked planned but exists"),
+        ("planned `test_here`", "099-cites.md:1: test_here is marked planned but exists"),
+        ("planned `test_not_written_yet`", "099-cites.md: test_not_written_yet"),
+    ],
+    ids=[
+        "before a name",
+        "before a path",
+        "stale before a name",
+        "stale before a path",
+        "stale across a line",
+        "stale before a code span",
+        "in a code span before its test",
+    ],
+)
+def test_planned_exempts_a_python_test_only_until_it_exists(
+    citation: str, problem: str | None, tmp_path: Path
+) -> None:
+    """Planned keeps a test's name out of a code span until the change that
+    writes the test, as spec 082 did. Once the test exists the word has
+    outlived its reason wherever it stands, and a name it kept out of a code
+    span would go unread."""
+    problems = unproven_citations(repository(tmp_path, f"- [ ] it will work ({citation})\n"))
+    assert problems == ([] if problem is None else [problem])
