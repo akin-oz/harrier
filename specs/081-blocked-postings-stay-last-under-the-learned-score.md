@@ -105,32 +105,31 @@ which for six features is 60, and 30 test positives.
 
 ## Acceptance criteria
 
-Tests named here are planned; the implementing change cites each one in
-backticks.
+Tests in `services/api/tests/test_scoring_model.py`.
 
-- [ ] A blocked posting scores below an unblocked one even when the model
+- [x] A blocked posting scores below an unblocked one even when the model
       gives the blocked posting a near-certain probability and the unblocked
       one a near-zero probability, and the penalty is computed from the
       model's score bounds rather than written as a constant
-      (planned test_a_blocked_posting_ranks_below_every_unblocked_model_score)
-- [ ] A floored model row names its scorer, its probability, its
+      (`test_a_blocked_posting_ranks_below_every_unblocked_model_score`)
+- [x] A floored model row names its scorer, its probability, its
       contributions and each blocker with the phrase that fired
-      (planned test_blocked_model_rows_name_their_blockers)
-- [ ] `FEATURE_ORDER` holds neither blocker, and a model file with the old
+      (`test_blocked_model_rows_name_their_blockers`)
+- [x] `FEATURE_ORDER` holds neither blocker, and a model file with the old
       eight-feature order is refused as `model-invalid`
-      (planned test_blockers_are_not_features)
-- [ ] A labelled posting a blocker fires on is excluded from the export and
-      counted as `blocked` (planned test_blocked_postings_are_excluded_from_labels)
-- [ ] A model that beats the rules is activated whatever sign its remaining
+      (`test_blockers_are_not_features`)
+- [x] A labelled posting a blocker fires on is excluded from the export and
+      counted as `blocked` (`test_blocked_postings_are_excluded_from_labels`)
+- [x] A model that beats the rules is activated whatever sign its remaining
       weights take, and the report has no blocker condition
-      (planned test_train_ships_without_a_blocker_condition)
-- [ ] The training minimum is ten positives per feature of the current
-      order (planned test_the_minimum_follows_the_feature_count)
-- [ ] Spec 077's tests that assumed blocker features are updated, not
+      (`test_train_ships_without_a_blocker_condition`)
+- [x] The training minimum is ten positives per feature of the current
+      order (`test_the_minimum_follows_the_feature_count`)
+- [x] Spec 077's tests that assumed blocker features are updated, not
       deleted: the blocker-weight refusal is replaced by the floor test above,
       and the US-only W-2 ranking test holds under the floor
-- [ ] Spec 077 is amended to point here
-- [ ] No real posting, company or tracker statistic appears in a fixture,
+- [x] Spec 077 is amended to point here
+- [x] No real posting, company or tracker statistic appears in a fixture,
       the spec or a commit message (ADR-008)
 - [ ] All gates green on PR
 
@@ -162,3 +161,17 @@ backticks.
   `blockers_negative` check this spec removes.
 - Akin's request of 2026-10-06 after the trial: keep spec 078's penalty on
   top of the model's score and drop the blocker ship condition.
+
+## What the implementation found
+
+- **The floor is tight.** With the model's scores between 0 and 100, a blocked
+  posting the model is certain about scores -1 and an unblocked one it
+  rejects scores 0, so the derived penalty is exactly enough and no more.
+  `test_a_blocked_posting_ranks_below_every_unblocked_model_score` builds
+  that case.
+- **Blocker entries follow the contributions and precede any note**, such as
+  `years_experience unset`, so a row reads in the order: scorer, probability,
+  learned reasons, rules.
+- **The learnable training world needed one negative weight** to keep proving
+  that a weight's sign no longer decides shipping; `years_gap` carries it in
+  `test_train_ships_without_a_blocker_condition`.

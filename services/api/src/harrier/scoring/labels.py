@@ -29,12 +29,17 @@ ACTOR_UNKNOWN = "actor-unknown"
 SYSTEM_CLOSED = "system-closed"
 DESCRIPTION_MISSING = "description-missing"
 DESCRIPTION_CHANGED = "description-changed"
+# A posting a blocker fires on is floored, not ranked, by the learned score
+# (spec 081), so it teaches the model nothing it will use. Decided where the
+# posting is assembled, in `harrier.scoring.export`.
+BLOCKED = "blocked"
 EXCLUSIONS: tuple[str, ...] = (
     UNDECIDED,
     ACTOR_UNKNOWN,
     SYSTEM_CLOSED,
     DESCRIPTION_MISSING,
     DESCRIPTION_CHANGED,
+    BLOCKED,
 )
 
 

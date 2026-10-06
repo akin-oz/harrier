@@ -33,7 +33,7 @@ from harrier.scoring.features import (
 )
 from harrier.screening.normalized import NormalizedJob
 from harrier.screening.policy import policy_version
-from harrier.screening.rules import CandidateConfig, score_job
+from harrier.screening.rules import CandidateConfig, blockers, score_job
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,18 @@ SIGNIFICANT_DIGITS = 12
 MODEL_MISSING = "model-missing"
 MODEL_INVALID = "model-invalid"
 EXTRACTION_FAILED = "extraction-failed"
+
+# Every score the model can give: `round(100 * p)` for p between 0 and 1.
+MODEL_SCORE_BOUNDS = (0, 100)
+
+
+def model_blocker_penalty() -> int:
+    """The smallest penalty that puts any blocked posting below every
+    unblocked model score (spec 081): spec 078's derivation, high minus low
+    plus one, over the model's bounds instead of the rules'. Derived, never
+    configured, so it moves if the bounds ever do."""
+    low, high = MODEL_SCORE_BOUNDS
+    return high - low + 1
 
 
 def scoring_dir() -> Path:
@@ -305,12 +317,18 @@ class FitScore:
     version: str
 
 
-def model_signals(model: Model, extraction: Extraction, probability: float) -> list[str]:
+def model_signals(
+    model: Model,
+    extraction: Extraction,
+    probability: float,
+    found: Sequence[tuple[str, str]] = (),
+) -> list[str]:
     """Which scorer, how sure, and the largest reasons, signed.
 
     "Why this score" is always answerable from the row: the five largest
-    contributions to the margin, each with its sign, and the phrase behind a
-    blocker.
+    contributions to the margin, each with its sign, then each blocker that
+    floored the score with the phrase that fired it (spec 081), in the
+    format the rule score uses (spec 078).
     """
     signals = [f"scorer=model:{model.identity}", f"p={probability:.2f}"]
     ranked = sorted(
@@ -318,11 +336,8 @@ def model_signals(model: Model, extraction: Extraction, probability: float) -> l
         key=lambda item: (-abs(item[1]), item[0]),
     )
     for name, value in ranked[:TOP_CONTRIBUTIONS]:
-        entry = f"{'+' if value > 0 else '-'}{name}({value:+.2f})"
-        phrase = extraction.phrases.get(name)
-        if phrase:
-            entry += f' "{phrase}"'
-        signals.append(entry)
+        signals.append(f"{'+' if value > 0 else '-'}{name}({value:+.2f})")
+    signals.extend(f'blocker={kind} "{phrase}"' for kind, phrase in found)
     signals.extend(extraction.notes)
     return signals
 
@@ -355,8 +370,15 @@ def fit_score_for(job: NormalizedJob, candidate_cfg: CandidateConfig) -> FitScor
         )
         return _scored_by_rules(job, candidate_cfg, EXTRACTION_FAILED)
     probability = model.probability(extraction.values)
+    score = round(100 * probability)
+    # A posting the candidate cannot take ranks below every posting they can,
+    # under this scorer as under the rules (spec 081). Once, however many
+    # blockers fire: it is already below everything eligible.
+    found = blockers(job)
+    if found:
+        score -= model_blocker_penalty()
     return FitScore(
-        score=round(100 * probability),
-        reasons=model_signals(model, extraction, probability),
+        score=score,
+        reasons=model_signals(model, extraction, probability, found),
         version=policy_version(candidate_cfg, model=model.identity),
     )

@@ -3,8 +3,13 @@
 Curated, named and few. Each feature comes from title, location and
 description, and each reuses a table `harrier.screening.rules` already owns,
 so the rule score and the learned score cannot disagree about what a phrase
-means: the blockers in particular are spec 078's `rules.blockers`, one
-definition for the penalty and the feature.
+means.
+
+The blockers are not features (spec 081). A posting the candidate cannot
+take is rare among the decisions the model learns from, so a weight for it
+would be noise; instead `harrier.scoring.model` floors a blocked posting
+below every eligible one, by the same derivation spec 078 uses for the rule
+score, and `rules.blockers` stays the one definition of a blocker.
 
 Deterministic by construction: no randomness, no clock, no network, and the
 same job always yields the same vector, which is what lets the export and
@@ -27,7 +32,6 @@ from harrier.screening.rules import (
     BACKEND_TERMS,
     FRONTEND_TERMS,
     CandidateConfig,
-    blockers,
     contains_word,
     is_target_title_variant,
     location_names_explicit_emea,
@@ -42,17 +46,12 @@ FEATURE_ORDER: tuple[str, ...] = (
     "title_fit",
     "frontend_share",
     "explicit_emea_remote",
-    "us_scope",
-    "employment_blocker",
     "years_gap",
 )
 
 # Unbounded counts, divided by their 92nd percentile over the training rows
 # and clipped to 1 at inference. The rest are already between 0 and 1.
 NUMERIC_FEATURES: frozenset[str] = frozenset({"skill_signal", "preferred_signal", "years_gap"})
-
-# Which blocker class from `rules.blockers` sets which feature.
-BLOCKER_FEATURES: dict[str, str] = {"us_scope": "us_scope", "employment": "employment_blocker"}
 
 # The fallback a job takes when it cannot be judged at all.
 DESCRIPTION_MISSING = "description-missing"
@@ -72,13 +71,11 @@ class Extraction:
     """A job as the model reads it.
 
     `values` are raw, before normalization, keyed by `FEATURE_ORDER`.
-    `phrases` names what fired a blocker feature, so the score can say why.
     `notes` are signals the row should carry even though no feature names
     them, such as a configuration key the extractor needed and did not find.
     """
 
     values: dict[str, float]
-    phrases: dict[str, str]
     notes: tuple[str, ...]
 
     def vector(self) -> list[float]:
@@ -113,12 +110,11 @@ def required_years(text: str) -> int | None:
 
 
 def extract(job: NormalizedJob, candidate_cfg: CandidateConfig) -> Extraction:
-    """The feature vector for one job, with the phrases that explain it."""
+    """The feature vector for one job, with any notes the row should carry."""
     title = normalize(job["title"])
     text = normalize(f"{job['title']} {job['description']}")
     scoring = scoring_config(candidate_cfg)
     values: dict[str, float] = {}
-    phrases: dict[str, str] = {}
     notes: list[str] = []
 
     skill_weights = cast("dict[str, int]", scoring["skill_signals"])
@@ -153,13 +149,6 @@ def extract(job: NormalizedJob, candidate_cfg: CandidateConfig) -> Extraction:
 
     values["explicit_emea_remote"] = 1.0 if location_names_explicit_emea(job["location"]) else 0.0
 
-    values["us_scope"] = 0.0
-    values["employment_blocker"] = 0.0
-    for kind, phrase in blockers(job):
-        feature = BLOCKER_FEATURES[kind]
-        values[feature] = 1.0
-        phrases[feature] = phrase
-
     candidate_years = _candidate_years(candidate_cfg)
     required = required_years(normalize(job["description"]))
     if candidate_years is None:
@@ -168,4 +157,4 @@ def extract(job: NormalizedJob, candidate_cfg: CandidateConfig) -> Extraction:
     else:
         values["years_gap"] = max(0.0, float(required) - candidate_years) if required else 0.0
 
-    return Extraction(values=values, phrases=phrases, notes=tuple(notes))
+    return Extraction(values=values, notes=tuple(notes))

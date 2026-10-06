@@ -25,13 +25,13 @@ from pathlib import Path
 
 from harrier.atomicio import write_bytes_atomic
 from harrier.scoring.features import FEATURE_ORDER, extract
-from harrier.scoring.labels import EXCLUSIONS, Labelled, label_job
+from harrier.scoring.labels import BLOCKED, EXCLUSIONS, Labelled, label_job
 from harrier.scoring.model import NO_MODEL, scoring_dir
 from harrier.screening.config import load_candidate_config
 from harrier.screening.descriptions import load_cached_description
 from harrier.screening.normalized import make_normalized_job
 from harrier.screening.policy import policy_version
-from harrier.screening.rules import score_job
+from harrier.screening.rules import blockers, score_job
 from harrier.tracker.store import list_events, list_jobs
 
 EXPORT_FORMAT_VERSION = 1
@@ -71,6 +71,12 @@ def export_features(conn: sqlite3.Connection, *, today: str | None = None) -> Ex
             url=job["url"],
             description=description,
         )
+        # The floor ranks a blocked posting, not the model (spec 081), and
+        # training on it would teach the other features to explain a
+        # rejection the blocker caused.
+        if blockers(normalized):
+            excluded[BLOCKED] += 1
+            continue
         # The baseline is the rule score as it would be now, on the same
         # input the features come from, so model and rules are compared on
         # identical postings. The stored score is never read: it was produced

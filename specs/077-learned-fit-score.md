@@ -342,9 +342,10 @@ A model may be activated only when all three hold:
 
 1. the lower bound of the 95 percent interval of the average precision
    difference is above 0;
-2. the `us_scope` and `employment_blocker` coefficients are negative (a
-   model that learned to reward a blocker would reproduce the 151 case and is
-   refused, whatever its average precision);
+2. superseded by spec 081, which replaced "the `us_scope` and
+   `employment_blocker` coefficients are negative": blockers are no longer
+   features, and a blocked posting is floored below every eligible one by
+   rule instead;
 3. the minimum label counts below were met.
 
 Otherwise `train` still writes the dated model file and the report, exits 3,
@@ -434,11 +435,10 @@ otherwise. Every fixture is synthetic.
 
 - [x] A synthetic US-only W-2 posting ("anywhere in the US", W-2, no
       sponsorship) ranks below a synthetic EMEA-remote posting with the same
-      skill keywords, under a fixture model whose blocker coefficients are
-      negative; the US posting's `signals` name `us_scope` and
-      `employment_blocker` with negative contributions. This proves the
-      features fire and the scorer applies them; whether the real model
-      learned negative weights is ship condition 2, not this test
+      skill keywords under a fixture model, and the US posting's `signals`
+      name both blockers and the phrases that fired them. As amended by spec
+      081 the blocked posting is floored by rule rather than by a learned
+      weight
       (`test_us_only_w2_posting_ranks_below_emea_remote_with_same_keywords`)
 - [x] Feature extraction is deterministic: the same job yields the same
       vector across repeated calls and across a fresh interpreter, and
@@ -474,18 +474,18 @@ otherwise. Every fixture is synthetic.
       (`test_a_decision_on_a_different_description_is_excluded`)
 - [x] `--live-only` drops backfilled events, and the report separates live
       test metrics (`test_live_only_drops_backfilled_events`)
-- [x] The blocker features are spec 078's `rules.blockers`, so a phrase added
-      to a table changes both the penalty and the feature
-      (`test_blocker_features_reuse_the_rule_tables`)
+- [x] Blockers are spec 078's `rules.blockers`, so a phrase added to a table
+      changes both the rule penalty and, as amended by spec 081, the learned
+      score's floor (`test_blocker_features_reuse_the_rule_tables`)
 - [x] The split is time-ordered and p92 stats use training rows only
       (`test_the_split_is_time_ordered`, `test_p92_stats_come_from_training_rows_only`)
 - [x] The old score is never a feature (`test_the_old_score_is_never_a_feature`)
-- [x] `train` refuses below the minimum, refuses to activate a model that does
-      not beat the baseline, and refuses one with a non-negative blocker
-      coefficient, each with exit 3 and the reason
+- [x] `train` refuses below the minimum and refuses to activate a model that
+      does not beat the baseline, each with exit 3 and the reason
       (`test_train_refuses_below_minimum_labels`,
-      `test_train_refuses_a_model_that_does_not_beat_the_rules`,
-      `test_train_refuses_a_model_that_rewards_a_blocker`)
+      `test_train_refuses_a_model_that_does_not_beat_the_rules`). The refusal
+      of a non-negative blocker coefficient is superseded by spec 081
+      (`test_train_ships_without_a_blocker_condition`)
 - [x] The model never changes a gate verdict (`test_the_model_never_changes_a_gate_verdict`);
       `tests/test_screening.py` passes unchanged
 - [x] `reevaluate` scores through the active model
@@ -662,3 +662,20 @@ What implementation found, each with what proves it:
   insufficient labels: the rules keep scoring, as specified while the data is
   below the minimum. The counts were reported in the session, not here
   (ADR-008).
+
+## Amendment: blockers are a floor, not features (spec 081, 2026-10-06)
+
+Spec 081 supersedes the blocker parts of this spec. Blocked postings are rare
+among the decisions the model learns from, so their weights came out near
+zero with either sign, and ship condition 2 refused every model. Now:
+
+- `us_scope` and `employment_blocker` are no longer features, leaving six,
+  so the minimum is 60 training positives (still ten per feature).
+- A blocked posting's model score is lowered by a penalty derived from the
+  model's bounds, so it ranks below every eligible posting under either
+  scorer, and `signals` names each blocker after the contributions.
+- A labelled posting a blocker fires on is excluded from the export, as
+  `blocked`.
+- Ship condition 2 is gone.
+
+The criteria above that described the old behavior point to spec 081's tests.
