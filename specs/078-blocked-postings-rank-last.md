@@ -1,8 +1,8 @@
 ---
 spec: 078
 title: A posting the candidate cannot take ranks below every posting they can
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M8
 depends: [031, 032, 033]
 ---
