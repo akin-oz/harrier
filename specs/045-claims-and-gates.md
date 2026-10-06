@@ -142,6 +142,26 @@ spec 044.
       (`services/api/tests/test_spec_structure.py::test_every_test_a_spec_names_actually_exists`, which also
       verifies the named file defines the named symbol, and
       `services/api/tests/test_demo.py::test_no_committed_file_names_an_absolute_home_directory`)
+- [ ] web test citations are checked in every shape the specs use, each
+      name against the file it names, and a name marked planned is exempt
+      only while no test has it (the 2026-10-06 amendment below; planned
+      test_a_web_citation_naming_no_test_fails,
+      test_a_web_citation_naming_a_real_test_passes,
+      test_a_web_name_must_be_in_the_file_it_names,
+      test_a_web_citation_resolves_to_exactly_one_file and
+      test_planned_exempts_a_web_test_only_until_it_exists, in
+      `services/api/tests/test_spec_structure.py`)
+- [ ] a quoted name of an existing web test that no shape reads fails the
+      check (planned test_a_quoted_web_test_name_with_no_file_fails in
+      `services/api/tests/test_spec_structure.py`)
+- [ ] a Python continuation, a code span holding `::` and a symbol, is
+      checked like a bare symbol (planned
+      test_a_python_continuation_is_checked in
+      `services/api/tests/test_spec_structure.py`)
+- [ ] the citations the wider check finds broken are corrected in specs 047,
+      056 and 080, and
+      `services/api/tests/test_spec_structure.py::test_every_test_a_spec_names_actually_exists`
+      passes over every committed spec
 - [ ] All gates green on PR
 
 ## Proof / origin
@@ -156,3 +176,116 @@ downgraded further because the claim itself was the defect.
 
 Git history, commit bodies, and published pull request descriptions (spec
 046). Coverage for the remaining CLI handlers beyond the decisions named here.
+
+## Amendment (2026-10-06): the reference check reads web tests
+
+`test_every_test_a_spec_names_actually_exists` collects the names of the web
+tests under `apps/web/src`, but its reference pattern matches only a Python
+symbol in a code span. A web test cited in a spec is never checked, so a
+renamed web test breaks a spec's proof without a failure, which is the defect
+the check exists to catch. It has already happened: spec 047 still cites "an
+absent artifact says which operation would produce it", a name commit 8e689a8
+changed.
+
+The same pattern misses a Python continuation, a code span holding `::` and a
+symbol, which cites a test in a file named earlier. The pattern expects a path
+or the symbol straight after the backtick, so it skips every continuation, and
+specs use them often. Spec 047 cites
+test_every_parameterized_kind_is_reachable_from_the_page that way, a name
+commit 5ee1f62 changed.
+
+The name collection has a defect of its own. It reads a web test's name up to
+the first quote mark of any kind, so a double-quoted name holding an
+apostrophe is cut short there, and a correct citation of it would fail once
+citations are read.
+
+### What the check reads
+
+**Web test names.** Every `test(` and `it(` call in a `*.test.ts` or
+`*.test.tsx` file under `apps/web/src`. A name runs to the quote mark that
+closes the one it opened with, so an apostrophe inside double quotes is part
+of the name.
+
+**Citations.** Specs cite a web test in five shapes, and the check reads all
+five, in a spec's text outside fenced code blocks. Below, `<file>` is a web
+test file, written as a path from the repository root or as a bare file name,
+and `<name>` is a test's name. A name may wrap across lines; a run of
+whitespace compares as one space.
+
+```text
+`<file>::<name>`              file and name in one code span (specs 042, 047, 048, 049)
+<file>::"<name>"              the same outside a code span (spec 026)
+`::<name>` or ::"<name>"      a continuation: the name is in the last <file>
+                              before it (specs 026, 042, 047, 048, 049)
+`<file>`: "<name>", "<name>"  a file in a code span, a colon or a comma, then
+                              names separated by commas or "and" (specs 072, 075, 080)
+"<name>" in `<file>`          a name, then "in", then the file (specs 056, 072, 080)
+```
+
+In the last two shapes a name may be double-quoted or in a code span. A name
+in a code span is read only when it holds a space, which a Python symbol and a
+path never do.
+
+**What it checks.** A path must name a web test file, and a bare file name
+must match exactly one. The name must be a test in that file: two files can
+hold tests of the same name, so a test elsewhere does not count. A
+continuation with no file before it fails.
+
+**Planned.** The word planned directly before a name exempts that name while
+no test has it. Where the file and the name share one code span, planned goes
+before the code span. This is the convention commit 851c7fa set for spec 080.
+A name marked planned that does exist fails: the marker has outlived its
+reason, and left in place it would hide the next rename. The change that
+writes the test removes the word.
+
+**A quoted test name with no file fails.** A double-quoted string or a code
+span whose text is exactly the name of an existing web test must be read by
+one of the five shapes, and not as planned. Spec 080's amendments, and one
+sentence of spec 056's, quote web test names with no file, and none of those
+is checked today. Without this rule each new way of writing a citation would
+go unread until its test was renamed, the way qualified Python names did
+(review of PR #49) and web names did.
+
+**Python continuations.** A code span holding `::` and a symbol is read like a
+bare symbol: the symbol must be a test somewhere under `services/api/tests`.
+It is not tied to the file named before it, because specs name that file in
+prose as often as in a code span, and tying it would fail correct citations.
+
+### What changes
+
+- `services/api/tests/test_spec_structure.py`: the check above becomes a
+  function that the existing test calls over the committed specs and the new
+  tests call over fixtures. The fixtures are synthetic: invented test names in
+  a temporary directory.
+- Spec 047: the two renamed citations name their tests as they are now,
+  "an absent artifact is listed with the operation that would produce it" in
+  `ApplyPage.test.tsx`, and
+  `test_every_parameterized_kind_is_reachable_from_a_page`.
+- Spec 080: its amendment from the review of PR #122 gives as its proof a test
+  that a later amendment renamed and rewrote. The proof sentence says so, and
+  every quoted web test name in its amendments gains its file.
+- Spec 056: one quoted web test name gains its file.
+
+No new file, so `config/data-classification.json` does not change.
+
+**Output.** The test fails with one line per broken citation: the spec, the
+line, the name, and what is wrong (not a test in its file, no single file,
+planned but present, or quoted with no file).
+
+**Failure modes this must not introduce.** A quoted phrase that is not the
+name of a test never fails: the rule on quoted names fires only on the exact
+name of a test that exists. A web test file named with no test after it, as
+in a Scope list, is not a citation.
+
+### Limitations
+
+- A citation that was wrong when it was written, in a shape the check does
+  not read, stays unread. The rule on quoted names sees only names that
+  exist. It holds every citation of an existing test, so a rename is caught.
+- A web test whose name is built at run time, from a template string or a
+  loop, has no fixed name to compare. None exists today.
+- Several specs from 016 to 026 cite Python tests outside code spans, and the
+  check does not read those. The Python planned convention relies on exactly
+  that: a planned name is left out of a code span so the check skips it. A
+  rule for Python like the one on quoted web names would need those specs
+  edited first, so it is not part of this amendment.
