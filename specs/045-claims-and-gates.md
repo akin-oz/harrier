@@ -165,7 +165,7 @@ spec 044.
       what replaced it (the amendment below on Python citations;
       `services/api/tests/test_spec_structure.py::test_every_test_a_spec_names_actually_exists`
       passes over every committed spec)
-- [ ] spec 023's Problem, Scope, resolution order and honest limitations
+- [x] spec 023's Problem, Scope, resolution order and honest limitations
       describe `user_config` as spec 041 left it, one row per kind with no
       scope column, and each corrected sentence names the file or test that
       proves it (the amendment below on spec 023;
@@ -362,7 +362,8 @@ limitation names:
 No code changes and no new file.
 
 **How to know it worked.** `grep -n scope specs/023-user-configuration-in-db.md`
-finds the column only where a sentence describes its removal, and
+finds the column only in sentences that describe its removal and in the
+criterion the amendment above marked superseded, and
 `services/api/tests/test_spec_structure.py::test_every_test_a_spec_names_actually_exists`
 passes over every committed spec, so each test the corrections cite exists.
 
