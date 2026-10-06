@@ -3,6 +3,7 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 
+import jobActionsCss from "../../features/tracker/JobActions.css?raw";
 import { TrackerPage } from "./TrackerPage";
 
 /**
@@ -620,6 +621,29 @@ test("other sends the selected code", async () => {
   });
 });
 
+test("a chosen code needs no words", async () => {
+  // Only `other` waits for text. Any other code confirms at once and sends its
+  // own label as the reason, so the row still reads as one (spec 080).
+  const calls = stubApi({ jobs: [job(1, "Northwind", "80")] });
+  const user = userEvent.setup();
+  renderPage();
+
+  const row = await rowFor("Northwind");
+  await user.click(within(row).getByRole("button", { name: "Reject" }));
+  await user.click(within(row).getByRole("button", { name: "other…" }));
+  await user.selectOptions(within(row).getByLabelText("Reason code"), "role_too_senior");
+  await user.click(within(row).getByRole("button", { name: "Confirm" }));
+
+  await waitFor(() => {
+    const sent = calls.find((call) => call.url === "/api/tracker/1/status");
+    expect(sent?.body).toEqual({
+      verb: "reject",
+      reason: "too senior",
+      reason_code: "role_too_senior",
+    });
+  });
+});
+
 test("the exit word names who acted", async () => {
   // Before applying, leaving is a rejection. After, it is a withdrawal, and
   // it sits beside the control for what the company said (spec 080).
@@ -734,6 +758,81 @@ test("danger marks the pills that close the row", async () => {
   }
 });
 
+/**
+ * `[ids, classes, types]` for one selector, `:not(x)` counting as `x`. Enough
+ * for the plain selectors JobActions.css uses: no `:is()`, `:where()` or
+ * nesting, which this would miscount.
+ */
+function specificity(selector: string): number[] {
+  const tokens =
+    selector
+      .replace(/:not\(([^)]*)\)/g, " $1")
+      .match(/#[\w-]+|\.[\w-]+|::[\w-]+|:[\w-]+|\[[^\]]*\]|\b[a-z][\w-]*/gi) ?? [];
+  const count = (test: (token: string) => boolean): number => tokens.filter(test).length;
+  return [
+    count((token) => token.startsWith("#")),
+    count((token) => /^(\.|\[|:(?!:))/.test(token)),
+    count((token) => /^(::|[a-z])/i.test(token)),
+  ];
+}
+
+function outranks(a: number[], b: number[]): boolean {
+  const index = a.findIndex((value, at) => value !== b[at]);
+  return index !== -1 && (a[index] ?? 0) > (b[index] ?? 0);
+}
+
+test("a danger hover outranks the ordinary hover", () => {
+  // jsdom applies matching rules in source order and ignores specificity,
+  // so no rendered test can see this, and "danger marks the pills that close
+  // the row" passed while a browser showed the ordinary accent on every one
+  // of them. The cascade is checked on the stylesheet's own rules, as jsdom
+  // parses them (review of PR #122).
+  const style = document.createElement("style");
+  style.textContent = jobActionsCss;
+  document.head.append(style);
+  const rules = Array.from(style.sheet?.cssRules ?? []).filter(
+    (rule): rule is CSSStyleRule => "selectorText" in rule,
+  );
+  style.remove();
+
+  const ordinary = rules.find(
+    (rule) => rule.selectorText === ".job-actions button:hover:not(:disabled)",
+  );
+  if (ordinary === undefined) throw new Error("the ordinary hover rule is gone");
+  const danger = rules.filter(
+    (rule) =>
+      rule.selectorText.includes(":hover") &&
+      rule.style.getPropertyValue("color").includes("--color-danger"),
+  );
+  // The exit control and the pills that close the row.
+  expect(danger.length).toBe(2);
+  for (const rule of danger) {
+    expect(
+      outranks(specificity(rule.selectorText), specificity(ordinary.selectorText)),
+      rule.selectorText,
+    ).toBe(true);
+  }
+});
+
+test("other… stays a group named by its exit word", async () => {
+  // Whose decision it is stays announced in every state of the takeover,
+  // including the reason form behind other… (spec 080).
+  for (const [status, word] of [
+    ["prospect", "Reject"],
+    ["applied", "Withdraw"],
+  ] as const) {
+    cleanup();
+    stubApi({ jobs: [job(1, "Northwind", "80", status)] });
+    const user = userEvent.setup();
+    renderPage();
+    const row = await rowFor("Northwind");
+    await user.click(within(row).getByRole("button", { name: word }));
+    await user.click(within(row).getByRole("button", { name: "other…" }));
+    const group = within(row).getByRole("group", { name: word });
+    expect(within(group).getByLabelText("Reason code")).toBeDefined();
+  }
+});
+
 test("interviewing is a company outcome, not a verb", async () => {
   for (const status of ["prospect", "applied"]) {
     cleanup();
@@ -797,6 +896,30 @@ test("a takeover keeps keyboard focus", async () => {
   await waitFor(() => {
     expect(document.activeElement).toBe(
       within(applied).getByRole("button", { name: "Company replied" }),
+    );
+  });
+});
+
+test("a refused company response hands focus back to its opener", async () => {
+  // A stale page can offer Company replied on a row that has since changed.
+  // The refusal closes the takeover and refetches the row; keyboard focus
+  // goes back to the control that opened it, as Escape and Cancel do,
+  // rather than to nothing (review finding on PR #122).
+  stubApi({
+    jobs: [job(1, "Northwind", "80", "applied")],
+    outcome: { code: 409, body: { detail: "no application was recorded for this job" } },
+  });
+  const user = userEvent.setup();
+  renderPage();
+
+  const row = await rowFor("Northwind");
+  await user.click(within(row).getByRole("button", { name: "Company replied" }));
+  await user.click(within(row).getByRole("button", { name: "ghosted" }));
+
+  expect(await screen.findByText("no application was recorded for this job")).toBeDefined();
+  await waitFor(() => {
+    expect(document.activeElement).toBe(
+      within(row).getByRole("button", { name: "Company replied" }),
     );
   });
 });

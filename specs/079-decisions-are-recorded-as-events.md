@@ -79,9 +79,11 @@ spec exists to enforce, and it holds at entry, in storage and on read:
 - **At entry.** `harrier reject` records a `candidate` decision and accepts
   only candidate or system codes; given a company code it refuses with exit 2
   and names `company-outcome`. `harrier company-outcome <selector> <code>`
-  records a `company` outcome, accepts only company codes, and refuses a row
-  with no `applied_date` (a company cannot reject an application that was
-  never sent). The status it sets follows from the code: `interview_invited`
+  records a `company` outcome, accepts only company codes, and refuses a
+  response from a company that never engaged with the row: one with no
+  `applied_date` that is not `interviewing` (a company cannot turn down an
+  application never sent or an interview it never offered). The status it
+  sets follows from the code: `interview_invited`
   moves the job to `interviewing`, every other company code to `rejected`,
   both through the existing transition rules.
 - **The `interviewing` verb is a company outcome.** `harrier interviewing`
@@ -137,8 +139,9 @@ CREATE TRIGGER job_events_append_only_delete BEFORE DELETE ON job_events
   the event, before the write. They record what the candidate was looking at
   when they decided. Later rescoring does not touch them.
 - `description_sha256` is the SHA-256 of the cached description at event
-  time, or empty when none is cached. It pins the text the decision was made
-  on without copying it.
+  time, or empty when none is cached or the cached file cannot be read as
+  UTF-8 JSON. It pins the text the decision was made on without copying it,
+  and a damaged cache file never refuses the move it would describe.
 - `reason_text` is the free text as entered. `reason_code` is the code: given
   explicitly, or inferred by `reasons.infer_code(text)`, or `unclassified`
   when inference finds nothing. Non-rejection decisions carry an empty code.
@@ -168,9 +171,10 @@ patterns are generic phrases, not tracker contents.
 candidate verb is the separation rule meeting old habits: `harrier reject 12
 "rejected by company"` is how company rejections were recorded until now.
 The CLI refuses it and names `company-outcome`. The API, which cannot be
-changed here, records it as a `company` outcome when the row has an
-`applied_date`, and as `unknown` / `unclassified` when it does not. It never
-records a company verdict as a candidate decision.
+changed here, records it as a `company` outcome when the company engaged
+with the row (it has an `applied_date`, or it is `interviewing`), and as
+`unknown` / `unclassified` when it did not. It never records a company
+verdict as a candidate decision.
 
 ### Backfill
 
@@ -193,6 +197,10 @@ something the data cannot show. `at` on a backfilled rejection is
 how a reader knows not to treat it as one.
 
 Idempotent: a job with any event is skipped, so a second run writes nothing.
+A job's first live event therefore writes the same reconstruction first, in
+the same transaction, so no job can hold a live event without the history
+before it; backfill would skip such a job, and the trigger would keep its
+history from ever being written.
 `--dry-run` prints counts per kind, actor and code and writes nothing. The
 counts are printed locally and never committed (ADR-008).
 
@@ -208,7 +216,11 @@ digest and API keep reading the `jobs` row; nothing that exists today reads
   transaction, both or neither (`test_a_status_change_and_its_event_commit_together`).
 - A company code on `reject`, or a candidate code on `company-outcome`: exit
   2, nothing written, the message names the right verb.
-- `company-outcome` on a row with no `applied_date`: exit 2, nothing written.
+- `company-outcome` with a rejection code on a row with no `applied_date`
+  that is not `interviewing`: exit 2, nothing written.
+- A description cache file that is not UTF-8 JSON: the move is recorded with
+  an empty `description_sha256`
+  (`test_a_damaged_description_file_does_not_block_a_decision`).
 - An UPDATE or DELETE on `job_events`: aborted by the trigger.
 - Free text that matches no pattern: `unclassified`, never a guess.
 - Must not introduce: a second writer of `job_events`; a change to the status
@@ -242,6 +254,14 @@ rows are synthetic.
       and records an interview invitation without one
       (`test_a_company_cannot_reject_an_application_never_sent`,
       `test_an_interview_invitation_needs_no_application`)
+- [x] After an invited interview on a row never applied to, a company's
+      rejection is its outcome, through `company-outcome` and through
+      `set_status` alike (`test_a_company_can_answer_the_interview_it_invited`)
+- [x] The first live move on a job with no events writes its reconstructed
+      history first, in the same transaction, and backfill then finds
+      nothing to write (`test_a_legacy_row_decided_live_keeps_its_history`)
+- [x] A cached description that is not valid UTF-8 never blocks a move
+      (`test_a_damaged_description_file_does_not_block_a_decision`)
 - [x] Every code belongs to exactly one actor, and `infer_code` maps each
       documented phrase to its code and an unknown phrase to `unclassified`
       (`test_every_reason_code_has_one_actor`, `test_infer_code`)
@@ -391,3 +411,31 @@ What implementation found, each with the test that proves it:
 - **`note`.** `set_status` takes free text for the event alone, for a company
   outcome whose row has no field for it (an interview invitation) or whose
   row field holds the code's label.
+
+## Amendment (2026-10-06, review of the merged range)
+
+A review of the merged 077 to 081 range found three defects in this spec's
+code. Each fix carries a test that fails without it.
+
+- **A live move on a job with no events lost its earlier history.**
+  Backfill skips any job with an event, so a job decided live before
+  `harrier events backfill` ran kept only its live events, and the
+  append-only trigger made the loss permanent. `set_status` now writes the
+  job's reconstruction, marked `backfilled = 1`, before its first live
+  event and in the same transaction. Stated under Backfill;
+  `test_a_legacy_row_decided_live_keeps_its_history`.
+- **A company could not answer an interview it invited.** The engagement
+  rule asked for an `applied_date`, so after a recruiter's approach on a job
+  nobody applied to, every company response was refused by
+  `company-outcome` and filed as `unknown` by `set_status`, while the
+  browser offered it on the row (spec 080). An `interviewing` row now counts
+  as engaged, in `harrier.tracker.reasons.company_engaged`, which both paths
+  read. `test_a_company_can_answer_the_interview_it_invited`.
+- **A damaged cache file blocked a status change.** The digest read caught
+  malformed JSON but not bytes that are not UTF-8, which a write cut off
+  mid-character leaves, so `set_status` raised. Such a file now reads as
+  missing. `test_a_damaged_description_file_does_not_block_a_decision`.
+
+Limitation: a job that already holds live events without the history
+before them is not repaired here. A read-only query finds one: its first
+event is not `created`.

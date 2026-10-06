@@ -227,8 +227,12 @@ export function JobActions({ job, onApply }: Props) {
     onError: (error: Error) => {
       // A stale page can offer this on a row that has since changed. The
       // refusal is shown in the domain's words and the row is fetched again,
-      // so what it offers next matches what it is.
+      // so what it offers next matches what it is. Closing the takeover
+      // unmounts the pill that had focus, so focus goes back to the control
+      // that opened it, as it does on Escape and Cancel (review finding on
+      // PR #122). Outcomes sent from More open no takeover and need none.
       setFailure(error.message);
+      setReturnFocus(takeover);
       reset();
       void queryClient.invalidateQueries({ queryKey: ["jobs"] });
     },
@@ -437,7 +441,13 @@ export function JobActions({ job, onApply }: Props) {
       )}
 
       {takeover === "exit" && otherOpen && (
-        <span className="job-actions__reason" onKeyDown={onTakeoverKey}>
+        // Still the exit takeover, so still named by its word (spec 080).
+        <span
+          className="job-actions__reason"
+          role="group"
+          aria-label={exitLabel}
+          onKeyDown={onTakeoverKey}
+        >
           <select
             aria-label="Reason code"
             value={otherCode}
