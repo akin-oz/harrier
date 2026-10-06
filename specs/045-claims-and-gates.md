@@ -171,6 +171,23 @@ spec 044.
       proves it (the amendment below on spec 023;
       `services/api/tests/test_userconfig.py::test_the_schema_carries_no_scope_column`,
       `::test_a_kind_is_unique_on_its_own`)
+- [x] an existing Python test named outside a code span fails the check, and
+      so does a name marked planned once its test exists, while file names,
+      paths, longer words, fenced examples and names no test has pass (the
+      amendment below on Python tests named outside a code span;
+      `services/api/tests/test_spec_structure.py::test_a_python_test_named_outside_a_code_span_fails`,
+      `::test_planned_exempts_a_python_test_only_until_it_exists`,
+      `::test_a_fenced_example_is_never_a_citation`)
+- [x] the committed specs name no existing Python test outside a code span,
+      and
+      `services/api/tests/test_spec_structure.py::test_every_test_a_spec_names_actually_exists`
+      passes over every committed spec
+- [x] spec 023's honest limitations say that config writes through the API
+      need the local API token and a trusted Host header since spec 035,
+      without calling the token authentication, and name the tests that
+      prove it (the amendment below on API auth;
+      `services/api/tests/test_api_exposure.py::test_a_state_changing_request_without_the_token_is_refused`,
+      `::test_a_request_with_a_foreign_host_is_refused`)
 - [x] an `-n` that belongs to another command in the same chain, or to
       commit message text, is allowed, while `git commit -n`,
       `git commit -nm "..."`, `--no-verify`, and
@@ -384,6 +401,126 @@ passes over every committed spec, so each test the corrections cite exists.
   session token on config writes
   (`services/api/tests/test_api_exposure.py::test_a_state_changing_request_without_the_token_is_refused`).
   It is not about the scope column, so it is left to its own change.
+
+## Amendment (2026-10-06): a Python test named outside a code span fails
+
+The first limitation of the amendment on Python citations in specs 016 to 026
+is this amendment. The check reads a Python test citation only in a code
+span, so a Python test named anywhere else is never read, and a rename breaks
+that citation without a failure. Specs 016 and 018 to 026 cited tests that way
+until that amendment, and nothing stops a new spec from doing it again. Web
+tests had the same gap, and the rule on quoted names closed it.
+
+### What the check reads
+
+**An existing Python test named outside a code span fails.** In a spec's text
+outside fenced code blocks and code spans, the exact name of a test defined
+under `services/api/tests` fails the check. Cited in a code span instead, the
+name is checked as before. A name no test has passes, so the removed tests
+that specs 023, 045 and 065 name stay as they are.
+
+**A name stands alone.** A name is a whole word: a longer identifier that
+contains one is not that name. A `/` or a `.` joins a name to a path or a file
+name, and then it is part of that path, so `services/api/tests/test_x.py`
+names a file and not a test. A full stop that ends a sentence joins nothing.
+
+**Planned.** The word planned directly before a name, or before the path and
+`::` joined to it, marks a test not yet written. The name stays out of a code
+span, as before, and passes while no test has it. Once a test has it, the
+citation fails as marked planned but exists, as on the web side: the marker
+has outlived its reason, and the change that writes the test removes the word
+and moves the name into a code span. Planned before a code span fails the
+same way once its test exists. A planned Python name never belongs in a code
+span: with no test, the span already fails as naming nothing.
+
+### What changes
+
+- `services/api/tests/test_spec_structure.py`: `unproven_citations` applies
+  the rule, and new tests run it over invented repositories with synthetic
+  names.
+- The committed specs: a draft of the rule finds no existing Python test
+  named outside a code span in them, so none is expected to change. Any name
+  the rule does find moves into a code span in this change, and the pull
+  request lists it.
+
+No new file, so `config/data-classification.json` does not change.
+
+**Output.** One line per name: the spec, the line, the name, and what is
+wrong (named outside a code span, or marked planned but exists).
+
+**How to know it worked.** The check passes over every committed spec.
+Writing an existing Python test's name in a spec, outside a code span, makes
+it fail and name the spec and the line. Before this change it passed.
+
+**Failure modes this must not introduce.** A file name, a path, a longer
+word, a fenced example and a name no test has never fail.
+
+### Limitations
+
+- The rule sees only names that exist, as the rule on quoted web names does.
+  A name that was already wrong when it was written stays unread outside a
+  code span.
+- A code span that holds more than a citation, such as a command, is still
+  not read. None holds the name of an existing test today.
+- Planned is read only directly before a name or its path. In "planned
+  test_x and test_y" only the first name carries it, so once both tests
+  exist the second fails as named outside a code span instead. Both fail.
+
+## Amendment (2026-10-06): spec 023 and the architecture doc on API auth
+
+The second limitation of the amendment "spec 023 describes the table
+spec 041 left" is this amendment. Spec 023's honest limitations say "The
+API write path has no auth either, because the service binds to localhost
+(unchanged from every other endpoint)." Spec 035 made that untrue. In
+`services/api/src/harrier_api/app.py`, `PUT` and `DELETE /config/{kind}`
+declare `dependencies=[Depends(require_token)]`, so a request without the
+local API token gets 403. `TrustedHostMiddleware` wraps the whole app, so
+a request whose Host header is not in `TRUSTED_HOSTS`
+(`services/api/src/harrier_api/localauth.py`) gets 400 before it reaches
+any route.
+
+The token is not authentication, and the correction does not call it that.
+`load_or_create_token` in `services/api/src/harrier_api/localauth.py`
+creates one token per install and stores it readable only by its owner. It
+tells the harrier UI apart from a page on another origin, not one user from
+another. The README's honest limitations call this a same-machine boundary,
+not a user model, and spec 023's correction uses the same words. Spec 035
+says the token is "bound to the local session", and that limitation calls
+it the session token. The code creates it once per install and keeps it in
+a file, so spec 023's correction says per install.
+
+`docs/architecture.md` makes the same claim in its honest limitations: "No
+auth on the API; it binds to localhost." This spec's Problem already lists
+architecture statements about auth among the claims to correct.
+
+### What changes
+
+- Spec 023: that sentence is corrected against the code. It says that since
+  spec 035 a config write needs the local API token and a trusted Host
+  header, names the tests that prove it in code spans so the reference
+  check reads them, and calls the token a same-machine boundary rather than
+  authentication. The paragraph's sentence "There is no authentication, no
+  tenant resolution, and no isolation" does not change: it is about user
+  accounts, and there are none.
+- `docs/architecture.md`: that line is corrected against the same code. It
+  keeps "Single user, single machine", says there are no user accounts, and
+  says the local API token and the trusted-host check stop a web page in
+  another tab from driving the API, but not a process running as the
+  operator. It names `services/api/tests/test_api_exposure.py` as the proof,
+  as the criterion on corrected claims requires.
+
+No code changes and no new file.
+
+**How to know it worked.** `grep -n "binds to localhost" specs/023-user-configuration-in-db.md docs/architecture.md`
+finds nothing, and
+`services/api/tests/test_spec_structure.py::test_every_test_a_spec_names_actually_exists`
+passes over every committed spec, so each test the correction cites exists.
+
+### Limitations
+
+- Nothing reads `docs/architecture.md` or a spec's prose against the code,
+  so either can go stale again without a failure, the way these two did
+  after spec 035.
 
 ## Amendment (2026-10-06): the commit guard reads only the commit's words
 

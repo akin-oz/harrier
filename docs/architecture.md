@@ -162,7 +162,9 @@ Details and the review-agent set land with deliverable 4 (checkpoint B).
 
 ## Honest limitations
 
-- Single user, single machine. No auth on the API; it binds to localhost.
+- Single user, single machine. There are no user accounts. A local API token and a
+  trusted-host check stop a web page in another tab from driving the API, but not a
+  process running as the operator (spec 035; `services/api/tests/test_api_exposure.py`).
 - The run registry is not a durable queue; scheduled work bypasses it by design.
 - macOS is the production platform (launchd); other platforms get manual CLI or cron.
 - SQLite truth trades direct greppability for transactions; `just export` restores it.
