@@ -12,6 +12,7 @@ what keeps a pull request title out of a fixture (ADR-008).
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -44,6 +45,28 @@ NOTICE = """<!-- This is an auto-generated comment: rate limited by coderabbit.a
 > **Next review available in:** **{wait}**
 > You've used all free OSS reviews for now.
 <!-- end of auto-generated comment: rate limited by coderabbit.ai -->"""
+
+# The wording the service has used since (spec 043 amendment), read from a live
+# pull request on 2026-10-06 and cut to its lines that matter, without the
+# account links it carries.
+CURRENT_NOTICE = """<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->
+
+> [!WARNING]
+> ## Review limit reached
+>
+> You've used all free OSS reviews for now.
+>
+> **Next included review available in {wait}.**
+>
+> <details>
+> <summary>View limit details</summary>
+>
+> **Limit details:** You've used the included review currently available.
+>
+> </details>
+<!-- end of auto-generated comment: rate limited by coderabbit.ai -->"""
+
+NOW = datetime(2026, 10, 6, 14, 45, tzinfo=UTC)
 
 
 @pytest.fixture
@@ -80,6 +103,18 @@ def a_state(**overrides: object) -> PullRequestState:
 )
 def test_the_wait_is_parsed(wait: str, expected: int) -> None:
     assert parse_wait_minutes(NOTICE.format(wait=wait)) == expected
+
+
+@pytest.mark.parametrize(
+    ("wait", "expected"),
+    [("52 minutes", 52), ("1 hour", 60), ("1 hour 5 minutes", 65)],
+)
+def test_the_current_notice_wording_is_parsed(wait: str, expected: int) -> None:
+    """The service reworded its notice: no colon after "available in", and no
+    bold of its own around the wait. The pattern read only the first wording,
+    so every rate-limited pull request reported "a rate-limit notice carried
+    no readable wait" and was skipped rather than waited for."""
+    assert parse_wait_minutes(CURRENT_NOTICE.format(wait=wait)) == expected
 
 
 def test_a_notice_with_no_readable_wait_returns_none() -> None:
@@ -130,6 +165,85 @@ def test_a_rate_limited_pull_request_waits() -> None:
     )
     assert decision.action == WAIT
     assert decision.wait_minutes == 39, "the grace minute keeps it off the exact boundary"
+
+
+def test_a_notice_waits_only_what_is_left_of_it() -> None:
+    """The wait counts from when the notice was posted, plus the grace minute."""
+    decision = decide(
+        a_state(
+            comment_bodies=[CURRENT_NOTICE.format(wait="52 minutes")],
+            notice_at="2026-10-06T14:25:00Z",
+        ),
+        requests_today=0,
+        daily_limit=DEFAULT_DAILY_LIMIT,
+        now=NOW,
+    )
+    assert decision.action == WAIT
+    assert decision.wait_minutes == 52 + GRACE_MINUTES - 20
+
+
+def test_an_expired_notice_asks_again() -> None:
+    """Counted from now, a notice three hours old made the loop wait out a
+    limit that had long passed before asking for the review it cut short."""
+    decision = decide(
+        a_state(
+            comment_bodies=[CURRENT_NOTICE.format(wait="32 minutes")],
+            notice_at="2026-10-06T10:52:25Z",
+        ),
+        requests_today=0,
+        daily_limit=DEFAULT_DAILY_LIMIT,
+        now=NOW,
+    )
+    assert decision.action == REQUEST
+    assert "nothing has reviewed" in decision.reason
+
+
+def test_an_expired_notice_on_a_reviewed_head_is_left_alone() -> None:
+    """Once its wait has passed, a notice decides nothing: a review that has
+    since covered the head is not asked for again."""
+    decision = decide(
+        a_state(
+            comment_bodies=[CURRENT_NOTICE.format(wait="32 minutes")],
+            notice_at="2026-10-06T10:52:25Z",
+            review_threads=3,
+            head_sha="abc1234",
+            last_reviewed_sha="abc1234",
+        ),
+        requests_today=0,
+        daily_limit=DEFAULT_DAILY_LIMIT,
+        now=NOW,
+    )
+    assert decision.action == SKIP
+
+
+def test_a_closed_pull_request_is_never_asked() -> None:
+    """The service answers a request on a merged pull request with "Action
+    not completed. Pull request is closed.", so asking only adds a comment.
+    Found by asking for reviews of merged pull requests."""
+    for comments, notice_at in (([], ""), ([CURRENT_NOTICE.format(wait="32 minutes")], "")):
+        decision = decide(
+            a_state(closed=True, comment_bodies=comments, notice_at=notice_at),
+            requests_today=0,
+            daily_limit=DEFAULT_DAILY_LIMIT,
+            now=NOW,
+        )
+        assert decision.action == SKIP
+        assert "closed" in decision.reason
+    assert "closed" in report([a_state(closed=True)])[0]
+
+
+def test_a_closed_pull_request_is_still_owed_its_answers() -> None:
+    """Answering comes before the state: a finding on a merged pull request
+    still needs a reply."""
+    waiting = ThreadState(
+        identifier="t1", resolved=True, last_author="coderabbitai", last_comment_id="c1"
+    )
+    decision = decide(
+        a_state(closed=True, review_threads=1, awaiting=(waiting,)),
+        requests_today=0,
+        daily_limit=DEFAULT_DAILY_LIMIT,
+    )
+    assert decision.action == RESPOND
 
 
 def test_an_unreviewed_pull_request_is_asked_again() -> None:
@@ -263,24 +377,20 @@ def payload(
     *,
     threads: list[dict[str, object]] | None = None,
     reviews: list[dict[str, object]] | None = None,
+    state: str | None = None,
 ) -> str:
     """A GraphQL answer in the shape gather parses.
 
     Built here rather than pasted, so a test says which threads and reviews it
     means instead of carrying an opaque blob.
     """
-    return json.dumps(
-        {
-            "data": {
-                "repository": {
-                    "pullRequest": {
-                        "reviewThreads": {"nodes": threads or []},
-                        "reviews": {"nodes": reviews or []},
-                    }
-                }
-            }
-        }
-    )
+    pull: dict[str, object] = {
+        "reviewThreads": {"nodes": threads or []},
+        "reviews": {"nodes": reviews or []},
+    }
+    if state is not None:
+        pull["state"] = state
+    return json.dumps({"data": {"repository": {"pullRequest": pull}}})
 
 
 def thread(
@@ -580,3 +690,96 @@ def test_a_notice_among_other_comments_is_still_found(handled_env: Path) -> None
     )
     # The newest notice wins, which is the whole reason newest_notice exists.
     assert decide(state, requests_today=0, daily_limit=6).wait_minutes == 30 + GRACE_MINUTES
+
+
+def test_the_current_notice_survives_gather_with_its_time(handled_env: Path) -> None:
+    """Through `gather`, as the API returns it: the reworded notice, and the
+    time of the comment that holds it, so the wait counts from then."""
+    comments = json.dumps(
+        [
+            {"body": "Looks good to me", "updated_at": "2026-10-06T09:00:00Z"},
+            {
+                "body": "walkthrough\n" + CURRENT_NOTICE.format(wait="52 minutes"),
+                "updated_at": "2026-10-06T14:25:00Z",
+            },
+        ]
+    )
+    state = gather(39, stub_gh(comments, "abc\n", payload()), owner="o", repo="r")
+    assert state.notice_at == "2026-10-06T14:25:00Z"
+    decision = decide(state, requests_today=0, daily_limit=6, now=NOW)
+    assert (decision.action, decision.wait_minutes) == (WAIT, 52 + GRACE_MINUTES - 20)
+
+
+def test_gather_reads_whether_the_pull_request_is_closed(handled_env: Path) -> None:
+    merged = gather(
+        39, stub_gh(comment_payload(), "abc\n", payload(state="MERGED")), owner="o", repo="r"
+    )
+    still_open = gather(
+        39, stub_gh(comment_payload(), "abc\n", payload(state="OPEN")), owner="o", repo="r"
+    )
+    assert (merged.closed, still_open.closed) == (True, False)
+    assert decide(merged, requests_today=0, daily_limit=6).action == SKIP
+    assert decide(still_open, requests_today=0, daily_limit=6).action == REQUEST
+
+
+# --- reviews the service leaves no review object for (spec 043 amendment) ---
+
+
+SUMMARY = """<!-- This is an auto-generated comment: summarize by coderabbit.ai -->
+{state}
+Reviewing files that changed from the base of the PR and between {base} and {head}.
+<!-- end of auto-generated comment: summarize by coderabbit.ai -->"""
+
+BASE = "1" * 40
+HEAD = "2" * 40
+
+
+def service_comments(*bodies: str) -> str:
+    """Comments as the API returns them, written by the review service."""
+    return json.dumps([{"body": body, "user": {"login": "coderabbitai[bot]"}} for body in bodies])
+
+
+def test_a_clean_review_counts_as_reviewed(handled_env: Path) -> None:
+    """A review that finds nothing creates no review object, only a line in
+    the summary comment beside the commits it covered. Read as unreviewed,
+    the pull request was asked again and spent the hour's one review on
+    commits already reviewed."""
+    clean = SUMMARY.format(
+        state="No actionable comments were generated in the recent review.", base=BASE, head=HEAD
+    )
+    at_head = gather(
+        39, stub_gh(service_comments(clean), f"{HEAD}\n", payload()), owner="o", repo="r"
+    )
+    assert at_head.reviewed
+    assert decide(at_head, requests_today=0, daily_limit=6).action == SKIP
+    moved = gather(39, stub_gh(service_comments(clean), "3" * 40, payload()), owner="o", repo="r")
+    assert decide(moved, requests_today=0, daily_limit=6).action == REQUEST
+
+
+def test_a_notice_carrying_a_commit_range_is_not_a_review(handled_env: Path) -> None:
+    """A rate-limit notice names the same commit range as a review does, so
+    the range alone proves nothing."""
+    notice = SUMMARY.format(state=CURRENT_NOTICE.format(wait="40 minutes"), base=BASE, head=HEAD)
+    state = gather(
+        39, stub_gh(service_comments(notice), f"{HEAD}\n", payload()), owner="o", repo="r"
+    )
+    assert not state.reviewed
+
+
+def test_a_review_in_progress_is_not_asked_again(handled_env: Path) -> None:
+    """Asking while the service is still writing buys a second review of the
+    same commits, or a notice."""
+    writing = SUMMARY.format(
+        state="<!-- This is an auto-generated comment: review in progress by coderabbit.ai -->",
+        base=BASE,
+        head=HEAD,
+    )
+    state = gather(
+        39,
+        stub_gh(service_comments(writing, "Thanks for the update."), f"{HEAD}\n", payload()),
+        owner="o",
+        repo="r",
+    )
+    decision = decide(state, requests_today=0, daily_limit=6)
+    assert (decision.action, decision.reason) == (SKIP, "a review is in progress")
+    assert "in progress" in report([state])[0]
