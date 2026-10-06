@@ -1,8 +1,8 @@
 ---
 spec: 081
 title: Blocked postings stay last under the learned score
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M8
 depends: [077, 078]
 ---
