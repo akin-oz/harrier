@@ -1,8 +1,8 @@
 ---
 spec: 080
 title: The browser records a company's response apart from the candidate's rejection
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M8
 depends: [042, 056, 079]
 ---
