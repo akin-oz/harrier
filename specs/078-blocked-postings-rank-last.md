@@ -66,9 +66,12 @@ there names the region it permits. `employment` has no such override: W-2
 and at-will are US payroll terms whatever the location says.
 
 Nor does `us_scope` fire on a US phrase offered with an explicit EMEA
-alternative: "must be based in the US or the EU" and "US/EU" are postings
-open to Europe. An alternative that is ambiguous or outside EMEA ("or
-anywhere", "or Canada") is no such offer, and the phrase still fires.
+alternative: "must be based in the US or the EU", "US/EU" and "the US,
+Canada, or Europe" are postings open to Europe. The offer must end its
+clause: a region word that opens the next one ("authorized to work in the
+US, EU candidates are not eligible") offers nothing. An alternative that is
+ambiguous or outside EMEA ("or anywhere", "or Canada") is no such offer
+either, and the phrase still fires.
 
 The location override is what the description-scoping rule in
 `remote_region_allowed` protects against in a different form. That rule keeps
@@ -176,6 +179,8 @@ posting is synthetic, with an invented company.
       with an ambiguous or non-EMEA alternative does
       (`test_a_us_phrase_with_an_emea_alternative_is_not_a_blocker`,
       `test_a_non_emea_alternative_still_blocks`)
+- [x] A region word that opens the next clause leaves US scope standing
+      (`test_a_region_opening_the_next_clause_offers_nothing`)
 - [x] A location holding an EU-permit phrase names EMEA and overrides US
       scope (`test_an_eu_permit_location_names_emea`)
 - [x] Each ambiguous word alone in the location leaves US scope standing,
@@ -320,3 +325,31 @@ that fails without it.
 These change which postings are floored, so rows scored before them keep
 their old scores until rescored, as the limitations section says of any
 version.
+
+## Amendment (2026-10-06, review of the fixes)
+
+A review of the merged fixes above found that the alternative rule had
+opened a hole, and that the floor's tests could pass with its terms
+reverted. Each fix carries a test that fails without it.
+
+- **The alternative rule read one word.** It skipped a US phrase whenever
+  the next word after a comma, slash, "or" or "and" was an EMEA region. So
+  a US-only posting that went on to mention Europe, as in "authorized to
+  work in the US, EU candidates are not eligible", escaped the floor and
+  ranked with the postings open to Europe. An offered region must now end
+  its clause, as stated under Behavior.
+  `test_a_region_opening_the_next_clause_offers_nothing`.
+- **It also missed common spellings of a real offer:** a list of places,
+  ", or", the full stop of "U.S.", and "or in Europe". Each still floored a
+  posting open to Europe. Each is now read as an offer, and so are a place
+  after the region and a comma that ends the clause.
+  `test_a_us_phrase_with_an_emea_alternative_is_not_a_blocker`.
+- **The floor's tests could not see three of its terms.** The suite stayed
+  green with any of these reverted: the smaller domain bonus below zero, the
+  include bonus held to what the keywords earn, or a negative exact title or
+  include bonus. A randomized check over generated configurations found
+  postings outside the bounds with each one reverted, and none with the code
+  as merged. `test_the_floor_holds_with_a_negative_contribution` now sets
+  each bonus below zero in turn, and
+  `test_the_blocker_penalty_is_derived_from_the_rules` also runs with an
+  include cap above what the keywords can earn.
