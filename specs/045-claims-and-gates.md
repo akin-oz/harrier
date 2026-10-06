@@ -171,6 +171,12 @@ spec 044.
       proves it (the amendment below on spec 023;
       `services/api/tests/test_userconfig.py::test_the_schema_carries_no_scope_column`,
       `::test_a_kind_is_unique_on_its_own`)
+- [ ] spec 023's honest limitations say that config writes through the API
+      need the local API token and a trusted Host header since spec 035,
+      without calling the token authentication, and name the tests that
+      prove it (the amendment below on the API write path;
+      `services/api/tests/test_api_exposure.py::test_a_state_changing_request_without_the_token_is_refused`,
+      `::test_a_request_with_a_foreign_host_is_refused`)
 - [ ] All gates green on PR
 
 ## Proof / origin
@@ -377,3 +383,49 @@ passes over every committed spec, so each test the corrections cite exists.
   session token on config writes
   (`services/api/tests/test_api_exposure.py::test_a_state_changing_request_without_the_token_is_refused`).
   It is not about the scope column, so it is left to its own change.
+
+## Amendment (2026-10-06): spec 023's sentence on the API write path
+
+The second limitation of the amendment "spec 023 describes the table
+spec 041 left" is this amendment. Spec 023's honest limitations say "The
+API write path has no auth either, because the service binds to localhost
+(unchanged from every other endpoint)." Spec 035 made that untrue. In
+`services/api/src/harrier_api/app.py`, `PUT` and `DELETE /config/{kind}`
+declare `dependencies=[Depends(require_token)]`, so a request without the
+local API token gets 403. `TrustedHostMiddleware` wraps the whole app, so
+a request whose Host header is not in `TRUSTED_HOSTS`
+(`services/api/src/harrier_api/localauth.py`) gets 400 before it reaches
+any route.
+
+The token is not authentication, and the correction does not call it that.
+`load_or_create_token` in `services/api/src/harrier_api/localauth.py`
+creates one token per install and stores it readable only by its owner. It
+tells the harrier UI apart from a page on another origin, not one user from
+another. The README's honest limitations call this a same-machine boundary,
+not a user model, and the correction uses the same words. Spec 035 says the
+token is "bound to the local session", and that limitation calls it the
+session token. The code creates it once per install and keeps it in a file,
+so the correction says per install.
+
+### What changes
+
+- Spec 023: that sentence is corrected against the code. It says that since
+  spec 035 a config write needs the local API token and a trusted Host
+  header, names the tests that prove it in code spans so the reference
+  check reads them, and calls the token a same-machine boundary rather than
+  authentication. The paragraph's sentence "There is no authentication, no
+  tenant resolution, and no isolation" does not change: it is about user
+  accounts, and there are none.
+
+No code changes and no new file.
+
+**How to know it worked.** `grep -n "binds to localhost" specs/023-user-configuration-in-db.md`
+finds nothing, and
+`services/api/tests/test_spec_structure.py::test_every_test_a_spec_names_actually_exists`
+passes over every committed spec, so each test the correction cites exists.
+
+### Limitations
+
+- `docs/architecture.md` says "No auth on the API; it binds to localhost."
+  It is stale the same way. It is not a spec, so it is left to its own
+  change.
