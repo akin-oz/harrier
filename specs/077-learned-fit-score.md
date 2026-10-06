@@ -101,7 +101,7 @@ the row. Per job, from its `job_events`:
 what an employer did with an application, not what the candidate thought of
 the posting. Spec 079 stores them apart so that no reader has to guess; this
 spec does not read them for the binary label
-(planned test_a_company_outcome_is_never_a_label).
+(`test_a_company_outcome_is_never_a_label`).
 
 **Location-reason rejections stay `0`.** A candidate decision coded
 `not_remote` or `location` is a posting that passed the automated gates and
@@ -132,7 +132,7 @@ correct this; it limits and measures it:
 - The old score is never a feature. `fit_score`, `score`, `signals` and
   `scoring_version`, on the row or on an event, are not read by the
   extractor, and the trainer refuses a feature order that names any of them
-  (planned test_the_old_score_is_never_a_feature).
+  (`test_the_old_score_is_never_a_feature`).
 - The rule score appears in the export only as the baseline column,
   recomputed with `score_job` under the current policy (including spec 078's
   blocker penalty), so model and baseline are compared on identical inputs.
@@ -154,7 +154,7 @@ ones (a backfilled rejection's `at` is `updated_at`, an upper bound that
 rescoring can push late, so it is not trusted for ordering). Ties are broken
 by job id. The earliest 70 percent are training rows and the rest are test
 rows. No test row is earlier than any training row
-(planned test_the_split_is_time_ordered). Regularization strength is chosen by
+(`test_the_split_is_time_ordered`). Regularization strength is chosen by
 forward-chaining cross-validation inside the training window only.
 
 ### Features
@@ -182,7 +182,7 @@ The blocker features call spec 078's `rules.blockers(job)` and nothing else.
 There is one definition of a blocker, in `rules.py`: the rule penalty and the
 model feature cannot disagree about whether a posting is blocked, and a
 phrase added to a table reaches both and moves the policy version once
-(planned test_blocker_features_reuse_the_rule_tables). The EU-permit stripping and
+(`test_blocker_features_reuse_the_rule_tables`). The EU-permit stripping and
 word-bounding are spec 078's and are inherited, not repeated.
 
 `years_gap` needs the candidate's years, which no configuration holds today.
@@ -198,7 +198,7 @@ per-source scoring) and no description-length feature (length is the defect).
 **Normalization.** Numeric features are divided by their 92nd percentile over
 the training rows and clipped to 1. The percentiles are computed from
 training rows only and stored in the model file, so test rows never inform
-their own scaling (planned test_p92_stats_come_from_training_rows_only). A
+their own scaling (`test_p92_stats_come_from_training_rows_only`). A
 percentile of 0 stores as 1, so a feature that never fired in training
 cannot divide by zero.
 
@@ -277,7 +277,7 @@ The gates still filter and the model only ranks. `title_allowed` and
 `remote_region_allowed` run before scoring exactly as now, and a job the gates
 reject is never scored. Remote-only and EMEA enforcement are not touched. A
 blocker feature lowers a rank; it never rejects
-(planned test_the_model_never_changes_a_gate_verdict).
+(`test_the_model_never_changes_a_gate_verdict`).
 
 ### Versioning
 
@@ -295,7 +295,7 @@ correct, and keeping one version rather than two is the simpler contract.
 
 Open rows (prospect, shortlisted) scored before activation sit on the old
 rule scale. `harrier reevaluate` rescores them through the same seam
-(planned test_reevaluate_uses_the_active_model); rows already decided keep their
+(`test_reevaluate_uses_the_active_model`); rows already decided keep their
 historic score, which is the record spec 033 protects.
 
 ### Fallback
@@ -389,7 +389,7 @@ Every new path and its class:
 All four `data/scoring/` paths are already covered by the `data/**` pattern
 in `config/data-classification.json`, so the guarded file needs no edit. If
 review prefers an explicit entry, that edit touches a guarded file and needs
-Akin's approval under this spec. planned test_every_scoring_path_is_never_in_git
+Akin's approval under this spec. `test_every_scoring_path_is_never_in_git`
 asserts the coverage through the matcher `tests/test_classification_coverage.py` uses.
 
 The export holds row id, `added_at`, label, the feature vector and the
@@ -429,80 +429,76 @@ skips when its dependency is absent is a guard that never runs.
 
 ## Acceptance criteria
 
-Tests marked planned do not exist yet. They are named here so the
-implementation has a target; the implementing change cites each one in
-backticks, where `tests/test_spec_structure.py` checks it exists.
-
 Tests live in `services/api/tests/test_scoring_model.py` unless named
 otherwise. Every fixture is synthetic.
 
-- [ ] A synthetic US-only W-2 posting ("anywhere in the US", W-2, no
+- [x] A synthetic US-only W-2 posting ("anywhere in the US", W-2, no
       sponsorship) ranks below a synthetic EMEA-remote posting with the same
       skill keywords, under a fixture model whose blocker coefficients are
       negative; the US posting's `signals` name `us_scope` and
       `employment_blocker` with negative contributions. This proves the
       features fire and the scorer applies them; whether the real model
       learned negative weights is ship condition 2, not this test
-      (planned test_us_only_w2_posting_ranks_below_emea_remote_with_same_keywords)
-- [ ] Feature extraction is deterministic: the same job yields the same
+      (`test_us_only_w2_posting_ranks_below_emea_remote_with_same_keywords`)
+- [x] Feature extraction is deterministic: the same job yields the same
       vector across repeated calls and across a fresh interpreter, and
       `EU_PERMIT_PATTERNS` phrases never set a blocker
-      (planned test_feature_extraction_is_deterministic,
-      planned test_eu_permit_phrases_are_never_blockers)
-- [ ] The model JSON round-trips and scores identically without
+      (`test_feature_extraction_is_deterministic`,
+      `test_eu_permit_phrases_are_never_blockers`)
+- [x] The model JSON round-trips and scores identically without
       scikit-learn: a subprocess with `sklearn` and `numpy` blocked from
       import scores a fixture model; and a model fitted by scikit-learn on
       synthetic data, written and read back, gives probabilities equal to
       `predict_proba` within 1e-9
-      (planned test_model_json_round_trips_and_scores_identically_without_sklearn)
-- [ ] A missing model falls back to the rules, the score equals `score_job`'s,
+      (`test_model_json_round_trips_and_scores_identically_without_sklearn`)
+- [x] A missing model falls back to the rules, the score equals `score_job`'s,
       and `signals` records `scorer=rules` and `fallback=model-missing`
-      (planned test_missing_model_falls_back_to_rules_and_records_it); the same
+      (`test_missing_model_falls_back_to_rules_and_records_it`); the same
       for an invalid file, a missing description and an extraction error
-      (planned test_each_fallback_condition_is_recorded)
-- [ ] `policy_version` changes when the model file changes, and when it is
-      removed (planned tests/test_seen_policy.py::test_policy_version_changes_when_the_model_file_changes)
-- [ ] A fallback row carries the rules version and a model row carries the
-      model version (planned test_scoring_version_names_the_scorer_that_was_used)
-- [ ] `signals` lists the five largest contributions, signed, after the
-      scorer and probability entries (planned test_signals_name_the_top_contributions_with_signs)
-- [ ] Labels come from candidate decision events: acted-on, skipped, and
+      (`test_each_fallback_condition_is_recorded`)
+- [x] `policy_version` changes when the model file changes, and when it is
+      removed (`tests/test_seen_policy.py::test_policy_version_changes_when_the_model_file_changes`)
+- [x] A fallback row carries the rules version and a model row carries the
+      model version (`test_scoring_version_names_the_scorer_that_was_used`)
+- [x] `signals` lists the five largest contributions, signed, after the
+      scorer and probability entries (`test_signals_name_the_top_contributions_with_signs`)
+- [x] Labels come from candidate decision events: acted-on, skipped, and
       each exclusion rule, over synthetic events
-      (planned test_labels_come_from_candidate_decisions)
-- [ ] A company outcome never sets or changes a label, and a job closed by a
+      (`test_labels_come_from_candidate_decisions`)
+- [x] A company outcome never sets or changes a label, and a job closed by a
       system decision before the candidate judged it is excluded
-      (planned test_a_company_outcome_is_never_a_label,
-      planned test_system_decisions_are_excluded)
-- [ ] A decision whose `description_sha256` does not match the cached
+      (`test_a_company_outcome_is_never_a_label`,
+      `test_system_decisions_are_excluded`)
+- [x] A decision whose `description_sha256` does not match the cached
       description is excluded and counted in the report
-      (planned test_a_decision_on_a_different_description_is_excluded)
-- [ ] `--live-only` drops backfilled events, and the report separates live
-      test metrics (planned test_live_only_drops_backfilled_events)
-- [ ] The blocker features are spec 078's `rules.blockers`, so a phrase added
+      (`test_a_decision_on_a_different_description_is_excluded`)
+- [x] `--live-only` drops backfilled events, and the report separates live
+      test metrics (`test_live_only_drops_backfilled_events`)
+- [x] The blocker features are spec 078's `rules.blockers`, so a phrase added
       to a table changes both the penalty and the feature
-      (planned test_blocker_features_reuse_the_rule_tables)
-- [ ] The split is time-ordered and p92 stats use training rows only
-      (planned test_the_split_is_time_ordered, planned test_p92_stats_come_from_training_rows_only)
-- [ ] The old score is never a feature (planned test_the_old_score_is_never_a_feature)
-- [ ] `train` refuses below the minimum, refuses to activate a model that does
+      (`test_blocker_features_reuse_the_rule_tables`)
+- [x] The split is time-ordered and p92 stats use training rows only
+      (`test_the_split_is_time_ordered`, `test_p92_stats_come_from_training_rows_only`)
+- [x] The old score is never a feature (`test_the_old_score_is_never_a_feature`)
+- [x] `train` refuses below the minimum, refuses to activate a model that does
       not beat the baseline, and refuses one with a non-negative blocker
       coefficient, each with exit 3 and the reason
-      (planned test_train_refuses_below_minimum_labels,
-      planned test_train_refuses_a_model_that_does_not_beat_the_rules,
-      planned test_train_refuses_a_model_that_rewards_a_blocker)
-- [ ] The model never changes a gate verdict (planned test_the_model_never_changes_a_gate_verdict);
+      (`test_train_refuses_below_minimum_labels`,
+      `test_train_refuses_a_model_that_does_not_beat_the_rules`,
+      `test_train_refuses_a_model_that_rewards_a_blocker`)
+- [x] The model never changes a gate verdict (`test_the_model_never_changes_a_gate_verdict`);
       `tests/test_screening.py` passes unchanged
-- [ ] `reevaluate` scores through the active model
-      (planned tests/test_tracker_cli.py::test_reevaluate_uses_the_active_model)
-- [ ] `export` is `database` class and `train` is `host-only`
+- [x] `reevaluate` scores through the active model
+      (`tests/test_tracker_cli.py::test_reevaluate_uses_the_active_model`)
+- [x] `export` is `database` class and `train` is `host-only`
       (`tests/test_delegation.py`, where every subcommand already must carry a class)
-- [ ] Inference does not import scikit-learn or numpy (import-linter contract
+- [x] Inference does not import scikit-learn or numpy (import-linter contract
       in `services/api/pyproject.toml`, run by `just check`)
-- [ ] Every `data/scoring/` path is never-in-git
-      (planned test_every_scoring_path_is_never_in_git)
-- [ ] `tests/test_scoring.py::test_every_score_field_is_written_together` and
+- [x] Every `data/scoring/` path is never-in-git
+      (`test_every_scoring_path_is_never_in_git`)
+- [x] `tests/test_scoring.py::test_every_score_field_is_written_together` and
       `::test_no_reader_takes_a_field_the_writer_does_not_fill` pass unchanged
-- [ ] No real posting, company or tracker statistic appears in a fixture,
+- [x] No real posting, company or tracker statistic appears in a fixture,
       the spec, or a commit message (ADR-008)
 - [ ] All gates green on PR
 
@@ -605,3 +601,64 @@ Amended after specs 078 and 079 were written, at Akin's request:
 
 The approval this spec carried before the amendment was reset to
 `approved: no`, so that approval covers the amended text.
+
+## Amendment (2026-10-06, during implementation)
+
+What implementation found, each with what proves it:
+
+- **No model is logged at info, not as a warning.** No model is the state of
+  every installation until one is trained, so a warning would fire on every
+  run, and `tests/test_demo.py::test_demo_discovery_needs_no_environment_keys`
+  holds a demo run to logging nothing that looks broken. A model file that
+  exists and is refused still warns. The row records `fallback=model-missing`
+  either way, as specified.
+- **`frontend_share` counts terms; it does not weigh them.** The backend side
+  has no weights to borrow, and inventing some would be the hand tuning this
+  model exists to replace. `FRONTEND_TERMS` and `BACKEND_TERMS` sit beside
+  `SKILL_SIGNALS` in `rules.py`, and both join the policy fingerprint: a model
+  scores what the extractor gives it, so a changed table moves the version
+  just as a changed model does. TypeScript, Node and full stack name both
+  sides and count for neither, and Angular for neither as the skill table
+  does not name it.
+- **Features match whole words.** The extractor reads the rule tables through
+  `contains_word`, the discipline `rules.py` applies since the Siracusa
+  defect, where `score_job` still matches substrings. `title_fit` reads the
+  include keywords in the title alone.
+- **`years_gap` reads a stated requirement.** A number of years counts only
+  when "experience" follows it within a few words; a range counts as its
+  lower bound; the largest requirement in the description wins.
+  `test_required_years_reads_the_stated_requirement`.
+- **The export says when and how each job was decided.** Beside the id,
+  label, vector and baseline, each row carries the time that orders the split,
+  whether the decision was live, and the score and version it carried when
+  decided (for the selection-bias report). A header line names the feature
+  order, the rules version the baseline was scored under, and how many jobs
+  each exclusion removed. A job whose only decision has no known actor is
+  counted apart, as `actor-unknown`. Still no text: `test_the_export_carries_no_text`.
+- **Training needs both outcomes on both sides of the split.** A window with
+  no negatives cannot be fitted or judged, so it is refused as insufficient,
+  like a window short of positives. Regularization is chosen from a log grid
+  of four strengths over four forward-chaining folds; the grid is a
+  judgement, and which strength wins is the data's.
+- **Scoring is out of reach of the sources too.** `harrier.scoring` joins the
+  modules the "sources are ingestion only" contract forbids: a learned score
+  is per-source scoring all the same if a source can reach it. The new
+  sklearn and numpy contract needs `include_external_packages`; a numpy
+  import added to the scorer breaks it.
+- **The pipeline imports the seam where it calls it.** `harrier.scoring` reads
+  the screening tables and the screening pipeline scores through
+  `harrier.scoring`, so a module-level import is a cycle whenever scoring
+  loads first. `test_every_scoring_module_imports_first` imports each module
+  first in a fresh interpreter.
+- **Activation writes atomically.** The container can be scoring while the
+  host activates a model, and a model is identified by its exact bytes, so
+  `harrier.atomicio.write_bytes_atomic` writes the file whole, the same
+  write-then-rename `write_json_atomic` uses.
+- **The fixtures are built in the tests.** Model files and exports are
+  generated in `tests/test_scoring_model.py` from synthetic values, so no
+  `tests/fixtures/scoring/` directory was needed.
+- **The data check.** Run read-only against a copy of the local tracker,
+  backfilled and exported there and then deleted, training was refused as
+  insufficient labels: the rules keep scoring, as specified while the data is
+  below the minimum. The counts were reported in the session, not here
+  (ADR-008).

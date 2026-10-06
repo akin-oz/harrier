@@ -18,11 +18,10 @@ import sqlite3
 from dataclasses import dataclass
 
 from harrier.capture import CaptureResult, add_captured_job
+from harrier.scoring.model import fit_score_for
 from harrier.screening.config import load_candidate_config
 from harrier.screening.descriptions import load_cached_description
 from harrier.screening.normalized import make_normalized_job
-from harrier.screening.policy import policy_version
-from harrier.screening.rules import score_job
 from harrier.tracker.queue import UNDECIDED_STATUSES, rank_active, status_counts
 from harrier.tracker.reasons import (
     COMPANY,
@@ -240,14 +239,14 @@ def rescore(conn: sqlite3.Connection, selector: str) -> RescoreResult:
         description=description,
     )
     candidate_cfg = load_candidate_config(conn)
-    score, reasons = score_job(normalized, candidate_cfg)
+    # The same seam discovery and capture score through (spec 077), so a
+    # rescore uses the active model exactly as a first pass would.
+    fit = fit_score_for(normalized, candidate_cfg)
     # A stored score of 0 is a score. The blank column is the only thing that
     # means unscored, so it is the only thing that reads as "-".
     previous = str(stored_score(job)) if job.get("fit_score", "").strip() else "-"
-    updated = update_fields(
-        conn, int(job["id"]), score_fields(score, reasons, policy_version(candidate_cfg))
-    )
-    return RescoreResult(job=updated, previous=previous, current=score)
+    updated = update_fields(conn, int(job["id"]), score_fields(fit.score, fit.reasons, fit.version))
+    return RescoreResult(job=updated, previous=previous, current=fit.score)
 
 
 def next_up(conn: sqlite3.Connection, limit: int | None = None) -> list[dict[str, str]]:

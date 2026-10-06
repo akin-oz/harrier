@@ -1,7 +1,7 @@
 """Browser-capture manual add (spec 010 port of the old jobs.py command_add).
 
-A captured job goes through the exact same score_job plus build_tracker_row
-pipeline as automated discovery: no special-casing. Manual adds skip the
+A captured job goes through the exact same scoring seam plus build_tracker_row
+pipeline as automated discovery: no special-casing (`fit_score_for`, spec 077). Manual adds skip the
 score cutoff by design: a human clicked add, so it lands as a prospect
 regardless of score.
 """
@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
+from harrier.scoring.model import fit_score_for
 from harrier.screening.config import load_candidate_config
 from harrier.screening.descriptions import (
     enrich_job_description_for_scoring,
@@ -21,8 +22,6 @@ from harrier.screening.descriptions import (
 )
 from harrier.screening.normalized import make_normalized_job, normalize
 from harrier.screening.pipeline import build_tracker_row
-from harrier.screening.policy import policy_version
-from harrier.screening.rules import score_job
 from harrier.tracker import DuplicateJobError, add_job
 
 logger = logging.getLogger(__name__)
@@ -78,8 +77,8 @@ def add_captured_job(
     if enrich:
         job = enrich_job_description_for_scoring(job)
         description = job["description"]
-    score, reasons = score_job(job, candidate_cfg)
-    row = build_tracker_row(job, score, reasons, policy_version(candidate_cfg))
+    fit = fit_score_for(job, candidate_cfg)
+    row = build_tracker_row(job, fit.score, fit.reasons, fit.version)
     row["notes"] = f"{row['notes']}; manual_added={datetime.now(UTC).date().isoformat()}"
 
     try:

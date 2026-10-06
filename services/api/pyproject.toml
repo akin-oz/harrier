@@ -38,6 +38,11 @@ dev = [
     "pyright>=1.1.390",
     "import-linter>=2.0",
     "httpx>=0.28",
+    # Fits the learned fit score offline (`harrier scoring train`, spec 077)
+    # and proves in CI that plain-Python inference reproduces it. Dev only:
+    # the image installs --no-dev, and an import-linter contract below keeps
+    # sklearn and numpy off every path except the trainer.
+    "scikit-learn>=1.9.1",
 ]
 
 [build-system]
@@ -72,6 +77,8 @@ testpaths = ["tests"]
 
 [tool.importlinter]
 root_packages = ["harrier", "harrier_api", "harrier_cli"]
+# Needed for the contract that names sklearn and numpy, which are not ours.
+include_external_packages = true
 
 [[tool.importlinter.contracts]]
 name = "domain is API-free"
@@ -98,4 +105,15 @@ forbidden_modules = [
     "harrier.screening.seen",
     "harrier.screening.config",
     "harrier.tracker",
+    # A learned score is scoring all the same: no source may reach it (spec 077).
+    "harrier.scoring",
 ]
+
+[[tool.importlinter.contracts]]
+# Inference is plain Python over a JSON model (spec 077). The trainer is the
+# one module allowed scikit-learn and numpy, which the image does not install.
+name = "only the trainer imports scikit-learn or numpy"
+type = "forbidden"
+source_modules = ["harrier", "harrier_api", "harrier_cli"]
+forbidden_modules = ["sklearn", "numpy"]
+ignore_imports = ["harrier.scoring.train -> sklearn", "harrier.scoring.train -> numpy"]

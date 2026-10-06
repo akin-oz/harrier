@@ -163,6 +163,36 @@ def test_the_blocker_tables_move_the_policy_version(
     assert policy_version(cfg) != before
 
 
+def test_policy_version_changes_when_the_model_file_changes(cfg: dict[str, Any]) -> None:
+    """The learned score is part of what a decision depends on (spec 077):
+    activating, retraining or removing a model moves the version."""
+    from harrier.atomicio import write_bytes_atomic
+    from harrier.scoring.features import FEATURE_ORDER
+    from harrier.scoring.model import NO_MODEL, active_model_path, dump_model, model_document
+
+    def model_bytes(weight: float) -> bytes:
+        return dump_model(
+            model_document(
+                coefficients=[weight] * len(FEATURE_ORDER),
+                intercept=0.0,
+                p92={"skill_signal": 1.0, "preferred_signal": 1.0, "years_gap": 1.0},
+                created_at="2026-10-06",
+                training={},
+                evaluation={},
+            )
+        )
+
+    without = policy_version(cfg)
+    assert without == policy_version(cfg, model=NO_MODEL)
+    write_bytes_atomic(active_model_path(), model_bytes(0.5))
+    first = policy_version(cfg)
+    write_bytes_atomic(active_model_path(), model_bytes(-0.5))
+    retrained = policy_version(cfg)
+    assert len({without, first, retrained}) == 3
+    active_model_path().unlink()
+    assert policy_version(cfg) == without
+
+
 def test_the_version_is_short_enough_to_read(cfg: dict[str, Any]) -> None:
     assert len(policy_version(cfg)) == 12
 

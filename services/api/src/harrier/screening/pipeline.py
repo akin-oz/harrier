@@ -36,7 +36,6 @@ from harrier.screening.policy import policy_version
 from harrier.screening.rules import (
     CandidateConfig,
     remote_region_allowed,
-    score_job,
     title_allowed,
 )
 from harrier.screening.seen import ACCEPTED, REJECTED, SeenDecision, now_iso
@@ -302,16 +301,25 @@ def screen_jobs(
             scored_desc = scored_job["description"].strip()
             if scored_url and scored_desc:
                 save_description_cache(scored_url, scored_desc)
-        score, reasons = score_job(scored_job, candidate_cfg)
+        # The one scoring seam (spec 077): the learned score when it can
+        # judge, the rules when it cannot, and the version of whichever did.
+        # Imported here, not at the top: `harrier.scoring` reads the
+        # screening tables, and importing it first loads this package, whose
+        # `__init__` loads this module. A module-level import is a cycle.
+        from harrier.scoring.model import fit_score_for
+
+        fit = fit_score_for(scored_job, candidate_cfg)
         # No cutoff. It could not reject an ATS posting and rejected LinkedIn
         # ones for being region-filtered at query level; the derivation is in
         # rules.py (spec 033).
 
         record(job_key, ACCEPTED, "passed every gate")
         result.new_tracker_rows.append(
-            build_tracker_row(scored_job, score, reasons, current_policy)
+            build_tracker_row(scored_job, fit.score, fit.reasons, fit.version)
         )
-        result.latest_items.append(_build_latest_item(scored_job, score, reasons, remote_reason))
+        result.latest_items.append(
+            _build_latest_item(scored_job, fit.score, fit.reasons, remote_reason)
+        )
         if url_norm:
             indexes.urls.add(url_norm)
         if company_norm and title_norm:

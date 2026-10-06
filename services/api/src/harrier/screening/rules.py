@@ -215,6 +215,43 @@ SKILL_SIGNALS: dict[str, int] = {
     "node": 4,
 }
 
+# Which side of the stack a posting leans to, for the learned score's
+# `frontend_share` (spec 077). Counted, not weighted: the backend side has no
+# weights to borrow, and inventing some would be the hand tuning the learned
+# score exists to replace. TypeScript, Node and full stack name both sides
+# and count for neither. Angular is in neither: it is frontend, but
+# `SKILL_SIGNALS` does not name it, so it would pull the share towards a
+# stack the skill table does not reward.
+FRONTEND_TERMS: tuple[str, ...] = (
+    "frontend",
+    "front end",
+    "front-end",
+    "react",
+    "vue",
+    "nuxt",
+    "next.js",
+    "svelte",
+    "css",
+)
+BACKEND_TERMS: tuple[str, ...] = (
+    "backend",
+    "back end",
+    "back-end",
+    "java",
+    "spring",
+    "kotlin",
+    "golang",
+    ".net",
+    "c#",
+    "python",
+    "django",
+    "ruby",
+    "rails",
+    "php",
+    "scala",
+    "microservices",
+)
+
 PREFERRED_SIGNAL_WEIGHTS: dict[str, int] = {
     "ownership": 4,
     "testing": 4,

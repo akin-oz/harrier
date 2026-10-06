@@ -325,6 +325,41 @@ def test_add_refuses_a_duplicate_company_and_title(db: sqlite3.Connection) -> No
     assert len(list_jobs(db)) == before
 
 
+def test_reevaluate_uses_the_active_model(db: sqlite3.Connection) -> None:
+    """Rescoring goes through the same seam as a first pass, so an open row
+    scored by the rules is rescored by the model once one is active
+    (spec 077)."""
+    from harrier.atomicio import write_bytes_atomic
+    from harrier.scoring.features import FEATURE_ORDER
+    from harrier.scoring.model import active_model_path, dump_model, model_document, model_identity
+    from harrier.screening.config import load_candidate_config
+    from harrier.screening.descriptions import save_description_cache
+    from harrier.screening.policy import policy_version
+
+    save_description_cache(
+        get_job(db, 1)["url"],
+        "Remote across Europe. TypeScript and React, testing and ownership, a small "
+        "team building developer tools with care for observability and performance.",
+    )
+    data = dump_model(
+        model_document(
+            coefficients=[0.4] * len(FEATURE_ORDER),
+            intercept=-0.5,
+            p92={"skill_signal": 30.0, "preferred_signal": 12.0, "years_gap": 5.0},
+            created_at="2026-10-06",
+            training={},
+            evaluation={},
+        )
+    )
+    write_bytes_atomic(active_model_path(), data)
+
+    assert main(["reevaluate", "1"]) == 0
+    job = get_job(db, 1)
+    identity = model_identity(data)
+    assert job["signals"].startswith(f"scorer=model:{identity}")
+    assert job["scoring_version"] == policy_version(load_candidate_config(db), model=identity)
+
+
 def test_reevaluate_reports_a_previous_score_of_zero_as_zero(
     db: sqlite3.Connection, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

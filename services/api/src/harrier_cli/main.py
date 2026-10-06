@@ -1031,6 +1031,42 @@ def _cmd_company_outcome(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_scoring(args: argparse.Namespace) -> int:
+    """The learned fit score's offline half (spec 077): export where the
+    database lives, train on the host from the export alone."""
+    if args.scoring_command == "export":
+        from harrier.scoring.export import export_features
+
+        with closing(connect()) as conn:
+            result = export_features(conn)
+        print(
+            f"exported {result.rows} labelled jobs ({result.positives} acted on) to {result.path}"
+        )
+        for reason, count in result.excluded.items():
+            print(f"  excluded {reason}: {count}")
+        return 0
+
+    try:
+        from harrier.scoring.train import train
+    except ImportError:
+        # The container installs --no-dev, and scikit-learn is a dev
+        # dependency: training is a host command (spec 077).
+        print(
+            "scikit-learn is not installed here. Train on the host, where the dev group "
+            "is installed: cd services/api && uv sync",
+            file=sys.stderr,
+        )
+        return 2
+    outcome = train(args.export, activate=args.activate, live_only=args.live_only)
+    for message in outcome.messages:
+        print(message, file=sys.stderr if outcome.exit_code else sys.stdout)
+    if outcome.report_path is not None:
+        print(f"report: {outcome.report_path}")
+    if outcome.model_path is not None:
+        print(f"model: {outcome.model_path}")
+    return outcome.exit_code
+
+
 def _cmd_events(args: argparse.Namespace) -> int:
     """A job's decision history, and the backfill that reconstructs it for rows
     decided before it was recorded (spec 079)."""
@@ -1625,6 +1661,11 @@ COMMAND_CLASSES: dict[str, CommandClass] = {
     "company-outcome": _DB,
     "events backfill": _DB,
     "events show": _DB,
+    # The export reads the tracker, so it runs where the database lives. The
+    # trainer reads only the export and needs scikit-learn, which the image
+    # does not install, so it runs here (spec 077).
+    "scoring export": _DB,
+    "scoring train": _HOST,
     "reevaluate": _DB,
     "applied": _DB,
     "reject": _DB,
@@ -1972,6 +2013,27 @@ def build_parser() -> argparse.ArgumentParser:
     show_cmd = events_sub.add_parser("show", help="print a job's events in order")
     show_cmd.add_argument("selector", help="job id, or a unique substring")
     events_cmd.set_defaults(func=_cmd_events)
+
+    scoring_cmd = sub.add_parser("scoring", help="the learned fit score (spec 077)")
+    scoring_sub = scoring_cmd.add_subparsers(dest="scoring_command", required=True)
+    scoring_sub.add_parser("export", help="write the labelled feature export the trainer reads")
+    train_cmd = scoring_sub.add_parser(
+        "train", help="fit, evaluate and optionally activate a model from the export"
+    )
+    train_cmd.add_argument(
+        "--export", type=Path, default=None, help="an export file (default: the newest)"
+    )
+    train_cmd.add_argument(
+        "--activate",
+        action="store_true",
+        help="make the model the active scorer, if it beats the rules",
+    )
+    train_cmd.add_argument(
+        "--live-only",
+        action="store_true",
+        help="train and evaluate on decisions recorded live, not backfilled",
+    )
+    scoring_cmd.set_defaults(func=_cmd_scoring)
 
     add_cmd = sub.add_parser("add", help="add a job by hand, scored and deduped (spec 027)")
     add_cmd.add_argument("--company", required=True)
