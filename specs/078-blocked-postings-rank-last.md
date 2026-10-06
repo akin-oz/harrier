@@ -58,11 +58,17 @@ Siracusa defect.
 
 `us_scope` does not fire when the location field names an explicit EMEA
 region (a `PREFERRED_REGION_PATTERNS` match outside
-`AMBIGUOUS_REGION_PATTERNS`: `worldwide`, `global`, `anywhere`, `remote-first`
-and `utc`; see the amendment below). "Remote, Europe" in the location with
-"we also hire anywhere in the US" in the description is a posting the
-candidate can take. `employment` has no such override: W-2 and at-will are
-US payroll terms whatever the location says.
+`AMBIGUOUS_REGION_PATTERNS`: `worldwide`, `global`, `anywhere`, `remote-first`,
+`utc` and `gmt`; see the amendments below). "Remote, Europe" in the location
+with "we also hire anywhere in the US" in the description is a posting the
+candidate can take. The location is read as written: an EU-permit phrase
+there names the region it permits. `employment` has no such override: W-2
+and at-will are US payroll terms whatever the location says.
+
+Nor does `us_scope` fire on a US phrase offered with an explicit EMEA
+alternative: "must be based in the US or the EU" and "US/EU" are postings
+open to Europe. An alternative that is ambiguous or outside EMEA ("or
+anywhere", "or Canada") is no such offer, and the phrase still fires.
 
 The location override is what the description-scoping rule in
 `remote_region_allowed` protects against in a different form. That rule keeps
@@ -80,14 +86,16 @@ computed from the configuration:
 
 where, from `score_bounds(cfg)`:
 
-- `high` is the most an unblocked posting can score: base, exact title
-  bonus, include keyword cap, every `SKILL_SIGNALS` weight, every
-  `PREFERRED_SIGNAL_WEIGHTS` weight, remote bonus, preferred-region bonus,
-  and the larger of the two domain bonuses.
+- `high` is the most an unblocked posting can score: base plus every
+  positive contribution at once (exact title bonus, the include bonus every
+  configured keyword earns held to its cap, remote bonus, preferred-region
+  bonus, every positive `SKILL_SIGNALS` and `PREFERRED_SIGNAL_WEIGHTS`
+  weight), and the larger of the two domain bonuses.
 - `low` is the least an unblocked posting can score once it has passed the
-  gates: base plus remote bonus, the part
-  `test_the_arithmetic_floor_is_derived_from_the_rules` already proves is
-  unavoidable.
+  gates: base plus every negative contribution a configuration allows,
+  bonuses and weights alike, and the smaller domain bonus when it is below
+  zero. No bonus is assumed earned: a remote-only board passes the gates
+  with no remote text (see the amendments below).
 
 There is no configuration key for it. A number someone can set is a number
 someone will tune until the 151 case looks right; a derived one moves when
@@ -161,8 +169,23 @@ posting is synthetic, with an invented company.
       description, and does not suppress `employment`
       (`test_an_explicit_emea_location_overrides_us_scope`)
 - [x] EU-permit phrases never fire a blocker ("must be based in the EU",
-      "EU work permit required", "EU-based contractor")
+      "EU work permit required", "EU-based contractor"), even with a table
+      pattern planted to match inside them
       (`test_eu_permit_phrases_are_never_blockers`)
+- [x] A US phrase with an explicit EMEA alternative does not fire, and one
+      with an ambiguous or non-EMEA alternative does
+      (`test_a_us_phrase_with_an_emea_alternative_is_not_a_blocker`,
+      `test_a_non_emea_alternative_still_blocks`)
+- [x] A location holding an EU-permit phrase names EMEA and overrides US
+      scope (`test_an_eu_permit_location_names_emea`)
+- [x] Each ambiguous word alone in the location leaves US scope standing,
+      a GMT offset among them, and every ambiguous entry is a region pattern
+      (`test_a_reach_is_not_a_region`, `test_a_gmt_offset_is_not_a_region`,
+      `test_every_ambiguous_word_is_a_region_pattern`)
+- [x] The floor holds for a remote-only board posting with no remote text,
+      and under a negative bonus or signal weight
+      (`test_the_floor_holds_for_a_remote_only_board_posting`,
+      `test_the_floor_holds_with_a_negative_contribution`)
 - [x] False-positive fixtures do not fire: "we sponsor visas", "unlike US-only
       roles, this one is open across Europe" with a European location,
       "US" inside an unrelated word, "W2" inside a product name
@@ -257,3 +280,44 @@ argument hold:
   candidate acted on. The counts were reported in the session, not here
   (ADR-008). Synthetic fixtures for both shapes are in
   `tests/test_scoring.py::test_blocker_tables_do_not_fire_on_eligible_postings`.
+
+## Amendment (2026-10-06, review of the merged range)
+
+A review of the merged spec 077 to 081 range found four defects in this
+spec's code and three tests that could not fail. Each fix carries a test
+that fails without it.
+
+- **A US phrase with a European alternative was a blocker.** "Must be based
+  in the US or the EU" floored a posting open to Europe. `_us_scope_phrase`
+  now skips a US-scope match joined to an explicit EMEA region by a comma,
+  slash, "or" or "and". An ambiguous or non-EMEA alternative still blocks.
+  `test_a_us_phrase_with_an_emea_alternative_is_not_a_blocker`,
+  `test_a_non_emea_alternative_still_blocks`.
+- **The location override stripped the location.** EU-permit phrases were
+  removed from the location before the region check, so "Remote (must be
+  based in the EU)" read as naming no region, and a US phrase in its
+  description floored it. The location is now read as written.
+  `test_an_eu_permit_location_names_emea`.
+- **`gmt` named a region.** "GMT-5" is the US east coast, and as a region
+  pattern it vouched for a US-only posting's location. It joins the
+  ambiguous set. `test_a_gmt_offset_is_not_a_region`.
+- **`low` assumed the remote bonus.** A remote-only board passes the gates
+  with no remote text, so its postings score below base plus remote, and the
+  strongest blocked posting outranked them. `low` now sums every negative
+  contribution and assumes no bonus earned; `high` sums every positive one,
+  with the include bonus held to what the configured keywords can earn, as
+  `score_job` holds it, so the penalty stays the smallest that works.
+  `test_the_floor_holds_for_a_remote_only_board_posting`,
+  `test_the_floor_holds_with_a_negative_contribution`.
+- **Three tests could not fail.** Removing `strip_eu_permit_phrases` left
+  `test_eu_permit_phrases_are_never_blockers` green, because no table
+  pattern matches inside those phrases; it now plants one that does.
+  Removing `remote-first` or `utc` from the ambiguous set left the suite
+  green, and a typo there fails open; `test_a_reach_is_not_a_region` covers
+  every member and `test_every_ambiguous_word_is_a_region_pattern` holds the
+  set to the region patterns. No test set a negative signal weight;
+  `test_the_floor_holds_with_a_negative_contribution` sets one.
+
+These change which postings are floored, so rows scored before them keep
+their old scores until rescored, as the limitations section says of any
+version.
