@@ -545,10 +545,42 @@ def test_an_explicit_emea_location_overrides_us_scope() -> None:
         "Must reside in Europe; right to work in the EU.",
     ],
 )
-def test_eu_permit_phrases_are_never_blockers(description: str) -> None:
+def test_eu_permit_phrases_are_never_blockers(
+    description: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The product invariant: these are positive signals, never filters, and
-    a penalty that sinks a posting to the bottom is a filter in all but name."""
+    a penalty that sinks a posting to the bottom is a filter in all but name.
+
+    No table entry today matches inside these phrases, so a planted one does:
+    the phrases must be gone before any table reads the text, whatever the
+    tables come to hold."""
+    planted = (*rules.EMPLOYMENT_BLOCKER_PATTERNS, r"\beu\b")
+    monkeypatch.setattr(rules, "EMPLOYMENT_BLOCKER_PATTERNS", planted)
     assert rules.blockers(_job("Frontend Engineer", "Remote", description)) == []
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        "Remote, Worldwide",
+        "Remote (Global)",
+        "Anywhere",
+        "Remote-first",
+        "Remote, UTC",
+        "Remote, GMT",
+    ],
+)
+def test_a_reach_is_not_a_region(location: str) -> None:
+    """One location per ambiguous word: each leaves US scope standing, because
+    a US-only posting can say any of them (spec 078)."""
+    found = rules.blockers(_job("Frontend Engineer", location, "We hire anywhere in the US."))
+    assert [kind for kind, _ in found] == ["us_scope"]
+
+
+def test_every_ambiguous_word_is_a_region_pattern() -> None:
+    """An ambiguous entry that is not a region pattern excludes nothing, so a
+    typo there fails open: the word it meant would vouch for a location."""
+    assert set(rules.PREFERRED_REGION_PATTERNS) >= rules.AMBIGUOUS_REGION_PATTERNS
 
 
 @pytest.mark.parametrize(
@@ -571,3 +603,102 @@ def test_eu_permit_phrases_are_never_blockers(description: str) -> None:
 )
 def test_blocker_tables_do_not_fire_on_eligible_postings(location: str, description: str) -> None:
     assert rules.blockers(_job("Frontend Engineer", location, description)) == []
+
+
+# --- spec 078 amendment: review of the merged range ------------------------------
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "Must be based in the US or the EU.",
+        "Eligible to work in the US or Europe.",
+        "Open to candidates anywhere in the US or EMEA.",
+        "Must be based in the US/EU.",
+        "Must be based in the US and the EU.",
+    ],
+)
+def test_a_us_phrase_with_an_emea_alternative_is_not_a_blocker(description: str) -> None:
+    """A posting open to the US or to Europe is open to Europe. Flooring it
+    buried a job the candidate can take (spec 078 amendment)."""
+    assert rules.blockers(_job("Frontend Engineer", "Remote", f"{description} {_SKILLS}")) == []
+
+
+@pytest.mark.parametrize(
+    "description",
+    ["Must be based in the US or Canada.", "Anywhere in the US or anywhere else we choose."],
+)
+def test_a_non_emea_alternative_still_blocks(description: str) -> None:
+    found = rules.blockers(_job("Frontend Engineer", "Remote", f"{description} {_SKILLS}"))
+    assert [kind for kind, _ in found] == ["us_scope"]
+
+
+def test_an_eu_permit_location_names_emea() -> None:
+    """ "Must be based in the EU" names the region it permits; the location
+    override reads the location as written."""
+    location = "Remote (must be based in the EU)"
+    assert rules.location_names_explicit_emea(location)
+    assert (
+        rules.blockers(
+            _job("Frontend Engineer", location, f"We also hire anywhere in the US. {_SKILLS}")
+        )
+        == []
+    )
+
+
+def test_a_gmt_offset_is_not_a_region() -> None:
+    """GMT-5 is the US east coast: a band, not an EMEA location."""
+    found = rules.blockers(
+        _job("Frontend Engineer", "Remote (GMT-5)", f"Anywhere in the US. {_SKILLS}")
+    )
+    assert [kind for kind, _ in found] == ["us_scope"]
+
+
+def test_the_floor_holds_for_a_remote_only_board_posting(cfg: dict[str, object]) -> None:
+    """A remote-only board passes the gates with no remote text, so it never
+    earns the remote bonus. The floor's lower bound assumed it did, and the
+    strongest blocked posting outranked such a job."""
+    with_keyword = json.loads(json.dumps(cfg))
+    cast("dict[str, list[str]]", with_keyword["targets"])["title_keywords_include"].append(
+        "javascript"
+    )
+    weak = _job("JavaScript Engineer", "Germany", "Build our web app.")
+    weak["remote_signal"] = "remote_only_board"
+    assert rules.remote_region_allowed(weak, with_keyword)[0]
+    low, _ = rules.score_bounds(with_keyword)
+    assert rules.score_job(weak, with_keyword)[0] >= low
+
+    targets = cast("dict[str, list[str]]", with_keyword["targets"])
+    scoring = rules.scoring_config(with_keyword)
+    every_signal = " ".join(
+        [
+            *cast("dict[str, int]", scoring["skill_signals"]),
+            *cast("dict[str, int]", scoring["preferred_signal_weights"]),
+            *targets["title_keywords_include"],
+            "developer tools",
+            "remote across europe",
+        ]
+    )
+    blocked = _job(targets["titles"][0], "Remote, Europe", f"{every_signal} W-2 only.")
+    assert rules.score_job(blocked, with_keyword)[0] < rules.score_job(weak, with_keyword)[0]
+
+
+@pytest.mark.parametrize("negative", ["bonus", "signal weight"])
+def test_the_floor_holds_with_a_negative_contribution(
+    cfg: dict[str, object], negative: str
+) -> None:
+    """A configuration may set a bonus or a signal weight below zero, and the
+    lower bound counts either. Large enough that the posting's other bonuses
+    cannot cover it, so a bound that left it out would sit above the posting."""
+    penalized = json.loads(json.dumps(cfg))
+    scoring = cast("dict[str, object]", penalized["scoring"])
+    if negative == "bonus":
+        scoring["preferred_region_bonus"] = -200
+    else:
+        scoring["skill_signals"] = {"europe": -200}
+    low, high = rules.score_bounds(penalized)
+    eligible = _job("Frontend Engineer", "Remote, Europe", "Remote across Europe.")
+    assert rules.score_job(eligible, penalized)[0] >= low
+    blocked = _job("Frontend Engineer", "Remote, Europe", "Remote across Europe. W-2 only.")
+    assert rules.score_job(blocked, penalized)[0] < low
+    assert rules.blocker_penalty(penalized) == high - low + 1

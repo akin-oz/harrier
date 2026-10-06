@@ -155,6 +155,9 @@ AMBIGUOUS_REGION_PATTERNS: frozenset[str] = frozenset(
         r"\banywhere\b",
         r"\bremote[- ]first\b",
         r"\butc\b",
+        # An offset from it names a band, not a region: "GMT-5" is the US
+        # east coast (spec 078 amendment).
+        r"\bgmt\b",
     }
 )
 
@@ -615,11 +618,43 @@ def _domain_bonuses(candidate_cfg: CandidateConfig) -> tuple[int, int]:
     return int(domain_cfg.get("primary", 5)), int(domain_cfg.get("secondary", 3))
 
 
+def _explicit_region_patterns() -> tuple[str, ...]:
+    return tuple(p for p in PREFERRED_REGION_PATTERNS if p not in AMBIGUOUS_REGION_PATTERNS)
+
+
 def location_names_explicit_emea(location: str) -> bool:
     """Whether a location field names a region in scope, not merely a
-    reach ("worldwide", "anywhere") that a US-only posting can also claim."""
-    explicit = tuple(p for p in PREFERRED_REGION_PATTERNS if p not in AMBIGUOUS_REGION_PATTERNS)
-    return text_matches_any_pattern(strip_eu_permit_phrases(normalize(location)), explicit)
+    reach ("worldwide", "anywhere") that a US-only posting can also claim.
+
+    Read as written. An EU-permit phrase names the region it permits, so
+    "Remote (must be based in the EU)" is in scope; stripping those phrases
+    first, as the blocker text is stripped, read it as no region at all
+    (spec 078 amendment)."""
+    return text_matches_any_pattern(normalize(location), _explicit_region_patterns())
+
+
+# What joins two places offered as alternatives: "based in the US or the EU",
+# "US/EU", "the US and Europe".
+_ALTERNATIVE = r"\s*(?:,|/|\bor\b|\band\b)\s*(?:the\s+)?"
+
+
+def _us_scope_phrase(text: str) -> str | None:
+    """The first US-scope phrase that restricts the posting to the US.
+
+    A US phrase offered with an explicit EMEA alternative ("must be based in
+    the US or the EU") is a posting open to Europe, and flooring it buried a
+    job the candidate can take (spec 078 amendment). An ambiguous
+    or non-EMEA alternative ("or anywhere", "or Canada") is no such offer.
+    """
+    explicit = _explicit_region_patterns()
+    for pattern in US_SCOPE_PATTERNS:
+        for found in re.finditer(pattern, text):
+            rest = text[found.end() :]
+            joined = re.match(_ALTERNATIVE, rest)
+            if joined and any(re.match(region, rest[joined.end() :]) for region in explicit):
+                continue
+            return found.group(0)
+    return None
 
 
 def _first_match(text: str, patterns: tuple[str, ...]) -> str | None:
@@ -644,7 +679,7 @@ def blockers(job: NormalizedJob) -> list[tuple[str, str]]:
         normalize(f"{job['title']} {job['location']} {job['description']}")
     )
     found: list[tuple[str, str]] = []
-    us_scope = _first_match(text, US_SCOPE_PATTERNS)
+    us_scope = _us_scope_phrase(text)
     if us_scope and not location_names_explicit_emea(job["location"]):
         found.append(("us_scope", us_scope))
     employment = _first_match(text, EMPLOYMENT_BLOCKER_PATTERNS)
@@ -656,11 +691,12 @@ def blockers(job: NormalizedJob) -> list[tuple[str, str]]:
 def score_bounds(candidate_cfg: CandidateConfig) -> tuple[int, int]:
     """The least and the most an unblocked posting can score (spec 078).
 
-    The least is what every posting that passes the gates is forced to earn,
-    base plus the remote bonus (proved unavoidable by
-    `tests/test_scoring.py::test_the_arithmetic_floor_is_derived_from_the_rules`),
-    lowered by any negative weight a configuration sets. The most is every
-    bonus at once and every positive weight matched.
+    The least is the base plus every negative contribution a configuration
+    allows; no bonus is assumed earned. The remote bonus used to be: a gate
+    demands remote text on most paths, but a remote-only board passes with
+    none, and such a posting scored below the bound, so a near-maximal blocked
+    posting outranked it (spec 078 amendment). The most is every
+    positive contribution at once.
     """
     scoring = scoring_config(candidate_cfg)
     weights = [
@@ -668,18 +704,28 @@ def score_bounds(candidate_cfg: CandidateConfig) -> tuple[int, int]:
         *cast("dict[str, int]", scoring["preferred_signal_weights"]).values(),
     ]
     primary, secondary = _domain_bonuses(candidate_cfg)
+    targets = _cfg_dict(candidate_cfg, "targets")
+    keyword_count = len(_str_list(targets, "title_keywords_include"))
+    # Every include keyword matched, held to the cap as `score_job` holds it.
+    include = min(
+        int(scoring["include_keyword_bonus_cap"]),
+        keyword_count * int(scoring["include_keyword_bonus"]),
+    )
+    contributions = [
+        int(scoring["exact_title_bonus"]),
+        include,
+        int(scoring["remote_bonus"]),
+        int(scoring["preferred_region_bonus"]),
+        *weights,
+    ]
     low = (
         int(scoring["base_score"])
-        + int(scoring["remote_bonus"])
-        + sum(weight for weight in weights if weight < 0)
+        + sum(value for value in contributions if value < 0)
+        + min(primary, secondary, 0)
     )
     high = (
         int(scoring["base_score"])
-        + int(scoring["exact_title_bonus"])
-        + int(scoring["include_keyword_bonus_cap"])
-        + int(scoring["remote_bonus"])
-        + int(scoring["preferred_region_bonus"])
-        + sum(weight for weight in weights if weight > 0)
+        + sum(value for value in contributions if value > 0)
         + max(primary, secondary, 0)
     )
     return low, high
