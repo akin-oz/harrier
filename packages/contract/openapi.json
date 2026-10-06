@@ -281,6 +281,40 @@
         "title": "CaptureOut",
         "type": "object"
       },
+      "CompanyOutcomeCode": {
+        "enum": [
+          "company_rejected",
+          "ghosted",
+          "no_response",
+          "assessment_failed",
+          "interview_invited"
+        ],
+        "title": "CompanyOutcomeCode",
+        "type": "string"
+      },
+      "CompanyOutcomeIn": {
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/CompanyOutcomeCode"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "CompanyOutcomeIn",
+        "type": "object"
+      },
       "ConfigErrorOut": {
         "description": "The body behind a 404 or a 400 on these routes.\n\nDeclared so the generated client knows these outcomes exist. Store\nvalidation answers 400 rather than 422 on purpose: FastAPI already owns\n422 for a malformed request body, where the detail is a list of field\nerrors. Reusing it would have put two different shapes behind one status\nand hidden the automatic one from the contract entirely (review finding\non PR #20). A well-formed ConfigIn whose value is wrong for its kind is\na different failure, and says so with a different code.",
         "properties": {
@@ -909,6 +943,28 @@
         "title": "OutreachRowOut",
         "type": "object"
       },
+      "RejectionCode": {
+        "enum": [
+          "not_remote",
+          "location",
+          "stack",
+          "role_too_senior",
+          "role_too_junior",
+          "contract_type",
+          "language",
+          "timezone",
+          "company",
+          "compensation",
+          "other",
+          "vacancy_closed",
+          "duplicate",
+          "application_expired",
+          "ai_evaluation",
+          "auto_reject"
+        ],
+        "title": "RejectionCode",
+        "type": "string"
+      },
       "RescoreOut": {
         "properties": {
           "current": {
@@ -1146,6 +1202,16 @@
               }
             ],
             "title": "Reason"
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RejectionCode"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "verb": {
             "title": "Verb",
@@ -3385,6 +3451,75 @@
           }
         },
         "summary": "List Queue"
+      }
+    },
+    "/tracker/{selector}/outcome": {
+      "post": {
+        "description": "What a company did with an application: the same function\n`harrier company-outcome` calls (specs 079, 080).",
+        "operationId": "recordCompanyOutcome",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompanyOutcomeIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "description": "no job matched the selector"
+          },
+          "409": {
+            "description": "the tracker refused the change"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
+          }
+        },
+        "summary": "Record Job Outcome"
       }
     },
     "/tracker/{selector}/rescore": {

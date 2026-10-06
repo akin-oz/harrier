@@ -9,8 +9,9 @@ from __future__ import annotations
 import os
 import sqlite3
 from collections.abc import AsyncIterator
+from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Literal, cast
+from typing import TYPE_CHECKING, Annotated, Literal, cast
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -24,6 +25,7 @@ from harrier.demo import repo_root
 from harrier.hostlease import oldest_hold
 from harrier.logsetup import configure_logging
 from harrier.tracker import list_jobs
+from harrier.tracker.reasons import CANDIDATE, COMPANY, SYSTEM, codes_for
 from harrier.tracker.selector import SelectorError
 from harrier.tracker.store import TrackerError
 from harrier_api.capture_routes import capture_router
@@ -211,9 +213,44 @@ class RunEventOut(BaseModel):
 tracker_router = APIRouter(route_class=DatabaseRoute)
 
 
+# The reason codes as the contract declares them (spec 080). Built from
+# `harrier.tracker.reasons` at import and never written out here, so a code
+# added to that table reaches the OpenAPI document on the next `just contract`
+# and becomes a type error in the browser wherever a label for it is missing.
+#
+# A rejection takes the candidate's and the system's codes. A company's codes
+# are not members, so a company verdict sent as a rejection is a 422 from the
+# schema rather than a check someone has to remember to write.
+#
+# Type checkers cannot follow a class built at runtime, so they are shown an
+# empty StrEnum, whose members are strings; pydantic, FastAPI and the schema
+# get the real one.
+if TYPE_CHECKING:
+
+    class RejectionCode(StrEnum): ...
+
+    class CompanyOutcomeCode(StrEnum): ...
+
+else:
+    RejectionCode = StrEnum(
+        "RejectionCode", {code: code for code in (*codes_for(CANDIDATE), *codes_for(SYSTEM))}
+    )
+    CompanyOutcomeCode = StrEnum("CompanyOutcomeCode", {code: code for code in codes_for(COMPANY)})
+
+
 class StatusChangeIn(BaseModel):
     verb: str
     reason: str | None = None
+    # Optional, so the command line's free text and older clients keep
+    # working: without a code the domain infers one (spec 079).
+    reason_code: RejectionCode | None = None
+
+
+class CompanyOutcomeIn(BaseModel):
+    code: CompanyOutcomeCode
+    # Accepted for parity with `harrier company-outcome`; the browser sends
+    # none, because the pill is the confirmation (spec 080).
+    note: str | None = None
 
 
 class AddJobIn(BaseModel):
@@ -260,8 +297,30 @@ def change_job_status(selector: str, body: StatusChangeIn, conn: Conn) -> JobOut
     and reject verbs call (spec 042)."""
     from harrier.tracker.actions import TrackerActionError, change_status
 
+    code = body.reason_code.value if body.reason_code is not None else None
     try:
-        return _as_job_out(change_status(conn, selector, body.verb, reason=body.reason))
+        return _as_job_out(
+            change_status(conn, selector, body.verb, reason=body.reason, reason_code=code)
+        )
+    except SelectorError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except (TrackerActionError, TrackerError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@tracker_router.post(
+    "/tracker/{selector}/outcome",
+    operation_id="recordCompanyOutcome",
+    dependencies=[Depends(require_token)],
+    responses=TRACKER_ERRORS,
+)
+def record_job_outcome(selector: str, body: CompanyOutcomeIn, conn: Conn) -> JobOut:
+    """What a company did with an application: the same function
+    `harrier company-outcome` calls (specs 079, 080)."""
+    from harrier.tracker.actions import TrackerActionError, record_company_outcome
+
+    try:
+        return _as_job_out(record_company_outcome(conn, selector, body.code.value, note=body.note))
     except SelectorError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except (TrackerActionError, TrackerError) as error:

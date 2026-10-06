@@ -61,9 +61,9 @@
   color: var(--color-danger);
 }
 
-/* The frequent-reason pills (spec 056). Standard button anatomy so they read
-   as one family with the verb that opened them, plus the danger hover the
-   Reject button already has: these clicks close a row. */
+/* The pills of both takeovers: the candidate's exit and the company's
+   response (specs 056, 080). Standard button anatomy so they read as one
+   family with the control that opened them. */
 .job-actions__pills {
   display: flex;
   gap: var(--space-1);
@@ -83,7 +83,10 @@
   white-space: nowrap;
 }
 
-.job-actions__pill:hover:not(:disabled) {
+/* Danger means consequence, not actor: every pill that closes the row
+   carries it, the candidate's or the company's, and an interview invitation,
+   which moves the row forward, keeps the ordinary hover (spec 080). */
+.job-actions__pill--closes:hover:not(:disabled) {
   border-color: var(--color-danger);
   color: var(--color-danger);
 }
@@ -99,14 +102,22 @@
 }
 
 /* Asking for the reason takes over the whole block: the row is mid-decision
-   and the other verbs are not what to do next. */
+   and the other verbs are not what to do next. The code comes first, in the
+   platform's own control for "one of a known list" (spec 080), on a line of
+   its own: the column is too narrow for it beside the input, which squeezed
+   the input to a sliver, so the words keep the width they always had. */
 .job-actions__reason {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: var(--space-1);
   align-items: center;
 }
 
+.job-actions__reason select {
+  grid-column: 1 / -1;
+}
+
+.job-actions__reason select,
 .job-actions__reason input {
   font: inherit;
   font-size: 0.82rem;
@@ -116,6 +127,12 @@
   background: var(--color-bg);
   color: var(--color-text);
   min-width: 0;
+}
+
+.job-actions__reason select:focus-visible,
+.job-actions__reason input:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
 }
 
 /* A refusal is a normal outcome, so it reads as information rather than as

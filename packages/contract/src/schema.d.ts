@@ -701,6 +701,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tracker/{selector}/outcome": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record Job Outcome
+         * @description What a company did with an application: the same function
+         *     `harrier company-outcome` calls (specs 079, 080).
+         */
+        post: operations["recordCompanyOutcome"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tracker/{selector}/rescore": {
         parameters: {
             query?: never;
@@ -916,6 +937,17 @@ export interface components {
             message: string;
             /** Ok */
             ok: boolean;
+        };
+        /**
+         * CompanyOutcomeCode
+         * @enum {string}
+         */
+        CompanyOutcomeCode: "company_rejected" | "ghosted" | "no_response" | "assessment_failed" | "interview_invited";
+        /** CompanyOutcomeIn */
+        CompanyOutcomeIn: {
+            code: components["schemas"]["CompanyOutcomeCode"];
+            /** Note */
+            note?: string | null;
         };
         /**
          * ConfigErrorOut
@@ -1252,6 +1284,11 @@ export interface components {
             /** Title */
             title: string;
         };
+        /**
+         * RejectionCode
+         * @enum {string}
+         */
+        RejectionCode: "not_remote" | "location" | "stack" | "role_too_senior" | "role_too_junior" | "contract_type" | "language" | "timezone" | "company" | "compensation" | "other" | "vacancy_closed" | "duplicate" | "application_expired" | "ai_evaluation" | "auto_reject";
         /** RescoreOut */
         RescoreOut: {
             /** Current */
@@ -1328,6 +1365,7 @@ export interface components {
         StatusChangeIn: {
             /** Reason */
             reason?: string | null;
+            reason_code?: components["schemas"]["RejectionCode"] | null;
             /** Verb */
             verb: string;
         };
@@ -3242,6 +3280,71 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["JobOut"][];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
+        };
+    };
+    recordCompanyOutcome: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                selector: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompanyOutcomeIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no job matched the selector */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the tracker refused the change */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

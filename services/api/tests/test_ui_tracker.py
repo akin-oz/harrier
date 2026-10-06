@@ -232,6 +232,161 @@ def test_api_rejection_text_never_becomes_a_candidate_decision(
     conn.close()
 
 
+# --- reason codes and the company's outcome (spec 080) -------------------------
+
+
+def _last_event(job: int) -> dict[str, str]:
+    from harrier.tracker.store import list_events
+
+    conn = connect()
+    try:
+        return list_events(conn, job)[-1]
+    finally:
+        conn.close()
+
+
+def _event_count() -> int:
+    conn = connect()
+    try:
+        return int(conn.execute("SELECT COUNT(*) FROM job_events").fetchone()[0])
+    finally:
+        conn.close()
+
+
+def test_status_change_carries_a_reason_code(job_id: int, client: TestClient) -> None:
+    """A code the browser sends is the code the history records, even where
+    the words alone would infer nothing."""
+    response = client.post(
+        f"/tracker/{job_id}/status",
+        json={"verb": "reject", "reason": "too much travel", "reason_code": "other"},
+        headers=auth(),
+    )
+    assert response.status_code == 200, response.text
+    event = _last_event(job_id)
+    assert (event["kind"], event["actor"], event["reason_code"]) == (
+        "decision",
+        "candidate",
+        "other",
+    )
+    assert event["reason_text"] == "too much travel"
+
+
+def test_a_company_code_is_not_a_rejection_code(job_id: int, client: TestClient) -> None:
+    """Refused by the schema, before any domain code runs: a company's verdict
+    has its own route and cannot arrive as the candidate's rejection."""
+    before = _event_count()
+    response = client.post(
+        f"/tracker/{job_id}/status",
+        json={"verb": "reject", "reason": "ghosted", "reason_code": "ghosted"},
+        headers=auth(),
+    )
+    assert response.status_code == 422
+    assert get_job(connect(), job_id)["status"] == "prospect"
+    assert _event_count() == before
+
+
+def test_a_status_change_without_a_code_still_infers(job_id: int, client: TestClient) -> None:
+    """The command line's free text and older clients keep working (spec 079)."""
+    response = client.post(
+        f"/tracker/{job_id}/status",
+        json={"verb": "reject", "reason": "missing stack"},
+        headers=auth(),
+    )
+    assert response.status_code == 200, response.text
+    assert _last_event(job_id)["reason_code"] == "stack"
+
+
+def test_company_outcome_route(job_id: int, client: TestClient) -> None:
+    client.post(f"/tracker/{job_id}/status", json={"verb": "applied"}, headers=auth())
+    response = client.post(
+        f"/tracker/{job_id}/outcome",
+        json={"code": "ghosted", "note": "followed up by email"},
+        headers=auth(),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "rejected"
+    event = _last_event(job_id)
+    assert (event["kind"], event["actor"], event["reason_code"]) == (
+        "outcome",
+        "company",
+        "ghosted",
+    )
+    assert event["reason_text"] == "followed up by email"
+
+    # An invitation moves the row forward instead of closing it.
+    conn = connect()
+    invited = add_job(
+        conn,
+        {
+            "company": "Northwind Labs",
+            "title": "Staff Frontend Engineer",
+            "url": "https://boards.example.com/northwind/3",
+        },
+    )
+    conn.close()
+    client.post(f"/tracker/{invited}/status", json={"verb": "applied"}, headers=auth())
+    response = client.post(
+        f"/tracker/{invited}/outcome", json={"code": "interview_invited"}, headers=auth()
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "interviewing"
+
+    # The candidate's own reasons are not a company's response.
+    refused = client.post(f"/tracker/{job_id}/outcome", json={"code": "stack"}, headers=auth())
+    assert refused.status_code == 422
+
+
+def test_company_outcome_refuses_an_unapplied_row(job_id: int, client: TestClient) -> None:
+    before = _event_count()
+    response = client.post(
+        f"/tracker/{job_id}/outcome", json={"code": "company_rejected"}, headers=auth()
+    )
+    assert response.status_code == 409
+    assert "no application was recorded" in response.json()["detail"]
+    assert get_job(connect(), job_id)["status"] == "prospect"
+    assert _event_count() == before
+
+
+def test_api_enums_come_from_the_reason_table(env: Path) -> None:
+    """Built from `harrier.tracker.reasons`, so a code added there reaches the
+    contract without anyone writing it out twice (spec 080)."""
+    from harrier.tracker.reasons import CANDIDATE, COMPANY, SYSTEM, codes_for
+    from harrier_api.app import CompanyOutcomeCode, RejectionCode
+
+    rejection = [*codes_for(CANDIDATE), *codes_for(SYSTEM)]
+    company = list(codes_for(COMPANY))
+    assert [member.value for member in RejectionCode] == rejection
+    assert [member.value for member in CompanyOutcomeCode] == company
+
+    schemas = create_app().openapi()["components"]["schemas"]
+    assert schemas["RejectionCode"]["enum"] == rejection
+    assert schemas["CompanyOutcomeCode"]["enum"] == company
+    assert not set(rejection) & set(company), "a code is both a rejection and a company response"
+
+
+def test_the_outcome_route_and_the_cli_call_the_same_function(
+    job_id: int, client: TestClient
+) -> None:
+    """Spec 042's pairing, for the company's outcome: both paths are driven
+    through a patched action, and both must arrive with the same arguments."""
+    real_row = get_job(connect(), job_id)
+
+    with patch("harrier.tracker.actions.record_company_outcome") as action:
+        action.return_value = real_row
+        main(["company-outcome", str(job_id), "ghosted"])
+    cli_call = action.call_args
+
+    with patch("harrier.tracker.actions.record_company_outcome") as action:
+        action.return_value = real_row
+        client.post(f"/tracker/{job_id}/outcome", json={"code": "ghosted"}, headers=auth())
+    api_call = action.call_args
+
+    assert cli_call is not None, "the CLI did not reach the shared action"
+    assert api_call is not None, "the API did not reach the shared action"
+    assert cli_call.args[1:] == api_call.args[1:]
+    assert cli_call.kwargs == api_call.kwargs
+
+
 def test_the_same_refusal_reaches_the_cli(env: Path, job_id: int) -> None:
     """The same message on both sides, which is what the shared action buys."""
     with pytest.raises(TrackerActionError, match="only recorded on a rejection"):
@@ -245,6 +400,7 @@ def test_the_same_refusal_reaches_the_cli(env: Path, job_id: int) -> None:
     ("method", "path", "payload"),
     [
         ("post", "/tracker/1/status", {"verb": "shortlist"}),
+        ("post", "/tracker/1/outcome", {"code": "ghosted"}),
         ("post", "/tracker/1/rescore", None),
         ("post", "/tracker", {"company": "A", "title": "T"}),
     ],

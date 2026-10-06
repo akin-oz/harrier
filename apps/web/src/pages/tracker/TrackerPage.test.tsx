@@ -48,6 +48,7 @@ function stubApi(options: {
   jobs?: Row[];
   queue?: Row[];
   status?: { code: number; body: unknown };
+  outcome?: { code: number; body: unknown };
   add?: { code: number; body: unknown };
 }): Call[] {
   const calls: Call[] = [];
@@ -78,6 +79,10 @@ function stubApi(options: {
       if (url.pathname === "/api/tracker/queue") return reply(200, options.queue ?? []);
       if (url.pathname.endsWith("/status")) {
         const answer = options.status ?? { code: 200, body: job(1, "Northwind", "80") };
+        return reply(answer.code, answer.body);
+      }
+      if (url.pathname.endsWith("/outcome")) {
+        const answer = options.outcome ?? { code: 200, body: job(1, "Northwind", "80") };
         return reply(answer.code, answer.body);
       }
       if (url.pathname === "/api/tracker") {
@@ -133,14 +138,23 @@ test("every verb the CLI has is reachable on the page", async () => {
   // What to do next for this status sits on the row; the rest are behind the
   // disclosure. The property is that none of them is gone, so this opens it
   // and then asserts the whole set, rather than asserting that all five are
-  // visible at once.
+  // visible at once. The CLI's `interviewing` is reached as Interview invite:
+  // an interview is the company's outcome, so the page names it as one
+  // (spec 080).
   stubApi({ jobs: [job(1, "Northwind", "80")] });
   const user = userEvent.setup();
   renderPage();
   const row = await rowFor("Northwind");
 
   await user.click(within(row).getByRole("button", { name: /^More actions/ }));
-  for (const label of ["Shortlist", "Request CV", "Applied", "Interviewing", "Reject", "Rescore"]) {
+  for (const label of [
+    "Shortlist",
+    "Request CV",
+    "Applied",
+    "Interview invite",
+    "Reject",
+    "Rescore",
+  ]) {
     expect(
       within(row).getByRole("button", { name: label }),
       `${label} is not reachable on the row`,
@@ -179,9 +193,10 @@ test("rejecting asks for a reason before it sends anything", async () => {
   await user.type(within(row).getByLabelText("Rejection reason"), "wrong stack");
   await user.click(within(row).getByRole("button", { name: "Confirm" }));
 
+  // With the code its select chose, `other` unless changed (spec 080).
   await waitFor(() => {
     const sent = calls.find((call) => call.url === "/api/tracker/1/status");
-    expect(sent?.body).toEqual({ verb: "reject", reason: "wrong stack" });
+    expect(sent?.body).toEqual({ verb: "reject", reason: "wrong stack", reason_code: "other" });
   });
 });
 
@@ -198,22 +213,16 @@ test("a reason pill submits the rejection in one click", async () => {
 
   await waitFor(() => {
     const sent = calls.find((call) => call.url === "/api/tracker/1/status");
-    expect(sent?.body).toEqual({ verb: "reject", reason: "hybrid" });
+    expect(sent?.body).toEqual({ verb: "reject", reason: "hybrid", reason_code: "not_remote" });
   });
 });
 
 test("every pill submits its exact lowercase label as the reason", async () => {
   // The strings are the stored values; consistent spellings are what makes
-  // rejection_reason groupable later (spec 056).
-  for (const why of [
-    "hybrid",
-    "onsite",
-    "closed",
-    "missing stack",
-    "location",
-    "language",
-    "rejected by company",
-  ]) {
+  // rejection_reason groupable later (spec 056). `rejected by company` is no
+  // longer among them: it is the company's response, recorded through
+  // Company replied (spec 080).
+  for (const why of ["hybrid", "onsite", "closed", "missing stack", "location", "language"]) {
     cleanup();
     const calls = stubApi({ jobs: [job(1, "Northwind", "80")] });
     const user = userEvent.setup();
@@ -225,10 +234,7 @@ test("every pill submits its exact lowercase label as the reason", async () => {
 
     await waitFor(() => {
       const sent = calls.find((call) => call.url === "/api/tracker/1/status");
-      expect(sent?.body, `${why} did not travel verbatim`).toEqual({
-        verb: "reject",
-        reason: why,
-      });
+      expect((sent?.body as { reason?: string } | undefined)?.reason, `${why} changed`).toBe(why);
     });
   }
 });
@@ -284,17 +290,20 @@ test("a rejected row offers Reopen, which shortlists it", async () => {
 });
 
 test("a rejected row can move straight to interviewing", async () => {
+  // A recruiter who writes after a rejection (spec 072). The move is
+  // recorded as what it is, the company's invitation, through the outcome
+  // route rather than as a status the candidate chose (spec 080).
   const calls = stubApi({ jobs: [job(1, "Northwind", "80", "rejected")] });
   const user = userEvent.setup();
   renderPage();
 
   const row = await rowFor("Northwind");
   await user.click(within(row).getByRole("button", { name: /^More actions/ }));
-  await user.click(within(row).getByRole("button", { name: "Interviewing" }));
+  await user.click(within(row).getByRole("button", { name: "Interview invite" }));
 
   await waitFor(() => {
-    const sent = calls.find((call) => call.url === "/api/tracker/1/status");
-    expect(sent?.body).toEqual({ verb: "interviewing", reason: null });
+    const sent = calls.find((call) => call.url === "/api/tracker/1/outcome");
+    expect(sent?.body).toEqual({ code: "interview_invited", note: null });
   });
 });
 
@@ -493,4 +502,301 @@ test("the other verbs are out of reach while a rejection reason is being typed",
   // Rescore hidden after cancelling pass (review finding on PR #41).
   expect(within(row).getByRole("button", { name: "Shortlist" })).toBeDefined();
   expect(within(row).getByRole("button", { name: "Rescore" })).toBeDefined();
+});
+
+// --- who decided: the candidate's exit and the company's response (spec 080) --
+
+// What each exit pill sends: the code the history records, and the text the
+// row keeps, exactly as spec 056 stored it.
+const EXIT_PILL_CODES: readonly (readonly [string, string])[] = [
+  ["hybrid", "not_remote"],
+  ["onsite", "not_remote"],
+  ["closed", "vacancy_closed"],
+  ["missing stack", "stack"],
+  ["location", "location"],
+  ["language", "language"],
+];
+const COMPANY_PILL_TEXTS = [
+  "interview",
+  "rejected",
+  "assessment failed",
+  "ghosted",
+  "no response",
+  "rejected by company",
+];
+const COMPANY_CODES = [
+  "company_rejected",
+  "ghosted",
+  "no_response",
+  "assessment_failed",
+  "interview_invited",
+];
+
+function renderWithApply(): void {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <TrackerPage onApply={() => undefined} />
+    </QueryClientProvider>,
+  );
+}
+
+test("each pill sends its code and text", async () => {
+  for (const [text, code] of EXIT_PILL_CODES) {
+    cleanup();
+    const calls = stubApi({ jobs: [job(1, "Northwind", "80")] });
+    const user = userEvent.setup();
+    renderPage();
+
+    const row = await rowFor("Northwind");
+    await user.click(within(row).getByRole("button", { name: "Reject" }));
+    await user.click(within(row).getByRole("button", { name: text }));
+
+    await waitFor(() => {
+      const sent = calls.find((call) => call.url === "/api/tracker/1/status");
+      expect(sent?.body, text).toEqual({ verb: "reject", reason: text, reason_code: code });
+    });
+  }
+});
+
+test("the exit controls offer no company verdict", async () => {
+  // Neither the pills nor the select behind `other…` can file what a company
+  // did as the candidate's own decision, before applying or after.
+  for (const [status, exit] of [
+    ["prospect", "Reject"],
+    ["applied", "Withdraw"],
+  ] as const) {
+    cleanup();
+    stubApi({ jobs: [job(1, "Northwind", "80", status)] });
+    const user = userEvent.setup();
+    renderPage();
+
+    const row = await rowFor("Northwind");
+    await user.click(within(row).getByRole("button", { name: exit }));
+    const group = within(row).getByRole("group", { name: exit });
+    for (const text of COMPANY_PILL_TEXTS) {
+      expect(
+        within(group).queryByRole("button", { name: text }),
+        `${exit} offers ${text}`,
+      ).toBeNull();
+    }
+
+    await user.click(within(group).getByRole("button", { name: "other…" }));
+    const select = within(row).getByLabelText("Reason code");
+    const values = Array.from((select as HTMLSelectElement).options).map((option) => option.value);
+    expect(values.length).toBeGreaterThan(0);
+    for (const code of COMPANY_CODES) {
+      expect(values, `${exit} offers ${code}`).not.toContain(code);
+    }
+  }
+});
+
+test("other sends the selected code", async () => {
+  const calls = stubApi({ jobs: [job(1, "Northwind", "80")] });
+  const user = userEvent.setup();
+  renderPage();
+
+  const row = await rowFor("Northwind");
+  await user.click(within(row).getByRole("button", { name: "Reject" }));
+  await user.click(within(row).getByRole("button", { name: "other…" }));
+
+  const select = within(row).getByLabelText("Reason code");
+  expect((select as HTMLSelectElement).value).toBe("other");
+  // `other` says nothing without words, so it waits for them.
+  const confirm = within(row).getByRole("button", { name: "Confirm" });
+  expect((confirm as HTMLButtonElement).disabled).toBe(true);
+
+  await user.selectOptions(select, "role_too_senior");
+  await user.type(within(row).getByLabelText("Rejection reason"), "staff level role");
+  await user.click(within(row).getByRole("button", { name: "Confirm" }));
+
+  await waitFor(() => {
+    const sent = calls.find((call) => call.url === "/api/tracker/1/status");
+    expect(sent?.body).toEqual({
+      verb: "reject",
+      reason: "staff level role",
+      reason_code: "role_too_senior",
+    });
+  });
+});
+
+test("the exit word names who acted", async () => {
+  // Before applying, leaving is a rejection. After, it is a withdrawal, and
+  // it sits beside the control for what the company said (spec 080).
+  for (const [status, present, absent] of [
+    ["prospect", ["Reject"], ["Withdraw", "Company replied"]],
+    ["shortlisted", ["Reject"], ["Withdraw", "Company replied"]],
+    ["tailored_cv_requested", ["Reject"], ["Withdraw", "Company replied"]],
+    ["applied", ["Withdraw", "Company replied"], ["Reject"]],
+    ["interviewing", ["Withdraw", "Company replied"], ["Reject"]],
+  ] as const) {
+    cleanup();
+    stubApi({ jobs: [job(1, "Northwind", "80", status)] });
+    renderPage();
+
+    const row = await rowFor("Northwind");
+    for (const label of present) {
+      expect(
+        within(row).queryByRole("button", { name: label }),
+        `${status}: ${label}`,
+      ).not.toBeNull();
+    }
+    for (const label of absent) {
+      expect(within(row).queryByRole("button", { name: label }), `${status}: ${label}`).toBeNull();
+    }
+  }
+});
+
+test("the resting row does not grow", async () => {
+  // One forward control, the exit, Apply and More: the shape the actions
+  // column was narrowed to so the table stops scrolling sideways. Nothing in
+  // spec 080 adds to it, and no pill shows until a takeover is opened.
+  for (const status of [
+    "prospect",
+    "shortlisted",
+    "tailored_cv_requested",
+    "applied",
+    "interviewing",
+    "rejected",
+  ]) {
+    cleanup();
+    stubApi({ jobs: [job(1, "Northwind", "80", status)] });
+    renderWithApply();
+
+    const row = await rowFor("Northwind");
+    const resting = row.querySelector(".job-actions__row");
+    expect(resting, status).not.toBeNull();
+    const buttons = within(resting as HTMLElement).getAllByRole("button");
+    expect(
+      buttons.length,
+      `${status} shows ${String(buttons.length)} controls`,
+    ).toBeLessThanOrEqual(4);
+    expect(row.querySelector(".job-actions__pill"), status).toBeNull();
+  }
+});
+
+test("company replied submits the company outcome", async () => {
+  const calls = stubApi({ jobs: [job(1, "Northwind", "80", "applied")] });
+  const user = userEvent.setup();
+  renderPage();
+
+  const row = await rowFor("Northwind");
+  await user.click(within(row).getByRole("button", { name: "Company replied" }));
+  const group = within(row).getByRole("group", { name: "Company response" });
+  expect(
+    within(group)
+      .getAllByRole("button")
+      .map((button) => button.textContent),
+  ).toEqual(["interview", "rejected", "assessment failed", "ghosted", "no response", "Cancel"]);
+
+  await user.click(within(group).getByRole("button", { name: "ghosted" }));
+  await waitFor(() => {
+    const sent = calls.find((call) => call.url === "/api/tracker/1/outcome");
+    expect(sent?.body).toEqual({ code: "ghosted", note: null });
+  });
+  // Through its own route only: nothing reached the candidate's status verb.
+  expect(calls.some((call) => call.url.endsWith("/status"))).toBe(false);
+
+  // Once interviewing, the invitation has happened and silence is no longer
+  // the question.
+  cleanup();
+  stubApi({ jobs: [job(1, "Northwind", "80", "interviewing")] });
+  renderPage();
+  const interviewing = await rowFor("Northwind");
+  await user.click(within(interviewing).getByRole("button", { name: "Company replied" }));
+  const offered = within(interviewing).getByRole("group", { name: "Company response" });
+  expect(
+    within(offered)
+      .getAllByRole("button")
+      .map((button) => button.textContent),
+  ).toEqual(["rejected", "assessment failed", "ghosted", "Cancel"]);
+});
+
+test("danger marks the pills that close the row", async () => {
+  // Color means consequence, not actor (spec 080).
+  stubApi({ jobs: [job(1, "Northwind", "80", "applied")] });
+  const user = userEvent.setup();
+  renderPage();
+
+  const row = await rowFor("Northwind");
+  await user.click(within(row).getByRole("button", { name: "Company replied" }));
+  const closes = (name: string): boolean =>
+    within(row).getByRole("button", { name }).classList.contains("job-actions__pill--closes");
+  expect(closes("interview")).toBe(false);
+  for (const name of ["rejected", "assessment failed", "ghosted", "no response"]) {
+    expect(closes(name), name).toBe(true);
+  }
+
+  await user.click(within(row).getByRole("button", { name: "Cancel" }));
+  await user.click(within(row).getByRole("button", { name: "Withdraw" }));
+  for (const [text] of EXIT_PILL_CODES) {
+    expect(closes(text), text).toBe(true);
+  }
+});
+
+test("interviewing is a company outcome, not a verb", async () => {
+  for (const status of ["prospect", "applied"]) {
+    cleanup();
+    stubApi({ jobs: [job(1, "Northwind", "80", status)] });
+    const user = userEvent.setup();
+    renderPage();
+    const row = await rowFor("Northwind");
+    await user.click(within(row).getByRole("button", { name: /^More actions/ }));
+    expect(within(row).queryByRole("button", { name: "Interviewing" }), status).toBeNull();
+  }
+
+  cleanup();
+  const calls = stubApi({ jobs: [job(1, "Northwind", "80", "applied")] });
+  const user = userEvent.setup();
+  renderPage();
+  const row = await rowFor("Northwind");
+  await user.click(within(row).getByRole("button", { name: "Company replied" }));
+  await user.click(within(row).getByRole("button", { name: "interview" }));
+
+  await waitFor(() => {
+    const sent = calls.find((call) => call.url === "/api/tracker/1/outcome");
+    expect(sent?.body).toEqual({ code: "interview_invited", note: null });
+  });
+  expect(calls.some((call) => call.url.endsWith("/status"))).toBe(false);
+});
+
+test("a takeover keeps keyboard focus", async () => {
+  stubApi({ jobs: [job(1, "Northwind", "80")] });
+  const user = userEvent.setup();
+  renderPage();
+  const row = await rowFor("Northwind");
+
+  // Opening lands on the first pill rather than on nothing.
+  await user.click(within(row).getByRole("button", { name: "Reject" }));
+  await waitFor(() => {
+    expect(document.activeElement).toBe(within(row).getByRole("button", { name: "hybrid" }));
+  });
+  // Escape closes without sending and hands focus back to the opener.
+  await user.keyboard("{Escape}");
+  expect(within(row).queryByRole("button", { name: "hybrid" })).toBeNull();
+  await waitFor(() => {
+    expect(document.activeElement).toBe(within(row).getByRole("button", { name: "Reject" }));
+  });
+  // So does Cancel.
+  await user.click(within(row).getByRole("button", { name: "Reject" }));
+  await user.click(within(row).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => {
+    expect(document.activeElement).toBe(within(row).getByRole("button", { name: "Reject" }));
+  });
+
+  // The company's takeover behaves the same way.
+  cleanup();
+  stubApi({ jobs: [job(1, "Northwind", "80", "applied")] });
+  renderPage();
+  const applied = await rowFor("Northwind");
+  await user.click(within(applied).getByRole("button", { name: "Company replied" }));
+  await waitFor(() => {
+    expect(document.activeElement).toBe(within(applied).getByRole("button", { name: "interview" }));
+  });
+  await user.keyboard("{Escape}");
+  await waitFor(() => {
+    expect(document.activeElement).toBe(
+      within(applied).getByRole("button", { name: "Company replied" }),
+    );
+  });
 });
