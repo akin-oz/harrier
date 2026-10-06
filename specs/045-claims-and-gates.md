@@ -165,6 +165,12 @@ spec 044.
       what replaced it (the amendment below on Python citations;
       `services/api/tests/test_spec_structure.py::test_every_test_a_spec_names_actually_exists`
       passes over every committed spec)
+- [ ] spec 023's Problem, Scope, resolution order and honest limitations
+      describe `user_config` as spec 041 left it, one row per kind with no
+      scope column, and each corrected sentence names the file or test that
+      proves it (the amendment below on spec 023;
+      `services/api/tests/test_userconfig.py::test_the_schema_carries_no_scope_column`,
+      `::test_a_kind_is_unique_on_its_own`)
 - [ ] All gates green on PR
 
 ## Proof / origin
@@ -330,3 +336,43 @@ it fail and name the spec; before this change the same rename passed.
 - Spec 023's other sentences about the scope column, in its Problem, Scope
   and honest limitations, have been stale since spec 041. Correcting them is
   not a citation change, so it is left to its own change.
+
+## Amendment (2026-10-06): spec 023 describes the table spec 041 left
+
+The last limitation above is this amendment. Spec 041 removed the `scope`
+column from `user_config` in commit 3defbdf and amended ADR-009 to match.
+Spec 023 still describes the column in four places, one more than that
+limitation names:
+
+- its Problem gives ADR-009's aim as a data layer "a tenant scope can
+  partition later"
+- its Scope keys the table on (scope, kind) and calls `scope` the tenancy
+  seam
+- step 1 of its resolution order reads the store "when a row exists for the
+  scope"
+- its honest limitations say "the scope column exists and partitions"
+
+### What changes
+
+- Spec 023: each of those sentences is corrected against the code and names
+  the file or test that proves it. A Python test goes in a code span, so the
+  reference check reads it. The scope column criterion, which the amendment
+  above marked superseded, does not change.
+
+No code changes and no new file.
+
+**How to know it worked.** `grep -n scope specs/023-user-configuration-in-db.md`
+finds the column only where a sentence describes its removal, and
+`services/api/tests/test_spec_structure.py::test_every_test_a_spec_names_actually_exists`
+passes over every committed spec, so each test the corrections cite exists.
+
+### Limitations
+
+- No check compares a spec's prose with the code. The reference check
+  proves that a cited test exists, not that the sentence citing it is true,
+  so a later change can leave a spec's prose stale without a failure.
+- Spec 023's sentence on the API write path says it has no auth because the
+  service binds to localhost. It predates spec 035, which requires the
+  session token on config writes
+  (`services/api/tests/test_api_exposure.py::test_a_state_changing_request_without_the_token_is_refused`).
+  It is not about the scope column, so it is left to its own change.
