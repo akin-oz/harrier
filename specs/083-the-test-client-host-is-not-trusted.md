@@ -105,22 +105,23 @@ This spec is the only new file, and specs are public, so
 
 ## Acceptance criteria
 
-- [ ] `GET /health` with Host `testserver`, and with Host `testserver:8000`,
-      answers 400 (planned test_the_test_clients_host_is_refused)
-- [ ] `POST /runs` with a valid token and Host `testserver` answers 400
-      (planned test_the_test_clients_host_is_refused_on_a_write)
-- [ ] `localhost`, `127.0.0.1`, `localhost:8000` and `0.0.0.0:8000` answer
+- [x] `GET /health` with Host `testserver`, and with Host `testserver:8000`,
+      answers 400
+      (`services/api/tests/test_api_exposure.py::test_the_test_clients_host_is_refused`)
+- [x] `POST /runs` with a valid token and Host `testserver` answers 400
+      (`::test_the_test_clients_host_is_refused_on_a_write`)
+- [x] `localhost`, `127.0.0.1`, `localhost:8000` and `0.0.0.0:8000` answer
       200 (`services/api/tests/test_api_exposure.py::test_a_local_host_is_allowed`,
       which gains `0.0.0.0:8000`)
-- [ ] a test client built with no base URL sends Host `localhost` (planned
-      test_a_client_without_a_base_url_reaches_the_app_as_localhost)
-- [ ] `TRUSTED_HOSTS` is `("localhost", "127.0.0.1", "[::1]", "0.0.0.0")`,
+- [x] a test client built with no base URL sends Host `localhost`
+      (`::test_a_client_without_a_base_url_reaches_the_app_as_localhost`)
+- [x] `TRUSTED_HOSTS` is `("localhost", "127.0.0.1", "[::1]", "0.0.0.0")`,
       and the diff adds no environment variable or parameter that changes it
-- [ ] no existing `TestClient(...)` call is edited, and the full suite passes
-- [ ] spec 051 quotes the new list
-- [ ] `just check` passes
+- [x] no existing `TestClient(...)` call is edited, and the full suite passes
+- [x] spec 051 quotes the new list
+- [x] `just check` passes
 
-The planned tests go in `services/api/tests/test_api_exposure.py`.
+The tests are in `services/api/tests/test_api_exposure.py`.
 
 ## Honest limitations
 
