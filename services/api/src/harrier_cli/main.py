@@ -1380,6 +1380,12 @@ def _cmd_review_followup(args: argparse.Namespace) -> int:
     # which is the distinction the service's own check does not draw.
     if any(not state.reviewed for state in states):
         exit_code = exit_code or 2
+    # Nor is one reviewed only before its head moved. Exiting 0 there called a
+    # push that answered findings settled while the decision above was asking
+    # for its review (spec 043 amendment). Not when anything is outstanding:
+    # that exits 3, because the answer comes first.
+    if any(not state.reviewed_at_head and not state.outstanding for state in states):
+        exit_code = exit_code or 2
     # And a reviewed pull request with an unanswered finding is not a settled
     # one. Exiting zero here is what let a Major finding sit unread: the loop
     # counted unresolved threads, and the finding was in a review body that

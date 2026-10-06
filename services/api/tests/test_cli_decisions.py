@@ -15,11 +15,13 @@ matters to whoever runs it.
 
 from __future__ import annotations
 
+import json
+import subprocess
 from pathlib import Path
 
 import pytest
 
-from harrier.reviewfollowup import PullRequestState, ReviewBody, ThreadState
+from harrier.reviewfollowup import PullRequestState, ReviewBody, ThreadState, record_handled
 from harrier_cli.main import main
 
 REVIEWER = "coderabbitai"
@@ -188,6 +190,9 @@ def test_a_settled_pull_request_exits_zero(monkeypatch: pytest.MonkeyPatch) -> N
             head_sha="abc",
             review_threads=2,
             comment_bodies=[],
+            # Settled means a review covered the head itself (spec 043
+            # amendment).
+            last_reviewed_sha="abc",
             reviews_seen=1,
         ),
     )
@@ -211,6 +216,97 @@ def test_a_truncated_page_of_findings_still_exits_three(monkeypatch: pytest.Monk
         ),
     )
     assert main(_argv([5])) == 3
+
+
+def test_a_head_reviewed_before_it_moved_exits_two(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The decision asked for a review of the new head while the exit code
+    called the pull request settled: PR #147's shape, after a push that
+    answered its review, printed "reviewed, 2 threads, nothing outstanding"
+    and exited 0 (spec 043 amendment). Through the real `gather`, with only
+    `gh` stubbed, because that spec has twice recorded a defect that tests
+    bypassing `gather` could not see."""
+    reviewed, pushed = "a" * 40, "b" * 40
+
+    def review(identifier: str, author: str, body: str, commit: str) -> dict[str, object]:
+        return {
+            "id": identifier,
+            "author": {"login": author},
+            "body": body,
+            "commit": {"oid": commit},
+        }
+
+    def thread(identifier: str, last_comment: str) -> dict[str, object]:
+        return {
+            "id": identifier,
+            "isResolved": True,
+            "comments": {"nodes": [{"id": last_comment, "author": {"login": REVIEWER}}]},
+        }
+
+    pull = {
+        "state": "OPEN",
+        "reviewThreads": {"nodes": [thread("t1", "ack1"), thread("t2", "ack2")]},
+        "reviews": {
+            "nodes": [
+                review("r1", REVIEWER, "**Actionable comments posted: 2**", reviewed),
+                review("r2", "akin-oz", "", pushed),
+                review("r3", "akin-oz", "", pushed),
+                review("r4", REVIEWER, "", pushed),
+                review("r5", REVIEWER, "", pushed),
+            ]
+        },
+    }
+    answers = {
+        "graphql": json.dumps({"data": {"repository": {"pullRequest": pull}}}),
+        "pr": f"{pushed}\n",
+        "api": "[]",
+    }
+
+    def gh(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert command[0] == "gh", f"unexpected command: {command}"
+        answer = answers["graphql" if "graphql" in command else command[1]]
+        return subprocess.CompletedProcess(command, 0, stdout=answer, stderr="")
+
+    monkeypatch.setattr("subprocess.run", gh)
+    # Every finding answered, and the reviewer's acknowledgements read.
+    record_handled(["r1", "ack1", "ack2"])
+
+    code = main(_argv([147]))
+
+    lines = capsys.readouterr().out.splitlines()
+    assert "PR #147: the head has moved since the last review" in lines
+    # The report line comes last, after the decisions.
+    assert (code, lines[-1]) == (2, "PR #147: NOT REVIEWED AT THE HEAD, last reviewed at aaaaaaa")
+
+
+def test_an_unanswered_finding_after_a_push_still_exits_three(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A push that answers some findings moves the head while another thread
+    still waits on us. The decision answers before it asks, and the
+    review-response rule says the command exits 3 while anything is
+    outstanding, so the moved head must not turn that into exit 2."""
+    _install(
+        monkeypatch,
+        PullRequestState(
+            number=6,
+            head_sha="new",
+            review_threads=2,
+            comment_bodies=[],
+            last_reviewed_sha="old",
+            reviews_seen=1,
+            awaiting=(
+                ThreadState(
+                    identifier="t1",
+                    resolved=False,
+                    last_author=REVIEWER,
+                    last_comment_id="c1",
+                ),
+            ),
+        ),
+    )
+    assert main(_argv([6])) == 3
 
 
 # --- portability ------------------------------------------------------------

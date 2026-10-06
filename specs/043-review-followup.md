@@ -174,7 +174,7 @@ Proven by services/api/tests/test_review_followup.py:
 | no notice means nothing is posted | `test_no_notice_means_none`, `test_a_notice_without_a_wait_is_reported_not_guessed` |
 | an unchanged head is not re-requested | `test_a_reviewed_pull_request_at_the_same_head_is_left_alone`, `test_a_moved_head_is_asked_again` |
 | a reply in a thread is not a review of the commit it names (amendment below) | `test_a_reply_in_a_thread_is_not_a_review`, `test_the_reviewed_sha_is_read_from_the_reviews` |
-| a head reviewed only before it moved exits 2 and says so (amendment below) | planned test_a_head_reviewed_before_it_moved_is_reported_as_not_reviewed_there, and in services/api/tests/test_cli_decisions.py planned test_a_head_reviewed_before_it_moved_exits_two and planned test_an_unanswered_finding_after_a_push_still_exits_three |
+| a head reviewed only before it moved exits 2 and says so (amendment below) | `test_a_head_reviewed_before_it_moved_is_reported_as_not_reviewed_there` (seven cases), `tests/test_cli_decisions.py::test_a_head_reviewed_before_it_moved_exits_two`, `tests/test_cli_decisions.py::test_an_unanswered_finding_after_a_push_still_exits_three` |
 | the daily bound stops the loop | `test_the_daily_bound_stops_the_loop`, `test_the_bound_wins_over_everything_else` |
 | rate limited is distinguishable from reviewed | `test_a_rate_limited_pull_request_reports_as_not_reviewed`, `test_a_reviewed_pull_request_reports_as_reviewed`, `test_a_pull_request_with_neither_is_still_not_reviewed` |
 | `gh` failing is reported | `test_gh_failing_is_reported_not_swallowed`, `test_an_unreadable_payload_is_reported` |
@@ -221,12 +221,12 @@ protect a counter would have been the wrong trade.
       the reviewer has only replied on is asked for its review (the
       amendment below on replies;
       `test_a_reply_in_a_thread_is_not_a_review`)
-- [ ] a pull request reviewed only before its head moved reads "NOT
+- [x] a pull request reviewed only before its head moved reads "NOT
       REVIEWED AT THE HEAD" and exits 2, and an unanswered finding still
-      exits 3 (the amendment below on the exit code; planned
-      test_a_head_reviewed_before_it_moved_exits_two, planned
-      test_an_unanswered_finding_after_a_push_still_exits_three and planned
-      test_a_head_reviewed_before_it_moved_is_reported_as_not_reviewed_there)
+      exits 3 (the amendment below on the exit code;
+      `tests/test_cli_decisions.py::test_a_head_reviewed_before_it_moved_exits_two`,
+      `tests/test_cli_decisions.py::test_an_unanswered_finding_after_a_push_still_exits_three`,
+      `test_a_head_reviewed_before_it_moved_is_reported_as_not_reviewed_there`)
 - [ ] All gates green on PR
 
 ## Proof / origin
@@ -485,22 +485,24 @@ owed, and exit 3 says an answer is owed.
 ### What changes
 
 - `services/api/src/harrier/reviewfollowup.py`: `PullRequestState` says
-  whether it is reviewed at its head, and `report` gives the new line.
+  whether it is reviewed at its head, `decide` reads that in place of its own
+  copy of the comparison, and `report` gives the new line.
 - `services/api/src/harrier_cli/main.py`: `_cmd_review_followup` exits 2 for
   a pull request reviewed only before its head moved, when nothing is
   outstanding.
-- `services/api/tests/test_cli_decisions.py`: planned
-  test_a_head_reviewed_before_it_moved_exits_two drives the PR #147 shape
+- `services/api/tests/test_cli_decisions.py`:
+  `test_a_head_reviewed_before_it_moved_exits_two` drives the PR #147 shape
   through the real `gather`, with `gh` stubbed, and asserts the decision
-  line, the report line and exit 2. It also gains planned
-  test_an_unanswered_finding_after_a_push_still_exits_three, which gives a
+  line, the report line and exit 2. It also gains
+  `test_an_unanswered_finding_after_a_push_still_exits_three`, which gives a
   pull request a moved head and an unanswered thread, and asserts exit 3.
   `test_a_settled_pull_request_exits_zero` gains a reviewed commit equal to
   its head, because settled now means reviewed there. What it proves is
   unchanged.
-- `services/api/tests/test_review_followup.py`: planned
-  test_a_head_reviewed_before_it_moved_is_reported_as_not_reviewed_there
-  checks the line with each reason and with no commit named.
+- `services/api/tests/test_review_followup.py`:
+  `test_a_head_reviewed_before_it_moved_is_reported_as_not_reviewed_there`
+  checks the line with each reason, the order of the reasons, and with no
+  commit named.
   `test_a_reviewed_pull_request_reports_as_reviewed` gains a reviewed commit
   equal to its head, for the same reason.
 
@@ -508,20 +510,19 @@ No new file, so `config/data-classification.json` does not change.
 
 ### How to know it worked
 
-The planned test_a_head_reviewed_before_it_moved_exits_two runs the command
-as above. Before this change it fails: the report line reads "reviewed, 2
-threads, nothing outstanding" and the command exits 0. After it, the line
-reads "NOT REVIEWED AT THE HEAD, last reviewed at" and the first seven
-characters of the commit the review named, and the command exits 2.
+`test_a_head_reviewed_before_it_moved_exits_two` runs the command as above.
+Before this change it failed: the report line read "reviewed, 2 threads,
+nothing outstanding" and the command exited 0. After it, the line reads
+"NOT REVIEWED AT THE HEAD, last reviewed at" and the first seven characters
+of the commit the review named, and the command exits 2.
 
 ### Failure modes this must not introduce
 
 - A pull request reviewed at its head stops exiting 0.
   `test_a_settled_pull_request_exits_zero`, with its reviewed commit set to
   its head, holds this.
-- An unanswered finding stops exiting 3 because its head also moved. The
-  planned test_an_unanswered_finding_after_a_push_still_exits_three holds
-  this.
+- An unanswered finding stops exiting 3 because its head also moved.
+  `test_an_unanswered_finding_after_a_push_still_exits_three` holds this.
 - The decision changes. No test of `decide` changes.
 
 ### Out of scope
