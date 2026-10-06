@@ -265,9 +265,8 @@ argument hold:
   preferred weight, and then an unblocked posting can score below base plus
   remote; the penalty would no longer guarantee the ordering. `score_bounds`
   adds every negative weight to `low` and every positive one to `high`.
-- **The pre-merge check removed eight patterns.** Run read-only against the
-  local tracker as the limitations section requires, phrases from two
-  shapes fired on postings the candidate had acted on:
+- **Eight patterns were removed before merge,** in two phrase shapes that
+  describe a company as often as a role:
   - "US-based" and "based in the US" describe where a company's team sits
     (the synthetic fixtures "our team is based in the US and Spain" and
     "E-Verify applies to our U.S. based roles")
@@ -275,9 +274,9 @@ argument hold:
   - "No visa sponsorship" and its variants are written by European
     employers as often as American ones, and do not bind a candidate who
     contracts through an EU entity.
-  Both are removed. A US-only role that says either is still caught by the
-  remaining US scope phrases. After the change, no blocker fires on a row the
-  candidate acted on. The counts were reported in the session, not here
+  A US-only role that says either is still caught by the remaining US scope
+  phrases. The read-only check the limitations section requires was run
+  before merge; what it found was reported in the session, not here
   (ADR-008). Synthetic fixtures for both shapes are in
   `tests/test_scoring.py::test_blocker_tables_do_not_fire_on_eligible_postings`.
 
