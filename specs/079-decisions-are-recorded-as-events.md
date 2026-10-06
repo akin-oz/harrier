@@ -205,7 +205,7 @@ digest and API keep reading the `jobs` row; nothing that exists today reads
 ## Failure modes
 
 - A status write whose event insert fails is rolled back with it: one
-  transaction, both or neither (`test_a_status_change_and_its_event_commit_together`).
+  transaction, both or neither (planned test_a_status_change_and_its_event_commit_together).
 - A company code on `reject`, or a candidate code on `company-outcome`: exit
   2, nothing written, the message names the right verb.
 - `company-outcome` on a row with no `applied_date`: exit 2, nothing written.
@@ -217,54 +217,58 @@ digest and API keep reading the `jobs` row; nothing that exists today reads
 
 ## Acceptance criteria
 
+Tests marked planned do not exist yet. They are named here so the
+implementation has a target; the implementing change cites each one in
+backticks, where `tests/test_spec_structure.py` checks it exists.
+
 Tests in `services/api/tests/test_job_events.py` unless named otherwise. All
 rows are synthetic.
 
 - [ ] Every `set_status` call appends exactly one event, with the row's
       `fit_score` and `scoring_version` from before the write, and `add_job`
       appends one `created` event
-      (`::test_every_status_change_appends_one_event`,
-      `::test_an_event_records_the_score_the_candidate_saw`)
+      (planned test_every_status_change_appends_one_event,
+      planned test_an_event_records_the_score_the_candidate_saw)
 - [ ] A status change and its event commit together or not at all
-      (`::test_a_status_change_and_its_event_commit_together`)
+      (planned test_a_status_change_and_its_event_commit_together)
 - [ ] `job_events` refuses UPDATE and DELETE
-      (`::test_job_events_is_append_only`)
+      (planned test_job_events_is_append_only)
 - [ ] A company rejection is recorded as a `company` outcome and never as a
       candidate decision: `company-outcome` writes `kind='outcome'`,
       `actor='company'`; `reject` with a company code refuses and names
       `company-outcome`; the CHECK constraint refuses a hand-built row that
       pairs `outcome` with any other actor
-      (`::test_a_company_verdict_is_never_a_candidate_decision`)
+      (planned test_a_company_verdict_is_never_a_candidate_decision)
 - [ ] The `interviewing` verb, from the CLI and from the API, records a
       `company` outcome with code `interview_invited`
-      (`::test_the_interviewing_verb_is_a_company_outcome`)
+      (planned test_the_interviewing_verb_is_a_company_outcome)
 - [ ] `company-outcome` refuses a row with no `applied_date`
-      (`::test_a_company_cannot_reject_an_application_never_sent`)
+      (planned test_a_company_cannot_reject_an_application_never_sent)
 - [ ] Every code belongs to exactly one actor, and `infer_code` maps each
       documented phrase to its code and an unknown phrase to `unclassified`
-      (`::test_every_reason_code_has_one_actor`, `::test_infer_code`)
+      (planned test_every_reason_code_has_one_actor, planned test_infer_code)
 - [ ] An API rejection with company text on an applied row is recorded as a
       company outcome, and on an unapplied row as `unknown`
-      (`tests/test_ui_tracker.py::test_api_rejection_text_never_becomes_a_candidate_decision`)
+      (planned tests/test_ui_tracker.py::test_api_rejection_text_never_becomes_a_candidate_decision)
 - [ ] The AI-evaluation auto-reject is a `system` decision with code
-      `ai_evaluation` (`tests/test_offers.py::test_auto_reject_is_a_system_decision`)
+      `ai_evaluation` (planned tests/test_offers.py::test_auto_reject_is_a_system_decision)
 - [ ] Backfill writes the documented events with `backfilled=1` and empty
       scores, separates company outcomes from candidate decisions by the same
       rules, and is idempotent; `--dry-run` writes nothing
-      (`::test_backfill_reconstructs_what_the_row_still_holds`,
-      `::test_backfill_is_idempotent`)
+      (planned test_backfill_reconstructs_what_the_row_still_holds,
+      planned test_backfill_is_idempotent)
 - [ ] A migrated database matches a fresh one
       (`tests/test_scoring.py::test_a_migrated_database_matches_a_fresh_one`,
       extended to cover migration 5)
 - [ ] Reopening a rejected job (spec 072) appends a candidate decision and
       leaves the earlier rejection event in place
-      (`::test_reopening_keeps_the_history`)
+      (planned test_reopening_keeps_the_history)
 - [ ] `tests/test_tracker_invariants.py` and the transition tests pass
       unchanged
 - [ ] `events backfill` and `events show` are `database` class
       (`tests/test_delegation.py`)
 - [ ] No reason text, company or title appears in a log line written by this
-      code (`::test_event_writes_log_no_reason_text`)
+      code (planned test_event_writes_log_no_reason_text)
 - [ ] No real tracker row appears in a fixture (ADR-008)
 - [ ] All gates green on PR
 
@@ -340,4 +344,4 @@ The existing `interviewing` verb records a company outcome
 browser's Interviewing button into a Company replied control, found that the
 verb would otherwise remain a way to record a company action as the
 candidate's. Stated under Behavior and proved by
-`::test_the_interviewing_verb_is_a_company_outcome`.
+planned test_the_interviewing_verb_is_a_company_outcome.
