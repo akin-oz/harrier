@@ -518,7 +518,7 @@ def test_planned_exempts_a_web_test_only_until_it_exists(
         ("The proof is `a thing happens`.", True),
         ('Still planned "a thing happens", which fails without the fix.', True),
         ('The page says "a phrase no test has".', False),
-        ('```text\n"a thing happens"\n```', False),
+        ('```text\n"a thing happens"\n\nA code span stops at a blank line.\n```', False),
     ],
     ids=["double quotes", "code span", "planned", "not a test name", "fenced example"],
 )
