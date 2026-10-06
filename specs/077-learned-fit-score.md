@@ -1,8 +1,8 @@
 ---
 spec: 077
 title: The fit score is learned from what the candidate acted on, and says why
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M8
 depends: [031, 032, 033, 074, 078, 079]
 ---
