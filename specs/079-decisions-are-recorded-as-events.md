@@ -1,8 +1,8 @@
 ---
 spec: 079
 title: Every decision on a job is recorded, with who made it and why
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M8
 depends: [031, 033, 036, 072]
 ---
