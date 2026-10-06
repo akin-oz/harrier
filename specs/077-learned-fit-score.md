@@ -1,10 +1,10 @@
 ---
 spec: 077
 title: The fit score is learned from what the candidate acted on, and says why
-status: accepted
-approved: yes
+status: proposed
+approved: no
 milestone: M8
-depends: [031, 032, 033, 074]
+depends: [031, 032, 033, 074, 078, 079]
 ---
 
 # Spec 077: The fit score is learned from what the candidate acted on, and says why
@@ -39,6 +39,12 @@ score ranks), the single score write path (`score_fields()`), and the score
 version. This spec does not reopen any of them. It changes only how the
 integer in `fit_score` is produced.
 
+Spec 078 already ranks a blocked posting below every eligible one, with a
+penalty derived from the rules. That fixes the 151 case without data. This
+spec goes further: it learns how much each signal matters from the
+candidate's own decisions, which spec 079 records with who made them and
+why.
+
 ## Scope
 
 A learned ranking model with an explicit fallback to the rules, built in four
@@ -56,9 +62,10 @@ Training is offline and split in two commands so the trainer never opens the
 database:
 
 - `harrier scoring export`: a `database`-class command (spec 074, so it is
-  delegated into the container while the container runs). Reads tracker rows
-  and cached descriptions, labels them, runs the same extractor inference
-  uses, and writes a feature export. Writes nothing to the database.
+  delegated into the container while the container runs). Reads decision
+  events (spec 079), tracker rows and cached descriptions, labels them, runs
+  the same extractor inference uses, and writes a feature export. Writes
+  nothing to the database.
 - `harrier scoring train`: a `host-only` command (spec 074). Reads only the
   export, fits the model with scikit-learn, evaluates it against the rules on
   a time-ordered held-out set, writes a dated model file and a report, and
@@ -80,51 +87,75 @@ schema, the API contract and `apps/web` do not change.
 
 ### Label
 
-Binary, from the tracker row at export time:
+Labels are read from the decision events of spec 079, not reconstructed from
+the row. Per job, from its `job_events`:
 
-| Label | Rows |
+| Label | Jobs |
 |---|---|
-| `1` acted on | `applied_date` is set, or status is `shortlisted`, `tailored_cv_requested`, `applied` or `interviewing`. A row the candidate applied to and the company later rejected or ghosted is `1`: the label is the candidate's decision, not the company's. |
-| `0` skipped | status `rejected`, no `applied_date`, and the rejection reason is not administrative. |
-| excluded | status `prospect` (undecided); a rejection reason that is administrative (vacancy closed or removed, duplicate, application expired), matched by `labels.ADMINISTRATIVE_REASONS`; a row with no cached description of at least `MIN_DESCRIPTION_LENGTH_FOR_SCORING` characters. |
+| `1` acted on | at least one `decision` event with `actor = 'candidate'` that moved the job forward (to `shortlisted`, `tailored_cv_requested` or `applied`). A later Withdraw, or a company rejection, does not undo it: the label is the candidate's judgement of the posting. |
+| `0` skipped | the candidate's first `decision` is a move to `rejected` with `actor = 'candidate'`, and no forward candidate decision follows it. |
+| excluded | no candidate decision yet (undecided); the job was closed by a `system` decision (`vacancy_closed`, `duplicate`, `application_expired`, `ai_evaluation`) before the candidate judged it; a job whose decision event carries a `description_sha256` that does not match the cached description (the text judged is not the text the extractor would read); a job with no cached description of at least `MIN_DESCRIPTION_LENGTH_FOR_SCORING` characters. |
 
-Rows rejected by the candidate for a location reason (hybrid, onsite,
-location) stay `0`. They passed the automated gates and were rejected by a
-person anyway, which is exactly the blind spot this model exists to see. The
-model learns to rank them low; it never rejects anything (see Gates below).
+**Company outcomes are never a label for this model.** `outcome` events with
+`actor = 'company'` (rejected, ghosted, no response, assessment failed) say
+what an employer did with an application, not what the candidate thought of
+the posting. Spec 079 stores them apart so that no reader has to guess; this
+spec does not read them for the binary label
+(`test_a_company_outcome_is_never_a_label`).
 
-**Why binary and not the three-class ordinal (ignored, acted on, interviewing
-or later).** The top class is empty or close to it in the tracker today, so
-a third class would be a coefficient vector fitted to almost nothing. The
-model file format carries `classes` and `class_values` so the ordinal model,
-and the collapse `p = 0*p0 + 0.5*p1 + 1*p2`, can be added by amendment once
-the top class reaches the same minimum as the positives below, without a
-format change.
+**Location-reason rejections stay `0`.** A candidate decision coded
+`not_remote` or `location` is a posting that passed the automated gates and
+was rejected by a person anyway, which is the blind spot this model exists to
+see. The model ranks such postings low; it never rejects anything (Gates,
+below).
 
-**Selection bias.** Every labeled row reached the tracker through the gates,
-and the queue that showed it was ranked by the old rule score, so acted-on
-rows lean toward rows the rules already liked. The spec does not pretend to
+**Backfilled events.** Jobs decided before spec 079 have events marked
+`backfilled = 1`, with inferred codes and no score at decision time. They are
+included by default, because they hold most of the history. `harrier scoring
+train --live-only` drops them, and the report always gives the test metrics
+for live events separately once that subset reaches the test minimum.
+
+**Why binary and not the three-class ordinal.** The top class would be
+company `interview_invited` outcomes on jobs the candidate acted on. Spec 079
+gives that class a verb and a home, but it is close to empty today, so a
+third class would be a coefficient vector fitted to almost nothing. The model
+file format carries `classes` and `class_values` so the ordinal model, and the
+collapse `p = 0*p0 + 0.5*p1 + 1*p2`, can be added by amendment once the top
+class reaches the same minimum as the positives below, without a format
+change.
+
+**Selection bias.** Every labeled job reached the tracker through the gates,
+and the queue that showed it was ranked by the rule score, so acted-on jobs
+lean toward jobs the rules already liked. The spec does not pretend to
 correct this; it limits and measures it:
 
 - The old score is never a feature. `fit_score`, `score`, `signals` and
-  `scoring_version` are not read by the extractor, and the trainer refuses a
-  feature order that names any of them
+  `scoring_version`, on the row or on an event, are not read by the
+  extractor, and the trainer refuses a feature order that names any of them
   (`test_the_old_score_is_never_a_feature`).
-- The rule score appears in the export only as the baseline column, recomputed
-  with `score_job` under the current policy, so model and baseline are
-  compared on identical inputs.
+- The rule score appears in the export only as the baseline column,
+  recomputed with `score_job` under the current policy (including spec 078's
+  blocker penalty), so model and baseline are compared on identical inputs.
 - The evaluation report gives average precision within each tercile of the
   baseline score on the test set. A model that only reproduces the rules has
   near base-rate precision inside a tercile; one that learned something else
   does not.
+- For live events, spec 079 keeps the `fit_score` and `scoring_version` the
+  job carried when it was decided. The report gives the acted-on rate by
+  that score band, per scoring version: the first direct measure of how much
+  the shown ranking drove the decisions. It is reported, never used as a
+  feature or a weight.
 
 ### Split
 
-Labeled rows are ordered by `added_at`, ties broken by `id`. The earliest 70
-percent are training rows and the rest are test rows. No test row is older
-than any training row (`test_the_split_is_time_ordered`). Regularization
-strength is chosen by forward-chaining cross-validation inside the training
-window only.
+Labeled jobs are ordered by the time of the candidate decision that set
+their label: the event `at` for live events, and `added_at` for backfilled
+ones (a backfilled rejection's `at` is `updated_at`, an upper bound that
+rescoring can push late, so it is not trusted for ordering). Ties are broken
+by job id. The earliest 70 percent are training rows and the rest are test
+rows. No test row is earlier than any training row
+(`test_the_split_is_time_ordered`). Regularization strength is chosen by
+forward-chaining cross-validation inside the training window only.
 
 ### Features
 
@@ -138,19 +169,21 @@ Fixed order, stored in the model file as `feature_order`.
 | `preferred_signal` | sum of `PREFERRED_SIGNAL_WEIGHTS` matched (EU-permit phrases stay positive, per the product invariant) | numeric, p92 |
 | `title_fit` | 1 for `is_target_title_variant`, else matched include keywords over the include cap | 0 to 1 |
 | `frontend_share` | frontend term weight over frontend plus backend term weight (new `BACKEND_TERMS` table beside `SKILL_SIGNALS`); 0.5 when neither appears | 0 to 1 |
-| `explicit_emea_remote` | a `PREFERRED_REGION_PATTERNS` match other than the ambiguous `worldwide`, `global`, `anywhere` | 0 or 1 |
-| `us_scope` | new `US_SCOPE_PATTERNS`: "anywhere in the US", "US-based", "US only", "must reside in the US", "US time zones", "authorized to work in the US" | 0 or 1 |
-| `employment_blocker` | new `EMPLOYMENT_BLOCKER_PATTERNS`: W-2, at-will employment, no visa sponsorship or unable to sponsor, student visa, OPT or CPT, US citizens only, security clearance | 0 or 1 |
+| `explicit_emea_remote` | the explicit-EMEA test spec 078 uses for its location override: a `PREFERRED_REGION_PATTERNS` match other than the ambiguous `worldwide`, `global`, `anywhere` | 0 or 1 |
+| `us_scope` | `rules.blockers(job)` reports class `us_scope` (spec 078's `US_SCOPE_PATTERNS`, with its explicit-EMEA location override) | 0 or 1 |
+| `employment_blocker` | `rules.blockers(job)` reports class `employment` (spec 078's `EMPLOYMENT_BLOCKER_PATTERNS`) | 0 or 1 |
 | `years_gap` | required years parsed from the description minus `candidate.years_experience`, floored at 0 | numeric, p92 |
 
 Grouped rather than one feature per phrase, because each phrase alone is
 rare and its coefficient would be noise at this data size. `signals` still
 names the phrase that fired.
 
-The blocker patterns are word-bounded through `contains_word` or anchored
-regexes, the same discipline `rules.py` already applies after the Siracusa
-defect. `EU_PERMIT_PATTERNS` are stripped before the blocker patterns run, so
-"must be based in the EU" can never read as a blocker.
+The blocker features call spec 078's `rules.blockers(job)` and nothing else.
+There is one definition of a blocker, in `rules.py`: the rule penalty and the
+model feature cannot disagree about whether a posting is blocked, and a
+phrase added to a table reaches both and moves the policy version once
+(`test_blocker_features_reuse_the_rule_tables`). The EU-permit stripping and
+word-bounding are spec 078's and are inherited, not repeated.
 
 `years_gap` needs the candidate's years, which no configuration holds today.
 A new key `candidate.years_experience` is added to the example
@@ -293,7 +326,7 @@ which scorer produced it.
 `harrier scoring train` computes, on the test rows:
 
 - **Average precision** of the model and of the baseline (the current rule
-  score). Average precision because the queue is read from the top: it
+  score, with spec 078's blocker penalty). Average precision because the queue is read from the top: it
   rewards putting acted-on rows first and is not inflated by the large
   number of easy negatives the way ROC AUC is.
 - A **paired bootstrap** over test rows (2000 resamples, fixed seed) of the
@@ -336,14 +369,9 @@ the counts, and exits 3 with `insufficient labels`. The rules keep scoring.
 These two numbers are a judgement, not a measurement, and they are Akin's to
 approve or change before implementation.
 
-**The honest alternative while the data is below the minimum.** A model that
-cannot be trained cannot fix the 151 case. If that case should be fixed
-sooner, the smallest honest step is a separate spec that adds the
-`us_scope` and `employment_blocker` patterns to the rule score as fixed
-penalties: hand-set, visible in `signals`, versioned through
-`_rule_fingerprint`, and evaluated with the same `export` and the same
-average precision report against the current rules. This spec does not do
-that; it is listed as a decision below.
+**While the data is below the minimum.** The rules keep scoring, and since
+spec 078 they already rank blocked postings last. A refused training run
+costs nothing but the report.
 
 ### Privacy (ADR-008)
 
@@ -434,8 +462,21 @@ otherwise. Every fixture is synthetic.
       model version (`::test_scoring_version_names_the_scorer_that_was_used`)
 - [ ] `signals` lists the five largest contributions, signed, after the
       scorer and probability entries (`::test_signals_name_the_top_contributions_with_signs`)
-- [ ] Labels: acted-on, skipped, and each exclusion rule, over synthetic rows
-      (`::test_labels_follow_the_candidates_decision`)
+- [ ] Labels come from candidate decision events: acted-on, skipped, and
+      each exclusion rule, over synthetic events
+      (`::test_labels_come_from_candidate_decisions`)
+- [ ] A company outcome never sets or changes a label, and a job closed by a
+      system decision before the candidate judged it is excluded
+      (`::test_a_company_outcome_is_never_a_label`,
+      `::test_system_decisions_are_excluded`)
+- [ ] A decision whose `description_sha256` does not match the cached
+      description is excluded and counted in the report
+      (`::test_a_decision_on_a_different_description_is_excluded`)
+- [ ] `--live-only` drops backfilled events, and the report separates live
+      test metrics (`::test_live_only_drops_backfilled_events`)
+- [ ] The blocker features are spec 078's `rules.blockers`, so a phrase added
+      to a table changes both the penalty and the feature
+      (`::test_blocker_features_reuse_the_rule_tables`)
 - [ ] The split is time-ordered and p92 stats use training rows only
       (`::test_the_split_is_time_ordered`, `::test_p92_stats_come_from_training_rows_only`)
 - [ ] The old score is never a feature (`::test_the_old_score_is_never_a_feature`)
@@ -464,8 +505,13 @@ otherwise. Every fixture is synthetic.
 ## Honest limitations
 
 - **The label is a proxy.** "Acted on" measures what the candidate chose to
-  pursue, not what would have led to an offer. Interview outcomes are too
-  few to learn from, so the model learns taste, not success.
+  pursue, not what would have led to an offer. Interview outcomes are
+  recorded since spec 079 but too few to learn from, so the model learns
+  taste, not success.
+- **Most history is backfilled.** Decisions made before spec 079 have
+  inferred codes, an approximate time and no score at decision time. They
+  are marked and can be dropped, but until live events accumulate the model
+  learns mostly from reconstructed labels.
 - **Selection bias is measured, not removed.** Rows the old ranking buried
   were less likely to be read, so some skipped rows were never really
   judged. Without knowing which rows were shown and read, no reweighting is
@@ -495,8 +541,8 @@ otherwise. Every fixture is synthetic.
 - The web UI, including any display of contributions beyond the existing
   `signals` field.
 - LLM-based scoring or LLM-extracted features.
-- Rule-score blocker penalties as an interim fix (a separate spec if wanted;
-  see Minimum data).
+- Rule-score blocker penalties. Spec 078; this spec reuses its tables.
+- Recording decisions and company outcomes. Spec 079; this spec reads them.
 - The three-class ordinal model and categorical features (format-ready,
   added by amendment when the data supports them).
 - Automatic or scheduled retraining.
@@ -505,10 +551,10 @@ otherwise. Every fixture is synthetic.
 
 1. The minimum data thresholds: 10 positives per feature in training, 30 in
    test.
-2. Whether to ship the blocker patterns as rule penalties first, under a
-   separate spec, so the 151 case is fixed before enough labels exist.
-3. Whether location-reason rejections (hybrid, onsite, location) count as
+2. Whether candidate rejections coded `not_remote` or `location` count as
    negatives, as proposed, or are excluded.
+3. Whether backfilled events are included by default, as proposed, or only
+   with a flag.
 4. Ship condition 2 (blocker coefficients must be negative) as a hard gate.
 5. `candidate.years_experience` as a new deciding configuration key.
 
@@ -524,6 +570,10 @@ otherwise. Every fixture is synthetic.
   version the model identity joins.
 - Spec 074 and `harrier_cli/main.py` `COMMAND_CLASSES`: why export runs in the
   container and train on the host.
+- Spec 078: the blocker tables and `rules.blockers`, reused as features, and
+  the penalized rule score used as the baseline.
+- Spec 079: the decision events the labels are read from, and the separation
+  of company outcomes from candidate decisions.
 - Staged validate, preprocess, score pipeline; percentile normalization with
   clipping and stored stats; an encoder stored beside the model; an explicit
   fallback and dated model filenames: adapted from a private reference
@@ -533,3 +583,21 @@ otherwise. Every fixture is synthetic.
 - The read-only audit of the local tracker that informed the label, split
   and minimum-data decisions was reported to Akin in the session, not
   recorded here (ADR-008).
+
+## Amendment (2026-10-06, before approval)
+
+Amended after specs 078 and 079 were written, at Akin's request:
+
+- **Labels read spec 079's events.** The candidate's own decisions set the
+  label; company outcomes never do; system closures are excluded. This
+  replaces inference from `applied_date` and free-text reasons.
+- **The split orders by decision time** for live events.
+- **Blocker features call spec 078's `rules.blockers`.** One definition of a
+  blocker serves the penalty and the model.
+- **The baseline is the penalized rule score**, so the model has to beat the
+  rules as they will be, not as they were.
+- **The interim alternative and its open decision are gone**: spec 078 is
+  that alternative.
+
+The approval this spec carried before the amendment was reset to
+`approved: no`, so that approval covers the amended text.
