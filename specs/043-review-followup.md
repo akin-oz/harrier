@@ -170,6 +170,7 @@ Proven by services/api/tests/test_review_followup.py:
 | the reworded notice is read (amendment below) | `test_the_current_notice_wording_is_parsed` (three cases), `test_the_current_notice_survives_gather_with_its_time` |
 | the wait counts from when the notice was posted (amendment below) | `test_a_notice_waits_only_what_is_left_of_it`, `test_an_expired_notice_asks_again`, `test_an_expired_notice_on_a_reviewed_head_is_left_alone` |
 | a closed pull request is never asked, and is still owed its answers (amendment below) | `test_a_closed_pull_request_is_never_asked`, `test_a_closed_pull_request_is_still_owed_its_answers`, `test_gather_reads_whether_the_pull_request_is_closed` |
+| a clean review counts, and a review in progress is not asked again (amendment below) | `test_a_clean_review_counts_as_reviewed`, `test_a_notice_carrying_a_commit_range_is_not_a_review`, `test_a_review_in_progress_is_not_asked_again` |
 | no notice means nothing is posted | `test_no_notice_means_none`, `test_a_notice_without_a_wait_is_reported_not_guessed` |
 | an unchanged head is not re-requested | `test_a_reviewed_pull_request_at_the_same_head_is_left_alone`, `test_a_moved_head_is_asked_again` |
 | the daily bound stops the loop | `test_the_daily_bound_stops_the_loop`, `test_the_bound_wins_over_everything_else` |
@@ -201,6 +202,8 @@ protect a counter would have been the wrong trade.
       wait has passed decides nothing
 - [x] a merged or closed pull request is never asked for a review, and a
       finding on one is still reported as owed an answer
+- [x] a review that found nothing counts as a review at the commits it
+      covered, and a review still being written is not asked for again
 - [x] a pull request with no notice reports that and posts nothing
 - [x] a re-request is not sent when the head commit has not moved since the
       last completed review
@@ -275,6 +278,20 @@ because a finding on a merged pull request is owed an answer like any other.
 
 So a pull request merged before its review is not reviewed by this service
 at all. Waiting for the review before merging is the only way to get one.
+
+Two more came from the first review this amendment earned. A review that
+finds nothing creates no review object, only a line in the service's
+summary comment ("No actionable comments were generated") beside the
+commits it covered. The command counted reviews by their objects, so a
+cleanly reviewed pull request read as unreviewed and would have been asked
+again, spending the hour's one review on commits already covered. The
+summary line now counts, at the commits it names; a rate-limit notice names
+the same commit range, so the range alone does not. And a review still
+being written carries its own marker, which the command did not read, so it
+would have asked again mid-review. It now reports the review in progress
+and waits for it. `test_a_clean_review_counts_as_reviewed`,
+`test_a_notice_carrying_a_commit_range_is_not_a_review`,
+`test_a_review_in_progress_is_not_asked_again`.
 
 Limitation, recorded rather than fixed here: the limit belongs to the
 repository, but notices are read per pull request. Asked about several pull

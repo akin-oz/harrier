@@ -720,3 +720,66 @@ def test_gather_reads_whether_the_pull_request_is_closed(handled_env: Path) -> N
     assert (merged.closed, still_open.closed) == (True, False)
     assert decide(merged, requests_today=0, daily_limit=6).action == SKIP
     assert decide(still_open, requests_today=0, daily_limit=6).action == REQUEST
+
+
+# --- reviews the service leaves no review object for (spec 043 amendment) ---
+
+
+SUMMARY = """<!-- This is an auto-generated comment: summarize by coderabbit.ai -->
+{state}
+Reviewing files that changed from the base of the PR and between {base} and {head}.
+<!-- end of auto-generated comment: summarize by coderabbit.ai -->"""
+
+BASE = "1" * 40
+HEAD = "2" * 40
+
+
+def service_comments(*bodies: str) -> str:
+    """Comments as the API returns them, written by the review service."""
+    return json.dumps([{"body": body, "user": {"login": "coderabbitai[bot]"}} for body in bodies])
+
+
+def test_a_clean_review_counts_as_reviewed(handled_env: Path) -> None:
+    """A review that finds nothing creates no review object, only a line in
+    the summary comment beside the commits it covered. Read as unreviewed,
+    the pull request was asked again and spent the hour's one review on
+    commits already reviewed."""
+    clean = SUMMARY.format(
+        state="No actionable comments were generated in the recent review.", base=BASE, head=HEAD
+    )
+    at_head = gather(
+        39, stub_gh(service_comments(clean), f"{HEAD}\n", payload()), owner="o", repo="r"
+    )
+    assert at_head.reviewed
+    assert decide(at_head, requests_today=0, daily_limit=6).action == SKIP
+    moved = gather(39, stub_gh(service_comments(clean), "3" * 40, payload()), owner="o", repo="r")
+    assert decide(moved, requests_today=0, daily_limit=6).action == REQUEST
+
+
+def test_a_notice_carrying_a_commit_range_is_not_a_review(handled_env: Path) -> None:
+    """A rate-limit notice names the same commit range as a review does, so
+    the range alone proves nothing."""
+    notice = SUMMARY.format(state=CURRENT_NOTICE.format(wait="40 minutes"), base=BASE, head=HEAD)
+    state = gather(
+        39, stub_gh(service_comments(notice), f"{HEAD}\n", payload()), owner="o", repo="r"
+    )
+    assert not state.reviewed
+
+
+def test_a_review_in_progress_is_not_asked_again(handled_env: Path) -> None:
+    """Asking while the service is still writing buys a second review of the
+    same commits, or a notice."""
+    writing = SUMMARY.format(
+        state="<!-- This is an auto-generated comment: review in progress by coderabbit.ai -->",
+        base=BASE,
+        head=HEAD,
+    )
+    state = gather(
+        39,
+        stub_gh(service_comments(writing, "Thanks for the update."), f"{HEAD}\n", payload()),
+        owner="o",
+        repo="r",
+    )
+    decision = decide(state, requests_today=0, daily_limit=6)
+    assert (decision.action, decision.reason) == (SKIP, "a review is in progress")
+    assert "in progress" in report([state])[0]

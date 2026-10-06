@@ -54,6 +54,15 @@ UNIT_MINUTES = {"minute": 1, "minutes": 1, "hour": 60, "hours": 60}
 
 REQUEST_COMMENT = "@coderabbitai review"
 
+# A review the service is still writing. Asking again then buys a second
+# review of the same commits, or a notice (spec 043 amendment).
+IN_PROGRESS_MARKER = "review in progress by coderabbit.ai"
+# A completed review with no findings creates no review object, only this
+# line in the service's summary comment, beside the commits it covered. A
+# rate-limit notice carries the same commit line, so only this one counts.
+CLEAN_REVIEW_MARKER = "No actionable comments were generated"
+REVIEWED_RANGE_PATTERN = re.compile(r"between ([0-9a-f]{7,40}) and ([0-9a-f]{7,40})")
+
 # Whose word we are waiting on. Compared case-insensitively and by prefix,
 # because the same reviewer appears as `coderabbitai` and `coderabbitai[bot]`
 # depending on which API answered.
@@ -212,6 +221,11 @@ class PullRequestState:
     # Merged or closed. The service refuses to review a closed pull request,
     # so asking only adds a comment (spec 043 amendment).
     closed: bool = False
+    # A review the service is still writing.
+    in_progress: bool = False
+    # A completed review that found nothing, read from the summary comment
+    # because it leaves no review object behind.
+    clean_review: bool = False
 
     @property
     def reviewed(self) -> bool:
@@ -223,7 +237,7 @@ class PullRequestState:
         creates no threads either, so reviews count too: otherwise a reviewed
         pull request reads as unreviewed and gets asked again.
         """
-        return self.review_threads > 0 or self.reviews_seen > 0
+        return self.review_threads > 0 or self.reviews_seen > 0 or self.clean_review
 
     @property
     def outstanding(self) -> bool:
@@ -314,6 +328,9 @@ def decide(
     if state.closed:
         # After answering, which a merged pull request is still owed.
         return Decision(SKIP, reason="closed: the service does not review a closed pull request")
+
+    if state.in_progress:
+        return Decision(SKIP, reason="a review is in progress")
 
     if requests_today >= daily_limit:
         return Decision(SKIP, reason=f"already asked {requests_today} times today")
@@ -516,9 +533,24 @@ def gather(number: int, run: GitHubRunner, *, owner: str, repo: str) -> PullRequ
     # `newest_notice` reads it; the service edits that comment in place, so
     # its update time is when the notice was written.
     notice_at = ""
+    in_progress = False
+    clean_review = False
+    summary_sha = ""
     for comment, body in zip(comments, comment_bodies, strict=True):
         if any(NOTICE_MARKER in block for block in body.split(NOTICE_SPLIT)):
             notice_at = str(comment.get("updated_at") or comment.get("created_at") or "")
+        author = str(_as_dict(comment.get("user")).get("login", ""))
+        if not author.lower().startswith(REVIEWER_LOGIN):
+            continue
+        # The service rewrites its summary comment as it goes and drops the
+        # marker when the review lands; a later reply of its own must not
+        # hide a marker that is still there (spec 043 amendment).
+        in_progress = in_progress or IN_PROGRESS_MARKER in body
+        if CLEAN_REVIEW_MARKER in body:
+            covered = REVIEWED_RANGE_PATTERN.findall(body)
+            if covered:
+                clean_review = True
+                summary_sha = covered[-1][1]
 
     try:
         payload: object = json.loads(detail_raw)
@@ -579,6 +611,9 @@ def gather(number: int, run: GitHubRunner, *, owner: str, repo: str) -> PullRequ
         if author.lower().startswith(REVIEWER_LOGIN):
             reviewed_sha = str(_as_dict(node.get("commit")).get("oid", "")) or reviewed_sha
 
+    if clean_review and summary_sha:
+        # The summary is rewritten on every review, so it is the newest word.
+        reviewed_sha = summary_sha
     handled = load_handled()
     return PullRequestState(
         number=number,
@@ -592,6 +627,8 @@ def gather(number: int, run: GitHubRunner, *, owner: str, repo: str) -> PullRequ
         truncated=truncated,
         notice_at=notice_at,
         closed=closed,
+        in_progress=in_progress,
+        clean_review=clean_review,
     )
 
 
@@ -630,6 +667,8 @@ def report(states: list[PullRequestState]) -> list[str]:
             )
         elif state.closed:
             lines.append(f"PR #{state.number}: NOT REVIEWED, closed, so the service will not now")
+        elif state.in_progress:
+            lines.append(f"PR #{state.number}: NOT REVIEWED YET, a review is in progress")
         elif newest_notice(state.comment_bodies) is not None:
             lines.append(f"PR #{state.number}: NOT REVIEWED, rate limited")
         else:
