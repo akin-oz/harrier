@@ -412,3 +412,135 @@ def test_capture_can_be_told_not_to_reach_the_network(
 
 
 # --- the run summary describes the run ----------------------------------------
+
+
+# --- blocked postings rank last (spec 078) -------------------------------------
+
+
+def _job(title: str, location: str, description: str):
+    return make_normalized_job(
+        source="greenhouse",
+        company="Example Labs",
+        title=title,
+        location=location,
+        url="https://boards.example.com/example/2",
+        description=description,
+    )
+
+
+_SKILLS = "TypeScript, React, testing, ownership, remote."
+
+
+def test_a_us_only_w2_posting_ranks_below_an_emea_remote_one(cfg: dict[str, object]) -> None:
+    """The 151 case, rebuilt from invented text: "anywhere in the US" matched
+    the preferred-region pattern and the score only ever added."""
+    us_only = _job(
+        "Senior Frontend Engineer",
+        "Remote",
+        f"Open to candidates anywhere in the US. W-2 position, no visa sponsorship. {_SKILLS}",
+    )
+    emea = _job("Senior Frontend Engineer", "Remote, Europe", f"Remote across Europe. {_SKILLS}")
+
+    us_score, us_reasons = rules.score_job(us_only, cfg)
+    emea_score, emea_reasons = rules.score_job(emea, cfg)
+
+    assert us_score < emea_score
+    assert 'blocker=us_scope "anywhere in the us"' in us_reasons
+    assert 'blocker=employment "w-2"' in us_reasons
+    assert not [reason for reason in emea_reasons if reason.startswith("blocker=")]
+
+
+def test_the_blocker_penalty_is_derived_from_the_rules(cfg: dict[str, object]) -> None:
+    """Computed from `score_bounds`, not restated. The strongest posting this
+    configuration allows proves the upper bound is reachable, and blocking it
+    with one phrase must still land it below the weakest posting the gates let
+    through."""
+    low, high = rules.score_bounds(cfg)
+    assert rules.blocker_penalty(cfg) == high - low + 1
+
+    scoring = rules.scoring_config(cfg)
+    targets = cast("dict[str, list[str]]", cfg["targets"])
+    every_signal = " ".join(
+        [
+            *cast("dict[str, int]", scoring["skill_signals"]),
+            *cast("dict[str, int]", scoring["preferred_signal_weights"]),
+            *targets["title_keywords_include"],
+            "developer tools",
+            "remote across europe",
+        ]
+    )
+    strongest = _job(targets["titles"][0], "Remote, Europe", every_signal)
+    assert rules.score_job(strongest, cfg)[0] == high, "the upper bound is not reachable"
+
+    blocked = _job(targets["titles"][0], "Remote, Europe", f"{every_signal} W-2 only.")
+    blocked_score = rules.score_job(blocked, cfg)[0]
+    assert blocked_score < low
+
+    keyword = targets["title_keywords_include"][0]
+    weakest = _passes_and_scores(
+        cfg, f"{keyword.title()} Engineer", "Remote", signal="linkedin_search"
+    )
+    assert weakest is not None and weakest >= low
+    assert blocked_score < weakest
+
+
+def test_blockers_do_not_stack(cfg: dict[str, object]) -> None:
+    one = _job("Frontend Engineer", "Remote", f"W-2 role. {_SKILLS}")
+    two = _job("Frontend Engineer", "Remote", f"W-2 role, US-only. {_SKILLS}")
+    unblocked = _job("Frontend Engineer", "Remote", f"Contract role. {_SKILLS}")
+
+    one_score, _ = rules.score_job(one, cfg)
+    two_score, two_reasons = rules.score_job(two, cfg)
+    base = rules.score_job(unblocked, cfg)[0]
+
+    assert len([r for r in two_reasons if r.startswith("blocker=")]) == 2
+    assert base - one_score == base - two_score == rules.blocker_penalty(cfg)
+
+
+def test_an_explicit_emea_location_overrides_us_scope() -> None:
+    description = "We also hire anywhere in the US. W-2 available for US hires."
+    in_europe = rules.blockers(_job("Frontend Engineer", "Remote, Europe", description))
+    unscoped = rules.blockers(_job("Frontend Engineer", "Remote", description))
+    reach_only = rules.blockers(_job("Frontend Engineer", "Remote, Worldwide", description))
+
+    assert [kind for kind, _ in in_europe] == ["employment"], "W-2 is never overridden"
+    assert [kind for kind, _ in unscoped] == ["us_scope", "employment"]
+    # "Worldwide" is a reach, not a region: a US-only posting can say it too.
+    assert [kind for kind, _ in reach_only] == ["us_scope", "employment"]
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "Must be based in the EU.",
+        "EU work permit required.",
+        "We work with an EU-based contractor entity.",
+        "Must reside in Europe; right to work in the EU.",
+    ],
+)
+def test_eu_permit_phrases_are_never_blockers(description: str) -> None:
+    """The product invariant: these are positive signals, never filters, and
+    a penalty that sinks a posting to the bottom is a filter in all but name."""
+    assert rules.blockers(_job("Frontend Engineer", "Remote", description)) == []
+
+
+@pytest.mark.parametrize(
+    ("location", "description"),
+    [
+        ("Remote", "We sponsor visas for the right people."),
+        ("Remote, Europe", "Unlike US-only roles, this one is open across Europe."),
+        ("Remote", "A campus-based team."),
+        ("Remote", "We build AcmeW2Go, a payroll tool."),
+        ("Remote", "Opt in to our newsletter. F1 fans welcome."),
+        ("Remote", "Join us only if you love TypeScript."),
+        ("Remote, Europe", "Our team is based in the US and Spain."),
+        ("Remote", "E-Verify applies to our U.S. based roles only."),
+        (
+            "Remote, Spain",
+            "We cannot offer visa sponsorship; you need the right to work in the EU.",
+        ),
+        ("Remote", "Unfortunately we are unable to provide visa sponsorship."),
+    ],
+)
+def test_blocker_tables_do_not_fire_on_eligible_postings(location: str, description: str) -> None:
+    assert rules.blockers(_job("Frontend Engineer", location, description)) == []

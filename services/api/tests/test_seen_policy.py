@@ -144,6 +144,25 @@ def test_changing_a_rule_table_in_code_changes_the_version(
     assert policy_version(cfg) != before
 
 
+@pytest.mark.parametrize(
+    "table", ["US_SCOPE_PATTERNS", "EMPLOYMENT_BLOCKER_PATTERNS", "AMBIGUOUS_REGION_PATTERNS"]
+)
+def test_the_blocker_tables_move_the_policy_version(
+    cfg: dict[str, Any], monkeypatch: pytest.MonkeyPatch, table: str
+) -> None:
+    """A blocker sends a posting below every eligible one, so a phrase added
+    or removed reranks history exactly as a weight change does (spec 078)."""
+    before = policy_version(cfg)
+    current: tuple[str, ...] | frozenset[str] = getattr(rules, table)
+    extended = (
+        current | {r"\binvented\b"}
+        if isinstance(current, frozenset)
+        else (*current, r"\binvented\b")
+    )
+    monkeypatch.setattr(rules, table, extended)
+    assert policy_version(cfg) != before
+
+
 def test_the_version_is_short_enough_to_read(cfg: dict[str, Any]) -> None:
     assert len(policy_version(cfg)) == 12
 

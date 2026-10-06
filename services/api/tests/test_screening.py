@@ -245,6 +245,27 @@ def test_eu_permit_phrases_raise_score_never_reject() -> None:
     assert allowed is True
 
 
+@pytest.mark.parametrize(
+    "location",
+    ["Remote, Europe", "Remote", "Remote, United States", "Hybrid, Berlin"],
+)
+def test_a_blocker_never_changes_a_gate_verdict(location: str) -> None:
+    """A blocker lowers a rank and never rejects (spec 078). The same
+    posting with and without blocker phrases gets the same gate verdict on
+    every location shape, accepted or rejected."""
+    plain = build_job(location=location, description="TypeScript React. Remote Europe role.")
+    blocked = build_job(
+        location=location,
+        description=(
+            "TypeScript React. Remote Europe role. Anywhere in the US, W-2, "
+            "no visa sponsorship, security clearance required."
+        ),
+    )
+    assert remote_region_allowed(plain, candidate_cfg()) == remote_region_allowed(
+        blocked, candidate_cfg()
+    )
+
+
 def test_dedupe_prefers_external_id_or_url() -> None:
     unique = dedupe_normalized_jobs(
         [
