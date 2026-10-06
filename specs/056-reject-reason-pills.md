@@ -81,9 +81,9 @@ Proof lives in `apps/web/src/pages/tracker/TrackerPage.test.tsx`.
   document (the existing mid-decision test keeps passing).
 - Cancel closes the picker without posting.
 - In a browser, `other…` shows in the muted text color and the pills keep
-  the ordinary one (planned "other…'s muted color outranks the shared
-  button rule", which fails without the fix). See "Amendment: `other…` is
-  muted in a browser too" below.
+  the ordinary one ("other…'s muted color outranks the shared button
+  rule", which fails without the fix). See "Amendment: `other…` is muted
+  in a browser too" below.
 - `pnpm type-check` and `pnpm lint` pass; the vitest suite passes.
 
 ## Proof / origin
@@ -170,14 +170,16 @@ said so, and until this amendment no browser showed it.
 Files: `JobActions.css` and `TrackerPage.test.tsx`, both already in this
 spec's scope.
 
-Proof: planned "other…'s muted color outranks the shared button rule" in
+Proof: "other…'s muted color outranks the shared button rule" in
 `TrackerPage.test.tsx`. It opens Reject and finds the rule that mutes
 `other…` by what it declares; that rule must match `other…` and no pill. It
 then reads the cascade from the stylesheet as parsed, and fails if any rule
 that styles the takeover's buttons at rest, or the buttons of the reason
 form behind `other…`, loses to `.job-actions button`. Without the fix it
-names `.job-actions__pill-other`. The implementing change also checks the
-computed color in a browser in demo mode.
+names `.job-actions__pill-other`; without the class on `other…`, it finds
+no muted rule. Checked in a browser in demo mode as well: `other…` and
+Cancel compute `--color-text-secondary`, the pills `--color-text`, and a
+hovered `other…` shows the ordinary accent, not the danger color.
 
 Limitation: as in spec 047's amendment of the same date, the test compares
 selectors rather than computed styles, because jsdom cannot rank rules.

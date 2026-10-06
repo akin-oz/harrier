@@ -896,6 +896,38 @@ test("the forward control's look outranks the shared button rule", async () => {
   }
 });
 
+test("other…'s muted color outranks the shared button rule", async () => {
+  // jsdom applied the muted color and a browser never did: `.job-actions
+  // button` outranks a bare class selector, so other… read in the pills' own
+  // color (spec 056). The rule is found by what it declares, and it mutes
+  // other… alone, not a pill.
+  stubApi({ jobs: [job(1, "Northwind", "80")] });
+  const user = userEvent.setup();
+  renderPage();
+
+  const row = await rowFor("Northwind");
+  await user.click(within(row).getByRole("button", { name: "Reject" }));
+  const takeover = within(row).getByRole("group", { name: "Reject" });
+  const other = within(takeover).getByRole("button", { name: "other…" });
+  const muted = jobActionsRules().find(
+    (rule) =>
+      rule.style.getPropertyValue("color").includes("--color-text-secondary") &&
+      other.matches(rule.selectorText),
+  );
+  if (muted === undefined) throw new Error("other…'s muted color is gone");
+  expect(
+    within(takeover)
+      .getAllByRole("button")
+      .filter((button) => button.matches(muted.selectorText))
+      .map((button) => button.textContent),
+  ).toEqual(["other…"]);
+  expect(restingRulesThatLose(takeover)).toEqual([]);
+
+  // The reason form behind other… holds the rest of the takeover's buttons.
+  await user.click(other);
+  expect(restingRulesThatLose(within(row).getByRole("group", { name: "Reject" }))).toEqual([]);
+});
+
 test("other… stays a group named by its exit word", async () => {
   // Whose decision it is stays announced in every state of the takeover,
   // including the reason form behind other… (spec 080).

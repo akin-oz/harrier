@@ -95,7 +95,11 @@
   color: var(--color-danger);
 }
 
-.job-actions__pill-other {
+/* Free-form reasons remain possible and stop being the default path, so
+   other… is muted beside the pills. Scoped under the shared rule, as Cancel
+   is below: a bare class selector loses to it and the muted color never
+   showed in a browser (spec 056). */
+.job-actions button.job-actions__pill-other {
   color: var(--color-text-secondary);
 }
 
