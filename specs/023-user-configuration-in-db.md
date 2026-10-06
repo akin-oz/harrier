@@ -155,8 +155,14 @@ authentication, no tenant resolution, and no isolation. Since spec 041
 there is no scope column, so a database holds one configuration, at most
 one row per kind (`test_the_schema_carries_no_scope_column`,
 `test_a_kind_is_unique_on_its_own`).
-The API write path has no auth either, because
-the service binds to localhost (unchanged from every other endpoint). The
+Since spec 035, `PUT` and `DELETE /config/{kind}` refuse a request
+without the local API token, and the service refuses any request whose
+Host header is not on its trusted list
+(`services/api/tests/test_api_exposure.py::test_a_state_changing_request_without_the_token_is_refused`,
+`::test_a_request_with_a_foreign_host_is_refused`). The token is one per
+install, not per user
+(`::test_a_second_call_returns_the_token_already_in_circulation`), so it
+is a same-machine boundary rather than authentication. The
 GUI half of ADR-009's promise is not here: the React app has no
 configuration surface yet, so "customizable easily" currently means the
 CLI and the API, not a settings page.
