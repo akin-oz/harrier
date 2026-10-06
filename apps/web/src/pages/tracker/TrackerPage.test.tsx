@@ -1,11 +1,12 @@
+import type { components, operations } from "@harrier/contract";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
 
 import type { Job } from "../../entities/job";
 import jobActionsCss from "../../features/tracker/JobActions.css?raw";
-import { JobActions } from "../../features/tracker/JobActions";
+import { JobActions, refusalMessage } from "../../features/tracker/JobActions";
 import { TrackerPage } from "./TrackerPage";
 
 /**
@@ -52,6 +53,8 @@ function stubApi(options: {
   queue?: Row[];
   status?: { code: number; body: unknown };
   outcome?: { code: number; body: unknown };
+  // Answered only when set; otherwise a rescore is unstubbed, as before.
+  rescore?: { code: number; body: unknown };
   add?: { code: number; body: unknown };
   // What a refetch returns once any write has been answered: a stale page.
   jobsAfterWrite?: Row[];
@@ -96,6 +99,9 @@ function stubApi(options: {
       }
       if (url.pathname.endsWith("/outcome")) {
         return answered(options.outcome ?? { code: 200, body: job(1, "Northwind", "80") });
+      }
+      if (options.rescore !== undefined && url.pathname.endsWith("/rescore")) {
+        return answered(options.rescore);
       }
       if (url.pathname === "/api/tracker") {
         const answer = options.add ?? {
@@ -982,5 +988,72 @@ test("a refusal keeps focus where a browser drops it", async () => {
     await waitFor(() => {
       expect(document.activeElement, send).toBe(reason);
     });
+  }
+});
+
+// --- a refusal is read through the contract (spec 082) ------------------------
+
+type ErrorOut = components["schemas"]["ErrorOut"];
+
+// The JSON body a response declares, or `never` when it declares none.
+type Declared<Answer> = Answer extends { content: { "application/json": infer Body } }
+  ? Body
+  : never;
+
+test("a tracker refusal is read through the contract's types", () => {
+  // Checked by `pnpm type-check`, which compiles this file; when the test
+  // runs, `expectTypeOf` does nothing. A reader that took `unknown` again,
+  // or a tracker write whose 404 or 409 lost its declared body, does not
+  // compile.
+  expectTypeOf(refusalMessage)
+    .parameter(0)
+    .toEqualTypeOf<
+      | ErrorOut
+      | components["schemas"]["DatabaseHeldOut"]
+      | components["schemas"]["HTTPValidationError"]
+    >();
+  expectTypeOf<
+    Declared<operations["changeJobStatus"]["responses"][404]>
+  >().toEqualTypeOf<ErrorOut>();
+  expectTypeOf<
+    Declared<operations["changeJobStatus"]["responses"][409]>
+  >().toEqualTypeOf<ErrorOut>();
+  expectTypeOf<
+    Declared<operations["recordCompanyOutcome"]["responses"][404]>
+  >().toEqualTypeOf<ErrorOut>();
+  expectTypeOf<
+    Declared<operations["recordCompanyOutcome"]["responses"][409]>
+  >().toEqualTypeOf<ErrorOut>();
+  expectTypeOf<Declared<operations["rescoreJob"]["responses"][404]>>().toEqualTypeOf<ErrorOut>();
+  expectTypeOf<Declared<operations["rescoreJob"]["responses"][409]>>().toEqualTypeOf<ErrorOut>();
+});
+
+test("each tracker write shows its refusal in the API's words", async () => {
+  // The reader takes the contract's types now (spec 082), and this holds
+  // that what it shows did not change. A 409 from status and from outcome
+  // was shown before; a rescore refusal and a 404 from any write were not.
+  const writes = [
+    { route: "status", rowStatus: "prospect", clicks: ["Shortlist"] },
+    { route: "outcome", rowStatus: "applied", clicks: ["Company replied", "ghosted"] },
+    { route: "rescore", rowStatus: "prospect", clicks: [/^More actions/, "Rescore"] },
+  ] as const;
+  for (const { route, rowStatus, clicks } of writes) {
+    for (const code of [404, 409]) {
+      cleanup();
+      const detail = `the tracker refused this ${route} with a ${String(code)}`;
+      const options: Parameters<typeof stubApi>[0] = {
+        jobs: [job(1, "Northwind", "80", rowStatus)],
+      };
+      options[route] = { code, body: { detail } };
+      stubApi(options);
+      const user = userEvent.setup();
+      renderPage();
+
+      const row = await rowFor("Northwind");
+      for (const name of clicks) {
+        await user.click(within(row).getByRole("button", { name }));
+      }
+      expect(await within(row).findByText(detail), detail).toBeDefined();
+    }
   }
 });

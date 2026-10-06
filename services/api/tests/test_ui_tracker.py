@@ -420,6 +420,102 @@ def test_the_queue_is_readable_without_the_token(client: TestClient) -> None:
     assert client.get("/tracker/counts").status_code == 200
 
 
+# --- a refusal is the body the contract declares (spec 082) ------------------
+
+# An id no tracker row has, so the selector names nothing.
+NO_ROW = 999_999
+
+# Spec 082's pairing table: one refusal of each kind for every tracker write
+# that names a job, and the request that provokes it. "row" is the `job_id`
+# fixture, a prospect with no stored description; "missing" is NO_ROW.
+REFUSALS: list[tuple[str, str, int, dict[str, str] | None, str]] = [
+    ("changeJobStatus", "status", 404, {"verb": "shortlist"}, "missing"),
+    ("changeJobStatus", "status", 409, {"verb": "promote"}, "row"),
+    ("recordCompanyOutcome", "outcome", 404, {"code": "ghosted"}, "missing"),
+    ("recordCompanyOutcome", "outcome", 409, {"code": "company_rejected"}, "row"),
+    ("rescoreJob", "rescore", 404, None, "missing"),
+    ("rescoreJob", "rescore", 409, None, "row"),
+]
+
+ERROR_OUT = {"$ref": "#/components/schemas/ErrorOut"}
+
+
+@pytest.mark.parametrize(
+    ("operation", "action", "status", "payload", "target"),
+    REFUSALS,
+    ids=[f"{operation}-{status}" for operation, _, status, _, _ in REFUSALS],
+)
+def test_every_tracker_refusal_is_the_body_the_contract_declares(
+    job_id: int,
+    client: TestClient,
+    operation: str,
+    action: str,
+    status: int,
+    payload: dict[str, str] | None,
+    target: str,
+) -> None:
+    """What a route sends when it refuses is what its contract says it sends.
+
+    The route raises `HTTPException` and `TRACKER_ERRORS` declares the body:
+    two lines that can drift, and the browser reads only the second one's
+    type. So this provokes the refusal, then reads the declaration for that
+    status from the document `packages/contract` is generated from.
+    """
+    path = f"/tracker/{job_id if target == 'row' else NO_ROW}/{action}"
+    if payload is None:
+        response = client.post(path, headers=auth())
+    else:
+        response = client.post(path, json=payload, headers=auth())
+
+    assert response.status_code == status, response.text
+    body = response.json()
+    assert set(body) == {"detail"}, body
+    assert isinstance(body["detail"], str)
+    assert body["detail"].strip()
+
+    declared = create_app().openapi()["paths"][f"/tracker/{{selector}}/{action}"]["post"]
+    assert declared["operationId"] == operation
+    content = declared["responses"][str(status)].get("content", {})
+    assert content.get("application/json", {}).get("schema") == ERROR_OUT, (
+        f"{operation} sends a {status} body its contract does not declare"
+    )
+
+
+def test_every_tracker_write_that_names_a_job_declares_its_refusals(env: Path) -> None:
+    """Judged on the contract, which is what the browser's types are made from.
+
+    Every operation under `/tracker/{selector}/` declares 404 and 409 with
+    `ErrorOut`, and the pairing table above provokes each one. A new route
+    there fails here until it declares its refusals and has rows in the
+    table, so a refusal cannot reach the browser untyped by being new.
+    """
+    spec = create_app().openapi()
+    operations = {
+        operation["operationId"]: operation
+        for path, methods in spec["paths"].items()
+        if path.startswith("/tracker/{selector}/")
+        for operation in methods.values()
+    }
+    assert operations, "the walk found no tracker write that names a job"
+    named = {(operation_id, status) for operation_id in operations for status in (404, 409)}
+    assert named == {(operation, status) for operation, _, status, _, _ in REFUSALS}
+
+    for operation_id, status in sorted(named):
+        declared = operations[operation_id]["responses"][str(status)]
+        content = declared.get("content", {})
+        assert content.get("application/json", {}).get("schema") == ERROR_OUT, (
+            f"{operation_id} declares a {status} with no ErrorOut body"
+        )
+        if status == 404:
+            assert declared["description"] == "the selector named no job, or more than one"
+
+    error_out = spec["components"]["schemas"]["ErrorOut"]
+    assert error_out["type"] == "object"
+    assert set(error_out["properties"]) == {"detail"}
+    assert error_out["properties"]["detail"]["type"] == "string"
+    assert error_out["required"] == ["detail"]
+
+
 # --- adding by hand -----------------------------------------------------------
 
 

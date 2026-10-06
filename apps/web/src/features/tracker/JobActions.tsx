@@ -554,14 +554,22 @@ export function JobActions({ job, onApply }: Props) {
   );
 }
 
+// What a tracker write answers when it refuses, as the contract declares it
+// (spec 082): the domain's words on a 404 or a 409, the hold on a 503, and
+// the field errors on a 422. Named from the generated types, so a body the
+// contract adds to one of these writes, or a field it renames, fails the
+// type check here rather than reaching the operator as the fallback.
+type Refusal =
+  | components["schemas"]["ErrorOut"]
+  | components["schemas"]["DatabaseHeldOut"]
+  | components["schemas"]["HTTPValidationError"];
+
 // The API answers a refusal with a `detail` string that is the message the
 // domain wrote. Showing it verbatim is the point: the CLI prints the same
 // words, and a UI that paraphrased them would be a second implementation of
-// the explanation.
-function refusalMessage(error: unknown): string {
-  if (typeof error === "object" && error !== null && "detail" in error) {
-    const detail = (error as { detail?: unknown }).detail;
-    if (typeof detail === "string") return detail;
-  }
-  return "the tracker refused that change";
+// the explanation. A 422's `detail` is a list of field errors, which only a
+// malformed request from this page can produce, so it reads as the fallback.
+// Exported for the type-level test that pins what it accepts.
+export function refusalMessage(error: Refusal): string {
+  return typeof error.detail === "string" ? error.detail : "the tracker refused that change";
 }

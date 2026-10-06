@@ -523,6 +523,20 @@
         "title": "DraftIn",
         "type": "object"
       },
+      "ErrorOut": {
+        "description": "The body of a refusal: the message the domain wrote, verbatim.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "ErrorOut",
+        "type": "object"
+      },
       "EvaluateIn": {
         "properties": {
           "jd_text": {
@@ -3493,9 +3507,23 @@
             "description": "missing or wrong local API token"
           },
           "404": {
-            "description": "no job matched the selector"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the selector named no job, or more than one"
           },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
             "description": "the tracker refused the change"
           },
           "422": {
@@ -3551,9 +3579,23 @@
             "description": "missing or wrong local API token"
           },
           "404": {
-            "description": "no job matched the selector"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the selector named no job, or more than one"
           },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
             "description": "the tracker refused the change"
           },
           "422": {
@@ -3620,9 +3662,23 @@
             "description": "missing or wrong local API token"
           },
           "404": {
-            "description": "no job matched the selector"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the selector named no job, or more than one"
           },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
             "description": "the tracker refused the change"
           },
           "422": {

@@ -11,7 +11,7 @@ import sqlite3
 from collections.abc import AsyncIterator
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Literal, cast
+from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -274,9 +274,21 @@ class RescoreOut(BaseModel):
     job: JobOut
 
 
-TRACKER_ERRORS: dict[int | str, dict[str, str]] = {
-    404: {"description": "no job matched the selector"},
-    409: {"description": "the tracker refused the change"},
+# FastAPI already sends this body for an `HTTPException`. Declaring it is what
+# lets the generated client know a refusal has one, so the browser reads
+# `detail` through a generated type rather than a cast (spec 082). The raise
+# and this declaration are separate lines, so
+# `tests/test_ui_tracker.py::test_every_tracker_refusal_is_the_body_the_contract_declares`
+# provokes each refusal and holds the two together.
+class ErrorOut(BaseModel):
+    """The body of a refusal: the message the domain wrote, verbatim."""
+
+    detail: str
+
+
+TRACKER_ERRORS: dict[int | str, dict[str, Any]] = {
+    404: {"model": ErrorOut, "description": "the selector named no job, or more than one"},
+    409: {"model": ErrorOut, "description": "the tracker refused the change"},
     **TOKEN_RESPONSES,
 }
 

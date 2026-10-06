@@ -193,3 +193,24 @@ The four pages after Tracker, each its own spec. Authentication design,
 which is spec 035. Any change to what a domain function does: this spec
 exposes existing behaviour and fixes none of it. Mobile layout. Sending
 anything to an employer, which no part of this system does.
+
+## Amendment (2026-10-06, spec 082)
+
+Two criteria above held less than they said, for refusals.
+
+- **"No hand-written request or response shape appears in `apps/web`"** did
+  not hold for refusal bodies. The tracker writes declared 404 and 409 with
+  no body, so `refusalMessage` in
+  `apps/web/src/features/tracker/JobActions.tsx` read `detail` through
+  `unknown` and a cast, which the drift gate cannot see. Spec 082 declares
+  the body, `ErrorOut`, on the tracker writes, and the page reads it by
+  generated type
+  (`services/api/tests/test_ui_tracker.py::test_every_tracker_refusal_is_the_body_the_contract_declares`,
+  `TrackerPage.test.tsx::a tracker refusal is read through the contract's types`).
+  The other routers' refusal bodies are recorded in spec 082's Out of scope.
+- **"A refused operation surfaces its reason in the UI"** cited a Python test
+  for the rescore refusal, so nothing showed the page displaying it.
+  `TrackerPage.test.tsx::each tracker write shows its refusal in the API's words`
+  now does, and shows a 404 from each tracker write as well.
+
+Both stay checked: each holds now, through spec 082.

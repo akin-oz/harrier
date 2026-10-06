@@ -212,10 +212,6 @@ body, so the generated error type still includes `undefined`.
 
 ## Acceptance criteria
 
-Tests marked planned do not exist yet. They are named here so the
-implementation has a target; the implementing change cites each one in
-backticks, where `tests/test_spec_structure.py` checks it exists.
-
 The pairing table the first test runs:
 
 | Operation | Refused with 404 | Refused with 409 |
@@ -224,44 +220,46 @@ The pairing table the first test runs:
 | `recordCompanyOutcome` | `{"code": "ghosted"}` on an id with no row | `{"code": "company_rejected"}` on a prospect |
 | `rescoreJob` | an id with no row | a row with no stored description |
 
-- [ ] For every operation and status in that table, the response has that
+- [x] For every operation and status in that table, the response has that
       status, a body that is exactly `{"detail": <non-empty string>}`, and
       the contract declares the status as `application/json` with `ErrorOut`
-      (planned services/api/tests/test_ui_tracker.py::test_every_tracker_refusal_is_the_body_the_contract_declares).
+      (`services/api/tests/test_ui_tracker.py::test_every_tracker_refusal_is_the_body_the_contract_declares`).
       Without the change it fails: no body is declared, and `ErrorOut` does
       not exist.
-- [ ] Every operation under `/tracker/{selector}/` declares 404 and 409 with
+- [x] Every operation under `/tracker/{selector}/` declares 404 and 409 with
       `ErrorOut`; the 404 reads "the selector named no job, or more than
       one"; `ErrorOut` is an object whose one property, `detail`, is a
       required string; and the pairing table covers every such operation
-      (planned test_every_tracker_write_that_names_a_job_declares_its_refusals,
+      (`services/api/tests/test_ui_tracker.py::test_every_tracker_write_that_names_a_job_declares_its_refusals`,
       judged on `create_app().openapi()` the way
       `test_every_route_that_opens_the_database_declares_the_503` is).
       Without the change it fails on six declarations.
-- [ ] `just contract` regenerates both artifacts, and their diff is what
+- [x] `just contract` regenerates both artifacts, and their diff is what
       "What the contract declares" lists and nothing else (CI
       `contract-drift`, and the diff itself).
-- [ ] `refusalMessage` takes `ErrorOut`, `DatabaseHeldOut` and
+- [x] `refusalMessage` takes `ErrorOut`, `DatabaseHeldOut` and
       `HTTPValidationError` by generated name, with no `unknown` and no
       cast. A type-level test pins its parameter to that union and each of
       the six bodies to `ErrorOut`, using vitest's `expectTypeOf`, which
-      `pnpm type-check` compiles (`TrackerPage.test.tsx`: planned "a tracker
-      refusal is read through the contract's types"). Without the change it
-      does not compile.
-- [ ] Shortlist, Company replied and Rescore each show a 404's and a 409's
+      `pnpm type-check` compiles (`TrackerPage.test.tsx`: "a tracker refusal
+      is read through the contract's types"). Without the change it does not
+      compile.
+- [x] Shortlist, Company replied and Rescore each show a 404's and a 409's
       `detail` verbatim in the row's status line (`TrackerPage.test.tsx`:
-      planned "each tracker write shows its refusal in the API's words").
-      This passes before the change too. It pins that typing the reader did
-      not change what it shows, and it is the browser's first proof of a
-      rescore refusal and of any 404.
-- [ ] The implementing pull request shows the two planned Python tests and
-      the type-level test failing on main's code.
-- [ ] Spec 042 is amended to point here: refusal bodies were not declared
+      "each tracker write shows its refusal in the API's words"). This passes
+      before the change too. It pins that typing the reader did not change
+      what it shows, and it is the browser's first proof of a rescore refusal
+      and of any 404.
+- [x] The implementing pull request shows the two Python tests above and the
+      type-level test failing on main's code (its description, and the
+      amendment below).
+- [x] Spec 042 is amended to point here: refusal bodies were not declared
       until this spec, so its "no hand-written response shape" criterion did
       not hold for them.
-- [ ] `uv run ruff check`, `uv run pyright`, `pnpm type-check` and
+- [x] `uv run ruff check`, `uv run pyright`, `pnpm type-check` and
       `pnpm lint` pass, and `just check` passes.
-- [ ] No real tracker row appears in a fixture (ADR-008).
+- [x] No real tracker row appears in a fixture (ADR-008). The new cases use
+      the suite's invented Northwind Labs and `boards.example.com`.
 
 ## Honest limitations
 
@@ -351,3 +349,28 @@ working.
 - ADR-005: an invented field fails `tsc`. Spec 042: the criterion this
   corrects. Spec 080: the outcome route, which took the same declaration.
 - A contract review of the merged spec 077 to 081 range.
+
+## Amendment (2026-10-06, during implementation)
+
+What implementation found, each with its proof. Scope and behavior are as
+specified; "The refusals today" stays as the record of the state before
+this change, and the pairing test now proves every row of it.
+
+- **The contract carries one line about the body.** A model's docstring is
+  its schema description, so `ErrorOut` has a one-line docstring and the
+  reasons for it sit in a comment above the class in `app.py`. A test path
+  and the history stay out of `schema.d.ts`.
+- **The page stub answers a rescore only when a test asks.** `stubApi` in
+  `TrackerPage.test.tsx` gained a `rescore` option. Without it a rescore is
+  unstubbed, as before, so no existing test sees a different answer.
+- **Each new test was run against main's code first.** The six pairing cases
+  passed their body checks, because the bodies were already
+  `{"detail": str}`, and then failed at the declaration. The structural test
+  failed at the first declaration it read. `pnpm type-check` failed on the
+  test file: `refusalMessage` not exported, `ErrorOut` missing, and each of
+  the six bodies resolving to `never`.
+- **The split the spec predicted holds.** With the reader put back to
+  `unknown`, `pnpm type-check` fails at "a tracker refusal is read through
+  the contract's types", while every rendered refusal test still passes.
+  With `rescoreJob`'s 409 sending a dict `detail`, only that pairing case
+  fails. Both were temporary edits, run and reverted.
