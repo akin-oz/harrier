@@ -171,6 +171,17 @@ spec 044.
       proves it (the amendment below on spec 023;
       `services/api/tests/test_userconfig.py::test_the_schema_carries_no_scope_column`,
       `::test_a_kind_is_unique_on_its_own`)
+- [ ] an existing Python test named outside a code span fails the check, and
+      so does a name marked planned once its test exists, while file names,
+      paths, longer words, fenced examples and names no test has pass (the
+      amendment below on Python tests named outside a code span; planned
+      test_a_python_test_named_outside_a_code_span_fails and planned
+      test_planned_exempts_a_python_test_only_until_it_exists, in
+      `services/api/tests/test_spec_structure.py`)
+- [ ] the committed specs name no existing Python test outside a code span,
+      and
+      `services/api/tests/test_spec_structure.py::test_every_test_a_spec_names_actually_exists`
+      passes over every committed spec
 - [ ] All gates green on PR
 
 ## Proof / origin
@@ -377,3 +388,67 @@ passes over every committed spec, so each test the corrections cite exists.
   session token on config writes
   (`services/api/tests/test_api_exposure.py::test_a_state_changing_request_without_the_token_is_refused`).
   It is not about the scope column, so it is left to its own change.
+
+## Amendment (2026-10-06): a Python test named outside a code span fails
+
+The first limitation of the amendment on Python citations in specs 016 to 026
+is this amendment. The check reads a Python test citation only in a code
+span, so a Python test named anywhere else is never read, and a rename breaks
+that citation without a failure. Specs 016 and 018 to 026 cited tests that way
+until that amendment, and nothing stops a new spec from doing it again. Web
+tests had the same gap, and the rule on quoted names closed it.
+
+### What the check reads
+
+**An existing Python test named outside a code span fails.** In a spec's text
+outside fenced code blocks and code spans, the exact name of a test defined
+under `services/api/tests` fails the check. Cited in a code span instead, the
+name is checked as before. A name no test has passes, so the removed tests
+that specs 023, 045 and 065 name stay as they are.
+
+**A name stands alone.** A name is a whole word: a longer identifier that
+contains one is not that name. A `/` or a `.` joins a name to a path or a file
+name, and then it is part of that path, so `services/api/tests/test_x.py`
+names a file and not a test. A full stop that ends a sentence joins nothing.
+
+**Planned.** The word planned directly before a name, or before the path and
+`::` joined to it, marks a test not yet written. The name stays out of a code
+span, as before, and passes while no test has it. Once a test has it, the
+citation fails as marked planned but exists, as on the web side: the marker
+has outlived its reason, and the change that writes the test removes the word
+and moves the name into a code span. Planned before a code span fails the
+same way once its test exists. A planned Python name never belongs in a code
+span: with no test, the span already fails as naming nothing.
+
+### What changes
+
+- `services/api/tests/test_spec_structure.py`: `unproven_citations` applies
+  the rule, and new tests run it over invented repositories with synthetic
+  names.
+- The committed specs: a draft of the rule finds no existing Python test
+  named outside a code span in them, so none is expected to change. Any name
+  the rule does find moves into a code span in this change, and the pull
+  request lists it.
+
+No new file, so `config/data-classification.json` does not change.
+
+**Output.** One line per name: the spec, the line, the name, and what is
+wrong (named outside a code span, or marked planned but exists).
+
+**How to know it worked.** The check passes over every committed spec.
+Writing an existing Python test's name in a spec, outside a code span, makes
+it fail and name the spec and the line. Before this change it passed.
+
+**Failure modes this must not introduce.** A file name, a path, a longer
+word, a fenced example and a name no test has never fail.
+
+### Limitations
+
+- The rule sees only names that exist, as the rule on quoted web names does.
+  A name that was already wrong when it was written stays unread outside a
+  code span.
+- A code span that holds more than a citation, such as a command, is still
+  not read. None holds the name of an existing test today.
+- Planned is read only directly before a name or its path. In "planned
+  test_x and test_y" only the first name carries it, so once both tests
+  exist the second fails as named outside a code span instead. Both fail.
