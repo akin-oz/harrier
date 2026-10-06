@@ -141,10 +141,11 @@ correct this; it limits and measures it:
   near base-rate precision inside a tercile; one that learned something else
   does not.
 - For live events, spec 079 keeps the `fit_score` and `scoring_version` the
-  job carried when it was decided. The report gives the acted-on rate by
-  that score band, per scoring version: the first direct measure of how much
-  the shown ranking drove the decisions. It is reported, never used as a
-  feature or a weight.
+  job carried when it was decided. The report gives the acted-on rate in
+  each third of that score, cut by value so that tied scores share a band,
+  per scoring version: the first direct measure of how much the shown
+  ranking drove the decisions. It is reported, never used as a feature or a
+  weight.
 
 ### Split
 
@@ -196,7 +197,8 @@ There is deliberately no source feature (the ingestion-only invariant: no
 per-source scoring) and no description-length feature (length is the defect).
 
 **Normalization.** Numeric features are divided by their 92nd percentile over
-the training rows and clipped to 1. The percentiles are computed from
+the training rows and clipped to 1, and only to 1: a negative count, which a
+configured negative weight can produce, keeps its sign. The percentiles are computed from
 training rows only and stored in the model file, so test rows never inform
 their own scaling (`test_p92_stats_come_from_training_rows_only`). A
 percentile of 0 stores as 1, so a feature that never fired in training
@@ -305,7 +307,7 @@ The rules score the job, and the row records why, when:
 | Condition | `signals` entry |
 |---|---|
 | no file at the active model path | `fallback=model-missing` |
-| file unreadable, wrong `format_version`, `feature_order` not equal to the extractor's, a non-finite number, or a missing `p92` entry | `fallback=model-invalid` |
+| file unreadable, wrong `format_version`, `feature_order` not equal to the extractor's, a non-finite number (one too large for a float included), or a missing `p92` entry | `fallback=model-invalid` |
 | no description of at least `MIN_DESCRIPTION_LENGTH_FOR_SCORING` characters | `fallback=description-missing` |
 | extraction raises | `fallback=extraction-failed` |
 
@@ -314,7 +316,9 @@ followed by the usual rule reasons, and its `scoring_version` is the policy
 version with `"model": "none"`. A model-missing or model-invalid condition is
 logged once per run at warning level with the path and the check that
 failed; no candidate or contact identity is logged. A run never fails
-because the model did.
+because the model did. A file that could not be read is tried again on the
+next score rather than remembered, so a passing read error does not hold the
+fallback until the file changes.
 
 This replaces the reference model's fixed 0.5 "skip prediction". A constant
 probability would put every unjudgeable job in the middle of the ranking
@@ -347,6 +351,11 @@ A model may be activated only when all three hold:
    features, and a blocked posting is floored below every eligible one by
    rule instead;
 3. the minimum label counts below were met.
+
+The model is judged on the scores it would ship, `round(100 * p)` with the
+ties that rounding makes, since that is the ranking the queue shows. Only
+the lower bound decides: a model ahead on the point estimate whose interval
+still reaches 0 is refused.
 
 Otherwise `train` still writes the dated model file and the report, exits 3,
 and states which condition failed. `--activate` on a failing model is
@@ -483,7 +492,11 @@ otherwise. Every fixture is synthetic.
 - [x] `train` refuses below the minimum and refuses to activate a model that
       does not beat the baseline, each with exit 3 and the reason
       (`test_train_refuses_below_minimum_labels`,
-      `test_train_refuses_a_model_that_does_not_beat_the_rules`). The refusal
+      `test_train_refuses_a_model_that_does_not_beat_the_rules`). The
+      training minimum decides at its boundary on its own, and only the
+      interval's lower bound ships a model
+      (`test_the_minimum_follows_the_feature_count`,
+      `test_only_the_lower_bound_ships_a_model`). The refusal
       of a non-negative blocker coefficient is superseded by spec 081
       (`test_train_ships_without_a_blocker_condition`)
 - [x] The model never changes a gate verdict (`test_the_model_never_changes_a_gate_verdict`);
@@ -496,6 +509,15 @@ otherwise. Every fixture is synthetic.
       in `services/api/pyproject.toml`, run by `just check`)
 - [x] Every `data/scoring/` path is never-in-git
       (`test_every_scoring_path_is_never_in_git`)
+- [x] The ship rule judges the scores that ship, and the selection-bias
+      report cuts its bands by score value
+      (`test_the_ship_rule_judges_the_scores_that_ship`,
+      `test_selection_bias_bands_by_score_value`)
+- [x] Normalization clips at 1 only; an unreadable model file is not
+      remembered; a number too large for a float is `model-invalid`, not an
+      error (`test_normalization_clips_only_at_one`,
+      `test_a_failed_read_is_not_cached`,
+      `test_an_absurd_number_is_refused_not_raised`)
 - [x] `tests/test_scoring.py::test_every_score_field_is_written_together` and
       `::test_no_reader_takes_a_field_the_writer_does_not_fill` pass unchanged
 - [x] No real posting, company or tracker statistic appears in a fixture,
@@ -528,7 +550,10 @@ otherwise. Every fixture is synthetic.
   the tables do not list is invisible to the model, exactly as it is to the
   rules today. The model can weigh a signal; it cannot discover one.
 - **`years_gap` parses numbers from free text.** "5+ years" and "five years"
-  are not the same string. Parse misses read as no requirement.
+  are not the same string. Parse misses read as no requirement. A number of
+  years that describes the company rather than the role ("the founders bring
+  25 years of experience") reads as a requirement: the parse cannot tell
+  whose years they are.
 - **A score of 0 to 100 is not comparable with a rule score.** Rows across
   the switch are distinguished by `scoring_version`, as spec 033 intends, but
   a list that mixes both versions still sorts them together.
@@ -626,7 +651,8 @@ What implementation found, each with what proves it:
   include keywords in the title alone.
 - **`years_gap` reads a stated requirement.** A number of years counts only
   when "experience" follows it within a few words; a range counts as its
-  lower bound; the largest requirement in the description wins.
+  lower bound, whether written with a hyphen, an en or em dash, or "to"; the
+  largest requirement in the description wins.
   `test_required_years_reads_the_stated_requirement`.
 - **The export says when and how each job was decided.** Beside the id,
   label, vector and baseline, each row carries the time that orders the split,
@@ -658,16 +684,16 @@ What implementation found, each with what proves it:
   generated in `tests/test_scoring_model.py` from synthetic values, so no
   `tests/fixtures/scoring/` directory was needed.
 - **The data check.** Run read-only against a copy of the local tracker,
-  backfilled and exported there and then deleted, training was refused as
-  insufficient labels: the rules keep scoring, as specified while the data is
-  below the minimum. The counts were reported in the session, not here
-  (ADR-008).
+  backfilled and exported there and then deleted. Its outcome was reported in
+  the session, not here (ADR-008): even whether the minimum was met says
+  something about the size of a real search.
 
 ## Amendment: blockers are a floor, not features (spec 081, 2026-10-06)
 
 Spec 081 supersedes the blocker parts of this spec. Blocked postings are rare
-among the decisions the model learns from, so their weights came out near
-zero with either sign, and ship condition 2 refused every model. Now:
+among the decisions the model learns from, so their weights rest on a
+handful of rows, and ship condition 2 would refuse a model over the sign of
+noise. Now:
 
 - `us_scope` and `employment_blocker` are no longer features, leaving six,
   so the minimum is 60 training positives (still ten per feature).
@@ -679,3 +705,59 @@ zero with either sign, and ship condition 2 refused every model. Now:
 - Ship condition 2 is gone.
 
 The criteria above that described the old behavior point to spec 081's tests.
+
+## Amendment (2026-10-06, review of the merged range)
+
+A review of the merged spec 077 to 081 range found five defects in this
+spec's code, one parse miss, and tests that could not fail. Each fix carries
+a test that fails without it.
+
+- **The selection-bias bands split tied scores.** Bands were cut by rank, so
+  where a boundary fell inside a run of equal scores, the sort put the skips
+  in the lower band and the acted-on rows in the higher one: a bias
+  manufactured by the report. They are cut by value, as the terciles are.
+  `test_selection_bias_bands_by_score_value`.
+- **The ship rule judged a ranking that never ships.** It compared the raw
+  probability with the rules, but the queue ranks by `round(100 * p)`, ties
+  and all. It now judges the shipped scores.
+  `test_the_ship_rule_judges_the_scores_that_ship`.
+- **One failed read pinned the fallback.** A model file that could not be
+  read was remembered as invalid until the file changed. It is tried again
+  on the next score. `test_a_failed_read_is_not_cached`.
+- **A huge number crashed the scorer.** An integer too large for a float is
+  valid JSON, and converting it raised instead of falling back, against "a
+  run never fails because the model did". It is `model-invalid`.
+  `test_an_absurd_number_is_refused_not_raised`.
+- **Normalization clipped at 0 too.** The spec says clipped to 1; a negative
+  count is information. `test_normalization_clips_only_at_one`.
+- **A range written with an en or em dash read as no requirement.** Many
+  postings join the two numbers of a range with one of those dashes rather
+  than a hyphen. The range separator accepts both, beside the hyphen and
+  "to". `test_required_years_reads_the_stated_requirement`.
+- **Tests that could not fail.** Each was checked by running the mutation it
+  should catch:
+  - the training minimum: `test_the_minimum_follows_the_feature_count` now
+    holds the test window at its minimum and moves the training count
+    across the boundary, so deleting the training check, or making it
+    strict, fails it;
+  - the lower bound: every synthetic world was lopsided, so shipping on the
+    upper bound or on the point estimate passed;
+    `test_only_the_lower_bound_ships_a_model` gives an interval that
+    straddles 0;
+  - labels: a job rejected and then reopened is acted on, and a live label
+    orders by its own decision time, in
+    `test_labels_come_from_candidate_decisions`;
+  - live metrics: `test_live_only_drops_backfilled_events` checks they are
+    computed over the live test rows, not merely present;
+  - the floor: the US-only W-2 test asserts a negative score, and the
+    signals test uses a posting with more non-zero contributions than the
+    five shown;
+  - EU-permit phrases: the model test plants a table pattern inside each
+    phrase, so removing the strip fails it;
+  - the export: `test_the_export_carries_no_text` plants reason wording on
+    a skipped job, so a leaked reason fails it.
+
+Declined, as a limitation rather than a fix: a number of years that
+describes the company reads as a requirement (see Honest limitations). Any
+rule that told the two apart would be another phrase list with its own
+misses.
