@@ -101,45 +101,45 @@ Two deviations from the stub's wording:
 
 - [x] demo mode reads the committed example even when the real config
       file exists, and leaves the path untouched outside demo mode
-      (test_demo_mode_reads_the_committed_example_even_when_a_real_config_exists)
+      (`test_demo_mode_reads_the_committed_example_even_when_a_real_config_exists`)
 - [x] the demo resolves its config from the repo regardless of the
       working directory
-      (test_demo_feeds_resolve_from_the_repo_regardless_of_working_directory)
+      (`test_demo_feeds_resolve_from_the_repo_regardless_of_working_directory`)
 - [x] a demo run writes nothing into the clone
-      (test_demo_writes_nothing_into_the_clone)
+      (`test_demo_writes_nothing_into_the_clone`)
 - [x] a URL with no fixture raises instead of reaching the network, and a
       fixture index entry cannot escape the fixture directory
-      (test_unfixtured_url_raises_instead_of_reaching_network,
-      test_fixture_entry_cannot_escape_the_fixture_directory)
+      (`test_unfixtured_url_raises_instead_of_reaching_network`,
+      `test_fixture_entry_cannot_escape_the_fixture_directory`)
 - [x] discovery runs offline over the fixture boards, screens them, and
       needs no environment keys; Apify is not attempted
-      (test_demo_discovery_runs_offline_and_screens_the_fixture_boards,
-      test_demo_discovery_needs_no_environment_keys)
+      (`test_demo_discovery_runs_offline_and_screens_the_fixture_boards`,
+      `test_demo_discovery_needs_no_environment_keys`)
 - [x] the seeded database carries both jobs and every profile document
-      (test_seed_demo_db_fills_jobs_and_profile_documents,
-      test_profile_seeds_all_name_a_committed_example)
+      (`test_seed_demo_db_fills_jobs_and_profile_documents`,
+      `test_profile_seeds_all_name_a_committed_example`)
 - [x] one origin serves the SPA and answers under /api, and an unbuilt SPA
       still leaves the API working
-      (test_api_serves_the_spa_and_still_answers_under_the_api_prefix,
-      test_api_without_a_built_spa_still_serves_the_api)
+      (`test_api_serves_the_spa_and_still_answers_under_the_api_prefix`,
+      `test_api_without_a_built_spa_still_serves_the_api`)
 - [x] every committed fixture and example names only reserved or ATS
       hosts, no real board slug, and no address outside the example
-      domains (test_fixtures_name_only_reserved_or_ats_hosts,
-      test_real_ats_hosts_carry_only_example_board_names,
-      test_fixtures_contain_no_address_outside_the_example_domains)
+      domains (`test_fixtures_name_only_reserved_or_ats_hosts`,
+      `test_real_ats_hosts_carry_only_example_board_names`,
+      `test_fixtures_contain_no_address_outside_the_example_domains`)
 - [x] clean-machine clone-to-demo works with zero keys and no decryption,
       where "clean machine" means no config files, no database, and no
       credentials. The frontend build still needs the npm registry once
       and writes apps/web/dist into the clone, which the README states
       rather than hides; the demo itself writes only to a temp directory
-      (test_demo_writes_nothing_into_the_clone)
+      (`test_demo_writes_nothing_into_the_clone`)
 - [x] a demo run makes no outbound call even when credentials are present
-      (test_demo_never_sends_telegram_even_with_credentials_present,
-      test_demo_refuses_to_read_a_real_mailbox)
+      (`test_demo_never_sends_telegram_even_with_credentials_present`,
+      `test_demo_refuses_to_read_a_real_mailbox`)
 - [x] the committed example wins over a config tree in the working
-      directory (test_config_resolution_ignores_the_working_directory)
+      directory (`test_config_resolution_ignores_the_working_directory`)
 - [x] a malformed fixture index raises OfflineFixtureError, not a decode
-      error (test_malformed_fixture_index_raises_offline_fixture_error)
+      error (`test_malformed_fixture_index_raises_offline_fixture_error`)
 - [x] the agent-executable part of the pre-publish checklist
       (docs/privacy-plan.md) is green, and the parts only a human can do
       are named as open

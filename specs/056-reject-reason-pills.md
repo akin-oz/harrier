@@ -82,8 +82,8 @@ Proof lives in `apps/web/src/pages/tracker/TrackerPage.test.tsx`.
 - Cancel closes the picker without posting.
 - In a browser, `other…` shows in the muted text color and the pills keep
   the ordinary one ("other…'s muted color outranks the shared button
-  rule", which fails without the fix). See "Amendment: `other…` is muted
-  in a browser too" below.
+  rule" in `TrackerPage.test.tsx`, which fails without the fix). See
+  "Amendment: `other…` is muted in a browser too" below.
 - `pnpm type-check` and `pnpm lint` pass; the vitest suite passes.
 
 ## Proof / origin
@@ -143,7 +143,8 @@ the "no enum in the contract" line under Out of scope for that field only.
 The pill list, its codes, and the `other…` select are specified in spec 080
 from here on. Proof: `every pill submits its exact lowercase label as the
 reason` in `TrackerPage.test.tsx` still iterates over every pill, now six,
-and "each pill sends its code and text" covers the codes.
+and "each pill sends its code and text" in `TrackerPage.test.tsx` covers the
+codes.
 
 ## Amendment: `other…` is muted in a browser too (2026-10-06)
 

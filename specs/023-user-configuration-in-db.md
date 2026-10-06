@@ -14,16 +14,22 @@ depends: [004, 011]
 User configuration (the board watchlist, the LinkedIn searches, the
 discovery settings, the hold list) lives in gitignored loose files. ADR-009
 wants it in the database: customization without editing a checkout, a clean
-open-source story, and a data layer a tenant scope can partition later.
+open-source story, and a data layer that does not block tenancy later.
+Since spec 041, ADR-009 says what keeps tenancy open is configuration in
+the database, read through accessors, not a tenant scope
+(`docs/adr/ADR-009-user-configuration-and-tenancy.md`).
 
 ## Scope
 
-- `user_config` table: one row per (scope, kind), value as JSON. The four
-  kinds are feeds, linkedin_searches, discovery, company_holds.
-- `scope` is the tenancy seam. It is `default` everywhere today and nothing
-  reads it as a variable, but it is in the unique key, so partitioning later
-  is a query change rather than a migration of every row (ADR-009: tenant
-  ready, not tenant complete).
+- `user_config` table: one row per kind
+  (`services/api/tests/test_userconfig.py::test_a_kind_is_unique_on_its_own`),
+  value as JSON. The four kinds are feeds, linkedin_searches, discovery,
+  company_holds.
+- No `scope` column. This spec first put one in the unique key as a
+  tenancy seam, always `default`. Spec 041 removed it in migration 6 of
+  `services/api/src/harrier/tracker/schema.py`, and ADR-009 now says that
+  re-adding it is a migration
+  (`services/api/tests/test_userconfig.py::test_the_schema_carries_no_scope_column`).
 - Shape validation on both the write and the read path. Write, so a bad
   value surfaces where it was set rather than inside discovery. Read,
   because a row can appear without going through the write path at all: a
@@ -57,7 +63,8 @@ open-source story, and a data layer a tenant scope can partition later.
 
 ## Resolution order, and why the file stays
 
-1. The store, when a row exists for the scope.
+1. The store, when a row exists for the kind
+   (`test_the_file_is_used_until_something_is_stored`).
 2. The file, resolved through `harrier.demo.resolve_config_path` so demo
    mode still gets its synthetic values.
 3. Empty.
@@ -89,35 +96,38 @@ purpose, and a user who empties it must not silently get the file back.
 
 - [x] discovery reads feeds and searches from the store, and a fresh clone
       with no files and no store rows runs cleanly with empty sources
-      (test_stored_feeds_route_to_their_importers,
-      test_a_fresh_install_with_no_store_and_no_files_runs_with_no_sources)
+      (`test_stored_feeds_route_to_their_importers`,
+      `test_a_fresh_install_with_no_store_and_no_files_runs_with_no_sources`)
 - [x] the file is used until something is stored, and clearing a value is
       distinguishable from never setting one
-      (test_the_file_is_used_until_something_is_stored,
-      test_an_empty_list_is_not_the_same_as_no_row)
+      (`test_the_file_is_used_until_something_is_stored`,
+      `test_an_empty_list_is_not_the_same_as_no_row`)
 - [x] a bad shape or unknown kind is refused at the write, by both surfaces
-      with the same message (test_a_bad_shape_is_refused_at_the_write,
-      test_the_api_refuses_a_bad_shape_with_the_stores_own_message,
-      test_an_unknown_kind_is_a_404_on_every_verb)
+      with the same message (`test_a_bad_shape_is_refused_at_the_write`,
+      `test_the_api_refuses_a_bad_shape_with_the_stores_own_message`,
+      `test_an_unknown_kind_is_a_404_on_every_verb`)
 - [x] config is editable through the API and the CLI, and every answer says
       where the value came from
-      (test_the_api_lists_every_kind_with_its_source,
-      test_putting_a_value_makes_it_the_stored_source,
-      test_deleting_a_value_restores_the_fallback,
-      test_unset_reports_whether_anything_was_removed)
+      (`test_the_api_lists_every_kind_with_its_source`,
+      `test_putting_a_value_makes_it_the_stored_source`,
+      `test_deleting_a_value_restores_the_fallback`,
+      `test_unset_reports_whether_anything_was_removed`)
 - [x] the import command round-trips the current files, ignoring the
       example file's reader-facing comment key
-      (test_import_round_trips_the_current_files,
-      test_import_with_no_files_reports_rather_than_claiming_success)
+      (`test_import_round_trips_the_current_files`,
+      `test_import_with_no_files_reports_rather_than_claiming_success`)
 - [x] the schema carries a scope column that partitions
-      (test_the_schema_carries_a_scope_column_for_later_tenancy)
+      (test_the_schema_carries_a_scope_column_for_later_tenancy, removed).
+      Superseded by spec 041, which removed the column and replaced that
+      test with
+      `services/api/tests/test_userconfig.py::test_the_schema_carries_no_scope_column`.
 - [x] the discovery settings survive the move, including the boolean trap
-      (test_discovery_settings_come_from_the_store,
-      test_a_boolean_count_does_not_pass_as_an_integer)
+      (`test_discovery_settings_come_from_the_store`,
+      `test_a_boolean_count_does_not_pass_as_an_integer`)
 - [x] a corrupted row is refused on read rather than coerced, and a
       malformed request body stays a distinct failure from a bad value
-      (test_a_corrupted_row_is_refused_rather_than_coerced,
-      test_a_malformed_body_and_a_bad_value_are_different_failures)
+      (`test_a_corrupted_row_is_refused_rather_than_coerced`,
+      `test_a_malformed_body_and_a_bad_value_are_different_failures`)
 - [x] All gates green: `just check` (ruff, ruff-format, pyright,
       lint-imports, pytest; tsc, eslint, prettier, vitest; contract
       regeneration; aie check), run by the CI workflow. History: PR #20.
@@ -140,10 +150,12 @@ real database untouched. Those counts are environment-specific and no other
 clone can reproduce them; they are recorded as evidence the import handles
 a real watchlist at size, not as a checkable criterion.
 
-Honest limitations: the scope column exists and partitions, which is not
-the same as multi-tenancy. There is no authentication, no tenant
-resolution, and no isolation; a second scope is reachable only by passing
-it explicitly in process. The API write path has no auth either, because
+Honest limitations: none of this is multi-tenancy. There is no
+authentication, no tenant resolution, and no isolation. Since spec 041
+there is no scope column, so a database holds one configuration, at most
+one row per kind (`test_the_schema_carries_no_scope_column`,
+`test_a_kind_is_unique_on_its_own`).
+The API write path has no auth either, because
 the service binds to localhost (unchanged from every other endpoint). The
 GUI half of ADR-009's promise is not here: the React app has no
 configuration surface yet, so "customizable easily" currently means the
