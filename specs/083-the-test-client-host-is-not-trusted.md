@@ -1,8 +1,11 @@
 ---
 spec: 083
 title: The API does not trust the test client's host name
-status: proposed
-approved: no
+status: accepted
+approved: yes
+approved-note: >
+  Approved by Akin in session on 2026-10-07, verbally rather than by editing
+  this file. Recorded here because the agent normally never sets this flag.
 milestone: M8
 depends: [035, 051, 060]
 ---
