@@ -171,7 +171,7 @@ spec 044.
       proves it (the amendment below on spec 023;
       `services/api/tests/test_userconfig.py::test_the_schema_carries_no_scope_column`,
       `::test_a_kind_is_unique_on_its_own`)
-- [ ] spec 023's honest limitations say that config writes through the API
+- [x] spec 023's honest limitations say that config writes through the API
       need the local API token and a trusted Host header since spec 035,
       without calling the token authentication, and name the tests that
       prove it (the amendment below on the API write path;
