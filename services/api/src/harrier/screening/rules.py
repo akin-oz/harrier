@@ -144,6 +144,63 @@ PREFERRED_REGION_PATTERNS: tuple[str, ...] = (
     r"\bmiddle east\b",
 )
 
+# The members of PREFERRED_REGION_PATTERNS that do not name a region. They
+# match "anywhere in the US" and "remote-first, US only" as readily as a
+# European posting, so they cannot vouch for a location being in scope
+# (spec 078). `\banywhere\b` is the pattern behind the posting that scored 151.
+AMBIGUOUS_REGION_PATTERNS: frozenset[str] = frozenset(
+    {
+        r"\bworldwide\b",
+        r"\bglobal\b",
+        r"\banywhere\b",
+        r"\bremote[- ]first\b",
+        r"\butc\b",
+    }
+)
+
+# Blockers: phrases that make a posting impossible for this candidate rather
+# than merely less attractive (spec 078). They lower a rank and never reject;
+# the gates above are the only filter. Matched after the EU-permit phrases are
+# stripped, so "must be based in the EU" can never read as one.
+#
+# A bare `us` is only trusted inside a phrase that cannot be ordinary English:
+# "join us only if" and "contact us based on" are sentences, "us-only" and
+# "anywhere in the us" are not.
+US_SCOPE_PATTERNS: tuple[str, ...] = (
+    r"\banywhere in the (?:us|u\.s\.?|usa|united states)\b",
+    r"\bus-only\b",
+    r"\b(?:u\.s\.|usa|united states)[- ]only\b",
+    r"\bmust (?:reside|live|be located|be based) in the (?:us|u\.s\.?|usa|united states)\b",
+    r"\b(?:us|u\.s\.) time ?zones? only\b",
+    r"\b(?:authorized|eligible) to work in the (?:us|u\.s\.?|usa|united states)\b",
+)
+
+# US payroll and immigration terms. "opt" and "f1" appear only with the word
+# that makes them a visa class, so "opt in" and Formula 1 are not.
+#
+# Deliberately absent, after checking the tables against real decisions
+# before merge (spec 078 amendment): "no visa sponsorship" and its variants,
+# which European employers write as often as American ones and which do not
+# bind a candidate contracting through an EU entity; and "US-based" or
+# "based in the US", which describe where a company's team sits as often as
+# where a role must be. A US-only role that says either is caught by the
+# US scope phrases above.
+EMPLOYMENT_BLOCKER_PATTERNS: tuple[str, ...] = (
+    r"\bw-?2\b",
+    r"\bat[- ]will employment\b",
+    r"\bemployment at[- ]will\b",
+    r"\bstudent visas?\b",
+    r"\bf-?1 (?:visa|students?)\b",
+    r"\b(?:stem )?(?:opt|cpt)(?:/(?:opt|cpt))? (?:students?|candidates?|visa|eligible)\b",
+    r"\b(?:us|u\.s\.) citizens? only\b",
+    r"\bmust be an? (?:us|u\.s\.) citizen\b",
+    r"\b(?:us|u\.s\.) citizens? or (?:green card|permanent resident)",
+    r"\bgreen card holders? only\b",
+    r"\bsecurity clearance (?:is )?required\b",
+    r"\brequires? (?:an? )?(?:active )?security clearance\b",
+    r"\b(?:active|current) (?:secret|top secret|ts/sci) clearance\b",
+)
+
 SKILL_SIGNALS: dict[str, int] = {
     "typescript": 7,
     "vue": 7,
@@ -465,10 +522,7 @@ def score_job(job: NormalizedJob, candidate_cfg: CandidateConfig) -> tuple[int, 
         reasons.append("preferred region signal")
 
     # Domain preference bonus: highest single match wins, no stacking.
-    domain_cfg = _cfg_dict(candidate_cfg, "scoring").get("domain_bonus", {})
-    domain_cfg = cast("dict[str, Any]", domain_cfg) if isinstance(domain_cfg, dict) else {}
-    primary_bonus = int(domain_cfg.get("primary", 5))
-    secondary_bonus = int(domain_cfg.get("secondary", 3))
+    primary_bonus, secondary_bonus = _domain_bonuses(candidate_cfg)
     prefs = _cfg_dict(candidate_cfg, "preferences")
     primary_domains = [normalize(d) for d in _str_list(prefs, "domains_preferred")]
     secondary_domains = [normalize(d) for d in _str_list(prefs, "domains_secondary")]
@@ -507,4 +561,96 @@ def score_job(job: NormalizedJob, candidate_cfg: CandidateConfig) -> tuple[int, 
     # 033) and the score is purely ordinal, so a bound on it buys nothing and
     # costs the distinction between the best two rows.
     # Proved by `tests/test_scoring.py::test_two_strong_postings_are_not_tied_by_a_cap`.
+
+    # A posting the candidate cannot take ranks below every posting they can
+    # (spec 078). Once, however many blockers fire: it is already below
+    # everything eligible, and ordering among impossible postings has no value.
+    found = blockers(job)
+    if found:
+        score -= blocker_penalty(candidate_cfg)
+        reasons.extend(f'blocker={kind} "{phrase}"' for kind, phrase in found)
     return score, reasons
+
+
+def _domain_bonuses(candidate_cfg: CandidateConfig) -> tuple[int, int]:
+    domain_cfg = _cfg_dict(candidate_cfg, "scoring").get("domain_bonus", {})
+    domain_cfg = cast("dict[str, Any]", domain_cfg) if isinstance(domain_cfg, dict) else {}
+    return int(domain_cfg.get("primary", 5)), int(domain_cfg.get("secondary", 3))
+
+
+def location_names_explicit_emea(location: str) -> bool:
+    """Whether a location field names a region in scope, not merely a
+    reach ("worldwide", "anywhere") that a US-only posting can also claim."""
+    explicit = tuple(p for p in PREFERRED_REGION_PATTERNS if p not in AMBIGUOUS_REGION_PATTERNS)
+    return text_matches_any_pattern(strip_eu_permit_phrases(normalize(location)), explicit)
+
+
+def _first_match(text: str, patterns: tuple[str, ...]) -> str | None:
+    for pattern in patterns:
+        found = re.search(pattern, text)
+        if found:
+            return found.group(0)
+    return None
+
+
+def blockers(job: NormalizedJob) -> list[tuple[str, str]]:
+    """Each blocker class that fires, with the phrase that fired it (spec 078).
+
+    Read from title, location and description: the description is the only
+    place these phrases appear. US scope gives way to a location that names
+    an EMEA region explicitly, because "Remote, Europe" with "we also hire
+    anywhere in the US" is a posting the candidate can take. Employment terms
+    have no such override: W-2 and at-will are US payroll whatever the
+    location says.
+    """
+    text = strip_eu_permit_phrases(
+        normalize(f"{job['title']} {job['location']} {job['description']}")
+    )
+    found: list[tuple[str, str]] = []
+    us_scope = _first_match(text, US_SCOPE_PATTERNS)
+    if us_scope and not location_names_explicit_emea(job["location"]):
+        found.append(("us_scope", us_scope))
+    employment = _first_match(text, EMPLOYMENT_BLOCKER_PATTERNS)
+    if employment:
+        found.append(("employment", employment))
+    return found
+
+
+def score_bounds(candidate_cfg: CandidateConfig) -> tuple[int, int]:
+    """The least and the most an unblocked posting can score (spec 078).
+
+    The least is what every posting that passes the gates is forced to earn,
+    base plus the remote bonus (proved unavoidable by
+    `tests/test_scoring.py::test_the_arithmetic_floor_is_derived_from_the_rules`),
+    lowered by any negative weight a configuration sets. The most is every
+    bonus at once and every positive weight matched.
+    """
+    scoring = scoring_config(candidate_cfg)
+    weights = [
+        *cast("dict[str, int]", scoring["skill_signals"]).values(),
+        *cast("dict[str, int]", scoring["preferred_signal_weights"]).values(),
+    ]
+    primary, secondary = _domain_bonuses(candidate_cfg)
+    low = (
+        int(scoring["base_score"])
+        + int(scoring["remote_bonus"])
+        + sum(weight for weight in weights if weight < 0)
+    )
+    high = (
+        int(scoring["base_score"])
+        + int(scoring["exact_title_bonus"])
+        + int(scoring["include_keyword_bonus_cap"])
+        + int(scoring["remote_bonus"])
+        + int(scoring["preferred_region_bonus"])
+        + sum(weight for weight in weights if weight > 0)
+        + max(primary, secondary, 0)
+    )
+    return low, high
+
+
+def blocker_penalty(candidate_cfg: CandidateConfig) -> int:
+    """The smallest penalty that puts any blocked posting below every
+    unblocked one. Derived, never configured: a number someone can set is a
+    number someone will tune until one case looks right (spec 078)."""
+    low, high = score_bounds(candidate_cfg)
+    return high - low + 1

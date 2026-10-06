@@ -53,12 +53,13 @@ Siracusa defect.
 
 | Class | Phrases (the table is the authority; these are its shape) |
 |---|---|
-| `us_scope` | anywhere in the US or United States; US only; US-based or based in the US; must reside, live or be located in the US; US time zones only; authorized or eligible to work in the US |
-| `employment` | W-2 or W2; at-will employment; no visa sponsorship, unable or not able to sponsor, sponsorship not available; F-1, OPT or CPT, student visa; US citizens or green card holders only; security clearance required |
+| `us_scope` | anywhere in the US or United States; US only; must reside, live, be located or be based in the US; US time zones only; authorized or eligible to work in the US |
+| `employment` | W-2 or W2; at-will employment; F-1, OPT or CPT, student visa; US citizens or green card holders only; security clearance required |
 
 `us_scope` does not fire when the location field names an explicit EMEA
-region (a `PREFERRED_REGION_PATTERNS` match other than the ambiguous
-`worldwide`, `global` and `anywhere`). "Remote, Europe" in the location with
+region (a `PREFERRED_REGION_PATTERNS` match outside
+`AMBIGUOUS_REGION_PATTERNS`: `worldwide`, `global`, `anywhere`, `remote-first`
+and `utc`; see the amendment below). "Remote, Europe" in the location with
 "we also hire anywhere in the US" in the description is a posting the
 candidate can take. `employment` has no such override: W-2 and at-will are
 US payroll terms whatever the location says.
@@ -144,41 +145,37 @@ the gates are unchanged, so reconsideration reaches the same verdicts.
 
 ## Acceptance criteria
 
-Tests marked planned do not exist yet. They are named here so the
-implementation has a target; the implementing change cites each one in
-backticks, where `tests/test_spec_structure.py` checks it exists.
-
 Tests in `services/api/tests/test_scoring.py` unless named otherwise. Every
 posting is synthetic, with an invented company.
 
-- [ ] A synthetic US-only W-2 posting ("anywhere in the US", W-2, no
+- [x] A synthetic US-only W-2 posting ("anywhere in the US", W-2, no
       sponsorship) ranks below a synthetic EMEA-remote posting with the same
       skill keywords, and its `signals` name both blockers with the matched
-      phrases (planned test_a_us_only_w2_posting_ranks_below_an_emea_remote_one)
-- [ ] The strongest unblocked posting the configuration allows, blocked by one
+      phrases (`test_a_us_only_w2_posting_ranks_below_an_emea_remote_one`)
+- [x] The strongest unblocked posting the configuration allows, blocked by one
       phrase, scores below the weakest unblocked posting that passes the
       gates; the penalty is computed from `score_bounds`, not restated
-      (planned test_the_blocker_penalty_is_derived_from_the_rules)
-- [ ] Two blockers apply one penalty (planned test_blockers_do_not_stack)
-- [ ] "Remote, Europe" in the location suppresses `us_scope` from the
+      (`test_the_blocker_penalty_is_derived_from_the_rules`)
+- [x] Two blockers apply one penalty (`test_blockers_do_not_stack`)
+- [x] "Remote, Europe" in the location suppresses `us_scope` from the
       description, and does not suppress `employment`
-      (planned test_an_explicit_emea_location_overrides_us_scope)
-- [ ] EU-permit phrases never fire a blocker ("must be based in the EU",
+      (`test_an_explicit_emea_location_overrides_us_scope`)
+- [x] EU-permit phrases never fire a blocker ("must be based in the EU",
       "EU work permit required", "EU-based contractor")
-      (planned test_eu_permit_phrases_are_never_blockers)
-- [ ] False-positive fixtures do not fire: "we sponsor visas", "unlike US-only
+      (`test_eu_permit_phrases_are_never_blockers`)
+- [x] False-positive fixtures do not fire: "we sponsor visas", "unlike US-only
       roles, this one is open across Europe" with a European location,
       "US" inside an unrelated word, "W2" inside a product name
-      (planned test_blocker_tables_do_not_fire_on_eligible_postings)
-- [ ] A blocker never changes a gate verdict
-      (planned tests/test_screening.py::test_a_blocker_never_changes_a_gate_verdict);
+      (`test_blocker_tables_do_not_fire_on_eligible_postings`)
+- [x] A blocker never changes a gate verdict
+      (`tests/test_screening.py::test_a_blocker_never_changes_a_gate_verdict`);
       the rest of `tests/test_screening.py` passes unchanged
-- [ ] `policy_version` changes when either table changes
-      (planned tests/test_seen_policy.py::test_the_blocker_tables_move_the_policy_version)
-- [ ] `test_every_score_field_is_written_together`,
+- [x] `policy_version` changes when either table changes
+      (`tests/test_seen_policy.py::test_the_blocker_tables_move_the_policy_version`)
+- [x] `test_every_score_field_is_written_together`,
       `test_no_reader_takes_a_field_the_writer_does_not_fill` and
       `test_the_arithmetic_floor_is_derived_from_the_rules` pass unchanged
-- [ ] No real posting or company appears in a fixture (ADR-008)
+- [x] No real posting or company appears in a fixture (ADR-008)
 - [ ] All gates green on PR
 
 ## Honest limitations
@@ -225,3 +222,38 @@ posting is synthetic, with an invented company.
 - Spec 077, Minimum data: this spec is the interim fix proposed there.
 - Product invariant (CLAUDE.md): EU-permit phrases are positive signals,
   never filters, hence `strip_eu_permit_phrases` before any blocker matches.
+
+## Amendment (2026-10-06, during implementation)
+
+Two corrections the implementation found, both making the spec's own
+argument hold:
+
+- **The ambiguous set is five patterns, not three.** `remote-first` and `utc`
+  are members of `PREFERRED_REGION_PATTERNS` that name no region either: a
+  location of "Remote-first" says nothing about whether a US-only posting is
+  in scope. Left out, they would let such a location override US scope. The
+  set is `rules.AMBIGUOUS_REGION_PATTERNS`, part of the policy fingerprint.
+  Proved by `tests/test_scoring.py::test_an_explicit_emea_location_overrides_us_scope`
+  (a "Worldwide" location does not override) and
+  `tests/test_seen_policy.py::test_the_blocker_tables_move_the_policy_version`.
+- **`low` subtracts any negative weight a configuration sets.** Base plus
+  the remote bonus is the floor only while every weight is non-negative, as
+  in the example configuration. A configuration may set a negative skill or
+  preferred weight, and then an unblocked posting can score below base plus
+  remote; the penalty would no longer guarantee the ordering. `score_bounds`
+  adds every negative weight to `low` and every positive one to `high`.
+- **The pre-merge check removed eight patterns.** Run read-only against the
+  local tracker as the limitations section requires, phrases from two
+  shapes fired on postings the candidate had acted on:
+  - "US-based" and "based in the US" describe where a company's team sits
+    (the synthetic fixtures "our team is based in the US and Spain" and
+    "E-Verify applies to our U.S. based roles")
+    as often as where a role must be.
+  - "No visa sponsorship" and its variants are written by European
+    employers as often as American ones, and do not bind a candidate who
+    contracts through an EU entity.
+  Both are removed. A US-only role that says either is still caught by the
+  remaining US scope phrases. After the change, no blocker fires on a row the
+  candidate acted on. The counts were reported in the session, not here
+  (ADR-008). Synthetic fixtures for both shapes are in
+  `tests/test_scoring.py::test_blocker_tables_do_not_fire_on_eligible_postings`.

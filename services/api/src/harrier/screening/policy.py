@@ -97,6 +97,12 @@ def _rule_fingerprint() -> dict[str, Any]:
             key: sorted(value) for key, value in sorted(rules.DOMAIN_KEYWORDS.items())
         },
         "preferred_signal_weights": dict(sorted(rules.PREFERRED_SIGNAL_WEIGHTS.items())),
+        # A blocker moves a posting below every eligible one, and the
+        # ambiguous set decides when a location overrides US scope, so all
+        # three rank as much as any weight does (spec 078).
+        "us_scope_patterns": list(rules.US_SCOPE_PATTERNS),
+        "employment_blocker_patterns": list(rules.EMPLOYMENT_BLOCKER_PATTERNS),
+        "ambiguous_region_patterns": sorted(rules.AMBIGUOUS_REGION_PATTERNS),
         # The score cutoff used to be fingerprinted here. It is gone (spec
         # 033): it decided nothing on the ATS path and decided the wrong
         # thing on the LinkedIn one, so there is no longer a threshold whose
