@@ -72,10 +72,10 @@ because harrier reads .env in Python.
 ## Stated changes from the old code
 
 - No shell wrappers: plists invoke the CLI directly (proven by
-  test_rendered_plists_invoke_the_cli_without_a_shell), so .env is read
+  `test_rendered_plists_invoke_the_cli_without_a_shell`), so .env is read
   by harrier's Python loader, which skips a malformed line rather than
   failing (proven by
-  test_malformed_env_line_does_not_break_the_python_loader).
+  `test_malformed_env_line_does_not_break_the_python_loader`).
 - Paths are resolved at install time from the actual repo location;
   neither the path nor the username is ever written into a committed
   file.
@@ -89,29 +89,29 @@ because harrier reads .env in Python.
 
 - [x] install writes and loads three plists pointing at the harrier
       repo, with no hardcoded home directory in the rendered output
-      (test_install_writes_three_plists_at_the_real_repo_path)
+      (`test_install_writes_three_plists_at_the_real_repo_path`)
 - [x] the rendered plists invoke the CLI directly, with no shell
       wrapper anywhere in ProgramArguments
-      (test_rendered_plists_invoke_the_cli_without_a_shell)
+      (`test_rendered_plists_invoke_the_cli_without_a_shell`)
 - [x] dry-run writes nothing and loads nothing
-      (test_dry_run_writes_nothing)
+      (`test_dry_run_writes_nothing`)
 - [x] status reports installed, loaded, drift, and next run time, and
       flags a hand-edited plist as drifted
-      (test_status_detects_drift)
+      (`test_status_detects_drift`)
 - [x] uninstall removes every plist it installed
-      (test_uninstall_removes_plists)
+      (`test_uninstall_removes_plists`)
 - [x] a malformed cadence config fails with the job and field named,
       including boolean trigger values and duplicate job names
-      (test_invalid_schedule_config_is_rejected,
-      test_boolean_trigger_values_are_rejected,
-      test_duplicate_job_names_are_rejected)
+      (`test_invalid_schedule_config_is_rejected`,
+      `test_boolean_trigger_values_are_rejected`,
+      `test_duplicate_job_names_are_rejected`)
 - [x] job names and the label prefix cannot escape their directories
-      (test_identifiers_cannot_escape_their_directories)
+      (`test_identifiers_cannot_escape_their_directories`)
 - [x] a failed load or unload reaches the caller as a failure, and an
       already-unloaded job still uninstalls cleanly
-      (test_load_failure_is_reported, test_unload_failure_keeps_the_plist)
+      (`test_load_failure_is_reported`, `test_unload_failure_keeps_the_plist`)
 - [x] a malformed .env line does not break harrier's loader
-      (test_malformed_env_line_does_not_break_the_python_loader)
+      (`test_malformed_env_line_does_not_break_the_python_loader`)
 - [x] All gates green on PR (PR #17)
 
 ## Proof / origin

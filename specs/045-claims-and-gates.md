@@ -160,7 +160,7 @@ spec 044.
       056 and 080, and
       `services/api/tests/test_spec_structure.py::test_every_test_a_spec_names_actually_exists`
       passes over every committed spec
-- [ ] every Python test that specs 016 and 018 to 026 cite outside a code
+- [x] every Python test that specs 016 and 018 to 026 cite outside a code
       span is cited in one, and spec 023's citation of a removed test says
       what replaced it (the amendment below on Python citations;
       `services/api/tests/test_spec_structure.py::test_every_test_a_spec_names_actually_exists`
@@ -319,8 +319,8 @@ opposite.
 No code changes and no new file.
 
 **How to know it worked.** The check passes over every committed spec.
-Renaming any test these specs cite makes it fail and name the spec; before
-this change the same rename passes.
+Renaming a test that one of these specs cited only outside a code span makes
+it fail and name the spec; before this change the same rename passed.
 
 ### Limitations
 

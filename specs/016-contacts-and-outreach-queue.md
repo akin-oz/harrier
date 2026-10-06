@@ -93,13 +93,13 @@ scripts; harrier's contacts already live in the database (spec 004).
       (services/api/tests/test_outreach.py, 21 tests)
 - [x] Nothing writes a contact without an approval step: staging alone
       never touches the contacts table
-      (test_find_contacts_stages_candidates_without_writing_contacts),
+      (`test_find_contacts_stages_candidates_without_writing_contacts`),
       and the poster backfill stages rather than writes
-      (test_backfill_stages_posters_without_writing_contacts)
+      (`test_backfill_stages_posters_without_writing_contacts`)
 - [x] A snoozed job never surfaces as due through sync
-      (test_snoozed_job_without_contacts_stays_snoozed)
+      (`test_snoozed_job_without_contacts_stays_snoozed`)
 - [x] Outreach sent transitions are legal only from ready or sent
-      (test_mark_sent_rejects_illegal_transitions)
+      (`test_mark_sent_rejects_illegal_transitions`)
 - [x] All gates green on PR (PR #13)
 
 ## Proof / origin

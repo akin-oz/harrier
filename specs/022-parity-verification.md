@@ -123,50 +123,50 @@ one changed the tool:
 ## Acceptance criteria
 
 - [x] every matrix row becomes a checklist item worded by its verdict
-      (test_every_row_becomes_an_item_with_its_verdict_prompt)
+      (`test_every_row_becomes_an_item_with_its_verdict_prompt`)
 - [x] regenerating preserves ticks and waivers, and reports items the
       matrix no longer carries
-      (test_regenerating_preserves_ticks_and_waivers,
-      test_a_retired_item_is_reported_not_silently_dropped)
+      (`test_regenerating_preserves_ticks_and_waivers`,
+      `test_a_retired_item_is_reported_not_silently_dropped`)
 - [x] a malformed row or verdict fails loudly rather than dropping an item
-      (test_an_unreadable_verdict_fails_rather_than_dropping_the_row,
-      test_a_short_row_fails_rather_than_being_guessed)
+      (`test_an_unreadable_verdict_fails_rather_than_dropping_the_row`,
+      `test_a_short_row_fails_rather_than_being_guessed`)
 - [x] the matrix's stated totals and its table cannot drift
-      (test_stated_counts_match_the_table)
+      (`test_stated_counts_match_the_table`)
 - [x] identical runs are clean; a rescored posting is a divergence; a
       posting only one run saw is not
-      (test_identical_runs_are_clean,
-      test_a_score_change_on_the_same_posting_is_decidable,
-      test_a_posting_only_one_run_saw_is_not_counted_as_a_divergence)
+      (`test_identical_runs_are_clean`,
+      `test_a_score_change_on_the_same_posting_is_decidable`,
+      `test_a_posting_only_one_run_saw_is_not_counted_as_a_divergence`)
 - [x] a seen-state asymmetry blocks the screening comparison instead of
       producing findings, while fetch counts are still reported, and the
       comparison is by suppressed share rather than absolute count
-      (test_seen_state_asymmetry_blocks_the_screening_comparison,
-      test_matching_fetch_counts_are_reported_even_when_screening_is_blocked,
-      test_equal_suppressed_shares_do_not_block_on_unequal_fetch_counts)
+      (`test_seen_state_asymmetry_blocks_the_screening_comparison`,
+      `test_matching_fetch_counts_are_reported_even_when_screening_is_blocked`,
+      `test_equal_suppressed_shares_do_not_block_on_unequal_fetch_counts`)
 - [x] differing fetch counts also block the screening comparison, and a
       source present in only one run is not clean
-      (test_differing_fetch_counts_block_the_screening_comparison,
-      test_a_source_only_the_new_run_had_is_not_clean,
-      test_a_source_missing_from_the_new_run_is_not_clean)
+      (`test_differing_fetch_counts_block_the_screening_comparison`,
+      `test_a_source_only_the_new_run_had_is_not_clean`,
+      `test_a_source_missing_from_the_new_run_is_not_clean`)
 - [x] an object that is not a run summary is rejected rather than diffing
-      clean (test_an_object_that_is_not_a_run_summary_is_rejected)
+      clean (`test_an_object_that_is_not_a_run_summary_is_rejected`)
 - [x] an unrecognized table header fails rather than skipping its rows
-      (test_an_unrecognized_table_header_fails_rather_than_skipping_its_rows)
+      (`test_an_unrecognized_table_header_fails_rather_than_skipping_its_rows`)
 - [x] a retired decision keeps its tick across regenerations and keeps the
       checklist incomplete until a human resolves it
-      (test_a_retired_decision_keeps_its_tick_across_regenerations,
-      test_a_retired_decision_keeps_the_checklist_incomplete)
+      (`test_a_retired_decision_keeps_its_tick_across_regenerations`,
+      `test_a_retired_decision_keeps_the_checklist_incomplete`)
 - [x] the committed checklist cannot drift from the matrix, and the
       header's own example is not read as a decision
-      (test_the_committed_checklist_matches_the_matrix,
-      test_the_headers_own_example_is_not_parsed_as_a_decision)
+      (`test_the_committed_checklist_matches_the_matrix`,
+      `test_the_headers_own_example_is_not_parsed_as_a_decision`)
 - [x] no report carries a filesystem path
-      (test_report_carries_no_filesystem_paths)
+      (`test_report_carries_no_filesystem_paths`)
 - [x] a shadow run is a dry run and never reaches the paid source
-      (test_shadow_implies_dry_run,
-      test_a_shadow_run_never_reaches_the_paid_source,
-      test_a_shadow_run_writes_nothing_to_the_tracker)
+      (`test_shadow_implies_dry_run`,
+      `test_a_shadow_run_never_reaches_the_paid_source`,
+      `test_a_shadow_run_writes_nothing_to_the_tracker`)
 - [x] All gates green: `just check` (ruff, ruff-format, pyright,
       lint-imports, pytest for the API; tsc, eslint, prettier, vitest for
       the web app; contract regeneration; aie check), run by the CI
