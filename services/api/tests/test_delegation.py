@@ -148,6 +148,10 @@ def test_every_subcommand_has_exactly_one_class() -> None:
     ("argv", "expected"),
     [
         (["shortlist", "1"], DATABASE),
+        (["company-outcome", "1", "ghosted"], DATABASE),
+        (["events", "backfill"], DATABASE),
+        (["events", "backfill", "--dry-run"], DATABASE),
+        (["events", "show", "1"], DATABASE),
         (["config", "list"], DATABASE),
         (["config", "set", "feeds"], DATABASE),
         (["config", "set", "feeds", "--file", "x.json"], HOST_PATH),

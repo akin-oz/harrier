@@ -30,6 +30,7 @@ from harrier.logsetup import configure_logging
 from harrier.profile import export_to, import_from, list_documents
 from harrier.tracker.export import export_csv
 from harrier.tracker.migrate_legacy import MigrationError, migrate
+from harrier.tracker.reasons import REASON_CODES
 from harrier.tracker.store import TrackerError
 
 
@@ -985,14 +986,22 @@ def _cmd_tracker_verb(args: argparse.Namespace) -> int:
             return 0
 
         reason = " ".join(getattr(args, "reason", []) or []).strip() or None
-        # The same function the API route calls (spec 042).
-        updated = change_status(
-            conn,
-            args.selector,
-            args.command,
-            reason=reason,
-            applied_date=getattr(args, "applied_date", None),
-        )
+        # The same function the API route calls (spec 042). The command line
+        # alone refuses a company's verdict typed as a rejection reason and
+        # names the verb that records it (spec 079).
+        try:
+            updated = change_status(
+                conn,
+                args.selector,
+                args.command,
+                reason=reason,
+                applied_date=getattr(args, "applied_date", None),
+                reason_code=getattr(args, "code", None),
+                refuse_company_reason=True,
+            )
+        except TrackerActionError as error:
+            print(f"refused: {error}", file=sys.stderr)
+            return 2
         _print_job(updated)
         return 0
     except SelectorError as error:
@@ -1000,6 +1009,64 @@ def _cmd_tracker_verb(args: argparse.Namespace) -> int:
         return 1
     finally:
         conn.close()
+
+
+def _cmd_company_outcome(args: argparse.Namespace) -> int:
+    """What a company did with an application, kept apart from the candidate's
+    own decisions (spec 079)."""
+    from harrier.tracker import SelectorError
+    from harrier.tracker.actions import TrackerActionError, record_company_outcome
+
+    note = " ".join(args.note or []).strip() or None
+    with closing(connect()) as conn:
+        try:
+            updated = record_company_outcome(conn, args.selector, args.code, note=note)
+        except SelectorError as error:
+            print(str(error), file=sys.stderr)
+            return 1
+        except TrackerActionError as error:
+            print(f"refused: {error}", file=sys.stderr)
+            return 2
+        _print_job(updated)
+    return 0
+
+
+def _cmd_events(args: argparse.Namespace) -> int:
+    """A job's decision history, and the backfill that reconstructs it for rows
+    decided before it was recorded (spec 079)."""
+    from harrier.tracker import SelectorError, resolve_selector
+    from harrier.tracker.store import backfill_events, list_events
+
+    with closing(connect()) as conn:
+        if args.events_command == "backfill":
+            counts = backfill_events(conn, dry_run=args.dry_run)
+            verb = "would write" if args.dry_run else "wrote"
+            print(f"{verb} {sum(counts.values())} events")
+            for (kind, actor, code), count in sorted(counts.items()):
+                print(f"  {kind:<8} {actor:<9} {code or '-':<20} {count}")
+            return 0
+        try:
+            job = resolve_selector(conn, args.selector)
+        except SelectorError as error:
+            print(str(error), file=sys.stderr)
+            return 1
+        events = list_events(conn, int(job["id"]))
+        if not events:
+            print("no events recorded; `harrier events backfill` reconstructs older history")
+            return 0
+        for event in events:
+            moved = f"{event['from_status'] or '-'} -> {event['to_status']}"
+            line = f"{event['at']}  {event['kind']:<8} {event['actor']:<9} {moved}"
+            if event["reason_code"]:
+                line += f"  {event['reason_code']}"
+            if event["reason_text"]:
+                line += f" ({event['reason_text']})"
+            if event["fit_score"]:
+                line += f"  score {event['fit_score']}"
+            if event["backfilled"] == "1":
+                line += "  [backfilled]"
+            print(line)
+    return 0
 
 
 def _cmd_config(args: argparse.Namespace) -> int:
@@ -1555,6 +1622,9 @@ COMMAND_CLASSES: dict[str, CommandClass] = {
     "shortlist": _DB,
     "track": _DB,
     "interviewing": _DB,
+    "company-outcome": _DB,
+    "events backfill": _DB,
+    "events show": _DB,
     "reevaluate": _DB,
     "applied": _DB,
     "reject": _DB,
@@ -1874,7 +1944,34 @@ def build_parser() -> argparse.ArgumentParser:
     reject_cmd = sub.add_parser("reject", help="reject a job with a reason (spec 027)")
     reject_cmd.add_argument("selector", help="job id, or a unique substring")
     reject_cmd.add_argument("reason", nargs="*", help="why (recorded on the row)")
+    reject_cmd.add_argument(
+        "--code",
+        choices=list(REASON_CODES),
+        default=None,
+        help="why, as a reason code (spec 079); inferred from the reason when omitted",
+    )
     reject_cmd.set_defaults(func=_cmd_tracker_verb)
+
+    outcome_cmd = sub.add_parser(
+        "company-outcome",
+        help="record a company's response to an application (spec 079)",
+    )
+    outcome_cmd.add_argument("selector", help="job id, or a unique substring")
+    outcome_cmd.add_argument("code", choices=list(REASON_CODES), help="the company's response")
+    outcome_cmd.add_argument("note", nargs="*", help="optional free text, kept on the event")
+    outcome_cmd.set_defaults(func=_cmd_company_outcome)
+
+    events_cmd = sub.add_parser("events", help="a job's decision history (spec 079)")
+    events_sub = events_cmd.add_subparsers(dest="events_command", required=True)
+    backfill_cmd = events_sub.add_parser(
+        "backfill", help="reconstruct events for rows decided before history was recorded"
+    )
+    backfill_cmd.add_argument(
+        "--dry-run", action="store_true", help="print the counts and write nothing"
+    )
+    show_cmd = events_sub.add_parser("show", help="print a job's events in order")
+    show_cmd.add_argument("selector", help="job id, or a unique substring")
+    events_cmd.set_defaults(func=_cmd_events)
 
     add_cmd = sub.add_parser("add", help="add a job by hand, scored and deduped (spec 027)")
     add_cmd.add_argument("--company", required=True)

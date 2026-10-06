@@ -261,4 +261,51 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
             "ALTER TABLE user_config_new RENAME TO user_config",
         ],
     ),
+    (
+        7,
+        [
+            # Every decision on a job, with who made it and why (spec 079).
+            # The `jobs` row says where a job is; this says how it got there,
+            # which `set_status` used to overwrite. Written only by the
+            # tracker write path, in the same transaction as the row change.
+            #
+            # Numbered 7 because 5 and 6 are taken; spec 079 said 5 before
+            # it was checked against main, and its amendment records that.
+            #
+            # The CHECK ties an outcome to the company and nothing else: a
+            # company's verdict can never be stored as the candidate's
+            # decision, whatever the caller passes.
+            """
+            CREATE TABLE job_events (
+                id INTEGER PRIMARY KEY,
+                job_id INTEGER NOT NULL REFERENCES jobs(id),
+                at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                kind TEXT NOT NULL CHECK (kind IN ('created', 'decision', 'outcome')),
+                actor TEXT NOT NULL
+                    CHECK (actor IN ('candidate', 'company', 'system', 'unknown')),
+                from_status TEXT NOT NULL DEFAULT '',
+                to_status TEXT NOT NULL,
+                reason_code TEXT NOT NULL DEFAULT '',
+                reason_text TEXT NOT NULL DEFAULT '',
+                fit_score TEXT NOT NULL DEFAULT '',
+                scoring_version TEXT NOT NULL DEFAULT '',
+                description_sha256 TEXT NOT NULL DEFAULT '',
+                backfilled INTEGER NOT NULL DEFAULT 0 CHECK (backfilled IN (0, 1)),
+                CHECK ((kind = 'outcome') = (actor = 'company'))
+            )
+            """,
+            "CREATE INDEX idx_job_events_job ON job_events(job_id, at)",
+            # Append-only in the database, not by convention. A correction is
+            # a new event; an edit would let history say something it never
+            # recorded.
+            """
+            CREATE TRIGGER job_events_append_only_update BEFORE UPDATE ON job_events
+            BEGIN SELECT RAISE(ABORT, 'job_events is append-only'); END
+            """,
+            """
+            CREATE TRIGGER job_events_append_only_delete BEFORE DELETE ON job_events
+            BEGIN SELECT RAISE(ABORT, 'job_events is append-only'); END
+            """,
+        ],
+    ),
 ]

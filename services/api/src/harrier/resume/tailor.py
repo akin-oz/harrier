@@ -172,8 +172,9 @@ def run_tailor(
             encoding="utf-8",
         )
 
-    # The PDF gate passed; only now does the tracker row change.
-    set_status(conn, job_id, "tailored_cv_requested")
+    # The PDF gate passed; only now does the tracker row change. The candidate
+    # asked for this CV, so the move is theirs (spec 079).
+    set_status(conn, job_id, "tailored_cv_requested", actor="candidate")
     return TailorResult(
         markdown_path=markdown_path,
         html_path=html_path,
