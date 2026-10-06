@@ -220,40 +220,44 @@ Spec 079 is amended to say so before either is approved.
 
 ## Acceptance criteria
 
+Tests marked planned do not exist yet. They are named here so the
+implementation has a target; the implementing change cites each one in
+backticks, where `tests/test_spec_structure.py` checks it exists.
+
 - [ ] `reason_code` on a status change is stored on the event; a company code
       is refused with 422; no code still infers from text
-      (`services/api/tests/test_ui_tracker.py::test_status_change_carries_a_reason_code`,
-      `::test_a_company_code_is_not_a_rejection_code`,
-      `::test_a_status_change_without_a_code_still_infers`)
+      (planned services/api/tests/test_ui_tracker.py::test_status_change_carries_a_reason_code,
+      planned test_a_company_code_is_not_a_rejection_code,
+      planned test_a_status_change_without_a_code_still_infers)
 - [ ] `recordCompanyOutcome` records a `company` outcome with the given code
       and note, moves the status as spec 079 says, and returns 409 on a row
       with no `applied_date`
-      (`services/api/tests/test_ui_tracker.py::test_company_outcome_route`,
-      `::test_company_outcome_refuses_an_unapplied_row`)
+      (planned services/api/tests/test_ui_tracker.py::test_company_outcome_route,
+      planned test_company_outcome_refuses_an_unapplied_row)
 - [ ] Both enums equal the actor partitions of `harrier.tracker.reasons`
-      (`services/api/tests/test_ui_tracker.py::test_api_enums_come_from_the_reason_table`)
+      (planned services/api/tests/test_ui_tracker.py::test_api_enums_come_from_the_reason_table)
 - [ ] The contract is regenerated and `just contract` leaves no diff
       (CI contract check)
 - [ ] Each exit pill sends its code and its exact text; there is no
       `rejected by company` pill; `other…` sends the code chosen in its
       select, defaulting to `other`, and the select lists no company code
-      (`apps/web/src/pages/tracker/TrackerPage.test.tsx`: `each pill sends its code and text`,
-      `the exit controls offer no company verdict`,
-      `other sends the selected code`)
+      (`apps/web/src/pages/tracker/TrackerPage.test.tsx`: planned "each pill sends its code and text",
+      planned "the exit controls offer no company verdict",
+      planned "other sends the selected code")
 - [ ] Applied and interviewing rows show Company replied and Withdraw, other
       rows show Reject, and the resting row has no more controls than before
-      (`TrackerPage.test.tsx`: `the exit word names who acted`,
-      `the resting row does not grow`)
+      (`TrackerPage.test.tsx`: planned "the exit word names who acted",
+      planned "the resting row does not grow")
 - [ ] Company replied offers the pills for the row's status and calls
       `recordCompanyOutcome`; interview does not carry the danger class and
       the closing pills do
-      (`TrackerPage.test.tsx`: `company replied submits the company outcome`,
-      `danger marks the pills that close the row`)
+      (`TrackerPage.test.tsx`: planned "company replied submits the company outcome",
+      planned "danger marks the pills that close the row")
 - [ ] Interviewing is no longer a candidate verb or a More item
-      (`TrackerPage.test.tsx`: `interviewing is a company outcome, not a verb`)
+      (`TrackerPage.test.tsx`: planned "interviewing is a company outcome, not a verb")
 - [ ] Opening any takeover focuses its first pill; Escape and Cancel close it
       and return focus to its opener
-      (`TrackerPage.test.tsx`: `a takeover keeps keyboard focus`)
+      (`TrackerPage.test.tsx`: planned "a takeover keeps keyboard focus")
 - [ ] Spec 056 is amended to point to this spec for the pill list, and its
       existing pill tests are updated rather than deleted
 - [ ] `pnpm type-check`, `pnpm lint`, `uv run ruff check`, `uv run pyright`
