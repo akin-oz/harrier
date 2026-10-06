@@ -9,6 +9,7 @@ of them needs Docker, and none of them reaches the operator's data directory:
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import http.server
 import json
@@ -471,14 +472,23 @@ def test_doctor_still_gives_a_verdict_when_the_database_cannot_be_read(
     live: Path,
     detector: Callable[[ContainerState], list[int]],
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    make_database(live / "tracker.db")
+    database = live / "tracker.db"
+    make_database(database)
     detector(owned_by_container(live))
-    (live / "tracker.db").chmod(0)
-    try:
+    # Refused at the read itself, not with permission bits: root reads a file
+    # whatever its mode, and the suite runs as root in cloud sessions.
+    real_open = Path.open
+
+    def refuse(self: Path, *args: object, **kwargs: object) -> object:
+        if self == database:
+            raise PermissionError(errno.EACCES, "Permission denied", str(self))
+        return real_open(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "open", refuse)
         code, lines = doctor(capsys)
-    finally:
-        (live / "tracker.db").chmod(0o644)
     assert code == 0
     assert "journal mode: unreadable" in lines
     assert lines[-1] == "host access: refused (container owns the database)"
@@ -617,10 +627,21 @@ def test_a_socket_this_user_may_not_use_is_named_as_such(
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     listener.bind(str(socket_path))
     listener.listen(1)
-    socket_path.chmod(0)
     monkeypatch.setenv("DOCKER_HOST", f"unix://{socket_path}")
+    # Refused at the connect itself, not with permission bits: root connects
+    # to a socket whatever its mode, and the suite runs as root in cloud
+    # sessions.
+    real_connect = socket.socket.connect
+
+    def refuse(self: socket.socket, address: object) -> None:
+        if address == str(socket_path):
+            raise PermissionError(errno.EACCES, "Permission denied")
+        real_connect(self, address)  # type: ignore[arg-type]
+
     try:
-        state = container.detect(timeout=0.3)
+        with monkeypatch.context() as patch:
+            patch.setattr(socket.socket, "connect", refuse)
+            state = container.detect(timeout=0.3)
     finally:
         listener.close()
         socket_path.unlink(missing_ok=True)
