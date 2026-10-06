@@ -101,6 +101,14 @@ def migrate(
         raise MigrationError(
             f"jobs table already has {existing_count} rows; pass --replace to reimport"
         )
+    # Replacing deletes every job, and the decision history refers to them.
+    # History is append-only (spec 079), so a reimport over it is refused
+    # rather than allowed to fail halfway on the foreign key.
+    if replace and conn.execute("SELECT 1 FROM job_events LIMIT 1").fetchone() is not None:
+        raise MigrationError(
+            "the tracker has decision history (job_events), which is append-only; "
+            "--replace would orphan it. Import into a fresh database instead."
+        )
 
     # Read and validate everything BEFORE touching the database, so an abort
     # (duplicates, unreadable CSV) can never leave it emptied under --replace.

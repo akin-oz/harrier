@@ -137,6 +137,24 @@ def test_second_migration_requires_replace(tmp_path: Path, csv_pair: tuple[Path,
     assert len(list_jobs(conn)) == len(SYNTHETIC_JOBS)
 
 
+def test_replace_refuses_over_decision_history(tmp_path: Path, csv_pair: tuple[Path, Path]) -> None:
+    """Replacing deletes every job, and the decision history refers to them.
+    History is append-only (spec 079), so the reimport is refused before it
+    touches anything, instead of failing halfway on the foreign key."""
+    from harrier.tracker import set_status
+
+    jobs_csv, contacts_csv = csv_pair
+    conn = connect(tmp_path / "t.db")
+    migrate(conn, jobs_csv, contacts_csv)
+    first = list_jobs(conn)[0]
+    set_status(conn, int(first["id"]), "shortlisted")
+
+    with pytest.raises(MigrationError, match="decision history"):
+        migrate(conn, jobs_csv, contacts_csv, replace=True)
+    assert len(list_jobs(conn)) == len(SYNTHETIC_JOBS)
+    assert len(list_contacts(conn)) == len(SYNTHETIC_CONTACTS)
+
+
 def test_export_reimport_round_trip(tmp_path: Path, csv_pair: tuple[Path, Path]) -> None:
     jobs_csv, contacts_csv = csv_pair
     conn = connect(tmp_path / "a.db")

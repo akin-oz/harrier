@@ -102,7 +102,16 @@ def evaluate_prospects(conn: sqlite3.Connection, options: BatchOptions) -> Batch
         if verdict.verdict in reject_verdicts and verdict.confidence >= options.threshold:
             reason = f"ai-evaluation: {verdict.reason or f'verdict={verdict.verdict}'}"
             if options.apply:
-                set_status(conn, job_id, "rejected", rejection_reason=reason[:300])
+                # A system decision, never the candidate's: the evaluator
+                # judged the posting, and the history says so (spec 079).
+                set_status(
+                    conn,
+                    job_id,
+                    "rejected",
+                    rejection_reason=reason[:300],
+                    reason_code="ai_evaluation",
+                    actor="system",
+                )
                 _append_audit(
                     {
                         "at": datetime.now(UTC).isoformat(),

@@ -365,6 +365,40 @@ def test_invalid_confidence_never_clears_the_threshold(
     assert get_job(db, job_id)["status"] == "prospect"
 
 
+def test_auto_reject_is_a_system_decision(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The evaluator judged the posting, not the candidate, and the history
+    says so (spec 079)."""
+    from harrier.tracker.store import list_events
+
+    job_id = add_prospect(db)
+    skip_verdict = Verdict(
+        verdict="skip", confidence=0.95, reason="onsite only", deal_breakers=("onsite",)
+    )
+
+    def fake_evaluate(
+        conn: sqlite3.Connection,
+        company: str,
+        role: str,
+        url: str,
+        jd_text: str,
+        output_dir: Path | None = None,
+    ) -> EvaluationResult:
+        return fake_result(company, role, skip_verdict)
+
+    monkeypatch.setattr(batch_module, "evaluate_offer", fake_evaluate)
+    evaluate_prospects(db, BatchOptions(apply=True))
+
+    last = list_events(db, job_id)[-1]
+    assert (last["kind"], last["actor"], last["reason_code"]) == (
+        "decision",
+        "system",
+        "ai_evaluation",
+    )
+    assert last["reason_text"].startswith("ai-evaluation:")
+
+
 def test_borderline_rejected_only_with_include_borderline(
     db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:

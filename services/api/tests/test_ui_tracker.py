@@ -192,6 +192,46 @@ def test_a_reason_on_a_non_rejection_is_refused(job_id: int, client: TestClient)
     assert "only recorded on a rejection" in response.json()["detail"]
 
 
+def test_api_rejection_text_never_becomes_a_candidate_decision(
+    env: Path, job_id: int, client: TestClient
+) -> None:
+    """The browser still sends free text until spec 080, and its "rejected by
+    company" pill is how a company's verdict arrives. Recorded as the
+    company's outcome when an application was sent, and as unknown when none
+    was; never as the candidate's own decision (spec 079)."""
+    from harrier.tracker.store import list_events
+
+    conn = connect()
+    unapplied = add_job(
+        conn,
+        {
+            "company": "Northwind Labs",
+            "title": "Staff Frontend Engineer",
+            "url": "https://boards.example.com/northwind/2",
+        },
+    )
+    client.post(f"/tracker/{job_id}/status", json={"verb": "applied"}, headers=auth())
+
+    for target in (job_id, unapplied):
+        response = client.post(
+            f"/tracker/{target}/status",
+            json={"verb": "reject", "reason": "rejected by company"},
+            headers=auth(),
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["status"] == "rejected"
+
+    applied_event = list_events(conn, job_id)[-1]
+    unapplied_event = list_events(conn, unapplied)[-1]
+    assert (applied_event["kind"], applied_event["actor"], applied_event["reason_code"]) == (
+        "outcome",
+        "company",
+        "company_rejected",
+    )
+    assert (unapplied_event["actor"], unapplied_event["reason_code"]) == ("unknown", "unclassified")
+    conn.close()
+
+
 def test_the_same_refusal_reaches_the_cli(env: Path, job_id: int) -> None:
     """The same message on both sides, which is what the shared action buys."""
     with pytest.raises(TrackerActionError, match="only recorded on a rejection"):

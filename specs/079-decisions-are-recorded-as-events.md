@@ -43,7 +43,7 @@ behavior (spec 077), and it loses facts that cannot be recovered later:
 ## Scope
 
 - An append-only `job_events` table in the tracker schema, added by migration
-  5 in `services/api/src/harrier/tracker/schema.py`. This is a guarded path
+  7 (see the amendment; this said 5) in `services/api/src/harrier/tracker/schema.py`. This is a guarded path
   (tracker schema and migrations) and needs approval under this spec.
 - `services/api/src/harrier/tracker/reasons.py` (new): the reason code table,
   each code bound to exactly one actor, and the mapping from free text to a
@@ -107,7 +107,7 @@ in the event, which is where the history is.
 
 ### The event row
 
-Migration 5:
+Migration 7 (numbered 5 before implementation found 5 and 6 taken):
 
 ```sql
 CREATE TABLE job_events (
@@ -205,7 +205,7 @@ digest and API keep reading the `jobs` row; nothing that exists today reads
 ## Failure modes
 
 - A status write whose event insert fails is rolled back with it: one
-  transaction, both or neither (planned test_a_status_change_and_its_event_commit_together).
+  transaction, both or neither (`test_a_status_change_and_its_event_commit_together`).
 - A company code on `reject`, or a candidate code on `company-outcome`: exit
   2, nothing written, the message names the right verb.
 - `company-outcome` on a row with no `applied_date`: exit 2, nothing written.
@@ -217,59 +217,59 @@ digest and API keep reading the `jobs` row; nothing that exists today reads
 
 ## Acceptance criteria
 
-Tests marked planned do not exist yet. They are named here so the
-implementation has a target; the implementing change cites each one in
-backticks, where `tests/test_spec_structure.py` checks it exists.
-
 Tests in `services/api/tests/test_job_events.py` unless named otherwise. All
 rows are synthetic.
 
-- [ ] Every `set_status` call appends exactly one event, with the row's
+- [x] Every `set_status` call appends exactly one event, with the row's
       `fit_score` and `scoring_version` from before the write, and `add_job`
       appends one `created` event
-      (planned test_every_status_change_appends_one_event,
-      planned test_an_event_records_the_score_the_candidate_saw)
-- [ ] A status change and its event commit together or not at all
-      (planned test_a_status_change_and_its_event_commit_together)
-- [ ] `job_events` refuses UPDATE and DELETE
-      (planned test_job_events_is_append_only)
-- [ ] A company rejection is recorded as a `company` outcome and never as a
+      (`test_every_status_change_appends_one_event`,
+      `test_an_event_records_the_score_the_candidate_saw`)
+- [x] A status change and its event commit together or not at all
+      (`test_a_status_change_and_its_event_commit_together`)
+- [x] `job_events` refuses UPDATE and DELETE
+      (`test_job_events_is_append_only`)
+- [x] A company rejection is recorded as a `company` outcome and never as a
       candidate decision: `company-outcome` writes `kind='outcome'`,
       `actor='company'`; `reject` with a company code refuses and names
       `company-outcome`; the CHECK constraint refuses a hand-built row that
       pairs `outcome` with any other actor
-      (planned test_a_company_verdict_is_never_a_candidate_decision)
-- [ ] The `interviewing` verb, from the CLI and from the API, records a
+      (`test_a_company_verdict_is_never_a_candidate_decision`)
+- [x] The `interviewing` verb, from the CLI and from the API, records a
       `company` outcome with code `interview_invited`
-      (planned test_the_interviewing_verb_is_a_company_outcome)
-- [ ] `company-outcome` refuses a row with no `applied_date`
-      (planned test_a_company_cannot_reject_an_application_never_sent)
-- [ ] Every code belongs to exactly one actor, and `infer_code` maps each
+      (`test_the_interviewing_verb_is_a_company_outcome`)
+- [x] `company-outcome` refuses a rejection on a row with no `applied_date`,
+      and records an interview invitation without one
+      (`test_a_company_cannot_reject_an_application_never_sent`,
+      `test_an_interview_invitation_needs_no_application`)
+- [x] Every code belongs to exactly one actor, and `infer_code` maps each
       documented phrase to its code and an unknown phrase to `unclassified`
-      (planned test_every_reason_code_has_one_actor, planned test_infer_code)
-- [ ] An API rejection with company text on an applied row is recorded as a
+      (`test_every_reason_code_has_one_actor`, `test_infer_code`)
+- [x] An API rejection with company text on an applied row is recorded as a
       company outcome, and on an unapplied row as `unknown`
-      (planned tests/test_ui_tracker.py::test_api_rejection_text_never_becomes_a_candidate_decision)
-- [ ] The AI-evaluation auto-reject is a `system` decision with code
-      `ai_evaluation` (planned tests/test_offers.py::test_auto_reject_is_a_system_decision)
-- [ ] Backfill writes the documented events with `backfilled=1` and empty
+      (`tests/test_ui_tracker.py::test_api_rejection_text_never_becomes_a_candidate_decision`)
+- [x] The AI-evaluation auto-reject is a `system` decision with code
+      `ai_evaluation` (`tests/test_offers.py::test_auto_reject_is_a_system_decision`)
+- [x] Backfill writes the documented events with `backfilled=1` and empty
       scores, separates company outcomes from candidate decisions by the same
       rules, and is idempotent; `--dry-run` writes nothing
-      (planned test_backfill_reconstructs_what_the_row_still_holds,
-      planned test_backfill_is_idempotent)
-- [ ] A migrated database matches a fresh one
+      (`test_backfill_reconstructs_what_the_row_still_holds`,
+      `test_backfill_is_idempotent`)
+- [x] A migrated database matches a fresh one
       (`tests/test_scoring.py::test_a_migrated_database_matches_a_fresh_one`,
-      extended to cover migration 5)
-- [ ] Reopening a rejected job (spec 072) appends a candidate decision and
+      extended to cover migration 7)
+- [x] Reopening a rejected job (spec 072) appends a candidate decision and
       leaves the earlier rejection event in place
-      (planned test_reopening_keeps_the_history)
-- [ ] `tests/test_tracker_invariants.py` and the transition tests pass
+      (`test_reopening_keeps_the_history`)
+- [x] `tests/test_tracker_invariants.py` and the transition tests pass
       unchanged
-- [ ] `events backfill` and `events show` are `database` class
-      (`tests/test_delegation.py`)
-- [ ] No reason text, company or title appears in a log line written by this
-      code (planned test_event_writes_log_no_reason_text)
-- [ ] No real tracker row appears in a fixture (ADR-008)
+- [x] `events backfill` and `events show` are `database` class, and both run
+      (`tests/test_delegation.py`, `test_the_event_commands_run`)
+- [x] `migrate-legacy --replace` refuses over existing history
+      (`tests/test_migrate_legacy.py::test_replace_refuses_over_decision_history`)
+- [x] No reason text, company or title appears in a log line written by this
+      code (`test_event_writes_log_no_reason_text`)
+- [x] No real tracker row appears in a fixture (ADR-008)
 - [ ] All gates green on PR
 
 ## What this gives spec 077
@@ -344,4 +344,50 @@ The existing `interviewing` verb records a company outcome
 browser's Interviewing button into a Company replied control, found that the
 verb would otherwise remain a way to record a company action as the
 candidate's. Stated under Behavior and proved by
-planned test_the_interviewing_verb_is_a_company_outcome.
+`test_the_interviewing_verb_is_a_company_outcome`.
+
+## Amendment (2026-10-06, during implementation)
+
+What implementation found, each with the test that proves it:
+
+- **Migration 7, not 5.** Migrations 5 and 6 already exist on main (the
+  `manual_reject` drop and the `user_config` rebuild). The runner skips any
+  version at or below the recorded one, so a second migration 5 would never
+  run on an existing database.
+  `tests/test_scoring.py::test_a_migrated_database_matches_a_fresh_one` now
+  brings a database stopped at the previous migration forward through the
+  real runner and compares its whole schema with a fresh one.
+- **The rules live under the one writer.** `set_status` classifies every move
+  through `harrier.tracker.reasons.classify_move`, so the interviewing rule
+  and the company-text rule hold for every caller, including any added later,
+  not only the verbs this spec names. A caller that names an actor its code
+  contradicts is refused rather than corrected.
+- **An interview invitation needs no application.** `company-outcome` refuses
+  a *rejection* on a row with no `applied_date`, which is what the rule's own
+  reason ("a company cannot reject an application that was never sent")
+  covers. A recruiter approaching about a job nobody applied to is the case
+  `harrier.tracker.transitions` keeps legal on purpose (spec 036), so
+  `interview_invited` is recorded without one.
+  `test_an_interview_invitation_needs_no_application`.
+- **One more system code, `auto_reject`.** The old pipeline wrote its own
+  rejections as `auto_reject:<rule>`. A rule made those decisions, so
+  "auto_reject:hybrid" is a system decision, not the candidate's
+  `not_remote`. "auto_reject:vacancy_closed" still reads as
+  `vacancy_closed`. `test_infer_code`.
+- **Backfill reconstructs a little more than the bullets said, and claims a
+  little less.** Arrival is `added_at` when that is an earlier day than
+  `created_at`, because rows imported from the old tracker were created on
+  the day of the import. A row now `shortlisted`, `tailored_cv_requested`,
+  or `applied` without a date gets the candidate decision that reached that
+  status, and an `interviewing` row the company outcome that did, all at
+  `updated_at`; without them spec 077 would read those rows as undecided.
+  `description_sha256` is empty on backfilled events for the same reason the
+  score is: today's cache cannot vouch for the text that was judged then.
+  `test_backfill_reconstructs_what_the_row_still_holds`.
+- **`migrate-legacy --replace` refuses over existing history.** Replacing
+  deletes every job, and an append-only history refers to them; the import
+  is refused before anything is touched rather than failing on the foreign
+  key. `tests/test_migrate_legacy.py::test_replace_refuses_over_decision_history`.
+- **`note`.** `set_status` takes free text for the event alone, for a company
+  outcome whose row has no field for it (an interview invitation) or whose
+  row field holds the code's label.

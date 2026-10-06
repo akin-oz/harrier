@@ -302,6 +302,33 @@ def test_a_migrated_database_matches_a_fresh_one(
     assert "scoring_version" in fresh_columns
     assert migrated_columns == fresh_columns
 
+    # And the newest migration on top of a database that already exists: one
+    # stopped at the migration before it, brought forward by the real runner,
+    # ends with exactly the schema a fresh one has. Spec 079's `job_events`
+    # is the migration this was extended for.
+    latest = MIGRATIONS[-1][0]
+    stopped = sqlite3.connect(tmp_path / "stopped.db")
+    stopped.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY)")
+    for version, statements in MIGRATIONS:
+        if version >= latest:
+            continue
+        for statement in statements:
+            stopped.execute(statement)
+        stopped.execute("INSERT INTO schema_version (version) VALUES (?)", (version,))
+    stopped.commit()
+    stopped.close()
+
+    def schema(conn: sqlite3.Connection) -> list[tuple[str, str, str]]:
+        rows = conn.execute("SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL")
+        return sorted((row[0], row[1], " ".join(str(row[2]).split())) for row in rows)
+
+    brought_forward = connect(tmp_path / "stopped.db")
+    fresh = connect()
+    assert any(name == "job_events" for _, name, _ in schema(fresh))
+    assert schema(brought_forward) == schema(fresh)
+    brought_forward.close()
+    fresh.close()
+
 
 # --- saturation ---------------------------------------------------------------
 

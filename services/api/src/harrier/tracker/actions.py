@@ -24,6 +24,15 @@ from harrier.screening.normalized import make_normalized_job
 from harrier.screening.policy import policy_version
 from harrier.screening.rules import score_job
 from harrier.tracker.queue import UNDECIDED_STATUSES, rank_active, status_counts
+from harrier.tracker.reasons import (
+    COMPANY,
+    INTERVIEW_INVITED,
+    REASON_CODES,
+    actor_of,
+    codes_for,
+    infer_code,
+    label_of,
+)
 from harrier.tracker.score import score_fields, stored_score
 from harrier.tracker.selector import resolve_selector
 from harrier.tracker.store import get_job, list_jobs, set_status, update_fields
@@ -58,12 +67,21 @@ def change_status(
     *,
     reason: str | None = None,
     applied_date: str | None = None,
+    reason_code: str | None = None,
+    refuse_company_reason: bool = False,
 ) -> dict[str, str]:
     """Move one job to the status a verb names.
 
     The selector is resolved here rather than by the caller, so the browser
     and the command line disagree about which job they meant only if
     `resolve_selector` is wrong, which is its own module with its own tests.
+
+    `refuse_company_reason` is the one place the two callers differ, and
+    spec 079 says so: the command line refuses a rejection whose reason is a
+    company's verdict and names `company-outcome`, while the browser, which
+    still sends free text until spec 080, has its verdict recorded as the
+    company's outcome by the store. Neither ever files it as the candidate's
+    decision.
     """
     target = STATUS_BY_VERB.get(verb)
     if target is None:
@@ -74,12 +92,72 @@ def change_status(
     # be silently dropped, so it is named here rather than absorbed.
     if reason and target != "rejected":
         raise TrackerActionError(f"a reason is only recorded on a rejection, not on {verb}")
+    if reason_code and target != "rejected":
+        raise TrackerActionError(f"a reason code is only recorded on a rejection, not on {verb}")
+    if reason_code is not None and reason_code not in REASON_CODES:
+        raise TrackerActionError(f"unknown reason code {reason_code!r}")
+    if target == "rejected" and refuse_company_reason:
+        code = reason_code if reason_code is not None else infer_code(reason)
+        if actor_of(code) == COMPANY:
+            raise TrackerActionError(
+                f"{label_of(code)!r} is the company's response, not your decision. "
+                f"Record it with: harrier company-outcome {selector} {code}"
+            )
     return set_status(
         conn,
         int(job["id"]),
         target,
         applied_date=applied_date,
         rejection_reason=reason if target == "rejected" else None,
+        reason_code=reason_code if target == "rejected" else None,
+    )
+
+
+def record_company_outcome(
+    conn: sqlite3.Connection,
+    selector: str,
+    code: str,
+    *,
+    note: str | None = None,
+) -> dict[str, str]:
+    """Record what a company did with an application (spec 079).
+
+    Only company codes, so the candidate's own reasons cannot be filed here;
+    and a rejection only for a job that was applied to, because a company
+    cannot reject an application that was never sent. An interview invitation
+    needs no application: a recruiter can approach about a job nobody applied
+    to, which `harrier.tracker.transitions` keeps legal on purpose.
+    """
+    if code not in REASON_CODES:
+        raise TrackerActionError(
+            f"unknown reason code {code!r}; a company's response is one of: "
+            f"{', '.join(codes_for(COMPANY))}"
+        )
+    if actor_of(code) != COMPANY:
+        raise TrackerActionError(
+            f"{code!r} is not a company's response. If it is your own decision, "
+            f"record it with: harrier reject {selector} --code {code}"
+        )
+    job = resolve_selector(conn, selector)
+    if code != INTERVIEW_INVITED and not job["applied_date"].strip():
+        raise TrackerActionError(
+            "no application was recorded for this job, so a company cannot have "
+            "rejected it. Mark it applied first, or reject it yourself with: "
+            f"harrier reject {selector}"
+        )
+    text = (note or "").strip()
+    if code == INTERVIEW_INVITED:
+        return set_status(
+            conn, int(job["id"]), "interviewing", reason_code=code, actor=COMPANY, note=text
+        )
+    return set_status(
+        conn,
+        int(job["id"]),
+        "rejected",
+        rejection_reason=text or label_of(code),
+        reason_code=code,
+        actor=COMPANY,
+        note=text,
     )
 
 

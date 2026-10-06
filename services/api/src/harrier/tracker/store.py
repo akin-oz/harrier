@@ -7,13 +7,28 @@ next_action defaults, and marking applied seeds the outreach block
 
 from __future__ import annotations
 
+import hashlib
+import logging
 import re
 import sqlite3
+from collections import Counter
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import date, timedelta
 
 from harrier.logredact import refresh_installed
 from harrier.tracker.invariants import all_breaches
+from harrier.tracker.reasons import (
+    CANDIDATE,
+    COMPANY,
+    CREATED,
+    DECISION,
+    INTERVIEW_INVITED,
+    OUTCOME,
+    SYSTEM,
+    ReasonError,
+    classify_move,
+)
 from harrier.tracker.schema import (
     CONTACT_FIELDS,
     NEXT_ACTION_DEFAULTS,
@@ -38,6 +53,9 @@ class UnknownStatusError(TrackerError):
 
 class JobNotFoundError(TrackerError):
     pass
+
+
+logger = logging.getLogger(__name__)
 
 
 def extract_note_value(notes: str, key: str) -> str:
@@ -103,19 +121,33 @@ def add_job(conn: sqlite3.Connection, fields: Mapping[str, str]) -> int:
     row_values = [values[name] if name != "status" else status for name in TRACKER_FIELDS]
     row_values += [promoted[key] for key in NOTE_KEYS]
     placeholders = ", ".join("?" for _ in columns)
-    try:
-        with conn:
+    description_sha256 = _description_sha256(values["url"])
+    with conn:
+        try:
             cursor = conn.execute(
                 f"INSERT INTO jobs ({', '.join(columns)}) VALUES ({placeholders})",
                 row_values,
             )
-    except sqlite3.IntegrityError as error:
-        # A concurrent writer can insert between find_duplicate and this
-        # INSERT; the unique indexes are the authority, so map their refusal
-        # to the same domain error the pre-check raises.
-        raise DuplicateJobError(f"duplicate detected by unique index: {error}") from error
-    row_id = cursor.lastrowid
-    assert row_id is not None
+        except sqlite3.IntegrityError as error:
+            # A concurrent writer can insert between find_duplicate and this
+            # INSERT; the unique indexes are the authority, so map their
+            # refusal to the same domain error the pre-check raises.
+            raise DuplicateJobError(f"duplicate detected by unique index: {error}") from error
+        row_id = cursor.lastrowid
+        assert row_id is not None
+        # The row and its first event commit together (spec 079). A row a
+        # person added by hand was created by the candidate; one discovery
+        # found was created by the system.
+        _append_event(
+            conn,
+            job_id=int(row_id),
+            kind=CREATED,
+            actor=CANDIDATE if promoted["manual_added"].strip() else SYSTEM,
+            to_status=status,
+            fit_score=values["fit_score"],
+            scoring_version=promoted["scoring_version"],
+            description_sha256=description_sha256,
+        )
     return int(row_id)
 
 
@@ -151,6 +183,9 @@ def set_status(
     *,
     applied_date: str | None = None,
     rejection_reason: str | None = None,
+    reason_code: str | None = None,
+    actor: str | None = None,
+    note: str | None = None,
 ) -> dict[str, str]:
     """The only status setter. Enforces the transition and stamps what it drags.
 
@@ -159,11 +194,32 @@ def set_status(
     through this path (spec 036). The permitted moves are derived in
     `harrier.tracker.transitions`, and what a move must clear comes from the
     same place, so a new status cannot gain a rule in one and not the other.
+
+    Every move also appends one event, in the same transaction (spec 079).
+    Who made it and why is decided by `harrier.tracker.reasons.classify_move`
+    from the row as it was, so a company's verdict is kept out of the
+    candidate's decisions on every path that reaches here. `note` is free
+    text for the event alone, for a move whose row has no field for it.
     """
     if status not in STATUSES:
         raise UnknownStatusError(f"unknown status {status!r}; legal: {', '.join(STATUSES)}")
     job = get_job(conn, job_id)
     check_transition(job["status"], status)
+    try:
+        move = classify_move(
+            job,
+            status,
+            reason_code=reason_code,
+            reason_text=rejection_reason if status == "rejected" else None,
+            actor=actor,
+        )
+    except ReasonError as error:
+        raise TrackerError(str(error)) from error
+    if note is not None:
+        reason_text = note
+    else:
+        reason_text = (rejection_reason or "") if status == "rejected" else ""
+    description_sha256 = _description_sha256(job["url"])
 
     updates: dict[str, str] = {"status": status}
     updates.update(fields_a_move_clears(job["status"], status))
@@ -190,6 +246,22 @@ def set_status(
         conn.execute(
             f"UPDATE jobs SET {assignments}, updated_at = datetime('now') WHERE id = ?",
             [*updates.values(), job_id],
+        )
+        # What the candidate was looking at when they decided: the score and
+        # version from before this write, which a later rescore overwrites on
+        # the row but never here.
+        _append_event(
+            conn,
+            job_id=job_id,
+            kind=move.kind,
+            actor=move.actor,
+            from_status=job["status"],
+            to_status=status,
+            reason_code=move.code,
+            reason_text=reason_text,
+            fit_score=job["fit_score"],
+            scoring_version=job.get("scoring_version", ""),
+            description_sha256=description_sha256,
         )
     return get_job(conn, job_id)
 
@@ -232,6 +304,184 @@ def update_fields(
             [*[str(v) for v in fields.values()], job_id],
         )
     return get_job(conn, job_id)
+
+
+# --- decision history (spec 079) ----------------------------------------------
+
+
+def _description_sha256(url: str) -> str:
+    """The digest of the description cached for a URL, or empty when none is.
+
+    It pins the text a decision was made on without copying it: the cache is
+    keyed by URL and can be rewritten, and the event should still say which
+    text was judged. Imported here rather than at module level because the
+    screening package imports the tracker.
+    """
+    if not url:
+        return ""
+    from harrier.screening.descriptions import load_cached_description
+
+    text = load_cached_description(url)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest() if text else ""
+
+
+def _append_event(
+    conn: sqlite3.Connection,
+    *,
+    job_id: int,
+    kind: str,
+    actor: str,
+    to_status: str,
+    from_status: str = "",
+    reason_code: str = "",
+    reason_text: str = "",
+    fit_score: str = "",
+    scoring_version: str = "",
+    description_sha256: str = "",
+    at: str | None = None,
+    backfilled: bool = False,
+) -> None:
+    """The only INSERT into `job_events`. Runs inside the caller's transaction,
+    so the event and the change it records commit together or not at all.
+
+    The log line carries ids and codes only: the reason text is the
+    candidate's own words and the row's company and title identify them.
+    """
+    fields: dict[str, object] = {
+        "job_id": job_id,
+        "kind": kind,
+        "actor": actor,
+        "from_status": from_status,
+        "to_status": to_status,
+        "reason_code": reason_code,
+        "reason_text": reason_text,
+        "fit_score": fit_score,
+        "scoring_version": scoring_version,
+        "description_sha256": description_sha256,
+        "backfilled": 1 if backfilled else 0,
+    }
+    if at is not None:
+        fields["at"] = at
+    placeholders = ", ".join("?" for _ in fields)
+    conn.execute(
+        f"INSERT INTO job_events ({', '.join(fields)}) VALUES ({placeholders})",
+        list(fields.values()),
+    )
+    logger.debug("job event: job=%s kind=%s actor=%s code=%s", job_id, kind, actor, reason_code)
+
+
+def list_events(conn: sqlite3.Connection, job_id: int) -> list[dict[str, str]]:
+    """A job's events in the order they were recorded."""
+    rows = conn.execute(
+        "SELECT * FROM job_events WHERE job_id = ? ORDER BY id", (job_id,)
+    ).fetchall()
+    return [_job_row_to_dict(row) for row in rows]
+
+
+@dataclass(frozen=True)
+class _PlannedEvent:
+    at: str
+    kind: str
+    actor: str
+    from_status: str
+    to_status: str
+    code: str = ""
+    text: str = ""
+
+
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _as_event_time(value: str) -> str:
+    """A stored timestamp in the event's format. SQLite's `datetime('now')`
+    writes `YYYY-MM-DD HH:MM:SS` in UTC; a bare date is taken as its midnight."""
+    text = (value or "").strip()
+    if _ISO_DATE.match(text):
+        return f"{text}T00:00:00Z"
+    if len(text) >= 19 and text[10] in " T":
+        return f"{text[:10]}T{text[11:19]}Z"
+    return ""
+
+
+def _plan_backfill(job: Mapping[str, str]) -> list[_PlannedEvent]:
+    """The events a row's current fields can still vouch for.
+
+    Its arrival; its application, when dated; and how it reached its present
+    status. Nothing the row cannot show is invented: no score at decision
+    time, no description digest, and a decision time that is an upper bound
+    where only `updated_at` survives.
+
+    Arrival is `added_at` when that is an earlier day than `created_at`: rows
+    imported from the old tracker were created on the day of the import, and
+    `added_at` is when they actually arrived.
+    """
+    created = _as_event_time(job.get("created_at", ""))
+    added = _as_event_time(job.get("added_at", ""))
+    # By day, not by instant: `added_at` is a bare date, and on the day a row
+    # really arrived `created_at` carries the time as well.
+    start = added if added and (not created or added[:10] < created[:10]) else created
+    actor = CANDIDATE if (job.get("manual_added") or "").strip() else SYSTEM
+    planned = [_PlannedEvent(start, CREATED, actor, "", "prospect")]
+    current = "prospect"
+    at = start
+
+    applied = _as_event_time(job.get("applied_date", ""))
+    if applied:
+        at = max(at, applied)
+        planned.append(_PlannedEvent(at, DECISION, CANDIDATE, current, "applied"))
+        current = "applied"
+
+    status = job.get("status", "")
+    last = max(at, _as_event_time(job.get("updated_at", "")) or at)
+    if status == "rejected":
+        reason = job.get("rejection_reason", "")
+        move = classify_move(job, "rejected", reason_text=reason)
+        planned.append(
+            _PlannedEvent(last, move.kind, move.actor, current, "rejected", move.code, reason)
+        )
+    elif status == "interviewing":
+        planned.append(
+            _PlannedEvent(last, OUTCOME, COMPANY, current, "interviewing", INTERVIEW_INVITED)
+        )
+    elif status != current:
+        planned.append(_PlannedEvent(last, DECISION, CANDIDATE, current, status))
+    return planned
+
+
+def backfill_events(
+    conn: sqlite3.Connection, *, dry_run: bool = False
+) -> Counter[tuple[str, str, str]]:
+    """Events for every job that has none, reconstructed and marked so.
+
+    Idempotent: a job with any event is skipped, so a second run writes
+    nothing. Returns the count per kind, actor and code, which `--dry-run`
+    prints without writing.
+    """
+    rows = conn.execute(
+        "SELECT * FROM jobs WHERE id NOT IN (SELECT job_id FROM job_events) ORDER BY id"
+    ).fetchall()
+    plans = [(int(row["id"]), _plan_backfill(_job_row_to_dict(row))) for row in rows]
+    counts: Counter[tuple[str, str, str]] = Counter(
+        (event.kind, event.actor, event.code) for _, events in plans for event in events
+    )
+    if dry_run:
+        return counts
+    with conn:
+        for job_id, events in plans:
+            for event in events:
+                _append_event(
+                    conn,
+                    job_id=job_id,
+                    kind=event.kind,
+                    actor=event.actor,
+                    from_status=event.from_status,
+                    to_status=event.to_status,
+                    reason_code=event.code,
+                    reason_text=event.text,
+                    at=event.at,
+                    backfilled=True,
+                )
+    return counts
 
 
 def add_contact(conn: sqlite3.Connection, fields: Mapping[str, str]) -> int:
