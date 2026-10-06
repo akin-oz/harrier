@@ -171,6 +171,12 @@ spec 044.
       proves it (the amendment below on spec 023;
       `services/api/tests/test_userconfig.py::test_the_schema_carries_no_scope_column`,
       `::test_a_kind_is_unique_on_its_own`)
+- [ ] an `-n` that belongs to another command in the same chain, or to
+      commit message text, is allowed, while `git commit -n`,
+      `git commit -nm "..."`, `--no-verify`, and
+      `git -c core.hooksPath=... commit` stay denied (the amendment below on
+      the commit guard; planned test_an_n_outside_the_commit_does_not_block_it,
+      `services/api/tests/test_guards.py::test_the_commit_guard_denies_every_proven_bypass`)
 - [ ] All gates green on PR
 
 ## Proof / origin
@@ -377,3 +383,101 @@ passes over every committed spec, so each test the corrections cite exists.
   session token on config writes
   (`services/api/tests/test_api_exposure.py::test_a_state_changing_request_without_the_token_is_refused`).
   It is not about the scope column, so it is left to its own change.
+
+## Amendment (2026-10-06): the commit guard reads only the commit's words
+
+`guard-commit.sh` looks for a hook bypass anywhere in the command string. An
+`-n` that belongs to another command, or that sits in the commit message,
+counts. So a chain with `sed -n`, `grep -n`, `head -n`, `echo -n`,
+`git log -n 3` or `find -name` beside the commit is denied. On 2026-10-06 it
+denied this ordinary commit for PR #148:
+
+```text
+sed -n 1,6p specs/045-claims-and-gates.md && git add specs/045-claims-and-gates.md && git commit -q -F - <<'EOF'
+...
+Spec: 045
+EOF
+```
+
+That is the failure mode this spec says a guard change must not introduce.
+The same string match misses forms that git reads as `-n`. Each of these
+skipped a failing pre-commit hook under git 2.43 in a throwaway repository,
+and passed the guard with a trailer:
+
+```text
+git commit "-n" ...         git commit -nm"a b" ...
+git commit ... -n;          git commit --no-veri ...
+(git commit ... -n)         x=$(git commit ... -n)
+```
+
+### What the guard reads
+
+**The words of each git commit.** The check reads the words after
+`git commit` to the end of that command, as the shell passes them to git:
+quotes removed, ending at an unquoted `;`, `&`, `|` or newline, or at the
+close of the subshell or command substitution that holds the commit. A
+command substitution or a redirection among the words does not end them.
+Commands inside a subshell or a command substitution are read the same way.
+
+**A word git reads as skipping the hooks denies.** That is `--no-verify`, an
+abbreviation of it that git accepts (`--no-veri`, `--no-verif`), or a short
+option cluster with an `n` before the first option that takes a value. So
+`-n`, `-an`, `-nm "..."` and `-nm"..."` deny, and `-am "..."` and `-m"note"`
+do not.
+
+**Other commands' options and message text are not read.** An option of
+another command in the chain, such as `sed -n`, is not read. Nor is a heredoc
+with a quoted delimiter that gives the commit its message: one read by git
+commit itself, as in `-F - <<'EOF'`, or one read by `cat` inside a command
+substitution among the commit's words, as in `-m "$(cat <<'EOF' ...)"`. A
+message given with `-m` is one word, so text inside it, such as
+`fix sed -n`, does not read as an option.
+
+**Text another command may run is checked as before.** A word of another
+command, or a heredoc or here-string another command reads, that itself
+contains `git commit` goes through the old whole-string pattern. So
+`bash -c "git commit -n ..."` and a heredoc fed to `bash` stay denied. A
+command the guard cannot read, such as one with an unclosed quote, goes
+through the old pattern whole.
+
+The hooksPath and git dir check, the trailer check, and the test for whether
+a command commits at all still read the whole string. The trailer sits in
+the heredoc, so it has to.
+
+### What changes
+
+- `.claude/hooks/guard-commit.sh`: the `-n` check reads words as above. The
+  reader is POSIX awk inside the script, so the guard needs nothing it did
+  not need before.
+- `services/api/tests/test_guards.py`: the forms above join the bypass list,
+  with the nested forms that must stay denied. A new test, planned
+  test_an_n_outside_the_commit_does_not_block_it, runs the chains and message
+  texts above, the PR #148 command first.
+
+No new file, so `config/data-classification.json` does not change.
+
+**Output.** Unchanged: exit 2 and the same message on a bypass, exit 0
+otherwise.
+
+**How to know it worked.** The PR #148 command passes the guard, and every
+case in the bypass list is denied. Run against the guard before this change,
+the new test fails on every case.
+
+**Failure modes this must not introduce.** A bypass the old pattern denied
+that the new check allows. Every case already in the bypass list stays
+denied, and so does `-n` on a commit inside a subshell, a command
+substitution, `bash -c "..."`, or a heredoc a shell reads.
+
+### Limitations
+
+- The guard reads text. A commit whose words are built at run time, from a
+  variable, `"$@"`, `eval` or a script file, is not read, as before.
+- A command commits only when `git` and `commit` are adjacent, as before, so
+  `git -C dir commit -n` is not checked at all. Closing that is its own
+  change.
+- Text another command receives is still checked whole. So
+  `echo "git commit -n"` in a chain stays denied, and so does a message that
+  mentions `git commit` beside an `-n` when it reaches git through a pipe or
+  through a heredoc with an unquoted delimiter.
+- A word after `--`, or an `-m` value that starts with a dash and an `n`, is
+  denied, though git reads it as a path or as message text.
