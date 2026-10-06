@@ -76,13 +76,12 @@ Deliberate changes from the old code, stated:
 - [ ] The import-linter contract restricting sources to
       harrier.screening.normalized lands with the sources package itself
       (spec 008); until then there is nothing for it to bind to
-- [ ] A description cache entry is replaced whole or not at all. A save
+- [x] A description cache entry is replaced whole or not at all. A save
       cut off partway, or refused by the encoder, leaves the previous entry
       byte for byte, readable, with no temporary file beside it, and a
       completed save stores the same bytes as before (the 2026-10-06
-      amendment below; planned
-      test_a_description_entry_is_replaced_whole_or_not_at_all in
-      `services/api/tests/test_screening.py`)
+      amendment below;
+      `tests/test_screening.py::test_a_description_entry_is_replaced_whole_or_not_at_all`)
 - [ ] All gates green on PR
 
 ## Proof / origin
@@ -179,7 +178,7 @@ entry empty, and both times the previous description read as missing.
 
 ### Proof
 
-Planned test_a_description_entry_is_replaced_whole_or_not_at_all in
+`test_a_description_entry_is_replaced_whole_or_not_at_all` in
 `services/api/tests/test_screening.py`. It saves an entry, then cuts the next
 save off halfway: the file write stops after half its bytes and raises, as a
 full disk does. It asserts that the save raises, that the entry holds its
@@ -187,8 +186,10 @@ previous bytes and reads back its previous description, and that no temporary
 file is left. A save of a description holding a lone surrogate must raise and
 leave the entry the same way. A completed save then replaces the entry with
 exactly the bytes documented above. The cut-off sits below both the old and
-the new writer, so the same test fails on the in-place write, where it leaves
-half of the new entry.
+the new writer, because both open their file through `io.open`, which the test
+wraps. The same test fails on the in-place write, where it leaves half of the
+new entry. It fails the same way on an in-place write that encodes first
+(`Path.write_bytes`), which the surrogate case alone would let through.
 
 ### Honest limitations
 

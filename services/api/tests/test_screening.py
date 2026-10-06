@@ -1,8 +1,11 @@
 """Screening behavior pins, ported from the old repo's tests/test_job_sources.py
 (spec 007). Fixture values are the old suite's synthetic ones."""
 
+import errno
+import io
+import json
 from pathlib import Path
-from typing import Any
+from typing import IO, Any, NoReturn, Self
 from unittest.mock import MagicMock, patch
 from urllib.error import URLError
 
@@ -17,6 +20,7 @@ from harrier.screening import (
     screen_jobs,
 )
 from harrier.screening import http as screening_http
+from harrier.screening.descriptions import load_cached_description, save_description_cache
 from harrier.screening.normalized import NormalizedJob
 from harrier.screening.pipeline import build_tracker_indexes
 
@@ -454,6 +458,83 @@ def test_an_enrichment_fetch_is_never_repeated_for_the_same_url(
         second = _screen([again], cfg, cache_descriptions=True)
         assert len(second.new_tracker_rows) == 1
         assert fetch.call_count == 1
+
+
+class _CutOff:
+    """A file whose write stops halfway and fails, as a full disk stops it.
+
+    Wrapped around `io.open`, which the in-place write and the atomic one
+    both open their file through, so the test judges what is left on disk
+    rather than which mechanism wrote it.
+    """
+
+    def __init__(self, handle: IO[Any]) -> None:
+        self._handle = handle
+
+    def write(self, data: Any) -> NoReturn:
+        self._handle.write(data[: len(data) // 2])
+        self._handle.flush()
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._handle, name)
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self._handle.close()
+
+
+def test_a_description_entry_is_replaced_whole_or_not_at_all(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed save leaves the previous entry as it was (spec 007 amendment).
+
+    The cache was written in place: truncated, then written. A save cut off
+    in between left part of an entry, and a description no encoding can
+    write left it empty. Either way the previous description read as
+    missing, so it was lost, and a decision on the job pinned no text.
+    """
+    monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path))
+    url = "https://example.com/jobs/7"
+    previous = "Ship the café ordering app for a remote European team. " * 3
+    replacement = "A different posting entirely, about a payments dashboard. " * 3
+
+    save_description_cache(url, previous)
+    [entry] = (tmp_path / "descriptions").glob("*.json")
+    written = entry.read_bytes()
+
+    def assert_the_previous_entry_stands() -> None:
+        assert entry.read_bytes() == written
+        assert load_cached_description(url) == previous
+        leftovers = [path.name for path in entry.parent.iterdir() if path != entry]
+        assert leftovers == [], "a failed save left a temporary file behind"
+
+    real_open = io.open
+
+    def cut_off_open(file: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        handle = real_open(file, mode, *args, **kwargs)
+        return _CutOff(handle) if "w" in mode else handle
+
+    with monkeypatch.context() as full_disk:
+        full_disk.setattr(io, "open", cut_off_open)
+        with pytest.raises(OSError, match="No space left"):
+            save_description_cache(url, replacement)
+    assert_the_previous_entry_stands()
+
+    # Refused before a byte is written: valid JSON can carry a lone surrogate
+    # (spec 079), and no encoding can write one.
+    with pytest.raises(UnicodeEncodeError):
+        save_description_cache(url, "A posting with a broken escape \ud800 in it.")
+    assert_the_previous_entry_stands()
+
+    save_description_cache(url, replacement)
+    assert entry.read_bytes() == json.dumps(
+        {"url": url, "description": replacement}, ensure_ascii=False
+    ).encode("utf-8")
+    assert load_cached_description(url) == replacement
+    assert [path.name for path in entry.parent.iterdir()] == [entry.name]
 
 
 def test_hybrid_wording_in_description_does_not_reject() -> None:
