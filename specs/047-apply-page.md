@@ -204,7 +204,7 @@ file is named.
       It is a stronger form than spec 042's: an apply route starts a run and a
       run is the CLI, so the test executes the argv the route builds rather
       than patching a shared function. Coverage of the set is held by
-      `::test_every_parameterized_kind_is_reachable_from_the_page` and
+      `::test_every_parameterized_kind_is_reachable_from_a_page` and
       `::test_every_apply_operation_has_a_route_in_the_contract`
 - [x] a truth-gate refusal surfaces in the UI with the gate's own words, not a
       generic failure
@@ -219,8 +219,8 @@ file is named.
       (`services/api/tests/test_resume.py::test_failing_pdf_gate_leaves_tracker_row_unchanged`,
       which predates this spec and is cited rather than duplicated), and the
       page says the artifact was not produced
-      (`ApplyPage.test.tsx::an absent artifact says which operation would
-      produce it`)
+      (`ApplyPage.test.tsx::an absent artifact is listed with the operation
+      that would produce it`)
 - [x] the artifact route resolves through the writing helpers and accepts no
       caller-supplied path, proven by a test that a traversal-shaped kind is
       refused as an unknown kind rather than read

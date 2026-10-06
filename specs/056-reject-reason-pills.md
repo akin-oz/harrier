@@ -139,4 +139,5 @@ the "no enum in the contract" line under Out of scope for that field only.
 The pill list, its codes, and the `other…` select are specified in spec 080
 from here on. Proof: `every pill submits its exact lowercase label as the
 reason` in `TrackerPage.test.tsx` still iterates over every pill, now six,
-and "each pill sends its code and text" covers the codes.
+and "each pill sends its code and text" in `TrackerPage.test.tsx` covers the
+codes.

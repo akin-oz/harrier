@@ -333,12 +333,13 @@ What implementation found, each with the test that proves it:
   candidate verb leads on from it. It now shows Company replied in that
   slot. The width budget is the shape the column was narrowed to: one
   forward control, the exit, Apply and More, at most four, and no pill until
-  a takeover opens. "the resting row does not grow" holds every status to
-  that.
+  a takeover opens. "the resting row does not grow" in `TrackerPage.test.tsx`
+  holds every status to that.
 - **A chosen code does not need words.** Confirm behind `other…` waits for
   text only when the code is `other`, which says nothing without it. Any
   other code with no text stores the code's own label as the row's reason,
-  so the row still reads as one. "a chosen code needs no words".
+  so the row still reads as one. "a chosen code needs no words" in
+  `TrackerPage.test.tsx`.
 - **The select sits on its own line above the input.** Side by side, the
   actions column squeezed the reason input to a sliver and truncated the
   select (found by checking the page in a browser, demo mode). On its own
@@ -365,11 +366,12 @@ A refusal from the outcome route closes the company takeover, so the pill
 that had focus unmounts. Focus went to nothing, because only Escape and
 Cancel handed it back. It now returns to Company replied, as on Escape and
 Cancel. A refused rejection from the exit pills keeps its takeover open, so
-focus stays on the pill and needed no change. Proof: "a refused company
-response hands focus back to its opener" in `TrackerPage.test.tsx`, which
-fails without the fix. (Superseded by the last amendment: focus now goes to
-the refusal's message, and the claim about the exit pills does not hold in
-a browser.)
+focus stays on the pill and needed no change. Proof: a test named "a refused
+company response hands focus back to its opener", which failed without the
+fix. (Superseded by the last amendment: focus now goes to the refusal's
+message, the test is renamed and rewritten as "a refused company response
+takes focus to its reason" in `TrackerPage.test.tsx`, and the claim about
+the exit pills does not hold in a browser.)
 
 ## Amendment (2026-10-06, review of the merged range)
 
@@ -379,12 +381,13 @@ spec's browser code and one claim its test did not prove.
 - **The danger hover never showed.** `.job-actions button:hover:not(:disabled)`
   outranks a bare class selector, so Reject, Withdraw and every closing pill
   hovered in the ordinary accent. Principle 3 held in the markup ("danger
-  marks the pills that close the row" checks the class) and failed in the
-  browser. Both danger rules are now scoped like the ordinary hover, the way
-  `.job-actions button.job-actions__cancel` already was. jsdom applies rules
-  in source order and ignores specificity, so no rendered test sees this.
-  The proof reads the cascade from the stylesheet as parsed: "a danger hover
-  outranks the ordinary hover", which fails without the fix. It imports the
+  marks the pills that close the row" in `TrackerPage.test.tsx` checks the
+  class) and failed in the browser. Both danger rules are now scoped like the
+  ordinary hover, the way `.job-actions button.job-actions__cancel` already
+  was. jsdom applies rules in source order and ignores specificity, so no
+  rendered test sees this. The proof reads the cascade from the stylesheet as
+  parsed: "a danger hover outranks the ordinary hover" in
+  `TrackerPage.test.tsx`, which fails without the fix. It imports the
   stylesheet with `?raw`, which vitest stubs to an empty string unless
   `apps/web/vitest.config.ts` lets it through, so that file gains one line.
   Checked in a browser too (demo mode): Reject and a closing pill now hover
@@ -392,11 +395,13 @@ spec's browser code and one claim its test did not prove.
 - **`other…` dropped the group.** The reason form replaced the pills' named
   group with an unnamed span, so a screen reader lost whose decision it was
   part way through. It is now the same `role="group"`, named by the exit
-  word. "other… stays a group named by its exit word".
+  word. "other… stays a group named by its exit word" in
+  `TrackerPage.test.tsx`.
 - **A claim cited a test that could not fail.** "A chosen code does not need
-  words" cited "other sends the selected code", which always types words.
-  "a chosen code needs no words" now proves it; requiring text for every code,
-  or dropping the label fallback, fails it.
+  words" cited "other sends the selected code" in `TrackerPage.test.tsx`,
+  which always types words. "a chosen code needs no words" in
+  `TrackerPage.test.tsx` now proves it; requiring text for every code, or
+  dropping the label fallback, fails it.
 - **Company replied on an invited row.** The browser offers Company replied
   on every `interviewing` row, including one a recruiter invited before
   anyone applied. Spec 079 refused every response there until its own
@@ -422,17 +427,18 @@ focus defects. Each fix carries a test that fails without it.
   nobody chose. A refusal now moves focus to its message instead, which is
   there before and after the refetch. The slot's two controls are keyed
   apart, so a status change mounts a new control rather than relabelling a
-  focused one. "a refused company response takes focus to its reason"
-  (renamed from "a refused company response hands focus back to its
-  opener"), "a status change mounts a new control instead of relabelling
-  the focused one".
+  focused one. "a refused company response takes focus to its reason" in
+  `TrackerPage.test.tsx` (renamed from "a refused company response hands
+  focus back to its opener"), "a status change mounts a new control instead
+  of relabelling the focused one" in `TrackerPage.test.tsx`.
 - **A disabled control drops focus.** While a write runs, its controls are
   disabled, and a browser moves focus off a disabled control to the page.
   So a refused rejection left focus on the page with the pills still open,
   and so did a refused action from More. The amendment above said neither
   needed handling, which held in jsdom only. Every refusal now moves focus
   to its message. The test blurs the control while the request is pending,
-  as the browser does: "a refusal keeps focus where a browser drops it".
+  as the browser does: "a refusal keeps focus where a browser drops it" in
+  `TrackerPage.test.tsx`.
 
 The Errors bullet now defers to spec 079 for what counts as engagement,
 which a separate change widens to a company that has already responded.

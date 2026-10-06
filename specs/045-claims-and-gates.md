@@ -142,23 +142,21 @@ spec 044.
       (`services/api/tests/test_spec_structure.py::test_every_test_a_spec_names_actually_exists`, which also
       verifies the named file defines the named symbol, and
       `services/api/tests/test_demo.py::test_no_committed_file_names_an_absolute_home_directory`)
-- [ ] web test citations are checked in every shape the specs use, each
+- [x] web test citations are checked in every shape the specs use, each
       name against the file it names, and a name marked planned is exempt
-      only while no test has it (the 2026-10-06 amendment below; planned
-      test_a_web_citation_naming_no_test_fails,
-      test_a_web_citation_naming_a_real_test_passes,
-      test_a_web_name_must_be_in_the_file_it_names,
-      test_a_web_citation_resolves_to_exactly_one_file and
-      test_planned_exempts_a_web_test_only_until_it_exists, in
-      `services/api/tests/test_spec_structure.py`)
-- [ ] a quoted name of an existing web test that no shape reads fails the
-      check (planned test_a_quoted_web_test_name_with_no_file_fails in
-      `services/api/tests/test_spec_structure.py`)
-- [ ] a Python continuation, a code span holding `::` and a symbol, is
-      checked like a bare symbol (planned
-      test_a_python_continuation_is_checked in
-      `services/api/tests/test_spec_structure.py`)
-- [ ] the citations the wider check finds broken are corrected in specs 047,
+      only while no test has it (the 2026-10-06 amendment below;
+      `services/api/tests/test_spec_structure.py::test_a_web_citation_naming_no_test_fails`,
+      `::test_a_web_citation_naming_a_real_test_passes`,
+      `::test_a_web_name_must_be_in_the_file_it_names`,
+      `::test_a_web_citation_resolves_to_exactly_one_file`,
+      `::test_planned_exempts_a_web_test_only_until_it_exists`)
+- [x] a quoted name of an existing web test that no shape reads fails the
+      check
+      (`services/api/tests/test_spec_structure.py::test_a_quoted_web_test_name_with_no_file_fails`)
+- [x] a Python continuation, a code span holding `::` and a symbol, is
+      checked like a bare symbol
+      (`services/api/tests/test_spec_structure.py::test_a_python_continuation_is_checked`)
+- [x] the citations the wider check finds broken are corrected in specs 047,
       056 and 080, and
       `services/api/tests/test_spec_structure.py::test_every_test_a_spec_names_actually_exists`
       passes over every committed spec
