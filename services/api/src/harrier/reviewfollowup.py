@@ -26,6 +26,7 @@ Two guards matter more than the feature:
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from collections.abc import Callable, Iterable
@@ -41,7 +42,13 @@ from harrier.db import data_dir
 NOTICE_MARKER = "rate limited by coderabbit.ai"
 NOTICE_SPLIT = "<!-- This is an auto-generated comment:"
 
-WAIT_PATTERN = re.compile(r"Next review available in:\**\s*\*+\s*([^*]+?)\s*\*+", re.IGNORECASE)
+# The phrase before the wait, in each wording the service has used: "Next
+# review available in: **38 minutes**" when this was written, and "Next
+# included review available in 52 minutes." since (spec 043 amendment). The
+# wait is whatever follows the phrase on its line.
+WAIT_PATTERN = re.compile(
+    r"Next\s+(?:included\s+)?review\s+available\s+in:?([^\n]*)", re.IGNORECASE
+)
 UNIT_PATTERN = re.compile(r"(\d+)\s*([a-z]+)", re.IGNORECASE)
 UNIT_MINUTES = {"minute": 1, "minutes": 1, "hour": 60, "hours": 60}
 
@@ -198,6 +205,13 @@ class PullRequestState:
     # another page, what we did not read may hold the finding, so the honest
     # answer is "something may be waiting" rather than "nothing is".
     truncated: bool = False
+    # When the comment holding the newest notice was last written, as the API
+    # gives it. The notice states its wait from then, not from whenever this
+    # runs. Empty when unknown.
+    notice_at: str = ""
+    # Merged or closed. The service refuses to review a closed pull request,
+    # so asking only adds a comment (spec 043 amendment).
+    closed: bool = False
 
     @property
     def reviewed(self) -> bool:
@@ -241,7 +255,38 @@ SKIP = "skip"
 RESPOND = "respond"
 
 
-def decide(state: PullRequestState, *, requests_today: int, daily_limit: int) -> Decision:
+def _parse_time(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def remaining_minutes(wait: int, notice_at: str, now: datetime) -> int:
+    """Minutes left before asking again: the stated wait and the grace minute,
+    counted from when the notice was posted.
+
+    A notice can sit on a pull request for hours, and counting its wait from
+    now made a limit that had long passed cost another full wait (spec 043
+    amendment). An unknown time keeps the whole wait, because guessing an
+    earlier one could ask too soon.
+    """
+    total = wait + GRACE_MINUTES
+    posted = _parse_time(notice_at) if notice_at else None
+    if posted is None:
+        return total
+    elapsed = (now - posted).total_seconds() / 60
+    return max(0, math.ceil(total - elapsed))
+
+
+def decide(
+    state: PullRequestState,
+    *,
+    requests_today: int,
+    daily_limit: int,
+    now: datetime | None = None,
+) -> Decision:
     """Whether to answer, ask again, wait, or leave it alone.
 
     Answering comes first, and before the daily bound. Asking for a fresh
@@ -266,16 +311,25 @@ def decide(state: PullRequestState, *, requests_today: int, daily_limit: int) ->
             parts.append("a bounded query had another page, so this is not a full picture")
         return Decision(RESPOND, reason="; ".join(parts))
 
+    if state.closed:
+        # After answering, which a merged pull request is still owed.
+        return Decision(SKIP, reason="closed: the service does not review a closed pull request")
+
     if requests_today >= daily_limit:
         return Decision(SKIP, reason=f"already asked {requests_today} times today")
 
     notice = newest_notice(state.comment_bodies)
     if notice is not None:
         wait = parse_wait_minutes(notice)
-        if wait:
-            return Decision(WAIT, wait_minutes=wait + GRACE_MINUTES, reason="rate limited")
-        # A notice with no readable wait. Reported rather than guessed at.
-        return Decision(SKIP, reason="a rate-limit notice carried no readable wait")
+        if not wait:
+            # A notice with no readable wait. Reported rather than guessed at.
+            return Decision(SKIP, reason="a rate-limit notice carried no readable wait")
+        left = remaining_minutes(wait, state.notice_at, now or datetime.now(UTC))
+        if left > 0:
+            return Decision(WAIT, wait_minutes=left, reason="rate limited")
+        # The wait has passed. What the notice cut short is decided as if
+        # there were no notice: asked for when unreviewed or moved, left alone
+        # when a review has since covered the head.
 
     if not state.reviewed:
         return Decision(REQUEST, reason="nothing has reviewed this yet")
@@ -441,7 +495,7 @@ def gather(number: int, run: GitHubRunner, *, owner: str, repo: str) -> PullRequ
                 "graphql",
                 "-f",
                 f'query={{repository(owner:"{owner}",name:"{repo}")'
-                f"{{pullRequest(number:{number}){{"
+                f"{{pullRequest(number:{number}){{state "
                 f"reviewThreads(first:100){{pageInfo{{hasNextPage}} nodes{{id isResolved "
                 f"comments(last:1){{nodes{{id author{{login}}}}}}}}}} "
                 f"reviews(last:20){{pageInfo{{hasPreviousPage}} "
@@ -456,7 +510,15 @@ def gather(number: int, run: GitHubRunner, *, owner: str, repo: str) -> PullRequ
         comment_payload: object = json.loads(comments_raw)
     except json.JSONDecodeError as error:
         raise FollowUpError(f"unexpected comment payload for {number}: {error}") from error
-    comment_bodies = [str(_as_dict(entry).get("body") or "") for entry in _as_list(comment_payload)]
+    comments = [_as_dict(entry) for entry in _as_list(comment_payload)]
+    comment_bodies = [str(comment.get("body") or "") for comment in comments]
+    # The newest notice is in the last comment that holds one, as
+    # `newest_notice` reads it; the service edits that comment in place, so
+    # its update time is when the notice was written.
+    notice_at = ""
+    for comment, body in zip(comments, comment_bodies, strict=True):
+        if any(NOTICE_MARKER in block for block in body.split(NOTICE_SPLIT)):
+            notice_at = str(comment.get("updated_at") or comment.get("created_at") or "")
 
     try:
         payload: object = json.loads(detail_raw)
@@ -465,6 +527,7 @@ def gather(number: int, run: GitHubRunner, *, owner: str, repo: str) -> PullRequ
         )
         threads_conn = _as_dict(pull.get("reviewThreads"))
         reviews_conn = _as_dict(pull.get("reviews"))
+        closed = str(pull.get("state") or "OPEN").upper() != "OPEN"
         thread_nodes = _as_list(threads_conn.get("nodes"))
         review_nodes = _as_list(reviews_conn.get("nodes"))
         # Both connections are bounded. Past the bound the unread findings are
@@ -527,6 +590,8 @@ def gather(number: int, run: GitHubRunner, *, owner: str, repo: str) -> PullRequ
         awaiting=tuple(threads_awaiting_reply(threads, handled)),
         unread_reviews=tuple(reviews_needing_a_read(reviews, handled)),
         truncated=truncated,
+        notice_at=notice_at,
+        closed=closed,
     )
 
 
@@ -563,6 +628,8 @@ def report(states: list[PullRequestState]) -> list[str]:
             lines.append(
                 f"PR #{state.number}: reviewed, {state.review_threads} threads, nothing outstanding"
             )
+        elif state.closed:
+            lines.append(f"PR #{state.number}: NOT REVIEWED, closed, so the service will not now")
         elif newest_notice(state.comment_bodies) is not None:
             lines.append(f"PR #{state.number}: NOT REVIEWED, rate limited")
         else:

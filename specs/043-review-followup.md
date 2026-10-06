@@ -167,6 +167,9 @@ Proven by services/api/tests/test_review_followup.py:
 |---|---|
 | the wait parses in every shape the notice uses | `test_the_wait_is_parsed` (six cases), `test_a_notice_with_no_readable_wait_returns_none`, `test_a_zero_wait_reads_as_no_wait` |
 | the newest notice wins | `test_the_newest_notice_is_the_one_used`, `test_a_notice_inside_a_longer_comment_is_found` |
+| the reworded notice is read (amendment below) | `test_the_current_notice_wording_is_parsed` (three cases), `test_the_current_notice_survives_gather_with_its_time` |
+| the wait counts from when the notice was posted (amendment below) | `test_a_notice_waits_only_what_is_left_of_it`, `test_an_expired_notice_asks_again`, `test_an_expired_notice_on_a_reviewed_head_is_left_alone` |
+| a closed pull request is never asked, and is still owed its answers (amendment below) | `test_a_closed_pull_request_is_never_asked`, `test_a_closed_pull_request_is_still_owed_its_answers`, `test_gather_reads_whether_the_pull_request_is_closed` |
 | no notice means nothing is posted | `test_no_notice_means_none`, `test_a_notice_without_a_wait_is_reported_not_guessed` |
 | an unchanged head is not re-requested | `test_a_reviewed_pull_request_at_the_same_head_is_left_alone`, `test_a_moved_head_is_asked_again` |
 | the daily bound stops the loop | `test_the_daily_bound_stops_the_loop`, `test_the_bound_wins_over_everything_else` |
@@ -192,6 +195,12 @@ protect a counter would have been the wrong trade.
 - [x] the wait is parsed from minutes, hours, and the combined form, with one
       test per shape and one for a notice that carries no wait
 - [x] the newest notice wins when a pull request carries several
+- [x] the reworded notice ("Next included review available in 52 minutes.")
+      is read, through `gather` as the API returns it
+- [x] the wait counts from when the notice was posted, and a notice whose
+      wait has passed decides nothing
+- [x] a merged or closed pull request is never asked for a review, and a
+      finding on one is still reported as owed an answer
 - [x] a pull request with no notice reports that and posts nothing
 - [x] a re-request is not sent when the head commit has not moved since the
       last completed review
@@ -220,3 +229,56 @@ thing should live in the governance rather than in one session's habits.
 Acting on findings automatically. Any integration with a review service other
 than the one in use. Changing what the four standing guardians or the two
 boards do.
+
+## Amendment (2026-10-06, the notice was reworded)
+
+The service changed the wording of its notice. It now reads:
+
+```
+<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->
+> [!WARNING]
+> ## Review limit reached
+> You've used all free OSS reviews for now.
+> **Next included review available in 52 minutes.**
+```
+
+The pattern read only the wording quoted under Problem, so every
+rate-limited pull request reported "a rate-limit notice carried no readable
+wait" and was skipped: the failure mode this spec names for a changed format,
+reported rather than absorbed, as intended. The phrase is now read in either
+wording, and the wait is what follows it on its line.
+`test_the_current_notice_wording_is_parsed`,
+`test_the_current_notice_survives_gather_with_its_time`.
+
+Reading the live notices also showed that the wait was counted from the
+wrong moment. A notice states its wait from when it was posted, and Proof /
+origin asks for "the time the notice actually states", but the command
+waited the full stated time from whenever it ran. A notice three hours old
+cost another full wait before the review it cut short was asked for. The
+wait now counts from the update time of the comment holding the notice,
+which the service edits in place, and a notice whose wait has passed
+decides nothing: the pull request is then judged as if it had none.
+`test_a_notice_waits_only_what_is_left_of_it`,
+`test_an_expired_notice_asks_again`,
+`test_an_expired_notice_on_a_reviewed_head_is_left_alone`.
+
+Asking for reviews of merged pull requests found the third. The scope was
+always "every open one", but the command never read a pull request's state,
+and the service answers a request on a closed one with "Action not
+completed. Pull request is closed.": a comment that buys nothing. The
+command now reads the state and never asks on a closed pull request. It
+still reports one whose findings are unanswered, before anything else,
+because a finding on a merged pull request is owed an answer like any other.
+`test_a_closed_pull_request_is_never_asked`,
+`test_a_closed_pull_request_is_still_owed_its_answers`,
+`test_gather_reads_whether_the_pull_request_is_closed`.
+
+So a pull request merged before its review is not reviewed by this service
+at all. Waiting for the review before merging is the only way to get one.
+
+Limitation, recorded rather than fixed here: the limit belongs to the
+repository, but notices are read per pull request. Asked about several pull
+requests at once, the command requests each that needs it, and every request
+after the one the limit allows earns a notice of its own, which the next run
+then waits out. Treating the limit as the repository's would change what the
+command does across pull requests, so it needs its own amendment.
