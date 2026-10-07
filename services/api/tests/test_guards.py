@@ -144,6 +144,25 @@ BYPASSES = [
     # substitution among a commit's options).
     "git commit \"$(cat <<'EOF'\n-n\nEOF\n)\" -m 'message' -m 'Spec: 045'",
     "git commit \"`cat <<'EOF'\n-n\nEOF\n`\" -m 'message' -m 'Spec: 045'",
+    # core.hooksPath given as git takes it, which the hooksPath check, matching
+    # `-c core.hooksPath` as written, did not see: the name in another case or
+    # quoted, --config-env, GIT_CONFIG_KEY_<n>, GIT_CONFIG_PARAMETERS, a git
+    # config write, and the lowercase name in text bash runs. Each skipped a
+    # failing pre-commit hook under git 2.43 and passed the guard on main at
+    # fb0ada4 with a trailer (spec 045's amendment on core.hooksPath).
+    'git -c core.hookspath=/dev/null commit -m "message" -m "Spec: 045"',
+    'git -c CORE.HOOKSPATH=/dev/null commit -m "message" -m "Spec: 045"',
+    'git -c "core.hooksPath=/dev/null" commit -m "message" -m "Spec: 045"',
+    "git -c 'core.hooksPath=/dev/null' commit -m 'message' -m 'Spec: 045'",
+    'X=/dev/null git --config-env=core.hooksPath=X commit -m "message" -m "Spec: 045"',
+    'X=/dev/null git --config-env core.hooksPath=X commit -m "message" -m "Spec: 045"',
+    "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null"
+    " git commit -m 'message' -m 'Spec: 045'",
+    "GIT_CONFIG_PARAMETERS=\"'core.hooksPath'='/dev/null'\" git commit -m 'message' -m 'Spec: 045'",
+    "export GIT_CONFIG_PARAMETERS=\"'core.hooksPath'='/dev/null'\";"
+    " git commit -m 'message' -m 'Spec: 045'",
+    'git config core.hooksPath /dev/null && git commit -m "message" -m "Spec: 045"',
+    "bash -c \"git -c core.hookspath=/dev/null commit -m 'message' -m 'Spec: 045'\"",
 ]
 
 # A guard stricter than the workflow it protects is its own failure.
@@ -172,6 +191,14 @@ ORDINARY = [
     'git commit -am"$(printf message)" -m "Spec: 045"',
     'git commit --message="$(printf message)" -m "Spec: 045"',
     'git commit -m "message" -m "Spec: 045" -- "$(printf README.md)"',
+    # core.hooksPath read or removed, another config name set, and a message
+    # that names the setting in another case: none gives it a value (spec
+    # 045's amendment on core.hooksPath).
+    'git -c user.name=x commit -m "message" -m "Spec: 045"',
+    "git config core.hooksPath",
+    "git config --get core.hooksPath",
+    "git config --unset core.hooksPath",
+    'git commit -m "note -c core.hookspath" -m "Spec: 045"',
 ]
 
 
@@ -426,6 +453,39 @@ def test_the_commit_guard_still_refuses_to_stage_an_env_file() -> None:
 # None stages or commits one, and each was denied while the check read the
 # whole command (spec 045's amendment on the env file check). Each carries a
 # trailer, so an ALLOW proves the env file check passed.
+# A git config write of core.hooksPath, alone: the setting stays for every
+# later commit, so the write itself is denied. Each let a commit that followed
+# skip a failing pre-commit hook under git 2.43, and passed the guard on main
+# at fb0ada4 (spec 045's amendment on core.hooksPath).
+HOOKSPATH_WRITES = [
+    "git config core.hooksPath /dev/null",
+    "git config --local core.hooksPath /dev/null",
+    "git config --global core.hooksPath /dev/null",
+    "git config -f .git/config core.hooksPath /dev/null",
+    "git config --add core.hooksPath /dev/null",
+    "git config core.hookspath /dev/null",
+]
+
+
+@pytest.mark.parametrize("command", HOOKSPATH_WRITES)
+def test_a_git_config_write_of_core_hookspath_is_denied(command: str) -> None:
+    """The hooksPath check matched `-c core.hooksPath` as written, so a git
+    config write of the same key, which outlives the command, passed it."""
+    payload = json.dumps({"tool_input": {"command": command}})
+    result = subprocess.run(
+        ["bash", str(HOOKS / "guard-commit.sh")],
+        input=payload,
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        check=False,
+    )
+    assert result.returncode == DENY, f"guard-commit.sh allowed a hooksPath write: {command}"
+    assert "hooksPath" in result.stderr, (
+        f"guard-commit.sh denied {command!r} for something else: {result.stderr}"
+    )
+
+
 ENV_FILE_ONLY_IN_A_MESSAGE = [
     'git commit -m "Stop reading .env in tests" -m "Spec: 045"',
     "git commit -q -F - <<'EOF'\nIgnore .env.local in the loader\n\nSpec: 045\nEOF",

@@ -232,13 +232,13 @@ spec 044.
       command substitution among a commit's options;
       `services/api/tests/test_guards.py::test_the_commit_guard_denies_every_proven_bypass`,
       `::test_the_commit_guard_allows_ordinary_work`)
-- [ ] a name for core.hooksPath, in any case and quoted or not, given by
+- [x] a name for core.hooksPath, in any case and quoted or not, given by
       `-c`, `--config-env`, `GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_PARAMETERS` or
       a `git config` write, is denied, while other config names and reading
       the key are allowed (the amendment below on core.hooksPath;
       `services/api/tests/test_guards.py::test_the_commit_guard_denies_every_proven_bypass`,
-      `::test_the_commit_guard_allows_ordinary_work`, planned
-      test_a_git_config_write_of_core_hookspath_is_denied)
+      `::test_the_commit_guard_allows_ordinary_work`,
+      `::test_a_git_config_write_of_core_hookspath_is_denied`)
 - [ ] All gates green on PR
 
 ## Proof / origin
@@ -1137,8 +1137,8 @@ global options" is this amendment. The hooksPath and git dir check matches
 `-c core.hooksPath` only as written, in the whole string. git reads a config
 name without case, takes it from other places too, and keeps it once
 `git config` writes it. Each of these skipped a failing pre-commit hook under
-git 2.43 in a throwaway repository, and the guard at 045968c allowed each
-with a trailer:
+git 2.43 in a throwaway repository, and the guard on main at fb0ada4 allowed
+each with a trailer:
 
 ```text
 git -c core.hookspath=/dev/null commit ...
@@ -1190,9 +1190,9 @@ check still runs first, unchanged.
   every command, after the existing check. No file is added.
 - `services/api/tests/test_guards.py`: the commit forms above join
   `BYPASSES`, each with a valid trailer, and so does
-  `bash -c "git -c core.hookspath=/dev/null commit ..."`. A new test, planned
-  test_a_git_config_write_of_core_hookspath_is_denied, runs the `git config`
-  writes alone. `git -c user.name=x commit ...`, the three reads and removals
+  `bash -c "git -c core.hookspath=/dev/null commit ..."`. A new test,
+  `::test_a_git_config_write_of_core_hookspath_is_denied`, runs the
+  `git config` writes alone. `git -c user.name=x commit ...`, the three reads and removals
   above, and a commit whose message names `-c core.hookspath` join
   `ORDINARY`.
 
@@ -1201,8 +1201,8 @@ No new file, so `config/data-classification.json` does not change.
 **Output.** Unchanged: exit 2 and the hooksPath message on a deny, exit 0
 otherwise.
 
-**How to know it worked.** Every form above is denied, and the guard at
-045968c allows each. The ordinary cases above are allowed.
+**How to know it worked.** Every form above is denied, and the guard on main
+at fb0ada4 allows each. The ordinary cases above are allowed.
 
 **Failure modes this must not introduce.** Another config name, such as
 `-c user.name=x` or `-c commit.gpgsign=false`, is never denied, and neither
@@ -1224,3 +1224,7 @@ decides as before.
 - Text another command receives is split at spaces, not read as a shell
   reads it, so a mention there can deny: `echo "-c core.hookspath=x"` is
   denied.
+- The guard reads the name, not whether its value reaches git. So
+  `git --config-env=core.hooksPath=X commit ...` is denied with `X` unset,
+  though git refuses it, and `git config --unset core.hooksPath <pattern>`
+  is denied, since a word follows the name.

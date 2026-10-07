@@ -48,7 +48,8 @@ OLD_BYPASS='--no-verify|(^|[[:space:]])-[A-Za-z]*n[A-Za-z]*([[:space:]]|=|$)'
 # Prints, separated by spaces: "commit" when it reads a git commit, or text
 # another command receives holds one; "reuse" when -C is one of a commit's own
 # options; "envfile" when it reads an env file anywhere but in a commit's
-# message; "bypass" when a git commit in the command skips the hooks, or else
+# message; "hookspath" when a command gives core.hooksPath a value as git
+# takes one; "bypass" when a git commit in the command skips the hooks, or else
 # "unread" when the command cannot be read. Written to POSIX awk, since the
 # guard runs under macOS awk as well as mawk and gawk. If awk itself fails, the
 # whole string is checked as before.
@@ -220,6 +221,65 @@ commit_words() {
     }
     function runs_a_bypass(t) { scan(t); return SEEN_COMMIT && SEEN_N }
 
+    # Whether word w, its quotes removed, gives core.hooksPath a value the
+    # way git takes one (the amendment to spec 045 on core.hooksPath). what
+    # names the word: "c" for the value of -c, whose name ends at the first
+    # =, or the whole value when there is none; "env" for the value of
+    # --config-env, whose name ends at the last =; "" for any word, read for
+    # GIT_CONFIG_KEY_<n>=<name> or a GIT_CONFIG_PARAMETERS=... that holds the
+    # name. A name compares without case, as git compares it. The variable
+    # names keep their case, as the shell does.
+    function sets_hookspath(w, what,    v, e, n, p, i, name) {
+      v = tolower(w)
+      if (what == "c") { e = index(v, "="); return (e ? substr(v, 1, e - 1) : v) == "core.hookspath" }
+      if (what == "env") {
+        n = split(v, p, "=")
+        if (n < 2) return 0
+        name = p[1]; for (i = 2; i < n; i++) name = name "=" p[i]
+        return name == "core.hookspath"
+      }
+      if (w ~ /^GIT_CONFIG_KEY_[0-9]+=/) return substr(v, index(v, "=") + 1) == "core.hookspath"
+      if (w ~ /^GIT_CONFIG_PARAMETERS=/) return index(v, "core.hookspath") > 0
+      return 0
+    }
+
+    # Text another command receives, or a command the reader cannot read, is
+    # split into fields at blanks, its quotes removed, and read by the rules
+    # of sets_hookspath and of a git config write: a -c or --config-env and
+    # the field after it, a GIT_CONFIG_ field, or git, its global options,
+    # config, the name and a field after it with no --get field between. A
+    # field that is or ends in ;, & or | ends a command (the amendment to
+    # spec 045 on core.hooksPath).
+    function text_sets_hookspath(t,    f, n, i, v, sep, ingit, value, cfg, cname, cafter, cget) {
+      n = split(t, f, /[[:space:]]+/)
+      ingit = 0; value = 0; cfg = 0; cname = 0; cafter = 0; cget = 0
+      for (i = 1; i <= n; i++) {
+        v = f[i]; gsub(/["\047]/, "", v)
+        sep = 0
+        if (v ~ /[;&|]$/) { sub(/[;&|]+$/, "", v); sep = 1 }
+        if (v != "") {
+          if (v == "-c" && i < n && sets_hookspath(f[i + 1], "c")) return 1
+          if (v == "--config-env" && i < n && sets_hookspath(f[i + 1], "env")) return 1
+          if (v ~ /^--config-env=/ && sets_hookspath(substr(v, 14), "env")) return 1
+          if (sets_hookspath(v, "")) return 1
+          if (cfg) {
+            if (v ~ /^--get(-all|-regexp)?$/) cget = 1
+            else if (!cname && tolower(v) == "core.hookspath") cname = 1
+            else if (cname) cafter = 1
+          } else if (!ingit) { if (v ~ /(^|[^[:alnum:]_])git$/) { ingit = 1; value = 0 } }
+          else if (value) value = 0
+          else if (v ~ /^-/) value = takes_value(v)
+          else if (v == "config") cfg = 1
+          else ingit = v ~ /(^|[^[:alnum:]_])git$/
+        }
+        if (sep) {
+          if (cfg && cname && cafter && !cget) return 1
+          ingit = 0; value = 0; cfg = 0; cname = 0; cafter = 0; cget = 0
+        }
+      }
+      return cfg && cname && cafter && !cget
+    }
+
     # Commands up to stop: a ")" or a backtick, or the end when stop is empty.
     # msg is 1 inside a command substitution whose output is message text.
     function parse_list(stop, msg,    c) {
@@ -257,8 +317,10 @@ commit_words() {
     # output is message text, when what cat writes is that output, not piped
     # on or redirected.
     function parse_command(stop, msg,    c, nw, w, commit, g, value, i, first, outer, text, k, r,
-        arg, paths, mnext, fnext, pnext, fin, pin, mtext, val, path, piped, out, nh, hd, hg, ns, hs, lead) {
+        arg, paths, mnext, fnext, pnext, fin, pin, mtext, val, path, piped, out, nh, hd, hg, ns, hs, lead,
+        vopt, cfg, cname, cafter, cget) {
       nw = 0; commit = 0; g = 0; value = 0; first = HN + 1; outer = HERE; HERE = ""
+      vopt = ""; cfg = 0; cname = 0; cafter = 0; cget = 0
       arg = 0; paths = 0; mnext = 0; fnext = 0; pnext = 0; fin = 0; pin = 0
       piped = 0; out = 0; nh = 0; ns = 0
       while (K <= NL && FAIL == "") {
@@ -282,11 +344,25 @@ commit_words() {
         }
         if (!commit) {
           w[++nw] = read_word(stop, 0)
+          # The words of git config: a write of core.hooksPath is a name
+          # with a word after it and no --get, --get-all or --get-regexp
+          # (the amendment to spec 045 on core.hooksPath).
+          if (cfg) {
+            if (w[nw] ~ /^--get(-all|-regexp)?$/) cget = 1
+            else if (!cname && tolower(w[nw]) == "core.hookspath") cname = nw
+            else if (cname) cafter = 1
+            continue
+          }
           if (!g) { if (is_git(w[nw])) g = nw }
-          else if (value) value = 0
+          else if (value) { value = 0; if (vopt != "" && sets_hookspath(w[nw], vopt)) HOOKS = 1 }
           else if (runs_no_subcommand(w[nw])) g = 0
-          else if (w[nw] ~ /^-/) value = takes_value(w[nw])
+          else if (w[nw] ~ /^-/) {
+            value = takes_value(w[nw])
+            vopt = w[nw] == "-c" ? "c" : w[nw] == "--config-env" ? "env" : ""
+            if (w[nw] ~ /^--config-env=/ && sets_hookspath(substr(w[nw], 14), "env")) HOOKS = 1
+          }
           else if (w[nw] == "commit") commit = nw
+          else if (w[nw] == "config") cfg = nw
           else g = is_git(w[nw]) ? nw : 0
           continue
         }
@@ -318,8 +394,14 @@ commit_words() {
           if (lead[i] && !val[i] && !path[i]) UNSURE = 1
         } else if (!commit || i < g) text = text " " w[i]
         if (!mtext[i] && names_env(w[i])) ENV = 1
+        # A GIT_CONFIG_KEY_<n> or GIT_CONFIG_PARAMETERS word in any command,
+        # except among the own words of a commit, which git reads as its
+        # options and message (the amendment to spec 045 on core.hooksPath).
+        if (!(commit && i > commit) && sets_hookspath(w[i], "")) HOOKS = 1
       }
+      if (cfg && cname && cafter && !cget) HOOKS = 1
       if (runs_a_bypass(text)) found()
+      if (text_sets_hookspath(text)) HOOKS = 1
       if (commit || SEEN_COMMIT) COMMIT = 1
       for (k = first; k <= HN; k++) HCMD[k] = text
     }
@@ -372,6 +454,7 @@ commit_words() {
             if (!m && holds_commit(line)) m = 1
             if (line ~ old) b = 1
             if (names_env(line)) ENV = 1
+            if (text_sets_hookspath(line)) HOOKS = 1
           }
         }
         if (!HTEXT[k]) {
@@ -510,9 +593,13 @@ commit_words() {
     END {
       NL = NR; K = 1; C = 1
       parse_list("", 0)
+      # A command the reader could not read is read for core.hooksPath by
+      # field, line by line, as text another command receives is.
+      if (FAIL != "" || UNSURE) for (k = 1; k <= NL; k++) if (text_sets_hookspath(L[k])) HOOKS = 1
       out = COMMIT ? " commit" : ""
       if (REUSE) out = out " reuse"
       if (ENV) out = out " envfile"
+      if (HOOKS) out = out " hookspath"
       if (VERDICT != "") out = out " " VERDICT
       else if (FAIL != "" || UNSURE) out = out " unread"
       if (out != "") print substr(out, 2)
@@ -528,19 +615,31 @@ commit_words() {
 # version matched a bare substring, so it blocked any command whose text
 # merely mentioned these, including the commit message describing this very
 # guard (review of PR #50).
+HOOKS_MSG="BLOCKED: redirecting hooksPath or the git dir disables the hook chain. The verification hooks ARE the definition of done."
 if printf '%s' "$CMD" | grep -qE '(^|[[:space:]])(-c[[:space:]]+core\.hooksPath|--git-dir|GIT_DIR)=?'; then
-  deny "BLOCKED: redirecting hooksPath or the git dir disables the hook chain. The verification hooks ARE the definition of done."
+  deny "$HOOKS_MSG"
 fi
 
-# The reader runs on a command whose text holds commit. One that does not
-# cannot name the subcommand unless a quote or a backslash splits the word,
-# and skipping the reader there keeps its cost off most commands.
+# The reader runs on a command whose text holds commit, or hookspath, in any
+# case. One that holds neither cannot name the subcommand, nor the setting,
+# unless a quote or a backslash splits the word, and skipping the reader there
+# keeps its cost off most commands.
 reader=no
 verdict=
-case "$CMD" in
-  *commit*) reader=yes; verdict=$(commit_words) || verdict=unread ;;
+case "$(printf '%s' "$CMD" | tr '[:upper:]' '[:lower:]')" in
+  *commit*|*hookspath*) reader=yes; verdict=$(commit_words) || verdict=unread ;;
 esac
 says() { case " $verdict " in *" $1 "*) return 0 ;; esac; return 1; }
+
+# The check above matches -c core.hooksPath as written. git also reads the
+# name without case, from --config-env, from GIT_CONFIG_KEY_<n> and
+# GIT_CONFIG_PARAMETERS, and keeps one that git config writes. The reader
+# reports each of those, in any command it reads, and by field in text another
+# command receives or in a command it cannot read (spec 045's amendment on
+# core.hooksPath). Reading the setting, or removing it, is not reported.
+if says hookspath; then
+  deny "$HOOKS_MSG"
+fi
 
 # A command commits when the whole string shows git and commit side by side,
 # as before, or when the reader reads a commit in it. Past git's global
