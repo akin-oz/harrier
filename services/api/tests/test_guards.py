@@ -15,7 +15,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import statistics
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -158,6 +161,47 @@ def test_an_n_outside_the_commit_does_not_block_it(command: str) -> None:
     assert run_guard("guard-commit.sh", command) == ALLOW, (
         f"guard-commit.sh blocked ordinary work: {command}"
     )
+
+
+def test_a_long_message_costs_time_in_proportion_to_its_length(tmp_path: Path) -> None:
+    """The first version of the word reader held the command as one string,
+    and reading it was quadratic. Under mawk, eight times the message took
+    about thirty times as long, 1.1 s for 8000 lines. Under original-awk,
+    the codebase macOS awk comes from, a 6000-line message took 16 s. The
+    guard runs before every command that mentions a commit.
+
+    mawk is used where it exists, as on the CI runner, so the ratio measures
+    the reader rather than whichever awk a machine provides. A linear reader
+    stays under eight: eight times the lines, plus the same process start.
+    """
+    env = dict(os.environ)
+    mawk = shutil.which("mawk")
+    if mawk:
+        (tmp_path / "awk").symlink_to(mawk)
+        env["PATH"] = f"{tmp_path}{os.pathsep}{env['PATH']}"
+    line = "A line of commit message text that says nothing in particular.\n"
+
+    def seconds(lines: int) -> float:
+        command = "git commit -q -F - <<'EOF'\n" + line * lines + "\nSpec: 045\nEOF"
+        payload = json.dumps({"tool_input": {"command": command}})
+        runs: list[float] = []
+        for _ in range(3):
+            start = time.perf_counter()
+            result = subprocess.run(
+                ["bash", str(HOOKS / "guard-commit.sh")],
+                input=payload,
+                capture_output=True,
+                text=True,
+                cwd=ROOT,
+                env=env,
+                check=False,
+            )
+            runs.append(time.perf_counter() - start)
+            assert result.returncode == ALLOW, result.stderr
+        return statistics.median(runs)
+
+    short, longer = seconds(1000), seconds(8000)
+    assert longer < 10 * short, f"1000 lines: {short:.3f} s, 8000 lines: {longer:.3f} s"
 
 
 def test_the_commit_guard_still_requires_a_spec_trailer() -> None:
