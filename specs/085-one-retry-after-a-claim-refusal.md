@@ -1,8 +1,8 @@
 ---
 spec: 085
 title: A refused letter or answer set gets one automatic retry with its refusals
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M8
 depends: [058, 065, 066]
 ---
