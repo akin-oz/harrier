@@ -221,6 +221,11 @@ spec 044.
       `services/api/tests/test_guards.py::test_an_env_file_named_only_in_a_message_does_not_block_the_commit`,
       `::test_the_env_file_check_still_denies_a_staged_or_read_env_file`,
       `::test_checks_that_need_no_reader_do_not_wait_for_it`)
+- [x] a heredoc that a commit message's `cat` pipes to another command is
+      read, and a command substitution inside `${...}` sends its command to
+      the whole string checks, so a commit either runs that skips the hooks
+      is denied (the amendment below on the env file check;
+      `services/api/tests/test_guards.py::test_the_commit_guard_denies_every_proven_bypass`)
 - [ ] All gates green on PR
 
 ## Proof / origin
@@ -929,9 +934,12 @@ here-string and heredoc line it reads, except a commit's message:
 - the value of `-m` or `--message`: the next word, the text attached as in
   `-m"text"` or `--message=text`, or the word after a short cluster that ends
   in `m`, such as `-am`;
-- a heredoc or here-string that is message text by the rule of the amendment
-  on the commit guard: fed to the commit, a heredoc with a quoted delimiter,
-  or read by `cat` inside a command substitution among the commit's words.
+- a heredoc with a quoted delimiter, or a here-string, that `cat` reads
+  inside a command substitution in that value, as in
+  `-m "$(cat <<'EOF' ...)"`, when what `cat` writes is the substitution's
+  output: not piped to another command, and not redirected;
+- a heredoc with a quoted delimiter, or a here-string, fed to a commit that
+  reads its message from stdin by `-F -`, and no pathspec from there.
 
 An env file is what the check matched before: `.env` and the letters,
 digits, `_`, `.` and `-` after it, other than `.env.example`, `.env.sample`
@@ -942,6 +950,29 @@ read as commands, so `-m "$(cat .env)"`, which writes the file into the
 message, is denied. `-F .env.local` and `-F - < .env.local` read a file into
 the message and are denied. A heredoc with an unquoted delimiter is read,
 since the shell expands it. A word after `--` is a path.
+
+**Only the message is message text.** A command substitution anywhere else
+gives a word: the file `-F` reads, a path, the value of another option, the
+target of a redirection, or a file `cat` reads inside a message. So
+`git commit -F "$(cat <<< .env)"` is denied, and so are
+`-F - < "$(cat <<'EOF' ...)"` naming `.env.local`,
+`-m "$(cat "$(cat <<< .env)")"` and `-m "$(cat <<'EOF' | xargs cat ...)"`.
+Under git 2.43 each wrote the env file into the commit message, and the
+first draft of this amendment let each through (review of PR #164). A
+heredoc fed to a commit that reads pathspecs from stdin, by
+`--pathspec-from-file=-`, is a list of paths. The output of a subshell or a
+process substitution is not followed, so a heredoc read there is read for an
+env file. A command substitution inside `${...}` is not read, though the
+shell may run it, so a command that holds one is one the reader cannot read.
+
+**The bypass check uses the same rule.** It skips message text, by the
+amendment on the commit guard. This replaces that amendment's rule, under
+which a heredoc was message text when fed to the commit or read by `cat`
+inside any command substitution among the commit's words. So a heredoc that
+a message's `cat` pipes to `bash` is now read for a `git commit -n`, and a
+command that holds a commit inside `${...}` is checked over the whole
+string. Under git 2.43 each ran a commit that skipped a failing pre-commit
+hook, and the guard let it through with a trailer.
 
 **Where the reader does not decide.** A command whose text holds no `commit`
 is not read, and a command the reader cannot read, or reads as a bypass, is
@@ -957,17 +988,20 @@ not run on, such as `git add .env`, is still checked without it.
 ### What changes
 
 - `.claude/hooks/guard-commit.sh`: the reader reports an env file it reads
-  outside a commit's message, and the `.env` check uses that report for a
-  command the reader read. No file is added.
+  outside a commit's message, which it tells by the rule above for the bypass
+  check too, and the `.env` check uses that report for a command the reader
+  read. No file is added.
 - `services/api/tests/test_guards.py`:
   `::test_an_env_file_named_only_in_a_message_does_not_block_the_commit` runs
   commits whose message names an env file in each form above, each with a
   trailer, and expects them allowed.
   `::test_the_env_file_check_still_denies_a_staged_or_read_env_file` runs
   commands that stage an env file, commit one as a path, or read one into a
-  message, and expects the env file message for each. The test that a check
-  needing no reader does not wait for it checks `git add .env` in place of a
-  commit that names `.env`.
+  message, and expects the env file message for each, the command
+  substitutions above that give a file or a path among them.
+  `::test_the_commit_guard_denies_every_proven_bypass` runs the two bypasses
+  above. The test that a check needing no reader does not wait for it checks
+  `git add .env` in place of a commit that names `.env`.
 
 No new file, so `config/data-classification.json` does not change.
 
@@ -976,8 +1010,9 @@ commit's message is now allowed, where it was denied.
 
 **How to know it worked.**
 `git commit -m "Stop reading .env in tests" -m "Spec: 045"` is allowed.
-`git add .env`, `git commit -m "$(cat .env)" -m "Spec: 045"` and
-`git commit -F .env.local` are denied with the env file message.
+`git add .env`, `git commit -m "$(cat .env)" -m "Spec: 045"`,
+`git commit -F .env.local` and `git commit -F "$(cat <<< .env)"` are denied
+with the env file message.
 
 **Failure modes this must not introduce.** Every env file staged, committed
 or read into a message stays denied, a template stays allowed, and every case
@@ -996,3 +1031,12 @@ in the bypass and ordinary lists keeps its outcome.
   git's global options says.
 - For a commit, the `.env` check now waits for the reader. A reader that never
   returns holds it up, as it already holds up the bypass and trailer checks.
+- Only `cat` is followed into a message. A heredoc that `tr` or `sed` reads
+  there is read, so a message that names an env file through them is denied.
+- A glob the shell expands to an env file, such as `.en?`, is not seen, as
+  before.
+- A command substitution whose output git reads as an option of the commit
+  is not read for a bypass. `git commit "$(cat <<'EOF' ...)"` with `-n` in
+  the heredoc skipped a failing pre-commit hook under git 2.43 and passes
+  the guard, as it did before this amendment. Closing that is its own
+  change.
