@@ -36,6 +36,7 @@ from harrier.apply.claims import (
     check_claims,
     find_placeholders,
     parse_claims,
+    retry_payload,
 )
 from harrier.apply.profile import (
     load_candidate_document,
@@ -415,15 +416,42 @@ def generate_cover_letter(
         extra_notes=extra_notes,
         brief=brief,
     )
+    system_prompt = SYSTEM_PROMPT_BASE + brief_instructions(brief, "letter")
+    output_text = _request_letter(system_prompt, payload)
+    try:
+        return _checked_letter(conn, output_text, company, role, jd_text, brief)
+    except ClaimCheckError as refusal:
+        # One retry that says what failed (spec 085). Parse and transport
+        # failures are not refusals and are not caught here.
+        logger.warning(
+            "cover letter refused on attempt 1, retrying once: %s", "; ".join(refusal.violations)
+        )
+        output_text = _request_letter(system_prompt, retry_payload(payload, refusal, output_text))
+    return _checked_letter(conn, output_text, company, role, jd_text, brief)
+
+
+def _request_letter(system_prompt: str, payload: dict[str, object]) -> str:
     try:
         output_text = generate_text(
-            SYSTEM_PROMPT_BASE + brief_instructions(brief, "letter"),
-            json.dumps(payload, ensure_ascii=False, indent=2),
+            system_prompt, json.dumps(payload, ensure_ascii=False, indent=2)
         )
     except LLMClientError as exc:
         raise RuntimeError(f"AI request failed: {exc}") from exc
     if not output_text.strip():
         raise RuntimeError("AI backend returned an empty response")
+    return output_text
+
+
+def _checked_letter(
+    conn: sqlite3.Connection,
+    output_text: str,
+    company: str,
+    role: str,
+    jd_text: str | None,
+    brief: Brief,
+) -> LetterDraft:
+    """One response parsed and put through every check. Raises
+    `ClaimCheckError` with every violation when it is refused."""
     try:
         parsed = parse_cover_letter_response(output_text)
         claims = parse_cover_letter_claims(output_text)
