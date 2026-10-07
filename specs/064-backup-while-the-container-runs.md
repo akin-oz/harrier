@@ -179,10 +179,16 @@ applied to spec 051 in the same change.
       By hand, transcript in the pull request with identity values redacted.
 - [x] `HARRIER_BACKUP_DIR` pointing at a directory that cannot be created makes
       `harrier backup` exit 1 with the one-line `backup failed: cannot create
-      backup directory ...` message and no traceback. Proved by a new test in
-      `services/api/tests/test_backup.py` that runs the CLI entry point with
-      the directory under a read-only parent. The test fails on today's code,
-      which raises `PermissionError`.
+      backup directory ...` message and no traceback. Proved by
+      `services/api/tests/test_backup.py::test_an_uncreatable_backup_directory_fails_with_one_line`,
+      which runs the CLI entry point with the `mkdir` of that directory
+      refused with `PermissionError`. The test fails on today's code, which
+      raises `PermissionError`.
+
+      **Amended 2026-10-06.** As approved, the test refused the `mkdir` with a
+      read-only parent. Root ignores directory modes, so the test skipped as
+      root and this criterion went unproved there. It now refuses the call
+      itself, as root and as any other user.
 - [x] The same failure leaves no partial archive and prunes nothing. Same test.
 - [ ] Spec 061's class table text is amended as stated above, in the same
       change. Open: spec 061 is not yet in git, so the amendment is applied
