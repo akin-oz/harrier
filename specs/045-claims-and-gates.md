@@ -188,6 +188,33 @@ spec 044.
       prove it (the amendment below on API auth;
       `services/api/tests/test_api_exposure.py::test_a_state_changing_request_without_the_token_is_refused`,
       `::test_a_request_with_a_foreign_host_is_refused`)
+- [x] an `-n` that belongs to another command in the same chain, or to
+      commit message text, is allowed, while `git commit -n`,
+      `git commit -nm "..."`, `--no-verify`, and
+      `git -c core.hooksPath=... commit` stay denied (the amendment below on
+      the commit guard;
+      `services/api/tests/test_guards.py::test_an_n_outside_the_commit_does_not_block_it`,
+      `::test_the_commit_guard_denies_every_proven_bypass`)
+- [x] a commit whose subcommand follows git global options (`-C <path>`,
+      `-c <k=v>`, `--no-pager`, `--git-dir`, `--work-tree`, `-P`, `-p`), or
+      whose `commit` is quoted, is checked like an adjacent one (the
+      amendment below on git's global options;
+      `services/api/tests/test_guards.py::test_the_commit_guard_denies_every_proven_bypass`,
+      `::test_the_commit_guard_allows_ordinary_work`,
+      `::test_a_commit_after_global_options_still_requires_a_spec_trailer`,
+      `::test_the_reuse_exemption_reads_only_the_commits_own_words`)
+- [x] the commit guard's time grows with a run of git global options rather
+      than exponentially, the hooksPath, git dir and `.env` checks that need
+      no reader run before it, `git --help commit` and the other options
+      after which git runs no subcommand are not commits, and a `-C` that git
+      reads as a value or a path does not exempt a commit from its trailer
+      (the amendment below after review of PR #158;
+      `services/api/tests/test_guards.py::test_the_commit_guard_denies_every_proven_bypass`,
+      `::test_the_commit_guard_allows_ordinary_work`,
+      `::test_the_reuse_exemption_reads_only_the_commits_own_words`,
+      `::test_a_run_of_global_options_costs_time_in_proportion_to_its_length`,
+      `::test_checks_that_need_no_reader_do_not_wait_for_it`,
+      `::test_no_subcommand_runs_after_a_help_or_query_option`)
 - [ ] All gates green on PR
 
 ## Proof / origin
@@ -514,3 +541,366 @@ passes over every committed spec, so each test the correction cites exists.
 - Nothing reads `docs/architecture.md` or a spec's prose against the code,
   so either can go stale again without a failure, the way these two did
   after spec 035.
+
+## Amendment (2026-10-06): the commit guard reads only the commit's words
+
+`guard-commit.sh` looks for a hook bypass anywhere in the command string. An
+`-n` that belongs to another command, or that sits in the commit message,
+counts. So a chain with `sed -n`, `grep -n`, `head -n`, `echo -n`,
+`git log -n 3` or `find -name` beside the commit is denied. On 2026-10-06 it
+denied this ordinary commit for PR #148:
+
+```text
+sed -n 1,6p specs/045-claims-and-gates.md && git add specs/045-claims-and-gates.md && git commit -q -F - <<'EOF'
+...
+Spec: 045
+EOF
+```
+
+That is the failure mode this spec says a guard change must not introduce.
+The same string match misses forms that git reads as `-n`. Each of these
+skipped a failing pre-commit hook under git 2.43 in a throwaway repository,
+and passed the guard with a trailer:
+
+```text
+git commit "-n" ...         git commit -nm"a b" ...
+git commit ... -n;          git commit --no-veri ...
+(git commit ... -n)         x=$(git commit ... -n)
+```
+
+### What the guard reads
+
+**The words of each git commit.** The check reads the words after
+`git commit` to the end of that command, as the shell passes them to git:
+quotes removed, ending at an unquoted `;`, `&`, `|` or newline, or at the
+close of the subshell or command substitution that holds the commit. A
+command substitution or a redirection among the words does not end them.
+Commands inside a subshell or a command substitution are read the same way.
+
+**A word git reads as skipping the hooks denies.** That is `--no-verify`, an
+abbreviation of it that git accepts (`--no-veri`, `--no-verif`), or a short
+option cluster with an `n` before the first option that takes a value. So
+`-n`, `-an`, `-nm "..."` and `-nm"..."` deny, and `-am "..."` and `-m"note"`
+do not.
+
+**Other commands' options and message text are not read.** An option of
+another command in the chain, such as `sed -n`, is not read, unless that
+command also receives `git commit` in its text (below). Nor is a heredoc
+with a quoted delimiter that gives the commit its message: one read by git
+commit itself, as in `-F - <<'EOF'`, or one read by `cat` inside a command
+substitution among the commit's words, as in `-m "$(cat <<'EOF' ...)"`. A
+message given with `-m` is one word, so text inside it, such as
+`fix sed -n`, does not read as an option.
+
+**Text another command may run is checked as before.** When a word, a
+heredoc or a here-string that another command receives contains
+`git commit`, that text and the command's own words go through the old
+whole-string pattern together, because the text may run with those words as
+arguments. So `bash -c "git commit -n ..."`, a heredoc fed to `bash`, and
+`bash -c 'git commit "$@"' _ -n` stay denied. A commit whose words hold
+`"$@"` or another positional parameter takes them from elsewhere in the
+string, as a function that runs `git commit "$@"` does, so the whole string
+goes through the old pattern. So does a command the guard cannot read, such
+as one with an unclosed quote.
+
+The hooksPath and git dir check, the trailer check, and the test for whether
+a command commits at all still read the whole string. The trailer sits in
+the heredoc, so it has to.
+
+### What changes
+
+- `.claude/hooks/guard-commit.sh`: the `-n` check reads words as above. The
+  reader is POSIX awk inside the script, so no file is added.
+- `services/api/tests/test_guards.py`: the forms above join the bypass list,
+  with the nested and argument-passing forms that must stay denied. A new
+  test, `test_an_n_outside_the_commit_does_not_block_it`, runs the chains and
+  message texts above, the PR #148 command first.
+
+No new file, so `config/data-classification.json` does not change.
+
+**Output.** Unchanged: exit 2 and the same message on a bypass, exit 0
+otherwise.
+
+**How to know it worked.** The PR #148 command passes the guard, and every
+case in the bypass list is denied. Run against the guard before this change,
+the new test fails on every case.
+
+**Failure modes this must not introduce.** A bypass the old pattern denied
+that the new check allows. Every case already in the bypass list stays
+denied, and so does `-n` on a commit inside a subshell, a command
+substitution, `bash -c "..."` or a heredoc a shell reads, and `-n` handed as
+an argument to such text or to a function that runs `git commit "$@"`.
+
+### Limitations
+
+- The guard reads text. A commit whose words are built at run time, from a
+  variable, `eval` or a script file, is not read, as before.
+- A command commits only when `git` and `commit` are adjacent, as before, so
+  `git -C dir commit -n` is not checked at all. Closing that is its own
+  change.
+- A command that receives text holding `git commit` is still checked whole
+  with its words. So `echo "git commit -n"` and `grep -n "git commit" file`
+  in a chain with a commit stay denied. A message that mentions `git commit`
+  is still checked by the old pattern when it reaches git through a pipe or
+  through a heredoc with an unquoted delimiter, so an `-n` in it can deny the
+  commit.
+- A commit whose words hold `"$@"`, `$1` or the like is checked whole, so
+  `git commit -m "$1"` chained beside a `sed -n` stays denied.
+- A word after `--`, or an `-m` value that starts with a dash and an `n`, is
+  denied, though git reads it as a path or as message text.
+
+## Amendment (2026-10-06): the commit guard reads git's global options
+
+The second limitation of the amendment "the commit guard reads only the
+commit's words" is this amendment. `guard-commit.sh` decides whether a command
+commits at all with `COMMITS`, a pattern that needs `git` and `commit` side by
+side on one line. A git global option between them, or a quote around either
+word, hides the commit, and then no check runs. Each of these skipped a
+failing pre-commit hook under git 2.43 in a throwaway repository, and the
+guard at e7696e9 (PR #151) allowed each with a trailer:
+
+```text
+git -C . commit -n ...               git -c user.name=x commit -n ...
+git --no-pager commit -n ...         git --work-tree . commit -n ...
+git -P commit -n ...                 git -p commit -n ...
+git "commit" -n ...                  "git" commit -n ...
+bash -c "git -C . commit -n ..."
+```
+
+So did `git \` with `commit -n ...` on the next line. The same guard allowed
+`git -C . commit -m "x"`, which has no trailer, and
+`git -C . commit -m "x" .env -m "Spec: 045"`. `--git-dir` is denied wherever
+it appears, so `git --git-dir .git commit -n ...` was denied already.
+
+### What the guard reads
+
+**The subcommand.** In each command the reader reads, the subcommand is the
+first word after `git`, or after a word that ends in `/git`, that is neither
+a global option nor the value of one. A global option is a word that starts
+with `-`. Eight take the next word as their value, as git 2.43 reads them:
+`-C`, `-c`, `--git-dir`, `--work-tree`, `--namespace`, `--config-env`,
+`--attr-source` and `--shallow-file`. Written as one word with `=`, as in
+`--work-tree=.`, an option takes no further word. Words are read as the shell
+passes them, so `git "commit"`, `"git" commit` and a line continuation
+between the two give the subcommand `commit`. The words after it are then the
+commit's words, checked as the amendment on the commit guard says. The global
+options are not among them.
+
+**What counts as a commit.** A command commits when the whole string matches
+`COMMITS`, as before, when the reader reads a commit in it as above, or when
+text another command receives holds one. Text is not read word by word, so it
+is matched with a pattern that allows global options, and the values of the
+eight above, between `git` and a `commit` that may be quoted. A command the
+reader cannot read is matched whole with the same pattern. The reader runs on
+any command whose text holds `commit`. A command that commits gets every check
+an adjacent `git commit` gets: the `.env` check, the bypass check and the
+trailer check.
+
+**The `-C` exemption reads the commit's own words.** The trailer check exempts
+`-C <commit>`, which reuses a message that already carries its trailer. It
+matches `-C` between spaces anywhere in the string, which cannot tell the
+global `-C <path>` from it, so every commit made with `git -C` would skip the
+trailer check. It now holds only when `-C` is one of the commit's own words.
+So a `-C` in another command or in message text no longer exempts a commit.
+Before this change, `git commit -m "pass -C to tar"` and
+`tar -C /tmp -cf /dev/null . && git commit -m "x"` passed with no trailer.
+`--amend --no-edit` is still matched in the whole string.
+
+The hooksPath and git dir check still reads the whole string, as before.
+
+### What changes
+
+- `.claude/hooks/guard-commit.sh`: the reader finds the subcommand as above,
+  and reports a commit it reads and a `-C` among a commit's words. The gate,
+  the `.env` check and the `-C` exemption use what it reports. No file is
+  added.
+- `services/api/tests/test_guards.py`: the forms above join `BYPASSES`, each
+  with a valid trailer, so a deny proves the bypass check and not the trailer
+  check. `git -C dir commit -m "..." -m "Spec: 045"`,
+  `git -C dir commit -C HEAD`, `git -C dir log -n 3` and
+  `git -c commit.gpgsign=false log -n 3` join `ORDINARY`. The `.env` test
+  gains `git -C . commit ... .env`. Two new tests,
+  `test_a_commit_after_global_options_still_requires_a_spec_trailer` and
+  `test_the_reuse_exemption_reads_only_the_commits_own_words`, run commits
+  with no trailer: after global options, and with a `-C` outside the commit's
+  own words.
+
+No new file, so `config/data-classification.json` does not change.
+
+**Output.** Unchanged: exit 2 and the same messages on a deny, exit 0
+otherwise. A commit after global options that also names a `.env` path now
+gets the `.env` message, since that check applies to it and runs first.
+
+**How to know it worked.** Every form above is denied, and the guard at
+e7696e9 allows each new one. `git -C dir commit -m "..."` with no trailer is
+denied. `git -C dir commit -m "..." -m "Spec: 045"`,
+`git -C dir commit -C HEAD` and `git -C dir log -n 3` are allowed.
+
+**Failure modes this must not introduce.** A git command whose subcommand is
+not `commit` is not checked, whatever options precede it, so
+`git -C dir log -n 3` stays allowed, and so does
+`git -c commit.gpgsign=false log -n 3`, whose text holds `commit` and so
+goes through the reader. Every case already in the bypass list stays denied,
+and every ordinary case stays allowed.
+
+### Limitations
+
+- An alias is not read as a commit. `git -c alias.ci=commit ci -n ...`
+  skipped the hook and passed the guard here, and an alias set in git config
+  would too.
+- The hooksPath and git dir check matches `-c core.hooksPath` only as
+  written. A lowercase key, a quoted value, `--config-env`, and the
+  `GIT_CONFIG_COUNT` or `GIT_CONFIG_PARAMETERS` environment each skipped the
+  hook and passed the guard here. Closing that is its own change.
+- `git -C dir add .env` still passes the `.env` check, whose test for
+  `git add` needs the two words side by side.
+- The options that take a value are git 2.43's. An option that another git
+  version reads with a value is read here as taking none.
+- The reader runs only on a command whose text holds `commit`, so a
+  subcommand with a quote or a backslash inside the word, such as
+  `co"mm"it`, is not read.
+- A commit in text another command receives is matched, not read, so `-C`
+  never exempts it: `bash -c "git commit -C HEAD"` now needs a trailer. A
+  command the reader cannot read keeps the whole-string `-C` exemption, so a
+  global `-C` still exempts it.
+- Text that only mentions a commit after global options now counts as one,
+  as text that mentions `git commit` already did. So a heredoc written to a
+  file that names `git -C . commit` needs a trailer, and
+  `echo "git -C . commit -n"` is denied.
+
+## Amendment (2026-10-07): the commit guard after review of PR #158
+
+A review of PR #158, run after it merged as 045968c, found five behaviors that
+PR introduced. Each reproduced against the guard before and after it, under
+mawk, gawk and original-awk.
+
+Two contradict this spec as written, so fixing them needs no new text:
+
+- `git commit -m "Fix the parser" -m "-C"` passes with no trailer. The
+  amendment on git's global options says a `-C` in message text no longer
+  exempts a commit.
+- `git --work-tree commit log -n 1` is denied as a bypass. `--work-tree`
+  takes `commit` as its value, so the subcommand is `log`, and that
+  amendment says such a command is not checked.
+
+Three were never written down, and this amendment states them:
+
+- Under mawk, the pattern for a commit after global options takes time that
+  grows exponentially with a run of options such as `--work-tree`, because it
+  can read each one with or without a value. With 24, 26 and 28 of them
+  before `status`, the guard took 0.18, 0.42 and 1.07 s, against 0.02 s
+  before PR #158. The review measured 7.3 s at 32, and more than 65 s at 38
+  with a hook bypass chained after them. A guard that does not finish cannot
+  deny.
+- Until PR #158, the hooksPath and git dir check, and the `.env` check, ran
+  before any parsing. They now wait for the reader, though neither needs it
+  for the commands it matched before.
+- `--help`, `-h`, `--version` and `-v` read as options that take no value, so
+  `git --help commit` counts as a commit and needs a trailer.
+
+### What the guard reads
+
+**Text is read a word at a time.** Text another command receives, and a
+heredoc body that is not message text, is checked for a commit line by line
+and word by word, the way the reader reads a command. A line holds a commit
+when it has `git`, at its start or after a character that is not a letter, a
+digit or `_`, then blanks, then global options, then a `commit` that may be
+quoted. A word is a run of characters other than blanks and quotes, and of
+quoted runs. Each of the eight options that take a value always takes the
+next word. So each option is read one way, and the time grows with the line
+rather than with the ways to read it. This replaces the pattern that the
+amendment on git's global options matches text with. A command the reader
+cannot read is still matched with that pattern (see Limitations).
+
+**After some options no subcommand runs.** Under git 2.43, `--help` and `-h`
+run help, and `--version` and `-v` run version, in place of any subcommand
+written after them. `--exec-path` without `=`, `--html-path`, `--man-path`,
+`--info-path` and `--list-cmds=<group>` print and exit. In a throwaway
+repository with a staged change, git made no commit with any of these before
+`commit -m x`, and made one with `--exec-path=<dir>`, `-p` or `--no-pager`.
+After any of the nine, no later word of that git command is its subcommand,
+whether the reader reads the command or it is text. So `git --help commit` is
+not a commit.
+
+**A `-C` exempts a commit only where git reads it as an option.** The word
+after an option of git commit that takes a value is that value. Those options
+are `-m`, `-F`, `-c`, `-C` and `-t`, a short cluster that ends in one of
+them, and a long option that takes a value, written without `=` and perhaps
+shortened: `--author`, `--cleanup`, `--date`, `--file`, `--fixup`,
+`--message`, `--pathspec-from-file`, `--reedit-message`, `--reuse-message`,
+`--squash`, `--template` and `--trailer`. A word after `--` is a path. Neither
+a value nor a path is the `-C` that reuses a message. The bypass check reads
+the same words as before.
+
+**Checks that need no reader run before it.** The hooksPath and git dir check,
+and the `.env` check for `git add` or `git commit` side by side, run before the
+reader, as they did before PR #158. The `.env` check for a commit that only the
+reader sees still runs after it, and before the bypass and trailer checks.
+
+### What changes
+
+- `.claude/hooks/guard-commit.sh`: text and heredoc bodies are read as above,
+  the reader and the text reading stop at the nine options above, the `-C`
+  exemption skips values and paths, and the hooksPath check and the side by
+  side `.env` check move ahead of the reader. No file is added.
+- `services/api/tests/test_guards.py`: `git --work-tree commit log -n 1`, alone
+  and inside `bash -c`, joins `ORDINARY`. The reuse test gains a `-C` given as
+  the value of `-m` and of `-F`, and one after `--`. The global options trailer
+  test gains `git --exec-path=<dir> commit` with no trailer. Three new tests:
+  `::test_no_subcommand_runs_after_a_help_or_query_option` puts each of the
+  nine options before `commit` with no trailer and expects it allowed;
+  `::test_a_run_of_global_options_costs_time_in_proportion_to_its_length` runs
+  4 and then 40 `--work-tree` options before `status; git commit -n ...` under
+  mawk where it exists, expects both denied, and the second to take less than
+  ten times as long; `::test_checks_that_need_no_reader_do_not_wait_for_it`
+  puts an `awk` that never returns in time first on the PATH and expects a
+  hooksPath redirect and a `.env` commit to be denied within seconds.
+  `BYPASSES` gains two cases inside `bash -c` that pin how text is read: a
+  `-c` value quoted with a blank in it, and a commit inside a quoted alias
+  value, `git -c alias.x='!git commit -n -q' x ...`. A reading that skipped a
+  `git` inside a word another reading had passed over would miss the second,
+  which the pattern caught. Each skipped a failing pre-commit hook under git
+  2.43.
+
+No new file, so `config/data-classification.json` does not change.
+
+**Output.** Unchanged: exit 2 and the same messages on a deny, exit 0
+otherwise. A command that both redirects hooksPath and names a `.env` path in
+a commit after global options now gets the hooksPath message, since that check
+runs first.
+
+**How to know it worked.** `git commit -m "Fix the parser" -m "-C"` is denied
+for its missing trailer. `git --work-tree commit log -n 1` and
+`git --help commit` are allowed. Under mawk, 40 `--work-tree` options take
+about as long as 4, and a bypass after them is denied. With an awk that never
+returns, a hooksPath redirect and a `.env` commit are still denied.
+
+**Failure modes this must not introduce.** Every case already in the bypass
+list stays denied, and every ordinary case stays allowed. `git -p commit`,
+`git --no-pager commit` and `git --exec-path=<dir> commit` still count as
+commits. `git -C dir commit -C HEAD` is still exempt from the trailer check.
+
+### Limitations
+
+- A command the reader cannot read is still matched whole with the pattern,
+  through grep. That pattern can still read `--work-tree` without a value, so
+  it counts `git --work-tree commit log` as a commit, which only denies more.
+  GNU grep 3.11 read 4000 `--work-tree` options with it in 0.06 s. macOS grep
+  was not measured.
+- Under original-awk, the codebase macOS awk comes from, the reader still
+  takes time that grows faster than one long line it reads, as it did before
+  PR #158. One line of 4000 `--work-tree` options before a commit took between
+  9.7 and 14.8 s in four runs, before this change and after it, against under
+  0.4 s in mawk and gawk. Text, read as above, took 0.14 s for 4000 options in
+  original-awk.
+- The review found five gaps that were there before PR #158. This amendment
+  leaves them, and each passed the guard both before and after that PR. An fd
+  number between `git` and `commit`, as in
+  `git -C . 2>/dev/null commit -n ...`, is read as the subcommand. A quoted
+  `"git"`, or a line continuation between `git` and `commit`, hides a commit
+  in text another command runs, as in `bash -c '"git" commit -n ...'`. git's
+  own path to the command, `/usr/lib/git-core/git-commit -n ...`, is not read
+  as git. One `-C` exempts every commit in the command, as in
+  `git commit -C HEAD && git -C . commit -m "x"`. `--amend --no-edit` is
+  matched anywhere in the string, so
+  `git commit -m "Explain --amend --no-edit"` needs no trailer.

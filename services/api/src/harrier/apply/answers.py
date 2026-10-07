@@ -32,6 +32,7 @@ from harrier.apply.claims import (
     banned_hits,
     check_claims,
     parse_claims,
+    retry_payload,
 )
 from harrier.apply.profile import (
     build_question_guidance,
@@ -442,37 +443,17 @@ def parse_answers_response(text: str) -> list[dict[str, object]]:
     return normalized
 
 
-def generate_ai_answers(
-    conn: sqlite3.Connection,
-    company: str,
-    role: str,
-    questions: list[str],
-    job_url: str | None = None,
-    tracker_row: dict[str, str] | None = None,
-    jd_text: str | None = None,
-    brief: Brief = EMPTY_BRIEF,
-) -> list[dict[str, object]]:
-    payload = build_answers_payload(
-        conn,
-        company,
-        role,
-        questions,
-        job_url=job_url,
-        tracker_row=tracker_row,
-        jd_text=jd_text,
-        brief=brief,
-    )
-    prompt = (
-        SYSTEM_PROMPT_BASE
-        + style_guidance_prompt(load_profile_json(conn))
-        + brief_instructions(brief, "answers")
-    )
+def request_answers(prompt: str, payload: dict[str, object]) -> str:
     try:
         output_text = generate_text(prompt, json.dumps(payload, ensure_ascii=False, indent=2))
     except LLMClientError as exc:
         raise RuntimeError(f"AI request failed: {exc}") from exc
     if not output_text.strip():
         raise RuntimeError("AI backend returned an empty response")
+    return output_text
+
+
+def parse_generated_answers(output_text: str) -> list[dict[str, object]]:
     try:
         return parse_answers_response(output_text)
     except (ValueError, json.JSONDecodeError) as exc:
@@ -552,7 +533,7 @@ def generate_answer_set(
     if not model_questions:
         return [built[index] for index in range(len(questions))]
 
-    generated = generate_ai_answers(
+    payload = build_answers_payload(
         conn,
         company,
         role,
@@ -562,6 +543,41 @@ def generate_answer_set(
         jd_text=jd_text,
         brief=brief,
     )
+    prompt = (
+        SYSTEM_PROMPT_BASE
+        + style_guidance_prompt(load_profile_json(conn))
+        + brief_instructions(brief, "answers")
+    )
+    output_text = request_answers(prompt, payload)
+    try:
+        drafts = _checked_answers(conn, output_text, company, role, model_questions, jd_text, brief)
+    except ClaimCheckError as refusal:
+        # One retry that says what failed (spec 085). The whole set is asked
+        # for again, because a violation does not say which answer it is from.
+        logger.warning(
+            "answers refused on attempt 1, retrying once: %s", "; ".join(refusal.violations)
+        )
+        output_text = request_answers(prompt, retry_payload(payload, refusal, output_text))
+        drafts = _checked_answers(conn, output_text, company, role, model_questions, jd_text, brief)
+
+    model_drafts = iter(drafts)
+    return [
+        built[index] if index in built else next(model_drafts) for index in range(len(questions))
+    ]
+
+
+def _checked_answers(
+    conn: sqlite3.Connection,
+    output_text: str,
+    company: str,
+    role: str,
+    model_questions: list[str],
+    jd_text: str | None,
+    brief: Brief,
+) -> list[AnswerDraft]:
+    """One response parsed and put through every check. Raises
+    `ClaimCheckError` with every violation when it is refused."""
+    generated = parse_generated_answers(output_text)
     # Model answers are placed back by position among the questions sent, so
     # the count has to match or an answer would land under the wrong question.
     if len(generated) != len(model_questions):
@@ -614,11 +630,7 @@ def generate_answer_set(
         violations.extend(check_claims(texts, draft.claims, context))
     if violations:
         raise ClaimCheckError(list(dict.fromkeys(violations)))
-
-    model_drafts = iter(drafts)
-    return [
-        built[index] if index in built else next(model_drafts) for index in range(len(questions))
-    ]
+    return drafts
 
 
 def render_markdown(
