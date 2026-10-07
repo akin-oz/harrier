@@ -749,3 +749,159 @@ def test_the_floor_holds_with_a_negative_contribution(
     blocked = _job("Senior Frontend Engineer", "Remote, Europe", f"{text} W-2 only.")
     assert rules.score_job(blocked, penalized)[0] < low
     assert rules.blocker_penalty(penalized) == high - low + 1
+
+
+# --- US payroll benefits are a blocker (spec 088) ----------------------------------
+
+_BENEFITS = (
+    "Benefits\n"
+    "- Remote work environment\n"
+    "- Subsidized medical, dental, and vision insurance\n"
+    "- Short- and long-term disability coverage\n"
+    "- 401(k) plan\n"
+    "- Company retreats\n"
+)
+
+
+def _kinds(location: str, description: str) -> list[str]:
+    return [kind for kind, _ in rules.blockers(_job("Frontend Engineer", location, description))]
+
+
+def test_a_401k_posting_relayed_as_worldwide_ranks_last(cfg: dict[str, object]) -> None:
+    """The case behind spec 088, rebuilt from invented text: an aggregator
+    relays a US consultancy's posting as worldwide and remote, and the only
+    sign that it is US payroll is the benefit list."""
+    with_plan = _job("Senior Frontend Engineer", "Worldwide", f"{_SKILLS}\n{_BENEFITS}")
+    no_plan = _BENEFITS.replace("- 401(k) plan\n", "")
+    without = _job("Senior Frontend Engineer", "Worldwide", f"{_SKILLS}\n{no_plan}")
+
+    with_score, with_reasons = rules.score_job(with_plan, cfg)
+    without_score, without_reasons = rules.score_job(without, cfg)
+
+    assert with_score < without_score
+    assert 'blocker=us_payroll "401(k)"' in with_reasons
+    assert not [reason for reason in without_reasons if reason.startswith("blocker=")]
+
+
+@pytest.mark.parametrize(
+    "benefit",
+    [
+        "401(k) plan",
+        "401k with a match",
+        "401 k matching",
+        "401 (k) plan",
+        "403(b) plan",
+        "403b plan",
+        "403 b plan",
+        "403 (b) plan",
+        "Health savings account",
+        "Health savings accounts with an employer contribution",
+    ],
+)
+def test_every_us_payroll_spelling_fires(benefit: str) -> None:
+    assert _kinds("Remote", f"{_SKILLS}\nBenefits:\n- {benefit}\n") == ["us_payroll"]
+
+
+def test_an_explicit_emea_location_overrides_us_payroll() -> None:
+    description = f"{_SKILLS}\n{_BENEFITS}"
+    assert _kinds("Remote, EMEA", description) == []
+    assert _kinds("Remote, Europe", description) == []
+    assert _kinds("Worldwide", description) == ["us_payroll"]
+    assert _kinds("Remote", description) == ["us_payroll"]
+
+
+@pytest.mark.parametrize(
+    "benefit",
+    [
+        "401k (US employees)",
+        "401(k) for US-based staff",
+        "US: 401(k) match",
+        "401(k) for U.S. employees, pension elsewhere",
+        "Health savings account (United States staff)",
+    ],
+)
+def test_a_us_qualified_benefit_is_not_a_blocker(benefit: str) -> None:
+    """A benefit labelled as US staff's says other regions exist."""
+    assert _kinds("Remote", f"{_SKILLS}\nBenefits:\n- Stock options\n- {benefit}\n") == []
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "Offices in the US.\n- 401(k) plan\n",
+        "We are a US consultancy; 401(k) plan included.",
+        "Our clients are US banks. 401(k) plan included.",
+        # Lower case "us" is the pronoun, not a label.
+        "Grow with us: 401(k) plan with us matching 4%.",
+    ],
+)
+def test_a_us_word_in_another_list_item_qualifies_nothing(description: str) -> None:
+    assert _kinds("Remote", f"{_SKILLS} {description}") == ["us_payroll"]
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "Salary: $350k to $401k.",
+        "Base pay USD 401k.",
+        "Salary between 350k and 401k.",
+        "Compensation 350k-401k depending on level.",
+        "Compensation 401k to 450k depending on level.",
+        "Order 1401k units.",
+    ],
+)
+def test_a_salary_is_not_a_401k(description: str) -> None:
+    assert _kinds("Remote", f"{_SKILLS} {description}") == []
+
+
+@pytest.mark.parametrize(
+    ("description", "expected"),
+    [
+        ("Fully remote, work from anywhere.", []),
+        ("Hire from any country we can contract in.", []),
+        ("Our team is globally distributed.", []),
+        # Also US scope's own "anywhere in the US".
+        ("Work from anywhere in the US.", ["us_scope", "us_payroll"]),
+    ],
+)
+def test_a_reach_phrase_overrides_us_payroll(description: str, expected: list[str]) -> None:
+    """A US company that says the role can be worked from anywhere also hires
+    abroad, and lists its US benefits without labelling them. The read-only
+    check before spec 088 found this on a posting the candidate could take."""
+    assert _kinds("Remote", f"{_SKILLS} {description}\n{_BENEFITS}") == expected
+
+
+@pytest.mark.parametrize(
+    "description",
+    ["Trusted by teams worldwide.", "Loved by customers around the world.", "A global brand."],
+)
+def test_a_customer_reach_is_not_a_hiring_reach(description: str) -> None:
+    assert _kinds("Remote", f"{_SKILLS} {description}\n{_BENEFITS}") == ["us_payroll"]
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "Subsidized medical, dental, and vision insurance.",
+        "Short- and long-term disability coverage.",
+        "Life insurance paid by the company.",
+        "Salary range: $105,000 to $125,000 USD.",
+        "Four on-site visits per year to our client in Atlanta, GA.",
+        "Candidates in the Atlanta area will be given priority.",
+    ],
+)
+def test_benefits_offered_outside_the_us_are_not_blockers(description: str) -> None:
+    assert _kinds("Remote", f"{_SKILLS} {description}") == []
+
+
+def test_us_payroll_and_employment_take_one_penalty(cfg: dict[str, object]) -> None:
+    both = _job("Frontend Engineer", "Remote", f"W-2 role. {_SKILLS}\n- 401(k) plan\n")
+    unblocked = _job("Frontend Engineer", "Remote", f"Contract role. {_SKILLS}")
+
+    score, reasons = rules.score_job(both, cfg)
+
+    assert [r for r in reasons if r.startswith("blocker=")] == [
+        'blocker=employment "w-2"',
+        'blocker=us_payroll "401(k)"',
+    ]
+    assert rules.score_job(unblocked, cfg)[0] - score == rules.blocker_penalty(cfg)
