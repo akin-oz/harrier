@@ -48,6 +48,31 @@ class NeedsInputError(Exception):
         super().__init__(f"{len(self.placeholders)} placeholder(s) need input: {markdown_path}")
 
 
+RETRY_INSTRUCTION = (
+    "Your previous response was refused by the checks listed in refusals. Return a"
+    " complete new response in the same format that fixes every one of them. Every"
+    " claim sentence must appear word for word in the text."
+)
+
+
+def retry_payload(
+    payload: dict[str, object], refusal: ClaimCheckError, previous_response: str
+) -> dict[str, object]:
+    """The first request's payload with what refused it added (spec 085, R2).
+
+    The refusals and the raw response only quote what the model itself
+    returned, so the retry sends the provider nothing it did not produce.
+    """
+    return {
+        **payload,
+        "retry": {
+            "instruction": RETRY_INSTRUCTION,
+            "refusals": list(refusal.violations),
+            "previous_response": previous_response,
+        },
+    }
+
+
 @dataclass(frozen=True)
 class Claim:
     sentence: str
