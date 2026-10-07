@@ -203,6 +203,35 @@ spec 044.
       `::test_the_commit_guard_allows_ordinary_work`,
       `::test_a_commit_after_global_options_still_requires_a_spec_trailer`,
       `::test_the_reuse_exemption_reads_only_the_commits_own_words`)
+- [x] the commit guard's time grows with a run of git global options rather
+      than exponentially, the hooksPath, git dir and `.env` checks that need
+      no reader run before it, `git --help commit` and the other options
+      after which git runs no subcommand are not commits, and a `-C` that git
+      reads as a value or a path does not exempt a commit from its trailer
+      (the amendment below after review of PR #158;
+      `services/api/tests/test_guards.py::test_the_commit_guard_denies_every_proven_bypass`,
+      `::test_the_commit_guard_allows_ordinary_work`,
+      `::test_the_reuse_exemption_reads_only_the_commits_own_words`,
+      `::test_a_run_of_global_options_costs_time_in_proportion_to_its_length`,
+      `::test_checks_that_need_no_reader_do_not_wait_for_it`,
+      `::test_no_subcommand_runs_after_a_help_or_query_option`)
+- [x] a commit whose message names an env file is allowed, while an env file
+      staged, committed or read into a message stays denied (the amendment
+      below on the env file check;
+      `services/api/tests/test_guards.py::test_an_env_file_named_only_in_a_message_does_not_block_the_commit`,
+      `::test_the_env_file_check_still_denies_a_staged_or_read_env_file`,
+      `::test_checks_that_need_no_reader_do_not_wait_for_it`)
+- [x] a heredoc that a commit message's `cat` pipes to another command is
+      read, and a command substitution inside `${...}` sends its command to
+      the whole string checks, so a commit either runs that skips the hooks
+      is denied (the amendment below on the env file check;
+      `services/api/tests/test_guards.py::test_the_commit_guard_denies_every_proven_bypass`)
+- [x] a command substitution in a word where git reads a commit's options
+      sends the command to the whole string checks, while one in the value
+      of an option or after `--` keeps its outcome (the amendment below on a
+      command substitution among a commit's options;
+      `services/api/tests/test_guards.py::test_the_commit_guard_denies_every_proven_bypass`,
+      `::test_the_commit_guard_allows_ordinary_work`)
 - [ ] a name for core.hooksPath, in any case and quoted or not, given by
       `-c`, `--config-env`, `GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_PARAMETERS` or
       a `git config` write, is denied, while other config names and reading
@@ -763,6 +792,344 @@ and every ordinary case stays allowed.
   file that names `git -C . commit` needs a trailer, and
   `echo "git -C . commit -n"` is denied.
 
+## Amendment (2026-10-07): the commit guard after review of PR #158
+
+A review of PR #158, run after it merged as 045968c, found five behaviors that
+PR introduced. Each reproduced against the guard before and after it, under
+mawk, gawk and original-awk.
+
+Two contradict this spec as written, so fixing them needs no new text:
+
+- `git commit -m "Fix the parser" -m "-C"` passes with no trailer. The
+  amendment on git's global options says a `-C` in message text no longer
+  exempts a commit.
+- `git --work-tree commit log -n 1` is denied as a bypass. `--work-tree`
+  takes `commit` as its value, so the subcommand is `log`, and that
+  amendment says such a command is not checked.
+
+Three were never written down, and this amendment states them:
+
+- Under mawk, the pattern for a commit after global options takes time that
+  grows exponentially with a run of options such as `--work-tree`, because it
+  can read each one with or without a value. With 24, 26 and 28 of them
+  before `status`, the guard took 0.18, 0.42 and 1.07 s, against 0.02 s
+  before PR #158. The review measured 7.3 s at 32, and more than 65 s at 38
+  with a hook bypass chained after them. A guard that does not finish cannot
+  deny.
+- Until PR #158, the hooksPath and git dir check, and the `.env` check, ran
+  before any parsing. They now wait for the reader, though neither needs it
+  for the commands it matched before.
+- `--help`, `-h`, `--version` and `-v` read as options that take no value, so
+  `git --help commit` counts as a commit and needs a trailer.
+
+### What the guard reads
+
+**Text is read a word at a time.** Text another command receives, and a
+heredoc body that is not message text, is checked for a commit line by line
+and word by word, the way the reader reads a command. A line holds a commit
+when it has `git`, at its start or after a character that is not a letter, a
+digit or `_`, then blanks, then global options, then a `commit` that may be
+quoted. A word is a run of characters other than blanks and quotes, and of
+quoted runs. Each of the eight options that take a value always takes the
+next word. So each option is read one way, and the time grows with the line
+rather than with the ways to read it. This replaces the pattern that the
+amendment on git's global options matches text with. A command the reader
+cannot read is still matched with that pattern (see Limitations).
+
+**After some options no subcommand runs.** Under git 2.43, `--help` and `-h`
+run help, and `--version` and `-v` run version, in place of any subcommand
+written after them. `--exec-path` without `=`, `--html-path`, `--man-path`,
+`--info-path` and `--list-cmds=<group>` print and exit. In a throwaway
+repository with a staged change, git made no commit with any of these before
+`commit -m x`, and made one with `--exec-path=<dir>`, `-p` or `--no-pager`.
+After any of the nine, no later word of that git command is its subcommand,
+whether the reader reads the command or it is text. So `git --help commit` is
+not a commit.
+
+**A `-C` exempts a commit only where git reads it as an option.** The word
+after an option of git commit that takes a value is that value. Those options
+are `-m`, `-F`, `-c`, `-C` and `-t`, a short cluster that ends in one of
+them, and a long option that takes a value, written without `=` and perhaps
+shortened: `--author`, `--cleanup`, `--date`, `--file`, `--fixup`,
+`--message`, `--pathspec-from-file`, `--reedit-message`, `--reuse-message`,
+`--squash`, `--template` and `--trailer`. A word after `--` is a path. Neither
+a value nor a path is the `-C` that reuses a message. The bypass check reads
+the same words as before.
+
+**Checks that need no reader run before it.** The hooksPath and git dir check,
+and the `.env` check for `git add` or `git commit` side by side, run before the
+reader, as they did before PR #158. The `.env` check for a commit that only the
+reader sees still runs after it, and before the bypass and trailer checks.
+
+### What changes
+
+- `.claude/hooks/guard-commit.sh`: text and heredoc bodies are read as above,
+  the reader and the text reading stop at the nine options above, the `-C`
+  exemption skips values and paths, and the hooksPath check and the side by
+  side `.env` check move ahead of the reader. No file is added.
+- `services/api/tests/test_guards.py`: `git --work-tree commit log -n 1`, alone
+  and inside `bash -c`, joins `ORDINARY`. The reuse test gains a `-C` given as
+  the value of `-m` and of `-F`, and one after `--`. The global options trailer
+  test gains `git --exec-path=<dir> commit` with no trailer. Three new tests:
+  `::test_no_subcommand_runs_after_a_help_or_query_option` puts each of the
+  nine options before `commit` with no trailer and expects it allowed;
+  `::test_a_run_of_global_options_costs_time_in_proportion_to_its_length` runs
+  4 and then 40 `--work-tree` options before `status; git commit -n ...` under
+  mawk where it exists, expects both denied, and the second to take less than
+  ten times as long; `::test_checks_that_need_no_reader_do_not_wait_for_it`
+  puts an `awk` that never returns in time first on the PATH and expects a
+  hooksPath redirect and a `.env` commit to be denied within seconds.
+  `BYPASSES` gains two cases inside `bash -c` that pin how text is read: a
+  `-c` value quoted with a blank in it, and a commit inside a quoted alias
+  value, `git -c alias.x='!git commit -n -q' x ...`. A reading that skipped a
+  `git` inside a word another reading had passed over would miss the second,
+  which the pattern caught. Each skipped a failing pre-commit hook under git
+  2.43.
+
+No new file, so `config/data-classification.json` does not change.
+
+**Output.** Unchanged: exit 2 and the same messages on a deny, exit 0
+otherwise. A command that both redirects hooksPath and names a `.env` path in
+a commit after global options now gets the hooksPath message, since that check
+runs first.
+
+**How to know it worked.** `git commit -m "Fix the parser" -m "-C"` is denied
+for its missing trailer. `git --work-tree commit log -n 1` and
+`git --help commit` are allowed. Under mawk, 40 `--work-tree` options take
+about as long as 4, and a bypass after them is denied. With an awk that never
+returns, a hooksPath redirect and a `.env` commit are still denied.
+
+**Failure modes this must not introduce.** Every case already in the bypass
+list stays denied, and every ordinary case stays allowed. `git -p commit`,
+`git --no-pager commit` and `git --exec-path=<dir> commit` still count as
+commits. `git -C dir commit -C HEAD` is still exempt from the trailer check.
+
+### Limitations
+
+- A command the reader cannot read is still matched whole with the pattern,
+  through grep. That pattern can still read `--work-tree` without a value, so
+  it counts `git --work-tree commit log` as a commit, which only denies more.
+  GNU grep 3.11 read 4000 `--work-tree` options with it in 0.06 s. macOS grep
+  was not measured.
+- Under original-awk, the codebase macOS awk comes from, the reader still
+  takes time that grows faster than one long line it reads, as it did before
+  PR #158. One line of 4000 `--work-tree` options before a commit took between
+  9.7 and 14.8 s in four runs, before this change and after it, against under
+  0.4 s in mawk and gawk. Text, read as above, took 0.14 s for 4000 options in
+  original-awk.
+- The review found five gaps that were there before PR #158. This amendment
+  leaves them, and each passed the guard both before and after that PR. An fd
+  number between `git` and `commit`, as in
+  `git -C . 2>/dev/null commit -n ...`, is read as the subcommand. A quoted
+  `"git"`, or a line continuation between `git` and `commit`, hides a commit
+  in text another command runs, as in `bash -c '"git" commit -n ...'`. git's
+  own path to the command, `/usr/lib/git-core/git-commit -n ...`, is not read
+  as git. One `-C` exempts every commit in the command, as in
+  `git commit -C HEAD && git -C . commit -m "x"`. `--amend --no-edit` is
+  matched anywhere in the string, so
+  `git commit -m "Explain --amend --no-edit"` needs no trailer.
+
+## Amendment (2026-10-07): the env file check reads past a commit's message
+
+The `.env` check denies a command that runs `git add` or `git commit` when its
+text names an env file anywhere, the commit message included. So
+`git commit -m "Stop reading .env in tests" -m "Spec: 045"` is denied, and the
+commit of the amendment after review of PR #158 was denied the same way until
+its message was reworded. `docs/privacy-plan.md` says the guard refuses to
+stage or commit `.env*` files. A message that names one does neither.
+
+### What the guard reads
+
+**A commit's message is not read for an env file.** In a command the reader
+reads, an env file is looked for in every word, redirection target,
+here-string and heredoc line it reads, except a commit's message:
+
+- the value of `-m` or `--message`: the next word, the text attached as in
+  `-m"text"` or `--message=text`, or the word after a short cluster that ends
+  in `m`, such as `-am`;
+- a heredoc with a quoted delimiter, or a here-string, that `cat` reads
+  inside a command substitution in that value, as in
+  `-m "$(cat <<'EOF' ...)"`, when what `cat` writes is the substitution's
+  output: not piped to another command, and not redirected;
+- a heredoc with a quoted delimiter, or a here-string, fed to a commit that
+  reads its message from stdin by `-F -`, and no pathspec from there.
+
+An env file is what the check matched before: `.env` and the letters,
+digits, `_`, `.` and `-` after it, other than `.env.example`, `.env.sample`
+and `.env.template`.
+
+**What a message cannot hide.** A command substitution inside a message is
+read as commands, so `-m "$(cat .env)"`, which writes the file into the
+message, is denied. `-F .env.local` and `-F - < .env.local` read a file into
+the message and are denied. A heredoc with an unquoted delimiter is read,
+since the shell expands it. A word after `--` is a path.
+
+**Only the message is message text.** A command substitution anywhere else
+gives a word: the file `-F` reads, a path, the value of another option, the
+target of a redirection, or a file `cat` reads inside a message. So
+`git commit -F "$(cat <<< .env)"` is denied, and so are
+`-F - < "$(cat <<'EOF' ...)"` naming `.env.local`,
+`-m "$(cat "$(cat <<< .env)")"` and `-m "$(cat <<'EOF' | xargs cat ...)"`.
+Under git 2.43 each wrote the env file into the commit message, and the
+first draft of this amendment let each through (review of PR #164). A
+heredoc fed to a commit that reads pathspecs from stdin, by
+`--pathspec-from-file=-`, is a list of paths. The output of a subshell or a
+process substitution is not followed, so a heredoc read there is read for an
+env file. A command substitution inside `${...}` is not read, though the
+shell may run it, so a command that holds one is one the reader cannot read.
+
+**The bypass check uses the same rule.** It skips message text, by the
+amendment on the commit guard. This replaces that amendment's rule, under
+which a heredoc was message text when fed to the commit or read by `cat`
+inside any command substitution among the commit's words. So a heredoc that
+a message's `cat` pipes to `bash` is now read for a `git commit -n`, and a
+command that holds a commit inside `${...}` is checked over the whole
+string. Under git 2.43 each ran a commit that skipped a failing pre-commit
+hook, and the guard let it through with a trailer.
+
+**Where the reader does not decide.** A command whose text holds no `commit`
+is not read, and a command the reader cannot read, or reads as a bypass, is
+checked over the whole string, as before.
+
+**Order.** Only the reader can tell a message from the rest, so for a command
+the reader reads, the `.env` check now runs after it. This replaces the
+sentence of the amendment after review of PR #158 that runs the `.env` check
+for `git add` or `git commit` side by side before the reader. The hooksPath
+and git dir check still runs before the reader, and a command the reader does
+not run on, such as `git add .env`, is still checked without it.
+
+### What changes
+
+- `.claude/hooks/guard-commit.sh`: the reader reports an env file it reads
+  outside a commit's message, which it tells by the rule above for the bypass
+  check too, and the `.env` check uses that report for a command the reader
+  read. No file is added.
+- `services/api/tests/test_guards.py`:
+  `::test_an_env_file_named_only_in_a_message_does_not_block_the_commit` runs
+  commits whose message names an env file in each form above, each with a
+  trailer, and expects them allowed.
+  `::test_the_env_file_check_still_denies_a_staged_or_read_env_file` runs
+  commands that stage an env file, commit one as a path, or read one into a
+  message, and expects the env file message for each, the command
+  substitutions above that give a file or a path among them.
+  `::test_the_commit_guard_denies_every_proven_bypass` runs the two bypasses
+  above. The test that a check needing no reader does not wait for it checks
+  `git add .env` in place of a commit that names `.env`.
+
+No new file, so `config/data-classification.json` does not change.
+
+**Output.** The same messages. A command that names an env file only in a
+commit's message is now allowed, where it was denied.
+
+**How to know it worked.**
+`git commit -m "Stop reading .env in tests" -m "Spec: 045"` is allowed.
+`git add .env`, `git commit -m "$(cat .env)" -m "Spec: 045"`,
+`git commit -F .env.local` and `git commit -F "$(cat <<< .env)"` are denied
+with the env file message.
+
+**Failure modes this must not introduce.** Every env file staged, committed
+or read into a message stays denied, a template stays allowed, and every case
+in the bypass and ordinary lists keeps its outcome.
+
+### Limitations
+
+- A message in text another command runs is still read, as in
+  `bash -c "git commit -m 'about .env'"`, since text is matched, not read for
+  options.
+- Other commands in the same command line are still read:
+  `echo .env >> .gitignore && git add .gitignore` is denied, and so is a
+  heredoc that writes a file naming `.env`, committed in the same command.
+- The values of other commit options, such as `--trailer`, are read.
+- `git -C dir add .env` still passes the `.env` check, as the amendment on
+  git's global options says.
+- For a commit, the `.env` check now waits for the reader. A reader that never
+  returns holds it up, as it already holds up the bypass and trailer checks.
+- Only `cat` is followed into a message. A heredoc that `tr` or `sed` reads
+  there is read, so a message that names an env file through them is denied.
+- A glob the shell expands to an env file, such as `.en?`, is not seen, as
+  before.
+- A command substitution whose output git reads as an option of the commit
+  is not read for a bypass. `git commit "$(cat <<'EOF' ...)"` with `-n` in
+  the heredoc skipped a failing pre-commit hook under git 2.43 and passes
+  the guard, as it did before this amendment. Closing that is its own
+  change.
+
+## Amendment (2026-10-07): a command substitution among a commit's options
+
+The last limitation of the amendment on the env file check is a hook bypass
+the reader does not see. The reader keeps each word with its quotes removed,
+and a command substitution adds nothing to the word, since its output is
+unknown. So a word that is only a substitution reads as empty, and nothing in
+it skips the hooks, though git may read its output as `-n`. Under git 2.43
+the command in that limitation skipped a failing pre-commit hook, and the
+guard on main allowed it with a trailer.
+
+### What the guard reads
+
+**A substitution where git reads options is not read.** A word among a
+commit's words that leads with a command substitution or a backtick, in a
+position where git reads options, makes the command one the reader cannot
+read. A word leads with one when the text before the first substitution, at
+that word's level, is empty or only dashes: git then reads the output as the
+start of the argument. The position is any word before `--` that is not the
+value of the option before it. The output could be any option, so the whole
+string goes through the old pattern, as it does for a commit whose words
+hold `"$@"`.
+
+That old pattern reads text, so it catches a bypass the substitution spells
+out, such as a `-n` on a line of a quoted heredoc, and it does not catch one
+a command inside the substitution builds, such as `$(printf -- -n)`, just as
+it does not for a `"$@"` whose value is set elsewhere. The point of marking
+the command unread is that the reader no longer reports "not a bypass" for
+it: the one that motivated this, the cited limitation's quoted heredoc with
+a literal `-n`, is now denied.
+
+**Where a substitution stays read.** These give a value, not an option, and
+keep their outcome:
+
+- the value of an option, as in `-m "$(...)"` or `-F "$(...)"`;
+- text attached to an option that takes a value, as in `-m"$(...)"`,
+  `-am"$(...)"` or `--message="$(...)"`;
+- a word after `--`, which git reads as a path.
+
+### What changes
+
+- `.claude/hooks/guard-commit.sh`: the reader marks such a command unread.
+  No file is added.
+- `services/api/tests/test_guards.py`: the cited limitation's command, with
+  a literal `-n` in its quoted heredoc, and its backtick form, join the
+  bypass list of `::test_the_commit_guard_denies_every_proven_bypass`, with a
+  trailer. A commit whose message is a substitution, in each read form above,
+  joins the list of `::test_the_commit_guard_allows_ordinary_work`.
+
+No new file, so `config/data-classification.json` does not change.
+
+**Output.** The same messages. A commit with a substitution where git reads
+its options is checked over the whole string.
+
+**How to know it worked.** The command in the last limitation of the
+amendment on the env file check, a quoted heredoc with a line that is `-n`,
+is denied for the bypass reason. `git commit -m "$(cat <<'EOF' ...)"`, the
+form this repository's commits use, is allowed as before.
+
+**Failure modes this must not introduce.** A message given with `-m` or
+`--message`, attached or not, and a file named by `-F`, are not marked
+unread. Every case in the bypass, ordinary and env file lists keeps its
+outcome.
+
+### Limitations
+
+- A command marked unread is checked over the whole string, so an `-n`
+  elsewhere in it, such as a `sed -n` in the same chain, denies the commit,
+  as it does for a commit whose words hold `"$@"`.
+- The guard still reads text. A bypass a command in the substitution builds,
+  such as `git commit "$(printf -- -n)"` or `"--$(printf no-verify)"`, is not
+  spelled out in the string, so the whole-string pattern does not catch it,
+  as it does not for a `"$@"` set elsewhere. Options built from a variable,
+  `eval` or a script file are not read either, as before.
+- The leading-substitution rule looks at the text before the first
+  substitution in the word. A substitution behind a non-dash literal, as in
+  `foo$(...)`, is a pathspec to git and is not marked unread.
 ## Amendment (2026-10-07): the commit guard reads core.hooksPath however git is given it
 
 The hooksPath limitation of the amendment "the commit guard reads git's

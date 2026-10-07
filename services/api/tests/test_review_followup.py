@@ -26,6 +26,7 @@ from harrier.reviewfollowup import (
     WAIT,
     FollowUpError,
     PullRequestState,
+    ReviewBody,
     ThreadState,
     decide,
     gather,
@@ -347,7 +348,9 @@ def test_a_rate_limited_pull_request_reports_as_not_reviewed() -> None:
 
 
 def test_a_reviewed_pull_request_reports_as_reviewed() -> None:
-    lines = report([a_state(review_threads=17)])
+    # Reviewed at its head, which is what "reviewed" now means in the report
+    # (spec 043 amendment).
+    lines = report([a_state(review_threads=17, last_reviewed_sha="abc1234")])
     assert "NOT REVIEWED" not in lines[0]
     assert "17 threads" in lines[0]
 
@@ -825,3 +828,106 @@ def test_a_reply_in_a_thread_is_not_a_review(handled_env: Path) -> None:
         REQUEST,
         "the head has moved since the last review",
     )
+
+
+# --- a head reviewed only before it moved (spec 043 amendment) -------------
+
+
+@pytest.mark.parametrize(
+    ("overrides", "detail"),
+    [
+        ({}, "last reviewed at aaaaaaa"),
+        ({"last_reviewed_sha": ""}, "no review names a commit"),
+        ({"closed": True}, "last reviewed at aaaaaaa; closed, so the service will not now"),
+        ({"in_progress": True}, "last reviewed at aaaaaaa; a review is in progress"),
+        (
+            {"comment_bodies": [CURRENT_NOTICE.format(wait="40 minutes")]},
+            "last reviewed at aaaaaaa; rate limited",
+        ),
+        (
+            {"in_progress": True, "comment_bodies": [CURRENT_NOTICE.format(wait="40 minutes")]},
+            "last reviewed at aaaaaaa; a review is in progress",
+        ),
+        (
+            {
+                "closed": True,
+                "in_progress": True,
+                "comment_bodies": [CURRENT_NOTICE.format(wait="40 minutes")],
+            },
+            "last reviewed at aaaaaaa; closed, so the service will not now",
+        ),
+    ],
+    ids=[
+        "moved",
+        "no commit named",
+        "closed",
+        "in progress",
+        "rate limited",
+        "in progress before rate limited",
+        "closed before both",
+    ],
+)
+def test_a_head_reviewed_before_it_moved_is_reported_as_not_reviewed_there(
+    overrides: dict[str, object], detail: str
+) -> None:
+    """Reported as reviewed, a pull request read as settled while the push
+    that answered its findings waited for a review of its own."""
+    fields: dict[str, object] = {
+        "review_threads": 2,
+        "reviews_seen": 1,
+        "head_sha": "b" * 40,
+        "last_reviewed_sha": "a" * 40,
+    }
+    fields.update(overrides)
+    assert report([a_state(**fields)]) == [f"PR #39: NOT REVIEWED AT THE HEAD, {detail}"]
+
+
+# --- a truncated query in the report line (spec 043 amendment) ----------------
+
+# Written out rather than imported, so a change to the words fails here.
+TRUNCATED = "a bounded query had another page, so this is not a full picture"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "parts"),
+    [
+        pytest.param({}, "", id="truncated, nothing else outstanding"),
+        pytest.param(
+            {"awaiting": (ThreadState("t1", False, "coderabbitai", "c1"),)},
+            "1 thread(s) awaiting a reply; ",
+            id="truncated, a thread awaiting a reply",
+        ),
+        pytest.param(
+            {
+                "unread_reviews": (
+                    ReviewBody(
+                        "r1",
+                        "coderabbitai",
+                        "Actionable comments posted: 1\n"
+                        "Some comments are outside the diff and can't be posted inline.",
+                    ),
+                )
+            },
+            "1 unread review(s); 1 with findings OUTSIDE THE DIFF, which no thread carries; ",
+            id="truncated, a review with findings outside the diff",
+        ),
+    ],
+)
+def test_a_truncated_pull_request_says_so_in_its_report_line(
+    overrides: dict[str, object], parts: str
+) -> None:
+    """The decision line said a bounded query had another page and the report
+    line did not. Alone, it read "NEEDS A REPLY:" with nothing after the
+    colon, and beside a thread it named only the thread (spec 043
+    amendment). The two lines now read one fact, in the same words."""
+    state = a_state(
+        review_threads=2,
+        reviews_seen=1,
+        last_reviewed_sha="abc1234",
+        truncated=True,
+        **overrides,
+    )
+
+    assert report([state]) == [f"PR #39: NEEDS A REPLY: {parts}{TRUNCATED}"]
+    decision = decide(state, requests_today=0, daily_limit=DEFAULT_DAILY_LIMIT)
+    assert decision.describe(39).endswith(TRUNCATED)

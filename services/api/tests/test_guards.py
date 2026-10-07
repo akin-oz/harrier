@@ -123,6 +123,27 @@ BYPASSES = [
     '"git" commit -n -m "message" -m "Spec: 045"',
     'git \\\ncommit -n -m "message" -m "Spec: 045"',
     "bash -c \"git -C . commit -n -m 'message' -m 'Spec: 045'\"",
+    # Text is read a word at a time, and a quoted run is one word, blank and
+    # all. A git inside a word that one reading passes over still starts a
+    # reading of its own, as the pattern did. Each skipped a failing
+    # pre-commit hook under git 2.43 (spec 045's amendment after review of PR
+    # #158).
+    "bash -c \"git -c 'user.name=a b' commit -n -m 'message' -m 'Spec: 045'\"",
+    "bash -c \"git -c alias.x='!git commit -n -q' x -m 'message' -m 'Spec: 045'\"",
+    # Text that is not a commit's message, though it sits inside one: a
+    # heredoc its cat pipes to a shell, and a command inside ${...}, which the
+    # reader does not read. Each skipped a failing pre-commit hook under git
+    # 2.43 (spec 045's amendment on the env file check, after review of PR
+    # #164).
+    "git commit -m \"$(cat <<'EOF' | bash\ngit commit -n -m 'message'\nEOF\n)\" -m 'Spec: 045'",
+    "git commit -m \"${X:-$(git commit -n -m 'message')}\" -m 'Spec: 045'",
+    # A word that is only a command substitution, where git reads the commit's
+    # options: its output is the argument, here -n. The reader kept such a
+    # word as empty, so it read as no option at all. Each skipped a failing
+    # pre-commit hook under git 2.43 (spec 045's amendment on a command
+    # substitution among a commit's options).
+    "git commit \"$(cat <<'EOF'\n-n\nEOF\n)\" -m 'message' -m 'Spec: 045'",
+    "git commit \"`cat <<'EOF'\n-n\nEOF\n`\" -m 'message' -m 'Spec: 045'",
 ]
 
 # A guard stricter than the workflow it protects is its own failure.
@@ -138,6 +159,19 @@ ORDINARY = [
     "git -C dir commit -C HEAD",
     "git -C dir log -n 3",
     "git -c commit.gpgsign=false log -n 3",
+    # --work-tree takes the next word, commit here, as its value, so the
+    # subcommand is log (spec 045's amendment after review of PR #158).
+    "git --work-tree commit log -n 1",
+    "bash -c 'git --work-tree commit log -n 1'",
+    # A substitution that gives a value, not an option: the value of -m, text
+    # attached to -m, -am or --message=, and a path after --. None is marked
+    # unread (spec 045's amendment on a command substitution among a commit's
+    # options). The first is the form this repository's own commits use.
+    "git commit -m \"$(cat <<'EOF'\nmessage\n\nSpec: 045\nEOF\n)\"",
+    'git commit -m"$(printf message)" -m "Spec: 045"',
+    'git commit -am"$(printf message)" -m "Spec: 045"',
+    'git commit --message="$(printf message)" -m "Spec: 045"',
+    'git commit -m "message" -m "Spec: 045" -- "$(printf README.md)"',
 ]
 
 
@@ -228,6 +262,78 @@ def test_a_long_message_costs_time_in_proportion_to_its_length(tmp_path: Path) -
     assert longer < 10 * short, f"1000 lines: {short:.3f} s, 8000 lines: {longer:.3f} s"
 
 
+def test_a_run_of_global_options_costs_time_in_proportion_to_its_length(tmp_path: Path) -> None:
+    """The pattern for a commit after global options could read --work-tree
+    with or without a value, and mawk tried both ways for each one: 28 of them
+    took 1.07 s, and 38 held the guard past 65 s with a hook bypass after
+    them. A guard that does not finish cannot deny. Text is now read a word at
+    a time (spec 045's amendment after review of PR #158).
+
+    mawk is used where it exists, as on the CI runner. Read a word at a time,
+    ten times the options costs about the same as the process start, and the
+    old pattern did not finish 40 of them within the timeout.
+    """
+    env = dict(os.environ)
+    mawk = shutil.which("mawk")
+    if mawk:
+        (tmp_path / "awk").symlink_to(mawk)
+        env["PATH"] = f"{tmp_path}{os.pathsep}{env['PATH']}"
+
+    def seconds(options: int) -> float:
+        command = "git" + " --work-tree" * options + ' status; git commit -n -m "m" -m "Spec: 045"'
+        payload = json.dumps({"tool_input": {"command": command}})
+        runs: list[float] = []
+        for _ in range(3):
+            start = time.perf_counter()
+            result = subprocess.run(
+                ["bash", str(HOOKS / "guard-commit.sh")],
+                input=payload,
+                capture_output=True,
+                text=True,
+                cwd=ROOT,
+                env=env,
+                check=False,
+                timeout=30,
+            )
+            runs.append(time.perf_counter() - start)
+            assert result.returncode == DENY, result.stderr
+        return statistics.median(runs)
+
+    few, many = seconds(4), seconds(40)
+    assert many < 10 * few, f"4 options: {few:.3f} s, 40 options: {many:.3f} s"
+
+
+def test_checks_that_need_no_reader_do_not_wait_for_it(tmp_path: Path) -> None:
+    """The hooksPath check and the env file check ran before any parsing
+    until the guard read every command that mentions a commit first, and then
+    they waited for it. An awk that never returns in time stands in for a
+    reader that is slow or stuck (spec 045's amendment after review of PR
+    #158). A commit's env file check needs the reader now, to tell its
+    message from its paths, so `git add .env`, which it does not read, stands
+    for that check (spec 045's amendment on the env file check)."""
+    stuck = tmp_path / "awk"
+    stuck.write_text("#!/bin/sh\nexec sleep 30\n")
+    stuck.chmod(0o755)
+    env = dict(os.environ)
+    env["PATH"] = f"{tmp_path}{os.pathsep}{env['PATH']}"
+    for command in (
+        'git -c core.hooksPath=/dev/null commit -m "m" -m "Spec: 045"',
+        "git add .env",
+    ):
+        payload = json.dumps({"tool_input": {"command": command}})
+        result = subprocess.run(
+            ["bash", str(HOOKS / "guard-commit.sh")],
+            input=payload,
+            capture_output=True,
+            text=True,
+            cwd=ROOT,
+            env=env,
+            check=False,
+            timeout=10,
+        )
+        assert result.returncode == DENY, f"{command}: {result.stderr}"
+
+
 def test_the_commit_guard_still_requires_a_spec_trailer() -> None:
     assert run_guard("guard-commit.sh", 'git commit -m "no trailer here"') == DENY
 
@@ -240,6 +346,9 @@ NO_TRAILER_AFTER_GLOBAL_OPTIONS = [
     'git -C dir commit -m "no trailer here"',
     'git --no-pager commit -m "no trailer here"',
     'git "commit" -m "no trailer here"',
+    # With a value, --exec-path sets the path and git runs the subcommand
+    # after it (spec 045's amendment after review of PR #158).
+    'git --exec-path=/usr/lib/git-core commit -m "no trailer here"',
 ]
 
 
@@ -251,12 +360,46 @@ def test_a_commit_after_global_options_still_requires_a_spec_trailer(command: st
     )
 
 
+# Options after which git runs help or version in place of the subcommand, or
+# prints and exits. Under git 2.43 none of these made a commit in a throwaway
+# repository with a staged change (spec 045's amendment after review of PR
+# #158). No trailer, so an ALLOW proves the guard read no commit.
+NO_SUBCOMMAND_RUNS = [
+    'git --help commit -m "no trailer here"',
+    'git -h commit -m "no trailer here"',
+    'git --version commit -m "no trailer here"',
+    'git -v commit -m "no trailer here"',
+    'git --exec-path commit -m "no trailer here"',
+    'git --html-path commit -m "no trailer here"',
+    'git --man-path commit -m "no trailer here"',
+    'git --info-path commit -m "no trailer here"',
+    'git --list-cmds=main commit -m "no trailer here"',
+    "bash -c 'git --help commit -m \"no trailer here\"'",
+]
+
+
+@pytest.mark.parametrize("command", NO_SUBCOMMAND_RUNS)
+def test_no_subcommand_runs_after_a_help_or_query_option(command: str) -> None:
+    """The reader took every word that starts with - for an option before
+    the subcommand, so `git --help commit` needed a trailer."""
+    assert run_guard("guard-commit.sh", command) == ALLOW, (
+        f"guard-commit.sh read a commit where git runs none: {command}"
+    )
+
+
 # A -C that is not one of the commit's own words: in its message, or in another
 # command. Neither reuses a message that carries a trailer, and both passed
 # while the exemption read the whole string.
 NOT_THE_COMMITS_OWN_C = [
     'git commit -m "pass -C to tar"',
     'tar -C /tmp -cf /dev/null . && git commit -m "no trailer here"',
+    # A -C that git reads as the value of another option, or as a path after
+    # --. Each passed once the exemption read the commit's own words (spec
+    # 045's amendment after review of PR #158).
+    'git commit -m "Fix the parser" -m "-C"',
+    "git -C . commit -m Fix -m '-C'",
+    "git commit -F -C",
+    'git commit -m "no trailer here" -- -C',
 ]
 
 
@@ -265,7 +408,9 @@ def test_the_reuse_exemption_reads_only_the_commits_own_words(command: str) -> N
     """The trailer check exempts -C <commit>, which reuses a message. Read from
     the whole string, -C was also git's global -C <path>, so it now counts only
     among the commit's own words (spec 045's amendment on git's global
-    options). `git -C dir commit -C HEAD` in ORDINARY is the case it keeps."""
+    options), and only where git reads it as an option: not as the value of
+    another option, nor as a path after `--` (the amendment after review of PR
+    #158). `git -C dir commit -C HEAD` in ORDINARY is the case it keeps."""
     assert run_guard("guard-commit.sh", command) == DENY, (
         f"guard-commit.sh exempted a commit from its trailer: {command}"
     )
@@ -275,6 +420,86 @@ def test_the_commit_guard_still_refuses_to_stage_an_env_file() -> None:
     assert run_guard("guard-commit.sh", "git add .env") == DENY
     assert run_guard("guard-commit.sh", "git add .env.example") == ALLOW
     assert run_guard("guard-commit.sh", 'git -C . commit -m "message" -m "Spec: 045" .env') == DENY
+
+
+# A commit whose message names an env file, in each form the message takes.
+# None stages or commits one, and each was denied while the check read the
+# whole command (spec 045's amendment on the env file check). Each carries a
+# trailer, so an ALLOW proves the env file check passed.
+ENV_FILE_ONLY_IN_A_MESSAGE = [
+    'git commit -m "Stop reading .env in tests" -m "Spec: 045"',
+    "git commit -q -F - <<'EOF'\nIgnore .env.local in the loader\n\nSpec: 045\nEOF",
+    "git commit -m \"$(cat <<'EOF'\nKeep .env out of git\n\nSpec: 045\nEOF\n)\"",
+    'git add src/app.py && git commit -m "Read .env.local lazily" -m "Spec: 045"',
+    'git commit -am "Load .env lazily" -m "Spec: 045"',
+    'git commit -m"Load .env lazily" -m "Spec: 045"',
+    'git commit --message="Load .env lazily" -m "Spec: 045"',
+    'git commit --message "Load .env lazily" -m "Spec: 045"',
+    'git -C . commit -m "Load .env lazily" -m "Spec: 045"',
+    "git commit -F - <<< 'Load .env lazily\n\nSpec: 045'",
+    'git commit -m"$(cat <<\'EOF\'\nKeep .env out of git\nEOF\n)" -m "Spec: 045"',
+    "git commit --file - <<'EOF'\nIgnore .env.local in the loader\n\nSpec: 045\nEOF",
+]
+
+
+@pytest.mark.parametrize("command", ENV_FILE_ONLY_IN_A_MESSAGE)
+def test_an_env_file_named_only_in_a_message_does_not_block_the_commit(command: str) -> None:
+    """The env file check matched the whole command, so a message that only
+    names an env file denied the commit that carried it."""
+    assert run_guard("guard-commit.sh", command) == ALLOW, (
+        f"guard-commit.sh blocked a commit for its message: {command}"
+    )
+
+
+# Commands that stage an env file, commit one as a path, or read one into the
+# message. Each must still be denied by the env file check itself, whatever
+# the bypass and trailer checks would say (spec 045's amendment on the env
+# file check).
+ENV_FILE_STAGED_OR_READ = [
+    "git add .env",
+    "git add -f .env.local",
+    'git add .env && git commit -m "message" -m "Spec: 045"',
+    'git -C . commit -m "message" -m "Spec: 045" .env',
+    'git commit -m "message" -m "Spec: 045" -- .env.local',
+    'git commit -m "message" -m "Spec: 045" -- -m .env',
+    "git commit -F .env.local",
+    'git commit -m "$(cat .env)" -m "Spec: 045"',
+    "git commit -F - < .env.local",
+    "git commit -F - <<EOF\n$(cat .env)\nEOF",
+    'bash -c "git add .env"',
+    "git add .env.example; git commit -m x .env.prod -m 'Spec: 045'",
+    # A command substitution gives message text only inside the message.
+    # Elsewhere its output names a file or a path, so a cat there is no
+    # message. Under git 2.43 the first four wrote the env file into the
+    # commit message (review of PR #164).
+    'git commit -F "$(cat <<< .env)"',
+    "git commit -F - < \"$(cat <<'EOF'\n.env.local\nEOF\n)\"",
+    'git commit -m "$(cat "$(cat <<< .env)")" -m "Spec: 045"',
+    'git commit -m "$(cat <<\'EOF\' | xargs cat\n.env\nEOF\n)" -m "Spec: 045"',
+    "git commit -m x -m 'Spec: 045' --pathspec-from-file=- <<'EOF'\n.env\nEOF",
+    "git commit -m x -m 'Spec: 045' --pathspec-from-file=<(cat <<< .env)",
+    'git commit -m "${X:-$(cat .env)}" -m "Spec: 045"',
+]
+
+
+@pytest.mark.parametrize("command", ENV_FILE_STAGED_OR_READ)
+def test_the_env_file_check_still_denies_a_staged_or_read_env_file(command: str) -> None:
+    """Reading past a commit's message must not let an env file through:
+    named as a path, read into the message by -F or a redirection, or written
+    into it by a command substitution."""
+    payload = json.dumps({"tool_input": {"command": command}})
+    result = subprocess.run(
+        ["bash", str(HOOKS / "guard-commit.sh")],
+        input=payload,
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        check=False,
+    )
+    assert result.returncode == DENY, f"guard-commit.sh allowed an env file: {command}"
+    assert "refusing to stage/commit .env* files" in result.stderr, (
+        f"guard-commit.sh denied {command!r} for something else: {result.stderr}"
+    )
 
 
 def test_the_turn_gate_sees_a_file_that_is_only_added(tmp_path: Path) -> None:

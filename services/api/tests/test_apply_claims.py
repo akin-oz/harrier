@@ -12,6 +12,7 @@ predicate can fail. Everything is synthetic.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from pathlib import Path
 
@@ -838,3 +839,189 @@ def test_a_claim_without_evidence_fails_to_parse(
     stub_letter(monkeypatch, letter_json(claims=[{"sentence": CHECKOUT, "about": "candidate"}]))
     with pytest.raises(RuntimeError, match="failed to parse AI response"):
         generate(db)
+
+
+# --- one retry after a refusal (spec 085) ------------------------------------------
+
+QUESTION = "What relevant experience do you have?"
+REWORDED = "I rebuilt the search service."
+NUMBERED = "I also cut build times by 35% in the same year."
+
+
+def stub_sequence(
+    monkeypatch: pytest.MonkeyPatch, module: object, responses: list[str]
+) -> list[tuple[str, str]]:
+    """The model returns each response in turn. Every call is recorded, and a
+    call past the last response fails the test rather than repeating one."""
+    calls: list[tuple[str, str]] = []
+
+    def fake(system_prompt: str, user_input: str) -> str:
+        calls.append((system_prompt, user_input))
+        assert len(calls) <= len(responses), f"model called {len(calls)} times"
+        return responses[len(calls) - 1]
+
+    monkeypatch.setattr(module, "generate_text", fake)
+    return calls
+
+
+def refused_letter() -> str:
+    """Refused on C1 only: a declared sentence the letter does not contain."""
+    return letter_json(claims=[*GROUNDED_CLAIMS, candidate(REWORDED, CHECKOUT_EVIDENCE)])
+
+
+def answers_json(*answers: dict[str, object]) -> str:
+    return json.dumps({"answers": list(answers)})
+
+
+def refused_answers() -> str:
+    return answers_json(
+        answer(
+            CHECKOUT,
+            [candidate(CHECKOUT, CHECKOUT_EVIDENCE), candidate(REWORDED, CHECKOUT_EVIDENCE)],
+        )
+    )
+
+
+def passing_answers() -> str:
+    return answers_json(answer(f"{CHECKOUT} {INVOICES}", GROUNDED_CLAIMS))
+
+
+def test_a_refused_letter_is_retried_once_and_the_second_draft_is_kept(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = stub_sequence(monkeypatch, letters_module, [refused_letter(), letter_json()])
+    letter = generate(db)
+    assert len(calls) == 2
+    assert [claim.sentence for claim in letter.claims] == [CHECKOUT, INVOICES]
+
+
+def test_a_refused_answer_set_is_retried_once_and_the_second_set_is_written(
+    db: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from harrier.tracker.actions import add_manually
+    from harrier_cli.main import main
+
+    _, row = add_manually(db, company=COMPANY, title=ROLE, url="https://example.com/jobs/1")
+    assert row is not None
+    jd_file = tmp_path / "posting.txt"
+    jd_file.write_text(POSTING, encoding="utf-8")
+    calls = stub_sequence(monkeypatch, answers_module, [refused_answers(), passing_answers()])
+
+    code = main(
+        ["answers", "--job-id", str(row["id"]), "--question", QUESTION, "--jd-file", str(jd_file)]
+    )
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert len(calls) == 2
+    answers_line = next(line for line in out.splitlines() if line.startswith("answers="))
+    written = Path(answers_line.removeprefix("answers=")).read_text(encoding="utf-8")
+    assert f"{CHECKOUT} {INVOICES}" in written
+    assert REWORDED not in written
+
+
+def test_the_retry_sends_the_refusals_and_the_previous_response(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = refused_letter()
+    calls = stub_sequence(monkeypatch, letters_module, [first, letter_json()])
+    generate(db)
+
+    (first_prompt, first_input), (second_prompt, second_input) = calls
+    assert second_prompt == first_prompt
+    second = json.loads(second_input)
+    retry = second.pop("retry")
+    assert second == json.loads(first_input)
+    assert retry["refusals"] == [f"claim sentence not in output: {REWORDED}"]
+    assert retry["previous_response"] == first
+    assert retry["instruction"]
+
+
+def test_a_second_refusal_fails_with_its_own_violations(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unclaimed_number = letter_json(f"{CHECKOUT} {INVOICES} {NUMBERED}")
+    calls = stub_sequence(monkeypatch, letters_module, [refused_letter(), unclaimed_number])
+    message = refusal(db)
+    assert len(calls) == 2
+    assert "number without evidence" in message
+    assert "claim sentence not in output" not in message
+
+
+def test_cli_answers_exits_1_after_two_refusals(
+    db: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from harrier.apply.answers import answers_path_for
+    from harrier.tracker.actions import add_manually
+    from harrier_cli.main import main
+
+    _, row = add_manually(db, company=COMPANY, title=ROLE, url="https://example.com/jobs/1")
+    assert row is not None
+    jd_file = tmp_path / "posting.txt"
+    jd_file.write_text(POSTING, encoding="utf-8")
+    calls = stub_sequence(monkeypatch, answers_module, [refused_answers(), refused_answers()])
+
+    code = main(
+        ["answers", "--job-id", str(row["id"]), "--question", QUESTION, "--jd-file", str(jd_file)]
+    )
+
+    assert code == 1
+    assert len(calls) == 2
+    assert "answers failed:" in capsys.readouterr().err
+    assert not answers_path_for(COMPANY, ROLE).exists()
+
+
+def test_a_passing_first_response_calls_the_model_once(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    letter_calls = stub_sequence(monkeypatch, letters_module, [letter_json(), refused_letter()])
+    generate(db)
+    answer_calls = stub_sequence(
+        monkeypatch, answers_module, [passing_answers(), refused_answers()]
+    )
+    generate_answer_set(db, COMPANY, ROLE, [QUESTION], jd_text=POSTING)
+    assert len(letter_calls) == 1
+    assert len(answer_calls) == 1
+
+
+def test_a_parse_failure_is_not_retried(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    malformed = letter_json(claims=[{"sentence": CHECKOUT, "about": "candidate"}])
+    calls = stub_sequence(monkeypatch, letters_module, [malformed, letter_json()])
+    with pytest.raises(RuntimeError, match="failed to parse AI response"):
+        generate(db)
+    assert len(calls) == 1
+
+
+def test_a_placeholder_is_not_retried(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_placeholder = answers_json(
+        answer(f"{CHECKOUT} {PLACEHOLDER}", [candidate(CHECKOUT, CHECKOUT_EVIDENCE)])
+    )
+    calls = stub_sequence(monkeypatch, answers_module, [with_placeholder, passing_answers()])
+    drafts = generate_answer_set(db, COMPANY, ROLE, [QUESTION], jd_text=POSTING)
+    assert len(calls) == 1
+    assert PLACEHOLDER in drafts[0].medium_answer
+
+
+def test_the_retry_logs_the_first_refusals(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    stub_sequence(monkeypatch, answers_module, [refused_answers(), passing_answers()])
+    with caplog.at_level(logging.WARNING, logger=answers_module.__name__):
+        generate_answer_set(db, COMPANY, ROLE, [QUESTION], jd_text=POSTING)
+    retries = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("answers refused on attempt 1, retrying once:")
+    ]
+    assert len(retries) == 1
+    assert f"claim sentence not in output: {REWORDED}" in retries[0]
