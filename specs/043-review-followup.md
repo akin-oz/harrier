@@ -176,7 +176,7 @@ Proven by services/api/tests/test_review_followup.py:
 | a reply in a thread is not a review of the commit it names (amendment below) | `test_a_reply_in_a_thread_is_not_a_review`, `test_the_reviewed_sha_is_read_from_the_reviews` |
 | a head reviewed only before it moved exits 2 and says so (amendment below) | `test_a_head_reviewed_before_it_moved_is_reported_as_not_reviewed_there` (seven cases), `tests/test_cli_decisions.py::test_a_head_reviewed_before_it_moved_exits_two`, `tests/test_cli_decisions.py::test_an_unanswered_finding_after_a_push_still_exits_three` |
 | a person records replies and reviews as read by naming their ids, and nothing else is recorded or posted (amendment below) | `tests/test_cli_decisions.py::test_marking_read_clears_what_the_run_printed`, `tests/test_cli_decisions.py::test_an_id_not_outstanding_records_nothing`, `tests/test_cli_decisions.py::test_marking_read_posts_nothing` |
-| a dry run never waits and never asks, with `--wait` or without (amendment below) | planned tests/test_cli_decisions.py::test_a_dry_run_never_waits_and_never_asks, planned tests/test_cli_decisions.py::test_waiting_without_a_dry_run_still_asks |
+| a dry run never waits and never asks, with `--wait` or without (amendment below) | `tests/test_cli_decisions.py::test_a_dry_run_never_waits_and_never_asks`, `tests/test_cli_decisions.py::test_waiting_without_a_dry_run_still_asks` |
 | the daily bound stops the loop | `test_the_daily_bound_stops_the_loop`, `test_the_bound_wins_over_everything_else` |
 | rate limited is distinguishable from reviewed | `test_a_rate_limited_pull_request_reports_as_not_reviewed`, `test_a_reviewed_pull_request_reports_as_reviewed`, `test_a_pull_request_with_neither_is_still_not_reviewed` |
 | `gh` failing is reported | `test_gh_failing_is_reported_not_swallowed`, `test_an_unreadable_payload_is_reported` |
@@ -234,10 +234,10 @@ protect a counter would have been the wrong trade.
       named hold outstanding, and posts nothing (the amendment below on
       recording replies as read;
       `tests/test_cli_decisions.py::test_marking_read_clears_what_the_run_printed`)
-- [ ] under `--dry-run` the command never sleeps, never posts and counts no
+- [x] under `--dry-run` the command never sleeps, never posts and counts no
       request, `--wait` beside it or not, and `--wait` alone still waits and
       asks (the amendment below on dry runs;
-      planned tests/test_cli_decisions.py::test_a_dry_run_never_waits_and_never_asks)
+      `tests/test_cli_decisions.py::test_a_dry_run_never_waits_and_never_asks`)
 - [ ] All gates green on PR
 
 ## Proof / origin
@@ -798,7 +798,9 @@ nothing". Beside `--wait` it did neither. The run waited out the limit,
 posted the request, printed `PR #147: review requested`, and counted the
 request against the daily bound. The branch that waits tests `--wait` and
 not `--dry-run`, while the request branch below it tests `--dry-run`. No test
-runs `--wait` at all, with `--dry-run` or without.
+reaches the branch that waits. The only one that passes `--wait`,
+`tests/test_cli_decisions.py::test_marking_read_posts_nothing`, passes it
+beside `--mark-read`, which never waits.
 
 Whoever adds `--dry-run` to see what a waiting run would do gets the wait
 itself, as long as the notice says, with the terminal or session held for it.
@@ -833,7 +835,7 @@ Considered and not chosen:
 ### Failure modes this must not introduce
 
 - `--wait` without `--dry-run` stops waiting or asking.
-  planned tests/test_cli_decisions.py::test_waiting_without_a_dry_run_still_asks
+  `tests/test_cli_decisions.py::test_waiting_without_a_dry_run_still_asks`
   holds this. It passes before the change and after it, so it pins what the
   change keeps.
 - A dry run's request decision starts posting. The tests that run
@@ -850,11 +852,11 @@ above:
   is not written, and the decision line starts
   `PR #147: rate limited, `. Before the change it fails: the run sleeps and
   posts
-  (planned tests/test_cli_decisions.py::test_a_dry_run_never_waits_and_never_asks).
+  (`tests/test_cli_decisions.py::test_a_dry_run_never_waits_and_never_asks`).
 - `--wait` alone: one sleep of the wait the notice leaves, one
   `gh pr comment` with `@coderabbitai review`, `PR #147: review requested`,
   and a daily count of 1
-  (planned tests/test_cli_decisions.py::test_waiting_without_a_dry_run_still_asks).
+  (`tests/test_cli_decisions.py::test_waiting_without_a_dry_run_still_asks`).
 
 ### What changes
 
