@@ -38,8 +38,13 @@ unchanged only gets another draft with the same chance of slipping.
 ## Scope
 
 - `generate_cover_letter` in `services/api/src/harrier/apply/letters.py`.
-- `generate_answer_set` in `services/api/src/harrier/apply/answers.py`, and
-  `generate_ai_answers`, which it calls.
+- `generate_answer_set` in `services/api/src/harrier/apply/answers.py`.
+  `generate_ai_answers`, which it called, is split into `request_answers` and
+  `parse_generated_answers`, because the retry needs the raw response between
+  the two. (Amended during implementation.)
+- `retry_payload` in `services/api/src/harrier/apply/claims.py`, which builds
+  the R2 payload for both. (Added during implementation: the first text did
+  not name this file.)
 - Tests in `services/api/tests/test_apply_claims.py`.
 - One added sentence in spec 065, under "Outputs and failure modes".
 - No CLI flag, no API route, no contract change, no schema change, no new
@@ -175,33 +180,26 @@ alone, so taking the retry out of the decision fails the test.
 
 - [ ] A letter stub that returns a C1-refused response first and a passing
       response second gives a draft built from the second response, and the
-      stub was called twice (planned
-      test_a_refused_letter_is_retried_once_and_the_second_draft_is_kept)
+      stub was called twice (`test_a_refused_letter_is_retried_once_and_the_second_draft_is_kept`)
 - [ ] The same for an answer set, with the markdown written from the second
-      response (planned
-      test_a_refused_answer_set_is_retried_once_and_the_second_set_is_written)
+      response (`test_a_refused_answer_set_is_retried_once_and_the_second_set_is_written`)
 - [ ] On the second call, the system prompt equals the first call's, and the
       user input parses to the first payload plus `retry`, whose `refusals`
       equals the first refusal's violations in order and whose
-      `previous_response` equals the first raw response (planned
-      test_the_retry_sends_the_refusals_and_the_previous_response)
+      `previous_response` equals the first raw response (`test_the_retry_sends_the_refusals_and_the_previous_response`)
 - [ ] A stub that returns two different refused responses raises
       `ClaimCheckError` with the second response's violations and not the
-      first's, and the stub was called exactly twice (planned
-      test_a_second_refusal_fails_with_its_own_violations)
+      first's, and the stub was called exactly twice (`test_a_second_refusal_fails_with_its_own_violations`)
 - [ ] `harrier answers` against two refused responses exits 1, prints
-      `answers failed:` to stderr, and writes no file (planned
-      test_cli_answers_exits_1_after_two_refusals)
-- [ ] A passing first response calls the stub once (planned
-      test_a_passing_first_response_calls_the_model_once)
+      `answers failed:` to stderr, and writes no file (`test_cli_answers_exits_1_after_two_refusals`)
+- [ ] A passing first response calls the stub once (`test_a_passing_first_response_calls_the_model_once`)
 - [ ] A first response with a malformed `claims` list fails with `failed to
-      parse AI response` after one call (planned
-      test_a_parse_failure_is_not_retried)
+      parse AI response` after one call (`test_a_parse_failure_is_not_retried`)
 - [ ] A first response holding only a placeholder writes the draft and calls
-      the stub once (planned test_a_placeholder_is_not_retried)
+      the stub once (`test_a_placeholder_is_not_retried`)
 - [ ] A retry that passes logs one WARNING line that starts with
       `answers refused on attempt 1, retrying once:` and contains the first
-      violation (planned test_the_retry_logs_the_first_refusals)
+      violation (`test_the_retry_logs_the_first_refusals`)
 - [ ] The existing refusal tests in `test_apply_claims.py` still pass
       unchanged. Their stubs return the same refused response on every call,
       so each now refuses after two calls instead of one.
@@ -209,7 +207,7 @@ alone, so taking the retry out of the decision fails the test.
       refusal is raised after one automatic retry also refuses (spec 085).
 - [ ] `just check` passes
 
-The planned tests go in `services/api/tests/test_apply_claims.py`.
+The tests are in `services/api/tests/test_apply_claims.py`.
 
 ## Honest limitations
 
