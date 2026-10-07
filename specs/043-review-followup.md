@@ -175,6 +175,7 @@ Proven by services/api/tests/test_review_followup.py:
 | an unchanged head is not re-requested | `test_a_reviewed_pull_request_at_the_same_head_is_left_alone`, `test_a_moved_head_is_asked_again` |
 | a reply in a thread is not a review of the commit it names (amendment below) | `test_a_reply_in_a_thread_is_not_a_review`, `test_the_reviewed_sha_is_read_from_the_reviews` |
 | a head reviewed only before it moved exits 2 and says so (amendment below) | `test_a_head_reviewed_before_it_moved_is_reported_as_not_reviewed_there` (seven cases), `tests/test_cli_decisions.py::test_a_head_reviewed_before_it_moved_exits_two`, `tests/test_cli_decisions.py::test_an_unanswered_finding_after_a_push_still_exits_three` |
+| a dry run never waits and never asks, with `--wait` or without (amendment below) | planned tests/test_cli_decisions.py::test_a_dry_run_never_waits_and_never_asks, planned tests/test_cli_decisions.py::test_waiting_without_a_dry_run_still_asks |
 | the daily bound stops the loop | `test_the_daily_bound_stops_the_loop`, `test_the_bound_wins_over_everything_else` |
 | rate limited is distinguishable from reviewed | `test_a_rate_limited_pull_request_reports_as_not_reviewed`, `test_a_reviewed_pull_request_reports_as_reviewed`, `test_a_pull_request_with_neither_is_still_not_reviewed` |
 | `gh` failing is reported | `test_gh_failing_is_reported_not_swallowed`, `test_an_unreadable_payload_is_reported` |
@@ -227,6 +228,10 @@ protect a counter would have been the wrong trade.
       `tests/test_cli_decisions.py::test_a_head_reviewed_before_it_moved_exits_two`,
       `tests/test_cli_decisions.py::test_an_unanswered_finding_after_a_push_still_exits_three`,
       `test_a_head_reviewed_before_it_moved_is_reported_as_not_reviewed_there`)
+- [ ] under `--dry-run` the command never sleeps, never posts and counts no
+      request, `--wait` beside it or not, and `--wait` alone still waits and
+      asks (the amendment below on dry runs;
+      planned tests/test_cli_decisions.py::test_a_dry_run_never_waits_and_never_asks)
 - [ ] All gates green on PR
 
 ## Proof / origin
@@ -550,3 +555,106 @@ of the commit the review named, and the command exits 2.
 - `rate limited` is read as the never-reviewed line reads it: from the newest
   notice, whatever its age. A notice whose wait has passed still shows, as it
   already does on that line.
+
+## Amendment (2026-10-07): a dry run never waits and never asks
+
+Found while writing the tests for PR #165, by reading `_cmd_review_followup`
+in `services/api/src/harrier_cli/main.py`, and listed there as found, not
+fixed. Then run at 2ea1e10, with `gh` and `time.sleep` stood in so that
+nothing was sent and nothing waited, on an open pull request reviewed only
+before its head moved and carrying a rate-limit notice of 38 minutes:
+
+| Flags | Slept | Posted | Exit |
+|---|---|---|---|
+| `--dry-run` | nothing | nothing | 2 |
+| `--wait` | 2340 seconds | `@coderabbitai review` | 2 |
+| `--dry-run --wait` | 2340 seconds | `@coderabbitai review` | 2 |
+
+`--dry-run` is documented in its help as "report what it would do and comment
+nothing". Beside `--wait` it did neither. The run waited out the limit,
+posted the request, printed `PR #147: review requested`, and counted the
+request against the daily bound. The branch that waits tests `--wait` and
+not `--dry-run`, while the request branch below it tests `--dry-run`. No test
+runs `--wait` at all, with `--dry-run` or without.
+
+Whoever adds `--dry-run` to see what a waiting run would do gets the wait
+itself, as long as the notice says, with the terminal or session held for it.
+Then a comment goes up on the pull request and asks for the review. That
+comment is the outward action `--dry-run` exists to prevent. This spec's
+line on dry runs covers only the request: "a request, reported and not posted
+under `--dry-run`" (the amendment above on replies). It never said what a dry
+run does with a wait.
+
+### Behavior after the change
+
+- Under `--dry-run` the command never sleeps and never posts, whatever else it
+  is given. With `--wait` beside it, a decision to wait prints its decision
+  line, `PR #N: rate limited, M minutes to wait`, as a dry run without
+  `--wait` does, and the run goes on to the next pull request.
+- Under `--dry-run` no request is counted against the daily bound. The count
+  is written only when a request is posted, as now.
+- Without `--dry-run`, `--wait` keeps what it does: it sleeps out the wait,
+  posts `@coderabbitai review`, prints `PR #N: review requested`, and counts
+  the request.
+- The decision, the report lines and the exit codes do not change.
+
+Considered and not chosen:
+
+- **Refusing the two flags together.** `argparse` exits 2 for a usage error,
+  and in this command 2 reads as "not reviewed at the head". The pair also
+  has an honest meaning: show what a waiting run would decide.
+- **A line of its own, such as "would wait M minutes, then ask".** The
+  decision line already states the wait, and a dry run's request decision
+  prints no "would ask" line either.
+
+### Failure modes this must not introduce
+
+- `--wait` without `--dry-run` stops waiting or asking.
+  planned tests/test_cli_decisions.py::test_waiting_without_a_dry_run_still_asks
+  holds this. It passes before the change and after it, so it pins what the
+  change keeps.
+- A dry run's request decision starts posting. The tests that run
+  `--dry-run` through `_install` in `services/api/tests/test_cli_decisions.py`
+  replace the request with one that fails the test, and hold this.
+
+### Acceptance criteria
+
+Both in `services/api/tests/test_cli_decisions.py`, through the real `gather`
+with `gh` stubbed and `time.sleep` replaced, on the pull request in the table
+above:
+
+- `--dry-run --wait`: nothing sleeps, no `gh pr comment` runs, the daily count
+  is not written, and the decision line starts
+  `PR #147: rate limited, `. Before the change it fails: the run sleeps and
+  posts
+  (planned tests/test_cli_decisions.py::test_a_dry_run_never_waits_and_never_asks).
+- `--wait` alone: one sleep of the wait the notice leaves, one
+  `gh pr comment` with `@coderabbitai review`, `PR #147: review requested`,
+  and a daily count of 1
+  (planned tests/test_cli_decisions.py::test_waiting_without_a_dry_run_still_asks).
+
+### What changes
+
+- `services/api/src/harrier_cli/main.py`: the branch that waits tests
+  `--dry-run` as well. Nothing else in the command changes.
+- `services/api/tests/test_cli_decisions.py`: the two tests above.
+- `specs/043-review-followup.md`: this amendment, its row in the criteria
+  table, and its checklist item.
+
+No new file, so `config/data-classification.json` does not change.
+
+### Out of scope
+
+- **Waiting across several pull requests.** `--wait` sleeps for each in turn,
+  and each request after the first earns a notice of its own, as the
+  amendment above on the reworded notice records. That is unchanged.
+
+### Migration
+
+None. A run that used `--dry-run --wait` to post a request was relying on the
+defect, and gets the same request by leaving out `--dry-run`.
+
+### Limitations
+
+- A dry run shows the decision at the moment it runs. It cannot show what the
+  service will say when the wait ends.
