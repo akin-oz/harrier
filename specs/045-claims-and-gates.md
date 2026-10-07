@@ -203,6 +203,18 @@ spec 044.
       `::test_the_commit_guard_allows_ordinary_work`,
       `::test_a_commit_after_global_options_still_requires_a_spec_trailer`,
       `::test_the_reuse_exemption_reads_only_the_commits_own_words`)
+- [ ] the commit guard's time grows with a run of git global options rather
+      than exponentially, the hooksPath, git dir and `.env` checks that need
+      no reader run before it, `git --help commit` and the other options
+      after which git runs no subcommand are not commits, and a `-C` that git
+      reads as a value or a path does not exempt a commit from its trailer
+      (the amendment below after review of PR #158;
+      `services/api/tests/test_guards.py::test_the_commit_guard_denies_every_proven_bypass`,
+      `::test_the_commit_guard_allows_ordinary_work`,
+      `::test_the_reuse_exemption_reads_only_the_commits_own_words`, planned
+      test_a_run_of_global_options_costs_time_in_proportion_to_its_length,
+      planned test_checks_that_need_no_reader_do_not_wait_for_it, planned
+      test_no_subcommand_runs_after_a_help_or_query_option)
 - [ ] All gates green on PR
 
 ## Proof / origin
@@ -755,3 +767,129 @@ and every ordinary case stays allowed.
   as text that mentions `git commit` already did. So a heredoc written to a
   file that names `git -C . commit` needs a trailer, and
   `echo "git -C . commit -n"` is denied.
+
+## Amendment (2026-10-07): the commit guard after review of PR #158
+
+A review of PR #158, run after it merged as 045968c, found five behaviors that
+PR introduced. Each reproduced against the guard before and after it, under
+mawk, gawk and original-awk.
+
+Two contradict this spec as written, so fixing them needs no new text:
+
+- `git commit -m "Fix the parser" -m "-C"` passes with no trailer. The
+  amendment on git's global options says a `-C` in message text no longer
+  exempts a commit.
+- `git --work-tree commit log -n 1` is denied as a bypass. `--work-tree`
+  takes `commit` as its value, so the subcommand is `log`, and that
+  amendment says such a command is not checked.
+
+Three were never written down, and this amendment states them:
+
+- Under mawk, the pattern for a commit after global options takes time that
+  grows exponentially with a run of options such as `--work-tree`, because it
+  can read each one with or without a value. With 24, 26 and 28 of them
+  before `status`, the guard took 0.18, 0.42 and 1.07 s, against 0.02 s
+  before PR #158. The review measured 7.3 s at 32, and more than 65 s at 38
+  with a hook bypass chained after them. A guard that does not finish cannot
+  deny.
+- Until PR #158, the hooksPath and git dir check, and the `.env` check, ran
+  before any parsing. They now wait for the reader, though neither needs it
+  for the commands it matched before.
+- `--help`, `-h`, `--version` and `-v` read as options that take no value, so
+  `git --help commit` counts as a commit and needs a trailer.
+
+### What the guard reads
+
+**Text is read a word at a time.** Text another command receives, and a
+heredoc body that is not message text, is checked for a commit line by line
+and word by word, the way the reader reads a command. A line holds a commit
+when it has `git`, at its start or after a character that is not a letter, a
+digit or `_`, then blanks, then global options, then a `commit` that may be
+quoted. A word is a run of characters other than blanks and quotes, and of
+quoted runs. Each of the eight options that take a value always takes the
+next word. So each option is read one way, and the time grows with the line
+rather than with the ways to read it. This replaces the pattern that the
+amendment on git's global options matches text with. A command the reader
+cannot read is still matched with that pattern (see Limitations).
+
+**After some options no subcommand runs.** Under git 2.43, `--help` and `-h`
+run help, and `--version` and `-v` run version, in place of any subcommand
+written after them. `--exec-path` without `=`, `--html-path`, `--man-path`,
+`--info-path` and `--list-cmds=<group>` print and exit. In a throwaway
+repository with a staged change, git made no commit with any of these before
+`commit -m x`, and made one with `--exec-path=<dir>`, `-p` or `--no-pager`.
+After any of the nine, no later word of that git command is its subcommand,
+whether the reader reads the command or it is text. So `git --help commit` is
+not a commit.
+
+**A `-C` exempts a commit only where git reads it as an option.** The word
+after an option of git commit that takes a value is that value. Those options
+are `-m`, `-F`, `-c`, `-C` and `-t`, a short cluster that ends in one of
+them, and a long option that takes a value, written without `=` and perhaps
+shortened: `--author`, `--cleanup`, `--date`, `--file`, `--fixup`,
+`--message`, `--pathspec-from-file`, `--reedit-message`, `--reuse-message`,
+`--squash`, `--template` and `--trailer`. A word after `--` is a path. Neither
+a value nor a path is the `-C` that reuses a message. The bypass check reads
+the same words as before.
+
+**Checks that need no reader run before it.** The hooksPath and git dir check,
+and the `.env` check for `git add` or `git commit` side by side, run before the
+reader, as they did before PR #158. The `.env` check for a commit that only the
+reader sees still runs after it, and before the bypass and trailer checks.
+
+### What changes
+
+- `.claude/hooks/guard-commit.sh`: text and heredoc bodies are read as above,
+  the reader and the text reading stop at the nine options above, the `-C`
+  exemption skips values and paths, and the hooksPath check and the side by
+  side `.env` check move ahead of the reader. No file is added.
+- `services/api/tests/test_guards.py`: `git --work-tree commit log -n 1`, alone
+  and inside `bash -c`, joins `ORDINARY`. The reuse test gains a `-C` given as
+  the value of `-m` and of `-F`, and one after `--`. The global options trailer
+  test gains `git --exec-path=<dir> commit` with no trailer. Three new tests:
+  planned test_no_subcommand_runs_after_a_help_or_query_option puts each of
+  the nine options before `commit` with no trailer and expects it allowed;
+  planned test_a_run_of_global_options_costs_time_in_proportion_to_its_length
+  runs 4 and then 40 `--work-tree` options before `status; git commit -n ...`
+  under mawk where it exists, expects both denied, and the second to take less
+  than ten times as long; planned
+  test_checks_that_need_no_reader_do_not_wait_for_it puts an `awk` that never
+  returns first on the PATH and expects a hooksPath redirect and a `.env`
+  commit to be denied within seconds.
+
+No new file, so `config/data-classification.json` does not change.
+
+**Output.** Unchanged: exit 2 and the same messages on a deny, exit 0
+otherwise. A command that both redirects hooksPath and names a `.env` path in
+a commit after global options now gets the hooksPath message, since that check
+runs first.
+
+**How to know it worked.** `git commit -m "Fix the parser" -m "-C"` is denied
+for its missing trailer. `git --work-tree commit log -n 1` and
+`git --help commit` are allowed. Under mawk, 40 `--work-tree` options take
+about as long as 4, and a bypass after them is denied. With an awk that never
+returns, a hooksPath redirect and a `.env` commit are still denied.
+
+**Failure modes this must not introduce.** Every case already in the bypass
+list stays denied, and every ordinary case stays allowed. `git -p commit`,
+`git --no-pager commit` and `git --exec-path=<dir> commit` still count as
+commits. `git -C dir commit -C HEAD` is still exempt from the trailer check.
+
+### Limitations
+
+- A command the reader cannot read is still matched whole with the pattern,
+  through grep. That pattern can still read `--work-tree` without a value, so
+  it counts `git --work-tree commit log` as a commit, which only denies more.
+  GNU grep 3.11 read 4000 `--work-tree` options with it in 0.06 s. macOS grep
+  was not measured.
+- The review found five gaps that were there before PR #158. This amendment
+  leaves them, and each passed the guard both before and after that PR. An fd
+  number between `git` and `commit`, as in
+  `git -C . 2>/dev/null commit -n ...`, is read as the subcommand. A quoted
+  `"git"`, or a line continuation between `git` and `commit`, hides a commit
+  in text another command runs, as in `bash -c '"git" commit -n ...'`. git's
+  own path to the command, `/usr/lib/git-core/git-commit -n ...`, is not read
+  as git. One `-C` exempts every commit in the command, as in
+  `git commit -C HEAD && git -C . commit -m "x"`. `--amend --no-edit` is
+  matched anywhere in the string, so
+  `git commit -m "Explain --amend --no-edit"` needs no trailer.
