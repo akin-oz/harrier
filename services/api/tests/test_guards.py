@@ -130,6 +130,20 @@ BYPASSES = [
     # #158).
     "bash -c \"git -c 'user.name=a b' commit -n -m 'message' -m 'Spec: 045'\"",
     "bash -c \"git -c alias.x='!git commit -n -q' x -m 'message' -m 'Spec: 045'\"",
+    # Text that is not a commit's message, though it sits inside one: a
+    # heredoc its cat pipes to a shell, and a command inside ${...}, which the
+    # reader does not read. Each skipped a failing pre-commit hook under git
+    # 2.43 (spec 045's amendment on the env file check, after review of PR
+    # #164).
+    "git commit -m \"$(cat <<'EOF' | bash\ngit commit -n -m 'message'\nEOF\n)\" -m 'Spec: 045'",
+    "git commit -m \"${X:-$(git commit -n -m 'message')}\" -m 'Spec: 045'",
+    # A word that is only a command substitution, where git reads the commit's
+    # options: its output is the argument, here -n. The reader kept such a
+    # word as empty, so it read as no option at all. Each skipped a failing
+    # pre-commit hook under git 2.43 (spec 045's amendment on a command
+    # substitution among a commit's options).
+    "git commit \"$(cat <<'EOF'\n-n\nEOF\n)\" -m 'message' -m 'Spec: 045'",
+    "git commit \"`cat <<'EOF'\n-n\nEOF\n`\" -m 'message' -m 'Spec: 045'",
 ]
 
 # A guard stricter than the workflow it protects is its own failure.
@@ -149,6 +163,15 @@ ORDINARY = [
     # subcommand is log (spec 045's amendment after review of PR #158).
     "git --work-tree commit log -n 1",
     "bash -c 'git --work-tree commit log -n 1'",
+    # A substitution that gives a value, not an option: the value of -m, text
+    # attached to -m, -am or --message=, and a path after --. None is marked
+    # unread (spec 045's amendment on a command substitution among a commit's
+    # options). The first is the form this repository's own commits use.
+    "git commit -m \"$(cat <<'EOF'\nmessage\n\nSpec: 045\nEOF\n)\"",
+    'git commit -m"$(printf message)" -m "Spec: 045"',
+    'git commit -am"$(printf message)" -m "Spec: 045"',
+    'git commit --message="$(printf message)" -m "Spec: 045"',
+    'git commit -m "message" -m "Spec: 045" -- "$(printf README.md)"',
 ]
 
 
@@ -285,7 +308,9 @@ def test_checks_that_need_no_reader_do_not_wait_for_it(tmp_path: Path) -> None:
     until the guard read every command that mentions a commit first, and then
     they waited for it. An awk that never returns in time stands in for a
     reader that is slow or stuck (spec 045's amendment after review of PR
-    #158)."""
+    #158). A commit's env file check needs the reader now, to tell its
+    message from its paths, so `git add .env`, which it does not read, stands
+    for that check (spec 045's amendment on the env file check)."""
     stuck = tmp_path / "awk"
     stuck.write_text("#!/bin/sh\nexec sleep 30\n")
     stuck.chmod(0o755)
@@ -293,7 +318,7 @@ def test_checks_that_need_no_reader_do_not_wait_for_it(tmp_path: Path) -> None:
     env["PATH"] = f"{tmp_path}{os.pathsep}{env['PATH']}"
     for command in (
         'git -c core.hooksPath=/dev/null commit -m "m" -m "Spec: 045"',
-        'git commit -m "message" -m "Spec: 045" .env',
+        "git add .env",
     ):
         payload = json.dumps({"tool_input": {"command": command}})
         result = subprocess.run(
@@ -395,6 +420,86 @@ def test_the_commit_guard_still_refuses_to_stage_an_env_file() -> None:
     assert run_guard("guard-commit.sh", "git add .env") == DENY
     assert run_guard("guard-commit.sh", "git add .env.example") == ALLOW
     assert run_guard("guard-commit.sh", 'git -C . commit -m "message" -m "Spec: 045" .env') == DENY
+
+
+# A commit whose message names an env file, in each form the message takes.
+# None stages or commits one, and each was denied while the check read the
+# whole command (spec 045's amendment on the env file check). Each carries a
+# trailer, so an ALLOW proves the env file check passed.
+ENV_FILE_ONLY_IN_A_MESSAGE = [
+    'git commit -m "Stop reading .env in tests" -m "Spec: 045"',
+    "git commit -q -F - <<'EOF'\nIgnore .env.local in the loader\n\nSpec: 045\nEOF",
+    "git commit -m \"$(cat <<'EOF'\nKeep .env out of git\n\nSpec: 045\nEOF\n)\"",
+    'git add src/app.py && git commit -m "Read .env.local lazily" -m "Spec: 045"',
+    'git commit -am "Load .env lazily" -m "Spec: 045"',
+    'git commit -m"Load .env lazily" -m "Spec: 045"',
+    'git commit --message="Load .env lazily" -m "Spec: 045"',
+    'git commit --message "Load .env lazily" -m "Spec: 045"',
+    'git -C . commit -m "Load .env lazily" -m "Spec: 045"',
+    "git commit -F - <<< 'Load .env lazily\n\nSpec: 045'",
+    'git commit -m"$(cat <<\'EOF\'\nKeep .env out of git\nEOF\n)" -m "Spec: 045"',
+    "git commit --file - <<'EOF'\nIgnore .env.local in the loader\n\nSpec: 045\nEOF",
+]
+
+
+@pytest.mark.parametrize("command", ENV_FILE_ONLY_IN_A_MESSAGE)
+def test_an_env_file_named_only_in_a_message_does_not_block_the_commit(command: str) -> None:
+    """The env file check matched the whole command, so a message that only
+    names an env file denied the commit that carried it."""
+    assert run_guard("guard-commit.sh", command) == ALLOW, (
+        f"guard-commit.sh blocked a commit for its message: {command}"
+    )
+
+
+# Commands that stage an env file, commit one as a path, or read one into the
+# message. Each must still be denied by the env file check itself, whatever
+# the bypass and trailer checks would say (spec 045's amendment on the env
+# file check).
+ENV_FILE_STAGED_OR_READ = [
+    "git add .env",
+    "git add -f .env.local",
+    'git add .env && git commit -m "message" -m "Spec: 045"',
+    'git -C . commit -m "message" -m "Spec: 045" .env',
+    'git commit -m "message" -m "Spec: 045" -- .env.local',
+    'git commit -m "message" -m "Spec: 045" -- -m .env',
+    "git commit -F .env.local",
+    'git commit -m "$(cat .env)" -m "Spec: 045"',
+    "git commit -F - < .env.local",
+    "git commit -F - <<EOF\n$(cat .env)\nEOF",
+    'bash -c "git add .env"',
+    "git add .env.example; git commit -m x .env.prod -m 'Spec: 045'",
+    # A command substitution gives message text only inside the message.
+    # Elsewhere its output names a file or a path, so a cat there is no
+    # message. Under git 2.43 the first four wrote the env file into the
+    # commit message (review of PR #164).
+    'git commit -F "$(cat <<< .env)"',
+    "git commit -F - < \"$(cat <<'EOF'\n.env.local\nEOF\n)\"",
+    'git commit -m "$(cat "$(cat <<< .env)")" -m "Spec: 045"',
+    'git commit -m "$(cat <<\'EOF\' | xargs cat\n.env\nEOF\n)" -m "Spec: 045"',
+    "git commit -m x -m 'Spec: 045' --pathspec-from-file=- <<'EOF'\n.env\nEOF",
+    "git commit -m x -m 'Spec: 045' --pathspec-from-file=<(cat <<< .env)",
+    'git commit -m "${X:-$(cat .env)}" -m "Spec: 045"',
+]
+
+
+@pytest.mark.parametrize("command", ENV_FILE_STAGED_OR_READ)
+def test_the_env_file_check_still_denies_a_staged_or_read_env_file(command: str) -> None:
+    """Reading past a commit's message must not let an env file through:
+    named as a path, read into the message by -F or a redirection, or written
+    into it by a command substitution."""
+    payload = json.dumps({"tool_input": {"command": command}})
+    result = subprocess.run(
+        ["bash", str(HOOKS / "guard-commit.sh")],
+        input=payload,
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        check=False,
+    )
+    assert result.returncode == DENY, f"guard-commit.sh allowed an env file: {command}"
+    assert "refusing to stage/commit .env* files" in result.stderr, (
+        f"guard-commit.sh denied {command!r} for something else: {result.stderr}"
+    )
 
 
 def test_the_turn_gate_sees_a_file_that_is_only_added(tmp_path: Path) -> None:

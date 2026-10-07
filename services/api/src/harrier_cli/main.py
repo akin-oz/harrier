@@ -1303,6 +1303,13 @@ def _cmd_reconsider(args: argparse.Namespace) -> int:
     return 0
 
 
+# The repository review-followup reads unless told otherwise. The `once read`
+# line repeats --owner and --repo only for a run given others, so the command
+# it prints records against the pull request it was printed from.
+_FOLLOWUP_OWNER = "akin-oz"
+_FOLLOWUP_REPO = "harrier"
+
+
 def _cmd_review_followup(args: argparse.Namespace) -> int:
     import subprocess
     import time
@@ -1315,7 +1322,12 @@ def _cmd_review_followup(args: argparse.Namespace) -> int:
         FollowUpError,
         decide,
         gather,
+        handled_path,
+        ids_not_outstanding,
         load_counts,
+        outstanding_identifiers,
+        read_handled,
+        record_handled,
         record_request,
         report,
         request_review,
@@ -1333,13 +1345,62 @@ def _cmd_review_followup(args: argparse.Namespace) -> int:
     counts = load_counts()
     states: list[PullRequestState] = []
     exit_code = 0
-    for number in numbers:
+    # Recording what a person has read (spec 043 amendment). Every pull request
+    # named is read and every id checked before anything is written, so a run
+    # records all of its ids or none, and only ids a run could have printed.
+    marked = [str(value) for value in dict.fromkeys(args.mark_read or [])]
+    gathered: dict[int, PullRequestState] = {}
+    if marked:
+        for number in numbers:
+            try:
+                gathered[number] = gather(number, run_gh, owner=args.owner, repo=args.repo)
+            except FollowUpError as error:
+                print(f"error: {error}", file=sys.stderr)
+                print("error: nothing was recorded", file=sys.stderr)
+                return 1
         try:
-            state = gather(number, run_gh, owner=args.owner, repo=args.repo)
+            handled = read_handled()
         except FollowUpError as error:
-            print(f"error: {error}", file=sys.stderr)
-            exit_code = 1
-            continue
+            print(f"error: nothing was recorded; {error}", file=sys.stderr)
+            return 1
+        refused = ids_not_outstanding(gathered.values(), marked, handled)
+        if refused:
+            print(
+                "error: nothing was recorded; not outstanding on the pull requests named: "
+                + ", ".join(refused),
+                file=sys.stderr,
+            )
+            return 1
+        if args.dry_run:
+            for identifier in marked:
+                print(f"would record as read: {identifier}")
+        else:
+            fresh = [identifier for identifier in marked if identifier not in handled]
+            if fresh:
+                try:
+                    handled = record_handled(fresh)
+                except OSError:
+                    print(
+                        f"error: nothing was recorded; could not write {handled_path()}",
+                        file=sys.stderr,
+                    )
+                    return 1
+            for identifier in marked:
+                done = "recorded as read" if identifier in fresh else "already recorded"
+                print(f"{done}: {identifier}")
+            gathered = {
+                number: state.after_recording(handled) for number, state in gathered.items()
+            }
+    for number in numbers:
+        if number in gathered:
+            state = gathered[number]
+        else:
+            try:
+                state = gather(number, run_gh, owner=args.owner, repo=args.repo)
+            except FollowUpError as error:
+                print(f"error: {error}", file=sys.stderr)
+                exit_code = 1
+                continue
         states.append(state)
         decision = decide(
             state,
@@ -1353,8 +1414,13 @@ def _cmd_review_followup(args: argparse.Namespace) -> int:
             # spec, and it belongs to whoever is at the keyboard. All this can
             # do honestly is refuse to move on while the reviewer is waiting
             # on an answer.
+            # The record is keyed on a thread's last comment, not the thread,
+            # so that is the id printed: the one a person records once read.
             for thread in state.awaiting:
-                print(f"  thread {thread.identifier} (resolved={thread.resolved})")
+                print(
+                    f"  thread {thread.identifier} (resolved={thread.resolved}), "
+                    f"last comment {thread.last_comment_id}"
+                )
             for review in state.unread_reviews:
                 where = (
                     " INCLUDING FINDINGS OUTSIDE THE DIFF"
@@ -1362,8 +1428,27 @@ def _cmd_review_followup(args: argparse.Namespace) -> int:
                     else ""
                 )
                 print(f"  review {review.identifier}: {review.actionable_count} actionable{where}")
+            identifiers = outstanding_identifiers(state)
+            if identifiers:
+                repository = (
+                    ""
+                    if (args.owner, args.repo) == (_FOLLOWUP_OWNER, _FOLLOWUP_REPO)
+                    else f" --owner {args.owner} --repo {args.repo}"
+                )
+                print(
+                    f"  once read, record them with: harrier review-followup {number}"
+                    f"{repository} --mark-read {' '.join(identifiers)}"
+                )
             continue
-        if decision.action == WAIT and args.wait:
+        if marked:
+            # Saying what was read must not spend the hour's one review as a
+            # side effect, nor sleep out a limit to spend it later. A plain
+            # run after the record asks (spec 043 amendment).
+            continue
+        # A dry run never sleeps and never asks, --wait or not. Beside --wait
+        # it once slept out the limit and posted the request (spec 043
+        # amendment).
+        if decision.action == WAIT and args.wait and not args.dry_run:
             time.sleep(decision.wait_minutes * 60)
             request_review(number, run_gh, owner=args.owner, repo=args.repo)
             counts[str(number)] = record_request(number)
@@ -2135,14 +2220,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="wait out a rate-limited review and ask again (spec 043)",
     )
     followup.add_argument("pull_requests", nargs="+", help="pull request numbers")
-    followup.add_argument("--owner", default="akin-oz")
-    followup.add_argument("--repo", default="harrier")
+    followup.add_argument("--owner", default=_FOLLOWUP_OWNER)
+    followup.add_argument("--repo", default=_FOLLOWUP_REPO)
     followup.add_argument("--daily-limit", default=None, type=_positive_int)
     followup.add_argument(
         "--wait", action="store_true", help="sleep out the rate limit rather than reporting it"
     )
     followup.add_argument(
         "--dry-run", action="store_true", help="report what it would do and comment nothing"
+    )
+    followup.add_argument(
+        "--mark-read",
+        nargs="+",
+        metavar="ID",
+        help="record these reply and review ids as read, once read; posts nothing (spec 043)",
     )
     followup.set_defaults(func=_cmd_review_followup)
 
