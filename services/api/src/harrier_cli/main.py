@@ -1445,7 +1445,10 @@ def _cmd_review_followup(args: argparse.Namespace) -> int:
             # side effect, nor sleep out a limit to spend it later. A plain
             # run after the record asks (spec 043 amendment).
             continue
-        if decision.action == WAIT and args.wait:
+        # A dry run never sleeps and never asks, --wait or not. Beside --wait
+        # it once slept out the limit and posted the request (spec 043
+        # amendment).
+        if decision.action == WAIT and args.wait and not args.dry_run:
             time.sleep(decision.wait_minutes * 60)
             request_review(number, run_gh, owner=args.owner, repo=args.repo)
             counts[str(number)] = record_request(number)

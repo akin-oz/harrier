@@ -28,7 +28,9 @@ from harrier.reviewfollowup import (
     ReviewBody,
     ThreadState,
     handled_path,
+    load_counts,
     record_handled,
+    state_path,
 )
 from harrier_cli.main import main
 
@@ -698,6 +700,60 @@ def test_a_record_it_cannot_use_is_left_as_it_was(
 
     assert expected in capsys.readouterr().err.splitlines()
     assert (code, kept.read_bytes()) == (1, before)
+
+
+# --- review-followup: a dry run never waits (spec 043 amendment) -----------
+
+
+def _rate_limited_and_read(monkeypatch: pytest.MonkeyPatch) -> tuple[list[list[str]], list[float]]:
+    """An open pull request reviewed only before its head moved, with every
+    finding read and a rate-limit notice of 38 minutes posted just now: what
+    a waiting run waits on. Returns what was posted and how long it slept,
+    both kept rather than done."""
+    notice: dict[str, object] = {
+        "body": (
+            "<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->\n"
+            "> **Next review available in:** **38 minutes**"
+        ),
+        "user": {"login": "coderabbitai[bot]"},
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    posted = _github(monkeypatch, {147: _answered_after_a_push("OPEN")}, comments=[notice])
+    record_handled(["ack1", "ack2", "r1"])
+    slept: list[float] = []
+    monkeypatch.setattr("time.sleep", slept.append)
+    return posted, slept
+
+
+def test_a_dry_run_never_waits_and_never_asks(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--dry-run says it comments nothing, but beside --wait the command slept
+    out the limit, posted the request and counted it (spec 043 amendment)."""
+    posted, slept = _rate_limited_and_read(monkeypatch)
+
+    code = main(["review-followup", "147", "--dry-run", "--wait"])
+
+    out = capsys.readouterr().out.splitlines()
+    assert any(line.startswith("PR #147: rate limited, ") for line in out)
+    assert (slept, posted, state_path().is_file(), code) == ([], [], False, 2)
+
+
+def test_waiting_without_a_dry_run_still_asks(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """What the change keeps: --wait alone sleeps out what the notice leaves,
+    asks once, and counts the request."""
+    posted, slept = _rate_limited_and_read(monkeypatch)
+
+    code = main(["review-followup", "147", "--wait"])
+
+    assert "PR #147: review requested" in capsys.readouterr().out.splitlines()
+    # 38 minutes and the grace minute, from a notice posted just now.
+    assert slept == [39 * 60]
+    assert [command[1:4] for command in posted] == [["pr", "comment", "147"]]
+    assert "@coderabbitai review" in posted[0]
+    assert (load_counts(), code) == ({"147": 1}, 2)
 
 
 # --- portability ------------------------------------------------------------
