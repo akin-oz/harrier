@@ -596,11 +596,12 @@ def gather(number: int, run: GitHubRunner, *, owner: str, repo: str) -> PullRequ
     for raw_review in review_nodes:
         node = _as_dict(raw_review)
         author = str(_as_dict(node.get("author")).get("login", ""))
+        body = str(node.get("body") or "")
         reviews.append(
             ReviewBody(
                 identifier=str(node.get("id", "")),
                 author=author,
-                body=str(node.get("body") or ""),
+                body=body,
             )
         )
         # The sha the newest review from the reviewer actually looked at.
@@ -608,7 +609,13 @@ def gather(number: int, run: GitHubRunner, *, owner: str, repo: str) -> PullRequ
         # head" branch could not fire and the loop asked again every cycle.
         # Its tests passed because they built the state by hand rather than
         # going through here.
-        if author.lower().startswith(REVIEWER_LOGIN):
+        #
+        # Only a node with a body is a review. A reply in a review thread is a
+        # node too, with an empty body and the head at the moment of the reply
+        # as its commit, so one acknowledgement after a push read the new head
+        # as reviewed and the review the push earned was never asked for (PR
+        # #147, spec 043 amendment).
+        if author.lower().startswith(REVIEWER_LOGIN) and body:
             reviewed_sha = str(_as_dict(node.get("commit")).get("oid", "")) or reviewed_sha
 
     if clean_review and summary_sha:

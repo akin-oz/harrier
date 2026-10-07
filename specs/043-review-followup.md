@@ -173,6 +173,7 @@ Proven by services/api/tests/test_review_followup.py:
 | a clean review counts, and a review in progress is not asked again (amendment below) | `test_a_clean_review_counts_as_reviewed`, `test_a_notice_carrying_a_commit_range_is_not_a_review`, `test_a_review_in_progress_is_not_asked_again` |
 | no notice means nothing is posted | `test_no_notice_means_none`, `test_a_notice_without_a_wait_is_reported_not_guessed` |
 | an unchanged head is not re-requested | `test_a_reviewed_pull_request_at_the_same_head_is_left_alone`, `test_a_moved_head_is_asked_again` |
+| a reply in a thread is not a review of the commit it names (amendment below) | `test_a_reply_in_a_thread_is_not_a_review`, `test_the_reviewed_sha_is_read_from_the_reviews` |
 | the daily bound stops the loop | `test_the_daily_bound_stops_the_loop`, `test_the_bound_wins_over_everything_else` |
 | rate limited is distinguishable from reviewed | `test_a_rate_limited_pull_request_reports_as_not_reviewed`, `test_a_reviewed_pull_request_reports_as_reviewed`, `test_a_pull_request_with_neither_is_still_not_reviewed` |
 | `gh` failing is reported | `test_gh_failing_is_reported_not_swallowed`, `test_an_unreadable_payload_is_reported` |
@@ -215,6 +216,10 @@ protect a counter would have been the wrong trade.
       clean
 - [x] no pull request title, branch name, or comment body is written to a
       committed file (ADR-008)
+- [x] a reply in a thread is not a review of the commit it names, so a head
+      the reviewer has only replied on is asked for its review (the
+      amendment below on replies;
+      `test_a_reply_in_a_thread_is_not_a_review`)
 - [ ] All gates green on PR
 
 ## Proof / origin
@@ -299,3 +304,112 @@ requests at once, the command requests each that needs it, and every request
 after the one the limit allows earns a notice of its own, which the next run
 then waits out. Treating the limit as the repository's would change what the
 command does across pull requests, so it needs its own amendment.
+
+## Amendment (2026-10-06): a reply in a thread is not a review
+
+Found by running the command on PR #147.
+`harrier review-followup 147 --dry-run` printed "PR #147: already reviewed at
+the current head" and "PR #147: reviewed, 2 threads, nothing outstanding",
+and exited 0. The service had reviewed only the previous head, a855abe. The
+current head, 937deb9, was pushed to answer that review, and the service's
+status on it read "Review rate limited".
+
+The cause is in `gather`. It took the reviewed commit from the newest review
+node the reviewer wrote. A reply posted in a review thread is a review node
+of its own, and on PR #147 each one has state COMMENTED, an empty body, and
+the head at that moment as its commit. The service replied in both threads
+after the push, so its two newest nodes were replies at 937deb9, and the
+decision found the head reviewed. The review that carried the findings,
+5433578445, has a body and names a855abe. The service's replies, 5433666186
+and 5433667882, have empty bodies and name 937deb9. Our own two replies are
+nodes as well, empty and at 937deb9, and never counted because the reviewer
+did not write them.
+
+So one reply from the reviewer after a push was enough to skip the review the
+push earned. That is the case the head-commit check exists for: answering
+findings moves the head, and the move earns a fresh review.
+
+### Behavior after the change
+
+- A review node from the reviewer sets the reviewed commit only when its body
+  is not empty. A node with an empty body is a reply in a thread and sets
+  nothing. Among the nodes with a body, the newest names the commit, as
+  before.
+- In the shape PR #147 had, with every finding answered, the reviewed commit
+  is a855abe and the head is 937deb9, so the decision is "the head has moved
+  since the last review": a request, reported and not posted under
+  `--dry-run`. A rate-limit notice whose wait has not passed still comes
+  first and makes it a wait.
+- A clean review is still read from the summary comment, as the amendment
+  above describes. When the summary reports one, the commit that ends the
+  range it names is the reviewed one, whatever the review nodes say, so
+  replies change nothing there.
+- Nothing else reads review nodes differently. `reviews_seen` still counts
+  replies: a reply always sits in a thread, and a thread already makes the
+  pull request read as reviewed, so counting it changes nothing. Finding a
+  reply that waits on us, by who spoke last in its thread, is unchanged, and
+  so is reading review bodies for findings.
+
+The body is the criterion because it is the difference the evidence shows:
+on PR #147 the review with findings has one, and all four replies have none.
+`gather` already reads the body, so the query does not change. The other
+criterion, whether every comment in a node replies to an earlier one, would
+mean reading every review's comments as well.
+
+### What changes
+
+- `services/api/src/harrier/reviewfollowup.py`: `gather` applies the rule
+  where it sets the reviewed commit. Nothing else in the module changes.
+- `services/api/tests/test_review_followup.py`:
+  `test_a_reply_in_a_thread_is_not_a_review` drives the PR #147 shape through
+  `gather`. `test_the_reviewed_sha_is_read_from_the_reviews` built its review
+  with an empty body, which this amendment reads as a reply, so its review
+  gains a body. What it proves is unchanged.
+
+No new file, so `config/data-classification.json` does not change. The
+command's output lines and exit codes do not change.
+
+### How to know it worked
+
+`test_a_reply_in_a_thread_is_not_a_review` builds what PR #147 held and runs
+it through `gather`, because this spec has twice recorded a defect that tests
+bypassing `gather` could not see. It holds a review with findings at commit
+A, recorded as read; two threads, each ending in the reviewer's
+acknowledgement, also recorded as read; then four review nodes with empty
+bodies at commit B, two ours and two the reviewer's, with B as the head. It
+asserts that the reviewed commit is A and that the decision is a request
+because the head has moved. Before this change it fails: the reviewed commit
+reads as B and the decision as "already reviewed at the current head". That
+failure was reproduced through `gather` before this amendment was written,
+and again by this test before the fix.
+
+### Failure modes this must not introduce
+
+- A review with a body at the head stops reading as reviewed there.
+  `test_the_reviewed_sha_is_read_from_the_reviews`, with its review given a
+  body, holds this.
+- A clean review read from the summary comment stops counting.
+  `test_a_clean_review_counts_as_reviewed` holds this.
+- A reply hides a finding. Replies are still read for who spoke last:
+  `test_a_reply_in_a_resolved_thread_still_needs_an_answer`,
+  `test_a_further_reply_comes_back_after_being_answered`.
+
+### Out of scope
+
+- **The report line and the exit code.** A pull request reviewed at an
+  earlier head and not at its current one still reads "reviewed, N threads,
+  nothing outstanding" and exits 0, while the decision line says the head has
+  moved, or that it is rate limited. That was already so for any moved head.
+  Exiting non-zero there would change what exit 2 means for every pull
+  request whose head has moved since its last review, so it needs its own
+  amendment.
+- **The review window.** `gather` reads the newest twenty review nodes, and
+  every reply, ours or the reviewer's, is one. Past twenty, the query has
+  another page, and the command reports "a bounded query had another page"
+  and exits 3 on every run. That fails closed, so nothing is missed, but
+  replies bring it sooner. It is left to its own change.
+
+### Limitations
+
+- A reply posted with a body of its own would still count as a review. None
+  has been seen: all four replies on PR #147 have empty bodies.
