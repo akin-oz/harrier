@@ -130,6 +130,13 @@ BYPASSES = [
     # #158).
     "bash -c \"git -c 'user.name=a b' commit -n -m 'message' -m 'Spec: 045'\"",
     "bash -c \"git -c alias.x='!git commit -n -q' x -m 'message' -m 'Spec: 045'\"",
+    # Text that is not a commit's message, though it sits inside one: a
+    # heredoc its cat pipes to a shell, and a command inside ${...}, which the
+    # reader does not read. Each skipped a failing pre-commit hook under git
+    # 2.43 (spec 045's amendment on the env file check, after review of PR
+    # #164).
+    "git commit -m \"$(cat <<'EOF' | bash\ngit commit -n -m 'message'\nEOF\n)\" -m 'Spec: 045'",
+    "git commit -m \"${X:-$(git commit -n -m 'message')}\" -m 'Spec: 045'",
 ]
 
 # A guard stricter than the workflow it protects is its own failure.
@@ -414,6 +421,8 @@ ENV_FILE_ONLY_IN_A_MESSAGE = [
     'git commit --message "Load .env lazily" -m "Spec: 045"',
     'git -C . commit -m "Load .env lazily" -m "Spec: 045"',
     "git commit -F - <<< 'Load .env lazily\n\nSpec: 045'",
+    'git commit -m"$(cat <<\'EOF\'\nKeep .env out of git\nEOF\n)" -m "Spec: 045"',
+    "git commit --file - <<'EOF'\nIgnore .env.local in the loader\n\nSpec: 045\nEOF",
 ]
 
 
@@ -443,6 +452,17 @@ ENV_FILE_STAGED_OR_READ = [
     "git commit -F - <<EOF\n$(cat .env)\nEOF",
     'bash -c "git add .env"',
     "git add .env.example; git commit -m x .env.prod -m 'Spec: 045'",
+    # A command substitution gives message text only inside the message.
+    # Elsewhere its output names a file or a path, so a cat there is no
+    # message. Under git 2.43 the first four wrote the env file into the
+    # commit message (review of PR #164).
+    'git commit -F "$(cat <<< .env)"',
+    "git commit -F - < \"$(cat <<'EOF'\n.env.local\nEOF\n)\"",
+    'git commit -m "$(cat "$(cat <<< .env)")" -m "Spec: 045"',
+    'git commit -m "$(cat <<\'EOF\' | xargs cat\n.env\nEOF\n)" -m "Spec: 045"',
+    "git commit -m x -m 'Spec: 045' --pathspec-from-file=- <<'EOF'\n.env\nEOF",
+    "git commit -m x -m 'Spec: 045' --pathspec-from-file=<(cat <<< .env)",
+    'git commit -m "${X:-$(cat .env)}" -m "Spec: 045"',
 ]
 
 

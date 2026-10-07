@@ -110,20 +110,31 @@ commit_words() {
       return 0
     }
 
-    # Where option w of git commit puts its message: 2 when git reads the next
-    # word as the message, after -m, a short cluster whose first option that
-    # takes a value is an m that ends it, or --message written without = and
-    # perhaps shortened; 1 when w holds the message itself, as -m"text" or
-    # --message=text do; 0 otherwise.
-    function message_in(w,    i, c, e) {
-      if (w ~ /^--[^=]+$/) return index("--message", w) == 1 ? 2 : 0
-      if (w ~ /^--[^=]+=/) { e = index(w, "="); return index("--message", substr(w, 1, e - 1)) == 1 }
+    # Where option w of git commit puts the value of option -s or --l: 2 when
+    # git reads the next word as that value, after -s, a short cluster whose
+    # first option that takes a value is an s that ends it, or --l written
+    # without = and perhaps shortened; 1 when w holds the value itself, as
+    # -m"text" and --message=text do, and VAL is then that value; 0 otherwise.
+    function value_in(w, s, l,    i, c, e) {
+      if (w ~ /^--[^=]+$/) return index("--" l, w) == 1 ? 2 : 0
+      if (w ~ /^--[^=]+=/) {
+        e = index(w, "="); VAL = substr(w, e + 1)
+        return index("--" l, substr(w, 1, e - 1)) == 1
+      }
       if (w !~ /^-[^-]/) return 0
       for (i = 2; i <= length(w); i++) {
         c = substr(w, i, 1)
-        if (index("mFcCtSu", c)) return c != "m" ? 0 : i == length(w) ? 2 : 1
+        if (index("mFcCtSu", c)) { VAL = substr(w, i + 1); return c != s ? 0 : i == length(w) ? 2 : 1 }
       }
       return 0
+    }
+
+    # Whether the output of a command substitution is message text. msg is 1
+    # inside a message and 0 outside one. It is 2 in an option of a commit,
+    # where the text p before the substitution decides: an option whose
+    # message is attached, as -m, -am and --message= are.
+    function in_message(msg, p) {
+      return msg == 2 ? value_in(p "x", "m", "message") == 1 : msg
     }
 
     # Whether text t names an env file: .env and the characters a file name
@@ -210,7 +221,7 @@ commit_words() {
     function runs_a_bypass(t) { scan(t); return SEEN_COMMIT && SEEN_N }
 
     # Commands up to stop: a ")" or a backtick, or the end when stop is empty.
-    # msg is 1 inside a command substitution among the words of a commit.
+    # msg is 1 inside a command substitution whose output is message text.
     function parse_list(stop, msg,    c) {
       while (K <= NL && FAIL == "") {
         c = at()
@@ -235,58 +246,94 @@ commit_words() {
     # option: not as the value of another option, nor as a path after --.
     # Every word is checked for an env file except the message of a commit,
     # the value of -m or --message (the amendment to spec 045 on the env file
-    # check).
-    function parse_command(stop, msg,    c, nw, w, commit, g, value, i, first, outer, text, k, arg, paths, mword, mnext) {
+    # check). Only the output of a command substitution in that message is
+    # message text. In any other word it is a word: a file -F reads, a path,
+    # a file cat reads. So is the output of a subshell or of a process
+    # substitution, which this does not follow.
+    #
+    # A heredoc or here-string fed to the command may be message text, and is
+    # once the command ends: for a commit, when it reads its message from
+    # stdin by -F - and no pathspec from there; for cat in a substitution whose
+    # output is message text, when what cat writes is that output, not piped
+    # on or redirected.
+    function parse_command(stop, msg,    c, nw, w, commit, g, value, i, first, outer, text, k, r,
+        arg, paths, mnext, fnext, pnext, fin, pin, mtext, val, path, piped, out, nh, hd, hg, ns, hs) {
       nw = 0; commit = 0; g = 0; value = 0; first = HN + 1; outer = HERE; HERE = ""
+      arg = 0; paths = 0; mnext = 0; fnext = 0; pnext = 0; fin = 0; pin = 0
+      piped = 0; out = 0; nh = 0; ns = 0
       while (K <= NL && FAIL == "") {
         c = at()
         if (blank(c)) { adv(); continue }
         if (c == "\\" && next1() == "\n") { adv(); adv(); continue }
-        if (c == stop || c == "\n" || c == ";" || c == "|" || c == ")") break
+        if (c == "|") { piped = next1() != "|"; break }
+        if (c == stop || c == "\n" || c == ";" || c == ")") break
         if (c == "&" && next1() != ">") break
         if (c == "#") { C = LEN[K] + 1; continue }
-        if (c == "(") { adv(); parse_list(")", msg); adv(); continue }
+        if (c == "(") { adv(); parse_list(")", 0); adv(); continue }
         if ((c == "<" || c == ">") && next1() == "(") {
-          adv(); adv(); parse_list(")", msg || commit); adv(); continue
+          adv(); adv(); parse_list(")", 0); adv(); continue
         }
-        if (c == "<" || c == ">" || c == "&") { redirect(stop, commit > 0, msg, w[1]); continue }
-        w[++nw] = read_word(stop, msg || commit)
-        if (commit) continue
-        if (!g) { if (is_git(w[nw])) g = nw }
-        else if (value) value = 0
-        else if (runs_no_subcommand(w[nw])) g = 0
-        else if (w[nw] ~ /^-/) value = takes_value(w[nw])
-        else if (w[nw] == "commit") commit = nw
-        else g = is_git(w[nw]) ? nw : 0
+        if (c == "<" || c == ">" || c == "&") {
+          r = redirect(stop, commit > 0, msg, w[1])
+          if (r == "out") out = 1
+          else if (r == "heredoc") { hd[++nh] = HN; hg[nh] = GEN }
+          else if (r == "here-string") hs[++ns] = WORD
+          continue
+        }
+        if (!commit) {
+          w[++nw] = read_word(stop, 0)
+          if (!g) { if (is_git(w[nw])) g = nw }
+          else if (value) value = 0
+          else if (runs_no_subcommand(w[nw])) g = 0
+          else if (w[nw] ~ /^-/) value = takes_value(w[nw])
+          else if (w[nw] == "commit") commit = nw
+          else g = is_git(w[nw]) ? nw : 0
+          continue
+        }
+        # A word of the commit: the value of the option before it, a path
+        # after --, or an option.
+        w[++nw] = read_word(stop, arg ? mnext : paths ? 0 : 2)
+        val[nw] = arg; path[nw] = paths
+        if (arg) {
+          mtext[nw] = mnext
+          if (w[nw] == "-") { if (fnext) fin = 1; if (pnext) pin = 1 }
+          arg = 0; mnext = 0; fnext = 0; pnext = 0
+        } else if (w[nw] == "--") paths = 1
+        else if (!paths) {
+          arg = commit_takes_value(w[nw])
+          r = value_in(w[nw], "m", "message"); mnext = (r == 2); mtext[nw] = (r == 1)
+          r = value_in(w[nw], "F", "file"); fnext = (r == 2); if (r == 1 && VAL == "-") fin = 1
+          r = value_in(w[nw], "", "pathspec-from-file"); pnext = (r == 2); if (r == 1 && VAL == "-") pin = 1
+        }
       }
-      text = HERE; HERE = outer; arg = 0; paths = 0; mnext = 0
+      r = commit ? (fin && !pin) : (!piped && !out)
+      for (k = 1; k <= nh; k++) if (hg[k] == GEN) HTEXT[hd[k]] = r
+      text = HERE; HERE = outer
+      for (k = 1; k <= ns; k++) if (!r) { text = text " " hs[k]; if (names_env(hs[k])) ENV = 1 }
       for (i = 1; i <= nw; i++) {
-        mword = 0
         if (commit && i > commit) {
           if (skips_hooks(w[i])) found()
-          if (w[i] == "-C" && !arg && !paths) REUSE = 1
-          if (arg) { arg = 0; mword = mnext; mnext = 0 }
-          else if (w[i] == "--") paths = 1
-          else if (!paths) {
-            arg = commit_takes_value(w[i])
-            mword = message_in(w[i]); mnext = (mword == 2); mword = (mword == 1)
-          }
+          if (w[i] == "-C" && !val[i] && !path[i]) REUSE = 1
           if (w[i] ~ /\$[@*0-9]|\$[{][@*0-9]/) UNSURE = 1
         } else if (!commit || i < g) text = text " " w[i]
-        if (!mword && names_env(w[i])) ENV = 1
+        if (!mtext[i] && names_env(w[i])) ENV = 1
       }
       if (runs_a_bypass(text)) found()
       if (commit || SEEN_COMMIT) COMMIT = 1
       for (k = first; k <= HN; k++) HCMD[k] = text
     }
 
-    # A redirection. A heredoc body is read after the end of its line. It is
-    # message text when its delimiter is quoted and it feeds the commit itself
-    # (own), or cat inside a command substitution among the commit words (msg).
-    # A here-string that is not message text counts as one of the words. The
-    # target, unless a heredoc delimiter or message text, is checked for an
-    # env file, so a file read into the message by < is.
-    function redirect(stop, own, msg, cmd,    op, c, word, message) {
+    # A redirection. A heredoc body is read after the end of its line. One
+    # with a quoted delimiter that feeds the commit itself (own) or cat in a
+    # substitution whose output is message text (msg) may be message text,
+    # and so may a here-string fed to either: the command decides when it
+    # ends. A here-string that is not message text counts as one of the
+    # words. The target is never message text, nor a substitution in it, and
+    # unless a heredoc delimiter it is checked for an env file, so a file read
+    # into the message by < is. Returns "heredoc" or "here-string" for one
+    # that may be message text, the here-string then in WORD, "out" for a
+    # redirection of output, and "" otherwise.
+    function redirect(stop, own, msg, cmd,    op, c, word, may) {
       op = at(); adv(); c = at()
       if (op == "<" && c == "<") {
         op = "<<"; adv()
@@ -296,13 +343,17 @@ commit_words() {
       else if (op == ">" && (c == ">" || c == "&" || c == "|")) { op = op c; adv() }
       else if (op == "&") { op = "&>"; adv(); if (at() == ">") { op = "&>>"; adv() } }
       while (blank(at())) adv()
-      word = read_word(stop, msg || own)
-      message = own || (msg && cmd == "cat")
+      word = read_word(stop, 0)
+      may = own || (msg && cmd == "cat")
       if (op == "<<" || op == "<<-") {
-        HN++; HDELIM[HN] = word; HSTRIP[HN] = (op == "<<-"); HTEXT[HN] = message && QUOTED
+        HN++; HDELIM[HN] = word; HSTRIP[HN] = (op == "<<-"); HTEXT[HN] = 0
         HCMD[HN] = ""
-      } else if (op == "<<<" && !message) HERE = HERE " " word
-      if (op != "<<" && op != "<<-" && !(op == "<<<" && message) && names_env(word)) ENV = 1
+        return may && QUOTED ? "heredoc" : ""
+      }
+      if (op == "<<<" && may) { WORD = word; return "here-string" }
+      if (op == "<<<") HERE = HERE " " word
+      if (names_env(word)) ENV = 1
+      return op ~ /^[>&]/ ? "out" : ""
     }
 
     # Heredoc bodies, line by line, after the newline that ends their command.
@@ -328,7 +379,7 @@ commit_words() {
           if ((m || SEEN_COMMIT) && (b || SEEN_N)) found()
         }
       }
-      HN = 0
+      HN = 0; GEN++
     }
 
     # One word with its quotes removed. A command substitution is parsed for
@@ -342,7 +393,7 @@ commit_words() {
           || c == "<" || c == ">" || c == "(" || c == ")") break
         if (c == "`") {
           if (stop == "`") break
-          adv(); parse_list("`", msg); adv(); continue
+          adv(); parse_list("`", in_message(msg, v)); adv(); continue
         }
         if (c == "\\") {
           if (next1() == "\n") { adv(); adv(); continue }
@@ -358,8 +409,8 @@ commit_words() {
           }
           continue
         }
-        if (c == "\"") { v = v dquote(msg); q = 1; continue }
-        if (c == "$" && next1() == "(") { adv(); adv(); parse_list(")", msg); adv(); continue }
+        if (c == "\"") { v = v dquote(msg, v); q = 1; continue }
+        if (c == "$" && next1() == "(") { adv(); adv(); parse_list(")", in_message(msg, v)); adv(); continue }
         if (c == "$" && next1() == "\047") { adv(); v = v ansi_c(); q = 1; continue }
         if (c == "$" && next1() == "\"") { adv(); continue }
         if (c == "$" && next1() == "{") { v = v brace(); continue }
@@ -371,7 +422,7 @@ commit_words() {
 
     # Plain text inside the quotes is copied a run at a time, up to the next
     # character that means something there.
-    function dquote(msg,    c, v, rest) {
+    function dquote(msg, p,    c, v, rest) {
       adv(); v = ""
       while (K <= NL && FAIL == "") {
         rest = substr(L[K], C)
@@ -385,8 +436,8 @@ commit_words() {
           if (c == "$" || c == "`" || c == "\"" || c == "\\") { v = v c; adv(); adv(); continue }
           v = v "\\"; adv(); continue
         }
-        if (c == "`") { adv(); parse_list("`", msg); adv(); continue }
-        if (c == "$" && next1() == "(") { adv(); adv(); parse_list(")", msg); adv(); continue }
+        if (c == "`") { adv(); parse_list("`", in_message(msg, p v)); adv(); continue }
+        if (c == "$" && next1() == "(") { adv(); adv(); parse_list(")", in_message(msg, p v)); adv(); continue }
         if (c == "$" && next1() == "{") { v = v brace(); continue }
         v = v c; adv()
       }
@@ -406,13 +457,19 @@ commit_words() {
       return v
     }
 
+    # A parameter expansion, kept as text. A command substitution inside one
+    # is not read, though the shell may run it, so a command that holds one
+    # is checked whole (the amendment to spec 045 on the env file check).
     function brace(    depth, c, v) {
       v = "${"; adv(); adv(); depth = 1
       while (K <= NL) {
         c = at(); v = v c; adv()
         if (c == "\\") { v = v at(); adv() }
         else if (c == "{") depth++
-        else if (c == "}" && --depth == 0) return v
+        else if (c == "}" && --depth == 0) {
+          if (index(v, "$(") || index(v, "`")) UNSURE = 1
+          return v
+        }
       }
       FAIL = "unclosed ${"
       return v
