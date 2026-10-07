@@ -773,7 +773,7 @@ the hook chain with one pattern over the whole string, and the pattern matches
 case, gets the value of `-c` with its quotes already removed by the shell, and
 reads the same key from `--config-env` and from its environment. Each of these
 skipped a failing pre-commit hook under git 2.43 in a throwaway repository,
-and the guard at ee77b1b (main) and at 345b3ca (PR #158) allowed each with a
+and the guard at 6bdbd6b, main with PR #158 merged, allowed each with a
 trailer:
 
 ```text
