@@ -51,7 +51,11 @@ TOKEN_ENV = "HARRIER_API_TOKEN"
 
 # Hostnames a local browser legitimately uses. A request arriving with any
 # other Host is either misrouted or rebound, and neither should reach a route.
-TRUSTED_HOSTS = ("localhost", "127.0.0.1", "[::1]", "0.0.0.0", "testserver")
+# `testserver`, the host Starlette's test client sends by default, is not one
+# of them: it is an ordinary name that DNS resolves, so a page on a network
+# whose DNS an attacker controls could rebind it to 127.0.0.1 and pass this
+# check. The tests reach the app as `localhost` instead (spec 083).
+TRUSTED_HOSTS = ("localhost", "127.0.0.1", "[::1]", "0.0.0.0")
 
 
 def token_path() -> Path:
