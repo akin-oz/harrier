@@ -203,7 +203,7 @@ spec 044.
       `::test_the_commit_guard_allows_ordinary_work`,
       `::test_a_commit_after_global_options_still_requires_a_spec_trailer`,
       `::test_the_reuse_exemption_reads_only_the_commits_own_words`)
-- [ ] the commit guard's time grows with a run of git global options rather
+- [x] the commit guard's time grows with a run of git global options rather
       than exponentially, the hooksPath, git dir and `.env` checks that need
       no reader run before it, `git --help commit` and the other options
       after which git runs no subcommand are not commits, and a `-C` that git
@@ -211,10 +211,10 @@ spec 044.
       (the amendment below after review of PR #158;
       `services/api/tests/test_guards.py::test_the_commit_guard_denies_every_proven_bypass`,
       `::test_the_commit_guard_allows_ordinary_work`,
-      `::test_the_reuse_exemption_reads_only_the_commits_own_words`, planned
-      test_a_run_of_global_options_costs_time_in_proportion_to_its_length,
-      planned test_checks_that_need_no_reader_do_not_wait_for_it, planned
-      test_no_subcommand_runs_after_a_help_or_query_option)
+      `::test_the_reuse_exemption_reads_only_the_commits_own_words`,
+      `::test_a_run_of_global_options_costs_time_in_proportion_to_its_length`,
+      `::test_checks_that_need_no_reader_do_not_wait_for_it`,
+      `::test_no_subcommand_runs_after_a_help_or_query_option`)
 - [ ] All gates green on PR
 
 ## Proof / origin
@@ -847,15 +847,20 @@ reader sees still runs after it, and before the bypass and trailer checks.
   and inside `bash -c`, joins `ORDINARY`. The reuse test gains a `-C` given as
   the value of `-m` and of `-F`, and one after `--`. The global options trailer
   test gains `git --exec-path=<dir> commit` with no trailer. Three new tests:
-  planned test_no_subcommand_runs_after_a_help_or_query_option puts each of
-  the nine options before `commit` with no trailer and expects it allowed;
-  planned test_a_run_of_global_options_costs_time_in_proportion_to_its_length
-  runs 4 and then 40 `--work-tree` options before `status; git commit -n ...`
-  under mawk where it exists, expects both denied, and the second to take less
-  than ten times as long; planned
-  test_checks_that_need_no_reader_do_not_wait_for_it puts an `awk` that never
-  returns first on the PATH and expects a hooksPath redirect and a `.env`
-  commit to be denied within seconds.
+  `::test_no_subcommand_runs_after_a_help_or_query_option` puts each of the
+  nine options before `commit` with no trailer and expects it allowed;
+  `::test_a_run_of_global_options_costs_time_in_proportion_to_its_length` runs
+  4 and then 40 `--work-tree` options before `status; git commit -n ...` under
+  mawk where it exists, expects both denied, and the second to take less than
+  ten times as long; `::test_checks_that_need_no_reader_do_not_wait_for_it`
+  puts an `awk` that never returns in time first on the PATH and expects a
+  hooksPath redirect and a `.env` commit to be denied within seconds.
+  `BYPASSES` gains two cases inside `bash -c` that pin how text is read: a
+  `-c` value quoted with a blank in it, and a commit inside a quoted alias
+  value, `git -c alias.x='!git commit -n -q' x ...`. A reading that skipped a
+  `git` inside a word another reading had passed over would miss the second,
+  which the pattern caught. Each skipped a failing pre-commit hook under git
+  2.43.
 
 No new file, so `config/data-classification.json` does not change.
 
@@ -882,6 +887,12 @@ commits. `git -C dir commit -C HEAD` is still exempt from the trailer check.
   it counts `git --work-tree commit log` as a commit, which only denies more.
   GNU grep 3.11 read 4000 `--work-tree` options with it in 0.06 s. macOS grep
   was not measured.
+- Under original-awk, the codebase macOS awk comes from, the reader still
+  takes time that grows faster than one long line it reads, as it did before
+  PR #158. One line of 4000 `--work-tree` options before a commit took between
+  9.7 and 14.8 s in four runs, before this change and after it, against under
+  0.4 s in mawk and gawk. Text, read as above, took 0.14 s for 4000 options in
+  original-awk.
 - The review found five gaps that were there before PR #158. This amendment
   leaves them, and each passed the guard both before and after that PR. An fd
   number between `git` and `commit`, as in

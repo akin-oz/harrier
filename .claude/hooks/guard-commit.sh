@@ -12,12 +12,15 @@ deny() { printf '%s\n' "$1" >&2; exit 2; }
 # A git commit as the whole string shows it, git and commit side by side.
 COMMITS='(^|[^[:alnum:]_])git[[:space:]]+commit'
 
-# A git commit with git's global options between git and commit, for text that
-# is matched rather than read word by word (spec 045's amendment on git's
-# global options). A unit of a word is a character that is not a space or a
-# quote, or a quoted run. The options in VALUED take the next word as their
-# value, as git 2.43 reads them. Any other option takes none, and a bare -C or
-# -c is never read as one that takes none.
+# A git commit with git's global options between git and commit, for a command
+# the reader cannot read, matched whole (spec 045's amendment on git's global
+# options). A unit of a word is a character that is not a space or a quote, or
+# a quoted run. The options in VALUED take the next word as their value, as git
+# 2.43 reads them. Any other option takes none, and a bare -C or -c is never
+# read as one that takes none. The pattern can read a long one either way, and
+# in mawk that cost time exponential in a run of them, so the reader reads text
+# a word at a time instead (spec 045's amendment after review of PR #158). GNU
+# grep, which matches this pattern here, read 4000 such options in 0.06 s.
 q="'"
 UNIT="([^[:space:]\"$q]|\"[^\"]*\"|$q[^$q]*$q)"
 VALUED="(-[Cc]|--(git-dir|work-tree|namespace|config-env|attr-source|shallow-file))"
@@ -44,12 +47,12 @@ OLD_BYPASS='--no-verify|(^|[[:space:]])-[A-Za-z]*n[A-Za-z]*([[:space:]]|=|$)'
 
 # Prints, separated by spaces: "commit" when it reads a git commit, or text
 # another command receives holds one; "reuse" when -C is one of a commit's own
-# words; "bypass" when a git commit in the command skips the hooks, or else
+# options; "bypass" when a git commit in the command skips the hooks, or else
 # "unread" when the command cannot be read. Written to POSIX awk, since the
 # guard runs under macOS awk as well as mawk and gawk. If awk itself fails, the
 # whole string is checked as before.
 commit_words() {
-  printf '%s' "$CMD" | LC_ALL=C awk -v commits="$GLOBAL_COMMITS" -v old="$OLD_BYPASS" '
+  printf '%s' "$CMD" | LC_ALL=C awk -v old="$OLD_BYPASS" '
     # The command is read line by line: L[k] is line k and LEN[k] its length.
     # The position is line K, column C, and column LEN[K] + 1 is the newline
     # that ends line K. Holding the command as one string was quadratic: in
@@ -79,6 +82,33 @@ commit_words() {
       return w ~ /^(-C|-c|--git-dir|--work-tree|--namespace|--config-env|--attr-source|--shallow-file)$/
     }
 
+    # A global option after which git runs no subcommand written later, as
+    # git 2.43 reads it: help or version runs in its place, or git prints a
+    # path or a list and exits.
+    function runs_no_subcommand(w) {
+      if (w ~ /^--exec-path/) return w !~ /^--exec-path=/
+      return w ~ /^(-h|--help|-v|--version|--html-path|--man-path|--info-path|--list-cmds=.*)$/
+    }
+
+    # Whether git commit reads the word after option w as the value of w: w is
+    # a short cluster whose first option that takes a value ends it, or a long
+    # option that takes one, written without = and perhaps shortened.
+    function commit_takes_value(w,    i, c, n, name) {
+      if (w ~ /^--[^=]+$/) {
+        n = split("author cleanup date file fixup message pathspec-from-file" \
+          " reedit-message reuse-message squash template trailer", name, " ")
+        for (i = 1; i <= n; i++) if (index("--" name[i], w) == 1) return 1
+        return 0
+      }
+      if (w !~ /^-[^-]/) return 0
+      for (i = 2; i <= length(w); i++) {
+        c = substr(w, i, 1)
+        if (index("mFcCt", c)) return i == length(w)
+        if (index("Su", c)) return 0
+      }
+      return 0
+    }
+
     # --no-verify, an abbreviation git accepts, or a short cluster with an n
     # before the first option that takes a value.
     function skips_hooks(w,    i, c) {
@@ -92,13 +122,60 @@ commit_words() {
       return 0
     }
 
-    # Text another command may run is checked as before: the old pattern,
-    # line by line, the way grep read the whole command.
+    # Whether a line of text holds a git commit: git, at the start or after a
+    # character that is not a letter, a digit or _, then git global options
+    # and the values of those that take one, then a commit that may be quoted.
+    # It is read a word at a time, so each option is read one way. A pattern
+    # that could read an option with or without a value took time exponential
+    # in a run of them in mawk (the amendment to spec 045 after review of PR
+    # #158). The line is split at blanks once, and a field that leaves a quote
+    # open is joined to the fields after it until the quote closes. Reading
+    # starts after every field that ends in such a git, quoted or not, as the
+    # pattern did. A field already read in the same state, as an option or as
+    # a value, ends the reading, which went no further the first time, so no
+    # field is read more than twice.
+    function holds_commit(t,    f, n, i, j, w, q, value, seen) {
+      n = split(t, f, /[[:space:]]+/)
+      for (i = 1; i < n; i++) {
+        if (f[i] !~ /(^|[^[:alnum:]_])git$/) continue
+        value = 0
+        for (j = i + 1; j <= n && !seen[j, value]++; ) {
+          if (!value && f[j] ~ /^["\047]?commit/) return 1
+          w = f[j]; q = left_open(w, ""); j++
+          while (q != "" && j <= n) { w = w " " f[j]; q = left_open(f[j], q); j++ }
+          if (w == "" || q != "") break
+          if (value) value = 0
+          else if (w !~ /^-/ || runs_no_subcommand(w)) break
+          else value = takes_value(w)
+        }
+      }
+      return 0
+    }
+
+    # The quote that text t leaves open, given quote q open at its start, or
+    # "" for none. A double quote pairs with the next double quote and a
+    # single quote with the next single quote, and each pair encloses the
+    # other kind.
+    function left_open(t, q,    e) {
+      while (1) {
+        if (q != "") {
+          e = index(t, q)
+          if (!e) return q
+          t = substr(t, e + 1); q = ""
+        }
+        if (!match(t, /["\047]/)) return ""
+        q = substr(t, RSTART, 1); t = substr(t, RSTART + 1)
+      }
+    }
+
+    # Text another command may run is checked line by line, the way grep read
+    # the whole command: for a commit as above, and for an -n with the old
+    # pattern.
     function scan(t,    n, i, part) {
       SEEN_COMMIT = 0; SEEN_N = 0
       n = split(t, part, "\n")
       for (i = 1; i <= n; i++) {
-        if (part[i] ~ commits) SEEN_COMMIT = 1
+        if (!SEEN_COMMIT && holds_commit(part[i])) SEEN_COMMIT = 1
         if (part[i] ~ old) SEEN_N = 1
       }
     }
@@ -120,13 +197,15 @@ commit_words() {
 
     # One simple command. Its subcommand is the first word after git that is
     # neither a global option nor the value of one (the amendment to spec 045
-    # on the global options of git). When that is commit, the words after it
-    # are its options, unless they hold "$@" or another positional parameter:
-    # then they come from elsewhere in the string, which is checked whole. Any
-    # other command that receives git commit in its text is checked whole too,
-    # its words and that text together, since the text may run with those
-    # words as arguments.
-    function parse_command(stop, msg,    c, nw, w, commit, g, value, i, first, outer, text, k) {
+    # on the global options of git), and there is none after an option that
+    # runs no subcommand. When that is commit, the words after it are its
+    # options, unless they hold "$@" or another positional parameter: then
+    # they come from elsewhere in the string, which is checked whole. Any other
+    # command that receives git commit in its text is checked whole too, its
+    # words and that text together, since the text may run with those words
+    # as arguments. A -C reuses a message only where git reads it as an
+    # option: not as the value of another option, nor as a path after --.
+    function parse_command(stop, msg,    c, nw, w, commit, g, value, i, first, outer, text, k, arg, paths) {
       nw = 0; commit = 0; g = 0; value = 0; first = HN + 1; outer = HERE; HERE = ""
       while (K <= NL && FAIL == "") {
         c = at()
@@ -144,15 +223,19 @@ commit_words() {
         if (commit) continue
         if (!g) { if (is_git(w[nw])) g = nw }
         else if (value) value = 0
+        else if (runs_no_subcommand(w[nw])) g = 0
         else if (w[nw] ~ /^-/) value = takes_value(w[nw])
         else if (w[nw] == "commit") commit = nw
         else g = is_git(w[nw]) ? nw : 0
       }
-      text = HERE; HERE = outer
+      text = HERE; HERE = outer; arg = 0; paths = 0
       for (i = 1; i <= nw; i++) {
         if (commit && i > commit) {
           if (skips_hooks(w[i])) found()
-          if (w[i] == "-C") REUSE = 1
+          if (w[i] == "-C" && !arg && !paths) REUSE = 1
+          if (arg) arg = 0
+          else if (w[i] == "--") paths = 1
+          else if (!paths) arg = commit_takes_value(w[i])
           if (w[i] ~ /\$[@*0-9]|\$[{][@*0-9]/) UNSURE = 1
         } else if (!commit || i < g) text = text " " w[i]
       }
@@ -193,7 +276,7 @@ commit_words() {
           line = L[K]; K++; C = 1
           if (HSTRIP[k]) sub(/^\t+/, "", line)
           if (line == HDELIM[k]) break
-          if (!HTEXT[k]) { if (line ~ commits) m = 1; if (line ~ old) b = 1 }
+          if (!HTEXT[k]) { if (!m && holds_commit(line)) m = 1; if (line ~ old) b = 1 }
         }
         if (!HTEXT[k]) {
           scan(HCMD[k])
@@ -304,6 +387,31 @@ commit_words() {
     }'
 }
 
+# Never stage or commit env files (except templates). A git add or a git
+# commit side by side is checked here, before the reader, and a commit that
+# only the reader sees is checked after it.
+names_env_file() {
+  printf '%s' "$CMD" | grep -oE '\.env[A-Za-z0-9_.-]*' \
+    | grep -vE '^\.env\.(example|sample|template)$' | grep -q .
+}
+ENV_FILE="BLOCKED: refusing to stage/commit .env* files. Credentials never enter git (ADR-002)."
+if printf '%s' "$CMD" | grep -qE '(^|[^[:alnum:]_])git[[:space:]]+(add|commit)' && names_env_file; then
+  deny "$ENV_FILE"
+fi
+
+# Checked for every command, before the reader and the "is this a commit"
+# gate below. It went before that gate when the gate needed `git` and `commit`
+# side by side, which let `git -c core.hooksPath=... commit` read as neither a
+# commit nor a bypass. It and the check above need no reader, so a reader that
+# is slow or never returns holds up neither (spec 045's amendment after review
+# of PR #158). Matched as command tokens rather than anywhere in the string.
+# The first version matched a bare substring, so it blocked any command whose
+# text merely mentioned these, including the commit message describing this
+# very guard (review of PR #50).
+if printf '%s' "$CMD" | grep -qE '(^|[[:space:]])(-c[[:space:]]+core\.hooksPath|--git-dir|GIT_DIR)=?'; then
+  deny "BLOCKED: redirecting hooksPath or the git dir disables the hook chain. The verification hooks ARE the definition of done."
+fi
+
 # The reader runs on a command whose text holds commit. One that does not
 # cannot name the subcommand unless a quote or a backslash splits the word,
 # and skipping the reader there keeps its cost off most commands.
@@ -323,28 +431,13 @@ if says commit || printf '%s' "$CMD" | grep -qE "$COMMITS" \
   commits=yes
 fi
 
-# Never stage or commit env files (except templates).
-if printf '%s' "$CMD" | grep -qE '(^|[^[:alnum:]_])git[[:space:]]+(add|commit)' \
-  || [ "$commits" = yes ]; then
-  if printf '%s' "$CMD" | grep -oE '\.env[A-Za-z0-9_.-]*' \
-    | grep -vE '^\.env\.(example|sample|template)$' | grep -q .; then
-    deny "BLOCKED: refusing to stage/commit .env* files. Credentials never enter git (ADR-002)."
-  fi
-fi
-
-# Checked BEFORE the "is this a commit" gate below, for every command. It went
-# there when that gate needed `git` and `commit` side by side, which let
-# `git -c core.hooksPath=... commit` read as neither a commit nor a bypass.
-# Matched as command tokens rather than anywhere in the string. The first
-# version matched a bare substring, so it blocked any command whose text merely
-# mentioned these, including the commit message describing this very guard
-# (review of PR #50).
-if printf '%s' "$CMD" | grep -qE '(^|[[:space:]])(-c[[:space:]]+core\.hooksPath|--git-dir|GIT_DIR)=?'; then
-  deny "BLOCKED: redirecting hooksPath or the git dir disables the hook chain. The verification hooks ARE the definition of done."
-fi
-
 # Only inspect git commit commands from here on.
 [ "$commits" = yes ] || exit 0
+
+# The env file check again, for a commit that only the reader sees.
+if names_env_file; then
+  deny "$ENV_FILE"
+fi
 
 if says bypass || { says unread && printf '%s' "$CMD" | grep -qE -- "$OLD_BYPASS"; }; then
   deny "BLOCKED: 'git commit --no-verify' (or -n, including bundled forms like -nm) is not allowed. The verification hooks ARE the definition of done."
@@ -353,7 +446,10 @@ fi
 # Amend without editing, or -C <commit>, reuses an already-trailered message.
 # -C counts only among the commit's own words. Matched in the whole string, it
 # was also git's global -C <path>, so every commit made with git -C would have
-# skipped the trailer (spec 045's amendment on git's global options).
+# skipped the trailer (spec 045's amendment on git's global options). Among
+# those words it counts only where git reads it as an option, not as the value
+# of -m or the like, nor as a path after `--` (the amendment after review of
+# PR #158).
 if printf '%s' "$CMD" | grep -qE -- '--amend[[:space:]]+--no-edit|--no-edit[[:space:]]+--amend' \
   || says reuse \
   || { says unread && printf '%s' "$CMD" | grep -qE -- '[[:space:]]-C[[:space:]]'; }; then
