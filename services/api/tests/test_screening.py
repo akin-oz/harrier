@@ -262,7 +262,7 @@ def test_a_blocker_never_changes_a_gate_verdict(location: str) -> None:
         location=location,
         description=(
             "TypeScript React. Remote Europe role. Anywhere in the US, W-2, "
-            "no visa sponsorship, security clearance required."
+            "no visa sponsorship, security clearance required.\n- 401(k) plan\n"
         ),
     )
     assert remote_region_allowed(plain, candidate_cfg()) == remote_region_allowed(
