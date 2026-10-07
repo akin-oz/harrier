@@ -204,6 +204,28 @@ EMPLOYMENT_BLOCKER_PATTERNS: tuple[str, ...] = (
     r"\b(?:active|current) (?:secret|top secret|ts/sci) clearance\b",
 )
 
+# US retirement and tax-advantaged accounts: benefits that exist only on US
+# payroll, so a posting offering one with no alternative pays through a
+# payroll the candidate cannot join (spec 088). Medical, dental, vision and
+# disability cover are absent because European employers offer them too.
+# The leading guard keeps "1401k" and "2,401k" out; salaries are rule 3, in
+# `_is_money`.
+US_PAYROLL_PATTERNS: tuple[str, ...] = (
+    r"(?<![\w.,])401\s?\(?k\)?(?!\w)",
+    r"(?<![\w.,])403\s?\(?b\)?(?!\w)",
+    r"\bhealth savings accounts?\b",
+)
+
+# Where a person may work, said so that a US benefit beside it is one
+# region's (spec 088, rule 4). Bare "worldwide", "global" and "around the
+# world" are absent: they describe customers and offices as often as hiring.
+US_PAYROLL_REACH_PATTERNS: tuple[str, ...] = (
+    r"\bwork from anywhere\b(?! in the (?:us|u\.s\.?|usa|united states)\b)",
+    r"\banywhere in the world\b",
+    r"\b(?:from|in) any country\b(?! in the (?:us|u\.s\.?|usa|united states)\b)",
+    r"\bglobally distributed\b",
+)
+
 SKILL_SIGNALS: dict[str, int] = {
     "typescript": 7,
     "vue": 7,
@@ -673,6 +695,48 @@ def _us_scope_phrase(text: str) -> str | None:
     return None
 
 
+# Where one benefit's list item ends: a line break, a bullet, a semicolon, or
+# a full stop that ends a sentence. Split before lowercasing, so "U.S.
+# employees" stays one item and "Paid leave. Equity" is two.
+_LIST_ITEM_END = r"[\r\n;•·]|\.\s+(?=[A-Z0-9])"
+# A US word that labels a benefit as one region's. Capitals only for the bare
+# form: "us" in lower case is the pronoun ("with us matching 4%").
+_US_QUALIFIER = r"(?<![\w.])(?:US|USA|U\.S\.?)(?!\w)|(?i:\bunited states\b|\bamerican\b)"
+# Rule 3: a currency directly before the number, or a range joining it to
+# another amount, makes it a salary.
+_MONEY_BEFORE = r"(?:[$€£]|\b(?:usd|eur|gbp))\s*$|\d\s*k?\s*(?:-|\u2013|to|and)\s*[$€£]?\s*$"
+_MONEY_AFTER = r"^\s*(?:-|\u2013|to|and)\s*[$€£]?\s*\d"
+
+
+def _is_money(item: str, start: int, end: int) -> bool:
+    return bool(
+        re.search(_MONEY_BEFORE, item[:start], re.IGNORECASE) or re.match(_MONEY_AFTER, item[end:])
+    )
+
+
+def _us_payroll_phrase(job: NormalizedJob) -> str | None:
+    """The first US-only benefit the posting offers (spec 088).
+
+    Read one list item at a time, because a US word in the benefit's own item
+    says it is one region's benefit ("401k (US employees)") while one in
+    another item says nothing about it. A description that says the role can
+    be worked from anywhere is a US company that also hires abroad, whatever
+    its benefit list says.
+    """
+    raw = "\n".join((job["title"], job["location"], job["description"]))
+    if text_matches_any_pattern(normalize(raw), US_PAYROLL_REACH_PATTERNS):
+        return None
+    for item in re.split(_LIST_ITEM_END, raw):
+        if re.search(_US_QUALIFIER, item):
+            continue
+        text = strip_eu_permit_phrases(normalize(item))
+        for pattern in US_PAYROLL_PATTERNS:
+            for found in re.finditer(pattern, text):
+                if not _is_money(text, found.start(), found.end()):
+                    return found.group(0)
+    return None
+
+
 def _first_match(text: str, patterns: tuple[str, ...]) -> str | None:
     for pattern in patterns:
         found = re.search(pattern, text)
@@ -689,7 +753,8 @@ def blockers(job: NormalizedJob) -> list[tuple[str, str]]:
     an EMEA region explicitly, because "Remote, Europe" with "we also hire
     anywhere in the US" is a posting the candidate can take. Employment terms
     have no such override: W-2 and at-will are US payroll whatever the
-    location says.
+    location says. A US-only benefit has it, because a benefit list describes
+    the company's payroll, not the role's (spec 088).
     """
     text = strip_eu_permit_phrases(
         normalize(f"{job['title']} {job['location']} {job['description']}")
@@ -701,6 +766,9 @@ def blockers(job: NormalizedJob) -> list[tuple[str, str]]:
     employment = _first_match(text, EMPLOYMENT_BLOCKER_PATTERNS)
     if employment:
         found.append(("employment", employment))
+    us_payroll = _us_payroll_phrase(job)
+    if us_payroll and not location_names_explicit_emea(job["location"]):
+        found.append(("us_payroll", us_payroll))
     return found
 
 

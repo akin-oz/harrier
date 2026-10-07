@@ -141,48 +141,39 @@ spec; the findings were reported in the session, not here (ADR-008).
 Tests in `services/api/tests/test_scoring.py` unless named otherwise. Every
 posting is synthetic, with an invented company.
 
-- [ ] A synthetic posting located "Worldwide", type remote, with React and
+- [x] A synthetic posting located "Worldwide", type remote, with React and
       TypeScript skills and a benefits list holding "401(k) plan", ranks
       below the same posting with that line removed, and its `signals` name
       `blocker=us_payroll` with the matched text
-      (planned
-      test_a_401k_posting_relayed_as_worldwide_ranks_last)
-- [ ] Each spelling in the table fires on its own
-      (planned
-      test_every_us_payroll_spelling_fires)
-- [ ] A location naming EMEA suppresses `us_payroll`; "Worldwide" and
-      "Remote" do not (planned
-      test_an_explicit_emea_location_overrides_us_payroll)
-- [ ] A US-qualified benefit does not fire: "401k (US employees)",
+      (`test_a_401k_posting_relayed_as_worldwide_ranks_last`)
+- [x] Each spelling in the table fires on its own
+      (`test_every_us_payroll_spelling_fires`)
+- [x] A location naming EMEA suppresses `us_payroll`; "Worldwide" and
+      "Remote" do not (`test_an_explicit_emea_location_overrides_us_payroll`)
+- [x] A US-qualified benefit does not fire: "401k (US employees)",
       "401(k) for US-based staff", "US: 401(k) match"
-      (planned
-      test_a_us_qualified_benefit_is_not_a_blocker)
-- [ ] A US word in a different list item does not suppress the match
-      (planned
-      test_a_us_word_in_another_list_item_qualifies_nothing)
-- [ ] A 401(k) beside "Fully remote, work from anywhere" with location
+      (`test_a_us_qualified_benefit_is_not_a_blocker`)
+- [x] A US word in a different list item does not suppress the match
+      (`test_a_us_word_in_another_list_item_qualifies_nothing`)
+- [x] A 401(k) beside "Fully remote, work from anywhere" with location
       "Remote" does not fire; beside "work from anywhere in the US" it does
-      (planned
-      test_a_reach_phrase_overrides_us_payroll)
-- [ ] A 401(k) beside "trusted by teams worldwide" or "customers around
+      (`test_a_reach_phrase_overrides_us_payroll`)
+- [x] A 401(k) beside "trusted by teams worldwide" or "customers around
       the world" with location "Remote" still fires
-      (planned
-      test_a_customer_reach_is_not_a_hiring_reach)
-- [ ] Salary amounts do not fire: "$350k to $401k", "USD 401k",
-      "350k and 401k" (planned
-      test_a_salary_is_not_a_401k)
-- [ ] Medical, dental, vision and disability cover, a USD salary range and
+      (`test_a_customer_reach_is_not_a_hiring_reach`)
+- [x] Salary amounts do not fire: "$350k to $401k", "USD 401k",
+      "350k and 401k" (`test_a_salary_is_not_a_401k`)
+- [x] Medical, dental, vision and disability cover, a USD salary range and
       on-site visits to a US city, alone or together, fire no blocker
-      (planned
-      test_benefits_offered_outside_the_us_are_not_blockers)
-- [ ] A posting with both `us_payroll` and `employment` takes one penalty
-      (extend `test_blockers_do_not_stack`)
-- [ ] `us_payroll` never changes a gate verdict
+      (`test_benefits_offered_outside_the_us_are_not_blockers`)
+- [x] A posting with both `us_payroll` and `employment` takes one penalty
+      (`test_us_payroll_and_employment_take_one_penalty`)
+- [x] `us_payroll` never changes a gate verdict
       (extend `tests/test_screening.py::test_a_blocker_never_changes_a_gate_verdict`)
-- [ ] `policy_version` changes when `US_PAYROLL_PATTERNS` changes
+- [x] `policy_version` changes when `US_PAYROLL_PATTERNS` changes
       (extend `tests/test_seen_policy.py::test_the_blocker_tables_move_the_policy_version`)
-- [ ] The spec 078 tests pass unchanged
-- [ ] No real posting or company appears in a fixture (ADR-008)
+- [x] The spec 078 tests pass unchanged
+- [x] No real posting or company appears in a fixture (ADR-008)
 - [ ] All gates green on PR
 
 ## Out of scope
@@ -225,3 +216,29 @@ keep their old version until `harrier reevaluate` rescores open rows.
 - Spec 078, Deliberately absent: "no visa sponsorship" and "US-based" were
   removed because they describe companies as often as roles. Rule 2 applies
   the same reasoning to a US-qualified benefit.
+
+## Amendment (2026-10-07, during implementation)
+
+Four points the implementation settled, none changing which postings the
+spec meant to floor:
+
+- **A bare "US" qualifies only in capitals.** Lower case "us" is the
+  pronoun: "401(k) plan with us matching 4%" would otherwise label the
+  benefit as US staff's and let a US-only posting through. `U.S.`, `USA`,
+  "United States" and "American" match in any case.
+  `tests/test_scoring.py::test_a_us_word_in_another_list_item_qualifies_nothing`.
+- **A full stop ends a list item when a capital or a digit follows.** The
+  item is split before lowercasing, so "U.S. employees" stays one item
+  while "Our clients are US banks. 401(k) plan" is two.
+  Same test.
+- **The reach phrases are a table, `US_PAYROLL_REACH_PATTERNS`,** and join
+  `_rule_fingerprint` beside `US_PAYROLL_PATTERNS`: adding one changes which
+  postings are floored, as a blocker phrase does.
+  `tests/test_seen_policy.py::test_the_blocker_tables_move_the_policy_version`.
+- **The stacking criterion is its own test,**
+  `test_us_payroll_and_employment_take_one_penalty`, rather than an
+  extension of the spec 078 test, which stays unchanged.
+
+Before merge, the blocker was run read-only over the stored descriptions of
+tracked rows. What it found was reported in the session, not here
+(ADR-008).

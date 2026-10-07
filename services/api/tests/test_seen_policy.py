@@ -145,7 +145,14 @@ def test_changing_a_rule_table_in_code_changes_the_version(
 
 
 @pytest.mark.parametrize(
-    "table", ["US_SCOPE_PATTERNS", "EMPLOYMENT_BLOCKER_PATTERNS", "AMBIGUOUS_REGION_PATTERNS"]
+    "table",
+    [
+        "US_SCOPE_PATTERNS",
+        "EMPLOYMENT_BLOCKER_PATTERNS",
+        "AMBIGUOUS_REGION_PATTERNS",
+        "US_PAYROLL_PATTERNS",
+        "US_PAYROLL_REACH_PATTERNS",
+    ],
 )
 def test_the_blocker_tables_move_the_policy_version(
     cfg: dict[str, Any], monkeypatch: pytest.MonkeyPatch, table: str

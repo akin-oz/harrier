@@ -103,6 +103,10 @@ def _rule_fingerprint() -> dict[str, Any]:
         # three rank as much as any weight does (spec 078).
         "us_scope_patterns": list(rules.US_SCOPE_PATTERNS),
         "employment_blocker_patterns": list(rules.EMPLOYMENT_BLOCKER_PATTERNS),
+        # The same holds for a US-only benefit, and for the reach phrases
+        # that excuse one (spec 088).
+        "us_payroll_patterns": list(rules.US_PAYROLL_PATTERNS),
+        "us_payroll_reach_patterns": list(rules.US_PAYROLL_REACH_PATTERNS),
         "ambiguous_region_patterns": sorted(rules.AMBIGUOUS_REGION_PATTERNS),
         # The learned score reads these as `frontend_share` (spec 077). A
         # model scores what the extractor gives it, so a changed table must
