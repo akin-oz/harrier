@@ -234,8 +234,8 @@ spec 044.
       `::test_the_commit_guard_allows_ordinary_work`)
 - [x] a name for core.hooksPath, in any case and quoted or not, given by
       `-c`, `--config-env`, `GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_PARAMETERS` or
-      a `git config` write, is denied, while other config names and reading
-      the key are allowed (the amendment below on core.hooksPath;
+      a `git config` write, is denied, while other config names, and reading
+      or removing the key, are allowed (the amendment below on core.hooksPath;
       `services/api/tests/test_guards.py::test_the_commit_guard_denies_every_proven_bypass`,
       `::test_the_commit_guard_allows_ordinary_work`,
       `::test_a_git_config_write_of_core_hookspath_is_denied`)
@@ -1167,20 +1167,50 @@ core.hooksPath a value by any of these:
 - `-c <name>=<value>`, or `--config-env <name>=<var>` in either form, among
   git's global options.
 - A word `GIT_CONFIG_KEY_<n>=<name>`, or a word `GIT_CONFIG_PARAMETERS=...`
-  that holds the name, in any command.
-- A `git config` that names it with a word after the name, and carries none
-  of `--get`, `--get-all` and `--get-regexp`. So `git config core.hooksPath`,
-  `git config --get core.hooksPath` and `git config --unset core.hooksPath`
-  stay allowed: they read the setting, or remove it and leave the hooks in
-  `.git/hooks`, where lefthook installs them.
+  that holds the name, in any command. `+=` counts as `=`, since it assigns a
+  variable not yet set.
+- A `git config` that names it with a word after the name, and no option
+  before the name that starts with `--get` or `--unset`, such as `--get-all`
+  or `--unset-all`. git 2.43 reads every word after the name as the value or
+  a value pattern, so an option there reads nothing:
+  `git config core.hooksPath --get` wrote `--get` as the path. The digits of
+  a redirection, as in `2>/dev/null`, are not a word. So
+  `git config core.hooksPath`, `git config --get core.hooksPath`,
+  `git config --unset core.hooksPath` and
+  `git config --unset core.hooksPath <pattern>` stay allowed: they read the
+  setting, or remove it and leave the hooks in `.git/hooks`, where lefthook
+  installs them.
 
 **Where it reads.** The word reader does this, on a command whose text holds
-`commit` or `hookspath` in any case. In a commit, git's global options are
+`commit`, or `hookspath` in any case. In a commit, git's global options are
 read and the commit's own words are not, so a message that names
 `-c core.hookspath` is allowed. Text another command receives, such as
 `bash -c "..."` or a heredoc fed to `bash`, and a command the reader cannot
-read, are split into words at spaces, with quotes removed, and read by the
-same rules.
+read, are read line by line, split into words at blanks, with quotes
+removed, and read by the same rules. There a newline, `;`, `&` and `|` end a
+command wherever they fall, but for the `&` of a redirection such as `2>&1`.
+A redirection is not a word, and neither is its target after a blank. A
+`GIT_CONFIG_PARAMETERS=` counts when the name follows it anywhere in that
+text, since its value may hold blanks.
+
+**Found in implementation.** The first implementation of this amendment read
+the rules as first written. Each of these skipped a failing pre-commit hook
+under git 2.43 and passed it with a trailer:
+
+- a quoted value after `-c` or `--config-env` in text, as in
+  `bash -c "git -c 'core.hookspath=/dev/null' commit ..."`, in a heredoc fed
+  to `bash`, and in a `case` the reader cannot read;
+- a redirection between `-c` and its value in text;
+- `git config core.hooksPath --get`, and a write in text with a `--get` after
+  it in a comment, or before it on another line or across a `;` with no
+  blank;
+- a `GIT_CONFIG_PARAMETERS` value with a blank in it, in text;
+- `+=` in place of `=`.
+
+It also denied `git config --unset core.hooksPath <pattern>` and
+`git config core.hooksPath 2>/dev/null`, which remove or read the setting.
+The rules above now say where an option counts, how text ends a command,
+that a redirection is not a word, and that `+=` assigns.
 
 The deny message is the one the hooksPath and git dir check prints. That
 check still runs first, unchanged.
@@ -1191,12 +1221,13 @@ check still runs first, unchanged.
   core.hooksPath found by the rules above, and the guard denies on it for
   every command, after the existing check. No file is added.
 - `services/api/tests/test_guards.py`: the commit forms above join
-  `BYPASSES`, each with a valid trailer, and so does
-  `bash -c "git -c core.hookspath=/dev/null commit ..."`. A new test,
+  `BYPASSES`, each with a valid trailer, and so do
+  `bash -c "git -c core.hookspath=/dev/null commit ..."` and the forms found
+  in implementation. A new test,
   `::test_a_git_config_write_of_core_hookspath_is_denied`, runs the
-  `git config` writes alone. `git -c user.name=x commit ...`, the three reads and removals
-  above, and a commit whose message names `-c core.hookspath` join
-  `ORDINARY`.
+  `git config` writes alone, `--get` and a `2` after the name among them.
+  `git -c user.name=x commit ...`, the reads and removals above, and a
+  commit whose message names `-c core.hookspath` join `ORDINARY`.
 
 No new file, so `config/data-classification.json` does not change.
 
@@ -1213,24 +1244,31 @@ decides as before.
 
 ### Limitations
 
-- A config file from elsewhere is not read. `-c include.path=<file>` and
+- A config file from elsewhere is not read, nor a value that reaches the
+  setting another way. `-c include.path=<file>` and
   `GIT_CONFIG_GLOBAL=<file>`, with a file that sets core.hooksPath, skipped
   the hook and passed the guard here, and so did appending to `.git/config`
-  with `printf`.
+  with `printf`, renaming a section that sets hooksPath to `core` with
+  `git config --rename-section`, and `xargs git config core.hooksPath` given
+  the value on its input.
 - Lefthook has switches of its own. `LEFTHOOK=0` and `LEFTHOOK_EXCLUDE=<job>`
   skipped a failing lefthook pre-commit under lefthook 2.1.17 and passed the
   guard. They are not hooksPath, so closing them is its own change.
 - A `git config` whose name a quote or a backslash splits, such as
   `core.hoo"ks"Path`, is not read: its text holds neither `commit` nor
   `hookspath`, so the reader does not run.
-- Text another command receives is split at spaces, not read as a shell
+- Text another command receives is split at blanks, not read as a shell
   reads it, so a mention there can deny: `echo "-c core.hookspath=x"` is
   denied.
+- Text is read line by line, so a line continuation there hides a name on
+  the next line. `bash -c` given `git -c \` on one line and
+  `core.hookspath=/dev/null commit ...` on the next skipped the hook and
+  passed the guard, as a line continuation hides a commit in text (the
+  amendment after review of PR #158).
 - The forms only the reader finds wait for it. A reader that never returns
   holds them up, as it holds up the bypass and trailer checks and, for a
   commit, the `.env` check. The existing check needs no reader, so it still
   denies `-c core.hooksPath` as written before the reader runs.
 - The guard reads the name, not whether its value reaches git. So
   `git --config-env=core.hooksPath=X commit ...` is denied with `X` unset,
-  though git refuses it, and `git config --unset core.hooksPath <pattern>`
-  is denied, since a word follows the name.
+  though git refuses it.

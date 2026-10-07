@@ -163,6 +163,36 @@ BYPASSES = [
     " git commit -m 'message' -m 'Spec: 045'",
     'git config core.hooksPath /dev/null && git commit -m "message" -m "Spec: 045"',
     "bash -c \"git -c core.hookspath=/dev/null commit -m 'message' -m 'Spec: 045'\"",
+    # The same, in forms the first reading of the amendment let through. In
+    # text, the value after -c or --config-env kept its quotes, a newline or a
+    # ; inside a field did not end a command, a redirection read as the value,
+    # and a GIT_CONFIG_PARAMETERS value split at its blank. A --get after the
+    # name of a git config read as a read, though git takes it as the value.
+    # And += assigns as = does. Each skipped a failing pre-commit hook under git
+    # 2.43, and each but the ';x' one passed the guard at 20b2186 with a
+    # trailer (spec 045's amendment on core.hooksPath). The ';x' one pins that
+    # a ; inside quotes, now read as the end of a command, still leaves a
+    # value after the name.
+    "bash -c \"git -c 'core.hookspath=/dev/null' commit -m 'message' -m 'Spec: 045'\"",
+    "bash <<'EOF'\ngit -c \"core.hookspath=/dev/null\" commit -m 'message' -m 'Spec: 045'\nEOF",
+    "X=/dev/null bash -c \"git --config-env 'core.hooksPath=X' commit"
+    " -m 'message' -m 'Spec: 045'\"",
+    'case x in x) git -c "core.hookspath=/dev/null" commit -m "message" -m "Spec: 045";; esac',
+    "bash -c \"git -c >/dev/null 'core.hookspath=/dev/null' commit -m 'message' -m 'Spec: 045'\"",
+    'git config core.hooksPath --get && git commit -m "message" -m "Spec: 045"',
+    'bash -c "git config core.hooksPath /dev/null # --get"'
+    ' && git commit -m "message" -m "Spec: 045"',
+    "bash -c 'git config --get core.hooksPath\ngit config core.hooksPath /dev/null'"
+    ' && git commit -m "message" -m "Spec: 045"',
+    'bash -c "git config --get core.hooksPath;git config core.hooksPath /dev/null"'
+    ' && git commit -m "message" -m "Spec: 045"',
+    "bash -c \"git config core.hooksPath ';x'\" && git commit -m 'message' -m 'Spec: 045'",
+    "bash <<'EOF'\ncd . && GIT_CONFIG_PARAMETERS=\"'user.name'='a b' 'core.hooksPath'='/dev/null'\""
+    " git commit -m 'message' -m 'Spec: 045'\nEOF",
+    "export GIT_CONFIG_PARAMETERS+=\"'core.hooksPath'='/dev/null'\";"
+    " git commit -m 'message' -m 'Spec: 045'",
+    "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0+=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null"
+    " git commit -m 'message' -m 'Spec: 045'",
 ]
 
 # A guard stricter than the workflow it protects is its own failure.
@@ -199,6 +229,12 @@ ORDINARY = [
     "git config --get core.hooksPath",
     "git config --unset core.hooksPath",
     'git commit -m "note -c core.hookspath" -m "Spec: 045"',
+    # A removal with a value pattern, and reads whose stderr goes to a file:
+    # the digits of a redirection, and its target, are not a value.
+    "git config --unset core.hooksPath /dev/null",
+    "git config --unset-all core.hooksPath",
+    "git config core.hooksPath 2>/dev/null || echo unset",
+    'bash -c "git config core.hooksPath 2> /dev/null || true"',
 ]
 
 
@@ -443,20 +479,12 @@ def test_the_reuse_exemption_reads_only_the_commits_own_words(command: str) -> N
     )
 
 
-def test_the_commit_guard_still_refuses_to_stage_an_env_file() -> None:
-    assert run_guard("guard-commit.sh", "git add .env") == DENY
-    assert run_guard("guard-commit.sh", "git add .env.example") == ALLOW
-    assert run_guard("guard-commit.sh", 'git -C . commit -m "message" -m "Spec: 045" .env') == DENY
-
-
-# A commit whose message names an env file, in each form the message takes.
-# None stages or commits one, and each was denied while the check read the
-# whole command (spec 045's amendment on the env file check). Each carries a
-# trailer, so an ALLOW proves the env file check passed.
 # A git config write of core.hooksPath, alone: the setting stays for every
 # later commit, so the write itself is denied. Each let a commit that followed
 # skip a failing pre-commit hook under git 2.43, and passed the guard on main
-# at fb0ada4 (spec 045's amendment on core.hooksPath).
+# at fb0ada4 (spec 045's amendment on core.hooksPath). git reads every word
+# after the name as the value, so --get wrote --get as the path, and a 2 that
+# a blank or a quote keeps from naming a redirection wrote 2.
 HOOKSPATH_WRITES = [
     "git config core.hooksPath /dev/null",
     "git config --local core.hooksPath /dev/null",
@@ -464,6 +492,9 @@ HOOKSPATH_WRITES = [
     "git config -f .git/config core.hooksPath /dev/null",
     "git config --add core.hooksPath /dev/null",
     "git config core.hookspath /dev/null",
+    "git config core.hooksPath --get",
+    "git config core.hooksPath 2 >/dev/null",
+    'git config core.hooksPath "2">/dev/null',
 ]
 
 
@@ -486,6 +517,16 @@ def test_a_git_config_write_of_core_hookspath_is_denied(command: str) -> None:
     )
 
 
+def test_the_commit_guard_still_refuses_to_stage_an_env_file() -> None:
+    assert run_guard("guard-commit.sh", "git add .env") == DENY
+    assert run_guard("guard-commit.sh", "git add .env.example") == ALLOW
+    assert run_guard("guard-commit.sh", 'git -C . commit -m "message" -m "Spec: 045" .env') == DENY
+
+
+# A commit whose message names an env file, in each form the message takes.
+# None stages or commits one, and each was denied while the check read the
+# whole command (spec 045's amendment on the env file check). Each carries a
+# trailer, so an ALLOW proves the env file check passed.
 ENV_FILE_ONLY_IN_A_MESSAGE = [
     'git commit -m "Stop reading .env in tests" -m "Spec: 045"',
     "git commit -q -F - <<'EOF'\nIgnore .env.local in the loader\n\nSpec: 045\nEOF",
