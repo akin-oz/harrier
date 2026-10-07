@@ -175,7 +175,7 @@ Proven by services/api/tests/test_review_followup.py:
 | an unchanged head is not re-requested | `test_a_reviewed_pull_request_at_the_same_head_is_left_alone`, `test_a_moved_head_is_asked_again` |
 | a reply in a thread is not a review of the commit it names (amendment below) | `test_a_reply_in_a_thread_is_not_a_review`, `test_the_reviewed_sha_is_read_from_the_reviews` |
 | a head reviewed only before it moved exits 2 and says so (amendment below) | `test_a_head_reviewed_before_it_moved_is_reported_as_not_reviewed_there` (seven cases), `tests/test_cli_decisions.py::test_a_head_reviewed_before_it_moved_exits_two`, `tests/test_cli_decisions.py::test_an_unanswered_finding_after_a_push_still_exits_three` |
-| a truncated pull request says so in its report line (amendment below) | planned test_a_truncated_pull_request_says_so_in_its_report_line (three cases) |
+| a truncated pull request says so in its report line (amendment below) | `test_a_truncated_pull_request_says_so_in_its_report_line` (three cases) |
 | the daily bound stops the loop | `test_the_daily_bound_stops_the_loop`, `test_the_bound_wins_over_everything_else` |
 | rate limited is distinguishable from reviewed | `test_a_rate_limited_pull_request_reports_as_not_reviewed`, `test_a_reviewed_pull_request_reports_as_reviewed`, `test_a_pull_request_with_neither_is_still_not_reviewed` |
 | `gh` failing is reported | `test_gh_failing_is_reported_not_swallowed`, `test_an_unreadable_payload_is_reported` |
@@ -228,10 +228,10 @@ protect a counter would have been the wrong trade.
       `tests/test_cli_decisions.py::test_a_head_reviewed_before_it_moved_exits_two`,
       `tests/test_cli_decisions.py::test_an_unanswered_finding_after_a_push_still_exits_three`,
       `test_a_head_reviewed_before_it_moved_is_reported_as_not_reviewed_there`)
-- [ ] a truncated pull request's report line says a bounded query had
+- [x] a truncated pull request's report line says a bounded query had
       another page, in the decision line's words, so no report line for an
       outstanding pull request ends at its colon (the amendment below on
-      truncation; planned test_a_truncated_pull_request_says_so_in_its_report_line)
+      truncation; `test_a_truncated_pull_request_says_so_in_its_report_line`)
 - [ ] All gates green on PR
 
 ## Proof / origin
@@ -625,7 +625,7 @@ same thing another way, and a reader would have to learn both.
 
 ### Acceptance criteria
 
-- planned test_a_truncated_pull_request_says_so_in_its_report_line, in
+- `test_a_truncated_pull_request_says_so_in_its_report_line`, in
   `services/api/tests/test_review_followup.py`, with three cases: truncated
   with nothing else outstanding, truncated with a thread awaiting a reply, and
   truncated with an unread review whose findings are outside the diff. Each
