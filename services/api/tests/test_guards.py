@@ -82,6 +82,26 @@ BYPASSES = [
     'git commit -m "message" -m "Spec: 045" --no-verify',
     'git -c core.hooksPath=/dev/null commit -m "m" -m "Spec: 045"',
     'git --git-dir=/tmp/x commit -m "m" -m "Spec: 045"',
+    # Spellings that skip the hooks and that the whole-string pattern let
+    # through. Each skipped a failing pre-commit hook under git 2.43 in a
+    # throwaway repository (spec 045's amendment on the commit guard).
+    'git commit "-n" -m "message" -m "Spec: 045"',
+    'git commit -nm"a b" -m "Spec: 045"',
+    'git commit -m "message" -m "Spec: 045" -n; echo done',
+    'git commit --no-veri -m "message" -m "Spec: 045"',
+    '(git commit -m "message" -m "Spec: 045" -n)',
+    'x=$(git commit -m "message" -m "Spec: 045" -n)',
+    # Denied before by the whole-string match, and reading only a commit's own
+    # words must not let them through: a substitution or a redirection does
+    # not end the words, text another command runs is still checked, and so
+    # are the arguments that text receives.
+    'git commit -m "message" $(true) -n -m "Spec: 045"',
+    'git commit -m "message" -m "Spec: 045" &>/dev/null -n',
+    "bash -c \"git commit -n -m 'message' -m 'Spec: 045'\"",
+    "bash <<'EOF'\ngit commit -n -m 'message' -m 'Spec: 045'\nEOF",
+    "bash -c 'git commit \"$@\"' _ -n -m 'message' -m 'Spec: 045'",
+    "bash -s -- -n -m 'message' -m 'Spec: 045' <<'EOF'\ngit commit \"$@\"\nEOF",
+    'f() { git commit "$@"; }; f -n -m "message" -m "Spec: 045"',
 ]
 
 # A guard stricter than the workflow it protects is its own failure.
@@ -103,6 +123,38 @@ def test_the_commit_guard_denies_every_proven_bypass(command: str) -> None:
 
 @pytest.mark.parametrize("command", ORDINARY)
 def test_the_commit_guard_allows_ordinary_work(command: str) -> None:
+    assert run_guard("guard-commit.sh", command) == ALLOW, (
+        f"guard-commit.sh blocked ordinary work: {command}"
+    )
+
+
+# An -n that belongs to another command in the chain, or that sits in the
+# commit message. The first is the shape of the command the whole-string match
+# denied while committing PR #148 on 2026-10-06. Each carries a Spec trailer,
+# so an ALLOW proves the -n check passed rather than that nothing was checked.
+N_OUTSIDE_THE_COMMIT = [
+    "sed -n 1,6p specs/045-claims-and-gates.md"
+    " && git add specs/045-claims-and-gates.md"
+    " && git commit -q -F - <<'EOF'\nAmend spec 045\n\nSpec: 045\nEOF",
+    'grep -n "Spec" specs/045-claims-and-gates.md && git commit -m "message" -m "Spec: 045"',
+    'head -n 3 README.md && git commit -m "message" -m "Spec: 045"',
+    'echo -n done && git commit -m "message" -m "Spec: 045"',
+    'git log -n 3 && git commit -m "message" -m "Spec: 045"',
+    'find specs -name "045-*" && git commit -m "message" -m "Spec: 045"',
+    'git commit -m "message" -m "Spec: 045" && git log -n 1',
+    'git commit -m "Read sed -n as sed reads it" -m "Spec: 045"',
+    "git commit -q -F - <<'EOF'\nThe guard read sed -n and head -n as a bypass.\n\nSpec: 045\nEOF",
+    "git commit -q -F - <<'EOF'\nDeny git commit -n and --no-verify.\n\nSpec: 045\nEOF",
+    "git commit -m \"$(cat <<'EOF'\nIt's the -n of sed, not a bypass.\n\nSpec: 045\nEOF\n)\"",
+]
+
+
+@pytest.mark.parametrize("command", N_OUTSIDE_THE_COMMIT)
+def test_an_n_outside_the_commit_does_not_block_it(command: str) -> None:
+    """The guard matched the whole command string, so another command's -n,
+    or one in the message, denied an ordinary commit: the failure mode spec
+    045 says a guard change must not introduce. It now reads only the words
+    the commit receives (spec 045's amendment on the commit guard)."""
     assert run_guard("guard-commit.sh", command) == ALLOW, (
         f"guard-commit.sh blocked ordinary work: {command}"
     )
