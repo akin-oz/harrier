@@ -226,7 +226,7 @@ spec 044.
       the whole string checks, so a commit either runs that skips the hooks
       is denied (the amendment below on the env file check;
       `services/api/tests/test_guards.py::test_the_commit_guard_denies_every_proven_bypass`)
-- [ ] a command substitution in a word where git reads a commit's options
+- [x] a command substitution in a word where git reads a commit's options
       sends the command to the whole string checks, while one in the value
       of an option or after `--` keeps its outcome (the amendment below on a
       command substitution among a commit's options;
@@ -1060,11 +1060,22 @@ guard on main allowed it with a trailer.
 ### What the guard reads
 
 **A substitution where git reads options is not read.** A word among a
-commit's words that holds a command substitution or a backtick, in a
+commit's words that leads with a command substitution or a backtick, in a
 position where git reads options, makes the command one the reader cannot
-read. That position is any word before `--` that is not the value of the
-option before it. The output could be any option, so the whole string goes
-through the old pattern, as it does for a commit whose words hold `"$@"`.
+read. A word leads with one when the text before the first substitution, at
+that word's level, is empty or only dashes: git then reads the output as the
+start of the argument. The position is any word before `--` that is not the
+value of the option before it. The output could be any option, so the whole
+string goes through the old pattern, as it does for a commit whose words
+hold `"$@"`.
+
+That old pattern reads text, so it catches a bypass the substitution spells
+out, such as a `-n` on a line of a quoted heredoc, and it does not catch one
+a command inside the substitution builds, such as `$(printf -- -n)`, just as
+it does not for a `"$@"` whose value is set elsewhere. The point of marking
+the command unread is that the reader no longer reports "not a bypass" for
+it: the one that motivated this, the cited limitation's quoted heredoc with
+a literal `-n`, is now denied.
 
 **Where a substitution stays read.** These give a value, not an option, and
 keep their outcome:
@@ -1078,10 +1089,11 @@ keep their outcome:
 
 - `.claude/hooks/guard-commit.sh`: the reader marks such a command unread.
   No file is added.
-- `services/api/tests/test_guards.py`: the command in that limitation joins
-  the bypass list of `::test_the_commit_guard_denies_every_proven_bypass`,
-  with its trailer. A commit whose message is a substitution, in each form
-  above, joins the list of `::test_the_commit_guard_allows_ordinary_work`.
+- `services/api/tests/test_guards.py`: the cited limitation's command, with
+  a literal `-n` in its quoted heredoc, and its backtick form, join the
+  bypass list of `::test_the_commit_guard_denies_every_proven_bypass`, with a
+  trailer. A commit whose message is a substitution, in each read form above,
+  joins the list of `::test_the_commit_guard_allows_ordinary_work`.
 
 No new file, so `config/data-classification.json` does not change.
 
@@ -1089,8 +1101,9 @@ No new file, so `config/data-classification.json` does not change.
 its options is checked over the whole string.
 
 **How to know it worked.** The command in the last limitation of the
-amendment on the env file check is denied. `git commit -m "$(cat <<'EOF'
-...)"`, the form this repository's commits use, is allowed as before.
+amendment on the env file check, a quoted heredoc with a line that is `-n`,
+is denied for the bypass reason. `git commit -m "$(cat <<'EOF' ...)"`, the
+form this repository's commits use, is allowed as before.
 
 **Failure modes this must not introduce.** A message given with `-m` or
 `--message`, attached or not, and a file named by `-F`, are not marked
@@ -1102,5 +1115,11 @@ outcome.
 - A command marked unread is checked over the whole string, so an `-n`
   elsewhere in it, such as a `sed -n` in the same chain, denies the commit,
   as it does for a commit whose words hold `"$@"`.
-- The guard still reads text. Options built at run time, from a variable,
-  `eval` or a script file, are not read, as before.
+- The guard still reads text. A bypass a command in the substitution builds,
+  such as `git commit "$(printf -- -n)"` or `"--$(printf no-verify)"`, is not
+  spelled out in the string, so the whole-string pattern does not catch it,
+  as it does not for a `"$@"` set elsewhere. Options built from a variable,
+  `eval` or a script file are not read either, as before.
+- The leading-substitution rule looks at the text before the first
+  substitution in the word. A substitution behind a non-dash literal, as in
+  `foo$(...)`, is a pathspec to git and is not marked unread.
