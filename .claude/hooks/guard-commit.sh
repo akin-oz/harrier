@@ -257,7 +257,7 @@ commit_words() {
     # output is message text, when what cat writes is that output, not piped
     # on or redirected.
     function parse_command(stop, msg,    c, nw, w, commit, g, value, i, first, outer, text, k, r,
-        arg, paths, mnext, fnext, pnext, fin, pin, mtext, val, path, piped, out, nh, hd, hg, ns, hs) {
+        arg, paths, mnext, fnext, pnext, fin, pin, mtext, val, path, piped, out, nh, hd, hg, ns, hs, lead) {
       nw = 0; commit = 0; g = 0; value = 0; first = HN + 1; outer = HERE; HERE = ""
       arg = 0; paths = 0; mnext = 0; fnext = 0; pnext = 0; fin = 0; pin = 0
       piped = 0; out = 0; nh = 0; ns = 0
@@ -293,7 +293,7 @@ commit_words() {
         # A word of the commit: the value of the option before it, a path
         # after --, or an option.
         w[++nw] = read_word(stop, arg ? mnext : paths ? 0 : 2)
-        val[nw] = arg; path[nw] = paths
+        val[nw] = arg; path[nw] = paths; lead[nw] = WSUBLEAD
         if (arg) {
           mtext[nw] = mnext
           if (w[nw] == "-") { if (fnext) fin = 1; if (pnext) pin = 1 }
@@ -315,6 +315,7 @@ commit_words() {
           if (skips_hooks(w[i])) found()
           if (w[i] == "-C" && !val[i] && !path[i]) REUSE = 1
           if (w[i] ~ /\$[@*0-9]|\$[{][@*0-9]/) UNSURE = 1
+          if (lead[i] && !val[i] && !path[i]) UNSURE = 1
         } else if (!commit || i < g) text = text " " w[i]
         if (!mtext[i] && names_env(w[i])) ENV = 1
       }
@@ -385,14 +386,27 @@ commit_words() {
     # One word with its quotes removed. A command substitution is parsed for
     # the commands in it and adds nothing to the word: its output is unknown.
     # QUOTED says whether any part of the word was quoted.
-    function read_word(stop, msg,    c, v, q, rest, e) {
-      v = ""; q = 0
+    # A word leads with a command substitution when the first one, at this
+    # level, has only empty or dash text before it: git then reads the
+    # substitution output as the start of the argument, which may be an option
+    # such as -n (the amendment to spec 045 on a command substitution among
+    # the options of a commit). A later substitution, or one behind a non-dash
+    # literal, cannot introduce a leading dash, so it does not count.
+    #
+    # seen and lead are local, so a nested read_word for a substitution inside
+    # this word does not clobber them. The globals WSUBSEEN and WSUBLEAD carry
+    # the result to parse_command: each function writes them only at its own
+    # return, so the outer read_word, which returns last, has the final word.
+    # dquote reports through them the same way, folded in after its call.
+    function read_word(stop, msg,    c, v, q, rest, e, seen, lead) {
+      v = ""; q = 0; seen = 0; lead = 0
       while (K <= NL && FAIL == "") {
         c = at()
         if (blank(c) || c == "\n" || c == ";" || c == "&" || c == "|" \
           || c == "<" || c == ">" || c == "(" || c == ")") break
         if (c == "`") {
           if (stop == "`") break
+          if (!seen) { seen = 1; lead = (v ~ /^-*$/) }
           adv(); parse_list("`", in_message(msg, v)); adv(); continue
         }
         if (c == "\\") {
@@ -409,39 +423,55 @@ commit_words() {
           }
           continue
         }
-        if (c == "\"") { v = v dquote(msg, v); q = 1; continue }
-        if (c == "$" && next1() == "(") { adv(); adv(); parse_list(")", in_message(msg, v)); adv(); continue }
+        if (c == "\"") {
+          v = v dquote(msg, v); q = 1
+          if (!seen && DQSEEN) { seen = 1; lead = DQLEAD }
+          continue
+        }
+        if (c == "$" && next1() == "(") {
+          if (!seen) { seen = 1; lead = (v ~ /^-*$/) }
+          adv(); adv(); parse_list(")", in_message(msg, v)); adv(); continue
+        }
         if (c == "$" && next1() == "\047") { adv(); v = v ansi_c(); q = 1; continue }
         if (c == "$" && next1() == "\"") { adv(); continue }
         if (c == "$" && next1() == "{") { v = v brace(); continue }
         v = v c; adv()
       }
-      QUOTED = q
+      QUOTED = q; WSUBSEEN = seen; WSUBLEAD = lead
       return v
     }
 
     # Plain text inside the quotes is copied a run at a time, up to the next
-    # character that means something there.
-    function dquote(msg, p,    c, v, rest) {
-      adv(); v = ""
+    # character that means something there. DQSEEN and DQLEAD report a leading
+    # substitution to read_word, set only at return so a nested read_word does
+    # not clobber them.
+    function dquote(msg, p,    c, v, rest, seen, lead) {
+      adv(); v = ""; seen = 0; lead = 0
       while (K <= NL && FAIL == "") {
         rest = substr(L[K], C)
         if (!match(rest, /["\\`$]/)) { v = v rest "\n"; K++; C = 1; continue }
         v = v substr(rest, 1, RSTART - 1); C += RSTART - 1
         c = at()
-        if (c == "\"") { adv(); return v }
+        if (c == "\"") { adv(); DQSEEN = seen; DQLEAD = lead; return v }
         if (c == "\\") {
           c = next1()
           if (c == "\n") { adv(); adv(); continue }
           if (c == "$" || c == "`" || c == "\"" || c == "\\") { v = v c; adv(); adv(); continue }
           v = v "\\"; adv(); continue
         }
-        if (c == "`") { adv(); parse_list("`", in_message(msg, p v)); adv(); continue }
-        if (c == "$" && next1() == "(") { adv(); adv(); parse_list(")", in_message(msg, p v)); adv(); continue }
+        if (c == "`") {
+          if (!seen) { seen = 1; lead = ((p v) ~ /^-*$/) }
+          adv(); parse_list("`", in_message(msg, p v)); adv(); continue
+        }
+        if (c == "$" && next1() == "(") {
+          if (!seen) { seen = 1; lead = ((p v) ~ /^-*$/) }
+          adv(); adv(); parse_list(")", in_message(msg, p v)); adv(); continue
+        }
         if (c == "$" && next1() == "{") { v = v brace(); continue }
         v = v c; adv()
       }
       if (FAIL == "") FAIL = "unclosed double quote"
+      DQSEEN = seen; DQLEAD = lead
       return v
     }
 

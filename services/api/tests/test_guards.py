@@ -137,6 +137,13 @@ BYPASSES = [
     # #164).
     "git commit -m \"$(cat <<'EOF' | bash\ngit commit -n -m 'message'\nEOF\n)\" -m 'Spec: 045'",
     "git commit -m \"${X:-$(git commit -n -m 'message')}\" -m 'Spec: 045'",
+    # A word that is only a command substitution, where git reads the commit's
+    # options: its output is the argument, here -n. The reader kept such a
+    # word as empty, so it read as no option at all. Each skipped a failing
+    # pre-commit hook under git 2.43 (spec 045's amendment on a command
+    # substitution among a commit's options).
+    "git commit \"$(cat <<'EOF'\n-n\nEOF\n)\" -m 'message' -m 'Spec: 045'",
+    "git commit \"`cat <<'EOF'\n-n\nEOF\n`\" -m 'message' -m 'Spec: 045'",
 ]
 
 # A guard stricter than the workflow it protects is its own failure.
@@ -156,6 +163,15 @@ ORDINARY = [
     # subcommand is log (spec 045's amendment after review of PR #158).
     "git --work-tree commit log -n 1",
     "bash -c 'git --work-tree commit log -n 1'",
+    # A substitution that gives a value, not an option: the value of -m, text
+    # attached to -m, -am or --message=, and a path after --. None is marked
+    # unread (spec 045's amendment on a command substitution among a commit's
+    # options). The first is the form this repository's own commits use.
+    "git commit -m \"$(cat <<'EOF'\nmessage\n\nSpec: 045\nEOF\n)\"",
+    'git commit -m"$(printf message)" -m "Spec: 045"',
+    'git commit -am"$(printf message)" -m "Spec: 045"',
+    'git commit --message="$(printf message)" -m "Spec: 045"',
+    'git commit -m "message" -m "Spec: 045" -- "$(printf README.md)"',
 ]
 
 
