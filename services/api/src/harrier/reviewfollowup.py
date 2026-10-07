@@ -240,6 +240,18 @@ class PullRequestState:
         return self.review_threads > 0 or self.reviews_seen > 0 or self.clean_review
 
     @property
+    def reviewed_at_head(self) -> bool:
+        """Whether a review covered the head itself, not only an earlier one.
+
+        The decision, the report line and the exit code all read this. When
+        only the decision did, a pull request whose last review came before a
+        push printed "reviewed, N threads, nothing outstanding" and exited 0,
+        while the decision asked for the review the push earned (spec 043
+        amendment).
+        """
+        return bool(self.last_reviewed_sha) and self.last_reviewed_sha == self.head_sha
+
+    @property
     def outstanding(self) -> bool:
         """Whether anything is waiting on us.
 
@@ -351,7 +363,7 @@ def decide(
     if not state.reviewed:
         return Decision(REQUEST, reason="nothing has reviewed this yet")
 
-    if state.last_reviewed_sha and state.last_reviewed_sha == state.head_sha:
+    if state.reviewed_at_head:
         return Decision(SKIP, reason="already reviewed at the current head")
 
     return Decision(REQUEST, reason="the head has moved since the last review")
@@ -644,6 +656,18 @@ def request_review(number: int, run: GitHubRunner, *, owner: str, repo: str) -> 
     run(["pr", "comment", str(number), "--repo", f"{owner}/{repo}", "--body", REQUEST_COMMENT])
 
 
+def _why_not_reviewed(state: PullRequestState) -> str:
+    """The reason the never-reviewed lines below give, in their order, or
+    nothing when none applies."""
+    if state.closed:
+        return "closed, so the service will not now"
+    if state.in_progress:
+        return "a review is in progress"
+    if newest_notice(state.comment_bodies) is not None:
+        return "rate limited"
+    return ""
+
+
 def report(states: list[PullRequestState]) -> list[str]:
     """One line per pull request, drawing the distinctions the check does not.
 
@@ -668,6 +692,19 @@ def report(states: list[PullRequestState]) -> list[str]:
                     f"{len(hidden)} with findings OUTSIDE THE DIFF, which no thread carries"
                 )
             lines.append(f"PR #{state.number}: NEEDS A REPLY: {'; '.join(detail)}")
+        elif state.reviewed and not state.reviewed_at_head:
+            # Reviewed, but only before the head moved: the push that answered
+            # the findings has had no review of its own (spec 043 amendment).
+            seen = (
+                f"last reviewed at {state.last_reviewed_sha[:7]}"
+                if state.last_reviewed_sha
+                else "no review names a commit"
+            )
+            why = _why_not_reviewed(state)
+            lines.append(
+                f"PR #{state.number}: NOT REVIEWED AT THE HEAD, {seen}"
+                + (f"; {why}" if why else "")
+            )
         elif state.reviewed:
             lines.append(
                 f"PR #{state.number}: reviewed, {state.review_threads} threads, nothing outstanding"

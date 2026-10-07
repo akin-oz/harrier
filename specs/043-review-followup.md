@@ -174,6 +174,7 @@ Proven by services/api/tests/test_review_followup.py:
 | no notice means nothing is posted | `test_no_notice_means_none`, `test_a_notice_without_a_wait_is_reported_not_guessed` |
 | an unchanged head is not re-requested | `test_a_reviewed_pull_request_at_the_same_head_is_left_alone`, `test_a_moved_head_is_asked_again` |
 | a reply in a thread is not a review of the commit it names (amendment below) | `test_a_reply_in_a_thread_is_not_a_review`, `test_the_reviewed_sha_is_read_from_the_reviews` |
+| a head reviewed only before it moved exits 2 and says so (amendment below) | `test_a_head_reviewed_before_it_moved_is_reported_as_not_reviewed_there` (seven cases), `tests/test_cli_decisions.py::test_a_head_reviewed_before_it_moved_exits_two`, `tests/test_cli_decisions.py::test_an_unanswered_finding_after_a_push_still_exits_three` |
 | the daily bound stops the loop | `test_the_daily_bound_stops_the_loop`, `test_the_bound_wins_over_everything_else` |
 | rate limited is distinguishable from reviewed | `test_a_rate_limited_pull_request_reports_as_not_reviewed`, `test_a_reviewed_pull_request_reports_as_reviewed`, `test_a_pull_request_with_neither_is_still_not_reviewed` |
 | `gh` failing is reported | `test_gh_failing_is_reported_not_swallowed`, `test_an_unreadable_payload_is_reported` |
@@ -220,6 +221,12 @@ protect a counter would have been the wrong trade.
       the reviewer has only replied on is asked for its review (the
       amendment below on replies;
       `test_a_reply_in_a_thread_is_not_a_review`)
+- [x] a pull request reviewed only before its head moved reads "NOT
+      REVIEWED AT THE HEAD" and exits 2, and an unanswered finding still
+      exits 3 (the amendment below on the exit code;
+      `tests/test_cli_decisions.py::test_a_head_reviewed_before_it_moved_exits_two`,
+      `tests/test_cli_decisions.py::test_an_unanswered_finding_after_a_push_still_exits_three`,
+      `test_a_head_reviewed_before_it_moved_is_reported_as_not_reviewed_there`)
 - [ ] All gates green on PR
 
 ## Proof / origin
@@ -413,3 +420,133 @@ and again by this test before the fix.
 
 - A reply posted with a body of its own would still count as a review. None
   has been seen: all four replies on PR #147 have empty bodies.
+
+## Amendment (2026-10-06): a head reviewed only before it moved exits 2
+
+The amendment above on replies recorded this as out of scope, and Akin asked
+for it next.
+
+That amendment made the decision right for a pull request reviewed at an
+earlier head. The report line and the exit code did not follow. The command,
+run at 207f850 on the shape PR #147 had, through the real `gather` with `gh`
+stubbed, printed:
+
+```
+PR #147: the head has moved since the last review
+
+PR #147: reviewed, 2 threads, nothing outstanding
+```
+
+and exited 0. The decision asks for a review, and the exit code says the
+pull request is settled. A session that reads the exit code takes the push
+that answered the findings as reviewed when nothing has reviewed it: the
+review arriving after our own push, missed one level above the decision.
+`test_a_settled_pull_request_exits_zero` pins that state as settled. Its pull
+request has threads and a review, nothing outstanding, and no review naming
+its head, and the decision answers that state with "the head has moved since
+the last review".
+
+### Behavior after the change
+
+- **Reviewed at the head** means the reviewed commit, as `gather` reads it,
+  is the head. That is the test behind "already reviewed at the current
+  head", so the decision, the report line and the exit code read one fact.
+- **Exit 2 means the head has not been reviewed.** Until now it meant that
+  nothing had reviewed the pull request at all. It now also covers a pull
+  request reviewed only before its head moved, when nothing is outstanding.
+  A pull request is settled, and exits 0, only when it is reviewed at its
+  head and nothing is outstanding.
+- **An unanswered finding still exits 3.** A pull request with a moved head
+  and something outstanding exits 3: the decision answers before it asks,
+  and the review-response rule says the command "exits 3 while anything is
+  outstanding". So the new exit 2 applies only when nothing is outstanding.
+- **The report line says so.** A pull request reviewed only before its head
+  moved, with nothing outstanding, reads
+  `PR #N: NOT REVIEWED AT THE HEAD, last reviewed at abc1234`, with the first
+  seven characters of the reviewed commit. When no review names a commit, as
+  when the only threads were started by someone else and the reviewer only
+  replied, `no review names a commit` takes the place of the commit. When a
+  reason from the never-reviewed lines applies, the first that applies
+  follows a semicolon, in the order those lines use:
+  `closed, so the service will not now`, `a review is in progress`, or
+  `rate limited`, each read as those lines read it.
+- Everything else keeps its line and its code: a pull request reviewed at its
+  head reads "reviewed, N threads, nothing outstanding" and exits 0, and
+  never-reviewed and outstanding pull requests read and exit as before. The
+  decision does not change, and neither does anything the command posts.
+
+Considered and not chosen: a new exit code, 4, for a head reviewed only
+before it moved, which would keep exit 2 meaning "never reviewed". Nothing
+in this repository switches on the codes: the command's own tests check
+them, and the review-response rule names only exit 3. A fourth code would
+add a distinction nothing reads. With this change, exit 2 says a review is
+owed, and exit 3 says an answer is owed.
+
+### What changes
+
+- `services/api/src/harrier/reviewfollowup.py`: `PullRequestState` says
+  whether it is reviewed at its head, `decide` reads that in place of its own
+  copy of the comparison, and `report` gives the new line.
+- `services/api/src/harrier_cli/main.py`: `_cmd_review_followup` exits 2 for
+  a pull request reviewed only before its head moved, when nothing is
+  outstanding.
+- `services/api/tests/test_cli_decisions.py`:
+  `test_a_head_reviewed_before_it_moved_exits_two` drives the PR #147 shape
+  through the real `gather`, with `gh` stubbed, and asserts the decision
+  line, the report line and exit 2. It also gains
+  `test_an_unanswered_finding_after_a_push_still_exits_three`, which gives a
+  pull request a moved head and an unanswered thread, and asserts exit 3.
+  `test_a_settled_pull_request_exits_zero` gains a reviewed commit equal to
+  its head, because settled now means reviewed there. What it proves is
+  unchanged.
+- `services/api/tests/test_review_followup.py`:
+  `test_a_head_reviewed_before_it_moved_is_reported_as_not_reviewed_there`
+  checks the line with each reason, the order of the reasons, and with no
+  commit named.
+  `test_a_reviewed_pull_request_reports_as_reviewed` gains a reviewed commit
+  equal to its head, for the same reason.
+
+No new file, so `config/data-classification.json` does not change.
+
+### How to know it worked
+
+`test_a_head_reviewed_before_it_moved_exits_two` runs the command as above.
+Before this change it failed: the report line read "reviewed, 2 threads,
+nothing outstanding" and the command exited 0. After it, the line reads
+"NOT REVIEWED AT THE HEAD, last reviewed at" and the first seven characters
+of the commit the review named, and the command exits 2.
+
+### Failure modes this must not introduce
+
+- A pull request reviewed at its head stops exiting 0.
+  `test_a_settled_pull_request_exits_zero`, with its reviewed commit set to
+  its head, holds this.
+- An unanswered finding stops exiting 3 because its head also moved.
+  `test_an_unanswered_finding_after_a_push_still_exits_three` holds this.
+- The decision changes. No test of `decide` changes.
+
+### Out of scope
+
+- **The order across several pull requests.** Codes combine as before: an
+  error first, then 2, then 3. So one pull request waiting on a review hides
+  another waiting on an answer from the exit code, though the report lines
+  show both
+  (`tests/test_cli_decisions.py::test_one_pull_request_awaiting_review_hides_another_awaiting_an_answer`).
+  Changing the order changes what a run over several pull requests exits,
+  so it is its own change.
+
+### Limitations
+
+- The head counts as reviewed only when a review with a body names it, or
+  the summary comment reports a clean review ending at it. If the service
+  ever passes over a head without either, for example when nothing it
+  reviews has changed, the pull request exits 2 until a later review covers
+  its head. That has not been observed here.
+- A closed pull request reviewed only before its last push exits 2 from now
+  on, as a closed one never reviewed at all already does. PR #147 is one:
+  merged at 937deb9, reviewed at a855abe. The service will not review it
+  now, so that exit cannot be cleared. It says the merged head was not
+  reviewed, rather than calling it settled.
+- `rate limited` is read as the never-reviewed line reads it: from the newest
+  notice, whatever its age. A notice whose wait has passed still shows, as it
+  already does on that line.
