@@ -73,11 +73,12 @@ governance rules exist to prevent.
 scope establishing that this API is not an open door, and a published container
 port is the easiest way to undo that without noticing.
 
-`TrustedHostMiddleware` is already configured with
-`("localhost", "127.0.0.1", "[::1]", "0.0.0.0", "testserver")`
-(`services/api/src/harrier_api/localauth.py:54`), so reaching the container as
-`localhost:8000` or `127.0.0.1:8000` passes and any other hostname gets a 400.
-That is the correct behavior and this spec does not widen the list.
+`TrustedHostMiddleware` is configured with
+`("localhost", "127.0.0.1", "[::1]", "0.0.0.0")`
+(`TRUSTED_HOSTS` in `services/api/src/harrier_api/localauth.py`; spec 083
+removed `testserver`), so reaching the container as `localhost:8000` or
+`127.0.0.1:8000` passes and any other hostname gets a 400. That is the correct
+behavior and this spec does not widen the list.
 
 ### Restart policy
 
