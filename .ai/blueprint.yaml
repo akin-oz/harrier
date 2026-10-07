@@ -5,6 +5,16 @@ project:
 
 workflow:
   development: spec-driven
+  # Pack contributions harrier already provides in its own form (spec 089).
+  disable:
+    # The commit guard is .claude/hooks/guard-commit.sh (spec 045).
+    - hook.spec-trailer
+    # The pack's rule allows "Spec: none"; spec-gate.yml resolves every
+    # trailer to an approved spec, so the spec-approval rule governs instead.
+    - rule.spec-trailer
+    # .claude/hooks/guard-source-of-truth.sh pauses for review on these paths;
+    # a deny would make them uneditable. Adopting it is a separate spec.
+    - permission.protect-guardrails
 
 ai:
   runtimes: [claude, codex]

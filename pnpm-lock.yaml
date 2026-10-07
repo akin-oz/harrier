@@ -9,8 +9,8 @@ importers:
   .:
     devDependencies:
       '@akinlabs/ai-engineering':
-        specifier: ^0.2.0
-        version: 0.2.0
+        specifier: ^0.6.2
+        version: 0.6.2
 
   apps/web:
     dependencies:
@@ -84,8 +84,8 @@ importers:
 
 packages:
 
-  '@akinlabs/ai-engineering@0.2.0':
-    resolution: {integrity: sha512-ucDiTxfPSzPs1GwnGliil2pcZGPqO7/3RFlEkl8ZEY+PucEisQkFD1p9MjVOS6QlZ29SI/kBRfeSXUgQzbo2og==}
+  '@akinlabs/ai-engineering@0.6.2':
+    resolution: {integrity: sha512-8yEJ99g52NUnCH/rBUUWIhgv1I/FNkWuZ2ZERS27betUHaiFwShffUBiI4bc935YqKTKH80zbPmChU7o7vuL8A==}
     engines: {node: '>=20'}
     hasBin: true
 
@@ -1783,7 +1783,7 @@ packages:
 
 snapshots:
 
-  '@akinlabs/ai-engineering@0.2.0':
+  '@akinlabs/ai-engineering@0.6.2':
     dependencies:
       yaml: 2.9.0
 

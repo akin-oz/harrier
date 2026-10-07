@@ -1,6 +1,7 @@
 # aie feedback log
 
-Gaps found while adopting `@akinlabs/ai-engineering@0.2.0` in harrier. Dogfooding
+Gaps found while adopting `@akinlabs/ai-engineering@0.2.0` in harrier; the
+repo is on 0.6.2 since spec 089. Dogfooding
 rule: generated files are never hand-edited; what the compiler cannot express gets
 wired directly (in files the compiler does not own) and logged here as candidate
 issues for the package. Source references are to the compiler checkout at
@@ -14,16 +15,19 @@ issues for the package. Source references are to the compiler checkout at
    here: all three governance hooks are hand-wired in `.claude/settings.json` and
    `.claude/hooks/`. Suggested fix: allow a `hooks:` block in schema 2, or let packs
    contribute hooks.
+   Status: closed in 0.3.0 (`hooks:` in blueprints, packs contribute hooks).
 2. **No turn-end/Stop hook event.** `HOOK_EVENTS` is closed at pre-edit, post-edit,
    session-start, session-end; Claude's `Stop` event (the heart of the Sorrel-style
    verification gate) is inexpressible, and the docs do not state the limitation.
    Impact: `.claude/hooks/verify-on-stop.sh` wired by hand. Suggested fix: add a
    `turn-end` normalized event mapping to Claude `Stop`, documented as unsupported
    on runtimes without an equivalent.
+   Status: closed in 0.3.0 (`turn-end` event).
 3. **Hook matchers are fixed per event.** `pre-edit` always compiles to matcher
    `Edit|Write|NotebookEdit`; a hook that needs `Bash` (the commit guard) cannot be
    declared even in manifest mode. Impact: commit guard hand-wired. Suggested fix:
    optional tool-matcher field on hook declarations.
+   Status: closed in 0.3.0 (`tools:` on `pre-tool` and `post-tool`).
 4. **The pack's approval gating is prose only.** `development/spec-driven` ships
    rules and agents that say "get agreement, then implement" but no mechanism: no
    approval frontmatter convention, no commit-trailer convention, no CI resolver.
@@ -50,6 +54,7 @@ issues for the package. Source references are to the compiler checkout at
    (`v0.1.0`, `v0.1.1`, `v0.2.0`) exist, so `@v0` fails CI resolution with
    "unable to find version v0". Harrier pins `@v0.2.0`. Suggested fix: publish
    and move a `v0` tag on each release, as actions conventionally do.
+   Status: closed in 0.3.0; harrier keeps an exact pin on purpose (spec 089).
 
 ## Non-gaps worth keeping
 

@@ -4,6 +4,6 @@
   "version": "0.0.0",
   "packageManager": "pnpm@11.18.0",
   "devDependencies": {
-    "@akinlabs/ai-engineering": "^0.2.0"
+    "@akinlabs/ai-engineering": "^0.6.2"
   }
 }

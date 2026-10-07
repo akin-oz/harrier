@@ -1,7 +1,7 @@
 ---
 description: Each change stays inside the boundary its spec describes
 ---
-<!-- generated-by: development/spec-driven@1 — edit the blueprint, not this file -->
+<!-- generated-by: development/spec-driven@3 — edit the blueprint, not this file -->
 
 A change does what its spec says and nothing else.
 

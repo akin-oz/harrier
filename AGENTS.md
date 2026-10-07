@@ -28,7 +28,7 @@ should say so.
 
 ## Rule: change-boundary
 
-<!-- generated-by: development/spec-driven@1 — edit the blueprint, not this file -->
+<!-- generated-by: development/spec-driven@3 — edit the blueprint, not this file -->
 
 A change does what its spec says and nothing else.
 
@@ -263,7 +263,7 @@ the actual output.
 - Every doc that claims a behavior names the file or test that proves it.
 - Honest limitations sections wherever relevant. No invented numbers anywhere. and ## Agent: spec-author
 
-<!-- generated-by: development/spec-driven@1 — edit the blueprint, not this file -->
+<!-- generated-by: development/spec-driven@3 — edit the blueprint, not this file -->
 
 You turn requests into specs. You do not implement.
 
@@ -295,7 +295,7 @@ writing a spec that cannot fail.
 
 ## Agent: implementer
 
-<!-- generated-by: development/spec-driven@1 — edit the blueprint, not this file -->
+<!-- generated-by: development/spec-driven@3 — edit the blueprint, not this file -->
 
 You implement against a spec that already exists. Read it first, and treat it as
 the definition of done.
@@ -898,7 +898,7 @@ pipeline's rejections. are replaced with the rules and agents listed in .ai/mani
 
 ## Rule: spec-first
 
-<!-- generated-by: development/spec-driven@1 — edit the blueprint, not this file -->
+<!-- generated-by: development/spec-driven@3 — edit the blueprint, not this file -->
 
 No change to observable behavior lands without a spec describing it first.
 
@@ -922,7 +922,7 @@ should say so.
 
 ## Rule: change-boundary
 
-<!-- generated-by: development/spec-driven@1 — edit the blueprint, not this file -->
+<!-- generated-by: development/spec-driven@3 — edit the blueprint, not this file -->
 
 A change does what its spec says and nothing else.
 
@@ -1161,7 +1161,7 @@ the actual output.
 
 ## Agent: spec-author
 
-<!-- generated-by: development/spec-driven@1 — edit the blueprint, not this file -->
+<!-- generated-by: development/spec-driven@3 — edit the blueprint, not this file -->
 
 You turn requests into specs. You do not implement.
 
@@ -1193,7 +1193,7 @@ writing a spec that cannot fail.
 
 ## Agent: implementer
 
-<!-- generated-by: development/spec-driven@1 — edit the blueprint, not this file -->
+<!-- generated-by: development/spec-driven@3 — edit the blueprint, not this file -->
 
 You implement against a spec that already exists. Read it first, and treat it as
 the definition of done.

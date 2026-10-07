@@ -1,7 +1,7 @@
 ---
 description: Implements exactly what the active spec describes
 ---
-<!-- generated-by: development/spec-driven@1 — edit the blueprint, not this file -->
+<!-- generated-by: development/spec-driven@3 — edit the blueprint, not this file -->
 
 You implement against a spec that already exists. Read it first, and treat it as
 the definition of done.

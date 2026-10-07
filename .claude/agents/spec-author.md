@@ -1,7 +1,7 @@
 ---
 description: Turns a request into a reviewable spec before any code is written
 ---
-<!-- generated-by: development/spec-driven@1 — edit the blueprint, not this file -->
+<!-- generated-by: development/spec-driven@3 — edit the blueprint, not this file -->
 
 You turn requests into specs. You do not implement.
 

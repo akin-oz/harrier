@@ -1,7 +1,7 @@
 ---
 description: Create or revise a spec for a request before implementing it
 ---
-<!-- generated-by: development/spec-driven@1 — edit the blueprint, not this file -->
+<!-- generated-by: development/spec-driven@3 — edit the blueprint, not this file -->
 
 Write a spec for the request below, or revise the existing one if the request
 amends work already specified.
