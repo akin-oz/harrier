@@ -145,27 +145,36 @@ posting is synthetic, with an invented company.
       TypeScript skills and a benefits list holding "401(k) plan", ranks
       below the same posting with that line removed, and its `signals` name
       `blocker=us_payroll` with the matched text
-      (`test_a_401k_posting_relayed_as_worldwide_ranks_last`)
+      (planned
+      test_a_401k_posting_relayed_as_worldwide_ranks_last)
 - [ ] Each spelling in the table fires on its own
-      (`test_every_us_payroll_spelling_fires`)
+      (planned
+      test_every_us_payroll_spelling_fires)
 - [ ] A location naming EMEA suppresses `us_payroll`; "Worldwide" and
-      "Remote" do not (`test_an_explicit_emea_location_overrides_us_payroll`)
+      "Remote" do not (planned
+      test_an_explicit_emea_location_overrides_us_payroll)
 - [ ] A US-qualified benefit does not fire: "401k (US employees)",
       "401(k) for US-based staff", "US: 401(k) match"
-      (`test_a_us_qualified_benefit_is_not_a_blocker`)
+      (planned
+      test_a_us_qualified_benefit_is_not_a_blocker)
 - [ ] A US word in a different list item does not suppress the match
-      (`test_a_us_word_in_another_list_item_qualifies_nothing`)
+      (planned
+      test_a_us_word_in_another_list_item_qualifies_nothing)
 - [ ] A 401(k) beside "Fully remote, work from anywhere" with location
       "Remote" does not fire; beside "work from anywhere in the US" it does
-      (`test_a_reach_phrase_overrides_us_payroll`)
+      (planned
+      test_a_reach_phrase_overrides_us_payroll)
 - [ ] A 401(k) beside "trusted by teams worldwide" or "customers around
       the world" with location "Remote" still fires
-      (`test_a_customer_reach_is_not_a_hiring_reach`)
+      (planned
+      test_a_customer_reach_is_not_a_hiring_reach)
 - [ ] Salary amounts do not fire: "$350k to $401k", "USD 401k",
-      "350k and 401k" (`test_a_salary_is_not_a_401k`)
+      "350k and 401k" (planned
+      test_a_salary_is_not_a_401k)
 - [ ] Medical, dental, vision and disability cover, a USD salary range and
       on-site visits to a US city, alone or together, fire no blocker
-      (`test_benefits_offered_outside_the_us_are_not_blockers`)
+      (planned
+      test_benefits_offered_outside_the_us_are_not_blockers)
 - [ ] A posting with both `us_payroll` and `employment` takes one penalty
       (extend `test_blockers_do_not_stack`)
 - [ ] `us_payroll` never changes a gate verdict
