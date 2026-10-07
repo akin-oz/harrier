@@ -739,6 +739,13 @@ def _earlier_reviews(
                 )
             ).get("reviews")
         )
+        # A page with no usable connection is unreadable, not the last page.
+        # Read as the last, it left every review before it unread and said
+        # nothing (review of PR #170).
+        if not isinstance(conn.get("nodes"), list) or not isinstance(conn.get("pageInfo"), dict):
+            raise FollowUpError(
+                f"unexpected review payload for {number}: an earlier page carried no reviews"
+            )
         nodes = _as_list(conn.get("nodes")) + nodes
         page_info = _as_dict(conn.get("pageInfo"))
     return nodes, bool(page_info.get("hasPreviousPage"))

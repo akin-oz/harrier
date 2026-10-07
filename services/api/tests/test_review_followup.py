@@ -986,6 +986,28 @@ def test_gh_failing_on_an_earlier_page_is_reported(handled_env: Path) -> None:
         gather(160, run, owner="o", repo="r")
 
 
+@pytest.mark.parametrize(
+    "pull",
+    [
+        pytest.param(None, id="no pull request"),
+        pytest.param({"reviews": None}, id="no reviews connection"),
+        pytest.param({"reviews": {"pageInfo": {"hasPreviousPage": False}}}, id="no nodes"),
+        pytest.param({"reviews": {"nodes": []}}, id="no pageInfo"),
+    ],
+)
+def test_an_earlier_page_without_its_reviews_is_reported(
+    handled_env: Path, pull: dict[str, object] | None
+) -> None:
+    """An earlier page that parsed but carried no usable reviews connection
+    was read as the last page. The reviews before it went unread and nothing
+    said so (review of PR #170). It is an unexpected payload, as a page that
+    is not JSON is."""
+    unusable = json.dumps({"data": {"repository": {"pullRequest": pull}}})
+    paged = paged_gh("abc\n", [reviews_page([], cursor="cursor1"), unusable])
+    with pytest.raises(FollowUpError, match=r"unexpected review payload for 160"):
+        gather(160, paged, owner="o", repo="r")
+
+
 # --- a truncated query in the report line (spec 043 amendment) ----------------
 
 # Written out rather than imported, so a change to the words fails here.
