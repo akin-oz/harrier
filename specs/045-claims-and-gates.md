@@ -215,6 +215,12 @@ spec 044.
       `::test_a_run_of_global_options_costs_time_in_proportion_to_its_length`,
       `::test_checks_that_need_no_reader_do_not_wait_for_it`,
       `::test_no_subcommand_runs_after_a_help_or_query_option`)
+- [ ] a commit whose message names an env file is allowed, while an env file
+      staged, committed or read into a message stays denied (the amendment
+      below on the env file check; planned
+      test_an_env_file_named_only_in_a_message_does_not_block_the_commit,
+      planned test_the_env_file_check_still_denies_a_staged_or_read_env_file,
+      `services/api/tests/test_guards.py::test_checks_that_need_no_reader_do_not_wait_for_it`)
 - [ ] All gates green on PR
 
 ## Proof / origin
@@ -904,3 +910,89 @@ commits. `git -C dir commit -C HEAD` is still exempt from the trailer check.
   `git commit -C HEAD && git -C . commit -m "x"`. `--amend --no-edit` is
   matched anywhere in the string, so
   `git commit -m "Explain --amend --no-edit"` needs no trailer.
+
+## Amendment (2026-10-07): the env file check reads past a commit's message
+
+The `.env` check denies a command that runs `git add` or `git commit` when its
+text names an env file anywhere, the commit message included. So
+`git commit -m "Stop reading .env in tests" -m "Spec: 045"` is denied, and the
+commit of the amendment after review of PR #158 was denied the same way until
+its message was reworded. `docs/privacy-plan.md` says the guard refuses to
+stage or commit `.env*` files. A message that names one does neither.
+
+### What the guard reads
+
+**A commit's message is not read for an env file.** In a command the reader
+reads, an env file is looked for in every word, redirection target,
+here-string and heredoc line it reads, except a commit's message:
+
+- the value of `-m` or `--message`: the next word, the text attached as in
+  `-m"text"` or `--message=text`, or the word after a short cluster that ends
+  in `m`, such as `-am`;
+- a heredoc or here-string that is message text by the rule of the amendment
+  on the commit guard: fed to the commit, a heredoc with a quoted delimiter,
+  or read by `cat` inside a command substitution among the commit's words.
+
+An env file is what the check matched before: `.env` and the letters,
+digits, `_`, `.` and `-` after it, other than `.env.example`, `.env.sample`
+and `.env.template`.
+
+**What a message cannot hide.** A command substitution inside a message is
+read as commands, so `-m "$(cat .env)"`, which writes the file into the
+message, is denied. `-F .env.local` and `-F - < .env.local` read a file into
+the message and are denied. A heredoc with an unquoted delimiter is read,
+since the shell expands it. A word after `--` is a path.
+
+**Where the reader does not decide.** A command whose text holds no `commit`
+is not read, and a command the reader cannot read, or reads as a bypass, is
+checked over the whole string, as before.
+
+**Order.** Only the reader can tell a message from the rest, so for a command
+the reader reads, the `.env` check now runs after it. This replaces the
+sentence of the amendment after review of PR #158 that runs the `.env` check
+for `git add` or `git commit` side by side before the reader. The hooksPath
+and git dir check still runs before the reader, and a command the reader does
+not run on, such as `git add .env`, is still checked without it.
+
+### What changes
+
+- `.claude/hooks/guard-commit.sh`: the reader reports an env file it reads
+  outside a commit's message, and the `.env` check uses that report for a
+  command the reader read. No file is added.
+- `services/api/tests/test_guards.py`: planned
+  test_an_env_file_named_only_in_a_message_does_not_block_the_commit runs
+  commits whose message names an env file in each form above, each with a
+  trailer, and expects them allowed. Planned
+  test_the_env_file_check_still_denies_a_staged_or_read_env_file runs
+  commands that stage an env file, commit one as a path, or read one into a
+  message, and expects the env file message for each. The test that a check
+  needing no reader does not wait for it checks `git add .env` in place of a
+  commit that names `.env`.
+
+No new file, so `config/data-classification.json` does not change.
+
+**Output.** The same messages. A command that names an env file only in a
+commit's message is now allowed, where it was denied.
+
+**How to know it worked.**
+`git commit -m "Stop reading .env in tests" -m "Spec: 045"` is allowed.
+`git add .env`, `git commit -m "$(cat .env)" -m "Spec: 045"` and
+`git commit -F .env.local` are denied with the env file message.
+
+**Failure modes this must not introduce.** Every env file staged, committed
+or read into a message stays denied, a template stays allowed, and every case
+in the bypass and ordinary lists keeps its outcome.
+
+### Limitations
+
+- A message in text another command runs is still read, as in
+  `bash -c "git commit -m 'about .env'"`, since text is matched, not read for
+  options.
+- Other commands in the same command line are still read:
+  `echo .env >> .gitignore && git add .gitignore` is denied, and so is a
+  heredoc that writes a file naming `.env`, committed in the same command.
+- The values of other commit options, such as `--trailer`, are read.
+- `git -C dir add .env` still passes the `.env` check, as the amendment on
+  git's global options says.
+- For a commit, the `.env` check now waits for the reader. A reader that never
+  returns holds it up, as it already holds up the bypass and trailer checks.
