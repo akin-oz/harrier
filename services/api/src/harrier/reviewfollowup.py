@@ -68,6 +68,14 @@ REVIEWED_RANGE_PATTERN = re.compile(r"between ([0-9a-f]{7,40}) and ([0-9a-f]{7,4
 # depending on which API answered.
 REVIEWER_LOGIN = "coderabbitai"
 
+# What is read from each page of the reviews connection. The cursor is how an
+# earlier page is asked for, because a reply in a thread is a review node and
+# enough of them push the review they answer off the newest page.
+REVIEW_FIELDS = "pageInfo{hasPreviousPage startCursor} nodes{id author{login} body commit{oid}}"
+# Earlier pages read before giving up and failing closed. Each holds a
+# hundred nodes, so this reads a thousand behind the newest twenty.
+REVIEW_PAGE_LIMIT = 10
+
 # A review body saying some of its findings could not be attached to a line.
 # Those findings exist only in the body: no thread is created for them, so a
 # query over `reviewThreads` is blind to them however it filters. Not
@@ -561,8 +569,7 @@ def gather(number: int, run: GitHubRunner, *, owner: str, repo: str) -> PullRequ
                 f"{{pullRequest(number:{number}){{state "
                 f"reviewThreads(first:100){{pageInfo{{hasNextPage}} nodes{{id isResolved "
                 f"comments(last:1){{nodes{{id author{{login}}}}}}}}}} "
-                f"reviews(last:20){{pageInfo{{hasPreviousPage}} "
-                f"nodes{{id author{{login}} body commit{{oid}}}}}}"
+                f"reviews(last:20){{{REVIEW_FIELDS}}}"
                 f"}}}}}}",
             ]
         )
@@ -617,11 +624,18 @@ def gather(number: int, run: GitHubRunner, *, owner: str, repo: str) -> PullRequ
         # reviews is last:20, so it already holds the newest and anything
         # omitted is a PREVIOUS one: hasNextPage is always false there and
         # reading it made the reviews half of this check inert (review of #50).
-        truncated = bool(_as_dict(threads_conn.get("pageInfo")).get("hasNextPage")) or bool(
-            _as_dict(reviews_conn.get("pageInfo")).get("hasPreviousPage")
-        )
+        threads_truncated = bool(_as_dict(threads_conn.get("pageInfo")).get("hasNextPage"))
     except json.JSONDecodeError as error:
         raise FollowUpError(f"unexpected review payload for {number}: {error}") from error
+    # Every reply in a thread is a review node, so twenty nodes can be all
+    # replies and the review they answer sits on an earlier page. Read back
+    # until there is none, or fail closed at the page bound (spec 043
+    # amendment on the review window).
+    earlier, reviews_truncated = _earlier_reviews(
+        number, run, owner=owner, repo=repo, page_info=_as_dict(reviews_conn.get("pageInfo"))
+    )
+    review_nodes = earlier + review_nodes
+    truncated = threads_truncated or reviews_truncated
 
     threads: list[ThreadState] = []
     for raw_thread in thread_nodes:
@@ -683,6 +697,61 @@ def gather(number: int, run: GitHubRunner, *, owner: str, repo: str) -> PullRequ
         in_progress=in_progress,
         clean_review=clean_review,
     )
+
+
+def _earlier_reviews(
+    number: int, run: GitHubRunner, *, owner: str, repo: str, page_info: dict[str, object]
+) -> tuple[list[object], bool]:
+    """The review nodes older than the newest page, oldest first, and whether
+    any were left unread.
+
+    A page that says there is more but carries no cursor, or more pages than
+    `REVIEW_PAGE_LIMIT`, leaves the rest unread, and the caller fails closed.
+    """
+    nodes: list[object] = []
+    for _ in range(REVIEW_PAGE_LIMIT):
+        cursor = page_info.get("startCursor")
+        if not page_info.get("hasPreviousPage"):
+            return nodes, False
+        if not isinstance(cursor, str) or not cursor:
+            return nodes, True
+        try:
+            raw = run(
+                [
+                    "api",
+                    "graphql",
+                    "-f",
+                    f'query={{repository(owner:"{owner}",name:"{repo}")'
+                    f"{{pullRequest(number:{number}){{"
+                    f"reviews(last:100,before:{json.dumps(cursor)}){{{REVIEW_FIELDS}}}"
+                    f"}}}}}}",
+                ]
+            )
+            payload: object = json.loads(raw)
+        except json.JSONDecodeError as error:
+            raise FollowUpError(f"unexpected review payload for {number}: {error}") from error
+        except Exception as error:
+            raise FollowUpError(f"could not read pull request {number}: {error}") from error
+        conn = _as_dict(
+            _as_dict(
+                _as_dict(_as_dict(_as_dict(payload).get("data")).get("repository")).get(
+                    "pullRequest"
+                )
+            ).get("reviews")
+        )
+        # A page with no usable connection is unreadable, not the last page.
+        # Read as the last, it left every review before it unread and said
+        # nothing (review of PR #170). A pageInfo without its boolean
+        # hasPreviousPage is the same: the next pass would read it as the end.
+        if not isinstance(conn.get("nodes"), list) or not isinstance(
+            _as_dict(conn.get("pageInfo")).get("hasPreviousPage"), bool
+        ):
+            raise FollowUpError(
+                f"unexpected review payload for {number}: an earlier page carried no reviews"
+            )
+        nodes = _as_list(conn.get("nodes")) + nodes
+        page_info = _as_dict(conn.get("pageInfo"))
+    return nodes, bool(page_info.get("hasPreviousPage"))
 
 
 def request_review(number: int, run: GitHubRunner, *, owner: str, repo: str) -> None:

@@ -22,6 +22,7 @@ from harrier.reviewfollowup import (
     GRACE_MINUTES,
     REQUEST,
     RESPOND,
+    REVIEW_PAGE_LIMIT,
     SKIP,
     WAIT,
     FollowUpError,
@@ -880,6 +881,136 @@ def test_a_head_reviewed_before_it_moved_is_reported_as_not_reviewed_there(
     }
     fields.update(overrides)
     assert report([a_state(**fields)]) == [f"PR #39: NOT REVIEWED AT THE HEAD, {detail}"]
+
+
+def paged_gh(head: str, pages: list[str]):
+    """Answer the main query with the newest page of reviews, and each query
+    for an earlier page with the next one back, in the order given.
+
+    An earlier page is asked for by cursor, so the stub checks that the query
+    names the cursor the page before it handed out.
+    """
+    calls: list[str] = []
+
+    def run(argv: list[str]) -> str:
+        if "graphql" in argv:
+            query = " ".join(argv)
+            if calls:
+                assert f'before:"cursor{len(calls)}"' in query, query
+            calls.append(query)
+            return pages[len(calls) - 1]
+        if argv[0] == "pr" and "headRefOid" in " ".join(argv):
+            return head
+        if argv[0] == "api" and "issues/" in " ".join(argv):
+            return comment_payload()
+        raise AssertionError(f"unexpected gh call: {argv}")
+
+    return run
+
+
+def reviews_page(
+    nodes: list[dict[str, object]],
+    *,
+    cursor: str | None,
+    threads: list[dict[str, object]] | None = None,
+) -> str:
+    """One page of the reviews connection. A cursor means an earlier page exists."""
+    pull: dict[str, object] = {
+        "reviewThreads": {"nodes": threads or []},
+        "reviews": {
+            "pageInfo": {"hasPreviousPage": cursor is not None, "startCursor": cursor},
+            "nodes": nodes,
+        },
+    }
+    return json.dumps({"data": {"repository": {"pullRequest": pull}}})
+
+
+def test_replies_past_the_window_do_not_hide_the_review(handled_env: Path) -> None:
+    """Every reply in a thread is a review node, so on a pull request with
+    enough conversation the newest twenty nodes are all replies. The query
+    then had an earlier page and the command reported "a bounded query had
+    another page" on every run, with every finding answered.
+
+    The review is on the earlier page. Reading back to it shows nothing waits
+    and names the commit it reviewed.
+    """
+    reviewed, pushed = "a" * 40, "b" * 40
+    replies = [review(f"reply{n}", commit=pushed) for n in range(25)]
+    newest = reviews_page(replies[5:], cursor="cursor1", threads=[thread("t1", comment="ack1")])
+    earlier = reviews_page(
+        [review("r1", body="**Actionable comments posted: 1**", commit=reviewed), *replies[:5]],
+        cursor=None,
+    )
+    record_handled(["r1", "ack1"])
+    state = gather(160, paged_gh(f"{pushed}\n", [newest, earlier]), owner="o", repo="r")
+    assert (state.truncated, state.outstanding, state.last_reviewed_sha) == (False, False, reviewed)
+
+
+def test_an_unread_review_past_the_window_is_still_found(handled_env: Path) -> None:
+    reviews_newest = [review(f"reply{n}") for n in range(20)]
+    newest = reviews_page(reviews_newest, cursor="cursor1")
+    earlier = reviews_page([review("r1", body="**Actionable comments posted: 1**")], cursor=None)
+    state = gather(160, paged_gh("abc\n", [newest, earlier]), owner="o", repo="r")
+    assert [r.identifier for r in state.unread_reviews] == ["r1"]
+
+
+def test_an_earlier_page_with_no_cursor_fails_closed(handled_env: Path) -> None:
+    """GitHub says there is more but gives no way to ask for it. Reading that
+    as complete would exit 0 on what was not read."""
+    pull: dict[str, object] = {
+        "reviewThreads": {"nodes": []},
+        "reviews": {"pageInfo": {"hasPreviousPage": True, "startCursor": None}, "nodes": []},
+    }
+    detail = json.dumps({"data": {"repository": {"pullRequest": pull}}})
+    state = gather(160, stub_gh(comment_payload(), "abc\n", detail), owner="o", repo="r")
+    assert state.truncated
+
+
+def test_reading_back_stops_at_the_page_bound(handled_env: Path) -> None:
+    """Every page says there is another. Reading stops at the bound and
+    fails closed rather than calling `gh` forever."""
+    pages = [reviews_page([], cursor=f"cursor{n + 1}") for n in range(REVIEW_PAGE_LIMIT + 1)]
+    state = gather(160, paged_gh("abc\n", pages), owner="o", repo="r")
+    assert state.truncated
+
+
+def test_gh_failing_on_an_earlier_page_is_reported(handled_env: Path) -> None:
+    paged = paged_gh("abc\n", [reviews_page([], cursor="cursor1")])
+
+    def run(argv: list[str]) -> str:
+        if "before:" in " ".join(argv):
+            raise RuntimeError("gh: HTTP 502")
+        return paged(argv)
+
+    with pytest.raises(FollowUpError, match=r"could not read pull request 160.*502"):
+        gather(160, run, owner="o", repo="r")
+
+
+@pytest.mark.parametrize(
+    "pull",
+    [
+        pytest.param(None, id="no pull request"),
+        pytest.param({"reviews": None}, id="no reviews connection"),
+        pytest.param({"reviews": {"pageInfo": {"hasPreviousPage": False}}}, id="no nodes"),
+        pytest.param({"reviews": {"nodes": []}}, id="no pageInfo"),
+        pytest.param({"reviews": {"nodes": [], "pageInfo": {}}}, id="no hasPreviousPage"),
+        pytest.param(
+            {"reviews": {"nodes": [], "pageInfo": {"hasPreviousPage": None}}},
+            id="hasPreviousPage not a boolean",
+        ),
+    ],
+)
+def test_an_earlier_page_without_its_reviews_is_reported(
+    handled_env: Path, pull: dict[str, object] | None
+) -> None:
+    """An earlier page that parsed but carried no usable reviews connection
+    was read as the last page. The reviews before it went unread and nothing
+    said so (review of PR #170). It is an unexpected payload, as a page that
+    is not JSON is."""
+    unusable = json.dumps({"data": {"repository": {"pullRequest": pull}}})
+    paged = paged_gh("abc\n", [reviews_page([], cursor="cursor1"), unusable])
+    with pytest.raises(FollowUpError, match=r"unexpected review payload for 160"):
+        gather(160, paged, owner="o", repo="r")
 
 
 # --- a truncated query in the report line (spec 043 amendment) ----------------

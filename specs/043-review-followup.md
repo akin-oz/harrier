@@ -175,6 +175,7 @@ Proven by services/api/tests/test_review_followup.py:
 | an unchanged head is not re-requested | `test_a_reviewed_pull_request_at_the_same_head_is_left_alone`, `test_a_moved_head_is_asked_again` |
 | a reply in a thread is not a review of the commit it names (amendment below) | `test_a_reply_in_a_thread_is_not_a_review`, `test_the_reviewed_sha_is_read_from_the_reviews` |
 | a head reviewed only before it moved exits 2 and says so (amendment below) | `test_a_head_reviewed_before_it_moved_is_reported_as_not_reviewed_there` (seven cases), `tests/test_cli_decisions.py::test_a_head_reviewed_before_it_moved_exits_two`, `tests/test_cli_decisions.py::test_an_unanswered_finding_after_a_push_still_exits_three` |
+| replies do not crowd a review out of the window (amendment below) | `test_replies_past_the_window_do_not_hide_the_review`, `test_an_unread_review_past_the_window_is_still_found`, `test_an_earlier_page_with_no_cursor_fails_closed`, `test_reading_back_stops_at_the_page_bound`, `test_gh_failing_on_an_earlier_page_is_reported`, `test_an_earlier_page_without_its_reviews_is_reported` (six cases) |
 | a person records replies and reviews as read by naming their ids, and nothing else is recorded or posted (amendment below) | `tests/test_cli_decisions.py::test_marking_read_clears_what_the_run_printed`, `tests/test_cli_decisions.py::test_an_id_not_outstanding_records_nothing`, `tests/test_cli_decisions.py::test_marking_read_posts_nothing` |
 | a truncated pull request says so in its report line (amendment below) | `test_a_truncated_pull_request_says_so_in_its_report_line` (three cases) |
 | a dry run never waits and never asks, with `--wait` or without (amendment below) | `tests/test_cli_decisions.py::test_a_dry_run_never_waits_and_never_asks`, `tests/test_cli_decisions.py::test_waiting_without_a_dry_run_still_asks` |
@@ -230,6 +231,10 @@ protect a counter would have been the wrong trade.
       `tests/test_cli_decisions.py::test_a_head_reviewed_before_it_moved_exits_two`,
       `tests/test_cli_decisions.py::test_an_unanswered_finding_after_a_push_still_exits_three`,
       `test_a_head_reviewed_before_it_moved_is_reported_as_not_reviewed_there`)
+- [x] replies past the newest twenty review nodes do not leave a pull
+      request outstanding on every run, and a review behind them is still
+      read (the amendment below on the review window;
+      `test_replies_past_the_window_do_not_hide_the_review`)
 - [x] a run prints the ids a person would record, and `--mark-read` records
       only the ids it is given, each checked against what the pull requests
       named hold outstanding, and posts nothing (the amendment below on
@@ -430,7 +435,8 @@ and again by this test before the fix.
   every reply, ours or the reviewer's, is one. Past twenty, the query has
   another page, and the command reports "a bounded query had another page"
   and exits 3 on every run. That fails closed, so nothing is missed, but
-  replies bring it sooner. It is left to its own change.
+  replies bring it sooner. It is left to its own change: the amendment
+  below on the review window.
 
 ### Limitations
 
@@ -566,6 +572,108 @@ of the commit the review named, and the command exits 2.
 - `rate limited` is read as the never-reviewed line reads it: from the newest
   notice, whatever its age. A notice whose wait has passed still shows, as it
   already does on that line.
+
+## Amendment (2026-10-06): the review window
+
+Recorded as out of scope by the amendment on replies, and fixed here. `gather`
+read `reviews(last:20)`. A reply in a review thread is a review node, ours or
+the reviewer's, so a pull request with enough conversation fills those twenty
+with replies. The query then reports an earlier page, `truncated` is set, and
+`outstanding` is true on every run: "a bounded query had another page" and
+exit 3, with every finding answered. The review the replies answer is on that
+earlier page, so its body and the commit it names are not read either.
+
+This was inferred from the query and reproduced through `gather` by the
+tests below, not observed on a live pull request.
+
+### Behavior after the change
+
+- When the newest page of reviews reports an earlier one, `gather` asks for
+  it by its `startCursor`, a hundred nodes at a time, and keeps going until
+  no earlier page is left. The nodes are read oldest first, as before, so the
+  newest review with a body still names the reviewed commit.
+- A pull request whose review nodes all fit in what was read is not
+  truncated by its reviews. Thread truncation (`reviewThreads(first:100)`)
+  is unchanged and still fails closed.
+- It still fails closed when reading back cannot finish: a page that reports
+  an earlier one with no cursor, or more than ten earlier pages
+  (`REVIEW_PAGE_LIMIT`). Those set `truncated`. The pull request is then
+  outstanding and the command exits 3, and its report line says a bounded
+  query had another page, as the amendment below on the report line states
+  (`tests/test_cli_decisions.py::test_a_truncated_page_of_findings_still_exits_three`,
+  `test_a_truncated_pull_request_says_so_in_its_report_line`).
+- `gh` failing on an earlier page, or returning something that is not JSON,
+  is reported as it is for the first query. An earlier page whose JSON has
+  no reviews connection, a connection without `nodes` or `pageInfo`, or a
+  `pageInfo` without a boolean `hasPreviousPage`, is an unexpected review
+  payload too. It is not read as the last page, which would leave every
+  review before it unread with nothing said
+  (`test_an_earlier_page_without_its_reviews_is_reported`).
+
+Paging was chosen over filtering because the API cannot filter replies out:
+a reply and a review with findings both have state COMMENTED, and the
+difference the amendment on replies relies on, the body, is not a filter the
+reviews connection takes.
+
+### What changes
+
+- `services/api/src/harrier/reviewfollowup.py`: the reviews fields move to
+  `REVIEW_FIELDS` and gain `startCursor`; `_earlier_reviews` reads the earlier
+  pages and raises on one it cannot read; `gather` prepends them and takes
+  review truncation from it.
+- `services/api/tests/test_review_followup.py`: the six tests below, and
+  two helpers that build paged answers.
+
+No new file, so `config/data-classification.json` does not change. The
+command's output lines and exit codes do not change.
+
+### How to know it worked
+
+- `test_replies_past_the_window_do_not_hide_the_review`: a review with
+  findings at commit A, then twenty five replies at B, every finding read.
+  The newest page holds twenty replies and a cursor; the earlier page holds
+  the review and five replies. It asserts not truncated, not outstanding,
+  and reviewed at A. Before the change it failed: truncated and outstanding.
+- `test_an_unread_review_past_the_window_is_still_found`: an unanswered
+  review behind twenty replies is reported as unread. Before the change it
+  was not read at all.
+- `test_an_earlier_page_with_no_cursor_fails_closed`: an earlier page with no
+  way to ask for it still reads as truncated. This held before the change
+  and is kept so paging cannot turn it into a pass.
+
+- `test_reading_back_stops_at_the_page_bound`: every page reports another;
+  reading stops at the bound and reads as truncated.
+- `test_gh_failing_on_an_earlier_page_is_reported`: a `gh` failure on an
+  earlier page raises the same error as one on the first query.
+- `test_an_earlier_page_without_its_reviews_is_reported` (six cases): an
+  earlier page that parses but has no pull request, no reviews connection,
+  no `nodes`, no `pageInfo`, or a `pageInfo` whose `hasPreviousPage` is
+  missing or not a boolean raises the unexpected review payload error.
+  Before the fix each was read as the last page and nothing was raised.
+  Found in the review of PR #170; the last two after the review of
+  ead5080 still rated the merge risk as a fail-closed gap.
+
+### Failure modes this must not introduce
+
+- A loop that never ends. The page bound stops it, and stopping fails
+  closed (`test_reading_back_stops_at_the_page_bound`).
+- A missed finding. Every node read is read exactly as before; paging only
+  reads more of them.
+
+### Limitations
+
+- Each earlier page is one more `gh` call. A pull request with a hundred
+  nodes beyond the newest twenty costs one; past the bound it costs ten and
+  still reports truncated.
+
+### Out of scope
+
+- The first query reads its connections as leniently as the loop above
+  once did. A payload with no `pullRequest`, or no `reviewThreads` or
+  `reviews` connection, reads as a pull request with no threads and no
+  reviews. That predates this amendment and is left to its own change,
+  which would make such a payload an unexpected review payload too, with a
+  test through `gather`. Found in the review of PR #170.
 
 ## Amendment (2026-10-07): a person records replies and reviews as read
 
@@ -811,10 +919,13 @@ builds its own list of parts and was left as it was.
 The report lines are the summary a run ends with, and in a run over several
 pull requests the only place their states sit together. There a truncated
 pull request reads as needing a reply with nothing named, or as needing only
-the replies it names, when the run could not see all of it. Truncation is not
-rare. Every reply in a thread is a review node, and `gather` reads the newest
-twenty, so a pull request with a long conversation is truncated on every run
-(the amendment above on replies, under Out of scope).
+the replies it names, when the run could not see all of it. Truncation was
+not rare. Every reply in a thread is a review node, and `gather` read the
+newest twenty, so a pull request with a long conversation was truncated on
+every run (the amendment above on replies, under Out of scope). The amendment
+above on the review window reads back past the replies, so a long
+conversation alone no longer truncates
+(`test_replies_past_the_window_do_not_hide_the_review`).
 
 ### Behavior after the change
 
