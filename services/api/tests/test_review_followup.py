@@ -621,9 +621,12 @@ def test_the_reviewed_sha_is_read_from_the_reviews(handled_env: Path) -> None:
     """This was never populated, so the "already reviewed at this head"
     branch could not fire and the loop asked again every cycle. Its tests
     passed because they built the state by hand rather than through gather."""
+    # A body, because a node without one is a reply in a thread rather than a
+    # review (spec 043 amendment).
+    reviewed = review("r1", body="Walkthrough", commit="abc1234")
     state = gather(
         39,
-        stub_gh(comment_payload(), "abc1234\n", payload(reviews=[review("r1", commit="abc1234")])),
+        stub_gh(comment_payload(), "abc1234\n", payload(reviews=[reviewed])),
         owner="o",
         repo="r",
     )
@@ -783,3 +786,42 @@ def test_a_review_in_progress_is_not_asked_again(handled_env: Path) -> None:
     decision = decide(state, requests_today=0, daily_limit=6)
     assert (decision.action, decision.reason) == (SKIP, "a review is in progress")
     assert "in progress" in report([state])[0]
+
+
+# --- a reply in a thread is not a review (spec 043 amendment) ---------------
+
+
+def test_a_reply_in_a_thread_is_not_a_review(handled_env: Path) -> None:
+    """A reply in a review thread is a review node of its own, with an empty
+    body and the head at the moment of the reply as its commit. On PR #147 the
+    reviewer acknowledged both answers after the push that made them, so its
+    newest nodes were replies at the new head, and the command reported
+    "already reviewed at the current head" for a head nothing had reviewed.
+
+    That pull request's shape, through `gather`, because this spec has twice
+    recorded a defect that tests bypassing it could not see.
+    """
+    reviewed, pushed = "a" * 40, "b" * 40
+    detail = payload(
+        threads=[
+            thread("t1", comment="ack1", resolved=True),
+            thread("t2", comment="ack2", resolved=True),
+        ],
+        reviews=[
+            review("r1", body="**Actionable comments posted: 2**", commit=reviewed),
+            review("r2", author="akin-oz", commit=pushed),
+            review("r3", author="akin-oz", commit=pushed),
+            review("r4", commit=pushed),
+            review("r5", commit=pushed),
+        ],
+    )
+    # Every finding answered, and the reviewer's acknowledgements read.
+    record_handled(["r1", "ack1", "ack2"])
+    state = gather(147, stub_gh(comment_payload(), f"{pushed}\n", detail), owner="o", repo="r")
+    assert not state.outstanding, "this test is about asking, so nothing may wait on us"
+    decision = decide(state, requests_today=0, daily_limit=6)
+    assert (state.last_reviewed_sha, decision.action, decision.reason) == (
+        reviewed,
+        REQUEST,
+        "the head has moved since the last review",
+    )

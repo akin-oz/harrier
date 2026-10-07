@@ -50,7 +50,25 @@ OLD_BYPASS='--no-verify|(^|[[:space:]])-[A-Za-z]*n[A-Za-z]*([[:space:]]|=|$)'
 # whole string is checked as before.
 commit_words() {
   printf '%s' "$CMD" | LC_ALL=C awk -v commits="$GLOBAL_COMMITS" -v old="$OLD_BYPASS" '
-    function at(i) { return substr(S, i, 1) }
+    # The command is read line by line: L[k] is line k and LEN[k] its length.
+    # The position is line K, column C, and column LEN[K] + 1 is the newline
+    # that ends line K. Holding the command as one string was quadratic: in
+    # original-awk, the codebase macOS awk comes from, each substr on a long
+    # string costs time that grows with the string, and a commit with a
+    # 1000-line quoted message took 11 s to read.
+    function at() {
+      if (K > NL) return ""
+      return C <= LEN[K] ? substr(L[K], C, 1) : "\n"
+    }
+    function next1() {
+      if (K > NL) return ""
+      if (C < LEN[K]) return substr(L[K], C + 1, 1)
+      if (C == LEN[K]) return "\n"
+      if (K == NL) return ""
+      return LEN[K + 1] ? substr(L[K + 1], 1, 1) : "\n"
+    }
+    function adv() { if (C <= LEN[K]) C++; else { K++; C = 1 } }
+
     function blank(c) { return c == " " || c == "\t" }
     function is_git(w) { return w == "git" || w ~ /\/git$/ }
     function found() { VERDICT = "bypass" }
@@ -74,17 +92,26 @@ commit_words() {
       return 0
     }
 
-    # Text another command may run is checked whole, as before.
-    function runs_a_bypass(t) { return t ~ commits && t ~ old }
+    # Text another command may run is checked as before: the old pattern,
+    # line by line, the way grep read the whole command.
+    function scan(t,    n, i, part) {
+      SEEN_COMMIT = 0; SEEN_N = 0
+      n = split(t, part, "\n")
+      for (i = 1; i <= n; i++) {
+        if (part[i] ~ commits) SEEN_COMMIT = 1
+        if (part[i] ~ old) SEEN_N = 1
+      }
+    }
+    function runs_a_bypass(t) { scan(t); return SEEN_COMMIT && SEEN_N }
 
     # Commands up to stop: a ")" or a backtick, or the end when stop is empty.
     # msg is 1 inside a command substitution among the words of a commit.
     function parse_list(stop, msg,    c) {
-      while (P <= N && FAIL == "") {
-        c = at(P)
+      while (K <= NL && FAIL == "") {
+        c = at()
         if (c == stop) return
-        if (c == "\n") { P++; read_bodies(); continue }
-        if (blank(c) || c == ";" || c == "&" || c == "|") { P++; continue }
+        if (c == "\n") { adv(); read_bodies(); continue }
+        if (blank(c) || c == ";" || c == "&" || c == "|") { adv(); continue }
         if (c == ")") { FAIL = "unbalanced )"; return }
         parse_command(stop, msg)
       }
@@ -101,16 +128,16 @@ commit_words() {
     # words as arguments.
     function parse_command(stop, msg,    c, nw, w, commit, g, value, i, first, outer, text, k) {
       nw = 0; commit = 0; g = 0; value = 0; first = HN + 1; outer = HERE; HERE = ""
-      while (P <= N && FAIL == "") {
-        c = at(P)
-        if (blank(c)) { P++; continue }
-        if (c == "\\" && at(P + 1) == "\n") { P += 2; continue }
+      while (K <= NL && FAIL == "") {
+        c = at()
+        if (blank(c)) { adv(); continue }
+        if (c == "\\" && next1() == "\n") { adv(); adv(); continue }
         if (c == stop || c == "\n" || c == ";" || c == "|" || c == ")") break
-        if (c == "&" && at(P + 1) != ">") break
-        if (c == "#") { while (P <= N && at(P) != "\n") P++; continue }
-        if (c == "(") { P++; parse_list(")", msg); P++; continue }
-        if ((c == "<" || c == ">") && at(P + 1) == "(") {
-          P += 2; parse_list(")", msg || commit); P++; continue
+        if (c == "&" && next1() != ">") break
+        if (c == "#") { C = LEN[K] + 1; continue }
+        if (c == "(") { adv(); parse_list(")", msg); adv(); continue }
+        if ((c == "<" || c == ">") && next1() == "(") {
+          adv(); adv(); parse_list(")", msg || commit); adv(); continue
         }
         if (c == "<" || c == ">" || c == "&") { redirect(stop, commit > 0, msg, w[1]); continue }
         w[++nw] = read_word(stop, msg || commit)
@@ -129,8 +156,8 @@ commit_words() {
           if (w[i] ~ /\$[@*0-9]|\$[{][@*0-9]/) UNSURE = 1
         } else if (!commit || i < g) text = text " " w[i]
       }
-      if (commit || text ~ commits) COMMIT = 1
       if (runs_a_bypass(text)) found()
+      if (commit || SEEN_COMMIT) COMMIT = 1
       for (k = first; k <= HN; k++) HCMD[k] = text
     }
 
@@ -139,15 +166,15 @@ commit_words() {
     # (own), or cat inside a command substitution among the commit words (msg).
     # A here-string that is not message text counts as one of the words.
     function redirect(stop, own, msg, cmd,    op, c, word, message) {
-      op = at(P); P++; c = at(P)
+      op = at(); adv(); c = at()
       if (op == "<" && c == "<") {
-        op = "<<"; P++
-        if (at(P) == "<") { op = "<<<"; P++ }
-        else if (at(P) == "-") { op = "<<-"; P++ }
-      } else if (op == "<" && (c == "&" || c == ">")) { op = op c; P++ }
-      else if (op == ">" && (c == ">" || c == "&" || c == "|")) { op = op c; P++ }
-      else if (op == "&") { op = "&>"; P++; if (at(P) == ">") { op = "&>>"; P++ } }
-      while (blank(at(P))) P++
+        op = "<<"; adv()
+        if (at() == "<") { op = "<<<"; adv() }
+        else if (at() == "-") { op = "<<-"; adv() }
+      } else if (op == "<" && (c == "&" || c == ">")) { op = op c; adv() }
+      else if (op == ">" && (c == ">" || c == "&" || c == "|")) { op = op c; adv() }
+      else if (op == "&") { op = "&>"; adv(); if (at() == ">") { op = "&>>"; adv() } }
+      while (blank(at())) adv()
       word = read_word(stop, msg || own)
       message = own || (msg && cmd == "cat")
       if (op == "<<" || op == "<<-") {
@@ -156,22 +183,23 @@ commit_words() {
       } else if (op == "<<<" && !message) HERE = HERE " " word
     }
 
-    function read_bodies(    k, e, line, body, t) {
+    # Heredoc bodies, line by line, after the newline that ends their command.
+    # A body that is not message text is checked with the words of the
+    # command that reads it, which a shell reading it would see as arguments.
+    function read_bodies(    k, line, m, b) {
       for (k = 1; k <= HN; k++) {
-        body = ""
-        while (P <= N) {
-          e = index(substr(S, P), "\n")
-          line = substr(S, P, e - 1); P += e
+        m = 0; b = 0
+        while (K <= NL) {
+          line = L[K]; K++; C = 1
           if (HSTRIP[k]) sub(/^\t+/, "", line)
           if (line == HDELIM[k]) break
-          body = body line "\n"
+          if (!HTEXT[k]) { if (line ~ commits) m = 1; if (line ~ old) b = 1 }
         }
-        # Checked with the words of the command that reads it, which a shell
-        # reading it would see as arguments.
-        if (HTEXT[k]) continue
-        t = body " " HCMD[k]
-        if (t ~ commits) COMMIT = 1
-        if (runs_a_bypass(t)) found()
+        if (!HTEXT[k]) {
+          scan(HCMD[k])
+          if (m || SEEN_COMMIT) COMMIT = 1
+          if ((m || SEEN_COMMIT) && (b || SEEN_N)) found()
+        }
       }
       HN = 0
     }
@@ -179,73 +207,83 @@ commit_words() {
     # One word with its quotes removed. A command substitution is parsed for
     # the commands in it and adds nothing to the word: its output is unknown.
     # QUOTED says whether any part of the word was quoted.
-    function read_word(stop, msg,    c, v, q, e) {
+    function read_word(stop, msg,    c, v, q, rest, e) {
       v = ""; q = 0
-      while (P <= N && FAIL == "") {
-        c = at(P)
+      while (K <= NL && FAIL == "") {
+        c = at()
         if (blank(c) || c == "\n" || c == ";" || c == "&" || c == "|" \
           || c == "<" || c == ">" || c == "(" || c == ")") break
         if (c == "`") {
           if (stop == "`") break
-          P++; parse_list("`", msg); P++; continue
+          adv(); parse_list("`", msg); adv(); continue
         }
         if (c == "\\") {
-          if (at(P + 1) == "\n") { P += 2; continue }
-          v = v at(P + 1); P += 2; q = 1; continue
+          if (next1() == "\n") { adv(); adv(); continue }
+          adv(); v = v at(); adv(); q = 1; continue
         }
         if (c == "\047") {
-          e = index(substr(S, P + 1), "\047")
-          if (e == 0) { FAIL = "unclosed quote"; break }
-          v = v substr(S, P + 1, e - 1); P += e + 1; q = 1; continue
+          adv(); q = 1
+          while (1) {
+            if (K > NL) { FAIL = "unclosed quote"; break }
+            rest = substr(L[K], C); e = index(rest, "\047")
+            if (e) { v = v substr(rest, 1, e - 1); C += e; break }
+            v = v rest "\n"; K++; C = 1
+          }
+          continue
         }
         if (c == "\"") { v = v dquote(msg); q = 1; continue }
-        if (c == "$" && at(P + 1) == "(") { P += 2; parse_list(")", msg); P++; continue }
-        if (c == "$" && at(P + 1) == "\047") { P++; v = v ansi_c(); q = 1; continue }
-        if (c == "$" && at(P + 1) == "\"") { P++; continue }
-        if (c == "$" && at(P + 1) == "{") { v = v brace(); continue }
-        v = v c; P++
+        if (c == "$" && next1() == "(") { adv(); adv(); parse_list(")", msg); adv(); continue }
+        if (c == "$" && next1() == "\047") { adv(); v = v ansi_c(); q = 1; continue }
+        if (c == "$" && next1() == "\"") { adv(); continue }
+        if (c == "$" && next1() == "{") { v = v brace(); continue }
+        v = v c; adv()
       }
       QUOTED = q
       return v
     }
 
-    function dquote(msg,    c, v) {
-      P++; v = ""
-      while (P <= N && FAIL == "") {
-        c = at(P)
-        if (c == "\"") { P++; return v }
+    # Plain text inside the quotes is copied a run at a time, up to the next
+    # character that means something there.
+    function dquote(msg,    c, v, rest) {
+      adv(); v = ""
+      while (K <= NL && FAIL == "") {
+        rest = substr(L[K], C)
+        if (!match(rest, /["\\`$]/)) { v = v rest "\n"; K++; C = 1; continue }
+        v = v substr(rest, 1, RSTART - 1); C += RSTART - 1
+        c = at()
+        if (c == "\"") { adv(); return v }
         if (c == "\\") {
-          c = at(P + 1)
-          if (c == "\n") { P += 2; continue }
-          if (c == "$" || c == "`" || c == "\"" || c == "\\") { v = v c; P += 2; continue }
-          v = v "\\"; P++; continue
+          c = next1()
+          if (c == "\n") { adv(); adv(); continue }
+          if (c == "$" || c == "`" || c == "\"" || c == "\\") { v = v c; adv(); adv(); continue }
+          v = v "\\"; adv(); continue
         }
-        if (c == "`") { P++; parse_list("`", msg); P++; continue }
-        if (c == "$" && at(P + 1) == "(") { P += 2; parse_list(")", msg); P++; continue }
-        if (c == "$" && at(P + 1) == "{") { v = v brace(); continue }
-        v = v c; P++
+        if (c == "`") { adv(); parse_list("`", msg); adv(); continue }
+        if (c == "$" && next1() == "(") { adv(); adv(); parse_list(")", msg); adv(); continue }
+        if (c == "$" && next1() == "{") { v = v brace(); continue }
+        v = v c; adv()
       }
       if (FAIL == "") FAIL = "unclosed double quote"
       return v
     }
 
     function ansi_c(    c, v) {
-      P++; v = ""
-      while (P <= N) {
-        c = at(P)
-        if (c == "\047") { P++; return v }
-        if (c == "\\") { v = v at(P + 1); P += 2; continue }
-        v = v c; P++
+      adv(); v = ""
+      while (K <= NL) {
+        c = at()
+        if (c == "\047") { adv(); return v }
+        if (c == "\\") { adv(); v = v at(); adv(); continue }
+        v = v c; adv()
       }
       FAIL = "unclosed quote"
       return v
     }
 
     function brace(    depth, c, v) {
-      v = "${"; P += 2; depth = 1
-      while (P <= N) {
-        c = at(P); v = v c; P++
-        if (c == "\\") { v = v at(P); P++ }
+      v = "${"; adv(); adv(); depth = 1
+      while (K <= NL) {
+        c = at(); v = v c; adv()
+        if (c == "\\") { v = v at(); adv() }
         else if (c == "{") depth++
         else if (c == "}" && --depth == 0) return v
       }
@@ -253,10 +291,10 @@ commit_words() {
       return v
     }
 
-    { S = S $0 "\n" }
+    { L[NR] = $0; LEN[NR] = length($0) }
 
     END {
-      N = length(S); P = 1
+      NL = NR; K = 1; C = 1
       parse_list("", 0)
       out = COMMIT ? " commit" : ""
       if (REUSE) out = out " reuse"
@@ -267,8 +305,8 @@ commit_words() {
 }
 
 # The reader runs on a command whose text holds commit. One that does not
-# cannot name the subcommand unless a quote or a backslash splits the word, and
-# the reader is not free: its cost grows faster than the command's length.
+# cannot name the subcommand unless a quote or a backslash splits the word,
+# and skipping the reader there keeps its cost off most commands.
 verdict=
 case "$CMD" in
   *commit*) verdict=$(commit_words) || verdict=unread ;;
