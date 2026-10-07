@@ -76,6 +76,12 @@ REVIEWER_LOGIN = "coderabbitai"
 OUTSIDE_DIFF_MARKER = "outside the diff"
 ACTIONABLE_PATTERN = re.compile(r"Actionable comments posted:\s*(\d+)", re.IGNORECASE)
 
+# Why a pull request whose bounded query had another page is outstanding. The
+# decision line and the report line both say it, in these words, so the two
+# read one fact. The report line once dropped it, and alone it read "NEEDS A
+# REPLY:" with nothing after the colon (spec 043 amendment).
+TRUNCATED = "a bounded query had another page, so this is not a full picture"
+
 # A minute past the stated wait. Asking at the exact boundary races the
 # service's own clock and earns another notice.
 GRACE_MINUTES = 1
@@ -349,7 +355,7 @@ def decide(
         if state.truncated:
             # Otherwise a truncation-only outstanding state printed
             # "NEEDS A REPLY:" with nothing after the colon (review of PR #50).
-            parts.append("a bounded query had another page, so this is not a full picture")
+            parts.append(TRUNCATED)
         return Decision(RESPOND, reason="; ".join(parts))
 
     if state.closed:
@@ -719,6 +725,8 @@ def report(states: list[PullRequestState]) -> list[str]:
                 detail.append(
                     f"{len(hidden)} with findings OUTSIDE THE DIFF, which no thread carries"
                 )
+            if state.truncated:
+                detail.append(TRUNCATED)
             lines.append(f"PR #{state.number}: NEEDS A REPLY: {'; '.join(detail)}")
         elif state.reviewed and not state.reviewed_at_head:
             # Reviewed, but only before the head moved: the push that answered
