@@ -597,8 +597,11 @@ tests below, not observed on a live pull request.
   is unchanged and still fails closed.
 - It still fails closed when reading back cannot finish: a page that reports
   an earlier one with no cursor, or more than ten earlier pages
-  (`REVIEW_PAGE_LIMIT`). Those set `truncated`, and the report line and exit
-  code are what spec 045 already says.
+  (`REVIEW_PAGE_LIMIT`). Those set `truncated`. The pull request is then
+  outstanding and the command exits 3, and its report line says a bounded
+  query had another page, as the amendment below on the report line states
+  (`tests/test_cli_decisions.py::test_a_truncated_page_of_findings_still_exits_three`,
+  `test_a_truncated_pull_request_says_so_in_its_report_line`).
 - `gh` failing on an earlier page, or returning something that is not JSON,
   is reported as it is for the first query.
 
