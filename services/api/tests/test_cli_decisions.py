@@ -102,9 +102,11 @@ def _argv(numbers: list[int]) -> list[str]:
     ]
 
 
-def _install(monkeypatch: pytest.MonkeyPatch, state: PullRequestState) -> None:
-    def fake_gather(*_a: object, **_k: object) -> PullRequestState:
-        return state
+def _install(monkeypatch: pytest.MonkeyPatch, *states: PullRequestState) -> None:
+    by_number = {state.number: state for state in states}
+
+    def fake_gather(number: int, *_a: object, **_k: object) -> PullRequestState:
+        return by_number[number]
 
     def no_counts() -> dict[str, int]:
         return {}
@@ -307,6 +309,50 @@ def test_an_unanswered_finding_after_a_push_still_exits_three(
         ),
     )
     assert main(_argv([6])) == 3
+
+
+def test_one_pull_request_awaiting_review_hides_another_awaiting_an_answer(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Across several pull requests the codes combine as an error first, then
+    2, then 3, so a head reviewed only before it moved hides another pull
+    request's unanswered finding from the exit code. The report lines still
+    show both. Pinned rather than changed (spec 043 amendment, out of scope):
+    moving the order changes what a run over several pull requests exits."""
+    _install(
+        monkeypatch,
+        PullRequestState(
+            number=7,
+            head_sha="new",
+            review_threads=2,
+            comment_bodies=[],
+            last_reviewed_sha="old",
+            reviews_seen=1,
+        ),
+        PullRequestState(
+            number=8,
+            head_sha="abc",
+            review_threads=1,
+            comment_bodies=[],
+            last_reviewed_sha="abc",
+            reviews_seen=1,
+            awaiting=(
+                ThreadState(
+                    identifier="t1",
+                    resolved=False,
+                    last_author=REVIEWER,
+                    last_comment_id="c1",
+                ),
+            ),
+        ),
+    )
+
+    code = main(_argv([7, 8]))
+
+    lines = capsys.readouterr().out.splitlines()
+    assert "PR #7: NOT REVIEWED AT THE HEAD, last reviewed at old" in lines
+    assert "PR #8: NEEDS A REPLY: 1 thread(s) awaiting a reply" in lines
+    assert code == 2
 
 
 # --- portability ------------------------------------------------------------

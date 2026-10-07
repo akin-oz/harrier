@@ -530,8 +530,10 @@ of the commit the review named, and the command exits 2.
 - **The order across several pull requests.** Codes combine as before: an
   error first, then 2, then 3. So one pull request waiting on a review hides
   another waiting on an answer from the exit code, though the report lines
-  show both. Changing the order changes what a run over several pull
-  requests exits, so it is its own change.
+  show both
+  (`tests/test_cli_decisions.py::test_one_pull_request_awaiting_review_hides_another_awaiting_an_answer`).
+  Changing the order changes what a run over several pull requests exits,
+  so it is its own change.
 
 ### Limitations
 
