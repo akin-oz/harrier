@@ -102,6 +102,24 @@ BYPASSES = [
     "bash -c 'git commit \"$@\"' _ -n -m 'message' -m 'Spec: 045'",
     "bash -s -- -n -m 'message' -m 'Spec: 045' <<'EOF'\ngit commit \"$@\"\nEOF",
     'f() { git commit "$@"; }; f -n -m "message" -m "Spec: 045"',
+    # A commit after git's global options, with git or commit quoted, or with
+    # commit after a line continuation. The test for whether a command commits
+    # needed git and commit side by side on one line, so each of these skipped
+    # a failing pre-commit hook under git 2.43 and passed the guard with a
+    # trailer (spec 045's amendment on git's global options). The --git-dir
+    # form was denied already, by the git dir check.
+    'git -C . commit -n -m "message" -m "Spec: 045"',
+    'git -c user.name=x commit -n -m "message" -m "Spec: 045"',
+    'git --no-pager commit -n -m "message" -m "Spec: 045"',
+    'git --work-tree . commit -n -m "message" -m "Spec: 045"',
+    'git --work-tree=. commit -n -m "message" -m "Spec: 045"',
+    'git --git-dir .git commit -n -m "message" -m "Spec: 045"',
+    'git -P commit -n -m "message" -m "Spec: 045"',
+    'git -p commit -n -m "message" -m "Spec: 045"',
+    'git "commit" -n -m "message" -m "Spec: 045"',
+    '"git" commit -n -m "message" -m "Spec: 045"',
+    'git \\\ncommit -n -m "message" -m "Spec: 045"',
+    "bash -c \"git -C . commit -n -m 'message' -m 'Spec: 045'\"",
 ]
 
 # A guard stricter than the workflow it protects is its own failure.
@@ -111,6 +129,12 @@ ORDINARY = [
     'git commit -am "message" -m "Spec: 045"',
     "git status",
     "git add README.md",
+    # Global options before commit, or before another subcommand. The -c value
+    # holds the word commit, so the reader runs and must find log after it.
+    'git -C dir commit -m "message" -m "Spec: 045"',
+    "git -C dir commit -C HEAD",
+    "git -C dir log -n 3",
+    "git -c commit.gpgsign=false log -n 3",
 ]
 
 
@@ -164,9 +188,49 @@ def test_the_commit_guard_still_requires_a_spec_trailer() -> None:
     assert run_guard("guard-commit.sh", 'git commit -m "no trailer here"') == DENY
 
 
+# A commit after a global option, or with commit quoted, and no trailer. The
+# test for whether a command commits needed git and commit side by side, so
+# none of these reached the trailer check. And -C <path> would have read as
+# the -C <commit> that reuses a message, which the trailer check exempts.
+NO_TRAILER_AFTER_GLOBAL_OPTIONS = [
+    'git -C dir commit -m "no trailer here"',
+    'git --no-pager commit -m "no trailer here"',
+    'git "commit" -m "no trailer here"',
+]
+
+
+@pytest.mark.parametrize("command", NO_TRAILER_AFTER_GLOBAL_OPTIONS)
+def test_a_commit_after_global_options_still_requires_a_spec_trailer(command: str) -> None:
+    """Spec 045's amendment on git's global options."""
+    assert run_guard("guard-commit.sh", command) == DENY, (
+        f"guard-commit.sh allowed a commit with no trailer: {command}"
+    )
+
+
+# A -C that is not one of the commit's own words: in its message, or in another
+# command. Neither reuses a message that carries a trailer, and both passed
+# while the exemption read the whole string.
+NOT_THE_COMMITS_OWN_C = [
+    'git commit -m "pass -C to tar"',
+    'tar -C /tmp -cf /dev/null . && git commit -m "no trailer here"',
+]
+
+
+@pytest.mark.parametrize("command", NOT_THE_COMMITS_OWN_C)
+def test_the_reuse_exemption_reads_only_the_commits_own_words(command: str) -> None:
+    """The trailer check exempts -C <commit>, which reuses a message. Read from
+    the whole string, -C was also git's global -C <path>, so it now counts only
+    among the commit's own words (spec 045's amendment on git's global
+    options). `git -C dir commit -C HEAD` in ORDINARY is the case it keeps."""
+    assert run_guard("guard-commit.sh", command) == DENY, (
+        f"guard-commit.sh exempted a commit from its trailer: {command}"
+    )
+
+
 def test_the_commit_guard_still_refuses_to_stage_an_env_file() -> None:
     assert run_guard("guard-commit.sh", "git add .env") == DENY
     assert run_guard("guard-commit.sh", "git add .env.example") == ALLOW
+    assert run_guard("guard-commit.sh", 'git -C . commit -m "message" -m "Spec: 045" .env') == DENY
 
 
 def test_the_turn_gate_sees_a_file_that_is_only_added(tmp_path: Path) -> None:

@@ -195,14 +195,14 @@ spec 044.
       the commit guard;
       `services/api/tests/test_guards.py::test_an_n_outside_the_commit_does_not_block_it`,
       `::test_the_commit_guard_denies_every_proven_bypass`)
-- [ ] a commit whose subcommand follows git global options (`-C <path>`,
+- [x] a commit whose subcommand follows git global options (`-C <path>`,
       `-c <k=v>`, `--no-pager`, `--git-dir`, `--work-tree`, `-P`, `-p`), or
       whose `commit` is quoted, is checked like an adjacent one (the
       amendment below on git's global options;
       `services/api/tests/test_guards.py::test_the_commit_guard_denies_every_proven_bypass`,
-      `::test_the_commit_guard_allows_ordinary_work`, planned
-      test_a_commit_after_global_options_still_requires_a_spec_trailer,
-      planned test_the_reuse_exemption_reads_only_the_commits_own_words)
+      `::test_the_commit_guard_allows_ordinary_work`,
+      `::test_a_commit_after_global_options_still_requires_a_spec_trailer`,
+      `::test_the_reuse_exemption_reads_only_the_commits_own_words`)
 - [ ] All gates green on PR
 
 ## Proof / origin
@@ -705,17 +705,19 @@ The hooksPath and git dir check still reads the whole string, as before.
 - `services/api/tests/test_guards.py`: the forms above join `BYPASSES`, each
   with a valid trailer, so a deny proves the bypass check and not the trailer
   check. `git -C dir commit -m "..." -m "Spec: 045"`,
-  `git -C dir commit -C HEAD` and `git -C dir log -n 3` join `ORDINARY`. The
-  `.env` test gains `git -C . commit ... .env`. Two new tests, planned
-  test_a_commit_after_global_options_still_requires_a_spec_trailer and
-  planned test_the_reuse_exemption_reads_only_the_commits_own_words, run
-  commits with no trailer: after global options, and with a `-C` outside the
-  commit's own words.
+  `git -C dir commit -C HEAD`, `git -C dir log -n 3` and
+  `git -c commit.gpgsign=false log -n 3` join `ORDINARY`. The `.env` test
+  gains `git -C . commit ... .env`. Two new tests,
+  `test_a_commit_after_global_options_still_requires_a_spec_trailer` and
+  `test_the_reuse_exemption_reads_only_the_commits_own_words`, run commits
+  with no trailer: after global options, and with a `-C` outside the commit's
+  own words.
 
 No new file, so `config/data-classification.json` does not change.
 
-**Output.** Unchanged: exit 2 and the same message on a deny, exit 0
-otherwise.
+**Output.** Unchanged: exit 2 and the same messages on a deny, exit 0
+otherwise. A commit after global options that also names a `.env` path now
+gets the `.env` message, since that check applies to it and runs first.
 
 **How to know it worked.** Every form above is denied, and the guard at
 e7696e9 allows each new one. `git -C dir commit -m "..."` with no trailer is
@@ -724,8 +726,10 @@ denied. `git -C dir commit -m "..." -m "Spec: 045"`,
 
 **Failure modes this must not introduce.** A git command whose subcommand is
 not `commit` is not checked, whatever options precede it, so
-`git -C dir log -n 3` stays allowed. Every case already in the bypass list
-stays denied, and every ordinary case stays allowed.
+`git -C dir log -n 3` stays allowed, and so does
+`git -c commit.gpgsign=false log -n 3`, whose text holds `commit` and so
+goes through the reader. Every case already in the bypass list stays denied,
+and every ordinary case stays allowed.
 
 ### Limitations
 
@@ -747,3 +751,7 @@ stays denied, and every ordinary case stays allowed.
   never exempts it: `bash -c "git commit -C HEAD"` now needs a trailer. A
   command the reader cannot read keeps the whole-string `-C` exemption, so a
   global `-C` still exempts it.
+- Text that only mentions a commit after global options now counts as one,
+  as text that mentions `git commit` already did. So a heredoc written to a
+  file that names `git -C . commit` needs a trailer, and
+  `echo "git -C . commit -n"` is denied.
