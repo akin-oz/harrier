@@ -175,6 +175,7 @@ Proven by services/api/tests/test_review_followup.py:
 | an unchanged head is not re-requested | `test_a_reviewed_pull_request_at_the_same_head_is_left_alone`, `test_a_moved_head_is_asked_again` |
 | a reply in a thread is not a review of the commit it names (amendment below) | `test_a_reply_in_a_thread_is_not_a_review`, `test_the_reviewed_sha_is_read_from_the_reviews` |
 | a head reviewed only before it moved exits 2 and says so (amendment below) | `test_a_head_reviewed_before_it_moved_is_reported_as_not_reviewed_there` (seven cases), `tests/test_cli_decisions.py::test_a_head_reviewed_before_it_moved_exits_two`, `tests/test_cli_decisions.py::test_an_unanswered_finding_after_a_push_still_exits_three` |
+| a truncated pull request says so in its report line (amendment below) | planned test_a_truncated_pull_request_says_so_in_its_report_line (three cases) |
 | the daily bound stops the loop | `test_the_daily_bound_stops_the_loop`, `test_the_bound_wins_over_everything_else` |
 | rate limited is distinguishable from reviewed | `test_a_rate_limited_pull_request_reports_as_not_reviewed`, `test_a_reviewed_pull_request_reports_as_reviewed`, `test_a_pull_request_with_neither_is_still_not_reviewed` |
 | `gh` failing is reported | `test_gh_failing_is_reported_not_swallowed`, `test_an_unreadable_payload_is_reported` |
@@ -227,6 +228,10 @@ protect a counter would have been the wrong trade.
       `tests/test_cli_decisions.py::test_a_head_reviewed_before_it_moved_exits_two`,
       `tests/test_cli_decisions.py::test_an_unanswered_finding_after_a_push_still_exits_three`,
       `test_a_head_reviewed_before_it_moved_is_reported_as_not_reviewed_there`)
+- [ ] a truncated pull request's report line says a bounded query had
+      another page, in the decision line's words, so no report line for an
+      outstanding pull request ends at its colon (the amendment below on
+      truncation; planned test_a_truncated_pull_request_says_so_in_its_report_line)
 - [ ] All gates green on PR
 
 ## Proof / origin
@@ -550,3 +555,107 @@ of the commit the review named, and the command exits 2.
 - `rate limited` is read as the never-reviewed line reads it: from the newest
   notice, whatever its age. A notice whose wait has passed still shows, as it
   already does on that line.
+
+## Amendment (2026-10-07): the report line names a truncated query
+
+Found on 2026-10-07 while writing the tests for PR #165, and listed there as
+found, not fixed.
+
+A bounded query that has another page makes a pull request outstanding, so
+the command exits 3 rather than call it settled
+(`tests/test_cli_decisions.py::test_a_truncated_page_of_findings_still_exits_three`).
+The decision line says why. The report line does not. At 29055af, through
+`decide` and `report` in `services/api/src/harrier/reviewfollowup.py`, a pull
+request truncated and with nothing else outstanding printed the decision
+line `PR #9: a bounded query had another page, so this is not a full picture`
+and the report line `PR #9: NEEDS A REPLY:` with nothing after the colon. One
+truncated with a thread awaiting a reply printed:
+
+```
+PR #9: 1 thread(s) awaiting a reply; a bounded query had another page, so this is not a full picture
+PR #9: NEEDS A REPLY: 1 thread(s) awaiting a reply
+```
+
+The same empty line was found in the decision during the review of PR #50,
+and the decision was fixed; the comment in `decide` records it. `report`
+builds its own list of parts and was left as it was.
+
+The report lines are the summary a run ends with, and in a run over several
+pull requests the only place their states sit together. There a truncated
+pull request reads as needing a reply with nothing named, or as needing only
+the replies it names, when the run could not see all of it. Truncation is not
+rare. Every reply in a thread is a review node, and `gather` reads the newest
+twenty, so a pull request with a long conversation is truncated on every run
+(the amendment above on replies, under Out of scope).
+
+### Behavior after the change
+
+- When a bounded query had another page, the report line of the outstanding
+  pull request ends with
+  `a bounded query had another page, so this is not a full picture`, after
+  any parts it already gives, separated by `; `. These are the decision
+  line's words, so the two lines read one fact.
+  - Truncated, with nothing else outstanding:
+    `PR #N: NEEDS A REPLY: a bounded query had another page, so this is not a full picture`.
+  - Truncated, with a thread awaiting a reply:
+    `PR #N: NEEDS A REPLY: 1 thread(s) awaiting a reply; a bounded query had another page, so this is not a full picture`.
+- So no report line for an outstanding pull request ends at its colon. Each
+  of the three things that make one outstanding (a thread awaiting a reply, an
+  unread review, truncation) now adds a part.
+- Nothing else changes: the decision, its line, the exit code, and the report
+  line of an outstanding pull request that is not truncated.
+
+Considered and not chosen: a label of its own for truncation alone, such as
+`MAY NEED A REPLY`. Truncation fails closed because the command cannot show
+that nothing waits, and exit 3 already says so. A second label would say the
+same thing another way, and a reader would have to learn both.
+
+### Failure modes this must not introduce
+
+- The report line of an outstanding pull request that is not truncated
+  changes.
+  `tests/test_cli_decisions.py::test_one_pull_request_awaiting_review_hides_another_awaiting_an_answer`
+  pins one, `PR #8: NEEDS A REPLY: 1 thread(s) awaiting a reply`, and holds
+  this.
+- The two lines drift apart again. One string serves both, as What changes
+  says.
+- The decision or the exit code changes. No test of `decide` changes, and
+  `tests/test_cli_decisions.py::test_a_truncated_page_of_findings_still_exits_three`
+  still holds.
+
+### Acceptance criteria
+
+- planned test_a_truncated_pull_request_says_so_in_its_report_line, in
+  `services/api/tests/test_review_followup.py`, with three cases: truncated
+  with nothing else outstanding, truncated with a thread awaiting a reply, and
+  truncated with an unread review whose findings are outside the diff. Each
+  asserts the whole report line, and that the decision line ends with the
+  same words. Before the change, all three fail.
+
+### What changes
+
+- `services/api/src/harrier/reviewfollowup.py`: `report` adds the part when a
+  query was truncated. Its words become one module constant that `decide`
+  and `report` both use, so they cannot drift.
+- `services/api/tests/test_review_followup.py`: the test above.
+- `specs/043-review-followup.md`: this amendment, its row in the criteria
+  table, and its checklist item.
+
+No new file, so `config/data-classification.json` does not change.
+
+### Out of scope
+
+- **Reading past the bound.** A truncated pull request still exits 3 on every
+  run, as the amendment above on replies records. Reading further pages, so
+  the line has less cause to appear, is its own change.
+
+### Migration
+
+None. No script, hook, workflow or recipe in the repository runs the command
+or reads its output, so only the people who read the report lines see the
+change.
+
+### Limitations
+
+- The line says the picture is partial. It cannot say what the unread page
+  holds, or whether anything there waits on an answer.
