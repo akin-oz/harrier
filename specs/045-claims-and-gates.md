@@ -195,6 +195,14 @@ spec 044.
       the commit guard;
       `services/api/tests/test_guards.py::test_an_n_outside_the_commit_does_not_block_it`,
       `::test_the_commit_guard_denies_every_proven_bypass`)
+- [ ] a `-c` or `--config-env` value, a `GIT_CONFIG_KEY_<n>` or a
+      `GIT_CONFIG_PARAMETERS` that sets `core.hooksPath`, in any case and
+      quoted or not, is denied in any command, while ordinary `-c` use such
+      as `git -c user.name=x commit -m "..." -m "Spec: 045"` and
+      `git -c commit.gpgsign=false log -n 3` stays allowed (the amendment
+      below on the hooksPath key;
+      `services/api/tests/test_guards.py::test_the_commit_guard_denies_every_proven_bypass`,
+      `::test_the_commit_guard_allows_ordinary_work`)
 - [ ] All gates green on PR
 
 ## Proof / origin
@@ -628,3 +636,108 @@ an argument to such text or to a function that runs `git commit "$@"`.
   `git commit -m "$1"` chained beside a `sed -n` stays denied.
 - A word after `--`, or an `-m` value that starts with a dash and an `n`, is
   denied, though git reads it as a path or as message text.
+
+## Amendment (2026-10-07): the hooksPath check reads the key as git does
+
+The second limitation of the amendment "the commit guard reads git's global
+options" is this amendment. `guard-commit.sh` denies a command that redirects
+the hook chain with one pattern over the whole string, and the pattern matches
+`-c core.hooksPath` only as written. Git compares this key without regard to
+case, gets the value of `-c` with its quotes already removed by the shell, and
+reads the same key from `--config-env` and from its environment. Each of these
+skipped a failing pre-commit hook under git 2.43 in a throwaway repository,
+and the guard at ee77b1b (main) and at 345b3ca (PR #158) allowed each with a
+trailer:
+
+```text
+git -c core.hookspath=/dev/null commit ...
+git -c "core.hooksPath=/dev/null" commit ...     (single quotes too)
+X=/dev/null git --config-env=core.hooksPath=X commit ...
+X=/dev/null git --config-env core.hooksPath=X commit ...
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git commit ...
+GIT_CONFIG_PARAMETERS="'core.hooksPath'='/dev/null'" git commit ...
+```
+
+So did each variant that `BYPASSES` gains below, one of them a `git push`
+that skipped a failing pre-push hook.
+
+### What the guard reads
+
+**The key.** A setting is denied when its key is `core.hookspath` in any mix
+of case, which is how git compares it. Git refuses a key with a space around
+it, and `core.x.hooksPath` names a subsection and leaves the hooks alone, so
+neither is that key.
+
+**Where a key is set.** The reader finds a setting in three places, with
+quotes and line continuations removed as the shell removes them:
+
+- The value of git's global `-c`. Its key is the text before the first `=`,
+  or the whole value when there is none.
+- The value of git's global `--config-env`, after its `=` or as the next
+  word. Its key is the text before the last `=`. Git splits each of the two
+  at that place.
+- A word that sets `GIT_CONFIG_KEY_<n>` to the key, or sets
+  `GIT_CONFIG_PARAMETERS` to a value that holds it, wherever the word stands:
+  before a command, after `env` or `export`, or alone.
+
+It looks in every command it reads, not only a commit, as the old pattern
+does. A commit's own words, its options and its message, are not settings.
+
+**Text another command receives**, such as a `bash -c` script, a here-string,
+or a heredoc that is not a commit message, is not read word by word. It is
+matched instead when it holds the word `git`: the forms above, in any case,
+with a quote allowed before the key. The whole string of a command the reader
+cannot read is matched the same way.
+
+**The reader runs** on a command whose text holds `commit`, `GIT_CONFIG_`, or
+`hookspath` in any case, where before it needed `commit`. The old pattern
+still runs on every whole string, so what it denied stays denied, and the git
+dir check does not change.
+
+### What changes
+
+- `.claude/hooks/guard-commit.sh`: the reader reports a command that sets the
+  key, and the hooksPath check denies on that report as well as on the old
+  pattern. No file is added.
+- `services/api/tests/test_guards.py`: the forms above join `BYPASSES`, each
+  with a valid trailer, so a deny proves the hooksPath check and not the
+  trailer check. So do these variants: an upper case key, `core."hooksPath"`,
+  `GIT_CONFIG_PARAMETERS` through `env`, the hooksPath pair after another pair
+  in `GIT_CONFIG_PARAMETERS`, the `GIT_CONFIG_COUNT` form through `export`,
+  the first form inside `bash -c "..."`, and the first form on `git push`.
+  `ORDINARY` gains `git -c user.name=x commit -m "..." -m "Spec: 045"`, the
+  same setting through `GIT_CONFIG_COUNT`, and a commit whose message names
+  `-c core.hookspath`, beside `git -c commit.gpgsign=false log -n 3`.
+
+No new file, so `config/data-classification.json` does not change.
+
+**Output.** Unchanged: exit 2 and the hooksPath message on a deny, exit 0
+otherwise.
+
+**How to know it worked.** Every case `BYPASSES` gains is denied, and the
+guard before this change allows each one. Every case `ORDINARY` gains is
+allowed, and every case already in `services/api/tests/test_guards.py` still
+passes.
+
+**Failure modes this must not introduce.** A key other than
+`core.hookspath`, set in any of these ways, is never denied, so ordinary `-c`
+use stays allowed. A commit message is not read as a setting. Every case
+already in `BYPASSES` stays denied, and every case already in `ORDINARY`
+stays allowed.
+
+### Limitations
+
+- A key or a value built at run time, from a variable or a command
+  substitution, is not read, as before.
+- A config file is not read. `git config core.hooksPath <dir>` writes the
+  repository's config, which every later git command there obeys, and
+  `-c include.path=<file>` and `GIT_CONFIG_GLOBAL=<file>` load one. Each
+  skipped the hook and passed the guard here. Closing that is its own change.
+- In a command whose text holds none of `commit`, `GIT_CONFIG_` and
+  `hookspath`, a key or a name split by a quote or a backslash, such as
+  `core.hooks"Path"`, is not read.
+- Text another command receives is matched, not read. So a mention there
+  denies when the text holds `git`, as `echo "git -c core.hookspath=x"` or a
+  heredoc that writes that line to a file does. A word that sets one of the
+  two variables denies wherever it stands, so
+  `echo GIT_CONFIG_KEY_0=core.hooksPath` does too.
