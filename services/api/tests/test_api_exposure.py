@@ -58,7 +58,7 @@ def test_a_request_with_a_foreign_host_is_refused(client: TestClient) -> None:
     assert response.status_code == 400
 
 
-@pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "localhost:8000"])
+@pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "localhost:8000", "0.0.0.0:8000"])
 def test_a_local_host_is_allowed(client: TestClient, host: str) -> None:
     assert client.get("/health", headers={"Host": host}).status_code == 200
 
@@ -68,6 +68,29 @@ def test_the_rebinding_check_applies_to_writes_too(client: TestClient) -> None:
         "/runs", json={"kind": "demo"}, headers={**auth(), "Host": "evil.example.com"}
     )
     assert response.status_code == 400
+
+
+@pytest.mark.parametrize("host", ["testserver", "testserver:8000"])
+def test_the_test_clients_host_is_refused(client: TestClient, host: str) -> None:
+    """Starlette's test client sends `testserver` by default, and the list once
+    trusted it so the suite could reach the app. It is an ordinary name that
+    DNS resolves, so on a network whose DNS an attacker controls, a page could
+    rebind it to 127.0.0.1 and pass this check (spec 083).
+    """
+    assert client.get("/health", headers={"Host": host}).status_code == 400
+
+
+def test_the_test_clients_host_is_refused_on_a_write(client: TestClient) -> None:
+    response = client.post("/runs", json={"kind": "demo"}, headers={**auth(), "Host": "testserver"})
+    assert response.status_code == 400
+
+
+def test_a_client_without_a_base_url_reaches_the_app_as_localhost(client: TestClient) -> None:
+    """The `client` fixture names no base URL. conftest.py replaces the test
+    client's default, so the suite reaches the app on a name it trusts rather
+    than on `testserver` (spec 083)."""
+    assert client.base_url.host == "localhost"
+    assert client.get("/health").status_code == 200
 
 
 # --- the token on state-changing requests ------------------------------------
