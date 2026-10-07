@@ -1130,6 +1130,7 @@ outcome.
 - The leading-substitution rule looks at the text before the first
   substitution in the word. A substitution behind a non-dash literal, as in
   `foo$(...)`, is a pathspec to git and is not marked unread.
+
 ## Amendment (2026-10-07): the commit guard reads core.hooksPath however git is given it
 
 The hooksPath limitation of the amendment "the commit guard reads git's
@@ -1137,8 +1138,9 @@ global options" is this amendment. The hooksPath and git dir check matches
 `-c core.hooksPath` only as written, in the whole string. git reads a config
 name without case, takes it from other places too, and keeps it once
 `git config` writes it. Each of these skipped a failing pre-commit hook under
-git 2.43 in a throwaway repository, and the guard on main at fb0ada4 allowed
-each with a trailer:
+git 2.43 in a throwaway repository, and the guard at 045968c allowed each
+with a trailer. So did the guard at fb0ada4, after the three amendments
+above:
 
 ```text
 git -c core.hookspath=/dev/null commit ...
@@ -1201,8 +1203,8 @@ No new file, so `config/data-classification.json` does not change.
 **Output.** Unchanged: exit 2 and the hooksPath message on a deny, exit 0
 otherwise.
 
-**How to know it worked.** Every form above is denied, and the guard on main
-at fb0ada4 allows each. The ordinary cases above are allowed.
+**How to know it worked.** Every form above is denied, and the guard at
+fb0ada4 allows each. The ordinary cases above are allowed.
 
 **Failure modes this must not introduce.** Another config name, such as
 `-c user.name=x` or `-c commit.gpgsign=false`, is never denied, and neither
@@ -1224,6 +1226,10 @@ decides as before.
 - Text another command receives is split at spaces, not read as a shell
   reads it, so a mention there can deny: `echo "-c core.hookspath=x"` is
   denied.
+- The forms only the reader finds wait for it. A reader that never returns
+  holds them up, as it holds up the bypass and trailer checks and, for a
+  commit, the `.env` check. The existing check needs no reader, so it still
+  denies `-c core.hooksPath` as written before the reader runs.
 - The guard reads the name, not whether its value reaches git. So
   `git --config-env=core.hooksPath=X commit ...` is denied with `X` unset,
   though git refuses it, and `git config --unset core.hooksPath <pattern>`
