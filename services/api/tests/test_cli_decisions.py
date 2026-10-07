@@ -16,12 +16,20 @@ matters to whoever runs it.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-from harrier.reviewfollowup import PullRequestState, ReviewBody, ThreadState, record_handled
+from harrier.reviewfollowup import (
+    PullRequestState,
+    ReviewBody,
+    ThreadState,
+    handled_path,
+    record_handled,
+)
 from harrier_cli.main import main
 
 REVIEWER = "coderabbitai"
@@ -353,6 +361,343 @@ def test_one_pull_request_awaiting_review_hides_another_awaiting_an_answer(
     assert "PR #7: NOT REVIEWED AT THE HEAD, last reviewed at old" in lines
     assert "PR #8: NEEDS A REPLY: 1 thread(s) awaiting a reply" in lines
     assert code == 2
+
+
+# --- review-followup: recording what was read (spec 043 amendment) ----------
+
+REVIEWED, PUSHED = "a" * 40, "b" * 40
+MARK_ALL = ["--mark-read", "ack1", "ack2", "r1"]
+
+
+def _review(identifier: str, author: str, body: str, commit: str) -> dict[str, object]:
+    return {"id": identifier, "author": {"login": author}, "body": body, "commit": {"oid": commit}}
+
+
+def _thread(identifier: str, last_comment: str) -> dict[str, object]:
+    return {
+        "id": identifier,
+        "isResolved": True,
+        "comments": {"nodes": [{"id": last_comment, "author": {"login": REVIEWER}}]},
+    }
+
+
+def _answered_after_a_push(
+    state: str = "MERGED",
+    *,
+    last_comments: tuple[str, str] = ("ack1", "ack2"),
+    more_threads: bool = False,
+) -> dict[str, object]:
+    """PR #147's shape: a review with two findings at one commit, a push that
+    answered both, and the reviewer's thanks as the last word in each thread.
+    Nothing is recorded as read, so both thanks and the review are owed a
+    read."""
+    first, second = last_comments
+    return {
+        "state": state,
+        "reviewThreads": {
+            "pageInfo": {"hasNextPage": more_threads},
+            "nodes": [_thread("t1", first), _thread("t2", second)],
+        },
+        "reviews": {
+            "nodes": [
+                _review("r1", REVIEWER, "**Actionable comments posted: 2**", REVIEWED),
+                _review("r2", "akin-oz", "", PUSHED),
+                _review("r3", "akin-oz", "", PUSHED),
+                _review("r4", REVIEWER, "", PUSHED),
+                _review("r5", REVIEWER, "", PUSHED),
+            ]
+        },
+    }
+
+
+def _github(
+    monkeypatch: pytest.MonkeyPatch,
+    pulls: dict[int, dict[str, object]],
+    *,
+    comments: list[dict[str, object]] | None = None,
+    unreadable: int | None = None,
+) -> list[list[str]]:
+    """`gh` as the command calls it, answering from the pull requests given,
+    each with PUSHED as its head. A comment the command posts is kept rather
+    than sent, so a test can say none was, and a command this does not know
+    fails the test."""
+    posted: list[list[str]] = []
+
+    def answer(command: list[str], stdout: str, code: int = 0) -> subprocess.CompletedProcess[str]:
+        stderr = "HTTP 502" if code else ""
+        return subprocess.CompletedProcess(command, code, stdout=stdout, stderr=stderr)
+
+    def gh(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert command[0] == "gh", f"unexpected command: {command}"
+        if command[1:3] == ["pr", "comment"]:
+            posted.append(command)
+            return answer(command, "")
+        found = re.search(
+            r"pullRequest\(number:(\d+)\)|issues/(\d+)/comments|^pr view (\d+)",
+            " ".join(command[1:]),
+        )
+        assert found, f"unexpected command: {command}"
+        number = int(next(group for group in found.groups() if group))
+        if number == unreadable:
+            return answer(command, "", code=1)
+        if "graphql" in command:
+            return answer(
+                command, json.dumps({"data": {"repository": {"pullRequest": pulls[number]}}})
+            )
+        if command[1] == "pr":
+            return answer(command, f"{PUSHED}\n")
+        return answer(command, json.dumps(comments or []))
+
+    monkeypatch.setattr("subprocess.run", gh)
+    return posted
+
+
+def _recorded() -> list[str] | None:
+    path = handled_path()
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+
+
+@pytest.mark.parametrize(
+    ("repository", "flags"),
+    [
+        pytest.param((), "", id="the default repository"),
+        pytest.param(
+            ("--owner", "example", "--repo", "example"),
+            " --owner example --repo example",
+            id="another repository",
+        ),
+    ],
+)
+def test_marking_read_clears_what_the_run_printed(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    repository: tuple[str, ...],
+    flags: str,
+) -> None:
+    """PR #147, replayed on its live data on 2026-10-07, exited 3 on two
+    thank-yous and a review whose findings were both fixed, and only a Python
+    call could record them as read (spec 043 amendment). The run now prints
+    the ids and the command that records them, and that command is run here
+    exactly as printed."""
+    posted = _github(monkeypatch, {147: _answered_after_a_push()})
+
+    code = main(["review-followup", "147", *repository])
+
+    out = capsys.readouterr().out.splitlines()
+    assert "  thread t1 (resolved=True), last comment ack1" in out
+    assert "  thread t2 (resolved=True), last comment ack2" in out
+    once = (
+        "  once read, record them with: "
+        f"harrier review-followup 147{flags} --mark-read ack1 ack2 r1"
+    )
+    assert once in out
+    assert (code, _recorded()) == (3, None)
+
+    code = main(once.split(": ", 1)[1].split()[1:])
+
+    out = capsys.readouterr().out.splitlines()
+    assert [line for line in out if line.startswith("recorded as read: ")] == [
+        "recorded as read: ack1",
+        "recorded as read: ack2",
+        "recorded as read: r1",
+    ]
+    assert out[-1] == (
+        "PR #147: NOT REVIEWED AT THE HEAD, last reviewed at aaaaaaa; "
+        "closed, so the service will not now"
+    )
+    assert (code, _recorded(), posted) == (2, ["ack1", "ack2", "r1"], [])
+
+
+@pytest.mark.parametrize(
+    ("given", "last_comments"),
+    [
+        pytest.param("ack1x", ("ack1", "ack2"), id="mistyped"),
+        pytest.param("ack9", ("ack1", "ack2"), id="from a pull request not named"),
+        pytest.param("ack1", ("ack3", "ack2"), id="a reply a newer one replaced"),
+    ],
+)
+def test_an_id_not_outstanding_records_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    given: str,
+    last_comments: tuple[str, str],
+) -> None:
+    """An id counts only when a pull request named holds it outstanding.
+    Recording one that matches nothing would report success while doing
+    nothing, and recording a reply a newer one replaced would leave the
+    person believing a thread read that they have not seen the end of. The
+    valid id beside it is not recorded either: all or nothing."""
+    posted = _github(
+        monkeypatch,
+        {
+            147: _answered_after_a_push(last_comments=last_comments),
+            150: _answered_after_a_push(last_comments=("ack9", "ack8")),
+        },
+    )
+
+    code = main(["review-followup", "147", "--mark-read", "ack2", given])
+
+    err = capsys.readouterr().err.splitlines()
+    assert (
+        f"error: nothing was recorded; not outstanding on the pull requests named: {given}" in err
+    )
+    assert (code, _recorded(), posted) == (1, None, [])
+    # Nothing was recorded, so the next run still prints what is outstanding.
+    main(["review-followup", "147", "--dry-run"])
+    assert f"  thread t1 (resolved=True), last comment {last_comments[0]}" in (
+        capsys.readouterr().out.splitlines()
+    )
+
+
+def test_a_pull_request_that_cannot_be_read_records_nothing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Its ids cannot be checked, so none of the run's ids is recorded, even
+    the ones another pull request named holds outstanding."""
+    posted = _github(
+        monkeypatch,
+        {147: _answered_after_a_push(), 150: _answered_after_a_push()},
+        unreadable=150,
+    )
+
+    code = main(["review-followup", "147", "150", *MARK_ALL])
+
+    err = capsys.readouterr().err.splitlines()
+    assert "error: could not read pull request 150: HTTP 502" in err
+    assert "error: nothing was recorded" in err
+    assert (code, _recorded(), posted) == (1, None, [])
+
+
+def test_marking_read_twice_changes_nothing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The second run of the same command finds every id already recorded,
+    leaves the record as it was, and reports as the first did."""
+    _github(monkeypatch, {147: _answered_after_a_push()})
+    first = main(["review-followup", "147", *MARK_ALL])
+    first_out = capsys.readouterr().out.splitlines()
+    record = handled_path().read_bytes()
+
+    second = main(["review-followup", "147", *MARK_ALL])
+
+    out = capsys.readouterr().out.splitlines()
+    assert out[:3] == [
+        "already recorded: ack1",
+        "already recorded: ack2",
+        "already recorded: r1",
+    ]
+    assert out[3:] == first_out[3:]
+    assert (second, handled_path().read_bytes()) == (first, record)
+
+
+@pytest.mark.parametrize(
+    ("flags", "notice"),
+    [
+        pytest.param((), False, id="no notice"),
+        pytest.param(("--wait",), False, id="no notice, --wait"),
+        pytest.param(("--wait",), True, id="rate limited, --wait"),
+    ],
+)
+def test_marking_read_posts_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    flags: tuple[str, ...],
+    notice: bool,
+) -> None:
+    """Saying what was read must not spend the hour's one review as a side
+    effect, or sleep out a limit to spend it later: a plain run after the
+    record asks (spec 043 amendment). This is not a dry run, so without that
+    rule the open pull request here is asked for its review."""
+    comments: list[dict[str, object]] = []
+    if notice:
+        comments.append(
+            {
+                "body": (
+                    "<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->\n"
+                    "> **Next review available in:** **38 minutes**"
+                ),
+                "user": {"login": "coderabbitai[bot]"},
+                "updated_at": datetime.now(UTC).isoformat(),
+            }
+        )
+    posted = _github(monkeypatch, {147: _answered_after_a_push("OPEN")}, comments=comments)
+
+    def no_sleep(_seconds: float) -> None:
+        raise AssertionError("--mark-read waited out a limit")
+
+    monkeypatch.setattr("time.sleep", no_sleep)
+
+    code = main(["review-followup", "147", *flags, *MARK_ALL])
+
+    out = capsys.readouterr().out.splitlines()
+    if notice:
+        assert any(line.startswith("PR #147: rate limited, ") for line in out)
+    else:
+        assert "PR #147: the head has moved since the last review" in out
+    assert (code, posted) == (2, [])
+
+
+def test_a_dry_run_records_nothing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Beside --mark-read, --dry-run checks the ids, says what it would
+    record, and writes nothing. The rest is a plain dry run's, over the
+    record as it stands."""
+    _github(monkeypatch, {147: _answered_after_a_push()})
+
+    code = main(["review-followup", "147", "--dry-run", *MARK_ALL])
+
+    out = capsys.readouterr().out.splitlines()
+    assert out[:3] == [
+        "would record as read: ack1",
+        "would record as read: ack2",
+        "would record as read: r1",
+    ]
+    assert (code, _recorded()) == (3, None)
+
+
+def test_marking_read_leaves_a_truncated_pull_request_outstanding(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """What a bounded query did not read cannot have been read, so recording
+    every id the run printed leaves the pull request outstanding (spec 045),
+    and truncation, having no id, gets no `once read` line."""
+    _github(monkeypatch, {147: _answered_after_a_push(more_threads=True)})
+
+    code = main(["review-followup", "147", *MARK_ALL])
+
+    out = capsys.readouterr().out.splitlines()
+    assert "PR #147: a bounded query had another page, so this is not a full picture" in out
+    assert not any("once read" in line for line in out)
+    assert (code, _recorded()) == (3, ["ack1", "ack2", "r1"])
+
+
+@pytest.mark.parametrize("problem", ["cannot be read", "cannot be written"])
+def test_a_record_it_cannot_use_is_left_as_it_was(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    problem: str,
+) -> None:
+    """Writing over a record that cannot be read loses every id it held, and
+    a record that cannot be written must not report success."""
+    _github(monkeypatch, {147: _answered_after_a_push()})
+    if problem == "cannot be read":
+        kept = handled_path()
+        kept.parent.mkdir(parents=True)
+        kept.write_text("{not json", encoding="utf-8")
+        expected = f"error: nothing was recorded; the record at {kept} cannot be read"
+    else:
+        kept = tmp_path / "occupied"
+        kept.write_text("a file where the data directory goes", encoding="utf-8")
+        monkeypatch.setenv("HARRIER_DATA_DIR", str(kept))
+        expected = f"error: nothing was recorded; could not write {handled_path()}"
+    before = kept.read_bytes()
+
+    code = main(["review-followup", "147", *MARK_ALL])
+
+    assert expected in capsys.readouterr().err.splitlines()
+    assert (code, kept.read_bytes()) == (1, before)
 
 
 # --- portability ------------------------------------------------------------
