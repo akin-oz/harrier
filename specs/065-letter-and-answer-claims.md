@@ -126,7 +126,8 @@ time-sensitive tool details unless the material supplies them.
   `generate_cover_letter` and `generate_answer_set` raise `ClaimCheckError`
   (a `ValueError`) listing every violation, not only the first. The CLI
   prints them to stderr and exits 1, as it does today for other generation
-  failures.
+  failures. Since spec 085, the error is raised only after one automatic
+  retry, which sends the violations back to the model, is refused as well.
 - **Needs input (C10 only).** The markdown draft is written, placeholders
   intact, so the operator can fill them. For a letter, no HTML and no PDF
   are rendered: a recruiter-facing artifact never carries a placeholder.
