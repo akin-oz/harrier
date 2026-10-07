@@ -175,7 +175,7 @@ Proven by services/api/tests/test_review_followup.py:
 | an unchanged head is not re-requested | `test_a_reviewed_pull_request_at_the_same_head_is_left_alone`, `test_a_moved_head_is_asked_again` |
 | a reply in a thread is not a review of the commit it names (amendment below) | `test_a_reply_in_a_thread_is_not_a_review`, `test_the_reviewed_sha_is_read_from_the_reviews` |
 | a head reviewed only before it moved exits 2 and says so (amendment below) | `test_a_head_reviewed_before_it_moved_is_reported_as_not_reviewed_there` (seven cases), `tests/test_cli_decisions.py::test_a_head_reviewed_before_it_moved_exits_two`, `tests/test_cli_decisions.py::test_an_unanswered_finding_after_a_push_still_exits_three` |
-| a person records replies and reviews as read by naming their ids, and nothing else is recorded or posted (amendment below) | planned tests/test_cli_decisions.py::test_marking_read_clears_what_the_run_printed, planned tests/test_cli_decisions.py::test_an_id_not_outstanding_records_nothing, planned tests/test_cli_decisions.py::test_marking_read_posts_nothing |
+| a person records replies and reviews as read by naming their ids, and nothing else is recorded or posted (amendment below) | `tests/test_cli_decisions.py::test_marking_read_clears_what_the_run_printed`, `tests/test_cli_decisions.py::test_an_id_not_outstanding_records_nothing`, `tests/test_cli_decisions.py::test_marking_read_posts_nothing` |
 | the daily bound stops the loop | `test_the_daily_bound_stops_the_loop`, `test_the_bound_wins_over_everything_else` |
 | rate limited is distinguishable from reviewed | `test_a_rate_limited_pull_request_reports_as_not_reviewed`, `test_a_reviewed_pull_request_reports_as_reviewed`, `test_a_pull_request_with_neither_is_still_not_reviewed` |
 | `gh` failing is reported | `test_gh_failing_is_reported_not_swallowed`, `test_an_unreadable_payload_is_reported` |
@@ -228,11 +228,11 @@ protect a counter would have been the wrong trade.
       `tests/test_cli_decisions.py::test_a_head_reviewed_before_it_moved_exits_two`,
       `tests/test_cli_decisions.py::test_an_unanswered_finding_after_a_push_still_exits_three`,
       `test_a_head_reviewed_before_it_moved_is_reported_as_not_reviewed_there`)
-- [ ] a run prints the ids a person would record, and `--mark-read` records
+- [x] a run prints the ids a person would record, and `--mark-read` records
       only the ids it is given, each checked against what the pull requests
       named hold outstanding, and posts nothing (the amendment below on
       recording replies as read;
-      planned tests/test_cli_decisions.py::test_marking_read_clears_what_the_run_printed)
+      `tests/test_cli_decisions.py::test_marking_read_clears_what_the_run_printed`)
 - [ ] All gates green on PR
 
 ## Proof / origin
@@ -695,28 +695,30 @@ every test.
   commit, and exits 2. Two cases: the default repository, where the
   `once read` line carries no `--owner` or `--repo`, and another one, where
   it carries both
-  (planned test_marking_read_clears_what_the_run_printed).
+  (`tests/test_cli_decisions.py::test_marking_read_clears_what_the_run_printed`).
 - An id not outstanding, in each of the three ways above: the error names
   it, exit 1, the record unchanged, and no `gh pr comment`
-  (planned test_an_id_not_outstanding_records_nothing).
+  (`tests/test_cli_decisions.py::test_an_id_not_outstanding_records_nothing`).
 - A pull request named that cannot be read: exit 1, the record unchanged
-  (planned test_a_pull_request_that_cannot_be_read_records_nothing).
+  (`tests/test_cli_decisions.py::test_a_pull_request_that_cannot_be_read_records_nothing`).
 - The same `--mark-read` twice: the second prints `already recorded:` for
   each id, the record is unchanged, and the exit code matches the first
-  (planned test_marking_read_twice_changes_nothing).
+  (`tests/test_cli_decisions.py::test_marking_read_twice_changes_nothing`).
 - An open pull request whose head has moved, with no notice: once
   `--mark-read` leaves nothing outstanding, the decision line reads "the head
   has moved since the last review", the command exits 2, and no
-  `gh pr comment` runs, with `--wait` or without
-  (planned test_marking_read_posts_nothing).
+  `gh pr comment` runs, with `--wait` or without. With a rate-limit notice
+  whose wait has not passed, and `--wait`, the decision line reads "rate
+  limited", nothing sleeps, and nothing is posted
+  (`tests/test_cli_decisions.py::test_marking_read_posts_nothing`).
 - `--dry-run` beside `--mark-read`: `would record as read:` for each id, and
-  the record unchanged (planned test_a_dry_run_records_nothing).
+  the record unchanged (`tests/test_cli_decisions.py::test_a_dry_run_records_nothing`).
 - A truncated pull request: after `--mark-read` with every printed id, it
-  still needs a reply and exits 3
-  (planned test_marking_read_leaves_a_truncated_pull_request_outstanding).
+  still needs a reply, prints no `once read` line, and exits 3
+  (`tests/test_cli_decisions.py::test_marking_read_leaves_a_truncated_pull_request_outstanding`).
 - A record that exists but cannot be read, and one that cannot be written:
   the error for each, exit 1, and the file as it was
-  (planned test_a_record_it_cannot_use_is_left_as_it_was).
+  (`tests/test_cli_decisions.py::test_a_record_it_cannot_use_is_left_as_it_was`).
 
 ### What changes
 
@@ -725,12 +727,15 @@ every test.
   line follows. With `--mark-read`, every pull request named is read and
   every id checked before anything is recorded, and the run then reports as
   a dry run.
-- `services/api/src/harrier/reviewfollowup.py`: one function says which of
-  the given ids the pull requests read do not hold outstanding and the record
-  does not hold, so the command and its tests read one rule. Telling a
-  damaged record from a missing one, for `--mark-read`, lives here too.
-  `record_handled` and the record's format do not change.
-- `services/api/tests/test_cli_decisions.py`: the planned tests above.
+- `services/api/src/harrier/reviewfollowup.py`: `ids_not_outstanding` says
+  which of the given ids the pull requests read do not hold outstanding and
+  the record does not hold, so the command and its tests read one rule.
+  `read_handled` tells a damaged record from a missing one, for
+  `--mark-read`, and `load_handled` reads through it as before.
+  `PullRequestState.after_recording` gives the state the record now gives,
+  so the run decides on it without reading GitHub twice. `record_handled`
+  and the record's format do not change.
+- `services/api/tests/test_cli_decisions.py`: the tests above.
 - `specs/043-review-followup.md`: this amendment, its row in the criteria
   table, and its checklist item, ticked when the tests exist.
 
