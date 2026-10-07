@@ -27,6 +27,7 @@ from harrier.reviewfollowup import (
     WAIT,
     FollowUpError,
     PullRequestState,
+    ReviewBody,
     ThreadState,
     decide,
     gather,
@@ -983,3 +984,54 @@ def test_gh_failing_on_an_earlier_page_is_reported(handled_env: Path) -> None:
 
     with pytest.raises(FollowUpError, match=r"could not read pull request 160.*502"):
         gather(160, run, owner="o", repo="r")
+
+
+# --- a truncated query in the report line (spec 043 amendment) ----------------
+
+# Written out rather than imported, so a change to the words fails here.
+TRUNCATED = "a bounded query had another page, so this is not a full picture"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "parts"),
+    [
+        pytest.param({}, "", id="truncated, nothing else outstanding"),
+        pytest.param(
+            {"awaiting": (ThreadState("t1", False, "coderabbitai", "c1"),)},
+            "1 thread(s) awaiting a reply; ",
+            id="truncated, a thread awaiting a reply",
+        ),
+        pytest.param(
+            {
+                "unread_reviews": (
+                    ReviewBody(
+                        "r1",
+                        "coderabbitai",
+                        "Actionable comments posted: 1\n"
+                        "Some comments are outside the diff and can't be posted inline.",
+                    ),
+                )
+            },
+            "1 unread review(s); 1 with findings OUTSIDE THE DIFF, which no thread carries; ",
+            id="truncated, a review with findings outside the diff",
+        ),
+    ],
+)
+def test_a_truncated_pull_request_says_so_in_its_report_line(
+    overrides: dict[str, object], parts: str
+) -> None:
+    """The decision line said a bounded query had another page and the report
+    line did not. Alone, it read "NEEDS A REPLY:" with nothing after the
+    colon, and beside a thread it named only the thread (spec 043
+    amendment). The two lines now read one fact, in the same words."""
+    state = a_state(
+        review_threads=2,
+        reviews_seen=1,
+        last_reviewed_sha="abc1234",
+        truncated=True,
+        **overrides,
+    )
+
+    assert report([state]) == [f"PR #39: NEEDS A REPLY: {parts}{TRUNCATED}"]
+    decision = decide(state, requests_today=0, daily_limit=DEFAULT_DAILY_LIMIT)
+    assert decision.describe(39).endswith(TRUNCATED)

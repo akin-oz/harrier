@@ -30,7 +30,7 @@ import math
 import os
 import re
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -83,6 +83,12 @@ REVIEW_PAGE_LIMIT = 10
 # this very loop, which is why review bodies are read rather than counted.
 OUTSIDE_DIFF_MARKER = "outside the diff"
 ACTIONABLE_PATTERN = re.compile(r"Actionable comments posted:\s*(\d+)", re.IGNORECASE)
+
+# Why a pull request whose bounded query had another page is outstanding. The
+# decision line and the report line both say it, in these words, so the two
+# read one fact. The report line once dropped it, and alone it read "NEEDS A
+# REPLY:" with nothing after the colon (spec 043 amendment).
+TRUNCATED = "a bounded query had another page, so this is not a full picture"
 
 # A minute past the stated wait. Asking at the exact boundary races the
 # service's own clock and earns another notice.
@@ -270,6 +276,21 @@ class PullRequestState:
         """
         return bool(self.awaiting) or bool(self.unread_reviews) or self.truncated
 
+    def after_recording(self, handled: set[str]) -> PullRequestState:
+        """This state as it reads once `handled` is the record: what it held
+        outstanding, less what the record now says was read.
+
+        The record only grows, so filtering what was outstanding gives what a
+        fresh `gather` would, without reading GitHub twice. Truncation is
+        untouched: what a bounded query did not read cannot have been read
+        (spec 043 amendment on recording replies as read).
+        """
+        return replace(
+            self,
+            awaiting=tuple(threads_awaiting_reply(list(self.awaiting), handled)),
+            unread_reviews=tuple(reviews_needing_a_read(list(self.unread_reviews), handled)),
+        )
+
 
 @dataclass(frozen=True)
 class Decision:
@@ -342,7 +363,7 @@ def decide(
         if state.truncated:
             # Otherwise a truncation-only outstanding state printed
             # "NEEDS A REPLY:" with nothing after the colon (review of PR #50).
-            parts.append("a bounded query had another page, so this is not a full picture")
+            parts.append(TRUNCATED)
         return Decision(RESPOND, reason="; ".join(parts))
 
     if state.closed:
@@ -443,20 +464,33 @@ def handled_path() -> Path:
     return data_dir() / HANDLED_FILENAME
 
 
-def load_handled() -> set[str]:
+def read_handled() -> set[str]:
+    """The record, or FollowUpError when it exists and cannot be read.
+
+    For whatever is about to write it: writing over a damaged record would
+    lose every id it held, so recording refuses instead (spec 043 amendment
+    on recording replies as read). A missing record is an empty one.
+    """
     path = handled_path()
     if not path.is_file():
         return set()
     try:
         parsed: object = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError) as error:
+        raise FollowUpError(f"the record at {path} cannot be read") from error
+    if not isinstance(parsed, list):
+        raise FollowUpError(f"the record at {path} cannot be read")
+    return {str(item) for item in cast("list[object]", parsed)}
+
+
+def load_handled() -> set[str]:
+    try:
+        return read_handled()
+    except FollowUpError:
         # A damaged record means re-reading things already answered, which is
         # noise. Losing a finding would be worse, so this fails towards
         # showing too much.
         return set()
-    if not isinstance(parsed, list):
-        return set()
-    return {str(item) for item in cast("list[object]", parsed)}
 
 
 def record_handled(identifiers: Iterable[str]) -> set[str]:
@@ -750,6 +784,8 @@ def report(states: list[PullRequestState]) -> list[str]:
                 detail.append(
                     f"{len(hidden)} with findings OUTSIDE THE DIFF, which no thread carries"
                 )
+            if state.truncated:
+                detail.append(TRUNCATED)
             lines.append(f"PR #{state.number}: NEEDS A REPLY: {'; '.join(detail)}")
         elif state.reviewed and not state.reviewed_at_head:
             # Reviewed, but only before the head moved: the push that answered
@@ -783,4 +819,24 @@ def outstanding_identifiers(state: PullRequestState) -> list[str]:
     """Every id that answering this round would mark as read."""
     return [thread.last_comment_id for thread in state.awaiting] + [
         review.identifier for review in state.unread_reviews
+    ]
+
+
+def ids_not_outstanding(
+    states: Iterable[PullRequestState], identifiers: Iterable[str], handled: set[str]
+) -> list[str]:
+    """The given ids that no pull request read holds outstanding and the
+    record does not already hold.
+
+    Recording any of them would mark read something nobody was shown: a
+    mistyped id, one from a pull request not named, or a reply a newer one
+    has since replaced, which leaves the newer reply unseen. So one of these
+    means nothing is recorded (spec 043 amendment on recording replies as
+    read).
+    """
+    shown = {identifier for state in states for identifier in outstanding_identifiers(state)}
+    return [
+        identifier
+        for identifier in identifiers
+        if identifier not in shown and identifier not in handled
     ]
