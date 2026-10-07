@@ -47,7 +47,8 @@ OLD_BYPASS='--no-verify|(^|[[:space:]])-[A-Za-z]*n[A-Za-z]*([[:space:]]|=|$)'
 
 # Prints, separated by spaces: "commit" when it reads a git commit, or text
 # another command receives holds one; "reuse" when -C is one of a commit's own
-# options; "bypass" when a git commit in the command skips the hooks, or else
+# options; "envfile" when it reads an env file anywhere but in a commit's
+# message; "bypass" when a git commit in the command skips the hooks, or else
 # "unread" when the command cannot be read. Written to POSIX awk, since the
 # guard runs under macOS awk as well as mawk and gawk. If awk itself fails, the
 # whole string is checked as before.
@@ -105,6 +106,33 @@ commit_words() {
         c = substr(w, i, 1)
         if (index("mFcCt", c)) return i == length(w)
         if (index("Su", c)) return 0
+      }
+      return 0
+    }
+
+    # Where option w of git commit puts its message: 2 when git reads the next
+    # word as the message, after -m, a short cluster whose first option that
+    # takes a value is an m that ends it, or --message written without = and
+    # perhaps shortened; 1 when w holds the message itself, as -m"text" or
+    # --message=text do; 0 otherwise.
+    function message_in(w,    i, c, e) {
+      if (w ~ /^--[^=]+$/) return index("--message", w) == 1 ? 2 : 0
+      if (w ~ /^--[^=]+=/) { e = index(w, "="); return index("--message", substr(w, 1, e - 1)) == 1 }
+      if (w !~ /^-[^-]/) return 0
+      for (i = 2; i <= length(w); i++) {
+        c = substr(w, i, 1)
+        if (index("mFcCtSu", c)) return c != "m" ? 0 : i == length(w) ? 2 : 1
+      }
+      return 0
+    }
+
+    # Whether text t names an env file: .env and the characters a file name
+    # goes on with, other than the templates .env.example, .env.sample and
+    # .env.template. The same test as the whole string check below.
+    function names_env(t) {
+      while (match(t, /\.env[A-Za-z0-9_.-]*/)) {
+        if (substr(t, RSTART, RLENGTH) !~ /^\.env\.(example|sample|template)$/) return 1
+        t = substr(t, RSTART + RLENGTH)
       }
       return 0
     }
@@ -205,7 +233,10 @@ commit_words() {
     # words and that text together, since the text may run with those words
     # as arguments. A -C reuses a message only where git reads it as an
     # option: not as the value of another option, nor as a path after --.
-    function parse_command(stop, msg,    c, nw, w, commit, g, value, i, first, outer, text, k, arg, paths) {
+    # Every word is checked for an env file except the message of a commit,
+    # the value of -m or --message (the amendment to spec 045 on the env file
+    # check).
+    function parse_command(stop, msg,    c, nw, w, commit, g, value, i, first, outer, text, k, arg, paths, mword, mnext) {
       nw = 0; commit = 0; g = 0; value = 0; first = HN + 1; outer = HERE; HERE = ""
       while (K <= NL && FAIL == "") {
         c = at()
@@ -228,16 +259,21 @@ commit_words() {
         else if (w[nw] == "commit") commit = nw
         else g = is_git(w[nw]) ? nw : 0
       }
-      text = HERE; HERE = outer; arg = 0; paths = 0
+      text = HERE; HERE = outer; arg = 0; paths = 0; mnext = 0
       for (i = 1; i <= nw; i++) {
+        mword = 0
         if (commit && i > commit) {
           if (skips_hooks(w[i])) found()
           if (w[i] == "-C" && !arg && !paths) REUSE = 1
-          if (arg) arg = 0
+          if (arg) { arg = 0; mword = mnext; mnext = 0 }
           else if (w[i] == "--") paths = 1
-          else if (!paths) arg = commit_takes_value(w[i])
+          else if (!paths) {
+            arg = commit_takes_value(w[i])
+            mword = message_in(w[i]); mnext = (mword == 2); mword = (mword == 1)
+          }
           if (w[i] ~ /\$[@*0-9]|\$[{][@*0-9]/) UNSURE = 1
         } else if (!commit || i < g) text = text " " w[i]
+        if (!mword && names_env(w[i])) ENV = 1
       }
       if (runs_a_bypass(text)) found()
       if (commit || SEEN_COMMIT) COMMIT = 1
@@ -247,7 +283,9 @@ commit_words() {
     # A redirection. A heredoc body is read after the end of its line. It is
     # message text when its delimiter is quoted and it feeds the commit itself
     # (own), or cat inside a command substitution among the commit words (msg).
-    # A here-string that is not message text counts as one of the words.
+    # A here-string that is not message text counts as one of the words. The
+    # target, unless a heredoc delimiter or message text, is checked for an
+    # env file, so a file read into the message by < is.
     function redirect(stop, own, msg, cmd,    op, c, word, message) {
       op = at(); adv(); c = at()
       if (op == "<" && c == "<") {
@@ -264,11 +302,13 @@ commit_words() {
         HN++; HDELIM[HN] = word; HSTRIP[HN] = (op == "<<-"); HTEXT[HN] = message && QUOTED
         HCMD[HN] = ""
       } else if (op == "<<<" && !message) HERE = HERE " " word
+      if (op != "<<" && op != "<<-" && !(op == "<<<" && message) && names_env(word)) ENV = 1
     }
 
     # Heredoc bodies, line by line, after the newline that ends their command.
     # A body that is not message text is checked with the words of the
-    # command that reads it, which a shell reading it would see as arguments.
+    # command that reads it, which a shell reading it would see as arguments,
+    # and for an env file.
     function read_bodies(    k, line, m, b) {
       for (k = 1; k <= HN; k++) {
         m = 0; b = 0
@@ -276,7 +316,11 @@ commit_words() {
           line = L[K]; K++; C = 1
           if (HSTRIP[k]) sub(/^\t+/, "", line)
           if (line == HDELIM[k]) break
-          if (!HTEXT[k]) { if (!m && holds_commit(line)) m = 1; if (line ~ old) b = 1 }
+          if (!HTEXT[k]) {
+            if (!m && holds_commit(line)) m = 1
+            if (line ~ old) b = 1
+            if (names_env(line)) ENV = 1
+          }
         }
         if (!HTEXT[k]) {
           scan(HCMD[k])
@@ -381,33 +425,22 @@ commit_words() {
       parse_list("", 0)
       out = COMMIT ? " commit" : ""
       if (REUSE) out = out " reuse"
+      if (ENV) out = out " envfile"
       if (VERDICT != "") out = out " " VERDICT
       else if (FAIL != "" || UNSURE) out = out " unread"
       if (out != "") print substr(out, 2)
     }'
 }
 
-# Never stage or commit env files (except templates). A git add or a git
-# commit side by side is checked here, before the reader, and a commit that
-# only the reader sees is checked after it.
-names_env_file() {
-  printf '%s' "$CMD" | grep -oE '\.env[A-Za-z0-9_.-]*' \
-    | grep -vE '^\.env\.(example|sample|template)$' | grep -q .
-}
-ENV_FILE="BLOCKED: refusing to stage/commit .env* files. Credentials never enter git (ADR-002)."
-if printf '%s' "$CMD" | grep -qE '(^|[^[:alnum:]_])git[[:space:]]+(add|commit)' && names_env_file; then
-  deny "$ENV_FILE"
-fi
-
 # Checked for every command, before the reader and the "is this a commit"
 # gate below. It went before that gate when the gate needed `git` and `commit`
 # side by side, which let `git -c core.hooksPath=... commit` read as neither a
-# commit nor a bypass. It and the check above need no reader, so a reader that
-# is slow or never returns holds up neither (spec 045's amendment after review
-# of PR #158). Matched as command tokens rather than anywhere in the string.
-# The first version matched a bare substring, so it blocked any command whose
-# text merely mentioned these, including the commit message describing this
-# very guard (review of PR #50).
+# commit nor a bypass. It needs no reader, so a reader that is slow or never
+# returns does not hold it up (spec 045's amendment after review of PR #158).
+# Matched as command tokens rather than anywhere in the string. The first
+# version matched a bare substring, so it blocked any command whose text
+# merely mentioned these, including the commit message describing this very
+# guard (review of PR #50).
 if printf '%s' "$CMD" | grep -qE '(^|[[:space:]])(-c[[:space:]]+core\.hooksPath|--git-dir|GIT_DIR)=?'; then
   deny "BLOCKED: redirecting hooksPath or the git dir disables the hook chain. The verification hooks ARE the definition of done."
 fi
@@ -415,9 +448,10 @@ fi
 # The reader runs on a command whose text holds commit. One that does not
 # cannot name the subcommand unless a quote or a backslash splits the word,
 # and skipping the reader there keeps its cost off most commands.
+reader=no
 verdict=
 case "$CMD" in
-  *commit*) verdict=$(commit_words) || verdict=unread ;;
+  *commit*) reader=yes; verdict=$(commit_words) || verdict=unread ;;
 esac
 says() { case " $verdict " in *" $1 "*) return 0 ;; esac; return 1; }
 
@@ -431,13 +465,28 @@ if says commit || printf '%s' "$CMD" | grep -qE "$COMMITS" \
   commits=yes
 fi
 
+# Never stage or commit env files (except templates): checked for a git add or
+# a git commit side by side, and for a commit the reader reads. Where the
+# reader read the command, it reports an env file named anywhere but in a
+# commit's message, so a message may name one (spec 045's amendment on the
+# env file check). Where it did not run, or could not read the command, the
+# whole string is checked, message and all.
+names_env_file() {
+  printf '%s' "$CMD" | grep -oE '\.env[A-Za-z0-9_.-]*' \
+    | grep -vE '^\.env\.(example|sample|template)$' | grep -q .
+}
+ENV_FILE="BLOCKED: refusing to stage/commit .env* files. Credentials never enter git (ADR-002)."
+if printf '%s' "$CMD" | grep -qE '(^|[^[:alnum:]_])git[[:space:]]+(add|commit)' \
+  || [ "$commits" = yes ]; then
+  if [ "$reader" = yes ] && ! says unread && ! says bypass; then
+    if says envfile; then deny "$ENV_FILE"; fi
+  elif names_env_file; then
+    deny "$ENV_FILE"
+  fi
+fi
+
 # Only inspect git commit commands from here on.
 [ "$commits" = yes ] || exit 0
-
-# The env file check again, for a commit that only the reader sees.
-if names_env_file; then
-  deny "$ENV_FILE"
-fi
 
 if says bypass || { says unread && printf '%s' "$CMD" | grep -qE -- "$OLD_BYPASS"; }; then
   deny "BLOCKED: 'git commit --no-verify' (or -n, including bundled forms like -nm) is not allowed. The verification hooks ARE the definition of done."

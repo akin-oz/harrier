@@ -215,12 +215,12 @@ spec 044.
       `::test_a_run_of_global_options_costs_time_in_proportion_to_its_length`,
       `::test_checks_that_need_no_reader_do_not_wait_for_it`,
       `::test_no_subcommand_runs_after_a_help_or_query_option`)
-- [ ] a commit whose message names an env file is allowed, while an env file
+- [x] a commit whose message names an env file is allowed, while an env file
       staged, committed or read into a message stays denied (the amendment
-      below on the env file check; planned
-      test_an_env_file_named_only_in_a_message_does_not_block_the_commit,
-      planned test_the_env_file_check_still_denies_a_staged_or_read_env_file,
-      `services/api/tests/test_guards.py::test_checks_that_need_no_reader_do_not_wait_for_it`)
+      below on the env file check;
+      `services/api/tests/test_guards.py::test_an_env_file_named_only_in_a_message_does_not_block_the_commit`,
+      `::test_the_env_file_check_still_denies_a_staged_or_read_env_file`,
+      `::test_checks_that_need_no_reader_do_not_wait_for_it`)
 - [ ] All gates green on PR
 
 ## Proof / origin
@@ -959,11 +959,11 @@ not run on, such as `git add .env`, is still checked without it.
 - `.claude/hooks/guard-commit.sh`: the reader reports an env file it reads
   outside a commit's message, and the `.env` check uses that report for a
   command the reader read. No file is added.
-- `services/api/tests/test_guards.py`: planned
-  test_an_env_file_named_only_in_a_message_does_not_block_the_commit runs
+- `services/api/tests/test_guards.py`:
+  `::test_an_env_file_named_only_in_a_message_does_not_block_the_commit` runs
   commits whose message names an env file in each form above, each with a
-  trailer, and expects them allowed. Planned
-  test_the_env_file_check_still_denies_a_staged_or_read_env_file runs
+  trailer, and expects them allowed.
+  `::test_the_env_file_check_still_denies_a_staged_or_read_env_file` runs
   commands that stage an env file, commit one as a path, or read one into a
   message, and expects the env file message for each. The test that a check
   needing no reader does not wait for it checks `git add .env` in place of a
