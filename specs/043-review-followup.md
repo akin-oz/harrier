@@ -175,7 +175,7 @@ Proven by services/api/tests/test_review_followup.py:
 | an unchanged head is not re-requested | `test_a_reviewed_pull_request_at_the_same_head_is_left_alone`, `test_a_moved_head_is_asked_again` |
 | a reply in a thread is not a review of the commit it names (amendment below) | `test_a_reply_in_a_thread_is_not_a_review`, `test_the_reviewed_sha_is_read_from_the_reviews` |
 | a head reviewed only before it moved exits 2 and says so (amendment below) | `test_a_head_reviewed_before_it_moved_is_reported_as_not_reviewed_there` (seven cases), `tests/test_cli_decisions.py::test_a_head_reviewed_before_it_moved_exits_two`, `tests/test_cli_decisions.py::test_an_unanswered_finding_after_a_push_still_exits_three` |
-| replies do not crowd a review out of the window (amendment below) | `test_replies_past_the_window_do_not_hide_the_review`, `test_an_unread_review_past_the_window_is_still_found`, `test_an_earlier_page_with_no_cursor_fails_closed`, `test_reading_back_stops_at_the_page_bound`, `test_gh_failing_on_an_earlier_page_is_reported`, `test_an_earlier_page_without_its_reviews_is_reported` (four cases) |
+| replies do not crowd a review out of the window (amendment below) | `test_replies_past_the_window_do_not_hide_the_review`, `test_an_unread_review_past_the_window_is_still_found`, `test_an_earlier_page_with_no_cursor_fails_closed`, `test_reading_back_stops_at_the_page_bound`, `test_gh_failing_on_an_earlier_page_is_reported`, `test_an_earlier_page_without_its_reviews_is_reported` (six cases) |
 | a person records replies and reviews as read by naming their ids, and nothing else is recorded or posted (amendment below) | `tests/test_cli_decisions.py::test_marking_read_clears_what_the_run_printed`, `tests/test_cli_decisions.py::test_an_id_not_outstanding_records_nothing`, `tests/test_cli_decisions.py::test_marking_read_posts_nothing` |
 | a truncated pull request says so in its report line (amendment below) | `test_a_truncated_pull_request_says_so_in_its_report_line` (three cases) |
 | a dry run never waits and never asks, with `--wait` or without (amendment below) | `tests/test_cli_decisions.py::test_a_dry_run_never_waits_and_never_asks`, `tests/test_cli_decisions.py::test_waiting_without_a_dry_run_still_asks` |
@@ -604,9 +604,10 @@ tests below, not observed on a live pull request.
   `test_a_truncated_pull_request_says_so_in_its_report_line`).
 - `gh` failing on an earlier page, or returning something that is not JSON,
   is reported as it is for the first query. An earlier page whose JSON has
-  no reviews connection, or a connection without `nodes` or `pageInfo`, is
-  an unexpected review payload too. It is not read as the last page, which
-  would leave every review before it unread with nothing said
+  no reviews connection, a connection without `nodes` or `pageInfo`, or a
+  `pageInfo` without a boolean `hasPreviousPage`, is an unexpected review
+  payload too. It is not read as the last page, which would leave every
+  review before it unread with nothing said
   (`test_an_earlier_page_without_its_reviews_is_reported`).
 
 Paging was chosen over filtering because the API cannot filter replies out:
@@ -644,11 +645,13 @@ command's output lines and exit codes do not change.
   reading stops at the bound and reads as truncated.
 - `test_gh_failing_on_an_earlier_page_is_reported`: a `gh` failure on an
   earlier page raises the same error as one on the first query.
-- `test_an_earlier_page_without_its_reviews_is_reported` (four cases): an
+- `test_an_earlier_page_without_its_reviews_is_reported` (six cases): an
   earlier page that parses but has no pull request, no reviews connection,
-  no `nodes` or no `pageInfo` raises the unexpected review payload error.
+  no `nodes`, no `pageInfo`, or a `pageInfo` whose `hasPreviousPage` is
+  missing or not a boolean raises the unexpected review payload error.
   Before the fix each was read as the last page and nothing was raised.
-  Found in the review of PR #170.
+  Found in the review of PR #170; the last two after the review of
+  ead5080 still rated the merge risk as a fail-closed gap.
 
 ### Failure modes this must not introduce
 

@@ -993,6 +993,11 @@ def test_gh_failing_on_an_earlier_page_is_reported(handled_env: Path) -> None:
         pytest.param({"reviews": None}, id="no reviews connection"),
         pytest.param({"reviews": {"pageInfo": {"hasPreviousPage": False}}}, id="no nodes"),
         pytest.param({"reviews": {"nodes": []}}, id="no pageInfo"),
+        pytest.param({"reviews": {"nodes": [], "pageInfo": {}}}, id="no hasPreviousPage"),
+        pytest.param(
+            {"reviews": {"nodes": [], "pageInfo": {"hasPreviousPage": None}}},
+            id="hasPreviousPage not a boolean",
+        ),
     ],
 )
 def test_an_earlier_page_without_its_reviews_is_reported(
