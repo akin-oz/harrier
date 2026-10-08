@@ -234,7 +234,7 @@ def test_dry_run_counts_and_classifies_without_sending(db: sqlite3.Connection) -
             message_id="m2",
         ),
     ]
-    summary = run_watch(db, dry_run=True, fetch=lambda: messages, send=no_send)
+    summary = run_watch(db, default_scope(db), dry_run=True, fetch=lambda: messages, send=no_send)
     joined = "\n".join(summary.lines)
     assert summary.fetched_count == 2
     assert summary.unseen_count == 2
@@ -256,7 +256,7 @@ def test_missing_message_id_is_reported_clearly(db: sqlite3.Connection) -> None:
             message_id="",
         )
     ]
-    summary = run_watch(db, dry_run=True, fetch=lambda: messages, send=no_send)
+    summary = run_watch(db, default_scope(db), dry_run=True, fetch=lambda: messages, send=no_send)
     joined = "\n".join(summary.lines)
     assert "message_id=<missing>" in joined
     assert "classified_kind=invalid_message_id" in joined
@@ -270,9 +270,9 @@ def test_seen_message_reports_already_seen(db: sqlite3.Connection) -> None:
             "Thanks for applying to Exampleco!", "We received your application.", message_id="m1"
         )
     ]
-    first = run_watch(db, dry_run=True, fetch=lambda: messages, send=no_send)
+    first = run_watch(db, default_scope(db), dry_run=True, fetch=lambda: messages, send=no_send)
     assert first.unseen_count == 1
-    second = run_watch(db, dry_run=True, fetch=lambda: messages, send=no_send)
+    second = run_watch(db, default_scope(db), dry_run=True, fetch=lambda: messages, send=no_send)
     joined = "\n".join(second.lines)
     assert "classified_kind=skipped_seen" in joined
     assert "skip_reason=already_seen" in joined
@@ -292,7 +292,7 @@ def test_seen_state_cap_drops_the_oldest_ids(
         build_message("Interview invitation b", "We invite you to interview.", message_id="new2"),
         build_message("Interview invitation c", "We invite you to interview.", message_id="new3"),
     ]
-    run_watch(db, dry_run=True, fetch=lambda: messages, send=no_send)
+    run_watch(db, default_scope(db), dry_run=True, fetch=lambda: messages, send=no_send)
     state = load_state()
     # The cap keeps the NEWEST ids in insertion order (review finding:
     # a set-based cap dropped an arbitrary subset).
@@ -339,6 +339,8 @@ def test_live_run_sends_actionable_and_stops_on_send_failure(
         sent.append(text)
         return 1 if len(sent) == 2 else 0
 
-    summary = run_watch(db, dry_run=False, fetch=lambda: messages, send=failing_send)
+    summary = run_watch(
+        db, default_scope(db), dry_run=False, fetch=lambda: messages, send=failing_send
+    )
     assert len(sent) == 2
     assert summary.send_failure == 1

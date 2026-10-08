@@ -21,6 +21,7 @@ from harrier.outreach.discovery import (
 )
 from harrier.screening.linkedin import fetch_linkedin_job_details, linkedin_job_id
 from harrier.tracker import list_contacts, list_jobs
+from harrier.tracks import Scope
 
 BATCH = 25
 
@@ -44,9 +45,9 @@ def _existing_contact_keys(conn: sqlite3.Connection) -> set[str]:
     return keys
 
 
-def _linkedin_rows(conn: sqlite3.Connection) -> list[tuple[dict[str, str], str]]:
+def _linkedin_rows(conn: sqlite3.Connection, scope: Scope) -> list[tuple[dict[str, str], str]]:
     rows: list[tuple[dict[str, str], str]] = []
-    for row in list_jobs(conn):
+    for row in list_jobs(conn, scope):
         url = (row.get("url") or "").strip()
         if not url or "linkedin.com/jobs" not in url.lower():
             continue
@@ -108,10 +109,10 @@ def _stage_poster(row: dict[str, str], job_url: str, poster: dict[str, str]) -> 
 
 
 def backfill_posters(
-    conn: sqlite3.Connection, *, limit: int = 0, dry_run: bool = False
+    conn: sqlite3.Connection, scope: Scope, *, limit: int = 0, dry_run: bool = False
 ) -> BackfillSummary:
     summary = BackfillSummary()
-    rows = _linkedin_rows(conn)
+    rows = _linkedin_rows(conn, scope)
     if limit > 0:
         rows = rows[:limit]
     summary.checked = len(rows)

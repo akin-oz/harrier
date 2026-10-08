@@ -15,6 +15,7 @@ from pathlib import Path
 
 from harrier.tracker.schema import CONTACT_FIELDS, TRACKER_FIELDS
 from harrier.tracker.store import extract_note_value, list_contacts, list_jobs
+from harrier.tracks import Scope
 
 
 def _strip_note_key(notes: str, key: str) -> str:
@@ -32,7 +33,7 @@ def _legacy_faithful(row: dict[str, str]) -> dict[str, str]:
     return faithful
 
 
-def export_csv(conn: sqlite3.Connection, dest_dir: Path) -> tuple[Path, Path]:
+def export_csv(conn: sqlite3.Connection, scope: Scope, dest_dir: Path) -> tuple[Path, Path]:
     dest_dir.mkdir(parents=True, exist_ok=True)
     jobs_path = dest_dir / "jobs.csv"
     contacts_path = dest_dir / "contacts.csv"
@@ -40,7 +41,7 @@ def export_csv(conn: sqlite3.Connection, dest_dir: Path) -> tuple[Path, Path]:
     with jobs_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(TRACKER_FIELDS))
         writer.writeheader()
-        for row in list_jobs(conn):
+        for row in list_jobs(conn, scope):
             faithful = _legacy_faithful(row)
             writer.writerow({name: faithful[name] for name in TRACKER_FIELDS})
 

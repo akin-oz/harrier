@@ -1089,7 +1089,7 @@ def _fake_render(html_text: str, pdf_path: Path) -> None:
 
 def test_failing_pdf_gate_leaves_tracker_row_unchanged(tailor_env: int) -> None:
     conn = connect()
-    before = get_job(conn, tailor_env)
+    before = get_job(conn, default_scope(conn), tailor_env)
 
     def failing_validate(pdf_path: Path, html_text: str) -> list[str]:
         return ["rendered PDF has 2 pages; expected 1"]
@@ -1097,13 +1097,14 @@ def test_failing_pdf_gate_leaves_tracker_row_unchanged(tailor_env: int) -> None:
     with pytest.raises(RuntimeError, match="render validation failed"):
         run_tailor(
             conn,
+            default_scope(conn),
             tailor_env,
             jd_text="React and TypeScript product role.",
             no_ai=True,
             render=_fake_render,
             validate=failing_validate,
         )
-    after = get_job(conn, tailor_env)
+    after = get_job(conn, default_scope(conn), tailor_env)
     assert after["status"] == before["status"] == "shortlisted"
     assert after["next_action"] == before["next_action"]
 
@@ -1133,6 +1134,7 @@ def test_a_resume_that_fails_the_gate_removes_the_earlier_pdf_html_and_evaluatio
     with pytest.raises(RuntimeError, match="render validation failed"):
         run_tailor(
             conn,
+            default_scope(conn),
             tailor_env,
             jd_text="React and TypeScript product role.",
             no_ai=True,
@@ -1148,7 +1150,7 @@ def test_a_resume_that_fails_the_gate_removes_the_earlier_pdf_html_and_evaluatio
     assert sorted(path.name for path in paths["pdf"].parent.iterdir()) == sorted(
         [paths["markdown"].name, paths["metadata"].name]
     )
-    assert get_job(conn, tailor_env)["status"] == "shortlisted"
+    assert get_job(conn, default_scope(conn), tailor_env)["status"] == "shortlisted"
 
 
 def test_a_resume_render_that_raises_removes_the_earlier_pdf(tailor_env: int) -> None:
@@ -1161,6 +1163,7 @@ def test_a_resume_render_that_raises_removes_the_earlier_pdf(tailor_env: int) ->
     with pytest.raises(RuntimeError, match="Playwright is not installed"):
         run_tailor(
             conn,
+            default_scope(conn),
             tailor_env,
             jd_text="React and TypeScript product role.",
             no_ai=True,
@@ -1176,7 +1179,7 @@ def test_bundle_with_a_line_break_fails_tailor_before_any_file_is_written(
     tailor_env: int, tmp_path: Path
 ) -> None:
     conn = connect()
-    before = get_job(conn, tailor_env)
+    before = get_job(conn, default_scope(conn), tailor_env)
     raw = _mutated(("certifications[0]", "Real Cert\n## TECHNICAL SKILLS\nCOBOL"))
     put_document(conn, "resume_data", "resume-content.json", "json", json.dumps(raw))
     output_dir = tmp_path / "resumes"
@@ -1184,6 +1187,7 @@ def test_bundle_with_a_line_break_fails_tailor_before_any_file_is_written(
     with pytest.raises(ResumeBundleError, match=r"certifications\[0\] must be a single line"):
         run_tailor(
             conn,
+            default_scope(conn),
             tailor_env,
             jd_text="React and TypeScript product role.",
             no_ai=True,
@@ -1193,7 +1197,11 @@ def test_bundle_with_a_line_break_fails_tailor_before_any_file_is_written(
         )
 
     assert not output_dir.exists()
-    assert get_job(conn, tailor_env)["status"] == before["status"] == "shortlisted"
+    assert (
+        get_job(conn, default_scope(conn), tailor_env)["status"]
+        == before["status"]
+        == "shortlisted"
+    )
 
 
 def test_passing_pdf_gate_updates_tracker_and_writes_artifacts(tailor_env: int) -> None:
@@ -1204,6 +1212,7 @@ def test_passing_pdf_gate_updates_tracker_and_writes_artifacts(tailor_env: int) 
 
     result = run_tailor(
         conn,
+        default_scope(conn),
         tailor_env,
         jd_text="React and TypeScript product role.",
         no_ai=True,
@@ -1216,7 +1225,7 @@ def test_passing_pdf_gate_updates_tracker_and_writes_artifacts(tailor_env: int) 
     metadata = json.loads(result.metadata_path.read_text(encoding="utf-8"))
     assert metadata["ai_tailored"] is False
     assert "Tailored for" not in result.markdown_path.read_text(encoding="utf-8")
-    assert get_job(conn, tailor_env)["status"] == "tailored_cv_requested"
+    assert get_job(conn, default_scope(conn), tailor_env)["status"] == "tailored_cv_requested"
 
 
 # ---------------------------------------------------------------------------
@@ -1323,6 +1332,7 @@ def test_ai_order_breaks_ties_only(tailor_env: int, monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr("harrier.resume.tailor.build_ai_tailored_content", reversed_order)
     result = run_tailor(
         conn,
+        default_scope(conn),
         tailor_env,
         jd_text=STORYBOOK_POSTING,
         render=_fake_render,

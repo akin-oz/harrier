@@ -111,6 +111,7 @@ def test_a_dry_run_notifies_nobody(env: Path) -> None:
     from harrier.db import connect
     from harrier.mail import run_watch
     from harrier.mail.watch import GmailMessage
+    from harrier.tracks import default_scope
 
     message = GmailMessage(
         message_id="abc123",
@@ -127,7 +128,9 @@ def test_a_dry_run_notifies_nobody(env: Path) -> None:
         sent.append(text)
         return 0
 
-    summary = run_watch(connect(), dry_run=True, fetch=lambda: [message], send=record)
+    summary = run_watch(
+        (conn := connect()), default_scope(conn), dry_run=True, fetch=lambda: [message], send=record
+    )
 
     assert sent == [], "a dry run sent a notification"
     # It did classify: a dry run that silently did nothing would satisfy the
@@ -230,6 +233,9 @@ def test_the_archive_still_holds_only_what_it_held(env: Path) -> None:
         "messageId",
         "actionable",
         "ignore_reason",
+        # The matched row's track slug, a name of a search and nothing about
+        # a person (spec 092).
+        "track",
     }
     for never in ("subject", "body_summary", "from", "sender", "snippet"):
         assert never not in ARCHIVED_FIELDS, f"the archive grew a {never} field"

@@ -53,7 +53,7 @@ def _seed(tmp_path: Path) -> None:
             },
             scope=default_scope(conn),
         )
-        set_status(conn, first, "shortlisted")
+        set_status(conn, default_scope(conn), first, "shortlisted")
     finally:
         conn.close()
 

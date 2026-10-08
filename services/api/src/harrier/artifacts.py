@@ -21,6 +21,7 @@ from harrier.offers.evaluate import report_path_for
 from harrier.resume.content import ResumeBundleError, load_bundle
 from harrier.resume.tailor import resume_paths_for
 from harrier.tracker import get_job
+from harrier.tracks import Scope
 
 
 class UnknownArtifactKind(KeyError):
@@ -80,8 +81,8 @@ def _resume_paths(conn: sqlite3.Connection, company: str, role: str) -> dict[str
     return resume_paths_for(bundle.name, company, role)
 
 
-def _paths_by_kind(conn: sqlite3.Connection, job_id: int) -> dict[str, Path]:
-    row = get_job(conn, job_id)
+def _paths_by_kind(conn: sqlite3.Connection, scope: Scope, job_id: int) -> dict[str, Path]:
+    row = get_job(conn, scope, job_id)
     company = row.get("company", "")
     role = row.get("title", "")
 
@@ -100,14 +101,14 @@ def _paths_by_kind(conn: sqlite3.Connection, job_id: int) -> dict[str, Path]:
     return paths
 
 
-def artifacts_for_job(conn: sqlite3.Connection, job_id: int) -> list[Artifact]:
+def artifacts_for_job(conn: sqlite3.Connection, scope: Scope, job_id: int) -> list[Artifact]:
     """Every artifact kind for this job, present or not.
 
     Absent kinds are listed rather than omitted: the page's job is to say
     what exists and what would produce the rest, and an omitted row cannot
     say the second thing.
     """
-    paths = _paths_by_kind(conn, job_id)
+    paths = _paths_by_kind(conn, scope, job_id)
     found: list[Artifact] = []
     for kind in ARTIFACT_KINDS:
         path = paths.get(kind)
@@ -123,7 +124,7 @@ def artifacts_for_job(conn: sqlite3.Connection, job_id: int) -> list[Artifact]:
     return found
 
 
-def artifact_for_job(conn: sqlite3.Connection, job_id: int, kind: str) -> Artifact:
+def artifact_for_job(conn: sqlite3.Connection, scope: Scope, job_id: int, kind: str) -> Artifact:
     """One artifact by kind.
 
     Raises `UnknownArtifactKind` for anything outside the closed set, which is
@@ -131,7 +132,7 @@ def artifact_for_job(conn: sqlite3.Connection, job_id: int, kind: str) -> Artifa
     """
     if kind not in PRODUCED_BY:
         raise UnknownArtifactKind(kind)
-    path = _paths_by_kind(conn, job_id).get(kind)
+    path = _paths_by_kind(conn, scope, job_id).get(kind)
     return Artifact(
         kind=kind,
         path=path if path is not None else Path(),

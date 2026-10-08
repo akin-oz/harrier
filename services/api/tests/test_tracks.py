@@ -122,7 +122,7 @@ def test_migration_8_keeps_every_row_in_the_default_track(seven: Path) -> None:
     try:
         version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
         assert version == 8
-        rows = list_jobs(conn)
+        rows = list_jobs(conn, default_scope(conn))
         assert len(rows) == len(SYNTHETIC_ROWS)
         assert {row["track_id"] for row in rows} == {str(DEFAULT_TRACK_ID)}
         tracks = list_tracks(conn)
@@ -209,10 +209,13 @@ def test_the_write_path_stamps_the_scopes_track(tmp_path: Path) -> None:
         conn.commit()
         second = resolve_scope(conn, "second")
         job_id = add_job(conn, SYNTHETIC_ROWS[0], scope=second)
-        assert get_job(conn, job_id)["track_id"] == "2"
+        # Read back through the second track's scope: spec 092 makes a by-id
+        # read in the wrong scope a not-found, which is its own test.
+        assert get_job(conn, second, job_id)["track_id"] == "2"
         with pytest.raises(TrackerError, match="track_id"):
             add_job(conn, {**SYNTHETIC_ROWS[1], "track_id": "1"}, scope=second)
-        assert len(list_jobs(conn)) == 1
+        assert len(list_jobs(conn, second)) == 1
+        assert list_jobs(conn, default_scope(conn)) == []
     finally:
         conn.close()
 

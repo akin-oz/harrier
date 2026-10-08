@@ -150,7 +150,7 @@ test is a last resort because it breaks on a wrapped line and can pass for
 the wrong reason. Both are addressed, and the test is held to a fixture
 that proves it fails.
 
-The guard (planned test_every_tracker_query_names_its_track) reads every
+The guard (`services/api/tests/test_tracker_queries_name_their_track.py::test_every_tracker_query_names_its_track`) reads every
 Python file under
 `services/api/src`, finds every string literal that names `jobs` or
 `job_events` as a table (`FROM jobs`, `JOIN jobs`, `UPDATE jobs`, `INSERT
@@ -220,49 +220,49 @@ otherwise. Each builds a database under `tmp_path`, inserts a second track
 directly into `tracks` (no command creates one until spec 093), and adds
 synthetic rows to both.
 
-- [ ] `next`, `review`, the API queue and the API job list over one scope
+- [x] `next`, `review`, the API queue and the API job list over one scope
       never return a row of the other track
-      (planned test_queue_never_shows_another_tracks_rows)
-- [ ] The label export over one scope holds no row or event of the other
+      (`services/api/tests/test_track_isolation.py::test_queue_never_shows_another_tracks_rows`)
+- [x] The label export over one scope holds no row or event of the other
       track, so the model trains on one track
-      (planned test_training_labels_ignore_other_tracks)
-- [ ] The digest and the CSV export over one scope name no row of the
-      other (planned test_digest_and_export_read_one_track)
-- [ ] `add_job` in the second track with a url, and separately an
+      (`services/api/tests/test_track_isolation.py::test_training_labels_ignore_other_tracks`)
+- [x] The digest and the CSV export over one scope name no row of the
+      other (`services/api/tests/test_track_isolation.py::test_digest_and_export_read_one_track`)
+- [x] `add_job` in the second track with a url, and separately an
       external_key, already stored in the first raises `DuplicateJobError`
       naming the first track's slug, and the row is not added
-      (planned test_a_url_stored_in_one_track_is_a_duplicate_in_another)
-- [ ] `get_job`, `set_status`, `update_fields` and `list_events` with a job
+      (`services/api/tests/test_track_isolation.py::test_a_url_stored_in_one_track_is_a_duplicate_in_another`)
+- [x] `get_job`, `set_status`, `update_fields` and `list_events` with a job
       id from the other track raise `JobNotFoundError` naming the id only,
       and the row is unchanged
-      (planned test_a_row_outside_the_scope_is_not_found_by_id)
-- [ ] The mail watch matches only the scope's rows and its event record
+      (`services/api/tests/test_track_isolation.py::test_a_row_outside_the_scope_is_not_found_by_id`)
+- [x] The mail watch matches only the scope's rows and its event record
       carries the matched job's track slug
-      (planned test_mail_matching_reads_one_track_and_records_it)
-- [ ] `events backfill` over one scope writes events for that track's
-      rows only (planned test_backfill_reconstructs_one_track)
-- [ ] `reconsider` protects only the scope's human rejections, and
+      (`services/api/tests/test_track_isolation.py::test_mail_matching_reads_one_track_and_records_it`)
+- [x] `events backfill` over one scope writes events for that track's
+      rows only (`services/api/tests/test_track_isolation.py::test_backfill_reconstructs_one_track`)
+- [x] `reconsider` protects only the scope's human rejections, and
       `evaluate-prospects` evaluates only the scope's prospects
-      (planned test_reconsider_and_batch_evaluation_read_one_track)
-- [ ] Every SQL literal on `jobs` or `job_events` under `services/api/src`
+      (`services/api/tests/test_track_isolation.py::test_reconsider_and_batch_evaluation_read_one_track`)
+- [x] Every SQL literal on `jobs` or `job_events` under `services/api/src`
       names its track or is a named exemption whose function exists
-      (planned test_every_tracker_query_names_its_track), and the guard
+      (`services/api/tests/test_tracker_queries_name_their_track.py::test_every_tracker_query_names_its_track`), and the guard
       fails against a fixture literal that lacks the predicate and against
       an exemption naming a function that does not exist
-      (planned test_the_static_guard_fails_on_an_unscoped_query)
-- [ ] The CLI resolves the default scope once per invocation and the API
+      (`services/api/tests/test_tracker_queries_name_their_track.py::test_the_static_guard_fails_on_an_unscoped_query`)
+- [x] The CLI resolves the default scope once per invocation and the API
       once per request, proven by counting `tracks` reads with a trace
-      callback (planned test_the_default_scope_is_resolved_once_per_entry)
-- [ ] The industry track is unchanged: the full suite passes with
+      callback (`services/api/tests/test_track_isolation.py::test_the_default_scope_is_resolved_once_per_entry`)
+- [x] The industry track is unchanged: the full suite passes with
       signature updates only, and
       `services/api/tests/test_tracker_cli.py::test_rank_puts_the_nearest_to_sending_first`
       and
       `services/api/tests/test_tracker_cli.py::test_review_lists_only_rows_awaiting_a_decision`
       pass without modification to their assertions
-- [ ] The contract is regenerated by `just contract` and shows no diff
-- [ ] Each test above fails with its behavior removed, checked by removing
+- [x] The contract is regenerated by `just contract` and shows no diff
+- [x] Each test above fails with its behavior removed, checked by removing
       each behavior in turn and recorded in the pull request
-- [ ] No real tracker row, count or posting appears in a fixture, this
+- [x] No real tracker row, count or posting appears in a fixture, this
       spec or a commit message (ADR-008)
 - [ ] All gates green on the pull request
 
@@ -284,6 +284,15 @@ synthetic rows to both.
   the default scope is the only scope outside a test.
 - **The mail watch's older event records carry no track.** Read as the
   default track, which is what they were.
+- **The mail watch keeps one seen-message list for the whole file.** A
+  message the watch has seen is skipped on every later run, whichever
+  track that run is scoped to. Running the watch in a second track would
+  therefore skip messages the first track's run had already seen, and never
+  match them there. No command can do that: the watch runs in the default
+  track only, and spec 093's allowlist refuses `gmail-watch` on any other.
+  The spec that lets the watch run per track partitions the seen state, or
+  classifies against every track before marking a message seen. Raised in
+  review of PR #181 and recorded here rather than built speculatively.
 
 ## Migration
 
@@ -350,3 +359,88 @@ container-up` so the image carries the scoped readers.
 - A track parameter on any route, or any contract change.
 - Changing the queue's ranking (spec 093 adds the academic kind's).
 - A scoped repository object (Options weighed).
+
+## Amendment (2026-10-08, during implementation)
+
+What implementation found, each with the test or file that holds it:
+
+- **A by-id read of another track's events is a not-found, not an empty
+  list.** `list_events` checks the job through `get_job` first, so the four
+  by-id readers refuse the same way with the same message
+  (`services/api/tests/test_track_isolation.py::test_a_row_outside_the_scope_is_not_found_by_id`).
+- **Two more `job_events` readers join `jobs`.** `company_has_responded`
+  and the private `_has_events` took a job id resolved in scope and read
+  `job_events` by it alone; both now join `jobs` and filter on `track_id`,
+  so the static guard reads them without an exemption.
+- **Each SQL literal names its own track.** `list_jobs` and `add_job`
+  assembled the predicate and the column list outside the literal, which a
+  literal-reading guard cannot see; the literal now carries `WHERE
+  track_id = ?` and `, track_id` itself. The guard reads a whole f-string
+  once rather than its constant halves, proven by the `halves` function in
+  its fixture
+  (`services/api/tests/test_tracker_queries_name_their_track.py::test_the_static_guard_fails_on_an_unscoped_query`).
+- **The named exemptions, as landed:** `find_duplicate` and
+  `all_tracks_dedupe_rows` in the store; `migrate` in the legacy import;
+  the whole-file counts in `verify_database`, `tracker_check`, `verify` and
+  the API `health` route. The schema module is skipped as DDL. The
+  `all_tracks_dedupe_rows` feed returns url, external_key, company, title,
+  notes and track_id: `build_tracker_indexes` reads an external key out of
+  the notes when the column is empty, so notes travel with it.
+- **The mail watch's archived event gains the `track` key.** The archive
+  keeps a fixed field list (spec 049's boundary, pinned by
+  `services/api/tests/test_ui_inbox.py::test_the_archive_still_holds_only_what_it_held`);
+  `track` joins it as a slug, the name of a search and nothing about a
+  person. No match, no track: the key holds an empty string.
+- **The CLI resolves the scope in twenty-one handlers, once each,** right
+  after the connection they open; handlers that read no tracker rows
+  resolve none. The API resolves it in `get_scope`, a dependency beside
+  `get_conn`, once per request. The contract is unchanged: a dependency
+  with no request parameter adds nothing to the OpenAPI document, and
+  `just contract` shows no diff.
+- **Company plus title dedupe is across tracks** (Open decisions, item 1,
+  as recommended): `find_duplicate` is unchanged and the refusal names the
+  existing row's track.
+- **Mutants.** With the track predicate removed from `list_jobs`, from
+  `get_job`, from `list_events`, from `backfill_events`, and with the mail
+  event's track blanked, a test in `test_track_isolation.py` fails in each
+  case; recorded in the pull request.
+
+## Amendment (2026-10-08, review of PR #181)
+
+Five findings. Four reproduced and are fixed, each with a test that fails
+without its fix; the fifth is recorded under Honest limitations.
+
+- **The digest read every track's mail events.** `build_digest` scoped its
+  rows but not `actionable_updates`, which reads the shared event file. It
+  now keeps an event whose `track` is the scope's slug; an event that
+  matched no row, or one written before tracks, stays in the default
+  track's digest, where it always appeared
+  (`services/api/tests/test_track_isolation.py::test_the_digest_shows_mail_events_of_its_own_track_only`).
+- **`harrier check` raised on a contact linked to another track's job.**
+  Contacts are the person's, so a link may name a job in any track.
+  `job_for_link` caught `ValueError` and `LookupError`, and
+  `JobNotFoundError` is neither, so the scoped not-found escaped as a
+  traceback; a link to a deleted job did the same before tracks. It is
+  caught now, and `unresolved_links` skips a link whose job exists in
+  another track, found through `track_of_job`, a named cross-track read
+  that returns the track and nothing of the row
+  (`services/api/tests/test_track_isolation.py::test_a_contact_linked_to_another_tracks_job_is_not_reported_gone`).
+- **Two tracks' feature exports on one day wrote one file.** The default
+  track keeps `data/scoring/exports/features-YYYYMMDD.jsonl`, which is what
+  the trainer finds by default; any other track writes under
+  `data/scoring/exports/<slug>/`, which `latest_export` does not read. The
+  header records the track slug and kind, and `read_export` refuses an
+  export whose kind is not `industry`, whatever path it is handed by
+  (`services/api/tests/test_track_isolation.py::test_each_track_gets_its_own_export_and_the_trainer_reads_industry_only`).
+  Both paths sit under `data/**`, already never-in-git.
+- **The static guard accepted a mention of `track_id` as a restriction.**
+  `SELECT track_id FROM jobs` reads every track and passed, and so did a
+  join `jobs.track_id = tracks.id`, which compares the column with another
+  column (found on the second review). A read or a write must now bind
+  `track_id` to a parameter, which is where the scope's track arrives, and
+  an insert into `jobs` must name it among its columns; the fixture carries
+  a projection-only reader, an unscoped join and an insert without the
+  column, and all three fail
+  (`services/api/tests/test_tracker_queries_name_their_track.py::test_the_static_guard_fails_on_an_unscoped_query`).
+- **Seen-message state per track:** declined as unreachable, with the
+  reasoning under Honest limitations.

@@ -24,6 +24,7 @@ from harrier.offers.evaluate import (
 )
 from harrier.screening.descriptions import load_cached_description
 from harrier.tracker import list_jobs, set_status
+from harrier.tracks import Scope
 
 logger = logging.getLogger(__name__)
 
@@ -61,9 +62,11 @@ def _append_audit(entry: dict[str, object]) -> None:
         handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
-def evaluate_prospects(conn: sqlite3.Connection, options: BatchOptions) -> BatchSummary:
+def evaluate_prospects(
+    conn: sqlite3.Connection, scope: Scope, options: BatchOptions
+) -> BatchSummary:
     summary = BatchSummary()
-    prospects = [row for row in list_jobs(conn) if row.get("status") == "prospect"]
+    prospects = [row for row in list_jobs(conn, scope) if row.get("status") == "prospect"]
     if options.limit > 0:
         prospects = prospects[: options.limit]
 
@@ -106,6 +109,7 @@ def evaluate_prospects(conn: sqlite3.Connection, options: BatchOptions) -> Batch
                 # judged the posting, and the history says so (spec 079).
                 set_status(
                     conn,
+                    scope,
                     job_id,
                     "rejected",
                     rejection_reason=reason[:300],

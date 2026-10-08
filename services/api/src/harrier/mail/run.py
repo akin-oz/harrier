@@ -28,6 +28,7 @@ from harrier.mail.watch import (
     tracker_rows,
 )
 from harrier.notify import send_telegram_message
+from harrier.tracks import Scope
 
 SEEN_STATE_LIMIT = 5000
 
@@ -60,6 +61,7 @@ def _debug_line(
 
 def run_watch(
     conn: sqlite3.Connection,
+    scope: Scope,
     *,
     dry_run: bool = False,
     fetch: FetchFn = fetch_recent_messages,
@@ -76,7 +78,7 @@ def run_watch(
         if isinstance(seen_raw, list)
         else {}
     )
-    rows = tracker_rows(conn)
+    rows = tracker_rows(conn, scope)
     messages = fetch()
     summary.fetched_count = len(messages)
 
@@ -105,6 +107,10 @@ def run_watch(
 
         summary.unseen_count += 1
         event = classify_message(message, rows)
+        # Which search the matched row belongs to, so a later reader of the
+        # event file can tell (spec 092). The rows are the scope's, so a
+        # match is a match in this track; no match, no track.
+        event["track"] = scope.track.slug if event.get("tracker_row") else ""
         append_event(event)
         if dry_run:
             line = _debug_line(

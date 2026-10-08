@@ -33,6 +33,7 @@ from harrier.apply.profile import profile_text
 from harrier.db import connect
 from harrier.profile.store import put_document
 from harrier.resume.content import load_skill_vocabulary, load_truth_sources
+from harrier.tracks import default_scope
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PROFILE_JSON_PATH = REPO_ROOT / "config" / "application-profile.example.json"
@@ -785,7 +786,9 @@ def test_cli_cover_letter_exits_3_and_names_each_placeholder(
     from harrier.tracker.actions import add_manually
     from harrier_cli.main import main
 
-    _, row = add_manually(db, company=COMPANY, title=ROLE, url="https://example.com/jobs/1")
+    _, row = add_manually(
+        db, default_scope(db), company=COMPANY, title=ROLE, url="https://example.com/jobs/1"
+    )
     assert row is not None
     jd_file = tmp_path / "posting.txt"
     jd_file.write_text(POSTING, encoding="utf-8")
@@ -904,7 +907,9 @@ def test_a_refused_answer_set_is_retried_once_and_the_second_set_is_written(
     from harrier.tracker.actions import add_manually
     from harrier_cli.main import main
 
-    _, row = add_manually(db, company=COMPANY, title=ROLE, url="https://example.com/jobs/1")
+    _, row = add_manually(
+        db, default_scope(db), company=COMPANY, title=ROLE, url="https://example.com/jobs/1"
+    )
     assert row is not None
     jd_file = tmp_path / "posting.txt"
     jd_file.write_text(POSTING, encoding="utf-8")
@@ -961,7 +966,9 @@ def test_cli_answers_exits_1_after_two_refusals(
     from harrier.tracker.actions import add_manually
     from harrier_cli.main import main
 
-    _, row = add_manually(db, company=COMPANY, title=ROLE, url="https://example.com/jobs/1")
+    _, row = add_manually(
+        db, default_scope(db), company=COMPANY, title=ROLE, url="https://example.com/jobs/1"
+    )
     assert row is not None
     jd_file = tmp_path / "posting.txt"
     jd_file.write_text(POSTING, encoding="utf-8")

@@ -29,6 +29,7 @@ from harrier.discovery import APIFY_MAX_COUNT, scheduled_apify_count
 from harrier.screening.normalized import NormalizedJob
 from harrier.sources import scrub_secrets
 from harrier.tracker.store import list_jobs
+from harrier.tracks import default_scope
 from harrier_api.app import create_app
 from harrier_api.localauth import TOKEN_HEADER, token_matches
 
@@ -181,7 +182,7 @@ def test_a_get_to_capture_changes_nothing(client: TestClient) -> None:
     assert response.status_code == 200
 
     conn = connect()
-    assert list_jobs(conn) == []
+    assert list_jobs(conn, default_scope(conn)) == []
     conn.close()
 
 
@@ -201,7 +202,7 @@ def test_the_capture_form_requires_the_token(
     assert response.status_code == 403, case
 
     conn = connect()
-    assert list_jobs(conn) == []
+    assert list_jobs(conn, default_scope(conn)) == []
     conn.close()
 
 
@@ -384,5 +385,5 @@ def test_the_bookmarklet_path_still_reaches_the_tracker(client: TestClient) -> N
     assert added.status_code == 200
 
     conn: sqlite3.Connection = connect()
-    assert len(list_jobs(conn)) == 1
+    assert len(list_jobs(conn, default_scope(conn))) == 1
     conn.close()

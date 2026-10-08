@@ -33,6 +33,7 @@ from harrier.screening.normalized import make_normalized_job
 from harrier.screening.policy import policy_version
 from harrier.screening.rules import blockers, score_job
 from harrier.tracker.store import list_events, list_jobs
+from harrier.tracks import DEFAULT_TRACK_ID, Scope
 
 EXPORT_FORMAT_VERSION = 1
 
@@ -49,7 +50,9 @@ class ExportResult:
     excluded: dict[str, int]
 
 
-def export_features(conn: sqlite3.Connection, *, today: str | None = None) -> ExportResult:
+def export_features(
+    conn: sqlite3.Connection, scope: Scope, *, today: str | None = None
+) -> ExportResult:
     """Label every decided job, extract its features, and write the export.
 
     Reads the tracker and the description cache; writes nothing to either.
@@ -57,9 +60,9 @@ def export_features(conn: sqlite3.Connection, *, today: str | None = None) -> Ex
     candidate_cfg = load_candidate_config(conn)
     excluded: Counter[str] = Counter({name: 0 for name in EXCLUSIONS})
     rows: list[dict[str, object]] = []
-    for job in list_jobs(conn):
+    for job in list_jobs(conn, scope):
         description = load_cached_description(job["url"])
-        outcome = label_job(job, list_events(conn, int(job["id"])), description)
+        outcome = label_job(job, list_events(conn, scope, int(job["id"])), description)
         if not isinstance(outcome, Labelled):
             excluded[outcome] += 1
             continue
@@ -107,10 +110,20 @@ def export_features(conn: sqlite3.Connection, *, today: str | None = None) -> Ex
         "rules_version": policy_version(candidate_cfg, model=NO_MODEL),
         "rows": len(rows),
         "excluded": dict(sorted(excluded.items())),
+        # Which search the labels came from, so an export can never train a
+        # model for another track's kind (spec 092, review of PR #181).
+        "track": scope.track.slug,
+        "track_kind": scope.track.kind,
     }
     lines = [json.dumps(header, sort_keys=True)]
     lines.extend(json.dumps(row, sort_keys=True) for row in rows)
-    path = exports_dir() / f"features-{stamp.replace('-', '')}.jsonl"
+    # The default track keeps the path the trainer has always read; any other
+    # track writes under its own slug, so a same-day export of one track can
+    # never overwrite another's (review of PR #181).
+    directory = (
+        exports_dir() if scope.track.id == DEFAULT_TRACK_ID else exports_dir() / scope.track.slug
+    )
+    path = directory / f"features-{stamp.replace('-', '')}.jsonl"
     write_bytes_atomic(path, ("\n".join(lines) + "\n").encode("utf-8"))
     return ExportResult(
         path=path,

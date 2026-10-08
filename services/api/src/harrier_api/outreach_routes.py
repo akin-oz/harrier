@@ -23,7 +23,8 @@ from pydantic import BaseModel
 
 from harrier.tracker.selector import SelectorError
 from harrier.tracker.store import TrackerError
-from harrier_api.deps import Conn, DatabaseRoute
+from harrier.tracks import Scope
+from harrier_api.deps import Conn, DatabaseRoute, ScopeDep
 from harrier_api.localauth import TOKEN_RESPONSES, require_token
 from harrier_api.runmodels import Manager, RunOut, run_out
 from harrier_api.runs import RunParams, write_run_input
@@ -107,11 +108,11 @@ OUTREACH_ERRORS: dict[int | str, dict[str, str]] = {
 }
 
 
-def _job_row(conn: sqlite3.Connection, selector: str) -> dict[str, str]:
+def _job_row(conn: sqlite3.Connection, scope: Scope, selector: str) -> dict[str, str]:
     from harrier.tracker.selector import resolve_selector
 
     try:
-        return resolve_selector(conn, selector)
+        return resolve_selector(conn, scope, selector)
     except SelectorError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
@@ -138,14 +139,14 @@ def _row_out(row: dict[str, str]) -> OutreachRowOut:
     responses=OUTREACH_ERRORS,
 )
 async def find_contacts(
-    selector: str, body: FindContactsIn, conn: Conn, manager: Manager
+    selector: str, body: FindContactsIn, conn: Conn, scope: ScopeDep, manager: Manager
 ) -> RunOut:
     """A run, and one that spends money: it reaches Hunter and Apify.
 
     It stages candidates. It writes no contact, which is the invariant this
     module exists to keep.
     """
-    row = _job_row(conn, selector)
+    row = _job_row(conn, scope, selector)
     numbers = {"--max-items": body.max_items} if body.max_items is not None else {}
     params = RunParams(
         job_id=int(row["id"]),
@@ -161,7 +162,7 @@ async def find_contacts(
     dependencies=[Depends(require_token)],
     responses=OUTREACH_ERRORS,
 )
-def list_candidates(selector: str, conn: Conn) -> list[CandidateOut]:
+def list_candidates(selector: str, conn: Conn, scope: ScopeDep) -> list[CandidateOut]:
     """The staged artifact, read through the same extraction approve uses.
 
     This carries a real person's name and title, so it authenticates, for the
@@ -169,7 +170,7 @@ def list_candidates(selector: str, conn: Conn) -> list[CandidateOut]:
     """
     from harrier.outreach import staged_candidates
 
-    row = _job_row(conn, selector)
+    row = _job_row(conn, scope, selector)
     return [
         CandidateOut(
             person_name=candidate.get("person_name", ""),
@@ -189,7 +190,7 @@ def list_candidates(selector: str, conn: Conn) -> list[CandidateOut]:
     dependencies=[Depends(require_token)],
     responses=OUTREACH_ERRORS,
 )
-def approve(selector: str, body: CandidateRef, conn: Conn) -> ContactOut:
+def approve(selector: str, body: CandidateRef, conn: Conn, scope: ScopeDep) -> ContactOut:
     """The only path in this API from a staged candidate to a stored contact.
 
     A candidate discovery never staged is refused rather than created, which
@@ -197,9 +198,10 @@ def approve(selector: str, body: CandidateRef, conn: Conn) -> ContactOut:
     """
     from harrier.outreach import approve_candidate, sync_tracker_outreach
 
-    row = _job_row(conn, selector)
+    row = _job_row(conn, scope, selector)
     added = approve_candidate(
         conn,
+        scope,
         row.get("company", ""),
         row.get("title", ""),
         row.get("url", ""),
@@ -210,7 +212,7 @@ def approve(selector: str, body: CandidateRef, conn: Conn) -> ContactOut:
             status_code=404,
             detail="candidate not found in the staged artifact",
         )
-    sync_tracker_outreach(conn)
+    sync_tracker_outreach(conn, scope)
     return ContactOut(
         id=int(added.get("id", 0) or 0),
         person_name=added.get("person_name", ""),
@@ -228,10 +230,10 @@ def approve(selector: str, body: CandidateRef, conn: Conn) -> ContactOut:
     dependencies=[Depends(require_token)],
     responses=OUTREACH_ERRORS,
 )
-def reject(selector: str, body: CandidateRef, conn: Conn) -> CandidateOut:
+def reject(selector: str, body: CandidateRef, conn: Conn, scope: ScopeDep) -> CandidateOut:
     from harrier.outreach import update_candidate_review_status
 
-    row = _job_row(conn, selector)
+    row = _job_row(conn, scope, selector)
     updated = update_candidate_review_status(
         row.get("company", ""), row.get("title", ""), body.linkedin_url, "rejected"
     )
@@ -256,11 +258,13 @@ def reject(selector: str, body: CandidateRef, conn: Conn) -> CandidateOut:
     dependencies=[Depends(require_token)],
     responses=OUTREACH_ERRORS,
 )
-def set_best_contact(selector: str, body: CandidateRef, conn: Conn) -> OutreachRowOut:
+def set_best_contact(
+    selector: str, body: CandidateRef, conn: Conn, scope: ScopeDep
+) -> OutreachRowOut:
     from harrier.outreach import set_best_contact_for_job
 
-    row = _job_row(conn, selector)
-    updated = set_best_contact_for_job(conn, int(row["id"]), body.linkedin_url)
+    row = _job_row(conn, scope, selector)
+    updated = set_best_contact_for_job(conn, scope, int(row["id"]), body.linkedin_url)
     if updated is None:
         # The CLI's own outcome: not an error, and not a success either.
         raise HTTPException(status_code=409, detail="contact is not linked to this job")
@@ -299,10 +303,10 @@ def list_outreach_contacts(conn: Conn) -> list[ContactOut]:
     dependencies=[Depends(require_token)],
     responses=TOKEN_RESPONSES,
 )
-def list_outreach_due(conn: Conn) -> list[OutreachRowOut]:
+def list_outreach_due(conn: Conn, scope: ScopeDep) -> list[OutreachRowOut]:
     from harrier.outreach import outreach_due_rows
 
-    return [_row_out(row) for row in outreach_due_rows(conn)]
+    return [_row_out(row) for row in outreach_due_rows(conn, scope)]
 
 
 @outreach_router.post(
@@ -311,10 +315,10 @@ def list_outreach_due(conn: Conn) -> list[OutreachRowOut]:
     dependencies=[Depends(require_token)],
     responses=TOKEN_RESPONSES,
 )
-def sync_outreach(conn: Conn) -> list[OutreachRowOut]:
+def sync_outreach(conn: Conn, scope: ScopeDep) -> list[OutreachRowOut]:
     from harrier.outreach import sync_tracker_outreach
 
-    return [_row_out(row) for row in sync_tracker_outreach(conn)]
+    return [_row_out(row) for row in sync_tracker_outreach(conn, scope)]
 
 
 @outreach_router.post(
@@ -323,7 +327,7 @@ def sync_outreach(conn: Conn) -> list[OutreachRowOut]:
     dependencies=[Depends(require_token)],
     responses=OUTREACH_ERRORS,
 )
-def mark_sent(selector: str, body: MarkIn, conn: Conn) -> OutreachRowOut:
+def mark_sent(selector: str, body: MarkIn, conn: Conn, scope: ScopeDep) -> OutreachRowOut:
     """Records that the operator sent something themselves.
 
     It sends nothing. The page says so in those words, because a control
@@ -331,9 +335,9 @@ def mark_sent(selector: str, body: MarkIn, conn: Conn) -> OutreachRowOut:
     """
     from harrier.outreach import mark_job_outreach_sent
 
-    row = _job_row(conn, selector)
+    row = _job_row(conn, scope, selector)
     try:
-        return _row_out(mark_job_outreach_sent(conn, int(row["id"]), sent_at=body.date))
+        return _row_out(mark_job_outreach_sent(conn, scope, int(row["id"]), sent_at=body.date))
     except (TrackerError, ValueError) as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
 
@@ -344,12 +348,14 @@ def mark_sent(selector: str, body: MarkIn, conn: Conn) -> OutreachRowOut:
     dependencies=[Depends(require_token)],
     responses=OUTREACH_ERRORS,
 )
-def mark_replied(selector: str, body: MarkIn, conn: Conn) -> OutreachRowOut:
+def mark_replied(selector: str, body: MarkIn, conn: Conn, scope: ScopeDep) -> OutreachRowOut:
     from harrier.outreach import mark_job_outreach_replied
 
-    row = _job_row(conn, selector)
+    row = _job_row(conn, scope, selector)
     try:
-        return _row_out(mark_job_outreach_replied(conn, int(row["id"]), replied_at=body.date))
+        return _row_out(
+            mark_job_outreach_replied(conn, scope, int(row["id"]), replied_at=body.date)
+        )
     except (TrackerError, ValueError) as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
 
@@ -360,12 +366,12 @@ def mark_replied(selector: str, body: MarkIn, conn: Conn) -> OutreachRowOut:
     dependencies=[Depends(require_token)],
     responses=OUTREACH_ERRORS,
 )
-def snooze(selector: str, body: SnoozeIn, conn: Conn) -> OutreachRowOut:
+def snooze(selector: str, body: SnoozeIn, conn: Conn, scope: ScopeDep) -> OutreachRowOut:
     from harrier.outreach import snooze_job_outreach
 
-    row = _job_row(conn, selector)
+    row = _job_row(conn, scope, selector)
     try:
-        return _row_out(snooze_job_outreach(conn, int(row["id"]), body.until))
+        return _row_out(snooze_job_outreach(conn, scope, int(row["id"]), body.until))
     except (TrackerError, ValueError) as error:
         # An unparseable date is the domain's refusal, in its own words.
         raise HTTPException(status_code=409, detail=str(error)) from error
@@ -380,14 +386,16 @@ def snooze(selector: str, body: SnoozeIn, conn: Conn) -> OutreachRowOut:
     dependencies=[Depends(require_token)],
     responses=OUTREACH_ERRORS,
 )
-async def draft_outreach(selector: str, body: DraftIn, conn: Conn, manager: Manager) -> RunOut:
+async def draft_outreach(
+    selector: str, body: DraftIn, conn: Conn, scope: ScopeDep, manager: Manager
+) -> RunOut:
     """The contact and the tone travel in a file, not argv.
 
     A contact's name and LinkedIn URL are a real person's details, and argv
     is readable from the process table by every other process on the machine
     (spec 047's rule, applied to spec 048's inputs).
     """
-    row = _job_row(conn, selector)
+    row = _job_row(conn, scope, selector)
     payload = {
         "contact_linkedin": body.contact_linkedin,
         "contact_name": body.contact_name,

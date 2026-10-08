@@ -64,7 +64,7 @@ def test_an_unknown_status_is_still_refused(db: sqlite3.Connection) -> None:
     from harrier.tracker.store import UnknownStatusError
 
     with pytest.raises(UnknownStatusError):
-        set_status(db, 1, "promoted")
+        set_status(db, default_scope(db), 1, "promoted")
 
 
 # --- applied carries its date -------------------------------------------------
@@ -76,11 +76,11 @@ def test_applied_cannot_lose_its_date_through_the_generic_update(db: sqlite3.Con
     `set_status` stamps the date, and then `update_fields` could clear it,
     leaving a row that says it was applied to on no particular day.
     """
-    set_status(db, 1, "applied")
-    assert get_job(db, 1)["applied_date"] != ""
+    set_status(db, default_scope(db), 1, "applied")
+    assert get_job(db, default_scope(db), 1)["applied_date"] != ""
     with pytest.raises(TrackerError, match="must carry the date"):
-        update_fields(db, 1, {"applied_date": ""})
-    assert get_job(db, 1)["applied_date"] != ""
+        update_fields(db, default_scope(db), 1, {"applied_date": ""})
+    assert get_job(db, default_scope(db), 1)["applied_date"] != ""
 
 
 def test_the_breach_is_named_the_same_way_wherever_it_is_found() -> None:
@@ -97,16 +97,16 @@ def test_leaving_rejected_clears_the_rejection_reason(db: sqlite3.Connection) ->
     """A resurrected job carrying the reason it was rejected reads as though
     it were rejected again for that reason. Only the rejecting branch ever
     touched the field, so it survived forever."""
-    set_status(db, 1, "rejected", rejection_reason="wrong stack")
-    assert get_job(db, 1)["rejection_reason"] == "wrong stack"
-    set_status(db, 1, "shortlisted")
-    assert get_job(db, 1)["rejection_reason"] == ""
+    set_status(db, default_scope(db), 1, "rejected", rejection_reason="wrong stack")
+    assert get_job(db, default_scope(db), 1)["rejection_reason"] == "wrong stack"
+    set_status(db, default_scope(db), 1, "shortlisted")
+    assert get_job(db, default_scope(db), 1)["rejection_reason"] == ""
 
 
 def test_a_rejection_reason_cannot_be_added_to_a_live_job(db: sqlite3.Connection) -> None:
-    set_status(db, 1, "shortlisted")
+    set_status(db, default_scope(db), 1, "shortlisted")
     with pytest.raises(TrackerError, match="must not carry a rejection reason"):
-        update_fields(db, 1, {"rejection_reason": "changed my mind"})
+        update_fields(db, default_scope(db), 1, {"rejection_reason": "changed my mind"})
 
 
 # --- the outreach axis ---------------------------------------------------------
@@ -121,12 +121,14 @@ def test_walking_back_past_applied_resets_the_outreach_axis(db: sqlite3.Connecti
     the orthogonality claim and makes the code honour it, rather than deleting
     the claim.
     """
-    set_status(db, 1, "applied")
-    update_fields(db, 1, {"outreach_status": "sent", "last_outreach_at": "2026-08-01"})
-    assert get_job(db, 1)["outreach_status"] == "sent"
+    set_status(db, default_scope(db), 1, "applied")
+    update_fields(
+        db, default_scope(db), 1, {"outreach_status": "sent", "last_outreach_at": "2026-08-01"}
+    )
+    assert get_job(db, default_scope(db), 1)["outreach_status"] == "sent"
 
-    set_status(db, 1, "prospect")
-    row = get_job(db, 1)
+    set_status(db, default_scope(db), 1, "prospect")
+    row = get_job(db, default_scope(db), 1)
     assert row["outreach_status"] == ""
     assert row["last_outreach_at"] == ""
 
@@ -136,22 +138,22 @@ def test_outreach_survives_a_move_that_stays_at_or_above_applied(
 ) -> None:
     """Orthogonal means orthogonal. Moving applied to interviewing is not a
     reason to forget who was contacted."""
-    set_status(db, 1, "applied")
-    update_fields(db, 1, {"outreach_status": "sent"})
-    set_status(db, 1, "interviewing")
-    assert get_job(db, 1)["outreach_status"] == "sent"
+    set_status(db, default_scope(db), 1, "applied")
+    update_fields(db, default_scope(db), 1, {"outreach_status": "sent"})
+    set_status(db, default_scope(db), 1, "interviewing")
+    assert get_job(db, default_scope(db), 1)["outreach_status"] == "sent"
 
 
 def test_a_prospect_cannot_be_given_a_sent_outreach_status(db: sqlite3.Connection) -> None:
     with pytest.raises(TrackerError, match="must not claim outreach"):
-        update_fields(db, 1, {"outreach_status": "sent"})
+        update_fields(db, default_scope(db), 1, {"outreach_status": "sent"})
 
 
 def test_a_planned_outreach_is_not_a_claim_that_it_happened(db: sqlite3.Connection) -> None:
     """`needs_contacts` is a plan and is fine on a prospect. Only the values
     that assert something happened are refused."""
-    update_fields(db, 1, {"outreach_status": "needs_contacts"})
-    assert get_job(db, 1)["outreach_status"] == "needs_contacts"
+    update_fields(db, default_scope(db), 1, {"outreach_status": "needs_contacts"})
+    assert get_job(db, default_scope(db), 1)["outreach_status"] == "needs_contacts"
 
 
 # --- rows that predate the rules ----------------------------------------------
@@ -163,30 +165,30 @@ def test_a_row_that_already_breaks_a_rule_can_still_be_repaired(
     """Refusing every write to a row that already breaks a rule would make
     rows written before these rules unrepairable, which is the opposite of
     what the spec asks for."""
-    set_status(db, 1, "applied")
+    set_status(db, default_scope(db), 1, "applied")
     db.execute("UPDATE jobs SET applied_date = '' WHERE id = 1")
     db.commit()
-    assert invariant_breach(get_job(db, 1)) != ""
+    assert invariant_breach(get_job(db, default_scope(db), 1)) != ""
 
     # A write that does not touch the breach is allowed through.
-    update_fields(db, 1, {"next_action": "chase the recruiter"})
-    assert get_job(db, 1)["next_action"] == "chase the recruiter"
+    update_fields(db, default_scope(db), 1, {"next_action": "chase the recruiter"})
+    assert get_job(db, default_scope(db), 1)["next_action"] == "chase the recruiter"
     # And the row can be put right.
-    update_fields(db, 1, {"applied_date": "2026-08-01"})
-    assert invariant_breach(get_job(db, 1)) == ""
+    update_fields(db, default_scope(db), 1, {"applied_date": "2026-08-01"})
+    assert invariant_breach(get_job(db, default_scope(db), 1)) == ""
 
 
 def test_check_reports_pre_existing_rows_and_changes_nothing(
     db: sqlite3.Connection, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    set_status(db, 1, "applied")
+    set_status(db, default_scope(db), 1, "applied")
     db.execute("UPDATE jobs SET applied_date = '' WHERE id = 1")
     db.commit()
-    before = dict(get_job(db, 1))
+    before = dict(get_job(db, default_scope(db), 1))
 
     assert main(["check"]) == 1
     assert "must carry the date" in capsys.readouterr().err
-    assert dict(get_job(db, 1)) == before
+    assert dict(get_job(db, default_scope(db), 1)) == before
 
 
 def test_check_is_quiet_and_succeeds_on_a_clean_tracker(
@@ -210,6 +212,7 @@ def _a_contact(
 
     return upsert_contact(
         conn,
+        default_scope(conn),
         company=company,
         role=role,
         job_url=url,
@@ -230,15 +233,15 @@ def test_a_contact_stays_linked_to_its_job_after_the_title_is_edited(
     from harrier.outreach.joblink import job_for_link
     from harrier.tracker.store import list_contacts
 
-    job = get_job(db, 1)
+    job = get_job(db, default_scope(db), 1)
     _a_contact(db, job["url"])
 
-    update_fields(db, 1, {"title": "Staff Frontend Engineer"})
+    update_fields(db, default_scope(db), 1, {"title": "Staff Frontend Engineer"})
 
     contact = list_contacts(db)[0]
     link = parse_linked_jobs(contact["linked_jobs"])[0]
     assert link["job_id"] == "1"
-    followed = job_for_link(db, link)
+    followed = job_for_link(db, default_scope(db), link)
     assert followed is not None
     assert followed["title"] == "Staff Frontend Engineer"
     # The text in the link is the old title, and that is fine: it is what a
@@ -258,7 +261,7 @@ def test_a_link_to_an_untracked_job_is_kept_and_reported(db: sqlite3.Connection)
     from harrier.outreach.joblink import unresolved_links
 
     _a_contact(db, "https://boards.example.com/elsewhere/999", company="Someone Else Ltd")
-    problems = unresolved_links(db)
+    problems = unresolved_links(db, default_scope(db))
     assert len(problems) == 1
     assert "matches no tracked job" in problems[0][1]
 
@@ -270,7 +273,7 @@ def test_the_backfill_links_old_records_and_drops_none(db: sqlite3.Connection) -
     from harrier.outreach.joblink import backfill_job_ids
     from harrier.tracker.store import list_contacts, update_contact_fields
 
-    job = get_job(db, 1)
+    job = get_job(db, default_scope(db), 1)
     _a_contact(db, job["url"])
     contact = list_contacts(db)[0]
     # Strip the ids, as a record written before this change would have been,
@@ -281,7 +284,7 @@ def test_the_backfill_links_old_records_and_drops_none(db: sqlite3.Connection) -
     ]
     update_contact_fields(db, int(contact["id"]), {"linked_jobs": serialize_linked_jobs(old)})
 
-    resolved, unmatched = backfill_job_ids(db)
+    resolved, unmatched = backfill_job_ids(db, default_scope(db))
     assert (resolved, unmatched) == (1, 1)
 
     links = parse_linked_jobs(list_contacts(db)[0]["linked_jobs"])
@@ -374,24 +377,24 @@ def test_a_second_breach_cannot_ride_in_behind_the_first(db: sqlite3.Connection)
     before and after a write that added a rejection reason, so the second
     breach looked like nothing new and was written (review finding on PR #44).
     """
-    set_status(db, 1, "applied")
+    set_status(db, default_scope(db), 1, "applied")
     db.execute("UPDATE jobs SET applied_date = '' WHERE id = 1")
     db.commit()
-    assert len(all_breaches(get_job(db, 1))) == 1
+    assert len(all_breaches(get_job(db, default_scope(db), 1))) == 1
 
     with pytest.raises(TrackerError, match="must not carry a rejection reason"):
-        update_fields(db, 1, {"rejection_reason": "added anyway"})
-    assert get_job(db, 1)["rejection_reason"] == ""
+        update_fields(db, default_scope(db), 1, {"rejection_reason": "added anyway"})
+    assert get_job(db, default_scope(db), 1)["rejection_reason"] == ""
 
 
 def test_the_pre_existing_breach_still_does_not_block_repair(db: sqlite3.Connection) -> None:
     """The other half of the same rule: refusing a new breach must not refuse
     a write that leaves the old one alone."""
-    set_status(db, 1, "applied")
+    set_status(db, default_scope(db), 1, "applied")
     db.execute("UPDATE jobs SET applied_date = '' WHERE id = 1")
     db.commit()
-    update_fields(db, 1, {"next_action": "chase the recruiter"})
-    assert get_job(db, 1)["next_action"] == "chase the recruiter"
+    update_fields(db, default_scope(db), 1, {"next_action": "chase the recruiter"})
+    assert get_job(db, default_scope(db), 1)["next_action"] == "chase the recruiter"
 
 
 def test_rejecting_then_reviving_to_an_earlier_stage_clears_outreach(
@@ -403,12 +406,14 @@ def test_rejecting_then_reviving_to_an_earlier_stage_clears_outreach(
     and applied then rejected then prospect left a prospect claiming contact
     had been sent (review finding on PR #44).
     """
-    set_status(db, 1, "applied")
-    update_fields(db, 1, {"outreach_status": "sent", "last_outreach_at": "2026-08-01"})
-    set_status(db, 1, "rejected", rejection_reason="wrong stack")
-    set_status(db, 1, "prospect")
+    set_status(db, default_scope(db), 1, "applied")
+    update_fields(
+        db, default_scope(db), 1, {"outreach_status": "sent", "last_outreach_at": "2026-08-01"}
+    )
+    set_status(db, default_scope(db), 1, "rejected", rejection_reason="wrong stack")
+    set_status(db, default_scope(db), 1, "prospect")
 
-    row = get_job(db, 1)
+    row = get_job(db, default_scope(db), 1)
     assert row["outreach_status"] == ""
     assert row["last_outreach_at"] == ""
     assert row["rejection_reason"] == ""
@@ -418,20 +423,20 @@ def test_rejecting_then_reviving_to_an_earlier_stage_clears_outreach(
 def test_reviving_to_applied_keeps_the_outreach_it_earned(db: sqlite3.Connection) -> None:
     """Only a move below applied loses it. Un-rejecting back to applied is
     not a reason to forget who was contacted."""
-    set_status(db, 1, "applied")
-    update_fields(db, 1, {"outreach_status": "sent"})
-    set_status(db, 1, "rejected", rejection_reason="wrong stack")
-    set_status(db, 1, "applied")
-    assert get_job(db, 1)["outreach_status"] == "sent"
+    set_status(db, default_scope(db), 1, "applied")
+    update_fields(db, default_scope(db), 1, {"outreach_status": "sent"})
+    set_status(db, default_scope(db), 1, "rejected", rejection_reason="wrong stack")
+    set_status(db, default_scope(db), 1, "applied")
+    assert get_job(db, default_scope(db), 1)["outreach_status"] == "sent"
 
 
 def test_check_reports_every_breach_on_a_row(db: sqlite3.Connection) -> None:
     """A row with two problems that reported one would send the operator
     round the loop again for the second."""
-    set_status(db, 1, "applied")
+    set_status(db, default_scope(db), 1, "applied")
     db.execute("UPDATE jobs SET applied_date = '', rejection_reason = 'stale' WHERE id = 1")
     db.commit()
-    reported = [why for _, why in check_rows([get_job(db, 1)])]
+    reported = [why for _, why in check_rows([get_job(db, default_scope(db), 1)])]
     assert len(reported) == 2
 
 
@@ -443,7 +448,7 @@ def test_the_link_report_says_when_it_wrote(
     from harrier.outreach.contacts import serialize_linked_jobs
     from harrier.tracker.store import list_contacts, update_contact_fields
 
-    job = get_job(db, 1)
+    job = get_job(db, default_scope(db), 1)
     _a_contact(db, job["url"])
     contact = list_contacts(db)[0]
     update_contact_fields(

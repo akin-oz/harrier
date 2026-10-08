@@ -32,6 +32,7 @@ from harrier.tracker.export import export_csv
 from harrier.tracker.migrate_legacy import MigrationError, migrate
 from harrier.tracker.reasons import REASON_CODES
 from harrier.tracker.store import TrackerError
+from harrier.tracks import default_scope
 
 
 def load_project_env(path: Path | None = None) -> None:
@@ -101,8 +102,10 @@ def _cmd_discover(args: argparse.Namespace) -> int:
         print(f"{source}: {stage}", flush=True)
 
     with closing(connect()) as conn:
+        scope = default_scope(conn)
         aggregate = run_discovery(
             conn,
+            scope,
             DiscoveryOptions(
                 dry_run=args.dry_run,
                 notify=not args.no_notify,
@@ -167,16 +170,17 @@ def _cmd_check(args: argparse.Namespace) -> int:
 
     wrote = 0
     conn = connect()
+    scope = default_scope(conn)
     try:
         if args.link_contacts:
             # The one thing this command changes, and only when asked. It
             # gives existing contact links the job id they were written
             # without; it never drops a link it cannot match (spec 036).
-            resolved, unmatched = backfill_job_ids(conn)
+            resolved, unmatched = backfill_job_ids(conn, scope)
             wrote = resolved
             print(f"linked {resolved} contact link(s) to jobs; {unmatched} left unmatched")
-        problems = check_rows(list_jobs(conn))
-        link_problems = unresolved_links(conn)
+        problems = check_rows(list_jobs(conn, scope))
+        link_problems = unresolved_links(conn, scope)
     finally:
         conn.close()
 
@@ -195,7 +199,8 @@ def _cmd_check(args: argparse.Namespace) -> int:
 
 def _cmd_export(args: argparse.Namespace) -> int:
     with closing(connect()) as conn:
-        jobs_path, contacts_path = export_csv(conn, Path(args.dest))
+        scope = default_scope(conn)
+        jobs_path, contacts_path = export_csv(conn, scope, Path(args.dest))
         print(f"exported: {jobs_path}")
         print(f"exported: {contacts_path}")
         return 0
@@ -249,8 +254,9 @@ def _cmd_tailor(args: argparse.Namespace) -> int:
             return 1
 
     with closing(connect()) as conn:
+        scope = default_scope(conn)
         try:
-            result = run_tailor(conn, args.job_id, jd_text=jd_text, no_ai=args.no_ai)
+            result = run_tailor(conn, scope, args.job_id, jd_text=jd_text, no_ai=args.no_ai)
         except (ResumeBundleError, ValueError, RuntimeError) as error:
             print(f"tailor failed: {error}", file=sys.stderr)
             return 1
@@ -293,8 +299,9 @@ def _cmd_cover_letter(args: argparse.Namespace) -> int:
             print(f"cover letter failed: cannot read --notes-file: {error}", file=sys.stderr)
             return 1
     with closing(connect()) as conn:
+        scope = default_scope(conn)
         try:
-            row = get_job(conn, args.job_id)
+            row = get_job(conn, scope, args.job_id)
             if not jd_text:
                 jd_text = load_cached_description(row.get("url", "")) or None
             brief = load_brief(conn, args.job_id)
@@ -349,8 +356,9 @@ def _cmd_answers(args: argparse.Namespace) -> int:
     if error_code is not None:
         return error_code
     with closing(connect()) as conn:
+        scope = default_scope(conn)
         try:
-            row = get_job(conn, args.job_id)
+            row = get_job(conn, scope, args.job_id)
             if not jd_text:
                 jd_text = load_cached_description(row.get("url", "")) or None
             questions = parse_questions(args.question, args.questions_file)
@@ -401,8 +409,9 @@ def _cmd_brief_set(args: argparse.Namespace) -> int:
         print(f"brief failed: cannot read --file: {error}", file=sys.stderr)
         return 1
     with closing(connect()) as conn:
+        scope = default_scope(conn)
         try:
-            get_job(conn, args.job_id)
+            get_job(conn, scope, args.job_id)
             store_brief(conn, args.job_id, text)
         except (BriefError, TrackerError) as error:
             print(f"brief failed: {error}", file=sys.stderr)
@@ -434,8 +443,9 @@ def _cmd_evaluate(args: argparse.Namespace) -> int:
     if args.jd_text:
         jd_text = args.jd_text
     with closing(connect()) as conn:
+        scope = default_scope(conn)
         try:
-            row = get_job(conn, args.job_id)
+            row = get_job(conn, scope, args.job_id)
             if not jd_text:
                 jd_text = load_cached_description(row.get("url", ""))
             result = evaluate_offer(
@@ -459,8 +469,10 @@ def _cmd_evaluate_prospects(args: argparse.Namespace) -> int:
     from harrier.offers import BatchOptions, evaluate_prospects
 
     with closing(connect()) as conn:
+        scope = default_scope(conn)
         summary = evaluate_prospects(
             conn,
+            scope,
             BatchOptions(
                 apply=args.apply,
                 threshold=args.threshold,
@@ -487,8 +499,9 @@ def _cmd_find_contacts(args: argparse.Namespace) -> int:
     from harrier.tracker import get_job
 
     with closing(connect()) as conn:
+        scope = default_scope(conn)
         try:
-            row = get_job(conn, args.job_id)
+            row = get_job(conn, scope, args.job_id)
             finder = find_best_contacts_for_job if args.best_only else find_contacts_for_job
             summary = finder(
                 company=row.get("company", ""),
@@ -527,6 +540,7 @@ def _cmd_contacts(args: argparse.Namespace) -> int:
     from harrier.tracker import get_job, list_contacts
 
     with closing(connect()) as conn:
+        scope = default_scope(conn)
         if args.contacts_command == "list":
             for contact in list_contacts(conn):
                 print(
@@ -536,25 +550,27 @@ def _cmd_contacts(args: argparse.Namespace) -> int:
                 )
             return 0
         try:
-            row = get_job(conn, args.job_id)
+            row = get_job(conn, scope, args.job_id)
         except TrackerError as error:
             print(f"contacts failed: {error}", file=sys.stderr)
             return 1
         company = row.get("company", "")
         role = row.get("title", "")
         if args.contacts_command == "set-best":
-            updated_row = set_best_contact_for_job(conn, args.job_id, args.linkedin_url)
+            updated_row = set_best_contact_for_job(conn, scope, args.job_id, args.linkedin_url)
             if updated_row is None:
                 print("contact is not linked to this job", file=sys.stderr)
                 return 1
             print(f"best_contact={updated_row.get('best_contact_name', '')}")
             return 0
         if args.contacts_command == "approve":
-            added = approve_candidate(conn, company, role, row.get("url", ""), args.linkedin_url)
+            added = approve_candidate(
+                conn, scope, company, role, row.get("url", ""), args.linkedin_url
+            )
             if added is None:
                 print("candidate not found in the staged artifact", file=sys.stderr)
                 return 1
-            sync_tracker_outreach(conn)
+            sync_tracker_outreach(conn, scope)
             print(f"approved: {added.get('person_name', '')} ({added.get('linkedin_url', '')})")
             return 0
         updated = update_candidate_review_status(company, role, args.linkedin_url, "rejected")
@@ -575,25 +591,26 @@ def _cmd_outreach(args: argparse.Namespace) -> int:
     )
 
     with closing(connect()) as conn:
+        scope = default_scope(conn)
         try:
             if args.outreach_command == "sync":
-                rows = sync_tracker_outreach(conn)
+                rows = sync_tracker_outreach(conn, scope)
                 print(f"synced {len(rows)} rows")
             elif args.outreach_command == "due":
-                for row in outreach_due_rows(conn):
+                for row in outreach_due_rows(conn, scope):
                     print(
                         f"{row['id']}. {row.get('company', '')} | {row.get('title', '')} | "
                         f"{row.get('next_outreach_action', '')} | "
                         f"best={row.get('best_contact_name', '')}"
                     )
             elif args.outreach_command == "mark-sent":
-                row = mark_job_outreach_sent(conn, args.job_id, sent_at=args.date)
+                row = mark_job_outreach_sent(conn, scope, args.job_id, sent_at=args.date)
                 print(f"outreach_status={row['outreach_status']}")
             elif args.outreach_command == "mark-replied":
-                row = mark_job_outreach_replied(conn, args.job_id, replied_at=args.date)
+                row = mark_job_outreach_replied(conn, scope, args.job_id, replied_at=args.date)
                 print(f"outreach_status={row['outreach_status']}")
             else:
-                row = snooze_job_outreach(conn, args.job_id, args.until)
+                row = snooze_job_outreach(conn, scope, args.job_id, args.until)
                 print(f"next_outreach_action={row['next_outreach_action']}")
         except (TrackerError, ValueError) as error:
             print(f"outreach failed: {error}", file=sys.stderr)
@@ -605,7 +622,8 @@ def _cmd_backfill_posters(args: argparse.Namespace) -> int:
     from harrier.outreach import backfill_posters
 
     with closing(connect()) as conn:
-        summary = backfill_posters(conn, limit=args.limit, dry_run=args.dry_run)
+        scope = default_scope(conn)
+        summary = backfill_posters(conn, scope, limit=args.limit, dry_run=args.dry_run)
         for line in summary.lines:
             print(line)
         print(
@@ -650,8 +668,9 @@ def _cmd_outreach_draft(args: argparse.Namespace) -> int:
         return str(value) if isinstance(value, str) and value else fallback
 
     with closing(connect()) as conn:
+        scope = default_scope(conn)
         try:
-            row = get_job(conn, args.job_id)
+            row = get_job(conn, scope, args.job_id)
             contact_name = supplied_text("contact_name", args.contact_name or "")
             contact_role = supplied_text("contact_role", args.contact_role or "")
             contact_linkedin = supplied_text("contact_linkedin", args.contact_linkedin or "")
@@ -696,8 +715,9 @@ def _cmd_gmail_watch(args: argparse.Namespace) -> int:
     from harrier.mail import run_watch
 
     with closing(connect()) as conn:
+        scope = default_scope(conn)
         try:
-            summary = run_watch(conn, dry_run=args.dry_run)
+            summary = run_watch(conn, scope, dry_run=args.dry_run)
         except RuntimeError as error:
             print(f"gmail watch failed: {error}", file=sys.stderr)
             return 1
@@ -784,7 +804,8 @@ def _cmd_digest(args: argparse.Namespace) -> int:
         print(f"digest failed: invalid --date: {error}", file=sys.stderr)
         return 2
     with closing(connect()) as conn:
-        digest, rc = run_digest(conn, target_date, dry_run=args.dry_run)
+        scope = default_scope(conn)
+        digest, rc = run_digest(conn, scope, target_date, dry_run=args.dry_run)
         print(digest)
         return rc
 
@@ -821,6 +842,7 @@ def _cmd_cutover(args: argparse.Namespace) -> int:
         return 1
 
     conn = connect()
+
     try:
         if args.cutover_command == "preflight":
             checks = preflight(conn, old_root=old_root)
@@ -917,9 +939,11 @@ def _cmd_tracker_verb(args: argparse.Namespace) -> int:
     from harrier.tracker.actions import TrackerActionError, change_status, rescore
 
     conn = connect()
+
+    scope = default_scope(conn)
     try:
         if args.command in {"next", "review"}:
-            jobs = list_jobs(conn)
+            jobs = list_jobs(conn, scope)
             if args.command == "review":
                 # Counts cover everything; the queue below is only what still
                 # needs a decision from you, which is what review is for.
@@ -944,6 +968,7 @@ def _cmd_tracker_verb(args: argparse.Namespace) -> int:
         if args.command == "add":
             result = add_captured_job(
                 conn,
+                scope,
                 company=args.company,
                 title=args.title,
                 location=args.location,
@@ -956,7 +981,7 @@ def _cmd_tracker_verb(args: argparse.Namespace) -> int:
             # looked up by what identifies it, which is also the check the
             # duplicate path just ran.
             if args.url:
-                for candidate in list_jobs(conn):
+                for candidate in list_jobs(conn, scope):
                     if candidate["url"] == args.url.strip():
                         print(describe(candidate))
                         break
@@ -974,7 +999,7 @@ def _cmd_tracker_verb(args: argparse.Namespace) -> int:
             # the first pass had. Moving it rather than keeping a copy is the
             # whole point of the shared action.
             try:
-                outcome = rescore(conn, args.selector)
+                outcome = rescore(conn, scope, args.selector)
             except TrackerActionError as error:
                 # Named by what the operator typed. The row itself is not
                 # resolved on this path any more, because the shared action
@@ -992,6 +1017,7 @@ def _cmd_tracker_verb(args: argparse.Namespace) -> int:
         try:
             updated = change_status(
                 conn,
+                scope,
                 args.selector,
                 args.command,
                 reason=reason,
@@ -1019,8 +1045,9 @@ def _cmd_company_outcome(args: argparse.Namespace) -> int:
 
     note = " ".join(args.note or []).strip() or None
     with closing(connect()) as conn:
+        scope = default_scope(conn)
         try:
-            updated = record_company_outcome(conn, args.selector, args.code, note=note)
+            updated = record_company_outcome(conn, scope, args.selector, args.code, note=note)
         except SelectorError as error:
             print(str(error), file=sys.stderr)
             return 1
@@ -1038,7 +1065,8 @@ def _cmd_scoring(args: argparse.Namespace) -> int:
         from harrier.scoring.export import export_features
 
         with closing(connect()) as conn:
-            result = export_features(conn)
+            scope = default_scope(conn)
+            result = export_features(conn, scope)
         print(
             f"exported {result.rows} labelled jobs ({result.positives} acted on) to {result.path}"
         )
@@ -1089,19 +1117,20 @@ def _cmd_events(args: argparse.Namespace) -> int:
     from harrier.tracker.store import backfill_events, list_events
 
     with closing(connect()) as conn:
+        scope = default_scope(conn)
         if args.events_command == "backfill":
-            counts = backfill_events(conn, dry_run=args.dry_run)
+            counts = backfill_events(conn, scope, dry_run=args.dry_run)
             verb = "would write" if args.dry_run else "wrote"
             print(f"{verb} {sum(counts.values())} events")
             for (kind, actor, code), count in sorted(counts.items()):
                 print(f"  {kind:<8} {actor:<9} {code or '-':<20} {count}")
             return 0
         try:
-            job = resolve_selector(conn, args.selector)
+            job = resolve_selector(conn, scope, args.selector)
         except SelectorError as error:
             print(str(error), file=sys.stderr)
             return 1
-        events = list_events(conn, int(job["id"]))
+        events = list_events(conn, scope, int(job["id"]))
         if not events:
             print("no events recorded; `harrier events backfill` reconstructs older history")
             return 0
@@ -1141,6 +1170,7 @@ def _cmd_config(args: argparse.Namespace) -> int:
     )
 
     conn = connect()
+
     try:
         if args.config_command == "list":
             rows = list_config(conn)
@@ -1208,6 +1238,7 @@ def _cmd_check_feeds(args: argparse.Namespace) -> int:
     )
 
     conn = connect()
+
     try:
         feeds = load_feeds_for_check(conn)
         report = check_feeds(feeds)
@@ -1293,12 +1324,14 @@ def _cmd_reconsider(args: argparse.Namespace) -> int:
     from harrier.screening.reconsider import reconsider_source
 
     conn = connect()
+
+    scope = default_scope(conn)
     try:
         candidate_cfg = load_candidate_config(conn)
         sources = [args.source] if args.source else list(SOURCE_ORDER)
         total_cleared = 0
         for source in sources:
-            report = reconsider_source(conn, source, candidate_cfg, dry_run=not args.apply)
+            report = reconsider_source(conn, scope, source, candidate_cfg, dry_run=not args.apply)
             if report.examined:
                 print(report.describe())
             total_cleared += report.changed

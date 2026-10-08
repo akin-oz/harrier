@@ -42,6 +42,7 @@ from harrier.tracker.store import (
     set_status,
     update_fields,
 )
+from harrier.tracks import Scope
 
 # The CLI verb each status change is spelled as, and the status it produces.
 # One mapping, so the browser cannot invent a sixth transition the command
@@ -68,6 +69,7 @@ class RescoreResult:
 
 def change_status(
     conn: sqlite3.Connection,
+    scope: Scope,
     selector: str,
     verb: str,
     *,
@@ -92,7 +94,7 @@ def change_status(
     target = STATUS_BY_VERB.get(verb)
     if target is None:
         raise TrackerActionError(f"unknown tracker verb: {verb}")
-    job = resolve_selector(conn, selector)
+    job = resolve_selector(conn, scope, selector)
     # The reason is only meaningful on a rejection, which is the only status
     # the store stamps it against. Passing it on any other transition would
     # be silently dropped, so it is named here rather than absorbed.
@@ -111,6 +113,7 @@ def change_status(
             )
     return set_status(
         conn,
+        scope,
         int(job["id"]),
         target,
         applied_date=applied_date,
@@ -121,6 +124,7 @@ def change_status(
 
 def record_company_outcome(
     conn: sqlite3.Connection,
+    scope: Scope,
     selector: str,
     code: str,
     *,
@@ -144,8 +148,8 @@ def record_company_outcome(
             f"{code!r} is not a company's response. If it is your own decision, "
             f"record it with: harrier reject {selector} --code {code}"
         )
-    job = resolve_selector(conn, selector)
-    engaged = company_engaged(job) or company_has_responded(conn, int(job["id"]))
+    job = resolve_selector(conn, scope, selector)
+    engaged = company_engaged(job) or company_has_responded(conn, scope, int(job["id"]))
     if code != INTERVIEW_INVITED and not engaged:
         raise TrackerActionError(
             "no application or invited interview was recorded for this job, so a "
@@ -155,10 +159,17 @@ def record_company_outcome(
     text = (note or "").strip()
     if code == INTERVIEW_INVITED:
         return set_status(
-            conn, int(job["id"]), "interviewing", reason_code=code, actor=COMPANY, note=text
+            conn,
+            scope,
+            int(job["id"]),
+            "interviewing",
+            reason_code=code,
+            actor=COMPANY,
+            note=text,
         )
     return set_status(
         conn,
+        scope,
         int(job["id"]),
         "rejected",
         rejection_reason=text or label_of(code),
@@ -170,6 +181,7 @@ def record_company_outcome(
 
 def add_manually(
     conn: sqlite3.Connection,
+    scope: Scope,
     *,
     company: str,
     title: str,
@@ -194,6 +206,7 @@ def add_manually(
     """
     result = add_captured_job(
         conn,
+        scope,
         company=company,
         title=title,
         location=location,
@@ -204,7 +217,7 @@ def add_manually(
     wanted = url.strip()
     wanted_company = company.strip().casefold()
     wanted_title = title.strip().casefold()
-    for candidate in list_jobs(conn):
+    for candidate in list_jobs(conn, scope):
         if wanted and candidate["url"] == wanted:
             return result, candidate
         if not wanted and (
@@ -215,7 +228,7 @@ def add_manually(
     return result, None
 
 
-def rescore(conn: sqlite3.Connection, selector: str) -> RescoreResult:
+def rescore(conn: sqlite3.Connection, scope: Scope, selector: str) -> RescoreResult:
     """Score one job again against the current configuration.
 
     Rescoring uses the description stored at import. It used to pass an empty
@@ -231,7 +244,7 @@ def rescore(conn: sqlite3.Connection, selector: str) -> RescoreResult:
     low: there is no honest number to give it. The caller decides what that
     means, which is exit 2 on the command line and a 409 over HTTP.
     """
-    job = resolve_selector(conn, selector)
+    job = resolve_selector(conn, scope, selector)
     description = load_cached_description(job["url"])
     if not description:
         raise TrackerActionError(
@@ -253,23 +266,29 @@ def rescore(conn: sqlite3.Connection, selector: str) -> RescoreResult:
     # A stored score of 0 is a score. The blank column is the only thing that
     # means unscored, so it is the only thing that reads as "-".
     previous = str(stored_score(job)) if job.get("fit_score", "").strip() else "-"
-    updated = update_fields(conn, int(job["id"]), score_fields(fit.score, fit.reasons, fit.version))
+    updated = update_fields(
+        conn, scope, int(job["id"]), score_fields(fit.score, fit.reasons, fit.version)
+    )
     return RescoreResult(job=updated, previous=previous, current=fit.score)
 
 
-def next_up(conn: sqlite3.Connection, limit: int | None = None) -> list[dict[str, str]]:
+def next_up(
+    conn: sqlite3.Connection, scope: Scope, limit: int | None = None
+) -> list[dict[str, str]]:
     """What to work on now, in the CLI's ordering."""
-    return rank_active(list_jobs(conn), limit)
+    return rank_active(list_jobs(conn, scope), limit)
 
 
-def review_queue(conn: sqlite3.Connection, limit: int | None = None) -> list[dict[str, str]]:
+def review_queue(
+    conn: sqlite3.Connection, scope: Scope, limit: int | None = None
+) -> list[dict[str, str]]:
     """What still needs a decision, which is a narrower question than `next`."""
-    return rank_active(list_jobs(conn), limit, statuses=UNDECIDED_STATUSES)
+    return rank_active(list_jobs(conn, scope), limit, statuses=UNDECIDED_STATUSES)
 
 
-def counts(conn: sqlite3.Connection) -> dict[str, int]:
-    return status_counts(list_jobs(conn))
+def counts(conn: sqlite3.Connection, scope: Scope) -> dict[str, int]:
+    return status_counts(list_jobs(conn, scope))
 
 
-def one(conn: sqlite3.Connection, job_id: int) -> dict[str, str]:
-    return get_job(conn, job_id)
+def one(conn: sqlite3.Connection, scope: Scope, job_id: int) -> dict[str, str]:
+    return get_job(conn, scope, job_id)

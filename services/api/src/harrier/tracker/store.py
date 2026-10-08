@@ -130,7 +130,7 @@ def add_job(conn: sqlite3.Connection, fields: Mapping[str, str], *, scope: Scope
             f"({existing['company']}: {existing['title']})"
         )
 
-    columns = [name for name in TRACKER_FIELDS] + list(NOTE_KEYS) + ["track_id"]
+    columns = [name for name in TRACKER_FIELDS] + list(NOTE_KEYS)
     row_values: list[object] = [
         values[name] if name != "status" else status for name in TRACKER_FIELDS
     ]
@@ -141,7 +141,7 @@ def add_job(conn: sqlite3.Connection, fields: Mapping[str, str], *, scope: Scope
     with conn:
         try:
             cursor = conn.execute(
-                f"INSERT INTO jobs ({', '.join(columns)}) VALUES ({placeholders})",
+                f"INSERT INTO jobs ({', '.join(columns)}, track_id) VALUES ({placeholders}, ?)",
                 row_values,
             )
         except sqlite3.IntegrityError as error:
@@ -172,8 +172,13 @@ def _track_slug(conn: sqlite3.Connection, track_id: str) -> str:
     return str(row[0]) if row is not None else f"id {track_id}"
 
 
-def get_job(conn: sqlite3.Connection, job_id: int) -> dict[str, str]:
-    row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+def get_job(conn: sqlite3.Connection, scope: Scope, job_id: int) -> dict[str, str]:
+    """One row of the scope's track. An id from another track is not found,
+    with the same error a missing id raises and nothing about the other
+    track's row in it (spec 092)."""
+    row = conn.execute(
+        "SELECT * FROM jobs WHERE id = ? AND track_id = ?", (job_id, scope.track.id)
+    ).fetchone()
     if row is None:
         raise JobNotFoundError(f"no job with id {job_id}")
     return _job_row_to_dict(row)
@@ -181,19 +186,48 @@ def get_job(conn: sqlite3.Connection, job_id: int) -> dict[str, str]:
 
 def list_jobs(
     conn: sqlite3.Connection,
+    scope: Scope,
     status: str | None = None,
     source: str | None = None,
 ) -> list[dict[str, str]]:
+    """The scope's rows, in id order. Every reader of tracker rows reads one
+    track (spec 092); the scope has no default so a reader cannot forget."""
     clauses: list[str] = []
-    params: list[str] = []
+    params: list[str | int] = [scope.track.id]
     if status is not None:
-        clauses.append("status = ?")
+        clauses.append("AND status = ?")
         params.append(status)
     if source is not None:
-        clauses.append("source = ?")
+        clauses.append("AND source = ?")
         params.append(source)
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    rows = conn.execute(f"SELECT * FROM jobs {where} ORDER BY id", params).fetchall()
+    rows = conn.execute(
+        f"SELECT * FROM jobs WHERE track_id = ? {' '.join(clauses)} ORDER BY id", params
+    ).fetchall()
+    return [_job_row_to_dict(row) for row in rows]
+
+
+def track_of_job(conn: sqlite3.Connection, job_id: int) -> int | None:
+    """Which track a job id belongs to, or None when no job has it.
+
+    For contact links only: a contact is the person's, not a track's, so a
+    link can name a job in any track, and the checker has to tell a job in
+    another track from one that is gone (review of PR #181). It returns the
+    track and nothing of the row.
+    """
+    row = conn.execute("SELECT track_id FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    return int(row[0]) if row is not None else None
+
+
+def all_tracks_dedupe_rows(conn: sqlite3.Connection) -> list[dict[str, str]]:
+    """The identity columns of every row in every track, for the dedupe
+    index only (spec 092). url and external_key are unique across the whole
+    file, so a posting stored in one track is a duplicate in every other;
+    this is the one reader that may see across tracks, and it returns the
+    columns dedupe compares and nothing else.
+    """
+    rows = conn.execute(
+        "SELECT url, external_key, company, title, notes, track_id FROM jobs ORDER BY id"
+    ).fetchall()
     return [_job_row_to_dict(row) for row in rows]
 
 
@@ -221,22 +255,24 @@ def _write_lock(conn: sqlite3.Connection) -> Generator[None, None, None]:
     conn.commit()
 
 
-def company_has_responded(conn: sqlite3.Connection, job_id: int) -> bool:
+def company_has_responded(conn: sqlite3.Connection, scope: Scope, job_id: int) -> bool:
     """Whether a company outcome is recorded for this job (spec 079).
 
     The row forgets an invited interview once the company's first response
     closes it, and the events do not.
     """
     row = conn.execute(
-        "SELECT 1 FROM job_events WHERE job_id = ? AND kind = 'outcome' AND actor = 'company' "
+        "SELECT 1 FROM job_events AS e JOIN jobs AS j ON j.id = e.job_id "
+        "WHERE e.job_id = ? AND j.track_id = ? AND e.kind = 'outcome' AND e.actor = 'company' "
         "LIMIT 1",
-        (job_id,),
+        (job_id, scope.track.id),
     ).fetchone()
     return row is not None
 
 
 def set_status(
     conn: sqlite3.Connection,
+    scope: Scope,
     job_id: int,
     status: str,
     *,
@@ -265,7 +301,7 @@ def set_status(
     if status not in STATUSES:
         raise UnknownStatusError(f"unknown status {status!r}; legal: {', '.join(STATUSES)}")
     with _write_lock(conn):
-        job = get_job(conn, job_id)
+        job = get_job(conn, scope, job_id)
         check_transition(job["status"], status)
         try:
             move = classify_move(
@@ -274,7 +310,7 @@ def set_status(
                 reason_code=reason_code,
                 reason_text=rejection_reason if status == "rejected" else None,
                 actor=actor,
-                engaged=company_engaged(job) or company_has_responded(conn, job_id),
+                engaged=company_engaged(job) or company_has_responded(conn, scope, job_id),
             )
         except ReasonError as error:
             raise TrackerError(str(error)) from error
@@ -288,7 +324,7 @@ def set_status(
         # its earlier history was lost for good under the append-only trigger
         # (spec 079 amendment). Its reconstruction now comes first, in
         # the same transaction, so a partial history cannot exist.
-        history = [] if _has_events(conn, job_id) else _plan_backfill(job)
+        history = [] if _has_events(conn, scope, job_id) else _plan_backfill(job)
 
         updates: dict[str, str] = {"status": status}
         updates.update(fields_a_move_clears(job["status"], status))
@@ -326,8 +362,9 @@ def set_status(
                     backfilled=True,
                 )
             conn.execute(
-                f"UPDATE jobs SET {assignments}, updated_at = datetime('now') WHERE id = ?",
-                [*updates.values(), job_id],
+                f"UPDATE jobs SET {assignments}, updated_at = datetime('now') "
+                "WHERE id = ? AND track_id = ?",
+                [*updates.values(), job_id, scope.track.id],
             )
             # What the candidate was looking at when they decided: the score and
             # version from before this write, which a later rescore overwrites on
@@ -345,11 +382,11 @@ def set_status(
                 scoring_version=job.get("scoring_version", ""),
                 description_sha256=description_sha256,
             )
-    return get_job(conn, job_id)
+    return get_job(conn, scope, job_id)
 
 
 def update_fields(
-    conn: sqlite3.Connection, job_id: int, fields: Mapping[str, str]
+    conn: sqlite3.Connection, scope: Scope, job_id: int, fields: Mapping[str, str]
 ) -> dict[str, str]:
     """Update non-status columns, refusing writes that break a status invariant.
 
@@ -368,11 +405,11 @@ def update_fields(
             f"(status changes go through set_status)"
         )
     if not fields:
-        return get_job(conn, job_id)
+        return get_job(conn, scope, job_id)
     # Read under the write lock, so the invariants are checked against the
     # row this write lands on (spec 079 amendment).
     with _write_lock(conn):
-        current = get_job(conn, job_id)
+        current = get_job(conn, scope, job_id)
         # Only a breach this write introduces. Refusing every write to a row that
         # already breaks a rule would make rows written before these rules
         # unrepairable, and the spec is explicit that they are reported and left
@@ -385,10 +422,11 @@ def update_fields(
         assignments = ", ".join(f"{name} = ?" for name in fields)
         with conn:
             conn.execute(
-                f"UPDATE jobs SET {assignments}, updated_at = datetime('now') WHERE id = ?",
-                [*[str(v) for v in fields.values()], job_id],
+                f"UPDATE jobs SET {assignments}, updated_at = datetime('now') "
+                "WHERE id = ? AND track_id = ?",
+                [*[str(v) for v in fields.values()], job_id, scope.track.id],
             )
-    return get_job(conn, job_id)
+    return get_job(conn, scope, job_id)
 
 
 # --- decision history (spec 079) ----------------------------------------------
@@ -455,15 +493,24 @@ def _append_event(
     logger.debug("job event: job=%s kind=%s actor=%s code=%s", job_id, kind, actor, reason_code)
 
 
-def _has_events(conn: sqlite3.Connection, job_id: int) -> bool:
-    row = conn.execute("SELECT 1 FROM job_events WHERE job_id = ? LIMIT 1", (job_id,)).fetchone()
+def _has_events(conn: sqlite3.Connection, scope: Scope, job_id: int) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM job_events AS e JOIN jobs AS j ON j.id = e.job_id "
+        "WHERE e.job_id = ? AND j.track_id = ? LIMIT 1",
+        (job_id, scope.track.id),
+    ).fetchone()
     return row is not None
 
 
-def list_events(conn: sqlite3.Connection, job_id: int) -> list[dict[str, str]]:
-    """A job's events in the order they were recorded."""
+def list_events(conn: sqlite3.Connection, scope: Scope, job_id: int) -> list[dict[str, str]]:
+    """A job's events in the order they were recorded, for a job of the
+    scope's track. Another track's job is not found, with the same error a
+    missing id raises (spec 092)."""
+    get_job(conn, scope, job_id)
     rows = conn.execute(
-        "SELECT * FROM job_events WHERE job_id = ? ORDER BY id", (job_id,)
+        "SELECT e.* FROM job_events AS e JOIN jobs AS j ON j.id = e.job_id "
+        "WHERE e.job_id = ? AND j.track_id = ? ORDER BY e.id",
+        (job_id, scope.track.id),
     ).fetchall()
     return [_job_row_to_dict(row) for row in rows]
 
@@ -539,9 +586,11 @@ def _plan_backfill(job: Mapping[str, str]) -> list[_PlannedEvent]:
 
 
 def backfill_events(
-    conn: sqlite3.Connection, *, dry_run: bool = False
+    conn: sqlite3.Connection, scope: Scope, *, dry_run: bool = False
 ) -> Counter[tuple[str, str, str]]:
-    """Events for every job that has none, reconstructed and marked so.
+    """Events for every job of the scope's track that has none, reconstructed
+    and marked so. Per track, because the reconstruction rules are a kind's
+    (spec 092).
 
     Idempotent: a job with any event is skipped, so a second run writes
     nothing. Returns the count per kind, actor and code, which `--dry-run`
@@ -551,7 +600,9 @@ def backfill_events(
     # same history in between (spec 079 amendment). A dry run writes nothing.
     with nullcontext() if dry_run else _write_lock(conn):
         rows = conn.execute(
-            "SELECT * FROM jobs WHERE id NOT IN (SELECT job_id FROM job_events) ORDER BY id"
+            "SELECT * FROM jobs WHERE track_id = ? "
+            "AND id NOT IN (SELECT job_id FROM job_events) ORDER BY id",
+            (scope.track.id,),
         ).fetchall()
         plans = [(int(row["id"]), _plan_backfill(_job_row_to_dict(row))) for row in rows]
         counts: Counter[tuple[str, str, str]] = Counter(

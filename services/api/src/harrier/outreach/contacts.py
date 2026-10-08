@@ -21,6 +21,7 @@ from harrier.tracker import (
 from harrier.tracker import (
     delete_contact as tracker_delete_contact,
 )
+from harrier.tracks import Scope
 
 RELEVANCE_ORDER = {
     "recruiter": 0,
@@ -187,6 +188,7 @@ def find_contact(conn: sqlite3.Connection, identifier: str) -> dict[str, str] | 
 
 def upsert_contact(
     conn: sqlite3.Connection,
+    scope: Scope,
     *,
     company: str,
     role: str,
@@ -210,7 +212,7 @@ def upsert_contact(
     # Resolved once, here, where the connection is. A link made without an id
     # is a text match waiting to go stale (spec 036); one made with an id
     # survives an edit to the job's title.
-    job_id = resolve_job_id(conn, normalize_job_link(company, role, job_url))
+    job_id = resolve_job_id(conn, scope, normalize_job_link(company, role, job_url))
     key = normalize(linkedin_url or person_name)
     if not key:
         raise ValueError("contact needs a linkedin_url or person_name identity")

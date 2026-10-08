@@ -27,6 +27,7 @@ from harrier.runoutcome import (
     record_success,
 )
 from harrier.tracker import list_jobs
+from harrier.tracks import DEFAULT_TRACK_ID, Scope
 
 DIGEST_ACTIONABLE_KINDS = {
     "interview_invite",
@@ -149,7 +150,23 @@ def extract_json_payload(line: str) -> dict[str, object] | None:
     return cast("dict[str, object]", payload) if isinstance(payload, dict) else None
 
 
-def actionable_updates(target_date: date) -> list[dict[str, object]]:
+def _event_in_scope(payload: dict[str, object], scope: Scope) -> bool:
+    """Whether a mail event belongs in this track's digest (spec 092).
+
+    An event records the slug of the track its row matched in. One with no
+    `track` key predates tracks and is the default track's; one whose key is
+    empty matched no row, and it goes to the default track's digest, which is
+    where every unmatched event went before tracks existed. Review of PR #181.
+    """
+    if "track" not in payload:
+        return scope.track.id == DEFAULT_TRACK_ID
+    track = str(payload.get("track") or "")
+    if not track:
+        return scope.track.id == DEFAULT_TRACK_ID
+    return track == scope.track.slug
+
+
+def actionable_updates(target_date: date, scope: Scope) -> list[dict[str, object]]:
     path = events_path()
     if not path.exists():
         return []
@@ -164,6 +181,8 @@ def actionable_updates(target_date: date) -> list[dict[str, object]]:
         # abort the digest on an unhashable membership test (review
         # finding).
         if not isinstance(kind, str) or kind not in DIGEST_ACTIONABLE_KINDS:
+            continue
+        if not _event_in_scope(payload, scope):
             continue
         timestamp = parse_event_timestamp(str(payload.get("timestamp") or ""))
         if not timestamp or timestamp.date() != target_date:
@@ -279,28 +298,29 @@ def schedule_health_lines(conn: sqlite3.Connection) -> list[str]:
     return [describe_age(job, recorded.get(job)) for job in SCHEDULED_JOBS]
 
 
-def build_digest(conn: sqlite3.Connection, target_date: date) -> str:
-    rows = list_jobs(conn)
+def build_digest(conn: sqlite3.Connection, scope: Scope, target_date: date) -> str:
+    rows = list_jobs(conn, scope)
     return render_digest(
         target_date,
         find_new_prospects(rows, target_date),
         top_prospects(rows),
         outreach_actions_due(rows),
         ghosted_applications(rows, target_date),
-        actionable_updates(target_date),
+        actionable_updates(target_date, scope),
         schedule_health_lines(conn),
     )
 
 
 def run_digest(
     conn: sqlite3.Connection,
+    scope: Scope,
     target_date: date,
     *,
     dry_run: bool = False,
     send: SendFn = send_telegram_message,
 ) -> tuple[str, int]:
     """Render the digest; send unless dry-run. Returns (digest, send rc)."""
-    digest = build_digest(conn, target_date)
+    digest = build_digest(conn, scope, target_date)
     if dry_run:
         return digest, 0
     rc = send(digest)

@@ -20,6 +20,7 @@ import sqlite3
 
 from harrier.screening.normalized import normalize
 from harrier.tracker.store import TrackerError, list_jobs
+from harrier.tracks import Scope
 
 # How many candidates an ambiguous selector prints before truncating. The
 # point is to help the operator narrow it, not to page the whole tracker.
@@ -34,7 +35,7 @@ def describe(job: dict[str, str]) -> str:
     return f"{job['id']}. {job['company']} - {job['title']} [{job['status']}]"
 
 
-def resolve_selector(conn: sqlite3.Connection, selector: str) -> dict[str, str]:
+def resolve_selector(conn: sqlite3.Connection, scope: Scope, selector: str) -> dict[str, str]:
     """The one row this selector names.
 
     A numeric selector is the job id, not a position. The old CLI indexed
@@ -46,7 +47,7 @@ def resolve_selector(conn: sqlite3.Connection, selector: str) -> dict[str, str]:
     if not cleaned:
         raise SelectorError("empty selector")
 
-    jobs = list_jobs(conn)
+    jobs = list_jobs(conn, scope)
     if cleaned.isdigit():
         wanted = int(cleaned)
         for job in jobs:

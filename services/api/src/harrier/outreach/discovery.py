@@ -25,6 +25,7 @@ from harrier.sources.apify_linkedin import (
     request_json,
     unwrap_apify_data,
 )
+from harrier.tracks import Scope
 
 DEFAULT_ACTOR = "harvestapi/linkedin-profile-search"
 DEFAULT_MAX_ITEMS = 10
@@ -482,7 +483,12 @@ def update_candidate_review_status(
 
 
 def approve_candidate(
-    conn: sqlite3.Connection, company: str, role: str, job_url: str, linkedin_url: str
+    conn: sqlite3.Connection,
+    scope: Scope,
+    company: str,
+    role: str,
+    job_url: str,
+    linkedin_url: str,
 ) -> dict[str, str] | None:
     """The only path from a staged candidate into the contacts store."""
     payload = load_candidates_artifact(company, role)
@@ -496,6 +502,7 @@ def approve_candidate(
         # retryable through the normal path).
         added = upsert_contact(
             conn,
+            scope,
             company=company,
             role=role,
             job_url=job_url,

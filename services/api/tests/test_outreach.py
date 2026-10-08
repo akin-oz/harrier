@@ -216,6 +216,7 @@ def test_approve_adds_candidate_to_contacts(db: sqlite3.Connection) -> None:
     write_candidates_artifact("Remote", "Senior Frontend Engineer", payload)
     added = approve_candidate(
         db,
+        default_scope(db),
         "Remote",
         "Senior Frontend Engineer",
         "https://example.com/job",
@@ -253,6 +254,7 @@ def test_upsert_contact_merges_same_person_across_multiple_jobs(
 ) -> None:
     upsert_contact(
         db,
+        default_scope(db),
         company="Acme",
         role="Senior Frontend Engineer",
         job_url="https://example.com/jobs/1",
@@ -264,6 +266,7 @@ def test_upsert_contact_merges_same_person_across_multiple_jobs(
     )
     upsert_contact(
         db,
+        default_scope(db),
         company="Beta",
         role="Senior Frontend Engineer",
         job_url="https://example.com/jobs/2",
@@ -370,15 +373,17 @@ def test_mark_sent_rejects_illegal_transitions(db: sqlite3.Connection) -> None:
         },
         scope=default_scope(db),
     )
-    set_status(db, job_id, "applied")
-    update_fields(db, job_id, {"outreach_status": "ready"})
-    assert mark_job_outreach_sent(db, job_id)["outreach_status"] == "sent"
-    assert mark_job_outreach_sent(db, job_id)["outreach_status"] == "follow_up_sent"
+    set_status(db, default_scope(db), job_id, "applied")
+    update_fields(db, default_scope(db), job_id, {"outreach_status": "ready"})
+    assert mark_job_outreach_sent(db, default_scope(db), job_id)["outreach_status"] == "sent"
+    assert (
+        mark_job_outreach_sent(db, default_scope(db), job_id)["outreach_status"] == "follow_up_sent"
+    )
     with pytest.raises(ValueError, match="cannot mark outreach sent"):
-        mark_job_outreach_sent(db, job_id)
-    update_fields(db, job_id, {"outreach_status": "replied"})
+        mark_job_outreach_sent(db, default_scope(db), job_id)
+    update_fields(db, default_scope(db), job_id, {"outreach_status": "replied"})
     with pytest.raises(ValueError, match="cannot mark outreach sent"):
-        mark_job_outreach_sent(db, job_id)
+        mark_job_outreach_sent(db, default_scope(db), job_id)
 
 
 def test_empty_identity_never_matches_or_writes(db: sqlite3.Connection) -> None:
@@ -386,6 +391,7 @@ def test_empty_identity_never_matches_or_writes(db: sqlite3.Connection) -> None:
 
     upsert_contact(
         db,
+        default_scope(db),
         company="Acme",
         role="Senior Frontend Engineer",
         job_url="https://example.com/jobs/1",
@@ -399,6 +405,7 @@ def test_empty_identity_never_matches_or_writes(db: sqlite3.Connection) -> None:
     with pytest.raises(ValueError, match="identity"):
         upsert_contact(
             db,
+            default_scope(db),
             company="Acme",
             role="Role",
             job_url="",
@@ -434,6 +441,7 @@ def test_approve_marks_artifact_only_after_contact_write(
     with pytest.raises(ValueError, match="boom"):
         approve_candidate(
             db,
+            default_scope(db),
             "Remote",
             "Senior Frontend Engineer",
             "https://example.com/job",
@@ -481,7 +489,7 @@ def test_backfill_stages_posters_without_writing_contacts(
         }
 
     monkeypatch.setattr(backfill_module, "fetch_linkedin_job_details", fake_details)
-    summary = backfill_posters(db)
+    summary = backfill_posters(db, default_scope(db))
     assert summary.staged == 1
     # The approval invariant: staging never writes a contact.
     assert list_contacts(db) == []
@@ -489,6 +497,7 @@ def test_backfill_stages_posters_without_writing_contacts(
     assert artifact is not None
     approved = approve_candidate(
         db,
+        default_scope(db),
         "Acme",
         "Senior Frontend Engineer",
         "https://www.linkedin.com/jobs/view/12345",
@@ -527,6 +536,7 @@ def test_set_best_contact_for_job(db: sqlite3.Connection) -> None:
     )
     upsert_contact(
         db,
+        default_scope(db),
         company="Acme",
         role="Senior Frontend Engineer",
         job_url="https://example.com/jobs/1",
@@ -535,10 +545,15 @@ def test_set_best_contact_for_job(db: sqlite3.Connection) -> None:
         linkedin_url="https://linkedin.com/in/jane",
         source="manual",
     )
-    updated = set_best_contact_for_job(db, job_id, "https://linkedin.com/in/jane")
+    updated = set_best_contact_for_job(
+        db, default_scope(db), job_id, "https://linkedin.com/in/jane"
+    )
     assert updated is not None
     assert updated["best_contact_name"] == "Jane Recruiter"
-    assert set_best_contact_for_job(db, job_id, "https://linkedin.com/in/stranger") is None
+    assert (
+        set_best_contact_for_job(db, default_scope(db), job_id, "https://linkedin.com/in/stranger")
+        is None
+    )
 
 
 def test_filter_outreach_rows_due_only_excludes_waiting_rows() -> None:

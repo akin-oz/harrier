@@ -245,7 +245,7 @@ def test_a_row_written_before_versions_reads_as_unknown(
         },
         scope=default_scope(conn),
     )
-    row = get_job(conn, job_id)
+    row = get_job(conn, default_scope(conn), job_id)
     assert row["scoring_version"] == "", "the column no longer defaults blank"
     assert stored_version(row) == UNKNOWN_VERSION
     conn.close()
@@ -385,11 +385,15 @@ def test_a_manually_added_ats_url_is_enriched_before_scoring(
 
     with patch.object(screening_http, "request_text", return_value=html):
         result = add_captured_job(
-            conn, company="Example Labs", title="Senior Frontend Engineer", url=url
+            conn,
+            default_scope(conn),
+            company="Example Labs",
+            title="Senior Frontend Engineer",
+            url=url,
         )
     assert result.status == "added"
 
-    row = next(job for job in list_jobs(conn) if job["url"] == url)
+    row = next(job for job in list_jobs(conn, default_scope(conn)) if job["url"] == url)
 
     # What the same posting scores without the fetched description. The
     # comparison that matters is that enrichment moved the number, not merely
@@ -432,6 +436,7 @@ def test_capture_can_be_told_not_to_reach_the_network(
     with patch.object(screening_http, "request_text") as fetch:
         add_captured_job(
             conn,
+            default_scope(conn),
             company="Example Labs",
             title="Senior Frontend Engineer",
             url="https://job-boards.greenhouse.io/example/jobs/2",

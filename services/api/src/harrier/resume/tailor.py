@@ -30,6 +30,7 @@ from harrier.resume.plan import (
 )
 from harrier.screening.descriptions import load_cached_description
 from harrier.tracker import get_job, set_status
+from harrier.tracks import Scope
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,7 @@ def resume_paths_for(
 
 def run_tailor(
     conn: sqlite3.Connection,
+    scope: Scope,
     job_id: int,
     *,
     jd_text: str | None = None,
@@ -87,7 +89,7 @@ def run_tailor(
 ) -> TailorResult:
     """Tailor for one tracker job; the row updates only after the PDF gate
     passes."""
-    row = get_job(conn, job_id)
+    row = get_job(conn, scope, job_id)
     company = row.get("company", "")
     requested_role = row.get("title", "")
     job_url = row.get("url", "")
@@ -174,7 +176,7 @@ def run_tailor(
 
     # The PDF gate passed; only now does the tracker row change. The candidate
     # asked for this CV, so the move is theirs (spec 079).
-    set_status(conn, job_id, "tailored_cv_requested", actor="candidate")
+    set_status(conn, scope, job_id, "tailored_cv_requested", actor="candidate")
     return TailorResult(
         markdown_path=markdown_path,
         html_path=html_path,

@@ -29,6 +29,7 @@ from harrier.atomicio import read_json_mapping, write_json_atomic
 from harrier.db import data_dir
 from harrier.demo import is_demo_mode
 from harrier.tracker import list_jobs
+from harrier.tracks import Scope
 
 logger = logging.getLogger(__name__)
 
@@ -479,6 +480,8 @@ ARCHIVED_FIELDS = (
     "messageId",
     "actionable",
     "ignore_reason",
+    # Which search the matched row belongs to, a slug and never a row (spec 092).
+    "track",
 )
 
 # Bounded, so an unattended machine cannot accumulate years of it.
@@ -574,8 +577,9 @@ def read_events(limit: int | None = None) -> EventsWindow:
     )
 
 
-def tracker_rows(conn: sqlite3.Connection) -> list[dict[str, str]]:
-    return list_jobs(conn)
+def tracker_rows(conn: sqlite3.Connection, scope: Scope) -> list[dict[str, str]]:
+    """The scope's rows: a message is matched against one track (spec 092)."""
+    return list_jobs(conn, scope)
 
 
 def _int_env(name: str, default: int) -> int:

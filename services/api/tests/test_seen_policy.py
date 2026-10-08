@@ -343,7 +343,7 @@ def test_a_rejection_under_an_older_policy_is_cleared(
     db: sqlite3.Connection, cfg: dict[str, Any]
 ) -> None:
     save_seen("greenhouse", {"k1": decision(policy="old-policy")})
-    report = reconsider_source(db, "greenhouse", cfg, dry_run=False)
+    report = reconsider_source(db, default_scope(db), "greenhouse", cfg, dry_run=False)
     assert report.changed == 1
     assert load_seen("greenhouse") == {}
 
@@ -354,7 +354,7 @@ def test_a_rejection_under_the_current_policy_is_left_alone(
     """Otherwise every reconsideration would re-offer everything, and the
     operator would see the same rejected postings on a loop."""
     save_seen("greenhouse", {"k1": decision(policy=policy_version(cfg))})
-    report = reconsider_source(db, "greenhouse", cfg, dry_run=False)
+    report = reconsider_source(db, default_scope(db), "greenhouse", cfg, dry_run=False)
     assert report.changed == 0
     assert report.kept == 1
     assert set(load_seen("greenhouse")) == {"k1"}
@@ -364,7 +364,7 @@ def test_an_acceptance_is_never_reconsidered(db: sqlite3.Connection, cfg: dict[s
     """It already produced a tracker row. Re-running it would at best do
     nothing and at worst duplicate the row."""
     save_seen("greenhouse", {"k1": decision(ACCEPTED, policy="old-policy")})
-    report = reconsider_source(db, "greenhouse", cfg, dry_run=False)
+    report = reconsider_source(db, default_scope(db), "greenhouse", cfg, dry_run=False)
     assert report.changed == 0
     assert set(load_seen("greenhouse")) == {"k1"}
 
@@ -373,14 +373,14 @@ def test_a_migrated_entry_is_eligible_for_the_first_reconsideration(
     db: sqlite3.Connection, cfg: dict[str, Any]
 ) -> None:
     save_seen("greenhouse", {"k1": SeenDecision(UNKNOWN, "", UNKNOWN_POLICY, "2026-01-01")})
-    assert reconsider_source(db, "greenhouse", cfg, dry_run=False).changed == 1
+    assert reconsider_source(db, default_scope(db), "greenhouse", cfg, dry_run=False).changed == 1
 
 
 def test_a_dry_run_reports_without_changing_anything(
     db: sqlite3.Connection, cfg: dict[str, Any]
 ) -> None:
     save_seen("greenhouse", {"k1": decision(policy="old-policy")})
-    report = reconsider_source(db, "greenhouse", cfg, dry_run=True)
+    report = reconsider_source(db, default_scope(db), "greenhouse", cfg, dry_run=True)
     assert report.changed == 1
     assert set(load_seen("greenhouse")) == {"k1"}
 
@@ -401,13 +401,13 @@ def test_a_job_the_operator_rejected_is_never_resurrected(
         },
         scope=default_scope(db),
     )
-    set_status(db, job_id, "rejected")
+    set_status(db, default_scope(db), job_id, "rejected")
 
     save_seen(
         "greenhouse",
         {"https://boards.example.com/northwind/1": decision(policy="old-policy")},
     )
-    report = reconsider_source(db, "greenhouse", cfg, dry_run=False)
+    report = reconsider_source(db, default_scope(db), "greenhouse", cfg, dry_run=False)
     assert report.protected == 1
     assert report.changed == 0
     assert len(load_seen("greenhouse")) == 1
@@ -427,8 +427,8 @@ def test_a_job_the_operator_has_not_rejected_is_not_protected(
         },
         scope=default_scope(db),
     )
-    set_status(db, job_id, "shortlisted")
-    assert human_rejected_keys(db) == set()
+    set_status(db, default_scope(db), job_id, "shortlisted")
+    assert human_rejected_keys(db, default_scope(db)) == set()
 
 
 def test_the_protection_matches_on_company_and_title_too(
@@ -447,8 +447,8 @@ def test_the_protection_matches_on_company_and_title_too(
         },
         scope=default_scope(db),
     )
-    set_status(db, job_id, "rejected")
-    assert "northwind labs|senior frontend engineer" in human_rejected_keys(db)
+    set_status(db, default_scope(db), job_id, "rejected")
+    assert "northwind labs|senior frontend engineer" in human_rejected_keys(db, default_scope(db))
 
 
 def test_the_recorded_reason_is_a_stable_slug(env: Path, cfg: dict[str, Any]) -> None:
