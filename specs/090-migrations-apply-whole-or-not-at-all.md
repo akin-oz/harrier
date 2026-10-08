@@ -104,8 +104,8 @@ operator's Python links; the container's is the Debian library of the
 implementing pull request records the version the container reports from
 `docker exec harrier python -c "import sqlite3; print(sqlite3.sqlite_version)"`
 and the host's from the same one-liner, and the partial-schema test
-(planned test_a_failed_migration_leaves_no_partial_schema) is run inside the
-container by hand as well as in CI.
+(`services/api/tests/test_migration_runner.py::test_a_failed_migration_leaves_no_partial_schema`)
+is mirrored inside the container by the script the amendment describes.
 
 ## Failure modes
 
@@ -139,33 +139,34 @@ place that applies migrations.
 Tests in `services/api/tests/test_migration_runner.py` unless named
 otherwise. Every database is built under `tmp_path` with synthetic rows.
 
-- [ ] With a migration list whose second statement is invalid, `connect`
+- [x] With a migration list whose second statement is invalid, `connect`
       raises, the table the first statement created does not exist, and
       `schema_version` is unchanged. Run first against the runner as it is
       at cd5665d and seen to fail there; the pull request records both runs
-      (planned test_a_failed_migration_leaves_no_partial_schema)
-- [ ] The connection is closed before the error leaves `connect`, proven by
+      (`services/api/tests/test_migration_runner.py::test_a_failed_migration_leaves_no_partial_schema`)
+- [x] The connection is closed before the error leaves `connect`, proven by
       a test that fails if a connection to the file is still open
-      (planned test_a_failed_migration_closes_the_connection)
-- [ ] Two processes opening the same new file at once both succeed, each
+      (`services/api/tests/test_migration_runner.py::test_a_failed_migration_closes_the_connection`)
+- [x] Two processes opening the same new file at once both succeed, each
       version appears once in `schema_version`, and the schema equals a
-      single open's (planned test_two_first_opens_apply_each_migration_once)
-- [ ] After `connect` returns, the connection's `isolation_level` is the
+      single open's
+      (`services/api/tests/test_migration_runner.py::test_two_first_opens_apply_each_migration_once`)
+- [x] After `connect` returns, the connection's `isolation_level` is the
       module default and a `with conn:` block still commits, on the success
       path and after a failed migration
-      (planned test_connect_returns_a_connection_in_its_usual_transaction_mode)
-- [ ] An open with nothing pending opens no transaction
-      (planned test_an_open_with_nothing_pending_takes_no_lock)
-- [ ] `services/api/tests/test_userconfig.py::test_every_migration_version_is_unique_and_ordered`
+      (`services/api/tests/test_migration_runner.py::test_connect_returns_a_connection_in_its_usual_transaction_mode`)
+- [x] An open with nothing pending opens no transaction
+      (`services/api/tests/test_migration_runner.py::test_an_open_with_nothing_pending_takes_no_lock`)
+- [x] `services/api/tests/test_userconfig.py::test_every_migration_version_is_unique_and_ordered`
       and
       `services/api/tests/test_scoring.py::test_a_migrated_database_matches_a_fresh_one`
       pass unchanged
-- [ ] The tests in `services/api/tests/test_concurrent_writers.py` pass
+- [x] The tests in `services/api/tests/test_concurrent_writers.py` pass
       unchanged
-- [ ] The pull request records the SQLite version reported inside the
-      container and on the host, and that the partial-schema test was run
-      inside the container
-- [ ] Each test above fails with its behavior removed, checked by removing
+- [x] The pull request records the SQLite version reported inside the
+      container and on the host, and the result of the in-container script
+      described in the amendment (the test itself cannot run there)
+- [x] Each test above fails with its behavior removed, checked by removing
       each behavior in turn and recorded in the pull request
 - [ ] All gates green on the pull request
 
@@ -240,3 +241,41 @@ and 093 land, which `just container-up` does.
 - Refusing a database newer than the code (Open decisions, item 1).
 - Migrations that must turn foreign keys off.
 - Migration tooling for a hosted store (ADR-013).
+
+## Amendment (2026-10-08, during implementation)
+
+What the two-process criterion found, each with the test that proves it:
+
+- **The busy timeout is set before the journal mode.** The second process
+  reached `PRAGMA journal_mode=WAL` while the first still held the write
+  lock for migration one, and with no timeout yet set it failed there with
+  "database is locked" instead of waiting. The pragma order in `connect`
+  changes; nothing else about the connection does.
+  `tests/test_migration_runner.py::test_two_first_opens_apply_each_migration_once`.
+- **The journal-mode pragma is retried within the same bound.** With the
+  timeout in place the second process still failed at that pragma: SQLite
+  answers it with busy without consulting the busy handler while another
+  connection is mid-write. `connect` now retries the pragma, sleeping
+  briefly, until it succeeds or `BUSY_TIMEOUT_MS` has passed, and re-raises
+  any other error at once. Same test.
+- **The in-container check is a script, not the test.** The image installs
+  no test dependencies (`Dockerfile`, `--no-dev`), so the partial-schema
+  test cannot run inside it. What was run there instead, and is recorded in
+  the pull request with both SQLite versions, is a script against a
+  temporary file in the container that issues the same statements through
+  the container's own `sqlite3` module (`BEGIN IMMEDIATE`, a `CREATE
+  TABLE`, a statement that cannot run, `ROLLBACK`) and prints the tables
+  left behind: none. The criterion is amended to say so.
+- **"Two processes" is two processes.** The test starts two interpreters
+  that each call `connect` on the same new file, with every `CREATE TABLE`
+  slowed and a pause after every `COMMIT` in both, so each process arrives
+  while the other holds the lock and each gets the lock between the
+  other's migrations. Each therefore reads a version the other has moved
+  on from and must find that work under the lock rather than redo it.
+  Under the runner at cd5665d the second died on "database is locked";
+  under this runner both succeed and the schema equals a single open's.
+- **One mutant survives, by design.** With the explicit `ROLLBACK` on
+  failure removed, every test still passes, because `connect` closes the
+  connection and closing discards the open transaction. The rollback stays
+  as the backstop for any later caller of `_apply_schema` that does not
+  close, the way spec 061 keeps `create_backup`'s own check.

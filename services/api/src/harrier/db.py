@@ -16,6 +16,7 @@ from __future__ import annotations
 import atexit
 import os
 import sqlite3
+import time
 from pathlib import Path
 
 from harrier import container, hostlease
@@ -234,7 +235,6 @@ def connect(db_path: Path | None = None, *, same_thread: bool = True) -> sqlite3
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, check_same_thread=same_thread)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
     # Several processes under one kernel write this database: the API and
     # CLI runs, in the container or on the host, never both at once (spec
     # 061). A second writer arriving mid-transaction still fails immediately
@@ -243,10 +243,46 @@ def connect(db_path: Path | None = None, *, same_thread: bool = True) -> sqlite3
     # that will get its turn in milliseconds. This comment used to say WAL
     # lets the container and the host interleave; across the bind mount it
     # does not, and that is how the file was corrupted on 2026-09-18.
+    #
+    # Set before the journal mode: a second process opening a brand-new file
+    # reaches the journal-mode pragma while the first still holds the write
+    # lock for migration one, and without a timeout it fails there instead of
+    # waiting (spec 090).
     conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+    _set_journal_mode_wal(conn)
     conn.execute("PRAGMA foreign_keys=ON")
-    _apply_schema(conn)
+    try:
+        _apply_schema(conn)
+    except BaseException:
+        # The caller never receives this connection, so nobody else can
+        # close it (spec 076), and an open handle on a failed open would hold
+        # the file and its -wal and -shm companions for the life of the
+        # process (spec 090).
+        conn.close()
+        raise
     return conn
+
+
+def _set_journal_mode_wal(conn: sqlite3.Connection) -> None:
+    """Switch to WAL, waiting out another connection's write (spec 090).
+
+    The journal-mode pragma answers SQLITE_BUSY without consulting the busy
+    handler when another connection holds the file mid-write, which is what
+    a first open looks like to a second first open arriving while the first
+    is still applying migration one. Seen as "database is locked" from the
+    second process in `tests/test_migration_runner.py` before this loop
+    existed. The retry is bounded by the same timeout every other wait on
+    this connection gets.
+    """
+    deadline = time.monotonic() + BUSY_TIMEOUT_MS / 1000
+    while True:
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            return
+        except sqlite3.OperationalError as error:
+            if error.sqlite_errorcode != sqlite3.SQLITE_BUSY or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.01)
 
 
 def schema_version(conn: sqlite3.Connection) -> int:
@@ -256,14 +292,46 @@ def schema_version(conn: sqlite3.Connection) -> int:
 
 
 def _apply_schema(conn: sqlite3.Connection) -> None:
+    """Apply every pending migration, each whole or not at all (spec 090).
+
+    This used to run each migration under `with conn:`. The sqlite3 module
+    opens that transaction only before a data statement, so a CREATE or
+    ALTER was on disk the moment it returned, and a migration that failed
+    on its third statement left its first two behind with no version row
+    to say so. SQLite can roll schema changes back; it has to be asked.
+
+    So the migration phase runs with the module's own transaction handling
+    off, and takes the write lock first: BEGIN IMMEDIATE, then re-read the
+    version under the lock, so two processes opening a new file at once
+    apply each migration once, with the second finding the first's work
+    instead of its CREATE TABLE.
+    """
     from harrier.tracker.schema import MIGRATIONS
 
     conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY)")
     current = schema_version(conn)
-    for version, statements in MIGRATIONS:
-        if version <= current:
-            continue
-        with conn:
-            for statement in statements:
-                conn.execute(statement)
-            conn.execute("INSERT INTO schema_version (version) VALUES (?)", (version,))
+    pending = [(version, statements) for version, statements in MIGRATIONS if version > current]
+    if not pending:
+        # An ordinary open: no transaction, no lock.
+        return
+
+    previous_isolation_level = conn.isolation_level
+    conn.isolation_level = None
+    try:
+        for version, statements in pending:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                if version <= schema_version(conn):
+                    # Another process applied it between our read and our lock.
+                    conn.execute("ROLLBACK")
+                    continue
+                for statement in statements:
+                    conn.execute(statement)
+                conn.execute("INSERT INTO schema_version (version) VALUES (?)", (version,))
+                conn.execute("COMMIT")
+            except BaseException:
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK")
+                raise
+    finally:
+        conn.isolation_level = previous_isolation_level
