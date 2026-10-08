@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 
 import type { Job } from "../../entities/job";
+import { INDUSTRY_TRACK } from "../../shared/track/fixtures";
 
 import { ApplyPage } from "./ApplyPage";
 
@@ -137,6 +138,7 @@ function renderPage(): void {
     <QueryClientProvider client={queryClient}>
       <ApplyPage
         job={JOB}
+        track={INDUSTRY_TRACK}
         onBack={() => undefined}
         createEventSource={() => new FakeEventSource() as unknown as EventSource}
       />

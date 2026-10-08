@@ -2,9 +2,10 @@ import type { ReactNode } from "react";
 
 import { useMemo } from "react";
 
+import { Deadline } from "./ui/Deadline";
 import { ScoreBar } from "./ui/ScoreBar";
 import { StatusPill } from "./ui/StatusPill";
-import type { Job } from "./types";
+import type { Job, JobStatus } from "./types";
 import "./JobTable.css";
 
 // score and fit_score are strings in the generated contract, and either can
@@ -33,16 +34,25 @@ function metaLine(job: Job): string {
 // entity and the actions are a feature: an entity importing a feature is the
 // layering violation `fsd-reviewer` exists to catch. The page owns the wiring
 // (spec 042).
+//
+// `statusLabel` is the selected track's word for a status (spec 093), and
+// `deadlineLed` puts the deadline where the score was, first in the row: on
+// an academic track the date a call closes is what decides the day's work,
+// and the queue is ordered by it (spec 094).
 export function JobTable({
   jobs,
   emptyMessage,
+  statusLabel,
   renderActions,
   keepOrder = false,
+  deadlineLed = false,
 }: {
   jobs: readonly Job[];
   emptyMessage: string;
+  statusLabel: (status: JobStatus) => string;
   renderActions?: (job: Job) => ReactNode;
   keepOrder?: boolean;
+  deadlineLed?: boolean;
 }) {
   // Open rows first, then by score. Sorting on score alone reads well until
   // most of the tracker is rejected, and then the first screen fills with
@@ -62,9 +72,15 @@ export function JobTable({
             if (closedA !== closedB) {
               return closedA - closedB;
             }
+            // A deadline-led table has no score to rank by, and ranking by
+            // the deadline is the queue's job, which "Next up" shows in the
+            // server's own order. "All" keeps the order the rows came in.
+            if (deadlineLed) {
+              return 0;
+            }
             return (parseScore(b) ?? -1) - (parseScore(a) ?? -1);
           }),
-    [jobs, keepOrder],
+    [jobs, keepOrder, deadlineLed],
   );
 
   if (rows.length === 0) {
@@ -72,6 +88,7 @@ export function JobTable({
   }
 
   const hasActions = renderActions !== undefined;
+  const variant = `${deadlineLed ? " job-table--deadline" : ""}${hasActions ? "" : " job-table--no-actions"}`;
 
   return (
     <div className="job-table-scroll">
@@ -79,14 +96,17 @@ export function JobTable({
           the column alignment and the sticky header; keeping thead, tr and td
           keeps the semantics a screen reader already understands, without
           restating them as role attributes. */}
-      <table className={`job-table${hasActions ? "" : " job-table--no-actions"}`}>
+      <table className={`job-table${variant}`}>
         <thead>
           <tr>
+            {deadlineLed && <th scope="col">Deadline</th>}
             <th scope="col">Status</th>
             <th scope="col">Job</th>
-            <th scope="col" className="job-table__num">
-              Score
-            </th>
+            {!deadlineLed && (
+              <th scope="col" className="job-table__num">
+                Score
+              </th>
+            )}
             <th scope="col">Next action</th>
             {hasActions && <th scope="col">Actions</th>}
           </tr>
@@ -94,8 +114,13 @@ export function JobTable({
         <tbody>
           {rows.map((job) => (
             <tr key={job.id}>
-              <td>
-                <StatusPill status={job.status} />
+              {deadlineLed && (
+                <td className="job-table__lead">
+                  <Deadline deadline={job.deadline} passed={job.deadline_passed} />
+                </td>
+              )}
+              <td className="job-table__status">
+                <StatusPill status={job.status} label={statusLabel(job.status)} />
               </td>
               <td className="job-table__job">
                 <span className="job-table__job-line">
@@ -118,9 +143,11 @@ export function JobTable({
                 </span>
                 <span className="job-table__meta">{metaLine(job)}</span>
               </td>
-              <td className="job-table__num">
-                <ScoreBar score={parseScore(job)} />
-              </td>
+              {!deadlineLed && (
+                <td className="job-table__num job-table__lead">
+                  <ScoreBar score={parseScore(job)} />
+                </td>
+              )}
               <td className="job-table__next-action" title={job.next_action}>
                 <span className="job-table__clamp">{job.next_action}</span>
               </td>

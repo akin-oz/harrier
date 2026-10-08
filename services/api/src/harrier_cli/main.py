@@ -34,7 +34,13 @@ from harrier.tracker.export import export_csv
 from harrier.tracker.migrate_legacy import MigrationError, migrate
 from harrier.tracker.reasons import REASON_CODES
 from harrier.tracker.store import TrackerError
-from harrier.tracks import Scope, Track, default_scope
+from harrier.tracks import (
+    NON_DEFAULT_OPERATIONS,
+    WRITE_OPERATIONS,
+    Scope,
+    Track,
+    default_scope,
+)
 
 
 def load_project_env(path: Path | None = None) -> None:
@@ -893,31 +899,10 @@ def _cmd_cutover(args: argparse.Namespace) -> int:
         conn.close()
 
 
-# With a non-default `--track`, only these run (spec 093). Every other command
-# reads the industry kind's configuration, profile documents or rules, none of
-# which a track of another kind has yet.
-TRACK_ALLOWLIST: frozenset[str] = frozenset(
-    {
-        "add",
-        "tracks list",
-        "tracks add",
-        "tracks archive",
-        "next",
-        "review",
-        "shortlist",
-        "track",
-        "applied",
-        "interviewing",
-        "reject",
-        "events show",
-        "export",
-    }
-)
-
-# The allowed commands that write a tracker row; an archived track refuses them.
-TRACK_WRITES: frozenset[str] = frozenset(
-    {"add", "shortlist", "track", "applied", "interviewing", "reject"}
-)
+# The allowlist lives in `harrier.tracks` so the CLI and the API read one list
+# (spec 094). These names keep the CLI's call sites as they were.
+TRACK_ALLOWLIST = NON_DEFAULT_OPERATIONS
+TRACK_WRITES = WRITE_OPERATIONS
 
 
 def _slug(value: str) -> str:

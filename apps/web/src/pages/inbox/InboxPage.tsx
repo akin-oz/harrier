@@ -7,6 +7,7 @@ import type { components } from "@harrier/contract";
 import { TERMINAL_STATES, useRunStream } from "../../features/runs/useRunStream";
 import type { EventSourceFactory, RunOut } from "../../features/runs/useRunStream";
 import { api } from "../../shared/api/client";
+import { trackKey, useSelectedSlug } from "../../shared/track";
 import "./InboxPage.css";
 
 type MailEvents = components["schemas"]["MailEventsOut"];
@@ -47,17 +48,18 @@ export function InboxPage({
   createEventSource?: EventSourceFactory;
 } = {}) {
   const queryClient = useQueryClient();
+  const slug = useSelectedSlug();
   const [dryRun, setDryRun] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
-  const events = useQuery({ queryKey: ["mail", "events"], queryFn: fetchEvents });
+  const events = useQuery({ queryKey: trackKey(slug, "mail", "events"), queryFn: fetchEvents });
   const stream = useRunStream(createEventSource);
   const { run, lines, lastLogLine, disconnected, failed } = stream;
   const active = run !== null && !TERMINAL_STATES.has(run.state);
 
   useEffect(() => {
     if (run !== null && TERMINAL_STATES.has(run.state)) {
-      void queryClient.invalidateQueries({ queryKey: ["mail", "events"] });
+      void queryClient.invalidateQueries({ queryKey: trackKey(slug, "mail", "events") });
     }
   }, [run, queryClient]);
 

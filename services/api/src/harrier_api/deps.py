@@ -6,14 +6,21 @@ import sqlite3
 from collections.abc import Callable, Iterator, Sequence
 from typing import Annotated, Any
 
-from fastapi import Depends, params
+from fastapi import Depends, HTTPException, Query, params
 from fastapi.dependencies.models import Dependant
 from fastapi.dependencies.utils import get_dependant
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
 
 from harrier.db import connect
-from harrier.tracks import Scope, default_scope
+from harrier.tracks import (
+    SLUG_MAX_LENGTH,
+    Scope,
+    UnknownTrackError,
+    default_scope,
+    operation_refusal,
+    resolve_scope,
+)
 from harrier_api.demo import demo_db_path, is_demo_mode
 
 
@@ -33,16 +40,60 @@ Conn = Annotated[sqlite3.Connection, Depends(get_conn)]
 
 
 def get_scope(conn: Conn) -> Scope:
-    """The track this request works in, resolved once per request (spec 092).
-
-    The default track until a later spec lets a request name one. Every
-    route that reads or writes tracker rows takes it, so no route can read
-    across tracks by forgetting.
-    """
+    """The default track, resolved once per request (spec 092). Only the
+    capture routes use it: a bookmarklet names no track, so they write to the
+    default one and take no `track` parameter (spec 094)."""
     return default_scope(conn)
 
 
 ScopeDep = Annotated[Scope, Depends(get_scope)]
+
+# The status route's operation is the verb in its body, which a dependency
+# cannot read; the route checks it with `require_operation` (spec 094).
+VERB_IN_BODY = "the verb in the request body"
+
+# A track named in a query string follows the slug rule (spec 091).
+SLUG_PATTERN = rf"^[a-z][a-z0-9-]{{0,{SLUG_MAX_LENGTH - 1}}}$"
+
+
+def require_operation(scope: Scope, operation: str) -> None:
+    """409 when this track may not run this operation (specs 093, 094)."""
+    refusal = operation_refusal(scope, operation)
+    if refusal is not None:
+        raise HTTPException(status_code=409, detail=refusal)
+
+
+def scope_for(operation: str) -> Callable[..., Scope]:
+    """The scope dependency for a route that runs `operation` (spec 094).
+
+    It adds the optional `track` query parameter to the route, resolves the
+    track once per request, and refuses the operation on a track that may not
+    run it, before the route reads a row. A route that reads or writes
+    tracker rows declares its operation through this, and a test walks every
+    route to hold that.
+    """
+
+    def dependency(
+        conn: Conn,
+        track: Annotated[
+            str | None,
+            Query(
+                pattern=SLUG_PATTERN,
+                description="The search track to work in; the default track when omitted.",
+            ),
+        ] = None,
+    ) -> Scope:
+        try:
+            scope = resolve_scope(conn, track)
+        except UnknownTrackError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        if operation != VERB_IN_BODY:
+            require_operation(scope, operation)
+        return scope
+
+    dependency.__name__ = f"scope_for_{operation.replace(' ', '_').replace('-', '_')}"
+    setattr(dependency, "track_operation", operation)  # noqa: B010 - read by the route walk
+    return dependency
 
 
 # --- the 503 while a host process holds the database (spec 075) ---

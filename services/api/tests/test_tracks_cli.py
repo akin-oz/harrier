@@ -179,9 +179,13 @@ def test_status_labels_follow_the_track_kind(
     for kind, rules in KIND_RULES.items():
         assert set(rules.labels) == set(STATUSES), kind
         assert set(rules.next_action) == set(STATUSES), kind
-    # The industry kind is today's behaviour, from one definition.
+    # The industry kind is today's behaviour, from one definition. Its labels
+    # are the browser's words, which spec 094 moved here; only the one status
+    # whose stored name is not a word reads differently.
     assert dict(KIND_RULES["industry"].next_action) == NEXT_ACTION_DEFAULTS
-    assert all(KIND_RULES["industry"].labels[status] == status for status in STATUSES)
+    assert {
+        status: label for status, label in KIND_RULES["industry"].labels.items() if label != status
+    } == {"tailored_cv_requested": "CV requested"}
 
     assert add_position("Example Lab") == 0
     capsys.readouterr()

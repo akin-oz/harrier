@@ -190,6 +190,7 @@ def add_manually(
     url: str = "",
     source: str = "manual",
     description: str = "",
+    deadline: str = "",
 ) -> tuple[CaptureResult, dict[str, str] | None]:
     """Add a job by hand, scored and deduped like any captured one.
 
@@ -214,6 +215,7 @@ def add_manually(
         url=url,
         source=source or "manual",
         description=description,
+        deadline=deadline,
     )
     wanted = url.strip()
     wanted_company = company.strip().casefold()

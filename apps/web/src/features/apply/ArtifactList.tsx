@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { components } from "@harrier/contract";
 
 import { api } from "../../shared/api/client";
+import { trackKey, useSelectedSlug } from "../../shared/track";
 
 // From the contract, never hand-written: an invented field has to be a
 // compile error rather than something that silently renders blank (ADR-005).
@@ -95,8 +96,9 @@ export function ArtifactList({
   onGenerate?: (operation: "resume" | "cover-letter" | "answers" | "evaluate") => void;
 }) {
   const [openError, setOpenError] = useState<string | null>(null);
+  const slug = useSelectedSlug();
   const query = useQuery({
-    queryKey: ["artifacts", jobId],
+    queryKey: trackKey(slug, "artifacts", jobId),
     queryFn: () => fetchArtifacts(jobId),
   });
 

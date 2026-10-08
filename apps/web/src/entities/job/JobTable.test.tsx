@@ -1,8 +1,12 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 
+import { statusLabel } from "../../shared/track";
+import { INDUSTRY_TRACK } from "../../shared/track/fixtures";
 import { JobTable } from "./JobTable";
-import type { Job } from "./types";
+import type { Job, JobStatus } from "./types";
+
+const label = (status: JobStatus): string => statusLabel(INDUSTRY_TRACK, status);
 
 // vitest globals are off, so RTL never auto-cleans: without this the DOM
 // accumulates rows across tests and row-order assertions read stale renders.
@@ -40,6 +44,9 @@ function makeJob(overrides: Partial<Job>): Job {
     manual_added: "",
     created_at: "",
     updated_at: "",
+    track: "job",
+    deadline: "",
+    deadline_passed: false,
     ...overrides,
   };
 }
@@ -47,6 +54,7 @@ function makeJob(overrides: Partial<Job>): Job {
 test("renders one row per job with a titled link", () => {
   render(
     <JobTable
+      statusLabel={label}
       jobs={[makeJob({}), makeJob({ id: 2, company: "Beta", title: "Product Engineer", url: "" })]}
       emptyMessage="No jobs match."
     />,
@@ -57,7 +65,13 @@ test("renders one row per job with a titled link", () => {
 });
 
 test("empty list renders the message the page supplied", () => {
-  render(<JobTable jobs={[]} emptyMessage="No jobs yet. Run discovery to find some." />);
+  render(
+    <JobTable
+      statusLabel={label}
+      jobs={[]}
+      emptyMessage="No jobs yet. Run discovery to find some."
+    />,
+  );
   expect(screen.getByText("No jobs yet. Run discovery to find some.")).toBeDefined();
 });
 
@@ -76,6 +90,7 @@ test("rows are ordered by score, highest first", () => {
   // insertion order (spec 026).
   render(
     <JobTable
+      statusLabel={label}
       jobs={[
         makeJob({ id: 1, company: "Low", score: "60" }),
         makeJob({ id: 2, company: "High", score: "110" }),
@@ -92,6 +107,7 @@ test("open rows outrank closed ones however they scored", () => {
   // tracker is rejected, which is the steady state of a real search.
   render(
     <JobTable
+      statusLabel={label}
       jobs={[
         makeJob({ id: 1, company: "ClosedTop", score: "120", status: "rejected" }),
         makeJob({ id: 2, company: "OpenLow", score: "58", status: "prospect" }),
@@ -105,11 +121,23 @@ test("open rows outrank closed ones however they scored", () => {
 });
 
 test("a blank score renders as unknown rather than zero", () => {
-  render(<JobTable jobs={[makeJob({ score: "", fit_score: "" })]} emptyMessage="none" />);
+  render(
+    <JobTable
+      statusLabel={label}
+      jobs={[makeJob({ score: "", fit_score: "" })]}
+      emptyMessage="none"
+    />,
+  );
   expect(screen.getByLabelText("no score")).toBeDefined();
 });
 
 test("status carries a text label, not colour alone", () => {
-  render(<JobTable jobs={[makeJob({ status: "tailored_cv_requested" })]} emptyMessage="none" />);
+  render(
+    <JobTable
+      statusLabel={label}
+      jobs={[makeJob({ status: "tailored_cv_requested" })]}
+      emptyMessage="none"
+    />,
+  );
   expect(screen.getByText("CV requested")).toBeDefined();
 });

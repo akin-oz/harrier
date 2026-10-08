@@ -27,6 +27,15 @@
 .job-table--no-actions tr {
   grid-template-columns: 112px minmax(200px, 1.5fr) 104px minmax(170px, 1fr);
 }
+/* The deadline leads, in the score's place and width plus room for its
+   phrase; the status column widens for the longer academic labels
+   ("Preparing documents"). */
+.job-table--deadline tr {
+  grid-template-columns: 136px 168px minmax(200px, 1.5fr) minmax(170px, 1fr) 208px;
+}
+.job-table--deadline.job-table--no-actions tr {
+  grid-template-columns: 136px 168px minmax(200px, 1.5fr) minmax(170px, 1fr);
+}
 .job-table thead tr {
   position: sticky;
   top: 0;
@@ -68,6 +77,10 @@
   align-items: baseline;
   gap: 6px;
   min-width: 0;
+  /* The cell lays its lines out at their content width, so without a bound
+     a long title ran on into the next column instead of ending in an
+     ellipsis. */
+  max-width: 100%;
 }
 .job-table__company {
   font-weight: 500;
@@ -84,6 +97,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* Bounded like the title line above: unbounded, it ran past the cell. */
+  max-width: 100%;
 }
 
 .job-table__num {
@@ -119,4 +134,87 @@
   border: 1px dashed var(--color-border);
   border-radius: var(--radius-md);
   margin: 0;
+}
+
+/* Below the width the full table needs (its columns add up to about 900px
+   with the page's padding), each row becomes a stacked record rather than a
+   strip the reader scrolls sideways through, which left the actions cut off
+   on a tablet and on a phone. The same cells in a two-column grid: the
+   status and the deadline or score share the first line, then the job, what
+   to do next, and the actions at full width so every control can be tapped.
+   The header row stays in the accessibility tree, hidden from sight only, so
+   a screen reader still announces each cell's column. */
+@media (max-width: 900px) {
+  .job-table-scroll {
+    max-height: none;
+    overflow: visible;
+    border: none;
+    background: none;
+  }
+  .job-table {
+    min-width: 0;
+    gap: var(--space-2);
+  }
+  .job-table thead tr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .job-table tr,
+  .job-table--no-actions tr,
+  .job-table--deadline tr,
+  .job-table--deadline.job-table--no-actions tr {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "status lead"
+      "job job"
+      "next next"
+      "actions actions";
+    gap: var(--space-1) var(--space-3);
+    padding: var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-bg-raised);
+  }
+  .job-table td,
+  .job-table tbody tr:last-child td {
+    padding: 0;
+    border-bottom: none;
+  }
+  .job-table td.job-table__status {
+    grid-area: status;
+  }
+  .job-table td.job-table__lead {
+    grid-area: lead;
+    justify-content: flex-end;
+  }
+  .job-table--deadline td.job-table__lead .deadline {
+    align-items: flex-end;
+    text-align: right;
+  }
+  .job-table td.job-table__job {
+    grid-area: job;
+  }
+  .job-table__job-line {
+    flex-wrap: wrap;
+  }
+  .job-table__title {
+    white-space: normal;
+  }
+  .job-table td.job-table__next-action {
+    grid-area: next;
+  }
+  .job-table__clamp,
+  .job-table__meta {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .job-table td.job-table__actions {
+    grid-area: actions;
+    padding: var(--space-2) 0 0;
+    border-top: 1px solid var(--color-border);
+  }
 }

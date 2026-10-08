@@ -760,6 +760,64 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tracks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Tracks
+         * @description Every track, archived ones included, in id order.
+         */
+        get: operations["listTracks"];
+        put?: never;
+        /** Post Track */
+        post: operations["addTrack"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tracks/kinds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Track Kinds
+         * @description Each kind a track can have, and whether a new one may be added now.
+         */
+        get: operations["listTrackKinds"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tracks/{slug}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Archive */
+        post: operations["archiveTrack"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -768,6 +826,8 @@ export interface components {
         AddJobIn: {
             /** Company */
             company: string;
+            /** Deadline */
+            deadline?: string | null;
             /**
              * Description
              * @default
@@ -1140,6 +1200,10 @@ export interface components {
             contacts_found: string;
             /** Created At */
             created_at: string;
+            /** Deadline */
+            deadline: string;
+            /** Deadline Passed */
+            deadline_passed: boolean;
             /** External Key */
             external_key: string;
             /** Fit Score */
@@ -1183,6 +1247,8 @@ export interface components {
             status: "prospect" | "shortlisted" | "tailored_cv_requested" | "applied" | "interviewing" | "rejected";
             /** Title */
             title: string;
+            /** Track */
+            track: string;
             /** Updated At */
             updated_at: string;
             /** Url */
@@ -1390,6 +1456,46 @@ export interface components {
              */
             no_ai?: boolean;
         };
+        /** TrackIn */
+        TrackIn: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "industry" | "academic";
+            /** Label */
+            label: string;
+            /** Slug */
+            slug: string;
+        };
+        /** TrackKindOut */
+        TrackKindOut: {
+            /** Available */
+            available: boolean;
+            /** Kind */
+            kind: string;
+            /** Reason */
+            reason: string;
+        };
+        /** TrackOut */
+        TrackOut: {
+            /** Archived */
+            archived: boolean;
+            /** Id */
+            id: number;
+            /** Is Default */
+            is_default: boolean;
+            /** Kind */
+            kind: string;
+            /** Label */
+            label: string;
+            /** Slug */
+            slug: string;
+            /** Status Labels */
+            status_labels: {
+                [key: string]: string;
+            };
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -1426,7 +1532,10 @@ export type $defs = Record<string, never>;
 export interface operations {
     draftAnswers: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
             header?: never;
             path: {
                 selector: string;
@@ -1484,7 +1593,10 @@ export interface operations {
     };
     listArtifacts: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
             header?: never;
             path: {
                 selector: string;
@@ -1538,7 +1650,10 @@ export interface operations {
     };
     readArtifact: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
             header?: never;
             path: {
                 selector: string;
@@ -1593,7 +1708,10 @@ export interface operations {
     };
     draftCoverLetter: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
             header?: never;
             path: {
                 selector: string;
@@ -1651,7 +1769,10 @@ export interface operations {
     };
     evaluateOffer: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
             header?: never;
             path: {
                 selector: string;
@@ -1709,7 +1830,10 @@ export interface operations {
     };
     tailorResume: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
             header?: never;
             path: {
                 selector: string;
@@ -2172,6 +2296,8 @@ export interface operations {
             query?: {
                 status?: ("prospect" | "shortlisted" | "tailored_cv_requested" | "applied" | "interviewing" | "rejected") | null;
                 source?: string | null;
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
             };
             header?: never;
             path?: never;
@@ -2357,7 +2483,10 @@ export interface operations {
     };
     listOutreachDue: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2379,6 +2508,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
             };
             /** @description A host process holds the tracker database (spec 075). */
             503: {
@@ -2393,7 +2531,10 @@ export interface operations {
     };
     syncOutreach: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2416,6 +2557,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
             /** @description A host process holds the tracker database (spec 075). */
             503: {
                 headers: {
@@ -2429,7 +2579,10 @@ export interface operations {
     };
     setBestContact: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
             header?: never;
             path: {
                 selector: string;
@@ -2494,7 +2647,10 @@ export interface operations {
     };
     listCandidates: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
             header?: never;
             path: {
                 selector: string;
@@ -2555,7 +2711,10 @@ export interface operations {
     };
     approveCandidate: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
             header?: never;
             path: {
                 selector: string;
@@ -2620,7 +2779,10 @@ export interface operations {
     };
     rejectCandidate: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
             header?: never;
             path: {
                 selector: string;
@@ -2685,7 +2847,10 @@ export interface operations {
     };
     draftOutreach: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
             header?: never;
             path: {
                 selector: string;
@@ -2750,7 +2915,10 @@ export interface operations {
     };
     findContacts: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
             header?: never;
             path: {
                 selector: string;
@@ -2815,7 +2983,10 @@ export interface operations {
     };
     markOutreachReplied: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
             header?: never;
             path: {
                 selector: string;
@@ -2880,7 +3051,10 @@ export interface operations {
     };
     markOutreachSent: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
             header?: never;
             path: {
                 selector: string;
@@ -2945,7 +3119,10 @@ export interface operations {
     };
     snoozeOutreach: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
             header?: never;
             path: {
                 selector: string;
@@ -3190,7 +3367,10 @@ export interface operations {
     };
     addJob: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -3239,7 +3419,10 @@ export interface operations {
     };
     trackerCounts: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -3255,6 +3438,15 @@ export interface operations {
                     "application/json": {
                         [key: string]: number;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
             /** @description A host process holds the tracker database (spec 075). */
@@ -3273,6 +3465,8 @@ export interface operations {
             query?: {
                 undecided?: boolean;
                 limit?: number | null;
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
             };
             header?: never;
             path?: never;
@@ -3311,7 +3505,10 @@ export interface operations {
     };
     recordCompanyOutcome: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
             header?: never;
             path: {
                 selector: string;
@@ -3380,7 +3577,10 @@ export interface operations {
     };
     rescoreJob: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
             header?: never;
             path: {
                 selector: string;
@@ -3445,7 +3645,10 @@ export interface operations {
     };
     changeJobStatus: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
             header?: never;
             path: {
                 selector: string;
@@ -3491,6 +3694,179 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
+        };
+    };
+    listTracks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackOut"][];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
+        };
+    };
+    addTrack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrackIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no track has that slug */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the rules refuse it */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
+        };
+    };
+    listTrackKinds: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackKindOut"][];
+                };
+            };
+        };
+    };
+    archiveTrack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no track has that slug */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the rules refuse it */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

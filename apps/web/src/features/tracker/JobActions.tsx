@@ -5,6 +5,14 @@ import type { KeyboardEvent } from "react";
 
 import type { Job, JobStatus } from "../../entities/job";
 import { api } from "../../shared/api/client";
+import {
+  TRACKS_KEY,
+  trackKey,
+  trackQuery,
+  unavailableSentence,
+  useSelectedSlug,
+} from "../../shared/track";
+import type { Track } from "../../shared/track";
 import "./JobActions.css";
 
 type RejectionCode = components["schemas"]["RejectionCode"];
@@ -17,11 +25,45 @@ type CompanyOutcomeCode = components["schemas"]["CompanyOutcomeCode"];
 // company's outcome through Company replied or Interview invite (spec 080),
 // and the domain records the CLI's `interviewing` verb the same way (spec 079).
 const VERBS = [
-  { verb: "shortlist", label: "Shortlist", from: ["prospect"] },
-  { verb: "track", label: "Request CV", from: ["prospect", "shortlisted"] },
-  { verb: "applied", label: "Applied", from: ["prospect", "shortlisted", "tailored_cv_requested"] },
-  { verb: "reject", label: "Reject", from: [] },
+  { verb: "shortlist", label: "Shortlist", to: "shortlisted", from: ["prospect"] },
+  {
+    verb: "track",
+    label: "Request CV",
+    to: "tailored_cv_requested",
+    from: ["prospect", "shortlisted"],
+  },
+  {
+    verb: "applied",
+    label: "Applied",
+    to: "applied",
+    from: ["prospect", "shortlisted", "tailored_cv_requested"],
+  },
+  { verb: "reject", label: "Reject", to: "rejected", from: [] },
 ] as const;
+
+type Verb = { verb: string; label: string; to: JobStatus; from: readonly string[] };
+
+// On any other track there is no company outcome to record it through: that
+// route is outside the allowlist (spec 093, Open decisions, item 2), so the
+// CLI's own `interviewing` verb is the move, which the allowlist allows.
+const INTERVIEWING: Verb = {
+  verb: "interviewing",
+  label: "Interviewing",
+  to: "interviewing",
+  from: ["applied"],
+};
+
+// The verbs a row offers on a track. The default track keeps the words it
+// always had. Any other track names each move by where it goes, in that
+// kind's own word ("Move to submitted"), since "Request CV" means nothing on
+// a call for applications; the verb sent is the same CLI verb either way.
+function verbsFor(track: Track): readonly Verb[] {
+  if (track.is_default) return VERBS;
+  return [...VERBS, INTERVIEWING].map((entry) => ({
+    ...entry,
+    label: `Move to ${track.status_labels[entry.to] ?? entry.to}`,
+  }));
+}
 
 // Once an application is out, the next word is the company's, and leaving is
 // a withdrawal rather than a rejection. The two sit side by side under names
@@ -33,13 +75,13 @@ const AFTER_APPLYING: readonly JobStatus[] = ["applied", "interviewing"];
 // old ones; the code is what the history records (spec 079). `hybrid` and
 // `onsite` share a code and keep their words. A company's verdict is not
 // here and cannot be: `RejectionCode` has no company members.
-const EXIT_PILLS: readonly { text: string; code: RejectionCode }[] = [
-  { text: "hybrid", code: "not_remote" },
-  { text: "onsite", code: "not_remote" },
-  { text: "closed", code: "vacancy_closed" },
-  { text: "missing stack", code: "stack" },
-  { text: "location", code: "location" },
-  { text: "language", code: "language" },
+const EXIT_PILLS: readonly { text: string; code: RejectionCode; everyTrack: boolean }[] = [
+  { text: "hybrid", code: "not_remote", everyTrack: false },
+  { text: "onsite", code: "not_remote", everyTrack: false },
+  { text: "closed", code: "vacancy_closed", everyTrack: true },
+  { text: "missing stack", code: "stack", everyTrack: false },
+  { text: "location", code: "location", everyTrack: true },
+  { text: "language", code: "language", everyTrack: true },
 ];
 
 // Every rejection code the contract declares, with how it reads. A `Record`
@@ -98,23 +140,35 @@ type Takeover = "exit" | "company";
 // reachable behind a disclosure, which is what keeps the actions column
 // narrow enough that the table does not scroll sideways. Every verb is still
 // on the row; none is removed.
-function forwardVerb(status: string): { verb: string; label: string } | null {
+function forwardVerb(
+  status: string,
+  verbs: readonly Verb[],
+): { verb: string; label: string } | null {
   // A rejected row's way back is Reopen, which is the existing `shortlist`
   // verb under another name rather than a sixth verb. Shortlisted, not
   // prospect, because the batch evaluator reads only prospects and would
   // reject the row again on its next refresh (spec 072).
   if (status === "rejected") return { verb: "shortlist", label: "Reopen" };
-  return VERBS.find((entry) => (entry.from as readonly string[]).includes(status)) ?? null;
+  return verbs.find((entry) => entry.from.includes(status)) ?? null;
 }
 
 // `onApply` is passed in rather than the page rendering its own button
 // beside this one: two separate controls stacked into two rows and made the
 // table row twice as tall as it needed to be. What to do next for this job
 // belongs on one line.
-type Props = { job: Job; onApply?: (job: Job) => void };
+//
+// `track` is the selected track. Off the default track the row offers only
+// what the shared allowlist allows there (spec 094): the forward moves and
+// the exit. Apply stays on the row, marked unavailable, and says why when
+// pressed, rather than vanishing (spec 042's defect is a browser that
+// silently covers less than it does).
+type Props = { job: Job; track: Track; onApply?: (job: Job) => void };
 
-export function JobActions({ job, onApply }: Props) {
+export function JobActions({ job, track, onApply }: Props) {
   const queryClient = useQueryClient();
+  const slug = useSelectedSlug();
+  const full = track.is_default;
+  const verbs = verbsFor(track);
   const [reason, setReason] = useState("");
   const [otherCode, setOtherCode] = useState<RejectionCode>("other");
   const [takeover, setTakeover] = useState<Takeover | null>(null);
@@ -190,7 +244,7 @@ export function JobActions({ job, onApply }: Props) {
   function settled(): void {
     setFailure(null);
     reset();
-    void queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    void queryClient.invalidateQueries({ queryKey: trackKey(slug, "jobs") });
   }
 
   const change = useMutation({
@@ -210,7 +264,7 @@ export function JobActions({ job, onApply }: Props) {
           ? { verb, reason: why ?? null }
           : { verb, reason: why ?? null, reason_code: code };
       const { data, error } = await api.POST("/tracker/{selector}/status", {
-        params: { path: { selector: String(job.id) } },
+        params: { path: { selector: String(job.id) }, query: trackQuery(slug) },
         body,
       });
       // A refusal is a normal outcome here, not an exception to swallow: the
@@ -227,6 +281,9 @@ export function JobActions({ job, onApply }: Props) {
     onSuccess: settled,
     onError: (error: Error) => {
       refused(error.message);
+      // A track archived in another tab refuses this write; the list is read
+      // again so the switcher and the tracks page say so (spec 094).
+      void queryClient.invalidateQueries({ queryKey: TRACKS_KEY });
     },
   });
 
@@ -235,7 +292,7 @@ export function JobActions({ job, onApply }: Props) {
   const outcome = useMutation({
     mutationFn: async (code: CompanyOutcomeCode) => {
       const { data, error } = await api.POST("/tracker/{selector}/outcome", {
-        params: { path: { selector: String(job.id) } },
+        params: { path: { selector: String(job.id) }, query: trackQuery(slug) },
         body: { code, note: null },
       });
       if (error !== undefined) throw new Error(refusalMessage(error));
@@ -251,14 +308,14 @@ export function JobActions({ job, onApply }: Props) {
       // but the refetch can turn that very button into Reopen.
       refused(error.message);
       reset();
-      void queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      void queryClient.invalidateQueries({ queryKey: trackKey(slug, "jobs") });
     },
   });
 
   const rescore = useMutation({
     mutationFn: async () => {
       const { data, error } = await api.POST("/tracker/{selector}/rescore", {
-        params: { path: { selector: String(job.id) } },
+        params: { path: { selector: String(job.id) }, query: trackQuery(slug) },
       });
       if (error !== undefined) throw new Error(refusalMessage(error));
       if (data === undefined) throw new Error("the local API token was not accepted");
@@ -266,7 +323,7 @@ export function JobActions({ job, onApply }: Props) {
     },
     onSuccess: (result) => {
       setFailure(null);
-      void queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      void queryClient.invalidateQueries({ queryKey: trackKey(slug, "jobs") });
       if (result.previous !== String(result.current)) {
         setFailure(`rescored ${result.previous || "-"} to ${String(result.current)}`);
       }
@@ -279,16 +336,25 @@ export function JobActions({ job, onApply }: Props) {
   const busy = change.isPending || outcome.isPending || rescore.isPending;
   const afterApplying = AFTER_APPLYING.includes(job.status);
   const exitLabel = afterApplying ? "Withdraw" : "Reject";
-  const primary = afterApplying ? null : forwardVerb(job.status);
+  // On the default track an applied row's next word is the company's, given
+  // through Company replied. Elsewhere there is no company outcome, so the
+  // row moves forward by its own verb like every earlier stage.
+  const primary = afterApplying && full ? null : forwardVerb(job.status, verbs);
   // A rejected row can still move forward (Reopen and the verbs under More),
   // but it cannot be rejected again or applied to until it is reopened
   // (spec 072).
   const closed = job.status === "rejected";
   // Everything the row can do that is not the primary verb and not Reject,
   // which has its own control because it asks for a reason first.
-  const secondary = VERBS.filter(
-    (entry) => entry.verb !== "reject" && entry.verb !== primary?.verb,
+  const secondary = verbs.filter(
+    (entry) =>
+      entry.verb !== "reject" &&
+      entry.verb !== primary?.verb &&
+      // The default track has always listed every verb here; elsewhere a
+      // move to the row's own status is left out, as it changes nothing.
+      (full || entry.to !== job.status),
   );
+  const exitPills = full ? EXIT_PILLS : EXIT_PILLS.filter((pill) => pill.everyTrack);
   const companyPills = (Object.keys(COMPANY_PILLS) as CompanyOutcomeCode[]).filter((code) =>
     COMPANY_PILLS[code].on.includes(job.status),
   );
@@ -307,7 +373,7 @@ export function JobActions({ job, onApply }: Props) {
         <div className="job-actions__row">
           {/* Keyed apart, so a refetch that changes the status mounts a new
               control instead of relabelling the focused one. */}
-          {afterApplying ? (
+          {afterApplying && full ? (
             <button
               key="company-replied"
               ref={companyRef}
@@ -350,13 +416,28 @@ export function JobActions({ job, onApply }: Props) {
           >
             {exitLabel}
           </button>
-          {onApply !== undefined && (
+          {full && onApply !== undefined && (
             <button
               type="button"
               disabled={closed}
               aria-label={`Apply to ${job.company}, ${job.title}`}
               onClick={() => {
                 onApply(job);
+              }}
+            >
+              Apply
+            </button>
+          )}
+          {/* Focusable, not `disabled`: a disabled control cannot be reached
+              from the keyboard to learn why it is off. */}
+          {!full && (
+            <button
+              type="button"
+              className="job-actions__unavailable"
+              aria-disabled="true"
+              aria-label={`Apply to ${job.company}, ${job.title}: not available on this track`}
+              onClick={() => {
+                refused(unavailableSentence(track));
               }}
             >
               Apply
@@ -397,7 +478,7 @@ export function JobActions({ job, onApply }: Props) {
               one that was rejected, and the row then goes straight to
               interviewing (spec 072). Recorded as what it is, the company's
               invitation (specs 079, 080). */}
-          {!afterApplying && (
+          {full && !afterApplying && (
             <button
               type="button"
               disabled={busy}
@@ -408,15 +489,17 @@ export function JobActions({ job, onApply }: Props) {
               Interview invite
             </button>
           )}
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => {
-              rescore.mutate();
-            }}
-          >
-            Rescore
-          </button>
+          {full && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                rescore.mutate();
+              }}
+            >
+              Rescore
+            </button>
+          )}
         </div>
       )}
 
@@ -431,7 +514,7 @@ export function JobActions({ job, onApply }: Props) {
           onKeyDown={onTakeoverKey}
         >
           <span className="job-actions__pills-label">{exitLabel}:</span>
-          {EXIT_PILLS.map((pill, index) => (
+          {exitPills.map((pill, index) => (
             <button
               key={pill.text}
               ref={index === 0 ? firstPillRef : undefined}

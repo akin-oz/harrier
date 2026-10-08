@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { components } from "@harrier/contract";
 
 import { api } from "../../shared/api/client";
+import { trackKey, useSelectedSlug } from "../../shared/track";
 import "./OutreachPage.css";
 
 type OutreachRow = components["schemas"]["OutreachRowOut"];
@@ -50,6 +51,7 @@ async function fetchCandidates(selector: string): Promise<readonly Candidate[]> 
 
 export function OutreachPage() {
   const queryClient = useQueryClient();
+  const slug = useSelectedSlug();
   const [selector, setSelector] = useState("");
   // What the query actually keys on. Typing "1234" into the box used to
   // issue four requests, one per keystroke, and each of them read the
@@ -66,16 +68,19 @@ export function OutreachPage() {
     };
   }, [selector]);
 
-  const due = useQuery({ queryKey: ["outreach", "due"], queryFn: fetchDue });
-  const contacts = useQuery({ queryKey: ["outreach", "contacts"], queryFn: fetchContacts });
+  const due = useQuery({ queryKey: trackKey(slug, "outreach", "due"), queryFn: fetchDue });
+  const contacts = useQuery({
+    queryKey: trackKey(slug, "outreach", "contacts"),
+    queryFn: fetchContacts,
+  });
   const candidates = useQuery({
-    queryKey: ["outreach", "candidates", settled],
+    queryKey: trackKey(slug, "outreach", "candidates", settled),
     queryFn: () => fetchCandidates(settled),
     enabled: settled !== "",
   });
 
   const refreshAll = () => {
-    void queryClient.invalidateQueries({ queryKey: ["outreach"] });
+    void queryClient.invalidateQueries({ queryKey: trackKey(slug, "outreach") });
   };
 
   const mark = useMutation({

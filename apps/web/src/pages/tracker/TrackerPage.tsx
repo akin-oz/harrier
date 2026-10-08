@@ -7,16 +7,15 @@ import { RunPanel } from "../../features/runs/RunPanel";
 import { AddJob } from "../../features/tracker/AddJob";
 import { JobActions } from "../../features/tracker/JobActions";
 import { api } from "../../shared/api/client";
+import {
+  statusLabel,
+  trackKey,
+  trackQuery,
+  unavailableSentence,
+  useSelectedSlug,
+} from "../../shared/track";
+import type { Track } from "../../shared/track";
 import "./TrackerPage.css";
-
-const STATUS_LABEL: Record<JobStatus, string> = {
-  prospect: "Prospect",
-  shortlisted: "Shortlisted",
-  tailored_cv_requested: "CV requested",
-  applied: "Applied",
-  interviewing: "Interviewing",
-  rejected: "Rejected",
-};
 
 // `next` and `review` are the CLI's two orderings and they answer different
 // questions: what to work on, and what still needs a decision. They are a
@@ -33,8 +32,8 @@ type View = (typeof VIEWS)[number]["id"];
 // The whole set is fetched once and filtered here. The contract has a status
 // query parameter but no search one, and the chip counts have to describe the
 // whole tracker rather than the current filter, so one request answers both.
-async function fetchAllJobs(): Promise<readonly Job[]> {
-  const { data, error } = await api.GET("/jobs", { params: { query: {} } });
+async function fetchAllJobs(slug: string | null): Promise<readonly Job[]> {
+  const { data, error } = await api.GET("/jobs", { params: { query: trackQuery(slug) } });
   if (error !== undefined) {
     throw new Error(`listJobs failed: ${JSON.stringify(error)}`);
   }
@@ -44,9 +43,9 @@ async function fetchAllJobs(): Promise<readonly Job[]> {
 // The queue ordering is computed by the domain, not re-derived here: ranking
 // the rows in the browser would be the second implementation this spec exists
 // to prevent.
-async function fetchQueue(undecided: boolean): Promise<readonly Job[]> {
+async function fetchQueue(slug: string | null, undecided: boolean): Promise<readonly Job[]> {
   const { data, error } = await api.GET("/tracker/queue", {
-    params: { query: { undecided } },
+    params: { query: { undecided, ...trackQuery(slug) } },
   });
   if (error !== undefined) {
     throw new Error(`queue failed: ${JSON.stringify(error)}`);
@@ -54,15 +53,29 @@ async function fetchQueue(undecided: boolean): Promise<readonly Job[]> {
   return data;
 }
 
-export function TrackerPage({ onApply }: { onApply?: (job: Job) => void } = {}) {
+// `track` is the selected track, resolved by the app from the URL. Its kind
+// names the statuses and decides what the table leads with; whether it is
+// the default decides what the rows may do (spec 094). The page is keyed by
+// track where it is mounted, so a switch starts it fresh.
+export function TrackerPage({ track, onApply }: { track: Track; onApply?: (job: Job) => void }) {
+  const slug = useSelectedSlug();
   const [status, setStatus] = useState<JobStatus | "">("");
   const [search, setSearch] = useState("");
-  const [view, setView] = useState<View>("all");
+  // An academic track opens on its queue: the server orders it by the
+  // nearest deadline, which is the question the day starts with.
+  const [view, setView] = useState<View>(track.is_default ? "all" : "next");
+  const label = (value: JobStatus): string => statusLabel(track, value);
+  // An archived track keeps its rows readable and takes no writes, so it
+  // offers none (spec 093).
+  const writable = !track.archived;
 
-  const all = useQuery({ queryKey: ["jobs"], queryFn: fetchAllJobs });
+  const all = useQuery({
+    queryKey: trackKey(slug, "jobs"),
+    queryFn: () => fetchAllJobs(slug),
+  });
   const queue = useQuery({
-    queryKey: ["jobs", "queue", view],
-    queryFn: () => fetchQueue(view === "review"),
+    queryKey: trackKey(slug, "jobs", "queue", view),
+    queryFn: () => fetchQueue(slug, view === "review"),
     enabled: view !== "all",
   });
   const query = view === "all" ? all : queue;
@@ -95,7 +108,9 @@ export function TrackerPage({ onApply }: { onApply?: (job: Job) => void } = {}) 
   const emptyMessage =
     (query.data?.length ?? 0) === 0
       ? view === "all"
-        ? "No jobs yet. Run discovery to find some."
+        ? track.is_default
+          ? "No jobs yet. Run discovery to find some."
+          : "Nothing on this track yet. Add a position by hand."
         : "Nothing in this queue."
       : isFiltered
         ? "No jobs match this filter."
@@ -103,9 +118,27 @@ export function TrackerPage({ onApply }: { onApply?: (job: Job) => void } = {}) 
 
   return (
     <section className="tracker-page">
-      <RunPanel />
+      {/* Runs start on the default track only: no run kind is on the shared
+          allowlist yet (spec 094, Honest limitations). */}
+      {track.is_default ? (
+        <RunPanel />
+      ) : (
+        <p className="tracker-page__unavailable">
+          <strong>Runs.</strong> {unavailableSentence(track)}
+        </p>
+      )}
+      {track.archived && (
+        <p className="tracker-page__archived" role="note">
+          {track.label} is archived. Its rows can be read and not changed.
+        </p>
+      )}
       <div className="tracker-page__toolbar">
-        <h2 className="tracker-page__heading">Tracker</h2>
+        <h2 className="tracker-page__heading">
+          {track.label}
+          <span className="tracker-page__kind">
+            {track.kind} track{track.archived ? ", archived" : ""}
+          </span>
+        </h2>
         <input
           type="search"
           className="tracker-page__search"
@@ -116,7 +149,7 @@ export function TrackerPage({ onApply }: { onApply?: (job: Job) => void } = {}) 
             setSearch(event.target.value);
           }}
         />
-        <AddJob />
+        {writable && <AddJob track={track} />}
       </div>
       <div className="tracker-page__filters" role="group" aria-label="Queue">
         {VIEWS.map((entry) => (
@@ -154,8 +187,7 @@ export function TrackerPage({ onApply }: { onApply?: (job: Job) => void } = {}) 
               setStatus(value);
             }}
           >
-            {STATUS_LABEL[value]}{" "}
-            <span className="tracker-chip__count">{counts.get(value) ?? 0}</span>
+            {label(value)} <span className="tracker-chip__count">{counts.get(value) ?? 0}</span>
           </button>
         ))}
       </div>
@@ -184,8 +216,12 @@ export function TrackerPage({ onApply }: { onApply?: (job: Job) => void } = {}) 
         <JobTable
           jobs={filtered}
           emptyMessage={emptyMessage}
+          statusLabel={label}
           keepOrder={view !== "all"}
-          renderActions={(job) => <JobActions job={job} onApply={onApply} />}
+          deadlineLed={!track.is_default}
+          renderActions={
+            writable ? (job) => <JobActions job={job} track={track} onApply={onApply} /> : undefined
+          }
         />
       )}
     </section>

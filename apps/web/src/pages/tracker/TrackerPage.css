@@ -14,6 +14,33 @@
   margin: 0;
   font-size: 16px;
   font-weight: 600;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* The kind, said beside the name on every track, so an academic page never
+   reads as the industry one with odd labels. */
+.tracker-page__kind {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-tertiary);
+}
+.tracker-page__unavailable,
+.tracker-page__archived {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-sunken);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+.tracker-page__unavailable strong {
+  color: var(--color-text);
+  font-weight: 600;
 }
 .tracker-page__search {
   flex: 1;
@@ -104,4 +131,21 @@
   background: none;
   color: inherit;
   font-weight: 500;
+}
+
+/* Phone width: the search takes its own line at full width, the chips stay
+   in rows that wrap, and every chip is tall enough to tap. */
+@media (max-width: 640px) {
+  .tracker-page__search {
+    flex: 1 1 100%;
+    max-width: none;
+    order: 3;
+    min-height: 40px;
+    font-size: 16px;
+  }
+  .tracker-chip {
+    min-height: 36px;
+    padding: 6px 12px;
+    font-size: 13px;
+  }
 }
