@@ -350,3 +350,14 @@ None for data. `just container-up` after it ships.
   command either.
 - `restore`, cutover, migrations and repository upkeep in the browser.
 - Per-track configuration.
+
+## Note (2026-10-08, proposed by spec 097)
+
+Takes effect when spec 097 is approved and implemented.
+
+- `GET /config` and `GET /config/{kind}` require the local token (spec 023's
+  open item, closed by spec 097), so the configuration page sends the token
+  on these reads, as the client already does for the reads listed in
+  `apps/web/src/shared/api/client.ts` (`TOKENED_READS`).
+- The new `academic_searches` kind is shown read-only on the configuration
+  page until an editor with spec 097's validation messages exists.
