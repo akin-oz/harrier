@@ -64,6 +64,27 @@ class TrackRefusedError(TrackError):
     default track or one already archived (spec 093)."""
 
 
+class AlreadyArchivedError(TrackRefusedError):
+    """Archiving a track that is already archived. Its own type, so a caller
+    tells a repeated archive from a refused one by class, never by wording
+    (review of PR #182)."""
+
+
+class ArchivedTrackError(TrackError):
+    """A write to a track that is archived: it reads and does not write
+    (spec 093)."""
+
+
+def refuse_if_archived(scope: Scope) -> None:
+    """The one check every tracker write makes. The CLI refuses earlier with
+    its own exit status; this holds for every other caller (review of
+    PR #182)."""
+    if scope.track.archived:
+        raise ArchivedTrackError(
+            f"track {scope.track.slug} is archived; it reads but does not write"
+        )
+
+
 QueueOrder = Literal["stage_then_score", "nearest_deadline"]
 
 
@@ -245,7 +266,7 @@ def archive_track(conn: sqlite3.Connection, slug: str) -> Track:
     if track.id == DEFAULT_TRACK_ID:
         raise TrackRefusedError("the default track cannot be archived")
     if track.archived:
-        raise TrackRefusedError(f"track {slug!r} is already archived")
+        raise AlreadyArchivedError(f"track {slug!r} is already archived")
     with conn:
         conn.execute("UPDATE tracks SET archived_at = datetime('now') WHERE id = ?", (track.id,))
     return resolve_scope(conn, slug).track

@@ -520,3 +520,21 @@ What implementation settled, each with the test or file that holds it:
   industry refusal, the deadline check, the labels, the unknown-slug
   refusal); each made a test above fail, and each file was restored
   byte-for-byte after its run.
+
+## Amendment (2026-10-08, review of PR #182)
+
+- **An archived track refuses writes in the store, not only in the CLI.**
+  `add_job`, `set_status` and `update_fields` refuse a scope whose track is
+  archived, so a caller that skips the command line cannot write to one.
+  The CLI still refuses first, with exit status 2
+  (`services/api/tests/test_tracks_cli.py::test_the_store_refuses_writes_on_an_archived_track`).
+- **A repeated archive is its own exception type,** `AlreadyArchivedError`,
+  so its exit status 1 comes from the type and not from the words of the
+  message (`services/api/tests/test_tracks_cli.py::test_a_repeated_archive_is_its_own_refusal`).
+  Spec 091's track-verb test now counts functions whose names start with a
+  verb, so the new guard `refuse_if_archived` and the exception names are
+  not mistaken for verbs.
+- **CSV cells that begin with a formula character** are written unchanged,
+  as they were before this spec, which only moved the export code. The fix
+  belongs to spec 096, which owns the browser download, and is recorded
+  there.

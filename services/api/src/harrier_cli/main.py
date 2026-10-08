@@ -1207,6 +1207,7 @@ def _track_line(track: Track) -> str:
 def _cmd_tracks(args: argparse.Namespace) -> int:
     """The search tracks: list (spec 091), add and archive (spec 093)."""
     from harrier.tracks import (
+        AlreadyArchivedError,
         DuplicateTrackError,
         TrackRefusedError,
         UnknownTrackError,
@@ -1225,7 +1226,9 @@ def _cmd_tracks(args: argparse.Namespace) -> int:
                 track = add_track(conn, args.slug, args.kind, args.label)
             else:
                 track = archive_track(conn, args.slug)
-        except DuplicateTrackError as error:
+        except (DuplicateTrackError, AlreadyArchivedError) as error:
+            # A state, not a misuse: the slug is taken, or the track is
+            # already archived. Told apart by type, never by the message.
             print(f"refused: {error}", file=sys.stderr)
             return 1
         except UnknownTrackError as error:
@@ -1233,9 +1236,7 @@ def _cmd_tracks(args: argparse.Namespace) -> int:
             return 2
         except TrackRefusedError as error:
             print(f"refused: {error}", file=sys.stderr)
-            # Archiving twice is a state, not a misuse; every other refusal
-            # is asking for something the rules do not allow.
-            return 1 if "already archived" in str(error) else 2
+            return 2
         print(_track_line(track))
         return 0
 

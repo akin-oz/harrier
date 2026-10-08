@@ -38,7 +38,7 @@ from harrier.tracker.schema import (
     TRACKER_FIELDS,
 )
 from harrier.tracker.transitions import check_transition, fields_a_move_clears
-from harrier.tracks import Scope, rules_for
+from harrier.tracks import ArchivedTrackError, Scope, refuse_if_archived, rules_for
 
 
 class TrackerError(Exception):
@@ -106,6 +106,7 @@ def add_job(conn: sqlite3.Connection, fields: Mapping[str, str], *, scope: Scope
     """
     if "track_id" in fields:
         raise TrackerError("track_id is set from the scope, not from the fields")
+    _refuse_archived(scope)
     values = {name: str(fields.get(name, "") or "") for name in TRACKER_FIELDS}
     promoted = expand_notes(values["notes"])
     for key in NOTE_KEYS:
@@ -169,6 +170,15 @@ def add_job(conn: sqlite3.Connection, fields: Mapping[str, str], *, scope: Scope
             description_sha256=description_sha256,
         )
     return int(row_id)
+
+
+def _refuse_archived(scope: Scope) -> None:
+    """An archived track reads and does not write, for every caller of the
+    write path, not only the CLI (spec 093, review of PR #182)."""
+    try:
+        refuse_if_archived(scope)
+    except ArchivedTrackError as error:
+        raise TrackerError(str(error)) from error
 
 
 def _is_iso_date(value: str) -> bool:
@@ -311,6 +321,7 @@ def set_status(
     """
     if status not in STATUSES:
         raise UnknownStatusError(f"unknown status {status!r}; legal: {', '.join(STATUSES)}")
+    _refuse_archived(scope)
     with _write_lock(conn):
         job = get_job(conn, scope, job_id)
         check_transition(job["status"], status)
@@ -424,6 +435,7 @@ def update_fields(
         )
     if not fields:
         return get_job(conn, scope, job_id)
+    _refuse_archived(scope)
     # Read under the write lock, so the invariants are checked against the
     # row this write lands on (spec 079 amendment).
     with _write_lock(conn):

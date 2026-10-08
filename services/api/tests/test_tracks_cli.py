@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 import harrier.capture as capture_module
 import harrier_cli.main as cli_module
 from harrier.db import connect
-from harrier.tracker import TrackerError, add_job, list_jobs
+from harrier.tracker import TrackerError, add_job, list_jobs, set_status, update_fields
 from harrier.tracker.queue import rank_by_deadline
 from harrier.tracker.schema import NEXT_ACTION_DEFAULTS, STATUSES
 from harrier.tracker.store import list_events
@@ -475,5 +475,48 @@ def test_browser_capture_lands_in_the_default_track(academic: Path) -> None:
         first, second = scopes(conn)
         assert {row["company"] for row in list_jobs(conn, first)} == {"Browser Co", "Form Co"}
         assert list_jobs(conn, second) == []
+    finally:
+        conn.close()
+
+
+# --- review of PR #182 ------------------------------------------------------
+
+
+def test_the_store_refuses_writes_on_an_archived_track(academic: Path) -> None:
+    """The CLI refuses first with exit 2; the store holds for every other
+    caller, so an archived track cannot be written by a path that skips the
+    command line."""
+    assert add_position("Example Lab") == 0
+    assert main(["tracks", "archive", SLUG]) == 0
+    conn = connect()
+    try:
+        archived = resolve_scope(conn, SLUG)
+        assert archived.track.archived
+        row = only_row(conn, archived)
+        with pytest.raises(TrackerError, match="archived"):
+            add_job(conn, {"company": "Later Lab", "title": "Engineer"}, scope=archived)
+        with pytest.raises(TrackerError, match="archived"):
+            set_status(conn, archived, int(row["id"]), "shortlisted")
+        with pytest.raises(TrackerError, match="archived"):
+            update_fields(conn, archived, int(row["id"]), {"notes": "touched"})
+        after = only_row(conn, archived)
+        assert after["status"] == "prospect" and after["notes"] == row["notes"]
+    finally:
+        conn.close()
+
+
+def test_a_repeated_archive_is_its_own_refusal(academic: Path) -> None:
+    """Exit status 1 for a repeated archive comes from the exception's type,
+    not from the words in its message."""
+    from harrier.tracks import AlreadyArchivedError, TrackRefusedError, archive_track
+
+    conn = connect()
+    try:
+        archive_track(conn, SLUG)
+        with pytest.raises(AlreadyArchivedError):
+            archive_track(conn, SLUG)
+        with pytest.raises(TrackRefusedError) as refused:
+            archive_track(conn, "job")
+        assert not isinstance(refused.value, AlreadyArchivedError)
     finally:
         conn.close()
