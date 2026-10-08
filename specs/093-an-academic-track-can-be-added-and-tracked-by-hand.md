@@ -538,3 +538,18 @@ What implementation settled, each with the test or file that holds it:
   as they were before this spec, which only moved the export code. The fix
   belongs to spec 096, which owns the browser download, and is recorded
   there.
+
+## Note (2026-10-08, proposed by spec 097)
+
+Takes effect when spec 097 is approved and implemented. Until then this
+spec stands as written.
+
+- **"No profile read on an academic track" is narrowed.** `discover` and
+  `reconsider` on an academic track read one `user_config` row, the
+  `academic_searches` kind, and use only their own track's entry. They read
+  no profile document. No other allowlisted command reads `user_config` or
+  `profile_documents`, and the redaction read stays the one shared read.
+  `services/api/tests/test_tracks_cli.py::test_academic_commands_read_no_profile_document`
+  gains `discover` in its command list.
+- **`discover` and `reconsider` join the allowlist,** so they leave this
+  spec's list of commands refused on a non-default track.
