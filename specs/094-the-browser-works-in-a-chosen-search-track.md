@@ -139,6 +139,11 @@ with `"track <slug> is archived"`.
 A route that depends on `ScopeDep` and declares no operation fails a test
 that walks the application's routes, so a new route cannot skip the list.
 
+Every route that takes `track` declares both refusals in the contract, a 404
+and a 409 with the `ErrorOut` body, so the browser reads them through
+generated types. The route class adds them, as it adds the 503 (spec 075),
+and a route's own wording for a status it already declares is kept.
+
 ### The tracks routes
 
 | Route | Operation id | Token | Answers |
@@ -250,6 +255,9 @@ otherwise. Every database is built under `tmp_path` with synthetic rows.
       the function `harrier tracks` calls
       (`services/api/tests/test_api_tracks.py::test_the_tracks_routes_list_add_and_archive`,
       `services/api/tests/test_api_tracks.py::test_the_cli_and_the_api_manage_tracks_through_the_same_functions`)
+- [x] Every route that takes `track` declares the 404 and the 409 with the
+      `ErrorOut` body, and `POST /tracks` declares no 404
+      (`services/api/tests/test_api_tracks.py::test_every_track_refusal_is_in_the_contract`)
 - [x] `NON_DEFAULT_OPERATIONS` is the one list both surfaces read
       (`services/api/tests/test_api_tracks.py::test_the_cli_and_the_api_share_one_allowlist`)
 - [x] `JobOut` carries `track`, `deadline` and `deadline_passed`, and
@@ -426,3 +434,11 @@ routes and the bundle.
   record on both tracks. The title and source lines in a job cell are also
   bounded to the cell, which fixes a long title running into the next
   column on the industry table too.
+- **The track refusals are in the contract.** Review of PR #185 found that
+  `POST /tracks` declared a 404 it never answers. The same check showed the
+  opposite gap on the routes this spec changed: `GET /jobs`, the queue, the
+  counts and `POST /tracker` answer 404 for an unknown track and 409 for a
+  refused operation, and declared neither. `DatabaseRoute` now declares both
+  on every route whose scope comes from `scope_for`, and each tracks route
+  declares only what it answers
+  (`services/api/tests/test_api_tracks.py::test_every_track_refusal_is_in_the_contract`).

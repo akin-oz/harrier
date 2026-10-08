@@ -1500,7 +1500,24 @@
             "description": "missing or wrong local API token"
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
             "description": "no job matched the selector"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track may not run this operation, or it is archived"
           },
           "422": {
             "content": {
@@ -1579,7 +1596,24 @@
             "description": "missing or wrong local API token"
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
             "description": "no job matched the selector"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track may not run this operation, or it is archived"
           },
           "422": {
             "content": {
@@ -1660,7 +1694,24 @@
             "description": "missing or wrong local API token"
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
             "description": "no such job, artifact kind, or the artifact is not produced yet"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track may not run this operation, or it is archived"
           },
           "422": {
             "content": {
@@ -1744,7 +1795,24 @@
             "description": "missing or wrong local API token"
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
             "description": "no job matched the selector"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track may not run this operation, or it is archived"
           },
           "422": {
             "content": {
@@ -1828,7 +1896,24 @@
             "description": "missing or wrong local API token"
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
             "description": "no job matched the selector"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track may not run this operation, or it is archived"
           },
           "422": {
             "content": {
@@ -1913,7 +1998,24 @@
             "description": "missing or wrong local API token"
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
             "description": "no job matched the selector"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track may not run this operation, or it is archived"
           },
           "422": {
             "content": {
@@ -2498,6 +2600,26 @@
             },
             "description": "Successful Response"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track parameter named no track"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track may not run this operation, or it is archived"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -2732,6 +2854,26 @@
           "403": {
             "description": "missing or wrong local API token"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track parameter named no track"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track may not run this operation, or it is archived"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -2797,6 +2939,26 @@
           },
           "403": {
             "description": "missing or wrong local API token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track parameter named no track"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track may not run this operation, or it is archived"
           },
           "422": {
             "content": {
@@ -2880,9 +3042,23 @@
             "description": "missing or wrong local API token"
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
             "description": "no job matched the selector, or the candidate was never staged"
           },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
             "description": "the domain refused the change"
           },
           "422": {
@@ -2962,9 +3138,23 @@
             "description": "missing or wrong local API token"
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
             "description": "no job matched the selector, or the candidate was never staged"
           },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
             "description": "the domain refused the change"
           },
           "422": {
@@ -3050,9 +3240,23 @@
             "description": "missing or wrong local API token"
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
             "description": "no job matched the selector, or the candidate was never staged"
           },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
             "description": "the domain refused the change"
           },
           "422": {
@@ -3137,9 +3341,23 @@
             "description": "missing or wrong local API token"
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
             "description": "no job matched the selector, or the candidate was never staged"
           },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
             "description": "the domain refused the change"
           },
           "422": {
@@ -3225,9 +3443,23 @@
             "description": "missing or wrong local API token"
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
             "description": "no job matched the selector, or the candidate was never staged"
           },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
             "description": "the domain refused the change"
           },
           "422": {
@@ -3313,9 +3545,23 @@
             "description": "missing or wrong local API token"
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
             "description": "no job matched the selector, or the candidate was never staged"
           },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
             "description": "the domain refused the change"
           },
           "422": {
@@ -3400,9 +3646,23 @@
             "description": "missing or wrong local API token"
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
             "description": "no job matched the selector, or the candidate was never staged"
           },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
             "description": "the domain refused the change"
           },
           "422": {
@@ -3488,9 +3748,23 @@
             "description": "missing or wrong local API token"
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
             "description": "no job matched the selector, or the candidate was never staged"
           },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
             "description": "the domain refused the change"
           },
           "422": {
@@ -3575,9 +3849,23 @@
             "description": "missing or wrong local API token"
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
             "description": "no job matched the selector, or the candidate was never staged"
           },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
             "description": "the domain refused the change"
           },
           "422": {
@@ -3852,6 +4140,26 @@
           "403": {
             "description": "missing or wrong local API token"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track parameter named no track"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track may not run this operation, or it is archived"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -3914,6 +4222,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track parameter named no track"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track may not run this operation, or it is archived"
           },
           "422": {
             "content": {
@@ -4006,6 +4334,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track parameter named no track"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track may not run this operation, or it is archived"
           },
           "422": {
             "content": {
@@ -4384,11 +4732,15 @@
           "403": {
             "description": "missing or wrong local API token"
           },
-          "404": {
-            "description": "no track has that slug"
-          },
           "409": {
-            "description": "the rules refuse it"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "a duplicate slug, or a kind the rules refuse"
           },
           "422": {
             "content": {
@@ -4467,10 +4819,24 @@
             "description": "missing or wrong local API token"
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
             "description": "no track has that slug"
           },
           "409": {
-            "description": "the rules refuse it"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the default track, or one already archived"
           },
           "422": {
             "content": {

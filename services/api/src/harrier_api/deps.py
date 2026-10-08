@@ -96,6 +96,44 @@ def scope_for(operation: str) -> Callable[..., Scope]:
     return dependency
 
 
+# --- refusal bodies ---
+
+
+# FastAPI already sends this body for an `HTTPException`. Declaring it is what
+# lets the generated client know a refusal has one, so the browser reads
+# `detail` through a generated type rather than a cast (spec 082). The raise
+# and this declaration are separate lines, so
+# `tests/test_ui_tracker.py::test_every_tracker_refusal_is_the_body_the_contract_declares`
+# provokes each refusal and holds the two together. It lives here so the
+# route class below can declare the track refusals with it (spec 094).
+class ErrorOut(BaseModel):
+    """The body of a refusal: the message the domain wrote, verbatim."""
+
+    detail: str
+
+
+# What `scope_for` can answer on every route that takes `track`: an unknown
+# slug, and an operation the track may not run or an archived track's write.
+TRACK_REFUSAL_RESPONSES: dict[int | str, dict[str, Any]] = {
+    404: {"model": ErrorOut, "description": "the track parameter named no track"},
+    409: {
+        "model": ErrorOut,
+        "description": "the track may not run this operation, or it is archived",
+    },
+}
+
+
+def _track_operation(dependant: Dependant) -> str | None:
+    operation = getattr(dependant.call, "track_operation", None)
+    if isinstance(operation, str):
+        return operation
+    for child in dependant.dependencies:
+        found = _track_operation(child)
+        if found is not None:
+            return found
+    return None
+
+
 # --- the 503 while a host process holds the database (spec 075) ---
 
 
@@ -144,14 +182,26 @@ def depends_on_conn(
 
 
 class DatabaseRoute(APIRoute):
-    """A route that declares the 503 itself when it depends on `Conn`.
+    """A route that declares the 503 itself when it depends on `Conn`, and
+    the track refusals when it takes its scope from `scope_for`.
 
     Declared by the route class rather than in each decorator, so a new route
-    that opens the database cannot forget it, and one that does not never
-    claims it (spec 075).
+    that opens the database or names a track cannot forget them, and one that
+    does not never claims them (specs 075, 094). A route's own declaration of
+    a status wins: the tracker writes keep their 404 wording (spec 082).
     """
 
     def __init__(self, path: str, endpoint: Callable[..., Any], **kwargs: Any) -> None:
+        own: dict[int | str, dict[str, Any]] = dict(kwargs.get("responses") or {})
+        declared: dict[int | str, dict[str, Any]] = {}
         if depends_on_conn(path, endpoint, kwargs.get("dependencies")):
-            kwargs["responses"] = {**DATABASE_HELD_RESPONSES, **(kwargs.get("responses") or {})}
+            declared.update(DATABASE_HELD_RESPONSES)
+        if _track_operation(get_dependant(path=path, call=endpoint)) is not None:
+            # Merged per status: a route that already declares a 404 keeps
+            # its wording, and gains the body model if it named none, since
+            # every refusal here is the same `HTTPException` body.
+            for status, entry in TRACK_REFUSAL_RESPONSES.items():
+                declared[status] = {**entry, **own.pop(status, {})}
+        if declared:
+            kwargs["responses"] = {**declared, **own}
         super().__init__(path, endpoint, **kwargs)

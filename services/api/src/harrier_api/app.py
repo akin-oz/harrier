@@ -39,6 +39,7 @@ from harrier_api.deps import (
     DatabaseHeldOut,
     DatabaseHoldOut,
     DatabaseRoute,
+    ErrorOut,
     require_operation,
     scope_for,
 )
@@ -286,18 +287,6 @@ class RescoreOut(BaseModel):
     previous: str
     current: int
     job: JobOut
-
-
-# FastAPI already sends this body for an `HTTPException`. Declaring it is what
-# lets the generated client know a refusal has one, so the browser reads
-# `detail` through a generated type rather than a cast (spec 082). The raise
-# and this declaration are separate lines, so
-# `tests/test_ui_tracker.py::test_every_tracker_refusal_is_the_body_the_contract_declares`
-# provokes each refusal and holds the two together.
-class ErrorOut(BaseModel):
-    """The body of a refusal: the message the domain wrote, verbatim."""
-
-    detail: str
 
 
 TRACKER_ERRORS: dict[int | str, dict[str, Any]] = {

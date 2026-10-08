@@ -7,7 +7,7 @@ verbs it has.
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path
 from pydantic import BaseModel, Field
@@ -27,7 +27,7 @@ from harrier.tracks import (
     kind_refusal,
     list_tracks,
 )
-from harrier_api.deps import SLUG_PATTERN, Conn, DatabaseRoute
+from harrier_api.deps import SLUG_PATTERN, Conn, DatabaseRoute, ErrorOut
 from harrier_api.localauth import TOKEN_RESPONSES, require_token
 
 tracks_router = APIRouter(route_class=DatabaseRoute)
@@ -59,9 +59,15 @@ class TrackKindOut(BaseModel):
     reason: str
 
 
-TRACK_ERRORS = {
-    404: {"description": "no track has that slug"},
-    409: {"description": "the rules refuse it"},
+# Each route declares only what it can answer: adding never looks a track up
+# by slug, so it has no 404 (review of PR #185).
+ADD_ERRORS: dict[int | str, dict[str, Any]] = {
+    409: {"model": ErrorOut, "description": "a duplicate slug, or a kind the rules refuse"},
+    **TOKEN_RESPONSES,
+}
+ARCHIVE_ERRORS: dict[int | str, dict[str, Any]] = {
+    404: {"model": ErrorOut, "description": "no track has that slug"},
+    409: {"model": ErrorOut, "description": "the default track, or one already archived"},
     **TOKEN_RESPONSES,
 }
 
@@ -99,7 +105,7 @@ def get_track_kinds() -> list[TrackKindOut]:
     operation_id="addTrack",
     status_code=201,
     dependencies=[Depends(require_token)],
-    responses=TRACK_ERRORS,
+    responses=ADD_ERRORS,
 )
 def post_track(body: TrackIn, conn: Conn) -> TrackOut:
     try:
@@ -112,7 +118,7 @@ def post_track(body: TrackIn, conn: Conn) -> TrackOut:
     "/tracks/{slug}/archive",
     operation_id="archiveTrack",
     dependencies=[Depends(require_token)],
-    responses=TRACK_ERRORS,
+    responses=ARCHIVE_ERRORS,
 )
 def post_archive(slug: Annotated[str, Path(pattern=SLUG_PATTERN)], conn: Conn) -> TrackOut:
     try:

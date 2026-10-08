@@ -193,6 +193,28 @@ def test_routes_outside_the_allowlist_refuse_a_non_default_track(
     client.app.dependency_overrides.clear()  # type: ignore[attr-defined]
 
 
+def test_every_track_refusal_is_in_the_contract() -> None:
+    """What a route can answer is what the contract declares, judged on the
+    document `packages/contract` is generated from (spec 094). Every route
+    that takes `track` can answer 404 for an unknown slug and 409 for a
+    refused operation; adding a track never looks one up, so it has no 404."""
+    spec = create_app().openapi()
+    error_out = {"$ref": "#/components/schemas/ErrorOut"}
+    scoped = scoped_routes()
+    assert scoped, "the walk found no scoped routes"
+    for method, path, _, _ in scoped:
+        responses = spec["paths"][path][method.lower()]["responses"]
+        for status in ("404", "409"):
+            schema = responses.get(status, {}).get("content", {}).get("application/json", {})
+            assert schema.get("schema") == error_out, (method, path, status)
+    tracks = spec["paths"]
+    assert "404" not in tracks["/tracks"]["post"]["responses"]
+    assert {"404", "409"} <= set(tracks["/tracks/{slug}/archive"]["post"]["responses"])
+    # A route with no track never claims the track refusals.
+    assert "404" not in tracks["/tracks"]["get"]["responses"]
+    assert "409" not in tracks["/health"]["get"]["responses"]
+
+
 def test_every_scoped_route_declares_its_operation() -> None:
     """A route that reads tracker rows declares its operation through
     `scope_for`, which adds the `track` parameter. Only the capture routes use
