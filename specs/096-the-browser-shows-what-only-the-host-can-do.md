@@ -137,6 +137,16 @@ and saves the response itself. The token never appears in a URL, so it never
 reaches browser history or an access log, and both responses carry
 `Cache-Control: no-store`, because `contacts.csv` holds contact identities.
 
+**A download neutralizes formula cells.** Company names and titles arrive
+from job boards, so a value can begin with `=`, `+`, `-`, `@`, a tab or a
+line break, and a spreadsheet opening the file would read it as a formula.
+In the two downloads, a text cell beginning with one of those characters is
+written with a leading apostrophe, which spreadsheets show as text. A field
+that holds a number (`fit_score`, `contacts_found`) is written as it is.
+`harrier export` keeps writing cells unchanged, because its files are read
+back by the legacy import and ADR-003 promises they survive that round trip.
+Raised in review of PR #182, which moved the export code without changing it.
+
 ### What only the host can do
 
 `GET /settings/host` returns these fields and no others: for each scheduled
@@ -252,6 +262,10 @@ otherwise. Synthetic data only, built under `tmp_path`.
       (planned test_host_facts_never_carry_a_secret_or_claim_health), and
       its response holds exactly the fields listed under Behavior
       (planned test_host_facts_hold_only_the_listed_fields)
+- [ ] In both downloads, a text cell beginning with `=`, `+`, `-`, `@`, a
+      tab or a line break gets a leading apostrophe, numeric fields are
+      unchanged, and `harrier export` still writes cells unchanged
+      (planned test_a_download_neutralizes_formula_cells)
 - [ ] The downloads are fetched with the token in the header, never in the
       URL, and answer with `Cache-Control: no-store`
       (planned test_downloads_take_the_token_in_the_header_and_are_not_cached)
@@ -312,6 +326,10 @@ None for data. `just container-up` after it ships.
    metadata, and an old token is the most common reason the watch stops.
 2. **Where the Settings page sits in the navigation.** Recommendation: last,
    after Operations, since it is visited least often.
+3. **Formula cells, added after approval.** Neutralize them in the browser
+   downloads only, as written above, or also in `harrier export`.
+   Recommendation: downloads only, because the command's files are read back
+   by the legacy import and an apostrophe would change the imported text.
 
 ## Proof / origin
 
