@@ -166,8 +166,19 @@ install, not per user
 (`::test_a_second_call_returns_the_token_already_in_circulation`), so it
 is a same-machine boundary rather than authentication. The
 GUI half of ADR-009's promise is not here: the React app has no
-configuration surface yet, so "customizable easily" currently means the
+configuration surface yet (spec 096 adds one), so "customizable easily" currently means the
 CLI and the API, not a settings page.
+
+## Open item (2026-10-08, privacy review of spec 096)
+
+`GET /config` and `GET /config/{kind}` answer without the token, although
+they serve the watchlist, the searches and the hold list, whose files are
+never-in-git classes. Found while reviewing spec 096, which builds the
+configuration page on these routes, and recorded here because this spec owns
+them. Not yet fixed.
+
+- [ ] configuration reads require the token
+      (planned test_config_reads_require_the_token)
 
 ## Out of scope
 
