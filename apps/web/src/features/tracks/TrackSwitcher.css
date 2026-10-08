@@ -1,0 +1,147 @@
+.track-switcher {
+  position: relative;
+  min-width: 0;
+}
+
+.track-switcher__button {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  max-width: 100%;
+  padding: 5px 10px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-raised);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.track-switcher__button:hover {
+  border-color: var(--color-accent);
+}
+.track-switcher__button:focus-visible,
+.track-switcher__item:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+/* The same quiet uppercase voice the table header uses, so the button reads
+   as a setting with a value rather than as a page title. */
+.track-switcher__prefix {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-tertiary);
+}
+.track-switcher__name {
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.track-switcher__kind {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+.track-switcher__chevron {
+  width: 12px;
+  height: 12px;
+  align-self: center;
+  color: var(--color-text-secondary);
+}
+
+.track-switcher__menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + var(--space-1));
+  z-index: 10;
+  min-width: 16rem;
+  max-width: calc(100vw - 2 * var(--space-4));
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-raised);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+}
+
+.track-switcher__item {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 7px var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.track-switcher__item:hover,
+.track-switcher__item:focus-visible {
+  background: var(--color-bg-sunken);
+}
+.track-switcher__item-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The selected track is checked, not only tinted, so the mark carries the
+   state for a reader who cannot tell the colours apart. */
+.track-switcher__check {
+  width: 12px;
+  height: 12px;
+  align-self: center;
+  color: var(--color-accent);
+  visibility: hidden;
+}
+.track-switcher__item[aria-checked="true"] .track-switcher__check {
+  visibility: visible;
+}
+.track-switcher__item[aria-checked="true"] .track-switcher__item-name {
+  font-weight: 600;
+}
+
+.track-switcher__separator {
+  height: 1px;
+  margin: var(--space-1) 0;
+  background: var(--color-border);
+}
+.track-switcher__item--manage {
+  grid-template-columns: 14px minmax(0, 1fr);
+  color: var(--color-text-secondary);
+}
+/* An empty first cell where the check sits, so "Manage tracks" lines up
+   with the track names above it. */
+.track-switcher__item--manage::before {
+  content: "";
+}
+
+@media (max-width: 640px) {
+  /* The button spans the header here, so the menu spans the button. */
+  .track-switcher__menu {
+    left: 0;
+    right: 0;
+    min-width: 0;
+    max-width: none;
+  }
+  .track-switcher__button {
+    min-height: 40px;
+    align-items: center;
+  }
+  .track-switcher__item {
+    min-height: 44px;
+    align-items: center;
+    font-size: 15px;
+  }
+}

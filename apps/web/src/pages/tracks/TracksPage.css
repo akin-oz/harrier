@@ -1,0 +1,121 @@
+.tracks-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 56rem;
+}
+.tracks-page__heading {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.tracks-page__lede {
+  margin: 0;
+  max-width: 65ch;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+.tracks-page__notice {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text);
+}
+.tracks-page__notice:empty {
+  display: none;
+}
+.tracks-page__notice:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+.tracks-page__error {
+  margin: 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+/* One row per track: the name with its slug under it, then the kind, the
+   state and the actions, in the table's own rhythm. */
+.tracks-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-raised);
+}
+.tracks-list__item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 7rem 9rem auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+.tracks-list__item:last-child {
+  border-bottom: none;
+}
+.tracks-list__name {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.tracks-list__label {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+/* The slug is an identifier the URL carries, so it reads as one. */
+.tracks-list__slug {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  overflow-wrap: anywhere;
+}
+.tracks-list__kind,
+.tracks-list__state {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+.tracks-list__selected {
+  color: var(--color-text);
+  font-weight: 600;
+}
+.tracks-list__item--archived .tracks-list__label {
+  color: var(--color-text-secondary);
+}
+.tracks-list__actions {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+  align-items: start;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  .tracks-list__item {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "name name"
+      "kind state"
+      "actions actions";
+    row-gap: var(--space-2);
+  }
+  .tracks-list__name {
+    grid-area: name;
+  }
+  .tracks-list__kind {
+    grid-area: kind;
+  }
+  .tracks-list__state {
+    grid-area: state;
+    text-align: right;
+  }
+  .tracks-list__actions {
+    grid-area: actions;
+    justify-content: stretch;
+  }
+  .tracks-list__actions > * {
+    flex: 1 1 auto;
+  }
+}

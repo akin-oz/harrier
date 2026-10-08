@@ -30,3 +30,81 @@
   border-color: var(--color-border-strong);
   background: var(--color-bg-raised);
 }
+.app-nav__link:focus-visible,
+.app-notice__link:focus-visible,
+.app-notice__button:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+/* A section the selected track cannot use: dimmed and drawn with a dashed
+   edge, so it reads as off without relying on the colour, and still
+   pressable, so the page can say why (spec 094). */
+.app-nav__link--off {
+  color: var(--color-text-tertiary);
+  border-style: dashed;
+  border-color: var(--color-border);
+}
+.app-nav__link--off.app-nav__link--active {
+  color: var(--color-text-secondary);
+  background: none;
+}
+
+/* The shell's own messages: loading, an unknown track, a section the track
+   cannot use. Plain text on the page, with the way out as a link. */
+.app-notice {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
+  max-width: 65ch;
+  margin: 0;
+  font-size: 14px;
+  color: var(--color-text-secondary);
+}
+.app-notice p {
+  margin: 0;
+}
+.app-notice__heading {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+.app-notice__link {
+  color: var(--color-accent-text);
+  text-underline-offset: 3px;
+}
+.app-notice--error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+.app-notice__button {
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid currentcolor;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 500;
+}
+
+@media (max-width: 640px) {
+  .app-main {
+    padding: var(--space-4);
+  }
+  .app-nav {
+    padding: var(--space-2) var(--space-4) 0;
+    flex-wrap: wrap;
+  }
+  .app-nav__link {
+    min-height: 40px;
+    padding: 6px 14px;
+    font-size: 14px;
+  }
+}

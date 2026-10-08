@@ -79,3 +79,24 @@
   font-size: 0.8rem;
   color: var(--color-text-secondary);
 }
+
+/* Phone width: the form opens below the trigger across the page's width
+   rather than hanging off its right edge, and its fields grow to tap size. */
+@media (max-width: 640px) {
+  .add-job-slot {
+    position: static;
+  }
+  .add-job {
+    left: var(--space-4);
+    right: var(--space-4);
+    width: auto;
+    top: auto;
+    margin-top: var(--space-1);
+  }
+  .add-job__open,
+  .add-job input,
+  .add-job__buttons button {
+    min-height: 40px;
+    font-size: 16px;
+  }
+}

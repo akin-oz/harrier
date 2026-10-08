@@ -57,8 +57,8 @@ Four things are missing, and each is visible:
 - `app.py`, `capture_routes.py`, `outreach_routes.py`, `mail_routes.py`:
   every route that depends on `ScopeDep` declares its operation through that
   dependency. The mapping is the table under Behavior.
-- New `tracks_routes.py`: `GET /tracks`, `POST /tracks`,
-  `POST /tracks/{slug}/archive`.
+- New `tracks_routes.py`: `GET /tracks`, `GET /tracks/kinds`,
+  `POST /tracks`, `POST /tracks/{slug}/archive`.
 - `JobOut` gains `track`, `deadline` and `deadline_passed`. `AddJobIn` gains
   `deadline`.
 
@@ -80,10 +80,21 @@ Four things are missing, and each is visible:
   `features/tracker/JobActions.tsx`: status labels from the selected track's
   kind, a deadline column and the passed flag, a deadline field on the add
   form on an academic track.
+- `entities/job/`: the status pill takes its label from the track, a new
+  deadline cell, and a deadline-led layout of the job table.
+- `pages/apply/`, `pages/outreach/`, `pages/inbox/`, `features/apply/`: their
+  query keys start with the selected track. Nothing else in them changes.
 - `app/App.tsx`: the Apply, Outreach and Inbox sections, and the Operations
   section when spec 050 lands, are shown disabled on a non-default track,
   each with the sentence under Behavior.
 - Tests beside each changed file.
+
+**Design record**
+
+- `apps/web/PRODUCT.md` (new, public): the product record the design work
+  reads, written by `/impeccable init` on this branch. It describes the
+  operator generically and holds no personal data (ADR-008). Added to this
+  Scope during implementation; see the amendment.
 
 **Not touched**: the schema, the CLI's behavior, the bookmarklet capture
 route's track (it stays on the default track), the run manager, and every
@@ -117,7 +128,7 @@ with `"track <slug> is archived"`.
 | `GET /tracker/queue` | `next`, or `review` when `undecided=true` | allowed |
 | `GET /tracker/counts` | `counts` | allowed |
 | `POST /tracker` | `add` | allowed (a write) |
-| `POST /tracker/{selector}/status` | the verb in the body | allowed for `shortlist`, `track`, `applied`, `reject` (writes) |
+| `POST /tracker/{selector}/status` | the verb in the body | allowed for `shortlist`, `track`, `applied`, `interviewing`, `reject` (writes) |
 | `POST /tracker/{selector}/outcome` | `company-outcome` | refused (spec 093, Open decisions, item 2) |
 | `POST /tracker/{selector}/rescore` | `reevaluate` | refused |
 | every `/apply/...` route | `tailor`, `cover-letter`, `answers`, `evaluate`, artifacts | refused |
@@ -128,11 +139,17 @@ with `"track <slug> is archived"`.
 A route that depends on `ScopeDep` and declares no operation fails a test
 that walks the application's routes, so a new route cannot skip the list.
 
+Every route that takes `track` declares both refusals in the contract, a 404
+and a 409 with the `ErrorOut` body, so the browser reads them through
+generated types. The route class adds them, as it adds the 503 (spec 075),
+and a route's own wording for a status it already declares is kept.
+
 ### The tracks routes
 
 | Route | Operation id | Token | Answers |
 |---|---|---|---|
 | `GET /tracks` | `listTracks` | no | every track, archived ones included, in id order |
+| `GET /tracks/kinds` | `listTrackKinds` | no | each kind, whether a new track of it may be added, and the domain's reason when not |
 | `POST /tracks` | `addTrack` | yes | 201 and the new track; 409 for a duplicate slug or a second industry track; 422 for a malformed slug or an unknown kind |
 | `POST /tracks/{slug}/archive` | `archiveTrack` | yes | the archived track; 404 unknown; 409 for the default track or one already archived |
 
@@ -221,54 +238,78 @@ the three new `JobOut` fields; a track parameter on the capture routes.
 API tests in `services/api/tests/test_api_tracks.py` (new) unless named
 otherwise. Every database is built under `tmp_path` with synthetic rows.
 
-- [ ] A request with `?track=<slug>` reads that track's rows and no other;
+- [x] A request with `?track=<slug>` reads that track's rows and no other;
       without it, the default track's
-      (planned test_a_request_names_its_track_by_query_parameter)
-- [ ] An unknown slug is 404 naming it, and a malformed slug is 422
-      (planned test_an_unknown_track_is_404_and_a_malformed_slug_is_422)
-- [ ] Every route outside the allowlist answers 409 on a non-default track
+      (`services/api/tests/test_api_tracks.py::test_a_request_names_its_track_by_query_parameter`)
+- [x] An unknown slug is 404 naming it, and a malformed slug is 422
+      (`services/api/tests/test_api_tracks.py::test_an_unknown_track_is_404_and_a_malformed_slug_is_422`)
+- [x] Every route outside the allowlist answers 409 on a non-default track
       before reading a row, walked over every route that depends on
-      `ScopeDep` (planned test_routes_outside_the_allowlist_refuse_a_non_default_track)
-- [ ] Every route that depends on `ScopeDep` declares an operation
-      (planned test_every_scoped_route_declares_its_operation)
-- [ ] A write on an archived track is 409 and changes nothing
-      (planned test_an_archived_track_refuses_writes_over_http)
-- [ ] `GET /tracks`, `POST /tracks` and `POST /tracks/{slug}/archive` answer
+      `ScopeDep` (`services/api/tests/test_api_tracks.py::test_routes_outside_the_allowlist_refuse_a_non_default_track`)
+- [x] Every route that depends on `ScopeDep` declares an operation
+      (`services/api/tests/test_api_tracks.py::test_every_scoped_route_declares_its_operation`)
+- [x] A write on an archived track is 409 and changes nothing
+      (`services/api/tests/test_api_tracks.py::test_an_archived_track_refuses_writes_over_http`)
+- [x] `GET /tracks`, `POST /tracks` and `POST /tracks/{slug}/archive` answer
       as the table says, the two writes require the token, and each calls
       the function `harrier tracks` calls
-      (planned test_the_tracks_routes_list_add_and_archive,
-      planned test_the_cli_and_the_api_manage_tracks_through_the_same_functions)
-- [ ] `NON_DEFAULT_OPERATIONS` is the one list both surfaces read
-      (planned test_the_cli_and_the_api_share_one_allowlist)
-- [ ] `JobOut` carries `track`, `deadline` and `deadline_passed`, and
+      (`services/api/tests/test_api_tracks.py::test_the_tracks_routes_list_add_and_archive`,
+      `services/api/tests/test_api_tracks.py::test_the_cli_and_the_api_manage_tracks_through_the_same_functions`)
+- [x] Every route that takes `track` declares the 404 and the 409 with the
+      `ErrorOut` body, and `POST /tracks` declares no 404
+      (`services/api/tests/test_api_tracks.py::test_every_track_refusal_is_in_the_contract`)
+- [x] `NON_DEFAULT_OPERATIONS` is the one list both surfaces read
+      (`services/api/tests/test_api_tracks.py::test_the_cli_and_the_api_share_one_allowlist`)
+- [x] `JobOut` carries `track`, `deadline` and `deadline_passed`, and
       `AddJobIn` stores a deadline and refuses an impossible date
-      (planned test_jobs_carry_their_track_and_deadline)
-- [ ] The academic queue over HTTP is in the order `harrier --track <slug>
-      next` prints (planned test_the_academic_queue_over_http_matches_the_cli)
-- [ ] The capture routes still write to the default track, as spec 093's
+      (`services/api/tests/test_api_tracks.py::test_jobs_carry_their_track_and_deadline`)
+- [x] The academic queue over HTTP is in the order `harrier --track <slug>
+      next` prints (`services/api/tests/test_api_tracks.py::test_the_academic_queue_over_http_matches_the_cli`)
+- [x] The capture routes still write to the default track, as spec 093's
       browser-capture test already pins; it passes unchanged
-- [ ] The industry track's responses are unchanged apart from the three new
+- [x] The industry track's responses are unchanged apart from the three new
       fields: `services/api/tests/test_ui_tracker.py` passes with no
       assertion edited
-- [ ] Web: the selected track survives a reload and a second tab, every data
+- [x] Web: the selected track survives a reload and a second tab, every data
       hook's query key starts with the track, and an unknown track shows the
-      message and the link back (planned web tests in the track hook's test file)
-- [ ] Web: the tracker page shows the kind's labels, the deadline column and
+      message and the link back
+      (`apps/web/src/shared/track/track.test.tsx::the selected track survives a reload and a second tab`,
+      `::switching changes the URL, and back returns to the previous track`,
+      `apps/web/src/app/App.test.tsx::every cache entry of track data is keyed by the selected track`,
+      `::an unknown track shows a message and a link back to the default track`)
+- [x] Web: the tracker page shows the kind's labels, the deadline column and
       the passed flag in words, and offers only allowed verbs on an academic
-      track (planned web tests in the tracker page's test file)
-- [ ] Web: the tracks page adds and archives a track, shows the industry kind
+      track
+      (`apps/web/src/pages/tracker/TrackerPage.test.tsx::an academic track reads in its kind's words, deadline first, in the server's order`,
+      `::an academic row offers only the moves its track allows`,
+      `::the add form asks for a deadline on an academic track and adds to that track`,
+      `::an archived track is readable and offers no change`)
+- [x] Web: the tracks page adds and archives a track, shows the industry kind
       disabled with the domain's reason, and confirms an archive by name
-      (planned web tests in the tracks page's test file)
-- [ ] Web: sections the track cannot use are disabled with the sentence under
-      Behavior (planned web test in the app's test file)
-- [ ] `just contract` regenerates the contract and the web app type-checks
+      (`apps/web/src/pages/tracks/TracksPage.test.tsx::every track is listed with its slug, kind and state, archived ones included`,
+      `::the industry kind is shown disabled with the domain's reason`,
+      `::adding a track posts the slug, label and kind, and offers to open it`,
+      `::archiving asks first, by name, and Escape keeps the track`,
+      `::a refused archive is shown in the domain's words`)
+- [x] Web: sections the track cannot use are disabled with the sentence under
+      Behavior
+      (`apps/web/src/app/App.test.tsx::sections the track cannot use are shown unavailable, with the reason`)
+- [x] `just contract` regenerates the contract and the web app type-checks
       against it with no hand-written request or response shape
-- [ ] Each test above fails with its behavior removed, checked by removing
+- [x] Each test above fails with its behavior removed, checked by removing
       each behavior in turn, recorded in the pull request
-- [ ] The web changes pass the Impeccable detector and an accessibility
+- [x] The web changes pass the Impeccable detector and an accessibility
       pass: the switcher and the archive confirmation work from the keyboard
       and announce their state
-- [ ] No real track, position, institution or person appears in a fixture,
+      (`apps/web/src/features/tracks/TrackSwitcher.test.tsx::the switcher is driven from the keyboard and announces its state`,
+      `::Escape closes the menu without switching, and focus returns to the button`,
+      `apps/web/src/pages/tracks/TracksPage.test.tsx::archiving asks first, by name, and Escape keeps the track`)
+- [x] At phone width the changed screens are usable, not only readable:
+      nothing is cut off or overlaps, the page never scrolls sideways, every
+      control can be tapped, and switching track, reading the queue and
+      changing a status can each be completed. Checked by a screenshot pass
+      at phone and desktop width, recorded in the pull request
+- [x] No real track, position, institution or person appears in a fixture,
       a test name or a screenshot (ADR-008)
 - [ ] All gates green on the pull request
 
@@ -341,3 +382,63 @@ routes and the bundle.
 - Per-track profiles and configuration, and any run on a non-default track.
 - Renaming a track, changing its kind, or unarchiving it.
 - A router library.
+
+## Amendment (2026-10-08, during implementation)
+
+- **`apps/web/PRODUCT.md` joins the Scope.** The design work on this branch
+  starts with `/impeccable init`, which writes the product record later
+  design work reads: users, purpose, the four commitments every screen keeps
+  (never invents claims, nothing auto-sends, data stays local, honest about
+  gaps), WCAG 2.2 AA, keyboard-first. It is public, describes the operator
+  generically, and is classified public by not matching any never-in-git
+  pattern in `config/data-classification.json`.
+- **Usable at phone width.** Desktop is the target, and the phone must not
+  be broken: a new acceptance criterion holds the changed screens to it.
+- **`interviewing` is allowed over HTTP on a non-default track,** as it is on
+  the command line: the status route checks the verb in its body against the
+  one shared list, and `interviewing` is on it. The table under Behavior
+  listed the browser verbs without it; corrected
+  (`services/api/tests/test_api_tracks.py::test_routes_outside_the_allowlist_refuse_a_non_default_track`
+  is the walk that holds the list).
+- **A request without the token is 403,** the answer `require_token` already
+  gives every route (spec 035).
+- **The industry kind's labels are the browser's words.** The browser held
+  its own status words ("CV requested") in two places, and Behavior forbids
+  a label table in the web app. `KIND_RULES["industry"]` now carries those
+  words, so the industry track reads as it always did and the browser holds
+  no copy. The command line prints the stored status on the industry track,
+  so its output is unchanged. Spec 093's test that the industry labels equal
+  the statuses now holds the one exception
+  (`services/api/tests/test_tracks_cli.py::test_status_labels_follow_the_track_kind`).
+- **`GET /tracks/kinds` joins the tracks routes.** The add form shows the
+  industry option disabled "with the reason the domain gives", and only the
+  domain had that sentence. `kind_refusal` in `harrier.tracks` now gives it,
+  `add_track` raises with it, and the route reports it, so the form shows
+  the words `POST /tracks` refuses with
+  (`services/api/tests/test_api_tracks.py::test_the_tracks_routes_list_add_and_archive`).
+- **"Every data hook" means every hook that reads a track's data.** The
+  tracks list, the kinds, the service's health and a run read by its id are
+  the same answer on every track, so their keys do not start with a slug.
+  The cache walk in `apps/web/src/app/App.test.tsx` names exactly those four.
+- **Apply and runs on a non-default track.** Apply is per row, not a
+  section, so each row keeps an Apply control marked unavailable that shows
+  the sentence under Behavior when pressed. The run panel on the tracker
+  page is replaced by the same sentence, since no run kind is on the shared
+  allowlist (Honest limitations).
+- **An archived track is read-only in the browser.** Its tracker shows its
+  rows with no add form and no row actions, and says it is archived, since
+  every write would answer 409.
+- **The job table stacks below 900px, not only on a phone.** Its columns
+  need about 900px, so between phone and desktop width the actions column
+  was cut off inside its scroll box. Below that width each row is a stacked
+  record on both tracks. The title and source lines in a job cell are also
+  bounded to the cell, which fixes a long title running into the next
+  column on the industry table too.
+- **The track refusals are in the contract.** Review of PR #185 found that
+  `POST /tracks` declared a 404 it never answers. The same check showed the
+  opposite gap on the routes this spec changed: `GET /jobs`, the queue, the
+  counts and `POST /tracker` answer 404 for an unknown track and 409 for a
+  refused operation, and declared neither. `DatabaseRoute` now declares both
+  on every route whose scope comes from `scope_for`, and each tracks route
+  declares only what it answers
+  (`services/api/tests/test_api_tracks.py::test_every_track_refusal_is_in_the_contract`).

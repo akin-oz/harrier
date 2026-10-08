@@ -7,6 +7,8 @@ import { ArtifactList } from "../../features/apply/ArtifactList";
 import { TERMINAL_STATES, useRunStream } from "../../features/runs/useRunStream";
 import type { EventSourceFactory, RunOut } from "../../features/runs/useRunStream";
 import { api } from "../../shared/api/client";
+import { statusLabel, trackKey, useSelectedSlug } from "../../shared/track";
+import type { Track } from "../../shared/track";
 import "../../shared/ui/run.css";
 import "./ApplyPage.css";
 
@@ -161,14 +163,17 @@ async function startOperation(
 
 export function ApplyPage({
   job,
+  track,
   onBack,
   createEventSource = (url: string) => new EventSource(url),
 }: {
   job: Job;
+  track: Track;
   onBack: () => void;
   createEventSource?: EventSourceFactory;
 }) {
   const queryClient = useQueryClient();
+  const slug = useSelectedSlug();
   const [operation, setOperation] = useState<Operation>("resume");
   const [text, setText] = useState("");
   const [noAi, setNoAi] = useState(false);
@@ -182,7 +187,7 @@ export function ApplyPage({
   // rather than left showing what was true before it started.
   useEffect(() => {
     if (run !== null && TERMINAL_STATES.has(run.state)) {
-      void queryClient.invalidateQueries({ queryKey: ["artifacts", job.id] });
+      void queryClient.invalidateQueries({ queryKey: trackKey(slug, "artifacts", job.id) });
     }
   }, [run, queryClient, job.id]);
 
@@ -225,7 +230,7 @@ export function ApplyPage({
         <h2 className="apply-page__heading">{job.company}</h2>
         <span className="apply-page__sep">/</span>
         <span className="apply-page__title">{job.title}</span>
-        <StatusPill status={job.status} />
+        <StatusPill status={job.status} label={statusLabel(track, job.status)} />
       </div>
 
       <div className="apply-page__layout">

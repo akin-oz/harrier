@@ -1,12 +1,13 @@
 import type { components, operations } from "@harrier/contract";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
 
 import type { Job } from "../../entities/job";
 import jobActionsCss from "../../features/tracker/JobActions.css?raw";
 import { JobActions, refusalMessage } from "../../features/tracker/JobActions";
+import { ACADEMIC_TRACK, INDUSTRY_TRACK } from "../../shared/track/fixtures";
 import { TrackerPage } from "./TrackerPage";
 
 /**
@@ -22,9 +23,10 @@ import { TrackerPage } from "./TrackerPage";
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  window.history.replaceState(null, "", "/");
 });
 
-type Row = Record<string, string | number>;
+type Row = Record<string, string | number | boolean>;
 
 function job(id: number, company: string, score: string, status = "prospect"): Row {
   return {
@@ -120,7 +122,7 @@ function renderPage(): void {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={queryClient}>
-      <TrackerPage />
+      <TrackerPage track={INDUSTRY_TRACK} />
     </QueryClientProvider>,
   );
 }
@@ -330,7 +332,7 @@ test("a rejected row cannot be rejected again or applied to", async () => {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={queryClient}>
-      <TrackerPage onApply={() => undefined} />
+      <TrackerPage track={INDUSTRY_TRACK} onApply={() => undefined} />
     </QueryClientProvider>,
   );
 
@@ -554,7 +556,7 @@ function renderWithApply(): void {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={queryClient}>
-      <TrackerPage onApply={() => undefined} />
+      <TrackerPage track={INDUSTRY_TRACK} onApply={() => undefined} />
     </QueryClientProvider>,
   );
 }
@@ -1052,7 +1054,10 @@ test("a status change mounts a new control instead of relabelling the focused on
   const queryClient = new QueryClient();
   const view = (status: string) => (
     <QueryClientProvider client={queryClient}>
-      <JobActions job={job(1, "Northwind", "80", status) as unknown as Job} />
+      <JobActions
+        job={job(1, "Northwind", "80", status) as unknown as Job}
+        track={INDUSTRY_TRACK}
+      />
     </QueryClientProvider>
   );
   const { rerender } = render(view("applied"));
@@ -1159,4 +1164,173 @@ test("each tracker write shows its refusal in the API's words", async () => {
       expect(await within(row).findByText(detail), detail).toBeDefined();
     }
   }
+});
+
+// --- an academic track (spec 094) ----------------------------------------------
+
+function position(
+  id: number,
+  company: string,
+  status: string,
+  deadline: string,
+  passed = false,
+): Row {
+  return {
+    ...job(id, company, "", status),
+    title: "Research Engineer",
+    track: "second-search",
+    deadline,
+    deadline_passed: passed,
+  };
+}
+
+function renderAcademic(track = ACADEMIC_TRACK): void {
+  window.history.replaceState(null, "", `/?track=${track.slug}`);
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <TrackerPage track={track} onApply={() => undefined} />
+    </QueryClientProvider>,
+  );
+}
+
+function companiesInOrder(): string[] {
+  return screen
+    .getAllByRole("row")
+    .slice(1)
+    .map((row) => within(row).getAllByRole("cell")[2]?.textContent ?? "");
+}
+
+test("an academic track reads in its kind's words, deadline first, in the server's order", async () => {
+  // The server's order, deliberately not the order a sort by date gives, so
+  // a table that re-sorted the queue would fail here (spec 042).
+  const calls = stubApi({
+    queue: [
+      position(1, "Example Lab", "applied", "2099-03-01"),
+      position(2, "Other Lab", "prospect", "2001-01-01", true),
+      position(3, "Third Lab", "tailored_cv_requested", ""),
+    ],
+  });
+  renderAcademic();
+
+  await rowFor("Example Lab");
+  expect(screen.getByRole("heading", { name: /Second search/ }).textContent).toContain(
+    "academic track",
+  );
+  // The academic page opens on its queue, the server's deadline order.
+  expect(screen.getByRole("button", { name: "Next up" }).getAttribute("aria-pressed")).toBe("true");
+  const read = calls.find((call) => call.url.startsWith("/api/tracker/queue"));
+  const query = new URL(read?.url ?? "", "http://x").searchParams;
+  expect(query.get("track")).toBe("second-search");
+  expect(query.get("undecided")).toBe("false");
+
+  expect(companiesInOrder().map((text) => text.split("Research")[0])).toEqual([
+    "Example Lab",
+    "Other Lab",
+    "Third Lab",
+  ]);
+  const headers = screen.getAllByRole("columnheader").map((cell) => cell.textContent);
+  expect(headers[0]).toBe("Deadline");
+  expect(headers).not.toContain("Score");
+
+  const open = await rowFor("Example Lab");
+  expect(within(open).getByText("Submitted")).toBeDefined();
+  expect(within(open).getByText(/^closes in \d+ days$/)).toBeDefined();
+  // Passed is said in words, not only by colour.
+  const passed = await rowFor("Other Lab");
+  expect(within(passed).getByText("Found")).toBeDefined();
+  expect(within(passed).getByText(/^passed \d+ days ago$/)).toBeDefined();
+  const undated = await rowFor("Third Lab");
+  expect(within(undated).getByText("Preparing documents")).toBeDefined();
+  expect(within(undated).getByText("No deadline")).toBeDefined();
+
+  const chips = within(screen.getByRole("group", { name: "Filter by status" }));
+  for (const word of ["Found", "Preparing documents", "Submitted", "Closed"]) {
+    expect(chips.getByRole("button", { name: new RegExp(`^${word}`) })).toBeDefined();
+  }
+  expect(chips.queryByRole("button", { name: /^Applied/ })).toBeNull();
+});
+
+test("an academic row offers only the moves its track allows", async () => {
+  const calls = stubApi({ queue: [position(1, "Example Lab", "applied", "2099-03-01")] });
+  const user = userEvent.setup();
+  renderAcademic();
+
+  const row = await rowFor("Example Lab");
+  expect(within(row).queryByRole("button", { name: "Company replied" })).toBeNull();
+  await user.click(within(row).getByRole("button", { name: /^More actions/ }));
+  const more = within(row).getByRole("group", { name: /^More actions/ });
+  expect(
+    within(more)
+      .getAllByRole("button")
+      .map((button) => button.textContent),
+  ).toEqual(["Move to shortlisted", "Move to preparing documents"]);
+  expect(within(row).queryByRole("button", { name: "Interview invite" })).toBeNull();
+  expect(within(row).queryByRole("button", { name: "Rescore" })).toBeNull();
+
+  // Apply is there, marked unavailable, and says why when pressed.
+  const apply = within(row).getByRole("button", { name: /^Apply to Example Lab/ });
+  expect(apply.getAttribute("aria-disabled")).toBe("true");
+  await user.click(apply);
+  expect(
+    within(row).getByText(
+      "Not available on Second search: it uses the default track's profile and configuration.",
+    ),
+  ).toBeDefined();
+
+  await user.click(within(row).getByRole("button", { name: "Withdraw" }));
+  const exit = within(row).getByRole("group", { name: "Withdraw" });
+  expect(
+    within(exit)
+      .getAllByRole("button")
+      .map((button) => button.textContent),
+  ).toEqual(["closed", "location", "language", "other…", "Cancel"]);
+  await user.click(within(exit).getByRole("button", { name: "Cancel" }));
+
+  await user.click(within(row).getByRole("button", { name: "Move to interviewing" }));
+  await waitFor(() => {
+    expect(calls.some((call) => call.url === "/api/tracker/1/status?track=second-search")).toBe(
+      true,
+    );
+  });
+  const sent = calls.find((call) => call.url === "/api/tracker/1/status?track=second-search");
+  expect(sent?.body).toEqual({ verb: "interviewing", reason: null });
+});
+
+test("the add form asks for a deadline on an academic track and adds to that track", async () => {
+  const calls = stubApi({});
+  const user = userEvent.setup();
+  renderAcademic();
+
+  await user.click(await screen.findByRole("button", { name: "Add a position by hand" }));
+  await user.type(screen.getByLabelText("Company"), "Example Lab");
+  await user.type(screen.getByLabelText("Title"), "Research Engineer");
+  fireEvent.change(screen.getByLabelText("Deadline"), { target: { value: "2099-04-01" } });
+  await user.click(screen.getByRole("button", { name: "Add" }));
+
+  await waitFor(() => {
+    expect(calls.some((call) => call.url === "/api/tracker?track=second-search")).toBe(true);
+  });
+  const sent = calls.find((call) => call.url === "/api/tracker?track=second-search");
+  expect(sent?.body).toMatchObject({ company: "Example Lab", deadline: "2099-04-01" });
+
+  // The default track's form is unchanged: nothing there reads a deadline.
+  cleanup();
+  window.history.replaceState(null, "", "/");
+  stubApi({});
+  renderPage();
+  await user.click(await screen.findByRole("button", { name: "Add a job by hand" }));
+  expect(screen.queryByLabelText("Deadline")).toBeNull();
+});
+
+test("an archived track is readable and offers no change", async () => {
+  stubApi({ queue: [position(1, "Example Lab", "applied", "2099-03-01")] });
+  renderAcademic({ ...ACADEMIC_TRACK, archived: true });
+
+  await rowFor("Example Lab");
+  expect(
+    screen.getByText("Second search is archived. Its rows can be read and not changed."),
+  ).toBeDefined();
+  expect(screen.queryByRole("columnheader", { name: "Actions" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /by hand/ })).toBeNull();
 });

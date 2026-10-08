@@ -1,0 +1,183 @@
+/* The tracks controls share the app's plain button anatomy: a 1px border,
+   the small radius, the raised surface. Primary is the add, danger is the
+   one irreversible act. */
+.tracks-button {
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 12px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-raised);
+  color: var(--color-text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tracks-button:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-accent-text);
+}
+.tracks-button:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+.tracks-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.tracks-button--primary:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-accent-text);
+  font-weight: 600;
+}
+.tracks-button--danger:not(:disabled),
+.tracks-button--danger:hover:not(:disabled) {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+  font-weight: 600;
+}
+
+/* --- add a track --- */
+
+.add-track__heading {
+  margin: var(--space-3) 0 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.add-track {
+  display: grid;
+  gap: var(--space-3);
+  max-width: 34rem;
+}
+.add-track__field {
+  display: grid;
+  gap: var(--space-1);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+.add-track__field input {
+  font: inherit;
+  font-size: 14px;
+  font-weight: 400;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-raised);
+  color: var(--color-text);
+}
+.add-track__field input:focus-visible,
+.add-track__kind input:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+.add-track__slug {
+  font-family: var(--font-mono);
+}
+.add-track__hint {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--color-text-tertiary);
+  margin: 0;
+  max-width: 65ch;
+}
+.add-track__kinds {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+.add-track__kinds legend {
+  padding: 0;
+  margin-bottom: var(--space-1);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+.add-track__kind {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: var(--space-2);
+  font-size: 14px;
+  color: var(--color-text);
+}
+.add-track__kind input {
+  accent-color: var(--color-accent);
+}
+/* An unavailable kind is said in words beside it; the dimmed name only
+   repeats that. */
+.add-track__kind--off .add-track__kind-name {
+  color: var(--color-text-tertiary);
+}
+.add-track__reason {
+  grid-column: 2;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  max-width: 60ch;
+}
+.add-track__outcome {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  min-height: 1.5em;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+.add-track__failure {
+  color: var(--color-danger);
+}
+
+/* --- archive a track --- */
+
+.archive-track {
+  display: grid;
+  gap: var(--space-1);
+  justify-items: end;
+}
+.archive-track__confirm {
+  display: grid;
+  gap: var(--space-2);
+  max-width: 26rem;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-md);
+  background: var(--color-danger-bg);
+}
+.archive-track__question {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text);
+}
+.archive-track__buttons {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.archive-track__message {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.archive-track__message:empty {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .tracks-button,
+  .add-track__field input {
+    min-height: 40px;
+  }
+  /* A phone browser zooms the page into any text field under 16px. */
+  .add-track__field input {
+    font-size: 16px;
+  }
+  .add-track__kind {
+    min-height: 32px;
+  }
+  .archive-track {
+    justify-items: stretch;
+  }
+}

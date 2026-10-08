@@ -150,3 +150,37 @@
   font-size: 12px;
   color: var(--color-text-secondary);
 }
+
+/* Apply on a track that has no profile: reachable, so pressing it can say
+   why it is off, and drawn as off so nobody expects it to work. */
+.job-actions button.job-actions__unavailable {
+  color: var(--color-text-tertiary);
+  border-style: dashed;
+  cursor: help;
+}
+.job-actions button.job-actions__unavailable:hover {
+  border-color: var(--color-border-strong);
+  color: var(--color-text-secondary);
+}
+
+/* Phone width: the row's controls are the only way to change a status
+   there, so each grows to a size a thumb can hit (WCAG 2.2 target size). */
+@media (max-width: 640px) {
+  .job-actions button,
+  .job-actions__reason select,
+  .job-actions__reason input {
+    min-height: 36px;
+    padding: 6px 12px;
+    font-size: 13px;
+  }
+  /* A phone browser zooms the page into any text field under 16px. */
+  .job-actions__reason select,
+  .job-actions__reason input {
+    font-size: 16px;
+  }
+  .job-actions__row,
+  .job-actions__pills,
+  .job-actions__more {
+    gap: var(--space-2);
+  }
+}

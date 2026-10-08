@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -24,7 +25,8 @@ from pydantic import BaseModel
 from harrier.tracker.selector import SelectorError
 from harrier.tracker.store import TrackerError
 from harrier.tracks import Scope
-from harrier_api.deps import Conn, DatabaseRoute, ScopeDep
+from harrier.tracks import Scope as TrackScope
+from harrier_api.deps import Conn, DatabaseRoute, scope_for
 from harrier_api.localauth import TOKEN_RESPONSES, require_token
 from harrier_api.runmodels import Manager, RunOut, run_out
 from harrier_api.runs import RunParams, write_run_input
@@ -139,7 +141,11 @@ def _row_out(row: dict[str, str]) -> OutreachRowOut:
     responses=OUTREACH_ERRORS,
 )
 async def find_contacts(
-    selector: str, body: FindContactsIn, conn: Conn, scope: ScopeDep, manager: Manager
+    selector: str,
+    body: FindContactsIn,
+    conn: Conn,
+    scope: Annotated[TrackScope, Depends(scope_for("find-contacts"))],
+    manager: Manager,
 ) -> RunOut:
     """A run, and one that spends money: it reaches Hunter and Apify.
 
@@ -162,7 +168,9 @@ async def find_contacts(
     dependencies=[Depends(require_token)],
     responses=OUTREACH_ERRORS,
 )
-def list_candidates(selector: str, conn: Conn, scope: ScopeDep) -> list[CandidateOut]:
+def list_candidates(
+    selector: str, conn: Conn, scope: Annotated[TrackScope, Depends(scope_for("contacts list"))]
+) -> list[CandidateOut]:
     """The staged artifact, read through the same extraction approve uses.
 
     This carries a real person's name and title, so it authenticates, for the
@@ -190,7 +198,12 @@ def list_candidates(selector: str, conn: Conn, scope: ScopeDep) -> list[Candidat
     dependencies=[Depends(require_token)],
     responses=OUTREACH_ERRORS,
 )
-def approve(selector: str, body: CandidateRef, conn: Conn, scope: ScopeDep) -> ContactOut:
+def approve(
+    selector: str,
+    body: CandidateRef,
+    conn: Conn,
+    scope: Annotated[TrackScope, Depends(scope_for("contacts approve"))],
+) -> ContactOut:
     """The only path in this API from a staged candidate to a stored contact.
 
     A candidate discovery never staged is refused rather than created, which
@@ -230,7 +243,12 @@ def approve(selector: str, body: CandidateRef, conn: Conn, scope: ScopeDep) -> C
     dependencies=[Depends(require_token)],
     responses=OUTREACH_ERRORS,
 )
-def reject(selector: str, body: CandidateRef, conn: Conn, scope: ScopeDep) -> CandidateOut:
+def reject(
+    selector: str,
+    body: CandidateRef,
+    conn: Conn,
+    scope: Annotated[TrackScope, Depends(scope_for("contacts reject"))],
+) -> CandidateOut:
     from harrier.outreach import update_candidate_review_status
 
     row = _job_row(conn, scope, selector)
@@ -259,7 +277,10 @@ def reject(selector: str, body: CandidateRef, conn: Conn, scope: ScopeDep) -> Ca
     responses=OUTREACH_ERRORS,
 )
 def set_best_contact(
-    selector: str, body: CandidateRef, conn: Conn, scope: ScopeDep
+    selector: str,
+    body: CandidateRef,
+    conn: Conn,
+    scope: Annotated[TrackScope, Depends(scope_for("contacts set-best"))],
 ) -> OutreachRowOut:
     from harrier.outreach import set_best_contact_for_job
 
@@ -303,7 +324,9 @@ def list_outreach_contacts(conn: Conn) -> list[ContactOut]:
     dependencies=[Depends(require_token)],
     responses=TOKEN_RESPONSES,
 )
-def list_outreach_due(conn: Conn, scope: ScopeDep) -> list[OutreachRowOut]:
+def list_outreach_due(
+    conn: Conn, scope: Annotated[TrackScope, Depends(scope_for("outreach due"))]
+) -> list[OutreachRowOut]:
     from harrier.outreach import outreach_due_rows
 
     return [_row_out(row) for row in outreach_due_rows(conn, scope)]
@@ -315,7 +338,9 @@ def list_outreach_due(conn: Conn, scope: ScopeDep) -> list[OutreachRowOut]:
     dependencies=[Depends(require_token)],
     responses=TOKEN_RESPONSES,
 )
-def sync_outreach(conn: Conn, scope: ScopeDep) -> list[OutreachRowOut]:
+def sync_outreach(
+    conn: Conn, scope: Annotated[TrackScope, Depends(scope_for("outreach sync"))]
+) -> list[OutreachRowOut]:
     from harrier.outreach import sync_tracker_outreach
 
     return [_row_out(row) for row in sync_tracker_outreach(conn, scope)]
@@ -327,7 +352,12 @@ def sync_outreach(conn: Conn, scope: ScopeDep) -> list[OutreachRowOut]:
     dependencies=[Depends(require_token)],
     responses=OUTREACH_ERRORS,
 )
-def mark_sent(selector: str, body: MarkIn, conn: Conn, scope: ScopeDep) -> OutreachRowOut:
+def mark_sent(
+    selector: str,
+    body: MarkIn,
+    conn: Conn,
+    scope: Annotated[TrackScope, Depends(scope_for("outreach mark-sent"))],
+) -> OutreachRowOut:
     """Records that the operator sent something themselves.
 
     It sends nothing. The page says so in those words, because a control
@@ -348,7 +378,12 @@ def mark_sent(selector: str, body: MarkIn, conn: Conn, scope: ScopeDep) -> Outre
     dependencies=[Depends(require_token)],
     responses=OUTREACH_ERRORS,
 )
-def mark_replied(selector: str, body: MarkIn, conn: Conn, scope: ScopeDep) -> OutreachRowOut:
+def mark_replied(
+    selector: str,
+    body: MarkIn,
+    conn: Conn,
+    scope: Annotated[TrackScope, Depends(scope_for("outreach mark-replied"))],
+) -> OutreachRowOut:
     from harrier.outreach import mark_job_outreach_replied
 
     row = _job_row(conn, scope, selector)
@@ -366,7 +401,12 @@ def mark_replied(selector: str, body: MarkIn, conn: Conn, scope: ScopeDep) -> Ou
     dependencies=[Depends(require_token)],
     responses=OUTREACH_ERRORS,
 )
-def snooze(selector: str, body: SnoozeIn, conn: Conn, scope: ScopeDep) -> OutreachRowOut:
+def snooze(
+    selector: str,
+    body: SnoozeIn,
+    conn: Conn,
+    scope: Annotated[TrackScope, Depends(scope_for("outreach snooze"))],
+) -> OutreachRowOut:
     from harrier.outreach import snooze_job_outreach
 
     row = _job_row(conn, scope, selector)
@@ -387,7 +427,11 @@ def snooze(selector: str, body: SnoozeIn, conn: Conn, scope: ScopeDep) -> Outrea
     responses=OUTREACH_ERRORS,
 )
 async def draft_outreach(
-    selector: str, body: DraftIn, conn: Conn, scope: ScopeDep, manager: Manager
+    selector: str,
+    body: DraftIn,
+    conn: Conn,
+    scope: Annotated[TrackScope, Depends(scope_for("outreach-draft"))],
+    manager: Manager,
 ) -> RunOut:
     """The contact and the tone travel in a file, not argv.
 

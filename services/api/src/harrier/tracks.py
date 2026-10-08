@@ -105,14 +105,16 @@ class KindRules:
 
 
 KIND_RULES: dict[str, KindRules] = {
-    # Today's behavior, unchanged: the labels are the statuses themselves and
-    # the next actions are the old repo's (scripts/jobs.py NEXT_ACTION_DEFAULTS),
-    # which `harrier.tracker.schema.NEXT_ACTION_DEFAULTS` now derives from.
+    # The next actions are the old repo's (scripts/jobs.py
+    # NEXT_ACTION_DEFAULTS), which `harrier.tracker.schema.NEXT_ACTION_DEFAULTS`
+    # now derives from. The labels are the words the browser has always shown
+    # (spec 094 moved them here so the browser holds no copy); the command
+    # line prints the stored status on this kind, so its output is unchanged.
     "industry": KindRules(
         labels={
             "prospect": "prospect",
             "shortlisted": "shortlisted",
-            "tailored_cv_requested": "tailored_cv_requested",
+            "tailored_cv_requested": "CV requested",
             "applied": "applied",
             "interviewing": "interviewing",
             "rejected": "rejected",
@@ -151,6 +153,49 @@ KIND_RULES: dict[str, KindRules] = {
         queue="nearest_deadline",
     ),
 }
+
+
+# What a non-default track may run, by operation name (spec 093, moved here by
+# spec 094 so the CLI and the API read one list). Operation names are the CLI
+# subcommands, plus the two reads the browser needs that the CLI reaches
+# through `next` and `review`: `list` (the track's rows) and `counts`.
+NON_DEFAULT_OPERATIONS: frozenset[str] = frozenset(
+    {
+        "add",
+        "tracks list",
+        "tracks add",
+        "tracks archive",
+        "next",
+        "review",
+        "shortlist",
+        "track",
+        "applied",
+        "interviewing",
+        "reject",
+        "events show",
+        "export",
+        "list",
+        "counts",
+    }
+)
+
+# The allowed operations that write a tracker row; an archived track refuses them.
+WRITE_OPERATIONS: frozenset[str] = frozenset(
+    {"add", "shortlist", "track", "applied", "interviewing", "reject"}
+)
+
+
+def operation_refusal(scope: Scope, operation: str) -> str | None:
+    """Why this scope may not run this operation, or None when it may.
+
+    One rule for both surfaces: the CLI prints it and exits 2, the API
+    answers 409 with it (specs 093, 094).
+    """
+    if scope.track.id != DEFAULT_TRACK_ID and operation not in NON_DEFAULT_OPERATIONS:
+        return f"{operation} is not available on track {scope.track.slug}"
+    if scope.track.archived and operation in WRITE_OPERATIONS:
+        return f"track {scope.track.slug} is archived"
+    return None
 
 
 def rules_for(kind: str) -> KindRules:
@@ -231,6 +276,22 @@ def resolve_scope(conn: sqlite3.Connection, slug: str | None) -> Scope:
     return Scope(track=_track_from_row(row))
 
 
+def kind_refusal(kind: str) -> str | None:
+    """Why a new track of this kind is refused, or None when it may be added.
+
+    `add_track` raises with these words, and the browser's add form shows them
+    beside the option it disables, so both surfaces give one reason (spec 094).
+    """
+    if kind not in TRACK_KINDS:
+        return f"unknown track kind {kind!r}; kinds: {', '.join(TRACK_KINDS)}"
+    if kind == "industry":
+        return (
+            "a second industry track is not supported yet: it would share the one "
+            "candidate configuration and watchlist with the first"
+        )
+    return None
+
+
 def add_track(conn: sqlite3.Connection, slug: str, kind: str, label: str) -> Track:
     """Create a track (spec 093).
 
@@ -239,13 +300,9 @@ def add_track(conn: sqlite3.Connection, slug: str, kind: str, label: str) -> Tra
     refusal lifts once configuration is per track.
     """
     validate_slug(slug)
-    if kind not in TRACK_KINDS:
-        raise TrackRefusedError(f"unknown track kind {kind!r}; kinds: {', '.join(TRACK_KINDS)}")
-    if kind == "industry":
-        raise TrackRefusedError(
-            "a second industry track is not supported yet: it would share the one "
-            "candidate configuration and watchlist with the first"
-        )
+    refusal = kind_refusal(kind)
+    if refusal is not None:
+        raise TrackRefusedError(refusal)
     label = label.strip()
     if not label:
         raise TrackRefusedError("a track needs a label")

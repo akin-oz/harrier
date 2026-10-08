@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from collections.abc import AsyncIterator
+from datetime import date
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
@@ -33,11 +34,14 @@ from harrier_api.capture_routes import capture_router
 from harrier_api.demo import demo_db_path, is_demo_mode, seed_demo_db
 from harrier_api.deps import (
     DATABASE_HELD_DETAIL,
+    VERB_IN_BODY,
     Conn,
     DatabaseHeldOut,
     DatabaseHoldOut,
     DatabaseRoute,
-    ScopeDep,
+    ErrorOut,
+    require_operation,
+    scope_for,
 )
 from harrier_api.localauth import (
     TOKEN_RESPONSES,
@@ -49,6 +53,7 @@ from harrier_api.mail_routes import mail_router
 from harrier_api.outreach_routes import outreach_router
 from harrier_api.runmodels import Manager, RunOut, run_out
 from harrier_api.runs import RunManager, RunParams, RunState, format_sse, write_run_input
+from harrier_api.tracks_routes import tracks_router
 
 API_VERSION = "0.1.0"
 
@@ -109,6 +114,11 @@ class JobOut(BaseModel):
     manual_added: str
     created_at: str
     updated_at: str
+    # Spec 094: the row's track, its deadline (empty for none), and whether
+    # that deadline is before the server's date.
+    track: str
+    deadline: str
+    deadline_passed: bool
 
 
 class HealthOut(BaseModel):
@@ -182,12 +192,12 @@ def get_session() -> SessionOut:
 @router.get("/jobs", operation_id="listJobs")
 def jobs(
     conn: Conn,
-    scope: ScopeDep,
+    scope: Annotated[TrackScope, Depends(scope_for("list"))],
     status: Annotated[JobStatus | None, Query()] = None,
     source: Annotated[str | None, Query()] = None,
 ) -> list[JobOut]:
     rows = list_jobs(conn, scope, status=status, source=source)
-    return [JobOut.model_validate({**row, "id": int(row["id"])}) for row in rows]
+    return [_as_job_out(row, scope) for row in rows]
 
 
 class StartRunIn(BaseModel):
@@ -263,6 +273,8 @@ class AddJobIn(BaseModel):
     url: str = ""
     source: str = "manual"
     description: str = ""
+    # A real calendar date or nothing; an impossible date is 422 (spec 094).
+    deadline: date | None = None
 
 
 class AddJobOut(BaseModel):
@@ -277,18 +289,6 @@ class RescoreOut(BaseModel):
     job: JobOut
 
 
-# FastAPI already sends this body for an `HTTPException`. Declaring it is what
-# lets the generated client know a refusal has one, so the browser reads
-# `detail` through a generated type rather than a cast (spec 082). The raise
-# and this declaration are separate lines, so
-# `tests/test_ui_tracker.py::test_every_tracker_refusal_is_the_body_the_contract_declares`
-# provokes each refusal and holds the two together.
-class ErrorOut(BaseModel):
-    """The body of a refusal: the message the domain wrote, verbatim."""
-
-    detail: str
-
-
 TRACKER_ERRORS: dict[int | str, dict[str, Any]] = {
     404: {"model": ErrorOut, "description": "the selector named no job, or more than one"},
     409: {"model": ErrorOut, "description": "the tracker refused the change"},
@@ -296,9 +296,21 @@ TRACKER_ERRORS: dict[int | str, dict[str, Any]] = {
 }
 
 
-def _as_job_out(job: dict[str, str]) -> JobOut:
+def _as_job_out(job: dict[str, str], scope: TrackScope) -> JobOut:
     """The same conversion `/jobs` uses, so one row shape reaches the client."""
-    return JobOut.model_validate({**job, "id": int(job["id"])})
+    deadline = (job.get("deadline") or "").strip()
+    return JobOut.model_validate(
+        {
+            **job,
+            "id": int(job["id"]),
+            # Every row a scoped route returns is the scope's (spec 092).
+            "track": scope.track.slug,
+            "deadline": deadline,
+            # The server decides, so the browser's clock cannot disagree with
+            # the queue the server ordered (spec 094).
+            "deadline_passed": bool(deadline) and deadline < date.today().isoformat(),
+        }
+    )
 
 
 @tracker_router.post(
@@ -307,15 +319,22 @@ def _as_job_out(job: dict[str, str]) -> JobOut:
     dependencies=[Depends(require_token)],
     responses=TRACKER_ERRORS,
 )
-def change_job_status(selector: str, body: StatusChangeIn, conn: Conn, scope: ScopeDep) -> JobOut:
+def change_job_status(
+    selector: str,
+    body: StatusChangeIn,
+    conn: Conn,
+    scope: Annotated[TrackScope, Depends(scope_for(VERB_IN_BODY))],
+) -> JobOut:
     """The same function the CLI's shortlist, track, applied, interviewing
     and reject verbs call (spec 042)."""
     from harrier.tracker.actions import TrackerActionError, change_status
 
     code = body.reason_code.value if body.reason_code is not None else None
+    require_operation(scope, body.verb)
     try:
         return _as_job_out(
-            change_status(conn, scope, selector, body.verb, reason=body.reason, reason_code=code)
+            change_status(conn, scope, selector, body.verb, reason=body.reason, reason_code=code),
+            scope,
         )
     except SelectorError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
@@ -330,7 +349,10 @@ def change_job_status(selector: str, body: StatusChangeIn, conn: Conn, scope: Sc
     responses=TRACKER_ERRORS,
 )
 def record_job_outcome(
-    selector: str, body: CompanyOutcomeIn, conn: Conn, scope: ScopeDep
+    selector: str,
+    body: CompanyOutcomeIn,
+    conn: Conn,
+    scope: Annotated[TrackScope, Depends(scope_for("company-outcome"))],
 ) -> JobOut:
     """What a company did with an application: the same function
     `harrier company-outcome` calls (specs 079, 080)."""
@@ -338,7 +360,8 @@ def record_job_outcome(
 
     try:
         return _as_job_out(
-            record_company_outcome(conn, scope, selector, body.code.value, note=body.note)
+            record_company_outcome(conn, scope, selector, body.code.value, note=body.note),
+            scope,
         )
     except SelectorError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
@@ -352,7 +375,9 @@ def record_job_outcome(
     dependencies=[Depends(require_token)],
     responses=TOKEN_RESPONSES,
 )
-def add_job_by_hand(body: AddJobIn, conn: Conn, scope: ScopeDep) -> AddJobOut:
+def add_job_by_hand(
+    body: AddJobIn, conn: Conn, scope: Annotated[TrackScope, Depends(scope_for("add"))]
+) -> AddJobOut:
     from harrier.tracker.actions import add_manually
 
     result, job = add_manually(
@@ -364,6 +389,7 @@ def add_job_by_hand(body: AddJobIn, conn: Conn, scope: ScopeDep) -> AddJobOut:
         url=body.url,
         source=body.source,
         description=body.description,
+        deadline=body.deadline.isoformat() if body.deadline is not None else "",
     )
     # A duplicate and a rejection are refusals the operator asked for, not
     # server errors, so they carry the reason rather than a status code the
@@ -371,7 +397,7 @@ def add_job_by_hand(body: AddJobIn, conn: Conn, scope: ScopeDep) -> AddJobOut:
     return AddJobOut(
         status=result.status,
         message=result.message,
-        job=_as_job_out(job) if job else None,
+        job=_as_job_out(job, scope) if job else None,
     )
 
 
@@ -381,7 +407,9 @@ def add_job_by_hand(body: AddJobIn, conn: Conn, scope: ScopeDep) -> AddJobOut:
     dependencies=[Depends(require_token)],
     responses=TRACKER_ERRORS,
 )
-def rescore_job(selector: str, conn: Conn, scope: ScopeDep) -> RescoreOut:
+def rescore_job(
+    selector: str, conn: Conn, scope: Annotated[TrackScope, Depends(scope_for("reevaluate"))]
+) -> RescoreOut:
     from harrier.tracker.actions import TrackerActionError, rescore
 
     try:
@@ -394,13 +422,15 @@ def rescore_job(selector: str, conn: Conn, scope: ScopeDep) -> RescoreOut:
         # (spec 033), and the operator gets the domain's own words rather
         # than a 500.
         raise HTTPException(status_code=409, detail=str(error)) from error
-    return RescoreOut(previous=result.previous, current=result.current, job=_as_job_out(result.job))
+    return RescoreOut(
+        previous=result.previous, current=result.current, job=_as_job_out(result.job, scope)
+    )
 
 
 @tracker_router.get("/tracker/queue", operation_id="listQueue")
 def list_queue(
     conn: Conn,
-    scope: ScopeDep,
+    scope: Annotated[TrackScope, Depends(scope_for("next"))],
     undecided: bool = False,
     limit: int | None = Query(default=None, ge=1, le=500),
 ) -> list[JobOut]:
@@ -410,11 +440,13 @@ def list_queue(
     from harrier.tracker.actions import next_up, review_queue
 
     rows = review_queue(conn, scope, limit) if undecided else next_up(conn, scope, limit)
-    return [_as_job_out(row) for row in rows]
+    return [_as_job_out(row, scope) for row in rows]
 
 
 @tracker_router.get("/tracker/counts", operation_id="trackerCounts")
-def tracker_counts(conn: Conn, scope: ScopeDep) -> dict[str, int]:
+def tracker_counts(
+    conn: Conn, scope: Annotated[TrackScope, Depends(scope_for("counts"))]
+) -> dict[str, int]:
     from harrier.tracker.actions import counts
 
     return counts(conn, scope)
@@ -501,7 +533,11 @@ def _apply_params(
     responses=APPLY_ERRORS,
 )
 async def tailor_resume(
-    selector: str, body: TailorIn, conn: Conn, scope: ScopeDep, manager: Manager
+    selector: str,
+    body: TailorIn,
+    conn: Conn,
+    scope: Annotated[TrackScope, Depends(scope_for("tailor"))],
+    manager: Manager,
 ) -> RunOut:
     """The same `tailor` verb the CLI runs, as a run (spec 047)."""
     params = _apply_params(conn, scope, selector, body.jd_text, no_ai=body.no_ai)
@@ -515,7 +551,11 @@ async def tailor_resume(
     responses=APPLY_ERRORS,
 )
 async def draft_cover_letter(
-    selector: str, body: CoverLetterIn, conn: Conn, scope: ScopeDep, manager: Manager
+    selector: str,
+    body: CoverLetterIn,
+    conn: Conn,
+    scope: Annotated[TrackScope, Depends(scope_for("cover-letter"))],
+    manager: Manager,
 ) -> RunOut:
     params = _apply_params(conn, scope, selector, body.notes, no_ai=False)
     return run_out(await manager.start("cover-letter", params))
@@ -528,7 +568,11 @@ async def draft_cover_letter(
     responses=APPLY_ERRORS,
 )
 async def draft_answers(
-    selector: str, body: AnswersIn, conn: Conn, scope: ScopeDep, manager: Manager
+    selector: str,
+    body: AnswersIn,
+    conn: Conn,
+    scope: Annotated[TrackScope, Depends(scope_for("answers"))],
+    manager: Manager,
 ) -> RunOut:
     params = _apply_params(conn, scope, selector, body.questions, no_ai=False)
     return run_out(await manager.start("answers", params))
@@ -541,7 +585,11 @@ async def draft_answers(
     responses=APPLY_ERRORS,
 )
 async def evaluate_offer_route(
-    selector: str, body: EvaluateIn, conn: Conn, scope: ScopeDep, manager: Manager
+    selector: str,
+    body: EvaluateIn,
+    conn: Conn,
+    scope: Annotated[TrackScope, Depends(scope_for("evaluate"))],
+    manager: Manager,
 ) -> RunOut:
     params = _apply_params(conn, scope, selector, body.jd_text, no_ai=False)
     return run_out(await manager.start("evaluate", params))
@@ -553,7 +601,9 @@ async def evaluate_offer_route(
     dependencies=[Depends(require_token)],
     responses=APPLY_ERRORS,
 )
-def list_artifacts(selector: str, conn: Conn, scope: ScopeDep) -> list[ArtifactOut]:
+def list_artifacts(
+    selector: str, conn: Conn, scope: Annotated[TrackScope, Depends(scope_for("artifacts"))]
+) -> list[ArtifactOut]:
     """The index requires the token even though it is a read.
 
     Tracker reads do not, and this deliberately differs: the names here are
@@ -581,7 +631,12 @@ def list_artifacts(selector: str, conn: Conn, scope: ScopeDep) -> list[ArtifactO
     dependencies=[Depends(require_token)],
     responses=ARTIFACT_ERRORS,
 )
-def read_artifact(selector: str, kind: str, conn: Conn, scope: ScopeDep) -> FileResponse:
+def read_artifact(
+    selector: str,
+    kind: str,
+    conn: Conn,
+    scope: Annotated[TrackScope, Depends(scope_for("artifacts"))],
+) -> FileResponse:
     from harrier.artifacts import UnknownArtifactKind, artifact_for_job
 
     job_id = _job_id_for(conn, scope, selector)
@@ -887,6 +942,7 @@ def create_app(run_manager: RunManager | None = None, spa_dir: Path | None = Non
     app.include_router(apply_router)
     app.include_router(outreach_router)
     app.include_router(mail_router)
+    app.include_router(tracks_router)
     app.add_middleware(ApiPrefixMiddleware)
     # Closes DNS rebinding, which is what made every other protection here
     # bypassable: a page the operator visits resolves its own hostname to
