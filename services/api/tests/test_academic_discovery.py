@@ -1646,3 +1646,38 @@ def test_no_item_text_reaches_the_summary_or_telegram(
     assert description not in "\n".join(sent)
     latest = next((data_dir() / "incoming").rglob(f"{source.SOURCE_NAME}_latest.json"))
     assert description not in latest.read_text(encoding="utf-8")
+
+
+# --- review of PR #187 -----------------------------------------------------------
+
+
+def test_an_unreadable_stored_search_is_reported_by_configured_tracks(
+    track: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with closing(connect()) as conn:
+        conn.execute(
+            "UPDATE user_config SET value = ? WHERE kind = ?", ("{not json", ACADEMIC_SEARCHES)
+        )
+        conn.commit()
+    capsys.readouterr()
+    assert main(["discover", "--scheduled", "--configured-tracks", "--no-notify"]) == 3
+    assert f"{ACADEMIC_SEARCHES}: stored {ACADEMIC_SEARCHES}" in capsys.readouterr().err
+
+
+def test_a_flag_phrase_with_no_word_is_refused_at_the_write() -> None:
+    with pytest.raises(SearchError, match=r"flag_phrases\.eligibility has a phrase with no word"):
+        validate_searches({SLUG: academic_search_entry(flag_phrases={"eligibility": ["!!!"]})})
+
+
+def test_an_apply_link_with_a_query_string_is_stored_whole_and_matches_the_next_run(
+    track: str, tmp_path: Path
+) -> None:
+    link = "https://positions.example.org/view?id=1"
+    discover(tmp_path, [item(1, applicationUrl=link)])
+    [row] = rows()
+    assert extract_note_value(row["notes"], "apply_url") == link
+    # The same call on another portal, its listing URL differing only by a
+    # fragment: a later run matches it through the stored application link.
+    discover(tmp_path, [item(2, applicationUrl=f"{link}#apply")])
+    assert len(rows()) == 1
+    assert f"tracker_duplicate:apply_url:{SLUG}" in reasons(seen())

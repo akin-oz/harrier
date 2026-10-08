@@ -385,6 +385,14 @@ def _clean_note(value: str) -> str:
     return re.sub(r"[;|=]", " ", value).strip()
 
 
+def note_url(url: str) -> str:
+    """A URL as a note value: whole, query string and `=` included, with only
+    the note separator `;` percent-encoded, so the stored link still opens
+    and still compares with a fresh one encoded the same way (review of
+    PR #187)."""
+    return url.strip().replace(";", "%3B")
+
+
 def normalize_link(url: str) -> str:
     """An application link compared across portals: scheme and host
     lowercased, fragment and trailing slash dropped, query string kept,
@@ -572,6 +580,9 @@ def build_academic_row(
     notes.append(f"flags={'|'.join(flags)}" if flags else "flags=not stated")
     for name in ACADEMIC_COMPONENTS:
         value = str(job["metadata"].get(name, "") or "not stated")
+        if name == "apply_url" and value != "not stated":
+            notes.append(f"{name}={note_url(value)}")
+            continue
         notes.append(f"{name}={_clean_note(value) or 'not stated'}")
     deadline_text = str(job["metadata"].get("deadline_text", "") or "")
     if deadline_text:
@@ -662,7 +673,9 @@ def _screen_academic(
         external_id = (job["external_id"] or job["external_job_id"]).strip()
         external_key = normalize(f"{job['source']}:{external_id}") if external_id else ""
         apply_url = str(job["metadata"].get("apply_url", "") or "")
-        apply_link = normalize_link(apply_url) if apply_url and apply_url != "not stated" else ""
+        apply_link = (
+            normalize_link(note_url(apply_url)) if apply_url and apply_url != "not stated" else ""
+        )
         company_norm = normalize(job["company"])
         title_norm = normalize(job["title"])
         duplicate = gates.indexes.duplicate_of(

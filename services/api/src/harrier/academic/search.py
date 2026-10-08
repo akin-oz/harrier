@@ -241,7 +241,19 @@ def _validate_entry(slug: str, value: object, *, enforce_limits: bool) -> dict[s
         for name, phrases in flags.items():
             if not name or not name.replace("_", "").isalnum() or name != name.lower():
                 raise SearchError(f"{where}.flag_phrases has a malformed flag name {name!r}")
-            normalized_flags[name] = _strings(phrases, f"{where}.flag_phrases.{name}")
+            checked = _strings(phrases, f"{where}.flag_phrases.{name}")
+            # The matcher's own rule, as for every other term: a phrase with
+            # no word to match would fail inside screening, after the run was
+            # billed (review of PR #187).
+            for phrase in checked:
+                try:
+                    AcademicTerm(phrase)
+                except ValueError as exc:
+                    raise SearchError(
+                        f"{where}.flag_phrases.{name} has a phrase with no word to match: "
+                        f"{phrase!r}"
+                    ) from exc
+            normalized_flags[name] = checked
         normalized["flag_phrases"] = normalized_flags
 
     if "funding_flag_values" in entry:

@@ -366,7 +366,14 @@ def run_configured_tracks(conn: sqlite3.Connection, options: AcademicOptions) ->
     scope. Never the default track. An unknown, archived or industry slug is
     reported, and one track's failure never stops the next."""
     reports: list[TrackReport] = []
-    for slug in load_searches(conn):
+    try:
+        searches = load_searches(conn)
+    except ConfigError as exc:
+        # An unreadable stored search is reported, not raised: the weekly
+        # job prints it and exits 3, as for any track it cannot run
+        # (review of PR #187).
+        return [TrackReport(ACADEMIC_SEARCHES, problem=str(exc))]
+    for slug in searches:
         try:
             scope = resolve_scope(conn, slug)
         except UnknownTrackError:
