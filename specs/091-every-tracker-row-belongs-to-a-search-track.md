@@ -276,6 +276,8 @@ BEGIN
 END;
 CREATE TRIGGER tracks_are_never_deleted BEFORE DELETE ON tracks
 BEGIN SELECT RAISE(ABORT, 'tracks are archived, never deleted'); END;
+CREATE TRIGGER tracks_keep_their_id BEFORE UPDATE OF id ON tracks
+BEGIN SELECT RAISE(ABORT, 'a track id never changes'); END;
 CREATE INDEX idx_jobs_track_status ON jobs(track_id, status);
 ```
 
@@ -292,7 +294,9 @@ CREATE INDEX idx_jobs_track_status ON jobs(track_id, status);
   default track's slug is `job` and its kind `industry`; its label is
   display text and runtime data like every other label.
 - The delete trigger keeps a `jobs` row from ever naming a track that is
-  gone. Archiving (spec 093) is the only lifecycle verb a track has.
+  gone, and the id trigger keeps one from naming a number no track has
+  any more: an `UPDATE tracks SET id` runs none of the job triggers.
+  Archiving (spec 093) is the only lifecycle verb a track has.
 - `contacts` stay person-level. A contact belongs to the person, not to a
   search.
 
@@ -386,7 +390,8 @@ database is built under `tmp_path` with synthetic rows.
       (`services/api/tests/test_tracks.py::test_migration_8_never_touches_job_events`)
 - [x] A raw INSERT into `jobs` naming an unknown track, and a raw UPDATE of
       `track_id` to one, are refused by the database; an INSERT naming
-      track 1 passes; a DELETE on `tracks` is refused
+      track 1 passes; a DELETE on `tracks` and an UPDATE of `tracks.id` are
+      refused
       (`services/api/tests/test_tracks.py::test_an_unknown_track_is_refused_by_the_database`)
 - [x] `add_job` writes the scope's track and refuses a `track_id` in
       `fields` (`services/api/tests/test_tracks.py::test_the_write_path_stamps_the_scopes_track`,
@@ -569,3 +574,12 @@ One line each. Each is future work with its own spec.
   reached every existing call site in the suite, which is the point of
   having no default; one test file's local helper of the same name was
   left alone.
+- **Review of PR #180, three findings, all applied.** An `UPDATE tracks SET
+  id` ran none of the job triggers and would have stranded every row of the
+  track; migration 8 gains `tracks_keep_their_id`, pinned in
+  `test_an_unknown_track_is_refused_by_the_database`. `validate_slug` used
+  `re.match`, whose `$` accepts a trailing newline the CHECK refuses; it is
+  `fullmatch` now, and `"job\n"` joins the refused shapes in
+  `test_a_slug_outside_the_rule_is_refused`. The module docstring claimed
+  every reader works in a scope; it now says the write path does and that
+  readers are spec 092's.

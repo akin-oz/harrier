@@ -2,9 +2,12 @@
 
 A track is a second kind of search by the same person, held as a row in
 `tracks`; a tenant is a second person, held as a store boundary this module
-never sees. Every reader and writer of tracker rows works in a `Scope`, a
-value passed down from the entry point that opened the connection, never a
-module global, so two scopes in one process cannot mix.
+never sees. The write path stamps every row with the track of the `Scope` it
+is given, a value passed down from the entry point that opened the
+connection, never a module global, so two scopes in one process cannot mix.
+Readers are not scoped yet: `list_jobs` and the rest still return every row,
+which is correct while every row is in the default track. Spec 092 makes
+every reader take a `Scope` too.
 
 Nothing here creates, archives or renames a track. Migration 8 seeds the one
 track every existing row belongs to; spec 093 adds the verbs.
@@ -77,7 +80,9 @@ class Scope:
 def validate_slug(slug: str) -> str:
     """The slug rule, in code with a message; the CHECK in the database is
     the backstop that says the same thing without one."""
-    if not slug or len(slug) > SLUG_MAX_LENGTH or _SLUG.match(slug) is None:
+    # fullmatch: `match` with `$` would accept a trailing newline that the
+    # database CHECK refuses (review of PR #180).
+    if not slug or len(slug) > SLUG_MAX_LENGTH or _SLUG.fullmatch(slug) is None:
         raise InvalidSlugError(f"invalid track slug {slug!r}; a slug is {SLUG_RULE}")
     return slug
 

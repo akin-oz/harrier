@@ -169,7 +169,11 @@ def test_an_unknown_track_is_refused_by_the_database(tmp_path: Path) -> None:
             raw.execute("UPDATE jobs SET track_id = 2 WHERE track_id = 1")
         with pytest.raises(sqlite3.IntegrityError, match="never deleted"):
             raw.execute("DELETE FROM tracks WHERE id = 1")
-        assert raw.execute("SELECT COUNT(*) FROM tracks").fetchone()[0] == 1
+        # An id update would run none of the job triggers and strand every
+        # row of the track (review of PR #180).
+        with pytest.raises(sqlite3.IntegrityError, match="never changes"):
+            raw.execute("UPDATE tracks SET id = 7 WHERE id = 1")
+        assert [tuple(r) for r in raw.execute("SELECT id FROM tracks")] == [(1,)]
     finally:
         raw.close()
 
@@ -228,7 +232,7 @@ def test_a_duplicate_names_the_track_it_lives_in(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "slug",
-    ["", "a" * 33, "1job", "-job", "Job", "my job", "my.job", "job_search", "jöb"],
+    ["", "a" * 33, "1job", "-job", "Job", "my job", "my.job", "job_search", "jöb", "job\n"],
 )
 def test_a_slug_outside_the_rule_is_refused(tmp_path: Path, slug: str) -> None:
     with pytest.raises(InvalidSlugError):

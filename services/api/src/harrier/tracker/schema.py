@@ -364,6 +364,13 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
             CREATE TRIGGER tracks_are_never_deleted BEFORE DELETE ON tracks
             BEGIN SELECT RAISE(ABORT, 'tracks are archived, never deleted'); END
             """,
+            # An id update runs none of the job triggers and would leave every
+            # row of that track naming a number no track has (review of PR
+            # #180). The id is the one column a job row points at.
+            """
+            CREATE TRIGGER tracks_keep_their_id BEFORE UPDATE OF id ON tracks
+            BEGIN SELECT RAISE(ABORT, 'a track id never changes'); END
+            """,
             "CREATE INDEX idx_jobs_track_status ON jobs(track_id, status)",
         ],
     ),
