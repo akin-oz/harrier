@@ -12,7 +12,8 @@ from conftest import auth
 from fastapi.testclient import TestClient
 
 from harrier_api.app import create_app
-from harrier_api.runs import RunManager, format_sse
+from harrier_api.runs import RunManager, RunParams, build_command, format_sse
+from harrier_cli.main import build_parser
 
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
 # pyright: reportUnknownArgumentType=false
@@ -250,3 +251,18 @@ def test_a_database_already_at_the_previous_version_gains_the_job_runs_table(
     tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert "job_runs" in tables
     conn.close()
+
+
+def test_run_manager_places_a_validated_track_before_the_verb() -> None:
+    """`--track` is a global flag, so a run that names a track carries it
+    between the module and the verb (spec 093)."""
+    plain = build_command("tailor", RunParams(job_id=1))
+    assert plain[3] == "tailor"
+    named = build_command("tailor", RunParams(job_id=1, track="second-search"))
+    assert named[:3] == plain[:3]
+    assert named[3:5] == ["--track=second-search", "tailor"]
+    parsed = build_parser().parse_args(named[3:])
+    assert parsed.track_slug == "second-search" and parsed.command == "tailor"
+    for bad in ("Second Search", "-x", "", "a" * 33):
+        with pytest.raises(ValueError, match="slug"):
+            RunParams(job_id=1, track=bad)

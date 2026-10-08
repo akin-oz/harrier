@@ -328,6 +328,8 @@ def test_a_migrated_database_matches_a_fresh_one(
     fresh = connect()
     assert any(name == "job_events" for _, name, _ in schema(fresh))
     assert any(name == "tracks" for _, name, _ in schema(fresh))
+    # Migration 9 (spec 093): the deadline column, on both paths.
+    assert "deadline" in {row[1] for row in fresh.execute("PRAGMA table_info(jobs)")}
     assert schema(brought_forward) == schema(fresh)
     brought_forward.close()
     fresh.close()

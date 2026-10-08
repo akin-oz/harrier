@@ -283,66 +283,64 @@ Tests in `services/api/tests/test_tracks_cli.py` unless named otherwise.
 Every database is built under `tmp_path`; every row and every track is
 synthetic.
 
-- [ ] `harrier --track x shortlist 1` with the container owning the
+- [x] `harrier --track x shortlist 1` with the container owning the
       database is delegated as the identical vector, flag included, and
       the host process's output and the lease name neither `x` nor the id
-      (`services/api/tests/test_delegation.py`,
-      planned test_track_flag_survives_delegation)
-- [ ] `RunParams(track="x")` makes `build_command` emit `--track x` before
+      (`services/api/tests/test_delegation.py::test_track_flag_survives_delegation`)
+- [x] `RunParams(track="x")` makes `build_command` emit `--track=x` before
       the verb; a malformed slug is refused by `RunParams`
-      (`services/api/tests/test_runs.py`,
-      planned test_run_manager_places_a_validated_track_before_the_verb)
-- [ ] `tracks add` creates an academic track that `tracks list` shows, and
+      (`services/api/tests/test_runs.py::test_run_manager_places_a_validated_track_before_the_verb`)
+- [x] `tracks add` creates an academic track that `tracks list` shows, and
       `add` with its slug lands the row in it
-      (planned test_add_lands_in_the_named_track)
-- [ ] An academic `add` stores no score, signals, version or remote
+      (`services/api/tests/test_tracks_cli.py::test_add_lands_in_the_named_track`)
+- [x] An academic `add` stores no score, signals, version or remote
       filter, loads no candidate configuration and makes no network
       request; the same `add` on the industry track is scored as today
-      (planned test_an_academic_add_stores_no_industry_score)
-- [ ] `applied` on an academic row sets `applied_date` and no follow-up
+      (`services/api/tests/test_tracks_cli.py::test_an_academic_add_stores_no_industry_score`)
+- [x] `applied` on an academic row sets `applied_date` and no follow-up
       date, next action or outreach block; on an industry row it seeds
       all of them
-      (planned test_marking_an_academic_row_applied_seeds_no_follow_up;
+      (`services/api/tests/test_tracks_cli.py::test_marking_an_academic_row_applied_seeds_no_follow_up`;
       `services/api/tests/test_tracker_cli.py::test_applied_seeds_the_outreach_block_and_the_follow_up`)
-- [ ] The academic queue orders by nearest open deadline, then no
+- [x] The academic queue orders by nearest open deadline, then no
       deadline, then passed deadlines flagged and last, and hides none of
       them; the industry queue is unchanged
-      (planned test_academic_queue_orders_by_nearest_open_deadline;
+      (`services/api/tests/test_tracks_cli.py::test_academic_queue_orders_by_nearest_open_deadline`;
       `services/api/tests/test_tracker_cli.py::test_rank_puts_the_nearest_to_sending_first`)
-- [ ] Every command outside the allowlist, parametrized over the list
+- [x] Every command outside the allowlist, parametrized over the list
       under Behavior, exits 2 naming the subcommand and the slug and reads
       no row; every command inside it runs
-      (planned test_commands_outside_the_allowlist_refuse_a_non_default_track)
-- [ ] `tracks add --kind industry` exits 2 and writes nothing
-      (planned test_tracks_add_refuses_a_second_industry_track)
-- [ ] A malformed or impossible `--deadline` exits 2, and the CHECK refuses
+      (`services/api/tests/test_tracks_cli.py::test_commands_outside_the_allowlist_refuse_a_non_default_track`)
+- [x] `tracks add --kind industry` exits 2 and writes nothing
+      (`services/api/tests/test_tracks_cli.py::test_tracks_add_refuses_a_second_industry_track`)
+- [x] A malformed or impossible `--deadline` exits 2, and the CHECK refuses
       a raw write of a malformed deadline
-      (planned test_a_malformed_deadline_is_refused)
-- [ ] A duplicate slug, archiving the default track, archiving twice, and
+      (`services/api/tests/test_tracks_cli.py::test_a_malformed_deadline_is_refused`)
+- [x] A duplicate slug, archiving the default track, archiving twice, and
       a write on an archived track are each refused and write nothing
-      (planned test_track_lifecycle_refusals)
-- [ ] `--track job` behaves as no flag
-      (planned test_the_default_tracks_slug_is_the_same_as_no_flag)
-- [ ] Status labels and next-action defaults follow the kind, and the raw
+      (`services/api/tests/test_tracks_cli.py::test_track_lifecycle_refusals`)
+- [x] `--track job` behaves as no flag
+      (`services/api/tests/test_tracks_cli.py::test_the_default_tracks_slug_is_the_same_as_no_flag`)
+- [x] Status labels and next-action defaults follow the kind, and the raw
       status is the same six-value lifecycle in both
-      (planned test_status_labels_follow_the_track_kind)
-- [ ] No allowed command on an academic track issues a statement naming
+      (`services/api/tests/test_tracks_cli.py::test_status_labels_follow_the_track_kind`)
+- [x] No allowed command on an academic track issues a statement naming
       `profile_documents` or `user_config`, proven with a trace callback
-      (planned test_academic_commands_read_no_profile_document)
-- [ ] `export` on a non-default track writes `D/<slug>/jobs.csv` and no
+      (`services/api/tests/test_tracks_cli.py::test_academic_commands_read_no_profile_document`)
+- [x] `export` on a non-default track writes `D/<slug>/jobs.csv` and no
       contacts file; without the flag it writes the two files it writes
-      today (planned test_export_on_a_non_default_track_writes_under_its_slug)
-- [ ] Browser capture and the API manual add land in the default track
-      (planned test_browser_capture_lands_in_the_default_track)
-- [ ] `tracks add` and `tracks archive` are `database` class
+      today (`services/api/tests/test_tracks_cli.py::test_export_on_a_non_default_track_writes_under_its_slug`)
+- [x] Browser capture and the API manual add land in the default track
+      (`services/api/tests/test_tracks_cli.py::test_browser_capture_lands_in_the_default_track`)
+- [x] `tracks add` and `tracks archive` are `database` class
       (`services/api/tests/test_delegation.py::test_every_subcommand_has_exactly_one_class`)
-- [ ] `services/api/tests/test_scoring.py::test_a_migrated_database_matches_a_fresh_one`
+- [x] `services/api/tests/test_scoring.py::test_a_migrated_database_matches_a_fresh_one`
       covers migration 9
-- [ ] The invariant text is amended as quoted and `npx aie check` passes
-- [ ] The contract is regenerated by `just contract` and shows no diff
-- [ ] Each test above fails with its behavior removed, checked by removing
+- [x] The invariant text is amended as quoted and `npx aie check` passes
+- [x] The contract is regenerated by `just contract` and shows no diff
+- [x] Each test above fails with its behavior removed, checked by removing
       each behavior in turn and recorded in the pull request
-- [ ] No real position, institution, person, deadline or tracker count
+- [x] No real position, institution, person, deadline or tracker count
       appears in a fixture, this spec or a commit message (ADR-008)
 - [ ] All gates green on the pull request
 
@@ -470,3 +468,55 @@ else changes; the schedule does not need reinstalling.
 - Opportunity modelling beyond one deadline.
 - Unarchiving, renaming, or changing a track's kind.
 - Per-kind statuses (Open decisions, item 7).
+
+## Amendment (2026-10-08, during implementation)
+
+What implementation settled, each with the test or file that holds it:
+
+- **The run manager emits `--track=<slug>`,** one argument, in the
+  `--flag=value` form `harrier_api/runs.py` uses for every value, rather
+  than the two arguments Behavior showed. It still sits between the module
+  and the verb, and the CLI parses it the same way
+  (`services/api/tests/test_runs.py::test_run_manager_places_a_validated_track_before_the_verb`).
+- **One definition of the industry next actions.**
+  `harrier.tracker.schema.NEXT_ACTION_DEFAULTS` is now derived from
+  `KIND_RULES["industry"]` rather than kept beside it, so the two cannot
+  drift (`services/api/tests/test_tracks_cli.py::test_status_labels_follow_the_track_kind`).
+- **What `applied` writes on an academic row:** `applied_date` and the
+  kind's next action for `applied` ("wait for a reply"). No follow-up date
+  in the next action, no `last_contact`, no outreach block
+  (`services/api/tests/test_tracks_cli.py::test_marking_an_academic_row_applied_seeds_no_follow_up`).
+- **Where the allowlist is checked.** In the process that runs the
+  command, after the run-or-delegate decision and logging setup, before the
+  command's own function: a delegated command is checked inside the
+  container, and the host process prints the subcommand only
+  (`services/api/tests/test_delegation.py::test_track_flag_survives_delegation`).
+  Resolving the slug opens the database, so a host-only command given
+  `--track` opens it too, and while the container owns it that open is
+  refused with exit 75 like any other host open (spec 061). No host-only
+  command is in the allowlist, so the flag only ever refuses them.
+- **Exit codes, as landed:** an unknown slug, a malformed one, `--kind
+  industry`, archiving the default track and a write on an archived track
+  exit 2; a slug already in use and archiving an archived track exit 1
+  (`services/api/tests/test_tracks_cli.py::test_track_lifecycle_refusals`,
+  `services/api/tests/test_tracks_cli.py::test_tracks_add_refuses_a_second_industry_track`).
+- **`--deadline` defaults to none, not an empty string.** argparse runs a
+  string default through the option's `type`, so an empty default was
+  parsed as a date and refused every `add` without the option. Found by
+  `services/api/tests/test_delegation.py::test_a_database_command_is_run_inside_the_container_as_the_same_vector`.
+- **Spec 091's test of "no way to create a track" is renamed.** It pinned
+  that `harrier.tracks` offered no verb; this spec adds two, so it is now
+  `services/api/tests/test_tracks.py::test_a_track_changes_only_through_add_and_archive`,
+  which pins that they are the only ones, and spec 091's citation is
+  updated in the same change. Spec 091's migration test now expects the
+  newest version rather than eight.
+- **The allowlist as landed is the one in Behavior.** `company-outcome` and
+  `events backfill` stay outside it (Open decisions, items 2 and 3, were not
+  decided), and the refusal test lists both. Adding either is a one-line
+  change to `TRACK_ALLOWLIST` in `harrier_cli/main.py` with its test.
+- **Mutants.** Eleven behaviors were removed one at a time (the allowlist,
+  the archived-write refusal, the academic add path, the follow-up rule,
+  the deadline queue, the per-track export, the run manager's track, the
+  industry refusal, the deadline check, the labels, the unknown-slug
+  refusal); each made a test above fail, and each file was restored
+  byte-for-byte after its run.

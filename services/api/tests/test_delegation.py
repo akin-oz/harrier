@@ -190,6 +190,24 @@ def test_a_database_command_is_run_inside_the_container_as_the_same_vector(
     assert "-t" not in runner.calls[0]
 
 
+def test_track_flag_survives_delegation(
+    live: Path,
+    answers: Callable[..., None],
+    runner: FakeDocker,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`--track` is part of the vector, so the container receives it as typed
+    (spec 093). The host process names the subcommand only: the slug reaches
+    neither its output nor the name a lease would carry (spec 075)."""
+    answers(owned(live))
+    argv = ["--track", "zeta-search", "shortlist", "1"]
+    assert main(argv) == 0
+    assert runner.calls == [exec_of(*argv)]
+    captured = capsys.readouterr()
+    assert "zeta-search" not in captured.out + captured.err
+    assert subcommand_name(build_parser().parse_args(argv)) == "shortlist"
+
+
 def test_a_delegated_command_never_opens_the_database_here(
     live: Path,
     answers: Callable[..., None],

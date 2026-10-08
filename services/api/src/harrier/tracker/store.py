@@ -33,13 +33,12 @@ from harrier.tracker.reasons import (
 )
 from harrier.tracker.schema import (
     CONTACT_FIELDS,
-    NEXT_ACTION_DEFAULTS,
     NOTE_KEYS,
     STATUSES,
     TRACKER_FIELDS,
 )
 from harrier.tracker.transitions import check_transition, fields_a_move_clears
-from harrier.tracks import Scope
+from harrier.tracks import Scope, rules_for
 
 
 class TrackerError(Exception):
@@ -118,7 +117,10 @@ def add_job(conn: sqlite3.Connection, fields: Mapping[str, str], *, scope: Scope
     if status not in STATUSES:
         raise UnknownStatusError(f"unknown status {status!r}; legal: {', '.join(STATUSES)}")
     if not values["next_action"]:
-        values["next_action"] = NEXT_ACTION_DEFAULTS[status]
+        values["next_action"] = rules_for(scope.track.kind).next_action[status]
+    deadline = str(fields.get("deadline", "") or "").strip()
+    if deadline and not _is_iso_date(deadline):
+        raise TrackerError(f"deadline must be a YYYY-MM-DD date, got {deadline!r}")
 
     existing = find_duplicate(
         conn, values["url"], values["company"], values["title"], promoted["external_key"]
@@ -136,12 +138,14 @@ def add_job(conn: sqlite3.Connection, fields: Mapping[str, str], *, scope: Scope
     ]
     row_values += [promoted[key] for key in NOTE_KEYS]
     row_values.append(scope.track.id)
+    row_values.append(deadline)
     placeholders = ", ".join("?" for _ in columns)
     description_sha256 = _description_sha256(values["url"])
     with conn:
         try:
             cursor = conn.execute(
-                f"INSERT INTO jobs ({', '.join(columns)}, track_id) VALUES ({placeholders}, ?)",
+                f"INSERT INTO jobs ({', '.join(columns)}, track_id, deadline) "
+                f"VALUES ({placeholders}, ?, ?)",
                 row_values,
             )
         except sqlite3.IntegrityError as error:
@@ -165,6 +169,13 @@ def add_job(conn: sqlite3.Connection, fields: Mapping[str, str], *, scope: Scope
             description_sha256=description_sha256,
         )
     return int(row_id)
+
+
+def _is_iso_date(value: str) -> bool:
+    try:
+        return date.fromisoformat(value).isoformat() == value
+    except ValueError:
+        return False
 
 
 def _track_slug(conn: sqlite3.Connection, track_id: str) -> str:
@@ -326,9 +337,16 @@ def set_status(
         # the same transaction, so a partial history cannot exist.
         history = [] if _has_events(conn, scope, job_id) else _plan_backfill(job)
 
+        rules = rules_for(scope.track.kind)
         updates: dict[str, str] = {"status": status}
         updates.update(fields_a_move_clears(job["status"], status))
-        if status == "applied":
+        if status == "applied" and not rules.seeds_follow_up:
+            # A kind with no follow-up cadence and no outreach records the
+            # date it was submitted and the kind's next action, and seeds
+            # nothing else (spec 093).
+            updates["applied_date"] = applied_date or date.today().isoformat()
+            updates["next_action"] = rules.next_action[status]
+        elif status == "applied":
             applied = applied_date or date.today().isoformat()
             follow_up = (date.fromisoformat(applied) + timedelta(days=7)).isoformat()
             updates["applied_date"] = applied
@@ -340,11 +358,11 @@ def set_status(
             updates["contacts_found"] = job["contacts_found"].strip() or "0"
             updates["outreach_priority"] = job["outreach_priority"].strip() or "high"
         elif status == "rejected":
-            updates["next_action"] = NEXT_ACTION_DEFAULTS[status]
+            updates["next_action"] = rules.next_action[status]
             if rejection_reason:
                 updates["rejection_reason"] = rejection_reason
         else:
-            updates["next_action"] = NEXT_ACTION_DEFAULTS[status]
+            updates["next_action"] = rules.next_action[status]
 
         assignments = ", ".join(f"{name} = ?" for name in updates)
         with conn:

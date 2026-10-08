@@ -567,7 +567,9 @@ One line each. Each is future work with its own spec.
   `services/api/tests/test_tracks.py::test_the_kind_check_derives_from_the_code_list`
   inserts each kind in `TRACK_KINDS` and refuses one outside it.
 - **`harrier.tracks` offers no way to create a track**, pinned by
-  `services/api/tests/test_tracks.py::test_the_module_offers_no_way_to_create_a_track`.
+  `services/api/tests/test_tracks.py::test_a_track_changes_only_through_add_and_archive`,
+  renamed by spec 093, which adds the two verbs and pins that they are the
+  only ones.
 - **ADR-012 lands accepted** (Open decisions, item 1): the approval of this
   spec on 2026-10-08 is the decision it records.
 - **Every test that calls `add_job` passes a scope.** The required keyword

@@ -121,7 +121,8 @@ def test_migration_8_keeps_every_row_in_the_default_track(seven: Path) -> None:
     conn = connect(seven)
     try:
         version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-        assert version == 8
+        # Eight and every migration after it: the database is current.
+        assert version == MIGRATIONS[-1][0]
         rows = list_jobs(conn, default_scope(conn))
         assert len(rows) == len(SYNTHETIC_ROWS)
         assert {row["track_id"] for row in rows} == {str(DEFAULT_TRACK_ID)}
@@ -284,12 +285,19 @@ def test_resolve_scope_names_an_unknown_slug(tmp_path: Path) -> None:
         conn.close()
 
 
-def test_the_module_offers_no_way_to_create_a_track() -> None:
-    """Migration 8 seeds the one track; spec 093 adds the verbs."""
+def test_a_track_changes_only_through_add_and_archive() -> None:
+    """Migration 8 seeds the one track and spec 093 adds two verbs. Nothing
+    renames a track, changes its kind or deletes it. This test was
+    `test_the_module_offers_no_way_to_create_a_track` under spec 091, which
+    pinned that no verb existed; spec 093 is the change that adds them."""
     import harrier.tracks as tracks
 
+    verbs = ("add", "create", "archive", "rename", "delete", "remove", "set_kind")
     public = {name for name in dir(tracks) if not name.startswith("_")}
-    assert not {name for name in public if "add" in name or "create" in name or "archive" in name}
+    assert {name for name in public if any(verb in name for verb in verbs)} == {
+        "add_track",
+        "archive_track",
+    }
 
 
 # --- the command ----------------------------------------------------------------

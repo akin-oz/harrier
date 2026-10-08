@@ -5,10 +5,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import sys
 from collections.abc import Callable
 from contextlib import closing
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 from harrier.container import CONTAINER_NAME, running_in
@@ -32,7 +34,7 @@ from harrier.tracker.export import export_csv
 from harrier.tracker.migrate_legacy import MigrationError, migrate
 from harrier.tracker.reasons import REASON_CODES
 from harrier.tracker.store import TrackerError
-from harrier.tracks import default_scope
+from harrier.tracks import Scope, Track, default_scope
 
 
 def load_project_env(path: Path | None = None) -> None:
@@ -102,7 +104,7 @@ def _cmd_discover(args: argparse.Namespace) -> int:
         print(f"{source}: {stage}", flush=True)
 
     with closing(connect()) as conn:
-        scope = default_scope(conn)
+        scope = _scope(conn, args)
         aggregate = run_discovery(
             conn,
             scope,
@@ -170,7 +172,7 @@ def _cmd_check(args: argparse.Namespace) -> int:
 
     wrote = 0
     conn = connect()
-    scope = default_scope(conn)
+    scope = _scope(conn, args)
     try:
         if args.link_contacts:
             # The one thing this command changes, and only when asked. It
@@ -199,10 +201,11 @@ def _cmd_check(args: argparse.Namespace) -> int:
 
 def _cmd_export(args: argparse.Namespace) -> int:
     with closing(connect()) as conn:
-        scope = default_scope(conn)
+        scope = _scope(conn, args)
         jobs_path, contacts_path = export_csv(conn, scope, Path(args.dest))
         print(f"exported: {jobs_path}")
-        print(f"exported: {contacts_path}")
+        if contacts_path is not None:
+            print(f"exported: {contacts_path}")
         return 0
 
 
@@ -254,7 +257,7 @@ def _cmd_tailor(args: argparse.Namespace) -> int:
             return 1
 
     with closing(connect()) as conn:
-        scope = default_scope(conn)
+        scope = _scope(conn, args)
         try:
             result = run_tailor(conn, scope, args.job_id, jd_text=jd_text, no_ai=args.no_ai)
         except (ResumeBundleError, ValueError, RuntimeError) as error:
@@ -299,7 +302,7 @@ def _cmd_cover_letter(args: argparse.Namespace) -> int:
             print(f"cover letter failed: cannot read --notes-file: {error}", file=sys.stderr)
             return 1
     with closing(connect()) as conn:
-        scope = default_scope(conn)
+        scope = _scope(conn, args)
         try:
             row = get_job(conn, scope, args.job_id)
             if not jd_text:
@@ -356,7 +359,7 @@ def _cmd_answers(args: argparse.Namespace) -> int:
     if error_code is not None:
         return error_code
     with closing(connect()) as conn:
-        scope = default_scope(conn)
+        scope = _scope(conn, args)
         try:
             row = get_job(conn, scope, args.job_id)
             if not jd_text:
@@ -409,7 +412,7 @@ def _cmd_brief_set(args: argparse.Namespace) -> int:
         print(f"brief failed: cannot read --file: {error}", file=sys.stderr)
         return 1
     with closing(connect()) as conn:
-        scope = default_scope(conn)
+        scope = _scope(conn, args)
         try:
             get_job(conn, scope, args.job_id)
             store_brief(conn, args.job_id, text)
@@ -443,7 +446,7 @@ def _cmd_evaluate(args: argparse.Namespace) -> int:
     if args.jd_text:
         jd_text = args.jd_text
     with closing(connect()) as conn:
-        scope = default_scope(conn)
+        scope = _scope(conn, args)
         try:
             row = get_job(conn, scope, args.job_id)
             if not jd_text:
@@ -469,7 +472,7 @@ def _cmd_evaluate_prospects(args: argparse.Namespace) -> int:
     from harrier.offers import BatchOptions, evaluate_prospects
 
     with closing(connect()) as conn:
-        scope = default_scope(conn)
+        scope = _scope(conn, args)
         summary = evaluate_prospects(
             conn,
             scope,
@@ -499,7 +502,7 @@ def _cmd_find_contacts(args: argparse.Namespace) -> int:
     from harrier.tracker import get_job
 
     with closing(connect()) as conn:
-        scope = default_scope(conn)
+        scope = _scope(conn, args)
         try:
             row = get_job(conn, scope, args.job_id)
             finder = find_best_contacts_for_job if args.best_only else find_contacts_for_job
@@ -540,7 +543,7 @@ def _cmd_contacts(args: argparse.Namespace) -> int:
     from harrier.tracker import get_job, list_contacts
 
     with closing(connect()) as conn:
-        scope = default_scope(conn)
+        scope = _scope(conn, args)
         if args.contacts_command == "list":
             for contact in list_contacts(conn):
                 print(
@@ -591,7 +594,7 @@ def _cmd_outreach(args: argparse.Namespace) -> int:
     )
 
     with closing(connect()) as conn:
-        scope = default_scope(conn)
+        scope = _scope(conn, args)
         try:
             if args.outreach_command == "sync":
                 rows = sync_tracker_outreach(conn, scope)
@@ -622,7 +625,7 @@ def _cmd_backfill_posters(args: argparse.Namespace) -> int:
     from harrier.outreach import backfill_posters
 
     with closing(connect()) as conn:
-        scope = default_scope(conn)
+        scope = _scope(conn, args)
         summary = backfill_posters(conn, scope, limit=args.limit, dry_run=args.dry_run)
         for line in summary.lines:
             print(line)
@@ -668,7 +671,7 @@ def _cmd_outreach_draft(args: argparse.Namespace) -> int:
         return str(value) if isinstance(value, str) and value else fallback
 
     with closing(connect()) as conn:
-        scope = default_scope(conn)
+        scope = _scope(conn, args)
         try:
             row = get_job(conn, scope, args.job_id)
             contact_name = supplied_text("contact_name", args.contact_name or "")
@@ -715,7 +718,7 @@ def _cmd_gmail_watch(args: argparse.Namespace) -> int:
     from harrier.mail import run_watch
 
     with closing(connect()) as conn:
-        scope = default_scope(conn)
+        scope = _scope(conn, args)
         try:
             summary = run_watch(conn, scope, dry_run=args.dry_run)
         except RuntimeError as error:
@@ -804,7 +807,7 @@ def _cmd_digest(args: argparse.Namespace) -> int:
         print(f"digest failed: invalid --date: {error}", file=sys.stderr)
         return 2
     with closing(connect()) as conn:
-        scope = default_scope(conn)
+        scope = _scope(conn, args)
         digest, rc = run_digest(conn, scope, target_date, dry_run=args.dry_run)
         print(digest)
         return rc
@@ -890,6 +893,90 @@ def _cmd_cutover(args: argparse.Namespace) -> int:
         conn.close()
 
 
+# With a non-default `--track`, only these run (spec 093). Every other command
+# reads the industry kind's configuration, profile documents or rules, none of
+# which a track of another kind has yet.
+TRACK_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "add",
+        "tracks list",
+        "tracks add",
+        "tracks archive",
+        "next",
+        "review",
+        "shortlist",
+        "track",
+        "applied",
+        "interviewing",
+        "reject",
+        "events show",
+        "export",
+    }
+)
+
+# The allowed commands that write a tracker row; an archived track refuses them.
+TRACK_WRITES: frozenset[str] = frozenset(
+    {"add", "shortlist", "track", "applied", "interviewing", "reject"}
+)
+
+
+def _slug(value: str) -> str:
+    """argparse validator for `--track`: a malformed slug is a usage error,
+    exit 2, before anything else runs (spec 093)."""
+    from harrier.tracks import InvalidSlugError, validate_slug
+
+    try:
+        return validate_slug(value)
+    except InvalidSlugError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
+
+
+def _scope(conn: sqlite3.Connection, args: argparse.Namespace) -> Scope:
+    """The scope this command works in: the one `--track` resolved before the
+    command ran, or the default track (specs 092, 093)."""
+    resolved = getattr(args, "track_scope", None)
+    return resolved if isinstance(resolved, Scope) else default_scope(conn)
+
+
+def _check_track(args: argparse.Namespace) -> int | None:
+    """Resolve `--track` once, and refuse what a non-default track may not run.
+
+    Runs in the process that runs the command, after the run-or-delegate
+    decision, so a delegated command is checked inside the container. Decided
+    before the command reads a row. Returns an exit status to stop with, or
+    None to go on.
+    """
+    from harrier.tracks import DEFAULT_TRACK_ID, UnknownTrackError, resolve_scope
+
+    slug = getattr(args, "track_slug", None)
+    if slug is None:
+        return None
+    with closing(connect()) as conn:
+        try:
+            scope = resolve_scope(conn, slug)
+        except UnknownTrackError as error:
+            print(f"harrier: {error}", file=sys.stderr)
+            return 2
+    args.track_scope = scope
+    if scope.track.id == DEFAULT_TRACK_ID:
+        return None
+    name = subcommand_name(args)
+    if name not in TRACK_ALLOWLIST:
+        print(
+            f"harrier {name}: not available on track {slug} (a {scope.track.kind} track); "
+            "it runs on the default track only",
+            file=sys.stderr,
+        )
+        return 2
+    if scope.track.archived and name in TRACK_WRITES:
+        print(
+            f"harrier {name}: track {slug} is archived; it reads but does not write",
+            file=sys.stderr,
+        )
+        return 2
+    return None
+
+
 def _iso_date(value: str) -> str:
     """argparse validator: a bad date used to reach date.fromisoformat and
     escape as an uncaught ValueError traceback (review finding on PR #27)."""
@@ -913,10 +1000,23 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
-def _print_job(job: dict[str, str]) -> None:
+def _print_job(job: dict[str, str], scope: Scope | None = None, today: str = "") -> None:
+    """One row. On a track whose kind relabels the statuses, the label is
+    printed in place of the stored status; a deadline is shown when set, and
+    flagged once it has passed (spec 093)."""
     from harrier.tracker import describe
+    from harrier.tracker.queue import deadline_passed
+    from harrier.tracks import status_label
 
-    print(describe(job))
+    if scope is None or scope.track.kind == "industry":
+        print(describe(job))
+    else:
+        label = status_label(scope.track.kind, job["status"])
+        print(f"{job['id']}. {job['company']} - {job['title']} [{label}]")
+    deadline = (job.get("deadline") or "").strip()
+    if deadline:
+        passed = "  (deadline passed)" if today and deadline_passed(job, today) else ""
+        print(f"   deadline: {deadline}{passed}")
     if job["next_action"]:
         print(f"   next: {job['next_action']}")
 
@@ -929,7 +1029,6 @@ def _cmd_tracker_verb(args: argparse.Namespace) -> int:
         SelectorError,
         describe,
         list_jobs,
-        rank_active,
         status_counts,
     )
 
@@ -937,10 +1036,14 @@ def _cmd_tracker_verb(args: argparse.Namespace) -> int:
     # difference between the command line and the browser is a bug in one of
     # them rather than a design decision nobody wrote down (spec 042).
     from harrier.tracker.actions import TrackerActionError, change_status, rescore
+    from harrier.tracker.queue import rank_for
+    from harrier.tracks import rules_for
 
     conn = connect()
 
-    scope = default_scope(conn)
+    scope = _scope(conn, args)
+    today = date.today().isoformat()
+    queue = rules_for(scope.track.kind).queue
     try:
         if args.command in {"next", "review"}:
             jobs = list_jobs(conn, scope)
@@ -952,17 +1055,17 @@ def _cmd_tracker_verb(args: argparse.Namespace) -> int:
                 print(f"total {len(jobs)}, active {active}")
                 print(", ".join(f"{name} {count}" for name, count in counts.items() if count))
                 print()
-                ranked = rank_active(jobs, args.limit, statuses=UNDECIDED_STATUSES)
+                ranked = rank_for(queue, jobs, args.limit, statuses=UNDECIDED_STATUSES, today=today)
                 if not ranked:
                     print("nothing awaiting a decision")
                     return 0
             else:
-                ranked = rank_active(jobs, args.limit)
+                ranked = rank_for(queue, jobs, args.limit, today=today)
                 if not ranked:
                     print("nothing active")
                     return 0
             for job in ranked:
-                _print_job(job)
+                _print_job(job, scope, today)
             return 0
 
         if args.command == "add":
@@ -975,6 +1078,7 @@ def _cmd_tracker_verb(args: argparse.Namespace) -> int:
                 url=args.url,
                 source=args.source,
                 description=args.description,
+                deadline=args.deadline or "",
             )
             print(result.message)
             # CaptureResult carries no row, so the added or clashing job is
@@ -1007,7 +1111,7 @@ def _cmd_tracker_verb(args: argparse.Namespace) -> int:
                 print(f"skipped {args.selector}: {error}", file=sys.stderr)
                 return 2
             print(f"rescored {outcome.previous} -> {outcome.current}")
-            _print_job(outcome.job)
+            _print_job(outcome.job, scope, today)
             return 0
 
         reason = " ".join(getattr(args, "reason", []) or []).strip() or None
@@ -1028,7 +1132,7 @@ def _cmd_tracker_verb(args: argparse.Namespace) -> int:
         except TrackerActionError as error:
             print(f"refused: {error}", file=sys.stderr)
             return 2
-        _print_job(updated)
+        _print_job(updated, scope, today)
         return 0
     except SelectorError as error:
         print(str(error), file=sys.stderr)
@@ -1045,7 +1149,7 @@ def _cmd_company_outcome(args: argparse.Namespace) -> int:
 
     note = " ".join(args.note or []).strip() or None
     with closing(connect()) as conn:
-        scope = default_scope(conn)
+        scope = _scope(conn, args)
         try:
             updated = record_company_outcome(conn, scope, args.selector, args.code, note=note)
         except SelectorError as error:
@@ -1065,7 +1169,7 @@ def _cmd_scoring(args: argparse.Namespace) -> int:
         from harrier.scoring.export import export_features
 
         with closing(connect()) as conn:
-            scope = default_scope(conn)
+            scope = _scope(conn, args)
             result = export_features(conn, scope)
         print(
             f"exported {result.rows} labelled jobs ({result.positives} acted on) to {result.path}"
@@ -1095,19 +1199,45 @@ def _cmd_scoring(args: argparse.Namespace) -> int:
     return outcome.exit_code
 
 
-def _cmd_tracks(args: argparse.Namespace) -> int:
-    """The search tracks (spec 091). `list` is the only verb here; creating
-    and archiving a track are spec 093's."""
-    from harrier.tracks import list_tracks
+def _track_line(track: Track) -> str:
+    line = f"{track.id}  {track.slug:<16} {track.kind:<9} {track.label}"
+    return f"{line}  archived" if track.archived else line
 
-    del args  # `list` takes no arguments
+
+def _cmd_tracks(args: argparse.Namespace) -> int:
+    """The search tracks: list (spec 091), add and archive (spec 093)."""
+    from harrier.tracks import (
+        DuplicateTrackError,
+        TrackRefusedError,
+        UnknownTrackError,
+        add_track,
+        archive_track,
+        list_tracks,
+    )
+
     with closing(connect()) as conn:
-        for track in list_tracks(conn):
-            line = f"{track.id}  {track.slug:<16} {track.kind:<9} {track.label}"
-            if track.archived:
-                line += "  archived"
-            print(line)
-    return 0
+        if args.tracks_command == "list":
+            for track in list_tracks(conn):
+                print(_track_line(track))
+            return 0
+        try:
+            if args.tracks_command == "add":
+                track = add_track(conn, args.slug, args.kind, args.label)
+            else:
+                track = archive_track(conn, args.slug)
+        except DuplicateTrackError as error:
+            print(f"refused: {error}", file=sys.stderr)
+            return 1
+        except UnknownTrackError as error:
+            print(f"refused: {error}", file=sys.stderr)
+            return 2
+        except TrackRefusedError as error:
+            print(f"refused: {error}", file=sys.stderr)
+            # Archiving twice is a state, not a misuse; every other refusal
+            # is asking for something the rules do not allow.
+            return 1 if "already archived" in str(error) else 2
+        print(_track_line(track))
+        return 0
 
 
 def _cmd_events(args: argparse.Namespace) -> int:
@@ -1117,7 +1247,7 @@ def _cmd_events(args: argparse.Namespace) -> int:
     from harrier.tracker.store import backfill_events, list_events
 
     with closing(connect()) as conn:
-        scope = default_scope(conn)
+        scope = _scope(conn, args)
         if args.events_command == "backfill":
             counts = backfill_events(conn, scope, dry_run=args.dry_run)
             verb = "would write" if args.dry_run else "wrote"
@@ -1325,7 +1455,7 @@ def _cmd_reconsider(args: argparse.Namespace) -> int:
 
     conn = connect()
 
-    scope = default_scope(conn)
+    scope = _scope(conn, args)
     try:
         candidate_cfg = load_candidate_config(conn)
         sources = [args.source] if args.source else list(SOURCE_ORDER)
@@ -1802,6 +1932,8 @@ COMMAND_CLASSES: dict[str, CommandClass] = {
     "events show": _DB,
     # Read-only: the tracks table and nothing else (spec 091).
     "tracks list": _DB,
+    "tracks add": _DB,
+    "tracks archive": _DB,
     # The export reads the tracker, so it runs where the database lives. The
     # trainer reads only the export and needs scikit-learn, which the image
     # does not install, so it runs here (spec 077).
@@ -1839,6 +1971,14 @@ def command_class(args: argparse.Namespace) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="harrier", description="Harrier CLI")
+    parser.add_argument(
+        "--track",
+        dest="track_slug",
+        type=_slug,
+        default=None,
+        metavar="SLUG",
+        help="the search track to work in (spec 093); the default track when omitted",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     migrate_parser = sub.add_parser(
@@ -2158,6 +2298,14 @@ def build_parser() -> argparse.ArgumentParser:
     tracks_cmd = sub.add_parser("tracks", help="the search tracks (spec 091)")
     tracks_sub = tracks_cmd.add_subparsers(dest="tracks_command", required=True)
     tracks_sub.add_parser("list", help="every track: id, slug, kind, label, archived")
+    tracks_add = tracks_sub.add_parser("add", help="create a track (spec 093)")
+    tracks_add.add_argument("slug", type=_slug)
+    tracks_add.add_argument("--kind", required=True, choices=["industry", "academic"])
+    tracks_add.add_argument("--label", required=True)
+    tracks_archive = tracks_sub.add_parser(
+        "archive", help="archive a track: it still lists and reads, and refuses writes"
+    )
+    tracks_archive.add_argument("slug", type=_slug)
     tracks_cmd.set_defaults(func=_cmd_tracks)
 
     scoring_cmd = sub.add_parser("scoring", help="the learned fit score (spec 077)")
@@ -2188,6 +2336,9 @@ def build_parser() -> argparse.ArgumentParser:
     add_cmd.add_argument("--location", default="")
     add_cmd.add_argument("--source", default="manual")
     add_cmd.add_argument("--description", default="")
+    add_cmd.add_argument(
+        "--deadline", type=_iso_date, default=None, help="YYYY-MM-DD, the call's closing date"
+    )
     add_cmd.set_defaults(func=_cmd_tracker_verb)
 
     for name, help_text in (
@@ -2429,6 +2580,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command != "doctor":
             configure_logging()
         try:
+            refused = _check_track(args)
+            if refused is not None:
+                return refused
             result: int = args.func(args)
         except TrackerError as error:
             print(f"error: {error}", file=sys.stderr)

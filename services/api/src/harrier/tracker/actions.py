@@ -16,13 +16,14 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
+from datetime import date
 
 from harrier.capture import CaptureResult, add_captured_job
 from harrier.scoring.model import fit_score_for
 from harrier.screening.config import load_candidate_config
 from harrier.screening.descriptions import load_cached_description
 from harrier.screening.normalized import make_normalized_job
-from harrier.tracker.queue import UNDECIDED_STATUSES, rank_active, status_counts
+from harrier.tracker.queue import UNDECIDED_STATUSES, rank_for, status_counts
 from harrier.tracker.reasons import (
     COMPANY,
     INTERVIEW_INVITED,
@@ -42,7 +43,7 @@ from harrier.tracker.store import (
     set_status,
     update_fields,
 )
-from harrier.tracks import Scope
+from harrier.tracks import Scope, rules_for
 
 # The CLI verb each status change is spelled as, and the status it produces.
 # One mapping, so the browser cannot invent a sixth transition the command
@@ -276,14 +277,25 @@ def next_up(
     conn: sqlite3.Connection, scope: Scope, limit: int | None = None
 ) -> list[dict[str, str]]:
     """What to work on now, in the CLI's ordering."""
-    return rank_active(list_jobs(conn, scope), limit)
+    return rank_for(
+        rules_for(scope.track.kind).queue,
+        list_jobs(conn, scope),
+        limit,
+        today=date.today().isoformat(),
+    )
 
 
 def review_queue(
     conn: sqlite3.Connection, scope: Scope, limit: int | None = None
 ) -> list[dict[str, str]]:
     """What still needs a decision, which is a narrower question than `next`."""
-    return rank_active(list_jobs(conn, scope), limit, statuses=UNDECIDED_STATUSES)
+    return rank_for(
+        rules_for(scope.track.kind).queue,
+        list_jobs(conn, scope),
+        limit,
+        statuses=UNDECIDED_STATUSES,
+        today=date.today().isoformat(),
+    )
 
 
 def counts(conn: sqlite3.Connection, scope: Scope) -> dict[str, int]:

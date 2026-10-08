@@ -79,8 +79,12 @@ These invariants come from the old repo's OPERATIONS.md and CLAUDE.md and surviv
 rewrite. Changing any of them requires an explicit spec.
 
 - **One tracker, one write path.** The tracker is the single source of truth for
-  application state. Status lifecycle: prospect, shortlisted, tailored_cv_requested,
-  applied, interviewing, rejected. The outreach status axis is orthogonal.
+  application state. Every row belongs to one search track (spec 091, ADR-012).
+  The status lifecycle is prospect, shortlisted, tailored_cv_requested, applied,
+  interviewing, rejected, shared by every track kind; a kind supplies its own
+  labels and next-action defaults (spec 093), never its own statuses. A kind that
+  needs a stage the six cannot express changes this invariant by spec. The
+  outreach status axis is orthogonal.
 - **Ingestion only.** Each job source module normalizes into the shared job shape and
   returns it. Filtering, scoring, remote-only enforcement, EMEA scoping, dedupe, and
   tracker append happen once, in the shared screening path. No per-source scoring
@@ -973,8 +977,12 @@ These invariants come from the old repo's OPERATIONS.md and CLAUDE.md and surviv
 rewrite. Changing any of them requires an explicit spec.
 
 - **One tracker, one write path.** The tracker is the single source of truth for
-  application state. Status lifecycle: prospect, shortlisted, tailored_cv_requested,
-  applied, interviewing, rejected. The outreach status axis is orthogonal.
+  application state. Every row belongs to one search track (spec 091, ADR-012).
+  The status lifecycle is prospect, shortlisted, tailored_cv_requested, applied,
+  interviewing, rejected, shared by every track kind; a kind supplies its own
+  labels and next-action defaults (spec 093), never its own statuses. A kind that
+  needs a stage the six cannot express changes this invariant by spec. The
+  outreach status axis is orthogonal.
 - **Ingestion only.** Each job source module normalizes into the shared job shape and
   returns it. Filtering, scoring, remote-only enforcement, EMEA scoping, dedupe, and
   tracker append happen once, in the shared screening path. No per-source scoring
