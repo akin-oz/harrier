@@ -10,6 +10,7 @@ every database sits under `tmp_path` (spec 060).
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterator
 from datetime import date
@@ -308,3 +309,80 @@ def test_the_default_scope_is_resolved_once_per_entry(
     client: TestClient = TestClient(create_app())
     assert client.get("/jobs").status_code == 200
     assert len(reads) == 1, reads
+
+
+# --- review of PR #181 ------------------------------------------------------------
+
+
+def test_the_digest_shows_mail_events_of_its_own_track_only(
+    two_tracks: tuple[sqlite3.Connection, Scope, Scope],
+) -> None:
+    from harrier.digest import actionable_updates
+    from harrier.mail.watch import events_path
+
+    conn, first, second = two_tracks
+    day = "2026-08-03T10:00:00+00:00"
+    events = [
+        {"kind": "interview_invite", "company": "Mine Co", "track": "job", "timestamp": day},
+        {"kind": "interview_invite", "company": "Theirs Co", "track": "second", "timestamp": day},
+        {"kind": "interview_invite", "company": "Nobody Co", "track": "", "timestamp": day},
+        {"kind": "interview_invite", "company": "Older Co", "timestamp": day},
+    ]
+    path = events_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(event) + "\n" for event in events), encoding="utf-8")
+
+    def companies(scope: Scope) -> set[str]:
+        return {str(u["company"]) for u in actionable_updates(date(2026, 8, 3), scope)}
+
+    # An unmatched event, and one written before tracks, stay where they
+    # always appeared: the default track's digest.
+    assert companies(first) == {"Mine Co", "Nobody Co", "Older Co"}
+    assert companies(second) == {"Theirs Co"}
+    del conn
+
+
+def test_a_contact_linked_to_another_tracks_job_is_not_reported_gone(
+    two_tracks: tuple[sqlite3.Connection, Scope, Scope],
+) -> None:
+    from harrier.outreach.joblink import unresolved_links
+    from harrier.tracker.store import add_contact
+
+    conn, first, second = two_tracks
+    theirs = list_jobs(conn, second)[0]["id"]
+    add_contact(
+        conn,
+        {
+            "company": "Other Works",
+            "person_name": "Synthetic Person",
+            "linkedin_url": "https://www.linkedin.com/in/synthetic-person",
+            "linked_jobs": json.dumps(
+                [
+                    {"job_id": theirs, "company": "Other Works", "job_title": "x", "job_url": ""},
+                    {"job_id": "999", "company": "Gone Co", "job_title": "y", "job_url": ""},
+                ]
+            ),
+        },
+    )
+    # Before the fix this raised JobNotFoundError out of `harrier check`.
+    problems = unresolved_links(conn, first)
+    assert problems == [("Synthetic Person", "a link to job 999, which is gone")]
+
+
+def test_each_track_gets_its_own_export_and_the_trainer_reads_industry_only(
+    two_tracks: tuple[sqlite3.Connection, Scope, Scope],
+) -> None:
+    from harrier.scoring.train import ExportError, latest_export, read_export
+
+    conn, first, second = two_tracks
+    mine = export_features(conn, first, today="2026-08-03")
+    theirs = export_features(conn, second, today="2026-08-03")
+    assert mine.path != theirs.path
+    assert mine.path.exists() and theirs.path.exists()
+    assert json.loads(mine.path.read_text(encoding="utf-8").splitlines()[0])["track"] == "job"
+    header = json.loads(theirs.path.read_text(encoding="utf-8").splitlines()[0])
+    assert header["track"] == "second" and header["track_kind"] == "academic"
+    # The newest export the trainer picks by default is the default track's.
+    assert latest_export() == mine.path
+    with pytest.raises(ExportError, match="academic"):
+        read_export(theirs.path)

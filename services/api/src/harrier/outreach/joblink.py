@@ -61,14 +61,17 @@ def job_for_link(
     This is what makes the link survive an edit: the title in the link may be
     stale, and the row it names is still the right row.
     """
-    from harrier.tracker.store import get_job
+    from harrier.tracker.store import JobNotFoundError, get_job
 
     identifier = (link.get("job_id") or "").strip()
     if not identifier:
         return None
     try:
         return get_job(conn, scope, int(identifier))
-    except (ValueError, LookupError):
+    # JobNotFoundError is not a LookupError, so a link to a missing job, or
+    # since spec 092 to another track's, escaped as a traceback from
+    # `harrier check` (review of PR #181).
+    except (ValueError, LookupError, JobNotFoundError):
         # A link to a job that has since been deleted. Reported by
         # `unresolved_links`, not repaired here: deciding what a contact
         # about a deleted job means is not this function's business.
@@ -84,16 +87,23 @@ def unresolved_links(conn: sqlite3.Connection, scope: Scope) -> list[tuple[str, 
     apart, and guessing would hide the second behind the first.
     """
     from harrier.outreach.contacts import parse_linked_jobs
-    from harrier.tracker.store import list_contacts
+    from harrier.tracker.store import list_contacts, track_of_job
 
     problems: list[tuple[str, str]] = []
     for contact in list_contacts(conn):
         name = contact.get("person_name") or contact.get("linkedin_url") or contact.get("id", "?")
         for link in parse_linked_jobs(contact.get("linked_jobs", "")):
-            if not (link.get("job_id") or "").strip():
+            identifier = (link.get("job_id") or "").strip()
+            if not identifier:
                 problems.append((str(name), "a linked job that matches no tracked job"))
-            elif job_for_link(conn, scope, link) is None:
-                problems.append((str(name), f"a link to job {link['job_id']}, which is gone"))
+                continue
+            if job_for_link(conn, scope, link) is not None:
+                continue
+            # Contacts are the person's, so a link may name a job in another
+            # track. That link resolves; it is just not this track's to check.
+            if identifier.isdigit() and track_of_job(conn, int(identifier)) is not None:
+                continue
+            problems.append((str(name), f"a link to job {link['job_id']}, which is gone"))
     return problems
 
 

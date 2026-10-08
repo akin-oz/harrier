@@ -120,6 +120,15 @@ def read_export(path: Path) -> tuple[dict[str, Any], list[Row]]:
     header = cast("dict[str, Any]", json.loads(lines[0]))
     if header.get("kind") != "header" or header.get("format_version") != EXPORT_FORMAT_VERSION:
         raise ExportError(f"{path.name} is not a format {EXPORT_FORMAT_VERSION} export")
+    # The learned model is the industry kind's. An export from a track of
+    # another kind is refused, whatever path it is handed by (spec 092). An
+    # export written before tracks has no kind and is the default track's.
+    kind = header.get("track_kind", "industry")
+    if kind != "industry":
+        raise ExportError(
+            f"{path.name} holds labels from a {kind} track; "
+            "the model trains on industry labels only"
+        )
     order = cast("list[str]", header.get("feature_order") or [])
     forbidden = sorted(FORBIDDEN_FEATURES & set(order))
     if forbidden:

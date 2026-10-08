@@ -284,6 +284,15 @@ synthetic rows to both.
   the default scope is the only scope outside a test.
 - **The mail watch's older event records carry no track.** Read as the
   default track, which is what they were.
+- **The mail watch keeps one seen-message list for the whole file.** A
+  message the watch has seen is skipped on every later run, whichever
+  track that run is scoped to. Running the watch in a second track would
+  therefore skip messages the first track's run had already seen, and never
+  match them there. No command can do that: the watch runs in the default
+  track only, and spec 093's allowlist refuses `gmail-watch` on any other.
+  The spec that lets the watch run per track partitions the seen state, or
+  classifies against every track before marking a message seen. Raised in
+  review of PR #181 and recorded here rather than built speculatively.
 
 ## Migration
 
@@ -395,3 +404,40 @@ What implementation found, each with the test or file that holds it:
   `get_job`, from `list_events`, from `backfill_events`, and with the mail
   event's track blanked, a test in `test_track_isolation.py` fails in each
   case; recorded in the pull request.
+
+## Amendment (2026-10-08, review of PR #181)
+
+Five findings. Four reproduced and are fixed, each with a test that fails
+without its fix; the fifth is recorded under Honest limitations.
+
+- **The digest read every track's mail events.** `build_digest` scoped its
+  rows but not `actionable_updates`, which reads the shared event file. It
+  now keeps an event whose `track` is the scope's slug; an event that
+  matched no row, or one written before tracks, stays in the default
+  track's digest, where it always appeared
+  (`services/api/tests/test_track_isolation.py::test_the_digest_shows_mail_events_of_its_own_track_only`).
+- **`harrier check` raised on a contact linked to another track's job.**
+  Contacts are the person's, so a link may name a job in any track.
+  `job_for_link` caught `ValueError` and `LookupError`, and
+  `JobNotFoundError` is neither, so the scoped not-found escaped as a
+  traceback; a link to a deleted job did the same before tracks. It is
+  caught now, and `unresolved_links` skips a link whose job exists in
+  another track, found through `track_of_job`, a named cross-track read
+  that returns the track and nothing of the row
+  (`services/api/tests/test_track_isolation.py::test_a_contact_linked_to_another_tracks_job_is_not_reported_gone`).
+- **Two tracks' feature exports on one day wrote one file.** The default
+  track keeps `data/scoring/exports/features-YYYYMMDD.jsonl`, which is what
+  the trainer finds by default; any other track writes under
+  `data/scoring/exports/<slug>/`, which `latest_export` does not read. The
+  header records the track slug and kind, and `read_export` refuses an
+  export whose kind is not `industry`, whatever path it is handed by
+  (`services/api/tests/test_track_isolation.py::test_each_track_gets_its_own_export_and_the_trainer_reads_industry_only`).
+  Both paths sit under `data/**`, already never-in-git.
+- **The static guard accepted a mention of `track_id` as a restriction.**
+  `SELECT track_id FROM jobs` reads every track and passed. A read or a
+  write must now compare `track_id`, and an insert into `jobs` must name it
+  among its columns; the fixture carries a projection-only reader and an
+  insert without the column, and both fail
+  (`services/api/tests/test_tracker_queries_name_their_track.py::test_the_static_guard_fails_on_an_unscoped_query`).
+- **Seen-message state per track:** declined as unreachable, with the
+  reasoning under Honest limitations.

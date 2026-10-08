@@ -24,7 +24,19 @@ TABLE_REFERENCE = re.compile(
     r"\b(?:FROM|JOIN|UPDATE|INSERT\s+INTO|DELETE\s+FROM)\s+(jobs|job_events)\b", re.IGNORECASE
 )
 EVENT_INSERT = re.compile(r"\bINSERT\s+INTO\s+job_events\b", re.IGNORECASE)
-NAMES_TRACK = re.compile(r"\btrack_id\b")
+# A restriction, not a mention: `SELECT track_id FROM jobs` reads every
+# track (review of PR #181). A read or a write must compare `track_id`; an
+# insert into `jobs` must name it among its columns.
+RESTRICTS_TRACK = re.compile(r"\btrack_id\s*(?:=|\bIN\b)", re.IGNORECASE)
+JOBS_INSERT = re.compile(r"\bINSERT\s+INTO\s+jobs\b", re.IGNORECASE)
+INSERT_NAMES_TRACK = re.compile(r"\bINSERT\s+INTO\s+jobs\s*\([^)]*\btrack_id\b", re.IGNORECASE)
+
+
+def names_its_track(text: str) -> bool:
+    if JOBS_INSERT.search(text):
+        return INSERT_NAMES_TRACK.search(text) is not None
+    return RESTRICTS_TRACK.search(text) is not None
+
 
 # Reads that may see every track, each as (file under src, function). An
 # exemption whose function is gone fails the guard, so none can outlive its
@@ -35,6 +47,8 @@ EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("harrier/tracker/store.py", "find_duplicate"),
         # The dedupe index feed, and nothing else.
         ("harrier/tracker/store.py", "all_tracks_dedupe_rows"),
+        # Which track a contact link's job is in: contacts are the person's.
+        ("harrier/tracker/store.py", "track_of_job"),
         # A whole-database import; its rows land in track 1 by the column
         # default, and `--replace` empties the file.
         ("harrier/tracker/migrate_legacy.py", "migrate"),
@@ -110,7 +124,7 @@ def unscoped_queries(src: Path, exempt: frozenset[tuple[str, str]]) -> list[str]
                 r"\b(?:FROM|JOIN|UPDATE|DELETE\s+FROM)\s+(jobs|job_events)\b", text, re.IGNORECASE
             ):
                 continue  # an insert names a job_id resolved in scope
-            if NAMES_TRACK.search(text):
+            if names_its_track(text):
                 continue
             function = _enclosing_function(tree, node)
             if (relative, function) in exempt:
@@ -156,6 +170,12 @@ def invented_source(tmp_path: Path) -> Path:
         '    return conn.execute(f"SELECT * FROM jobs {extra} " "WHERE track_id = ?", (scope,))\n'
         "def forgetful(conn):\n"
         '    return conn.execute("SELECT * FROM jobs ORDER BY id")\n'
+        "def projection(conn):\n"
+        '    return conn.execute("SELECT track_id FROM jobs ORDER BY id")\n'
+        "def inserts(conn, row):\n"
+        '    conn.execute(f"INSERT INTO jobs ({row}, track_id) VALUES (?, ?)", (1, 1))\n'
+        "def blind_insert(conn, row):\n"
+        '    conn.execute(f"INSERT INTO jobs ({row}) VALUES (?)", (1,))\n'
         "def records(conn, job_id):\n"
         '    conn.execute("INSERT INTO job_events (job_id) VALUES (?)", (job_id,))\n'
         "def counts(conn):\n"
@@ -168,11 +188,12 @@ def invented_source(tmp_path: Path) -> Path:
 def test_the_static_guard_fails_on_an_unscoped_query(invented_source: Path) -> None:
     exempt = frozenset({("pkg/reader.py", "counts")})
     problems = unscoped_queries(invented_source, exempt)
-    assert len(problems) == 1, problems
-    assert "forgetful" in problems[0]
-    # The wrapped literal and the scoped one pass; the event insert is
-    # exempt by shape; the count is exempt by name.
-    assert "wrapped" not in problems[0] and "scoped" not in problems[0]
+    flagged = sorted(problem.split(" in ")[1].split(":")[0] for problem in problems)
+    # A mention of track_id in the projection is not a restriction, and an
+    # insert into jobs must name the column (review of PR #181). The wrapped
+    # literal, the scoped one, the f-string halves and the insert that names
+    # the column pass; the event insert is exempt by shape; the count by name.
+    assert flagged == ["blind_insert", "forgetful", "projection"], problems
 
     # An exemption naming a function that does not exist is itself a problem.
     stale = frozenset({("pkg/reader.py", "counts"), ("pkg/reader.py", "vanished")})

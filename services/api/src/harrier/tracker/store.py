@@ -206,6 +206,18 @@ def list_jobs(
     return [_job_row_to_dict(row) for row in rows]
 
 
+def track_of_job(conn: sqlite3.Connection, job_id: int) -> int | None:
+    """Which track a job id belongs to, or None when no job has it.
+
+    For contact links only: a contact is the person's, not a track's, so a
+    link can name a job in any track, and the checker has to tell a job in
+    another track from one that is gone (review of PR #181). It returns the
+    track and nothing of the row.
+    """
+    row = conn.execute("SELECT track_id FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    return int(row[0]) if row is not None else None
+
+
 def all_tracks_dedupe_rows(conn: sqlite3.Connection) -> list[dict[str, str]]:
     """The identity columns of every row in every track, for the dedupe
     index only (spec 092). url and external_key are unique across the whole
