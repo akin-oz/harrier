@@ -25,9 +25,11 @@ TABLE_REFERENCE = re.compile(
 )
 EVENT_INSERT = re.compile(r"\bINSERT\s+INTO\s+job_events\b", re.IGNORECASE)
 # A restriction, not a mention: `SELECT track_id FROM jobs` reads every
-# track (review of PR #181). A read or a write must compare `track_id`; an
-# insert into `jobs` must name it among its columns.
-RESTRICTS_TRACK = re.compile(r"\btrack_id\s*(?:=|\bIN\b)", re.IGNORECASE)
+# track, and so does `JOIN tracks ON jobs.track_id = tracks.id`, which
+# compares the column with another column (review of PR #181, twice). A read
+# or a write must bind `track_id` to a parameter, which is where the scope's
+# track arrives; an insert into `jobs` must name it among its columns.
+RESTRICTS_TRACK = re.compile(r"\btrack_id\s*(?:=\s*\?|\bIN\s*\(\s*\?)", re.IGNORECASE)
 JOBS_INSERT = re.compile(r"\bINSERT\s+INTO\s+jobs\b", re.IGNORECASE)
 INSERT_NAMES_TRACK = re.compile(r"\bINSERT\s+INTO\s+jobs\s*\([^)]*\btrack_id\b", re.IGNORECASE)
 
@@ -174,6 +176,8 @@ def invented_source(tmp_path: Path) -> Path:
         '    return conn.execute("SELECT track_id FROM jobs ORDER BY id")\n'
         "def inserts(conn, row):\n"
         '    conn.execute(f"INSERT INTO jobs ({row}, track_id) VALUES (?, ?)", (1, 1))\n'
+        "def joined(conn):\n"
+        '    return conn.execute("SELECT * FROM jobs JOIN tracks ON jobs.track_id = tracks.id")\n'
         "def blind_insert(conn, row):\n"
         '    conn.execute(f"INSERT INTO jobs ({row}) VALUES (?)", (1,))\n'
         "def records(conn, job_id):\n"
@@ -193,7 +197,7 @@ def test_the_static_guard_fails_on_an_unscoped_query(invented_source: Path) -> N
     # insert into jobs must name the column (review of PR #181). The wrapped
     # literal, the scoped one, the f-string halves and the insert that names
     # the column pass; the event insert is exempt by shape; the count by name.
-    assert flagged == ["blind_insert", "forgetful", "projection"], problems
+    assert flagged == ["blind_insert", "forgetful", "joined", "projection"], problems
 
     # An exemption naming a function that does not exist is itself a problem.
     stale = frozenset({("pkg/reader.py", "counts"), ("pkg/reader.py", "vanished")})

@@ -434,10 +434,13 @@ without its fix; the fifth is recorded under Honest limitations.
   (`services/api/tests/test_track_isolation.py::test_each_track_gets_its_own_export_and_the_trainer_reads_industry_only`).
   Both paths sit under `data/**`, already never-in-git.
 - **The static guard accepted a mention of `track_id` as a restriction.**
-  `SELECT track_id FROM jobs` reads every track and passed. A read or a
-  write must now compare `track_id`, and an insert into `jobs` must name it
-  among its columns; the fixture carries a projection-only reader and an
-  insert without the column, and both fail
+  `SELECT track_id FROM jobs` reads every track and passed, and so did a
+  join `jobs.track_id = tracks.id`, which compares the column with another
+  column (found on the second review). A read or a write must now bind
+  `track_id` to a parameter, which is where the scope's track arrives, and
+  an insert into `jobs` must name it among its columns; the fixture carries
+  a projection-only reader, an unscoped join and an insert without the
+  column, and all three fail
   (`services/api/tests/test_tracker_queries_name_their_track.py::test_the_static_guard_fails_on_an_unscoped_query`).
 - **Seen-message state per track:** declined as unreachable, with the
   reasoning under Honest limitations.
