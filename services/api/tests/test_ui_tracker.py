@@ -28,6 +28,7 @@ from fastapi.testclient import TestClient
 from harrier.db import connect
 from harrier.tracker.actions import STATUS_BY_VERB, TrackerActionError, change_status, rescore
 from harrier.tracker.store import add_job, get_job
+from harrier.tracks import default_scope
 from harrier_api.app import create_app
 from harrier_cli.main import main
 
@@ -51,6 +52,7 @@ def job_id(env: Path) -> int:
             "source": "greenhouse",
             "location": "Remote, Europe",
         },
+        scope=default_scope(conn),
     )
     conn.close()
     return identifier
@@ -209,6 +211,7 @@ def test_api_rejection_text_never_becomes_a_candidate_decision(
             "title": "Staff Frontend Engineer",
             "url": "https://boards.example.com/northwind/2",
         },
+        scope=default_scope(conn),
     )
     client.post(f"/tracker/{job_id}/status", json={"verb": "applied"}, headers=auth())
 
@@ -322,6 +325,7 @@ def test_company_outcome_route(job_id: int, client: TestClient) -> None:
             "title": "Staff Frontend Engineer",
             "url": "https://boards.example.com/northwind/3",
         },
+        scope=default_scope(conn),
     )
     conn.close()
     client.post(f"/tracker/{invited}/status", json={"verb": "applied"}, headers=auth())
@@ -575,6 +579,7 @@ def test_the_queue_matches_the_cli_ordering(env: Path, client: TestClient) -> No
                 "source": "greenhouse",
                 "location": "Remote, Europe",
             },
+            scope=default_scope(conn),
         )
     expected = [row["id"] for row in next_up(conn)]
     conn.close()

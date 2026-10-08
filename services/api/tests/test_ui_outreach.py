@@ -32,6 +32,7 @@ from fastapi.testclient import TestClient
 from harrier.db import connect
 from harrier.outreach.discovery import candidates_output_path
 from harrier.tracker.store import add_job, list_contacts
+from harrier.tracks import default_scope
 from harrier_api.app import create_app
 from harrier_api.runs import PARAMETERIZED_KINDS, RunParams, build_command
 from harrier_cli.main import build_parser, main
@@ -62,6 +63,7 @@ def job_id(env: Path) -> int:
             "source": "greenhouse",
             "location": "Remote, Europe",
         },
+        scope=default_scope(conn),
     )
     conn.close()
     return identifier

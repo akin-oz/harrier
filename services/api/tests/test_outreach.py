@@ -30,6 +30,7 @@ from harrier.outreach import (
 )
 from harrier.outreach.discovery import DEFAULT_ACTOR
 from harrier.tracker import list_contacts
+from harrier.tracks import default_scope
 
 SAMPLE_ITEM: dict[str, Any] = {
     "fullName": "Jane Recruiter",
@@ -367,6 +368,7 @@ def test_mark_sent_rejects_illegal_transitions(db: sqlite3.Connection) -> None:
             "source": "greenhouse",
             "status": "prospect",
         },
+        scope=default_scope(db),
     )
     set_status(db, job_id, "applied")
     update_fields(db, job_id, {"outreach_status": "ready"})
@@ -463,6 +465,7 @@ def test_backfill_stages_posters_without_writing_contacts(
             "source": "apify_linkedin",
             "status": "applied",
         },
+        scope=default_scope(db),
     )
 
     def fake_details(urls: list[str], **kwargs: object) -> dict[str, dict[str, object]]:
@@ -520,6 +523,7 @@ def test_set_best_contact_for_job(db: sqlite3.Connection) -> None:
             "source": "greenhouse",
             "status": "applied",
         },
+        scope=default_scope(db),
     )
     upsert_contact(
         db,

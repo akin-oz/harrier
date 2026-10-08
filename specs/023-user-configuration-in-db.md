@@ -154,7 +154,9 @@ Honest limitations: none of this is multi-tenancy. There is no
 authentication, no tenant resolution, and no isolation. Since spec 041
 there is no scope column, so a database holds one configuration, at most
 one row per kind (`test_the_schema_carries_no_scope_column`,
-`test_a_kind_is_unique_on_its_own`).
+`test_a_kind_is_unique_on_its_own`). Search tracks (spec 091, ADR-012) are
+not tenancy either, and configuration stays one row per kind until
+per-track configuration lands.
 Since spec 035, `PUT` and `DELETE /config/{kind}` refuse a request
 without the local API token, and the service refuses any request whose
 Host header is not on its trusted list

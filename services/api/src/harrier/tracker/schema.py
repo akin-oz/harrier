@@ -7,6 +7,8 @@ legacy CSV column order and is load-bearing for export fidelity.
 
 from __future__ import annotations
 
+from harrier.tracks import TRACK_KINDS
+
 # Legacy 20-column order (old repo: scripts/job_sources.py TRACKER_FIELDS).
 TRACKER_FIELDS: tuple[str, ...] = (
     "company",
@@ -92,6 +94,7 @@ CONTACT_FIELDS: tuple[str, ...] = (
 )
 
 _STATUS_LIST = ", ".join(f"'{s}'" for s in STATUSES)
+_TRACK_KIND_LIST = ", ".join(f"'{kind}'" for kind in TRACK_KINDS)
 _JOB_TEXT_COLUMNS = ", ".join(
     f"{name} TEXT NOT NULL DEFAULT ''" for name in TRACKER_FIELDS if name != "status"
 )
@@ -306,6 +309,69 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
             CREATE TRIGGER job_events_append_only_delete BEFORE DELETE ON job_events
             BEGIN SELECT RAISE(ABORT, 'job_events is append-only'); END
             """,
+        ],
+    ),
+    (
+        8,
+        [
+            # Search tracks (spec 091, ADR-012). A track is a second kind of
+            # search by the same person; a tenant is a second person and is a
+            # store boundary, never a column. The kind list derives from
+            # TRACK_KINDS the way the status CHECK derives from STATUSES.
+            f"""
+            CREATE TABLE tracks (
+                id INTEGER PRIMARY KEY,
+                slug TEXT NOT NULL UNIQUE CHECK (
+                    length(slug) BETWEEN 1 AND 32
+                    AND slug GLOB '[a-z]*'
+                    AND slug NOT GLOB '*[^a-z0-9-]*'
+                ),
+                kind TEXT NOT NULL CHECK (kind IN ({_TRACK_KIND_LIST})),
+                label TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                archived_at TEXT
+            )
+            """,
+            # The one track every existing row belongs to. Its slug and label
+            # are rows like any other track's; only its id is fixed.
+            (
+                "INSERT INTO tracks (id, slug, kind, label) "
+                "VALUES (1, 'job', 'industry', 'Job search')"
+            ),
+            # ADD COLUMN, so `jobs` is never rebuilt: `job_events` references
+            # it and the runner cannot turn foreign keys off inside its
+            # transaction (spec 090). SQLite refuses a REFERENCES clause on an
+            # added column whose default is not NULL, so the referential rule
+            # is two triggers rather than a foreign key.
+            "ALTER TABLE jobs ADD COLUMN track_id INTEGER NOT NULL DEFAULT 1",
+            """
+            CREATE TRIGGER jobs_track_must_exist_on_insert BEFORE INSERT ON jobs
+            BEGIN
+                SELECT RAISE(ABORT, 'unknown track')
+                WHERE NOT EXISTS (SELECT 1 FROM tracks WHERE id = NEW.track_id);
+            END
+            """,
+            """
+            CREATE TRIGGER jobs_track_must_exist_on_update BEFORE UPDATE OF track_id ON jobs
+            BEGIN
+                SELECT RAISE(ABORT, 'unknown track')
+                WHERE NOT EXISTS (SELECT 1 FROM tracks WHERE id = NEW.track_id);
+            END
+            """,
+            # Archiving (spec 093) is the only lifecycle verb a track has, so
+            # no job row can ever name a track that is gone.
+            """
+            CREATE TRIGGER tracks_are_never_deleted BEFORE DELETE ON tracks
+            BEGIN SELECT RAISE(ABORT, 'tracks are archived, never deleted'); END
+            """,
+            # An id update runs none of the job triggers and would leave every
+            # row of that track naming a number no track has (review of PR
+            # #180). The id is the one column a job row points at.
+            """
+            CREATE TRIGGER tracks_keep_their_id BEFORE UPDATE OF id ON tracks
+            BEGIN SELECT RAISE(ABORT, 'a track id never changes'); END
+            """,
+            "CREATE INDEX idx_jobs_track_status ON jobs(track_id, status)",
         ],
     ),
 ]

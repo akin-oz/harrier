@@ -19,6 +19,7 @@ from harrier.mail import (
     validate_env,
 )
 from harrier.tracker import add_job
+from harrier.tracks import default_scope
 
 
 @pytest.fixture()
@@ -318,6 +319,7 @@ def test_live_run_sends_actionable_and_stops_on_send_failure(
             "source": "greenhouse",
             "status": "applied",
         },
+        scope=default_scope(db),
     )
     messages = [
         build_message(

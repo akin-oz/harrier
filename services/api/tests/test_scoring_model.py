@@ -81,6 +81,7 @@ from harrier.screening.pipeline import TrackerIndexes, screen_jobs
 from harrier.screening.policy import policy_version
 from harrier.tracker.actions import change_status, record_company_outcome
 from harrier.tracker.store import add_job, backfill_events, get_job, list_events, set_status
+from harrier.tracks import default_scope
 from harrier_cli.main import main
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -470,6 +471,7 @@ def _tracked(conn: sqlite3.Connection, index: int, *, described: bool = True) ->
             "url": url,
             "added_at": "2026-08-01",
         },
+        scope=default_scope(conn),
     )
 
 
@@ -610,6 +612,7 @@ def test_blocked_postings_are_excluded_from_labels(conn: sqlite3.Connection) -> 
             "url": blocked_url,
             "added_at": "2026-08-01",
         },
+        scope=default_scope(conn),
     )
     change_status(conn, str(blocked), "reject", reason="location")
     eligible = _tracked(conn, 1)

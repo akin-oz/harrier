@@ -49,6 +49,7 @@ from harrier.resume.plan import HEDGE_WORDS
 from harrier.resume.ranking import rank_bullet_ids
 from harrier.resume.tailor import resume_paths_for, run_tailor
 from harrier.tracker import add_job, get_job
+from harrier.tracks import default_scope
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EXAMPLE_BUNDLE_PATH = REPO_ROOT / "config" / "resume-content.example.json"
@@ -1077,6 +1078,7 @@ def tailor_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> int:
             "source": "greenhouse",
             "status": "shortlisted",
         },
+        scope=default_scope(conn),
     )
     return job_id
 

@@ -45,6 +45,7 @@ from harrier.sources.greenhouse import fetch_greenhouse_jobs
 from harrier.sources.lever import fetch_lever_jobs
 from harrier.sources.remoteok import fetch_remoteok_jobs
 from harrier.tracker import DuplicateJobError, add_job, list_jobs
+from harrier.tracks import default_scope
 from harrier.userconfig import (
     load_ats_feeds,
     load_discovery_settings,
@@ -188,9 +189,13 @@ def _run_source(
 
     persisted = 0
     if not dry_run:
+        # Resolved once per source run; every row this run adds lands in the
+        # default track (spec 091). Spec 092 threads the scope from the entry
+        # point instead.
+        scope = default_scope(conn)
         for row in result.new_tracker_rows:
             try:
-                add_job(conn, row)
+                add_job(conn, row, scope=scope)
                 persisted += 1
             except DuplicateJobError:
                 # The screen already deduped; a race with a concurrent add is

@@ -52,6 +52,7 @@ from harrier.tracker.store import (
     set_status,
     update_fields,
 )
+from harrier.tracks import default_scope
 from harrier_api.app import create_app
 from harrier_cli.main import main
 
@@ -75,6 +76,7 @@ def _job(conn: sqlite3.Connection, index: int = 1, **fields: str) -> int:
             "fit_score": "90",
             **fields,
         },
+        scope=default_scope(conn),
     )
 
 
@@ -554,6 +556,7 @@ def test_event_writes_log_no_reason_text(
             "title": "Principal Gizmo Wrangler",
             "url": "https://boards.example.com/zephyrine/1",
         },
+        scope=default_scope(conn),
     )
     set_status(conn, job_id, "applied")
     record_company_outcome(conn, str(job_id), "ghosted", note="a private note about the recruiter")

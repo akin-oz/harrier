@@ -1067,6 +1067,21 @@ def _cmd_scoring(args: argparse.Namespace) -> int:
     return outcome.exit_code
 
 
+def _cmd_tracks(args: argparse.Namespace) -> int:
+    """The search tracks (spec 091). `list` is the only verb here; creating
+    and archiving a track are spec 093's."""
+    from harrier.tracks import list_tracks
+
+    del args  # `list` takes no arguments
+    with closing(connect()) as conn:
+        for track in list_tracks(conn):
+            line = f"{track.id}  {track.slug:<16} {track.kind:<9} {track.label}"
+            if track.archived:
+                line += "  archived"
+            print(line)
+    return 0
+
+
 def _cmd_events(args: argparse.Namespace) -> int:
     """A job's decision history, and the backfill that reconstructs it for rows
     decided before it was recorded (spec 079)."""
@@ -1752,6 +1767,8 @@ COMMAND_CLASSES: dict[str, CommandClass] = {
     "company-outcome": _DB,
     "events backfill": _DB,
     "events show": _DB,
+    # Read-only: the tracks table and nothing else (spec 091).
+    "tracks list": _DB,
     # The export reads the tracker, so it runs where the database lives. The
     # trainer reads only the export and needs scikit-learn, which the image
     # does not install, so it runs here (spec 077).
@@ -2104,6 +2121,11 @@ def build_parser() -> argparse.ArgumentParser:
     show_cmd = events_sub.add_parser("show", help="print a job's events in order")
     show_cmd.add_argument("selector", help="job id, or a unique substring")
     events_cmd.set_defaults(func=_cmd_events)
+
+    tracks_cmd = sub.add_parser("tracks", help="the search tracks (spec 091)")
+    tracks_sub = tracks_cmd.add_subparsers(dest="tracks_command", required=True)
+    tracks_sub.add_parser("list", help="every track: id, slug, kind, label, archived")
+    tracks_cmd.set_defaults(func=_cmd_tracks)
 
     scoring_cmd = sub.add_parser("scoring", help="the learned fit score (spec 077)")
     scoring_sub = scoring_cmd.add_subparsers(dest="scoring_command", required=True)

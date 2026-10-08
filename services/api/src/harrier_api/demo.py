@@ -23,6 +23,7 @@ from harrier.db import DB_FILENAME, connect, data_dir
 from harrier.demo import is_demo_mode, repo_root
 from harrier.profile import put_document
 from harrier.tracker import add_job
+from harrier.tracks import default_scope
 
 FIXTURE_ENV = "HARRIER_DEMO_FIXTURE"
 
@@ -111,8 +112,9 @@ def seed_demo_db(fixture: Path | None = None) -> Path:
 
     conn = connect(db_path)
     try:
+        scope = default_scope(conn)
         for job in jobs:
-            add_job(conn, job)
+            add_job(conn, job, scope=scope)
         seed_profile_documents(conn)
     finally:
         conn.close()

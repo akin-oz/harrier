@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 
 from harrier.db import connect
 from harrier.tracker import STATUSES, add_job, set_status
+from harrier.tracks import default_scope
 from harrier_api.app import JobStatus, create_app
 
 
@@ -39,6 +40,7 @@ def _seed(tmp_path: Path) -> None:
                 "source": "greenhouse",
                 "notes": "score=80; external_key=gh:acme:1",
             },
+            scope=default_scope(conn),
         )
         add_job(
             conn,
@@ -49,6 +51,7 @@ def _seed(tmp_path: Path) -> None:
                 "source": "ashby",
                 "notes": "",
             },
+            scope=default_scope(conn),
         )
         set_status(conn, first, "shortlisted")
     finally:

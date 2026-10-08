@@ -23,6 +23,7 @@ from harrier.tracker import (
     set_status,
     status_counts,
 )
+from harrier.tracks import default_scope
 from harrier_cli.main import main
 
 
@@ -49,6 +50,7 @@ def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
                 "fit_score": str(90 - index * 10),
                 "added_at": f"2026-08-0{index}",
             },
+            scope=default_scope(conn),
         )
     return conn
 

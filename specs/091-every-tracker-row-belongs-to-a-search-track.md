@@ -276,6 +276,8 @@ BEGIN
 END;
 CREATE TRIGGER tracks_are_never_deleted BEFORE DELETE ON tracks
 BEGIN SELECT RAISE(ABORT, 'tracks are archived, never deleted'); END;
+CREATE TRIGGER tracks_keep_their_id BEFORE UPDATE OF id ON tracks
+BEGIN SELECT RAISE(ABORT, 'a track id never changes'); END;
 CREATE INDEX idx_jobs_track_status ON jobs(track_id, status);
 ```
 
@@ -292,7 +294,9 @@ CREATE INDEX idx_jobs_track_status ON jobs(track_id, status);
   default track's slug is `job` and its kind `industry`; its label is
   display text and runtime data like every other label.
 - The delete trigger keeps a `jobs` row from ever naming a track that is
-  gone. Archiving (spec 093) is the only lifecycle verb a track has.
+  gone, and the id trigger keeps one from naming a number no track has
+  any more: an `UPDATE tracks SET id` runs none of the job triggers.
+  Archiving (spec 093) is the only lifecycle verb a track has.
 - `contacts` stay person-level. A contact belongs to the person, not to a
   search.
 
@@ -376,43 +380,46 @@ track 1).
 Tests in `services/api/tests/test_tracks.py` unless named otherwise. Every
 database is built under `tmp_path` with synthetic rows.
 
-- [ ] A database at version seven holding synthetic rows migrates to
+- [x] A database at version seven holding synthetic rows migrates to
       version eight, every row reads `track_id = 1`, and `tracks` holds
       exactly the seeded row with slug `job` and kind `industry`
-      (planned test_migration_8_keeps_every_row_in_the_default_track)
-- [ ] The `job_events` rows are value-for-value identical before and after
+      (`services/api/tests/test_tracks.py::test_migration_8_keeps_every_row_in_the_default_track`)
+- [x] The `job_events` rows are value-for-value identical before and after
       migration 8, and the append-only triggers still fire; the second half
       is `services/api/tests/test_job_events.py::test_job_events_is_append_only`
-      (planned test_migration_8_never_touches_job_events)
-- [ ] A raw INSERT into `jobs` naming an unknown track, and a raw UPDATE of
+      (`services/api/tests/test_tracks.py::test_migration_8_never_touches_job_events`)
+- [x] A raw INSERT into `jobs` naming an unknown track, and a raw UPDATE of
       `track_id` to one, are refused by the database; an INSERT naming
-      track 1 passes; a DELETE on `tracks` is refused
-      (planned test_an_unknown_track_is_refused_by_the_database)
-- [ ] `add_job` writes the scope's track and refuses a `track_id` in
-      `fields` (planned test_the_write_path_stamps_the_scopes_track)
-- [ ] Each shape outside the slug rule (empty, too long, a leading digit or
+      track 1 passes; a DELETE on `tracks` and an UPDATE of `tracks.id` are
+      refused
+      (`services/api/tests/test_tracks.py::test_an_unknown_track_is_refused_by_the_database`)
+- [x] `add_job` writes the scope's track and refuses a `track_id` in
+      `fields` (`services/api/tests/test_tracks.py::test_the_write_path_stamps_the_scopes_track`,
+      `services/api/tests/test_tracks.py::test_a_duplicate_names_the_track_it_lives_in`)
+- [x] Each shape outside the slug rule (empty, too long, a leading digit or
       hyphen, an upper-case letter, a space, a dot) is refused by
       `validate_slug` and by the CHECK, and `job` passes both
-      (planned test_a_slug_outside_the_rule_is_refused)
-- [ ] `resolve_scope` with an unknown slug raises `UnknownTrackError`
+      (`services/api/tests/test_tracks.py::test_a_slug_outside_the_rule_is_refused`,
+      `services/api/tests/test_tracks.py::test_a_slug_inside_the_rule_passes_both`)
+- [x] `resolve_scope` with an unknown slug raises `UnknownTrackError`
       naming the slug, and `default_scope` is track 1
-      (planned test_resolve_scope_names_an_unknown_slug)
-- [ ] `harrier tracks list` prints the default track and is a `database`
+      (`services/api/tests/test_tracks.py::test_resolve_scope_names_an_unknown_slug`)
+- [x] `harrier tracks list` prints the default track and is a `database`
       class command
-      (planned test_tracks_list_prints_the_default_track;
+      (`services/api/tests/test_tracks.py::test_tracks_list_prints_the_default_track`;
       `services/api/tests/test_delegation.py::test_every_subcommand_has_exactly_one_class`)
-- [ ] `services/api/tests/test_scoring.py::test_a_migrated_database_matches_a_fresh_one`
+- [x] `services/api/tests/test_scoring.py::test_a_migrated_database_matches_a_fresh_one`
       covers migration 8
-- [ ] A source module that imports `harrier.tracks` fails `uv run
+- [x] A source module that imports `harrier.tracks` fails `uv run
       lint-imports`, checked by adding such an import on a scratch branch
       and recording the failure in the pull request
-- [ ] The full suite passes with no reader changed: every reader still
+- [x] The full suite passes with no reader changed: every reader still
       returns every row, and every row is in track 1
-- [ ] ADR-012 exists with the text above; ADR-009 carries the extended
+- [x] ADR-012 exists with the text above; ADR-009 carries the extended
       status line; ADR-003 carries the per-store note; `docs/architecture.md`
       and the README limitation are updated; spec 023's Proof / origin is
       amended
-- [ ] No real tracker row, count, institution or person appears in a
+- [x] No real tracker row, count, institution or person appears in a
       fixture, this spec, the ADR or a commit message (ADR-008)
 - [ ] All gates green on the pull request
 
@@ -545,3 +552,34 @@ One line each. Each is future work with its own spec.
   tenant selection at every boundary; authentication and hosting
   (ADR-013).
 - Refusing a database newer than the code (spec 090, Open decisions).
+
+## Amendment (2026-10-08, during implementation)
+
+- **`add_job` has three callers, not four.** `discovery.py`, `capture.py`
+  and the demo seeder `harrier_api/demo.py` call it and now pass the
+  default scope, resolved once each. `tracker/migrate_legacy.py` never
+  called it: the import inserts rows itself, and they land in track 1
+  through the column default, which spec 092 lists as a named exemption.
+  `tracker/actions.py` reaches `add_job` through `capture.py` and did not
+  change. The demo seeder was not in the Scope list above; it is in the
+  diff, named here rather than absorbed.
+- **The kind CHECK is proven to derive from code.**
+  `services/api/tests/test_tracks.py::test_the_kind_check_derives_from_the_code_list`
+  inserts each kind in `TRACK_KINDS` and refuses one outside it.
+- **`harrier.tracks` offers no way to create a track**, pinned by
+  `services/api/tests/test_tracks.py::test_the_module_offers_no_way_to_create_a_track`.
+- **ADR-012 lands accepted** (Open decisions, item 1): the approval of this
+  spec on 2026-10-08 is the decision it records.
+- **Every test that calls `add_job` passes a scope.** The required keyword
+  reached every existing call site in the suite, which is the point of
+  having no default; one test file's local helper of the same name was
+  left alone.
+- **Review of PR #180, three findings, all applied.** An `UPDATE tracks SET
+  id` ran none of the job triggers and would have stranded every row of the
+  track; migration 8 gains `tracks_keep_their_id`, pinned in
+  `test_an_unknown_track_is_refused_by_the_database`. `validate_slug` used
+  `re.match`, whose `$` accepts a trailing newline the CHECK refuses; it is
+  `fullmatch` now, and `"job\n"` joins the refused shapes in
+  `test_a_slug_outside_the_rule_is_refused`. The module docstring claimed
+  every reader works in a scope; it now says the write path does and that
+  readers are spec 092's.

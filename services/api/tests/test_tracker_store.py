@@ -17,6 +17,7 @@ from harrier.tracker import (
     set_status,
     update_fields,
 )
+from harrier.tracks import default_scope
 
 
 @pytest.fixture()
@@ -42,7 +43,7 @@ def _job(**overrides: str) -> dict[str, str]:
 
 
 def test_add_job_expands_notes_and_defaults_next_action(conn: sqlite3.Connection) -> None:
-    job_id = add_job(conn, _job())
+    job_id = add_job(conn, _job(), scope=default_scope(conn))
     job = get_job(conn, job_id)
     assert job["score"] == "78"
     assert job["archetype"] == "product_engineer"
@@ -52,25 +53,33 @@ def test_add_job_expands_notes_and_defaults_next_action(conn: sqlite3.Connection
 
 
 def test_add_job_rejects_duplicates_by_url_key_and_company_title(conn: sqlite3.Connection) -> None:
-    add_job(conn, _job())
+    add_job(conn, _job(), scope=default_scope(conn))
     with pytest.raises(DuplicateJobError):
-        add_job(conn, _job(notes=""))  # same url
+        add_job(conn, _job(notes=""), scope=default_scope(conn))  # same url
     with pytest.raises(DuplicateJobError):
-        add_job(conn, _job(url="https://other.example.com/x", notes="external_key=gh:acme:1"))
+        add_job(
+            conn,
+            _job(url="https://other.example.com/x", notes="external_key=gh:acme:1"),
+            scope=default_scope(conn),
+        )
     with pytest.raises(DuplicateJobError):
-        add_job(conn, _job(url="https://other.example.com/y", notes="", company="acme"))
+        add_job(
+            conn,
+            _job(url="https://other.example.com/y", notes="", company="acme"),
+            scope=default_scope(conn),
+        )
 
 
 def test_unknown_status_raises(conn: sqlite3.Connection) -> None:
     with pytest.raises(UnknownStatusError):
-        add_job(conn, _job(status="in_progress"))
-    job_id = add_job(conn, _job())
+        add_job(conn, _job(status="in_progress"), scope=default_scope(conn))
+    job_id = add_job(conn, _job(), scope=default_scope(conn))
     with pytest.raises(UnknownStatusError):
         set_status(conn, job_id, "ghosted")
 
 
 def test_applied_seeds_outreach_block(conn: sqlite3.Connection) -> None:
-    job_id = add_job(conn, _job())
+    job_id = add_job(conn, _job(), scope=default_scope(conn))
     job = set_status(conn, job_id, "applied", applied_date="2026-08-08")
     assert job["status"] == "applied"
     assert job["applied_date"] == "2026-08-08"
@@ -83,7 +92,7 @@ def test_applied_seeds_outreach_block(conn: sqlite3.Connection) -> None:
 
 
 def test_applied_fills_only_blank_outreach_fields(conn: sqlite3.Connection) -> None:
-    job_id = add_job(conn, _job())
+    job_id = add_job(conn, _job(), scope=default_scope(conn))
     update_fields(conn, job_id, {"outreach_status": "ready", "outreach_priority": "low"})
     job = set_status(conn, job_id, "applied", applied_date="2026-08-08")
     assert job["outreach_status"] == "ready"
@@ -92,23 +101,24 @@ def test_applied_fills_only_blank_outreach_fields(conn: sqlite3.Connection) -> N
 
 
 def test_rejected_records_reason_and_clears_next_action(conn: sqlite3.Connection) -> None:
-    job_id = add_job(conn, _job())
+    job_id = add_job(conn, _job(), scope=default_scope(conn))
     job = set_status(conn, job_id, "rejected", rejection_reason="remote policy changed")
     assert job["rejection_reason"] == "remote policy changed"
     assert job["next_action"] == ""
 
 
 def test_update_fields_refuses_status(conn: sqlite3.Connection) -> None:
-    job_id = add_job(conn, _job())
+    job_id = add_job(conn, _job(), scope=default_scope(conn))
     with pytest.raises(Exception, match="set_status"):
         update_fields(conn, job_id, {"status": "applied"})
 
 
 def test_list_jobs_filters(conn: sqlite3.Connection) -> None:
-    a = add_job(conn, _job())
+    a = add_job(conn, _job(), scope=default_scope(conn))
     add_job(
         conn,
         _job(url="https://boards.example.com/beta/2", company="Beta", title="Staff FE", notes=""),
+        scope=default_scope(conn),
     )
     set_status(conn, a, "shortlisted")
     assert len(list_jobs(conn)) == 2
@@ -121,7 +131,7 @@ def test_unique_index_race_maps_to_duplicate_error(
 ) -> None:
     from harrier.tracker import store as store_module
 
-    add_job(conn, _job())
+    add_job(conn, _job(), scope=default_scope(conn))
 
     # Simulate the concurrent-writer race: the pre-check sees nothing, the
     # unique index still refuses.
@@ -132,4 +142,6 @@ def test_unique_index_race_maps_to_duplicate_error(
 
     monkeypatch.setattr(store_module, "find_duplicate", no_precheck)
     with pytest.raises(DuplicateJobError, match="unique index"):
-        store_module.add_job(conn, _job(company="Other", title="Other role"))
+        store_module.add_job(
+            conn, _job(company="Other", title="Other role"), scope=default_scope(conn)
+        )

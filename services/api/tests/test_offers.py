@@ -32,6 +32,7 @@ from harrier.offers.stories import STORY_BANK_LIMIT, capture_stories
 from harrier.profile.store import put_document
 from harrier.tracker import add_job, get_job
 from harrier.tracker.actions import change_status
+from harrier.tracks import default_scope
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -225,6 +226,7 @@ def add_prospect(conn: sqlite3.Connection, index: int = 1) -> int:
             "source": "greenhouse",
             "status": "prospect",
         },
+        scope=default_scope(conn),
     )
 
 

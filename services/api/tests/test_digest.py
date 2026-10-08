@@ -18,6 +18,7 @@ from harrier.digest import (
 )
 from harrier.mail.watch import events_path
 from harrier.tracker import add_job, set_status, update_fields
+from harrier.tracks import default_scope
 
 TARGET = date(2026, 8, 10)
 
@@ -49,6 +50,7 @@ def seed_job(
             "fit_score": fit_score,
             "added_at": added_at,
         },
+        scope=default_scope(conn),
     )
     if status == "applied":
         set_status(conn, job_id, "applied", applied_date=applied_date or "2026-08-01")

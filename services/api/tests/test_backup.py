@@ -34,6 +34,7 @@ from harrier.backup import (
 )
 from harrier.db import DB_FILENAME, connect
 from harrier.tracker.store import add_job, list_jobs
+from harrier.tracks import default_scope
 
 
 def a_job(index: int) -> dict[str, str]:
@@ -53,7 +54,7 @@ def data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.delenv("HARRIER_DEMO", raising=False)
     conn = connect()
     for index in range(3):
-        add_job(conn, a_job(index))
+        add_job(conn, a_job(index), scope=default_scope(conn))
     conn.close()
     return directory
 
@@ -78,7 +79,7 @@ def test_a_backup_taken_during_an_open_write_holds_the_committed_rows(
     state: the fourth row is present, the uncommitted fifth is not.
     """
     writer = connect()
-    add_job(writer, a_job(4))  # committed by add_job
+    add_job(writer, a_job(4), scope=default_scope(writer))  # committed by add_job
     writer.execute("BEGIN")
     writer.execute(
         "INSERT INTO jobs (company, title, url, source, location) VALUES (?,?,?,?,?)",
@@ -102,7 +103,7 @@ def test_the_backup_follows_the_data_directory_override(
     elsewhere = tmp_path / "somewhere-else"
     monkeypatch.setenv("HARRIER_DATA_DIR", str(elsewhere))
     conn = connect()
-    add_job(conn, a_job(99))
+    add_job(conn, a_job(99), scope=default_scope(conn))
     conn.close()
 
     result = create_backup(tmp_path / "backups")
