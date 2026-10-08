@@ -57,3 +57,6 @@ dist/
 # An operator's working copy of an application brief (spec 066). Briefs live
 # in the database; this name is ignored so a copy of the example stays local.
 /config/application-brief.json
+# An operator's working copy of the academic searches (spec 097). The search
+# lives in the database; this name is ignored so a copy stays local.
+/config/academic-searches.json

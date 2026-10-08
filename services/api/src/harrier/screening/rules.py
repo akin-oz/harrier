@@ -821,3 +821,78 @@ def blocker_penalty(candidate_cfg: CandidateConfig) -> int:
     number someone will tune until one case looks right (spec 078)."""
     low, high = score_bounds(candidate_cfg)
     return high - low + 1
+
+
+# --- the academic term matcher (spec 097) ------------------------------------
+#
+# Its own function, not `title_allowed`. That one applies the compiled
+# industry hints before reading any list, rejects every title when its include
+# list is empty, and matches whole words of text `normalize` has only
+# lowercased. On an academic track each of those loses postings the source
+# found correctly, and a loss recorded in seen state is permanent. This reads
+# no candidate configuration and no industry table.
+
+
+class AcademicTerm:
+    """One term: its text, and whether it matches the start of any word."""
+
+    __slots__ = ("pattern", "prefix", "text")
+
+    def __init__(self, text: str, *, prefix: bool = False) -> None:
+        self.text = text
+        self.prefix = prefix
+        words = re.findall(r"\w+", fold_text(text))
+        if not words:
+            raise ValueError(f"term {text!r} has no word to match")
+        # Words of a phrase match with any run of spaces, hyphens or slashes
+        # between them. A whole-word term needs a boundary at both ends; a
+        # prefix term only at its start, so a stem reaches compound words.
+        body = r"[\s\-/]+".join(re.escape(word) for word in words)
+        tail = "" if prefix else r"(?!\w)"
+        self.pattern = re.compile(rf"(?<!\w){body}{tail}")
+
+    def __repr__(self) -> str:
+        return f"AcademicTerm({self.text!r}, prefix={self.prefix})"
+
+    def __eq__(self, other: object) -> bool:
+        return (
+            isinstance(other, AcademicTerm)
+            and self.text == other.text
+            and self.prefix == other.prefix
+        )
+
+    def __hash__(self) -> int:
+        return hash((self.text, self.prefix))
+
+
+# The matcher's rules, in a form the academic policy version digests: a
+# change to how text is folded or matched changes decisions (spec 097).
+ACADEMIC_MATCHER_RULES = (
+    "nfkc",
+    "casefold",
+    "strip-combining-accents",
+    "drop-periods-between-letters",
+    "whole-word-or-prefix",
+    "phrase-separators:space,hyphen,slash",
+)
+
+
+def fold_text(text: str) -> str:
+    """Unicode NFKC, case-folded, combining accents stripped, and periods
+    between letters removed, so "A.B.C." and "abc" read the same."""
+    import unicodedata
+
+    composed = unicodedata.normalize("NFKC", text or "").casefold()
+    decomposed = unicodedata.normalize("NFD", composed)
+    stripped = "".join(char for char in decomposed if not unicodedata.combining(char))
+    return re.sub(r"(?<=\w)\.(?=\w)", "", unicodedata.normalize("NFC", stripped))
+
+
+def academic_match(terms: list[AcademicTerm], text: str) -> AcademicTerm | None:
+    """The first term found in the text, or None. An empty list matches
+    nothing and therefore, used as a gate, rejects nothing."""
+    folded = fold_text(text)
+    for term in terms:
+        if term.pattern.search(folded):
+            return term
+    return None

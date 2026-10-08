@@ -12,6 +12,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from harrier.container import CONTAINER_NAME, running_in
 from harrier.db import (
@@ -42,6 +43,9 @@ from harrier.tracks import (
     default_scope,
 )
 
+if TYPE_CHECKING:
+    from harrier.academic.discovery import AcademicOptions
+
 
 def load_project_env(path: Path | None = None) -> None:
     """Load .env from the working directory (spec 011; launchd wrappers rely
@@ -60,6 +64,90 @@ def load_project_env(path: Path | None = None) -> None:
             os.environ[key] = value
 
 
+def _academic_options(args: argparse.Namespace) -> AcademicOptions:
+    from harrier.academic.discovery import AcademicOptions
+
+    return AcademicOptions(
+        dry_run=args.dry_run,
+        shadow=args.shadow,
+        notify=not args.no_notify,
+        dataset_files=list(args.dataset_file),
+        from_run=str(args.from_run or ""),
+    )
+
+
+def _print_academic_summary(summary: dict[str, object]) -> None:
+    print(json.dumps(summary, indent=2, ensure_ascii=False))
+    run_id = str(summary.get("run_id", "") or "")
+    if run_id:
+        # A dry run's dataset can be replayed for free with --from-run.
+        print(f"run id: {run_id}")
+
+
+def _cmd_discover_academic(conn: sqlite3.Connection, scope: Scope, args: argparse.Namespace) -> int:
+    """Discovery on an academic track (spec 097): its own search, its own
+    source, and none of the industry sources."""
+    from harrier.academic.discovery import AcademicDiscoveryError, run_academic_discovery
+    from harrier.runoutcome import EXIT_RUN_FAILED
+
+    industry_only = [
+        flag
+        for flag, value in (
+            ("--only-source", args.only_source),
+            ("--wellfound-file", args.wellfound_file),
+            ("--wttj-file", args.wttj_file),
+        )
+        if value
+    ]
+    if industry_only:
+        print(
+            f"{', '.join(industry_only)} is not available on track {scope.track.slug}",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        summary = run_academic_discovery(conn, scope, _academic_options(args))
+    except AcademicDiscoveryError as error:
+        print(f"harrier: {error}", file=sys.stderr)
+        return 2
+    _print_academic_summary(summary)
+    if summary.get("failed"):
+        print(f"discovery failed on {scope.track.slug}: {summary['failed']}", file=sys.stderr)
+        return EXIT_RUN_FAILED
+    return 0
+
+
+def _cmd_discover_configured(args: argparse.Namespace) -> int:
+    """`discover --configured-tracks`: every track the stored search names,
+    each in its own scope, never the default track (spec 097)."""
+    from harrier.academic.discovery import run_configured_tracks
+    from harrier.runoutcome import EXIT_RUN_FAILED
+
+    if getattr(args, "track_slug", None) is not None:
+        print(
+            "--configured-tracks names its tracks from the stored search; drop --track",
+            file=sys.stderr,
+        )
+        return 2
+    with closing(connect()) as conn:
+        reports = run_configured_tracks(conn, _academic_options(args))
+    failed = False
+    for report in reports:
+        if report.problem:
+            print(f"{report.slug}: {report.problem}", file=sys.stderr)
+            failed = True
+            continue
+        summary = report.summary or {}
+        print(f"--- {report.slug}")
+        _print_academic_summary(summary)
+        if summary.get("failed"):
+            print(f"discovery failed on {report.slug}: {summary['failed']}", file=sys.stderr)
+            failed = True
+    if not reports:
+        print("no track is configured in academic_searches")
+    return EXIT_RUN_FAILED if failed else 0
+
+
 def _cmd_discover(args: argparse.Namespace) -> int:
     from harrier.discovery import (
         SOURCE_ORDER,
@@ -68,6 +156,17 @@ def _cmd_discover(args: argparse.Namespace) -> int:
         run_discovery,
     )
     from harrier.runoutcome import classify_run
+    from harrier.tracks import rules_for
+
+    if args.configured_tracks:
+        return _cmd_discover_configured(args)
+    resolved = getattr(args, "track_scope", None)
+    if isinstance(resolved, Scope) and rules_for(resolved.track.kind).screening == "academic":
+        with closing(connect()) as conn:
+            return _cmd_discover_academic(conn, resolved, args)
+    if args.from_run:
+        print("--from-run is for an academic track's source", file=sys.stderr)
+        return 2
 
     only = frozenset(item.strip() for item in args.only_source if item.strip())
     unknown = sorted(only - set(SOURCE_ORDER))
@@ -985,6 +1084,41 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _academic_components(notes: str) -> list[str]:
+    """The parts of an academic discovery decision, one per line (spec 097):
+    what matched and where, the flags, and the source's components. Nothing
+    is summed, counted into a number or used to sort. A row added by hand has
+    none of these notes and prints none."""
+    from harrier.sources.apify_academic import COMPONENTS
+    from harrier.tracker.store import extract_note_value
+
+    matched = extract_note_value(notes, "matched")
+    if not matched:
+        return []
+    lines: list[str] = []
+    if matched == "none":
+        lines.append("matched: none")
+    else:
+        _label, _, where = matched.partition(":")
+        term, _, field_name = where.rpartition("@")
+        lines.append(f"matched: '{term}' in {field_name}")
+    position = extract_note_value(notes, "position")
+    if position:
+        term, _, field_name = position.rpartition("@")
+        lines.append(f"position: '{term}' in {field_name}")
+    flags = extract_note_value(notes, "flags")
+    if not flags or flags == "not stated":
+        lines.append("flags: not stated")
+    else:
+        for flag in flags.split("|"):
+            name, _, rest = flag.partition(":")
+            field_name, _, evidence = rest.partition(":")
+            lines.append(f"{name}: '{evidence}' in {field_name}")
+    for name in COMPONENTS:
+        lines.append(f"{name.replace('_', ' ')}: {extract_note_value(notes, name) or 'not stated'}")
+    return lines
+
+
 def _print_job(job: dict[str, str], scope: Scope | None = None, today: str = "") -> None:
     """One row. On a track whose kind relabels the statuses, the label is
     printed in place of the stored status; a deadline is shown when set, and
@@ -998,6 +1132,8 @@ def _print_job(job: dict[str, str], scope: Scope | None = None, today: str = "")
     else:
         label = status_label(scope.track.kind, job["status"])
         print(f"{job['id']}. {job['company']} - {job['title']} [{label}]")
+        for line in _academic_components(job.get("notes", "")):
+            print(f"   {line}")
     deadline = (job.get("deadline") or "").strip()
     if deadline:
         passed = "  (deadline passed)" if today and deadline_passed(job, today) else ""
@@ -1442,6 +1578,13 @@ def _cmd_reconsider(args: argparse.Namespace) -> int:
     conn = connect()
 
     scope = _scope(conn, args)
+    from harrier.tracks import rules_for
+
+    if rules_for(scope.track.kind).screening == "academic":
+        try:
+            return _reconsider_academic(conn, scope, args)
+        finally:
+            conn.close()
     try:
         candidate_cfg = load_candidate_config(conn)
         sources = [args.source] if args.source else list(SOURCE_ORDER)
@@ -1464,6 +1607,47 @@ def _cmd_reconsider(args: argparse.Namespace) -> int:
             print(f"{total_cleared} would be cleared; re-run with --apply")
     finally:
         conn.close()
+    return 0
+
+
+def _reconsider_academic(conn: sqlite3.Connection, scope: Scope, args: argparse.Namespace) -> int:
+    """`reconsider` on an academic track (spec 097): the version comes from
+    the track's own search, and only its own seen state is read and cleared.
+    A posting the operator rejected is never reopened."""
+    from harrier.academic.discovery import (
+        AcademicDiscoveryError,
+        entry_for,
+        protected_seen_keys,
+    )
+    from harrier.academic.search import policy_fingerprint
+    from harrier.screening.policy import academic_policy_version
+    from harrier.screening.reconsider import reconsider_source
+    from harrier.sources.apify_academic import SOURCE_NAME
+
+    try:
+        entry = entry_for(conn, scope)
+    except AcademicDiscoveryError as error:
+        print(f"harrier: {error}", file=sys.stderr)
+        return 2
+    protected = protected_seen_keys(conn, scope)
+    report = reconsider_source(
+        conn,
+        scope,
+        SOURCE_NAME,
+        None,
+        dry_run=not args.apply,
+        policy=academic_policy_version(policy_fingerprint(entry)),
+        track_id=scope.track.id,
+        protected_keys=protected,
+    )
+    if report.examined:
+        print(report.describe())
+    if not report.changed:
+        print("nothing is eligible to clear")
+    elif args.apply:
+        print(f"{report.changed} cleared; the next discovery run will judge them again")
+    else:
+        print(f"{report.changed} would be cleared; re-run with --apply")
     return 0
 
 
@@ -2034,6 +2218,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--scheduled",
         action="store_true",
         help="apply the scheduled policy: Apify on weekday mornings only, configured count",
+    )
+    discover.add_argument(
+        "--from-run",
+        default="",
+        help="academic track: screen an existing Apify run's dataset without a new run (spec 097)",
+    )
+    discover.add_argument(
+        "--configured-tracks",
+        action="store_true",
+        help="run discovery for every academic track the stored search names (spec 097)",
     )
     discover.set_defaults(func=_cmd_discover)
 

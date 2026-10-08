@@ -832,14 +832,27 @@ def _file_value(kind: str) -> object:
     return None
 
 
-@config_router.get("/config", operation_id="listConfig")
+# Both reads require the token (spec 023's open item, closed by spec 097):
+# they serve the watchlist, the searches, the hold list and the academic
+# searches, which describe the operator's own search.
+@config_router.get(
+    "/config",
+    operation_id="listConfig",
+    responses=TOKEN_RESPONSES,
+    dependencies=[Depends(require_token)],
+)
 def list_configuration(conn: Conn) -> list[ConfigOut]:
     from harrier.userconfig import KINDS
 
     return [_config_out(conn, kind) for kind in KINDS]
 
 
-@config_router.get("/config/{kind}", operation_id="getConfig", responses={404: CONFIG_ERRORS[404]})
+@config_router.get(
+    "/config/{kind}",
+    operation_id="getConfig",
+    responses={404: CONFIG_ERRORS[404], **TOKEN_RESPONSES},
+    dependencies=[Depends(require_token)],
+)
 def get_configuration(kind: str, conn: Conn) -> ConfigOut:
     from harrier.userconfig import KINDS
 

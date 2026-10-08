@@ -295,7 +295,26 @@ def schedule_health_lines(conn: sqlite3.Connection) -> list[str]:
     this list is exactly the job nobody notices has stopped (spec 029).
     """
     recorded = all_last_success(conn)
-    return [describe_age(job, recorded.get(job)) for job in SCHEDULED_JOBS]
+    jobs = [*SCHEDULED_JOBS, *academic_discovery_jobs(conn)]
+    return [describe_age(job, recorded.get(job)) for job in jobs]
+
+
+def academic_discovery_jobs(conn: sqlite3.Connection) -> list[str]:
+    """`discovery:<track id>` for every live academic track the stored search
+    names (spec 097). Its success is recorded under its own key, so the
+    default track's discovery line never reads an academic success."""
+    from harrier.tracks import list_tracks
+    from harrier.userconfig.store import ACADEMIC_SEARCHES, ConfigError, get_config
+
+    try:
+        searches = get_config(conn, ACADEMIC_SEARCHES)
+    except ConfigError:
+        return []
+    if not isinstance(searches, dict):
+        return []
+    ids = {track.slug: track.id for track in list_tracks(conn) if not track.archived}
+    slugs = sorted(str(slug) for slug in cast("dict[object, object]", searches))
+    return [f"discovery:{ids[slug]}" for slug in slugs if slug in ids]
 
 
 def build_digest(conn: sqlite3.Connection, scope: Scope, target_date: date) -> str:

@@ -76,8 +76,13 @@ def now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _state_path(source_name: str) -> Path:
-    return data_dir() / "discovery" / f"{source_name}_seen.json"
+def _state_path(source_name: str, track_id: int | None = None) -> Path:
+    """The default track keeps today's path; any other track keeps its own
+    file per source, so one track's decision never suppresses a posting for
+    another (spec 097)."""
+    if track_id is None:
+        return data_dir() / "discovery" / f"{source_name}_seen.json"
+    return data_dir() / "discovery" / str(track_id) / f"{source_name}_seen.json"
 
 
 def _decision_from(raw: object, fallback_at: str) -> SeenDecision | None:
@@ -92,7 +97,7 @@ def _decision_from(raw: object, fallback_at: str) -> SeenDecision | None:
     )
 
 
-def load_seen(source_name: str) -> dict[str, SeenDecision]:
+def load_seen(source_name: str, track_id: int | None = None) -> dict[str, SeenDecision]:
     """Every recorded decision for this source.
 
     Reads the pre-spec-031 format too. Those entries become unknown-verdict,
@@ -101,7 +106,7 @@ def load_seen(source_name: str) -> dict[str, SeenDecision]:
     treating them as current-policy rejections would hide them from the first
     reconsideration, which is the one that matters.
     """
-    path = _state_path(source_name)
+    path = _state_path(source_name, track_id)
     try:
         record = read_json_mapping(path)
     except DamagedStateError as error:
@@ -136,7 +141,9 @@ def load_seen(source_name: str) -> dict[str, SeenDecision]:
     }
 
 
-def save_seen(source_name: str, decisions: dict[str, SeenDecision]) -> None:
+def save_seen(
+    source_name: str, decisions: dict[str, SeenDecision], track_id: int | None = None
+) -> None:
     """Persist, capped at SEEN_CAP by age.
 
     Newest kept. The previous rule sorted the keys and kept the tail, which
@@ -145,7 +152,7 @@ def save_seen(source_name: str, decisions: dict[str, SeenDecision]) -> None:
     """
     newest = sorted(decisions.items(), key=lambda item: item[1].at, reverse=True)[:SEEN_CAP]
     write_json_atomic(
-        _state_path(source_name),
+        _state_path(source_name, track_id),
         {
             "decisions": {key: decision.as_json() for key, decision in newest},
             "updated_at": now_iso(),

@@ -16,6 +16,14 @@
       }
     },
     {
+      "name": "academic-discovery",
+      "command": ["discover", "--scheduled", "--configured-tracks"],
+      "trigger": {
+        "kind": "calendar",
+        "times": [{ "weekday": 1, "hour": 9, "minute": 30 }]
+      }
+    },
+    {
       "name": "digest",
       "command": ["digest"],
       "trigger": {

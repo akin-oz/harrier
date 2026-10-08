@@ -75,9 +75,22 @@ def _job_row_to_dict(row: sqlite3.Row) -> dict[str, str]:
 
 
 def find_duplicate(
-    conn: sqlite3.Connection, url: str, company: str, title: str, external_key: str
+    conn: sqlite3.Connection,
+    url: str,
+    company: str,
+    title: str,
+    external_key: str,
+    *,
+    deadline: str | None = None,
 ) -> dict[str, str] | None:
-    """Dedupe order ports from the old screen path: url, external_key, company+title."""
+    """Dedupe order ports from the old screen path: url, external_key, company+title.
+
+    `deadline` is passed for a row added to an academic track (spec 097):
+    there a company-and-title match is a duplicate only when the two
+    deadlines are equal or either is empty, so two distinct calls at one
+    institution under one generic title are both kept. With either deadline
+    empty the rule is exactly the old one. None keeps the old rule outright.
+    """
     if url:
         row = conn.execute("SELECT * FROM jobs WHERE url = ?", (url,)).fetchone()
         if row is not None:
@@ -87,10 +100,17 @@ def find_duplicate(
         if row is not None:
             return _job_row_to_dict(row)
     if company and title:
-        row = conn.execute(
-            "SELECT * FROM jobs WHERE company = ? COLLATE NOCASE AND title = ? COLLATE NOCASE",
-            (company, title),
-        ).fetchone()
+        if deadline is None:
+            row = conn.execute(
+                "SELECT * FROM jobs WHERE company = ? COLLATE NOCASE AND title = ? COLLATE NOCASE",
+                (company, title),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT * FROM jobs WHERE company = ? COLLATE NOCASE AND title = ? COLLATE NOCASE"
+                " AND (? = '' OR deadline = '' OR deadline = ?)",
+                (company, title, deadline, deadline),
+            ).fetchone()
         if row is not None:
             return _job_row_to_dict(row)
     return None
@@ -123,8 +143,18 @@ def add_job(conn: sqlite3.Connection, fields: Mapping[str, str], *, scope: Scope
     if deadline and not _is_iso_date(deadline):
         raise TrackerError(f"deadline must be a YYYY-MM-DD date, got {deadline!r}")
 
+    # The deadline-aware rule is the academic kind's (spec 097); the industry
+    # call is the one it always was.
+    academic_rule = (
+        {"deadline": deadline} if rules_for(scope.track.kind).screening == "academic" else {}
+    )
     existing = find_duplicate(
-        conn, values["url"], values["company"], values["title"], promoted["external_key"]
+        conn,
+        values["url"],
+        values["company"],
+        values["title"],
+        promoted["external_key"],
+        **academic_rule,
     )
     if existing is not None:
         raise DuplicateJobError(
@@ -247,7 +277,7 @@ def all_tracks_dedupe_rows(conn: sqlite3.Connection) -> list[dict[str, str]]:
     columns dedupe compares and nothing else.
     """
     rows = conn.execute(
-        "SELECT url, external_key, company, title, notes, track_id FROM jobs ORDER BY id"
+        "SELECT url, external_key, company, title, notes, track_id, deadline FROM jobs ORDER BY id"
     ).fetchall()
     return [_job_row_to_dict(row) for row in rows]
 
