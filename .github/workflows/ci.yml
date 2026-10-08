@@ -52,8 +52,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # No floating v0 tag exists on the action; pin the release (docs/aie-feedback.md).
-      - uses: akin-oz/ai-engineering@v0.2.0
+      # Pinned to the exact release that package.json installs, so CI and the
+      # local aie check compile with the same compiler (spec 089).
+      - uses: akin-oz/ai-engineering@v0.6.2
 
   gitleaks:
     name: Secret scan

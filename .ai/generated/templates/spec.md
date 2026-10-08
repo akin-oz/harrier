@@ -1,4 +1,4 @@
-<!-- generated-by: development/spec-driven@1 — edit the blueprint, not this file -->
+<!-- generated-by: development/spec-driven@3 — edit the blueprint, not this file -->
 # Spec NNN: <what this changes>
 
 - Status: Draft | Accepted | Shipped

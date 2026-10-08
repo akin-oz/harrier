@@ -1,7 +1,7 @@
 ---
 description: Behavior changes start from a written spec
 ---
-<!-- generated-by: development/spec-driven@1 — edit the blueprint, not this file -->
+<!-- generated-by: development/spec-driven@3 — edit the blueprint, not this file -->
 
 No change to observable behavior lands without a spec describing it first.
 
