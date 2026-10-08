@@ -11,7 +11,7 @@ spec: NNN
 title: short imperative title
 status: proposed | accepted | in-progress | shipped
 approved: no
-milestone: M0..M7
+milestone: M0..M9
 depends: [NNN, ...]
 ```
 
@@ -37,6 +37,7 @@ Body sections: Problem, Scope, Acceptance criteria (checkboxes), Proof / origin
 - **M6** review findings, gates that can fail, the UI that drives the tool:
   025, 026, and 027 through 043
 - **M7** open-source readiness: 044, 045, 046
+- **M9** search tracks: 090 onward
 
 Stubs sequence the backlog; they do not define final scope. Refine a stub into a
 real spec before asking for approval, and expect the scope to narrow or split at
