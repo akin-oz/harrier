@@ -28,6 +28,7 @@ from harrier.tracker import list_jobs
 from harrier.tracker.reasons import CANDIDATE, COMPANY, SYSTEM, codes_for
 from harrier.tracker.selector import SelectorError
 from harrier.tracker.store import TrackerError
+from harrier.tracks import Scope as TrackScope
 from harrier_api.capture_routes import capture_router
 from harrier_api.demo import demo_db_path, is_demo_mode, seed_demo_db
 from harrier_api.deps import (
@@ -36,6 +37,7 @@ from harrier_api.deps import (
     DatabaseHeldOut,
     DatabaseHoldOut,
     DatabaseRoute,
+    ScopeDep,
 )
 from harrier_api.localauth import (
     TOKEN_RESPONSES,
@@ -180,10 +182,11 @@ def get_session() -> SessionOut:
 @router.get("/jobs", operation_id="listJobs")
 def jobs(
     conn: Conn,
+    scope: ScopeDep,
     status: Annotated[JobStatus | None, Query()] = None,
     source: Annotated[str | None, Query()] = None,
 ) -> list[JobOut]:
-    rows = list_jobs(conn, status=status, source=source)
+    rows = list_jobs(conn, scope, status=status, source=source)
     return [JobOut.model_validate({**row, "id": int(row["id"])}) for row in rows]
 
 
@@ -304,7 +307,7 @@ def _as_job_out(job: dict[str, str]) -> JobOut:
     dependencies=[Depends(require_token)],
     responses=TRACKER_ERRORS,
 )
-def change_job_status(selector: str, body: StatusChangeIn, conn: Conn) -> JobOut:
+def change_job_status(selector: str, body: StatusChangeIn, conn: Conn, scope: ScopeDep) -> JobOut:
     """The same function the CLI's shortlist, track, applied, interviewing
     and reject verbs call (spec 042)."""
     from harrier.tracker.actions import TrackerActionError, change_status
@@ -312,7 +315,7 @@ def change_job_status(selector: str, body: StatusChangeIn, conn: Conn) -> JobOut
     code = body.reason_code.value if body.reason_code is not None else None
     try:
         return _as_job_out(
-            change_status(conn, selector, body.verb, reason=body.reason, reason_code=code)
+            change_status(conn, scope, selector, body.verb, reason=body.reason, reason_code=code)
         )
     except SelectorError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
@@ -326,13 +329,17 @@ def change_job_status(selector: str, body: StatusChangeIn, conn: Conn) -> JobOut
     dependencies=[Depends(require_token)],
     responses=TRACKER_ERRORS,
 )
-def record_job_outcome(selector: str, body: CompanyOutcomeIn, conn: Conn) -> JobOut:
+def record_job_outcome(
+    selector: str, body: CompanyOutcomeIn, conn: Conn, scope: ScopeDep
+) -> JobOut:
     """What a company did with an application: the same function
     `harrier company-outcome` calls (specs 079, 080)."""
     from harrier.tracker.actions import TrackerActionError, record_company_outcome
 
     try:
-        return _as_job_out(record_company_outcome(conn, selector, body.code.value, note=body.note))
+        return _as_job_out(
+            record_company_outcome(conn, scope, selector, body.code.value, note=body.note)
+        )
     except SelectorError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except (TrackerActionError, TrackerError) as error:
@@ -345,11 +352,12 @@ def record_job_outcome(selector: str, body: CompanyOutcomeIn, conn: Conn) -> Job
     dependencies=[Depends(require_token)],
     responses=TOKEN_RESPONSES,
 )
-def add_job_by_hand(body: AddJobIn, conn: Conn) -> AddJobOut:
+def add_job_by_hand(body: AddJobIn, conn: Conn, scope: ScopeDep) -> AddJobOut:
     from harrier.tracker.actions import add_manually
 
     result, job = add_manually(
         conn,
+        scope,
         company=body.company,
         title=body.title,
         location=body.location,
@@ -373,11 +381,11 @@ def add_job_by_hand(body: AddJobIn, conn: Conn) -> AddJobOut:
     dependencies=[Depends(require_token)],
     responses=TRACKER_ERRORS,
 )
-def rescore_job(selector: str, conn: Conn) -> RescoreOut:
+def rescore_job(selector: str, conn: Conn, scope: ScopeDep) -> RescoreOut:
     from harrier.tracker.actions import TrackerActionError, rescore
 
     try:
-        result = rescore(conn, selector)
+        result = rescore(conn, scope, selector)
     except SelectorError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except TrackerActionError as error:
@@ -392,6 +400,7 @@ def rescore_job(selector: str, conn: Conn) -> RescoreOut:
 @tracker_router.get("/tracker/queue", operation_id="listQueue")
 def list_queue(
     conn: Conn,
+    scope: ScopeDep,
     undecided: bool = False,
     limit: int | None = Query(default=None, ge=1, le=500),
 ) -> list[JobOut]:
@@ -400,15 +409,15 @@ def list_queue(
     needs a decision from the operator."""
     from harrier.tracker.actions import next_up, review_queue
 
-    rows = review_queue(conn, limit) if undecided else next_up(conn, limit)
+    rows = review_queue(conn, scope, limit) if undecided else next_up(conn, scope, limit)
     return [_as_job_out(row) for row in rows]
 
 
 @tracker_router.get("/tracker/counts", operation_id="trackerCounts")
-def tracker_counts(conn: Conn) -> dict[str, int]:
+def tracker_counts(conn: Conn, scope: ScopeDep) -> dict[str, int]:
     from harrier.tracker.actions import counts
 
-    return counts(conn)
+    return counts(conn, scope)
 
 
 # --- apply: artifacts for one job (spec 047) ---
@@ -459,22 +468,24 @@ ARTIFACT_ERRORS: dict[int | str, dict[str, str]] = {
 }
 
 
-def _job_id_for(conn: sqlite3.Connection, selector: str) -> int:
+def _job_id_for(conn: sqlite3.Connection, scope: TrackScope, selector: str) -> int:
     from harrier.tracker.selector import resolve_selector
 
     try:
-        return int(resolve_selector(conn, selector)["id"])
+        return int(resolve_selector(conn, scope, selector)["id"])
     except SelectorError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
-def _apply_params(conn: sqlite3.Connection, selector: str, text: str, *, no_ai: bool) -> RunParams:
+def _apply_params(
+    conn: sqlite3.Connection, scope: TrackScope, selector: str, text: str, *, no_ai: bool
+) -> RunParams:
     """Resolve the selector and stage the free text, in that order.
 
     The order matters: staging first would write a file for a job that does
     not exist, and nothing would ever consume or remove it.
     """
-    job_id = _job_id_for(conn, selector)
+    job_id = _job_id_for(conn, scope, selector)
     stripped = text.strip()
     return RunParams(
         job_id=job_id,
@@ -489,9 +500,11 @@ def _apply_params(conn: sqlite3.Connection, selector: str, text: str, *, no_ai: 
     dependencies=[Depends(require_token)],
     responses=APPLY_ERRORS,
 )
-async def tailor_resume(selector: str, body: TailorIn, conn: Conn, manager: Manager) -> RunOut:
+async def tailor_resume(
+    selector: str, body: TailorIn, conn: Conn, scope: ScopeDep, manager: Manager
+) -> RunOut:
     """The same `tailor` verb the CLI runs, as a run (spec 047)."""
-    params = _apply_params(conn, selector, body.jd_text, no_ai=body.no_ai)
+    params = _apply_params(conn, scope, selector, body.jd_text, no_ai=body.no_ai)
     return run_out(await manager.start("tailor", params))
 
 
@@ -502,9 +515,9 @@ async def tailor_resume(selector: str, body: TailorIn, conn: Conn, manager: Mana
     responses=APPLY_ERRORS,
 )
 async def draft_cover_letter(
-    selector: str, body: CoverLetterIn, conn: Conn, manager: Manager
+    selector: str, body: CoverLetterIn, conn: Conn, scope: ScopeDep, manager: Manager
 ) -> RunOut:
-    params = _apply_params(conn, selector, body.notes, no_ai=False)
+    params = _apply_params(conn, scope, selector, body.notes, no_ai=False)
     return run_out(await manager.start("cover-letter", params))
 
 
@@ -514,8 +527,10 @@ async def draft_cover_letter(
     dependencies=[Depends(require_token)],
     responses=APPLY_ERRORS,
 )
-async def draft_answers(selector: str, body: AnswersIn, conn: Conn, manager: Manager) -> RunOut:
-    params = _apply_params(conn, selector, body.questions, no_ai=False)
+async def draft_answers(
+    selector: str, body: AnswersIn, conn: Conn, scope: ScopeDep, manager: Manager
+) -> RunOut:
+    params = _apply_params(conn, scope, selector, body.questions, no_ai=False)
     return run_out(await manager.start("answers", params))
 
 
@@ -526,9 +541,9 @@ async def draft_answers(selector: str, body: AnswersIn, conn: Conn, manager: Man
     responses=APPLY_ERRORS,
 )
 async def evaluate_offer_route(
-    selector: str, body: EvaluateIn, conn: Conn, manager: Manager
+    selector: str, body: EvaluateIn, conn: Conn, scope: ScopeDep, manager: Manager
 ) -> RunOut:
-    params = _apply_params(conn, selector, body.jd_text, no_ai=False)
+    params = _apply_params(conn, scope, selector, body.jd_text, no_ai=False)
     return run_out(await manager.start("evaluate", params))
 
 
@@ -538,7 +553,7 @@ async def evaluate_offer_route(
     dependencies=[Depends(require_token)],
     responses=APPLY_ERRORS,
 )
-def list_artifacts(selector: str, conn: Conn) -> list[ArtifactOut]:
+def list_artifacts(selector: str, conn: Conn, scope: ScopeDep) -> list[ArtifactOut]:
     """The index requires the token even though it is a read.
 
     Tracker reads do not, and this deliberately differs: the names here are
@@ -547,7 +562,7 @@ def list_artifacts(selector: str, conn: Conn) -> list[ArtifactOut]:
     """
     from harrier.artifacts import artifacts_for_job
 
-    job_id = _job_id_for(conn, selector)
+    job_id = _job_id_for(conn, scope, selector)
     return [
         ArtifactOut(
             kind=item.kind,
@@ -556,7 +571,7 @@ def list_artifacts(selector: str, conn: Conn) -> list[ArtifactOut]:
             media_type=item.media_type,
             filename=item.path.name,
         )
-        for item in artifacts_for_job(conn, job_id)
+        for item in artifacts_for_job(conn, scope, job_id)
     ]
 
 
@@ -566,12 +581,12 @@ def list_artifacts(selector: str, conn: Conn) -> list[ArtifactOut]:
     dependencies=[Depends(require_token)],
     responses=ARTIFACT_ERRORS,
 )
-def read_artifact(selector: str, kind: str, conn: Conn) -> FileResponse:
+def read_artifact(selector: str, kind: str, conn: Conn, scope: ScopeDep) -> FileResponse:
     from harrier.artifacts import UnknownArtifactKind, artifact_for_job
 
-    job_id = _job_id_for(conn, selector)
+    job_id = _job_id_for(conn, scope, selector)
     try:
-        artifact = artifact_for_job(conn, job_id, kind)
+        artifact = artifact_for_job(conn, scope, job_id, kind)
     except UnknownArtifactKind as error:
         # A path-shaped kind lands here, refused before anything touched the
         # filesystem, because the kind is a closed set (spec 047).

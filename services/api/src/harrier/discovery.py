@@ -44,8 +44,9 @@ from harrier.sources.feeds import UNROUTED
 from harrier.sources.greenhouse import fetch_greenhouse_jobs
 from harrier.sources.lever import fetch_lever_jobs
 from harrier.sources.remoteok import fetch_remoteok_jobs
-from harrier.tracker import DuplicateJobError, add_job, list_jobs
-from harrier.tracks import default_scope
+from harrier.tracker import DuplicateJobError, add_job
+from harrier.tracker.store import all_tracks_dedupe_rows
+from harrier.tracks import Scope
 from harrier.userconfig import (
     load_ats_feeds,
     load_discovery_settings,
@@ -163,6 +164,7 @@ def _source_enabled(name: str, only_sources: frozenset[str]) -> bool:
 
 def _run_source(
     conn: sqlite3.Connection,
+    scope: Scope,
     source_name: str,
     jobs: list[NormalizedJob],
     fetched_count: int,
@@ -174,7 +176,9 @@ def _run_source(
     save seen state, write the per-source summary. Dry runs mutate nothing."""
     candidate_cfg = load_candidate_config(conn)
     hold_companies = load_hold_companies(conn)
-    indexes = build_tracker_indexes(list_jobs(conn))
+    # Dedupe sees every track: url and external_key are unique across the
+    # whole file, so a posting stored elsewhere is a duplicate here (spec 092).
+    indexes = build_tracker_indexes(all_tracks_dedupe_rows(conn))
     source_seen = load_seen(source_name)
     normalized_jobs = dedupe_normalized_jobs(jobs)
 
@@ -189,10 +193,6 @@ def _run_source(
 
     persisted = 0
     if not dry_run:
-        # Resolved once per source run; every row this run adds lands in the
-        # default track (spec 091). Spec 092 threads the scope from the entry
-        # point instead.
-        scope = default_scope(conn)
         for row in result.new_tracker_rows:
             try:
                 add_job(conn, row, scope=scope)
@@ -231,6 +231,7 @@ def _run_source(
 
 def run_discovery(
     conn: sqlite3.Connection,
+    scope: Scope,
     options: DiscoveryOptions,
     progress: ProgressFn | None = None,
 ) -> dict[str, object]:
@@ -279,6 +280,7 @@ def run_discovery(
         summaries.append(
             _run_source(
                 conn,
+                scope,
                 source_name,
                 jobs,
                 len(jobs),
@@ -306,6 +308,7 @@ def run_discovery(
             summaries.append(
                 _run_source(
                     conn,
+                    scope,
                     "remoteok",
                     remoteok_jobs,
                     len(remoteok_jobs),
@@ -358,6 +361,7 @@ def run_discovery(
                 summaries.append(
                     _run_source(
                         conn,
+                        scope,
                         "apify_linkedin",
                         apify_jobs,
                         len(apify_jobs),
@@ -384,6 +388,7 @@ def run_discovery(
         summaries.append(
             _run_source(
                 conn,
+                scope,
                 "wellfound",
                 wellfound_jobs,
                 len(wellfound_jobs),
@@ -399,6 +404,7 @@ def run_discovery(
         summaries.append(
             _run_source(
                 conn,
+                scope,
                 "wttj",
                 wttj_jobs,
                 len(wttj_jobs),

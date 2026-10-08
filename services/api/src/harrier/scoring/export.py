@@ -33,6 +33,7 @@ from harrier.screening.normalized import make_normalized_job
 from harrier.screening.policy import policy_version
 from harrier.screening.rules import blockers, score_job
 from harrier.tracker.store import list_events, list_jobs
+from harrier.tracks import Scope
 
 EXPORT_FORMAT_VERSION = 1
 
@@ -49,7 +50,9 @@ class ExportResult:
     excluded: dict[str, int]
 
 
-def export_features(conn: sqlite3.Connection, *, today: str | None = None) -> ExportResult:
+def export_features(
+    conn: sqlite3.Connection, scope: Scope, *, today: str | None = None
+) -> ExportResult:
     """Label every decided job, extract its features, and write the export.
 
     Reads the tracker and the description cache; writes nothing to either.
@@ -57,9 +60,9 @@ def export_features(conn: sqlite3.Connection, *, today: str | None = None) -> Ex
     candidate_cfg = load_candidate_config(conn)
     excluded: Counter[str] = Counter({name: 0 for name in EXCLUSIONS})
     rows: list[dict[str, object]] = []
-    for job in list_jobs(conn):
+    for job in list_jobs(conn, scope):
         description = load_cached_description(job["url"])
-        outcome = label_job(job, list_events(conn, int(job["id"])), description)
+        outcome = label_job(job, list_events(conn, scope, int(job["id"])), description)
         if not isinstance(outcome, Labelled):
             excluded[outcome] += 1
             continue

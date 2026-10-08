@@ -476,32 +476,40 @@ def _tracked(conn: sqlite3.Connection, index: int, *, described: bool = True) ->
 
 
 def _label(conn: sqlite3.Connection, job_id: int) -> Labelled | str:
-    job = get_job(conn, job_id)
-    return label_job(job, list_events(conn, job_id), load_cached_description(job["url"]))
+    job = get_job(conn, default_scope(conn), job_id)
+    return label_job(
+        job, list_events(conn, default_scope(conn), job_id), load_cached_description(job["url"])
+    )
 
 
 def test_labels_come_from_candidate_decisions(conn: sqlite3.Connection) -> None:
     acted = _tracked(conn, 1)
-    change_status(conn, str(acted), "shortlist")
+    change_status(conn, default_scope(conn), str(acted), "shortlist")
     skipped = _tracked(conn, 2)
-    change_status(conn, str(skipped), "reject", reason="missing stack")
+    change_status(conn, default_scope(conn), str(skipped), "reject", reason="missing stack")
     withdrawn = _tracked(conn, 3)
-    change_status(conn, str(withdrawn), "applied")
-    change_status(conn, str(withdrawn), "reject", reason="hybrid")
+    change_status(conn, default_scope(conn), str(withdrawn), "applied")
+    change_status(conn, default_scope(conn), str(withdrawn), "reject", reason="hybrid")
     waiting = _tracked(conn, 4)
     unknown = _tracked(conn, 5)
-    change_status(conn, str(unknown), "reject", reason="a reason nobody wrote a pattern for")
+    change_status(
+        conn,
+        default_scope(conn),
+        str(unknown),
+        "reject",
+        reason="a reason nobody wrote a pattern for",
+    )
     undescribed = _tracked(conn, 6, described=False)
-    change_status(conn, str(undescribed), "shortlist")
+    change_status(conn, default_scope(conn), str(undescribed), "shortlist")
     reopened = _tracked(conn, 7)
-    change_status(conn, str(reopened), "reject", reason="missing stack")
-    change_status(conn, str(reopened), "shortlist")
+    change_status(conn, default_scope(conn), str(reopened), "reject", reason="missing stack")
+    change_status(conn, default_scope(conn), str(reopened), "shortlist")
 
     acted_label = _label(conn, acted)
     assert isinstance(acted_label, Labelled) and acted_label.label == 1 and acted_label.live
     # A live decision orders by its own time, not by the day the job arrived.
-    assert acted_label.decided_at == list_events(conn, acted)[-1]["at"]
-    assert acted_label.decided_at != get_job(conn, acted)["added_at"]
+    assert acted_label.decided_at == list_events(conn, default_scope(conn), acted)[-1]["at"]
+    assert acted_label.decided_at != get_job(conn, default_scope(conn), acted)["added_at"]
     # Rejected and then reopened: the forward decision is the judgement.
     reopened_label = _label(conn, reopened)
     assert isinstance(reopened_label, Labelled) and reopened_label.label == 1
@@ -523,7 +531,7 @@ def test_labels_come_from_candidate_decisions(conn: sqlite3.Connection) -> None:
         (legacy_url,),
     )
     conn.commit()
-    backfill_events(conn)
+    backfill_events(conn, default_scope(conn))
     legacy = conn.execute("SELECT id FROM jobs WHERE url = ?", (legacy_url,)).fetchone()[0]
     legacy_label = _label(conn, int(legacy))
     assert isinstance(legacy_label, Labelled)
@@ -536,14 +544,14 @@ def test_labels_come_from_candidate_decisions(conn: sqlite3.Connection) -> None:
 
 def test_a_company_outcome_is_never_a_label(conn: sqlite3.Connection) -> None:
     applied = _tracked(conn, 1)
-    change_status(conn, str(applied), "applied")
-    record_company_outcome(conn, str(applied), "ghosted")
+    change_status(conn, default_scope(conn), str(applied), "applied")
+    record_company_outcome(conn, default_scope(conn), str(applied), "ghosted")
     label = _label(conn, applied)
     # Applied, then ghosted: the candidate wanted it, which is the label.
     assert isinstance(label, Labelled) and label.label == 1
 
     approached = _tracked(conn, 2)
-    record_company_outcome(conn, str(approached), "interview_invited")
+    record_company_outcome(conn, default_scope(conn), str(approached), "interview_invited")
     # A recruiter's invitation alone says nothing about the candidate's view.
     assert _label(conn, approached) == UNDECIDED
 
@@ -552,6 +560,7 @@ def test_system_decisions_are_excluded(conn: sqlite3.Connection) -> None:
     closed = _tracked(conn, 1)
     set_status(
         conn,
+        default_scope(conn),
         closed,
         "rejected",
         rejection_reason="ai-evaluation: onsite",
@@ -563,13 +572,15 @@ def test_system_decisions_are_excluded(conn: sqlite3.Connection) -> None:
 
 def test_a_decision_on_a_different_description_is_excluded(conn: sqlite3.Connection) -> None:
     judged = _tracked(conn, 1)
-    change_status(conn, str(judged), "shortlist")
+    change_status(conn, default_scope(conn), str(judged), "shortlist")
     # The cache is keyed by URL and can be rewritten: this text is not the one
     # the candidate judged.
-    save_description_cache(get_job(conn, judged)["url"], f"A different posting entirely. {BODY}")
+    save_description_cache(
+        get_job(conn, default_scope(conn), judged)["url"], f"A different posting entirely. {BODY}"
+    )
     assert _label(conn, judged) == DESCRIPTION_CHANGED
 
-    result = export_features(conn, today="2026-10-06")
+    result = export_features(conn, default_scope(conn), today="2026-10-06")
     assert result.excluded[DESCRIPTION_CHANGED] == 1
     header = json.loads(result.path.read_text(encoding="utf-8").splitlines()[0])
     assert header["excluded"][DESCRIPTION_CHANGED] == 1
@@ -582,10 +593,16 @@ def test_the_export_carries_no_text(conn: sqlite3.Connection) -> None:
     a way in that the assertion would catch (privacy review of the spec 077
     range: the first version planted none)."""
     job_id = _tracked(conn, 1)
-    change_status(conn, str(job_id), "shortlist")
+    change_status(conn, default_scope(conn), str(job_id), "shortlist")
     skipped = _tracked(conn, 2)
-    change_status(conn, str(skipped), "reject", reason="missing stack, planted reason wording")
-    result = export_features(conn, today="2026-10-06")
+    change_status(
+        conn,
+        default_scope(conn),
+        str(skipped),
+        "reject",
+        reason="missing stack, planted reason wording",
+    )
+    result = export_features(conn, default_scope(conn), today="2026-10-06")
     assert result.rows == 2, "the skipped job was not exported, so its reason was never at risk"
     text = result.path.read_text(encoding="utf-8")
     for secret in (
@@ -614,11 +631,11 @@ def test_blocked_postings_are_excluded_from_labels(conn: sqlite3.Connection) -> 
         },
         scope=default_scope(conn),
     )
-    change_status(conn, str(blocked), "reject", reason="location")
+    change_status(conn, default_scope(conn), str(blocked), "reject", reason="location")
     eligible = _tracked(conn, 1)
-    change_status(conn, str(eligible), "shortlist")
+    change_status(conn, default_scope(conn), str(eligible), "shortlist")
 
-    result = export_features(conn, today="2026-10-06")
+    result = export_features(conn, default_scope(conn), today="2026-10-06")
     assert result.excluded[BLOCKED] == 1
     assert result.rows == 1
 
@@ -914,7 +931,7 @@ def test_the_scoring_commands_run(
     conn: sqlite3.Connection, capsys: pytest.CaptureFixture[str]
 ) -> None:
     job_id = _tracked(conn, 1)
-    change_status(conn, str(job_id), "shortlist")
+    change_status(conn, default_scope(conn), str(job_id), "shortlist")
     assert main(["scoring", "export"]) == 0
     assert "exported 1 labelled jobs" in capsys.readouterr().out
     # One labelled job is far below the minimum: refused, the rules stay.

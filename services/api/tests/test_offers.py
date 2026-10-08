@@ -258,15 +258,15 @@ def test_skip_verdict_above_threshold_rejects_only_with_apply(
     monkeypatch.setattr(batch_module, "evaluate_offer", fake_evaluate)
     audit_path = data_dir() / "evaluations" / "audit.jsonl"
 
-    dry = evaluate_prospects(db, BatchOptions(apply=False))
+    dry = evaluate_prospects(db, default_scope(db), BatchOptions(apply=False))
     assert dry.would_reject == 1
     assert dry.auto_rejected == 0
-    assert get_job(db, job_id)["status"] == "prospect"
+    assert get_job(db, default_scope(db), job_id)["status"] == "prospect"
     assert not audit_path.exists()
 
-    live = evaluate_prospects(db, BatchOptions(apply=True, refresh=True))
+    live = evaluate_prospects(db, default_scope(db), BatchOptions(apply=True, refresh=True))
     assert live.auto_rejected == 1
-    row = get_job(db, job_id)
+    row = get_job(db, default_scope(db), job_id)
     assert row["status"] == "rejected"
     assert row["rejection_reason"].startswith("ai-evaluation:")
     entries = [json.loads(line) for line in audit_path.read_text().splitlines()]
@@ -300,16 +300,16 @@ def test_a_reopened_row_is_not_evaluated_again(
         return fake_result(company, role, skip_verdict)
 
     monkeypatch.setattr(batch_module, "evaluate_offer", fake_evaluate)
-    evaluate_prospects(db, BatchOptions(apply=True))
-    assert get_job(db, job_id)["status"] == "rejected"
+    evaluate_prospects(db, default_scope(db), BatchOptions(apply=True))
+    assert get_job(db, default_scope(db), job_id)["status"] == "rejected"
 
-    change_status(db, str(job_id), "shortlist")
+    change_status(db, default_scope(db), str(job_id), "shortlist")
     calls.clear()
-    summary = evaluate_prospects(db, BatchOptions(apply=True, refresh=True))
+    summary = evaluate_prospects(db, default_scope(db), BatchOptions(apply=True, refresh=True))
 
     assert calls == []
     assert summary.auto_rejected == 0
-    row = get_job(db, job_id)
+    row = get_job(db, default_scope(db), job_id)
     assert row["status"] == "shortlisted"
     assert row["rejection_reason"] == ""
 
@@ -333,12 +333,12 @@ def test_existing_report_gates_rerun_unless_refresh(
         return fake_result(company, role, apply_verdict)
 
     monkeypatch.setattr(batch_module, "evaluate_offer", fake_evaluate)
-    first = evaluate_prospects(db, BatchOptions())
+    first = evaluate_prospects(db, default_scope(db), BatchOptions())
     assert first.processed == 1
-    second = evaluate_prospects(db, BatchOptions())
+    second = evaluate_prospects(db, default_scope(db), BatchOptions())
     assert second.processed == 0
     assert second.skipped_existing == 1
-    third = evaluate_prospects(db, BatchOptions(refresh=True))
+    third = evaluate_prospects(db, default_scope(db), BatchOptions(refresh=True))
     assert third.processed == 1
     assert calls["count"] == 2
 
@@ -362,9 +362,9 @@ def test_invalid_confidence_never_clears_the_threshold(
         return fake_result(company, role, malformed)
 
     monkeypatch.setattr(batch_module, "evaluate_offer", fake_evaluate)
-    summary = evaluate_prospects(db, BatchOptions(apply=True))
+    summary = evaluate_prospects(db, default_scope(db), BatchOptions(apply=True))
     assert summary.auto_rejected == 0
-    assert get_job(db, job_id)["status"] == "prospect"
+    assert get_job(db, default_scope(db), job_id)["status"] == "prospect"
 
 
 def test_auto_reject_is_a_system_decision(
@@ -390,9 +390,9 @@ def test_auto_reject_is_a_system_decision(
         return fake_result(company, role, skip_verdict)
 
     monkeypatch.setattr(batch_module, "evaluate_offer", fake_evaluate)
-    evaluate_prospects(db, BatchOptions(apply=True))
+    evaluate_prospects(db, default_scope(db), BatchOptions(apply=True))
 
-    last = list_events(db, job_id)[-1]
+    last = list_events(db, default_scope(db), job_id)[-1]
     assert (last["kind"], last["actor"], last["reason_code"]) == (
         "decision",
         "system",
@@ -418,10 +418,10 @@ def test_borderline_rejected_only_with_include_borderline(
         return fake_result(company, role, borderline)
 
     monkeypatch.setattr(batch_module, "evaluate_offer", fake_evaluate)
-    plain = evaluate_prospects(db, BatchOptions(apply=True))
+    plain = evaluate_prospects(db, default_scope(db), BatchOptions(apply=True))
     assert plain.auto_rejected == 0
     with_flag = evaluate_prospects(
-        db, BatchOptions(apply=True, refresh=True, include_borderline=True)
+        db, default_scope(db), BatchOptions(apply=True, refresh=True, include_borderline=True)
     )
     assert with_flag.auto_rejected == 1
-    assert get_job(db, job_id)["status"] == "rejected"
+    assert get_job(db, default_scope(db), job_id)["status"] == "rejected"

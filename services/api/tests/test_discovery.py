@@ -21,6 +21,7 @@ from harrier.discovery import (
 from harrier.notify import build_telegram_message, send_telegram_message
 from harrier.screening.normalized import NormalizedJob, make_normalized_job
 from harrier.tracker import list_jobs
+from harrier.tracks import default_scope
 from harrier.userconfig import DISCOVERY, accessors, set_config
 from harrier_cli.main import build_parser
 
@@ -114,6 +115,7 @@ def test_apify_count_override_passes_through(
     conn = connect()
     run_discovery(
         conn,
+        default_scope(conn),
         DiscoveryOptions(
             dry_run=True,
             notify=False,
@@ -142,6 +144,7 @@ def test_scheduled_run_uses_configured_count(
     monkeypatch.setattr(discovery_module, "fetch_apify_linkedin_jobs", fake_apify)
     run_discovery(
         conn,
+        default_scope(conn),
         DiscoveryOptions(
             dry_run=True,
             notify=False,
@@ -193,6 +196,7 @@ def test_scheduled_evening_run_skips_apify(
     conn = connect()
     aggregate = run_discovery(
         conn,
+        default_scope(conn),
         DiscoveryOptions(
             dry_run=True,
             notify=False,
@@ -222,7 +226,9 @@ def test_a_run_that_found_nothing_still_notifies(
     monkeypatch.setattr(discovery_module, "send_telegram_message", _capture(sent))
 
     conn = connect()
-    aggregate = run_discovery(conn, DiscoveryOptions(only_sources=frozenset({"greenhouse"})))
+    aggregate = run_discovery(
+        conn, default_scope(conn), DiscoveryOptions(only_sources=frozenset({"greenhouse"}))
+    )
 
     assert aggregate["new_prospects"] == 0
     assert len(sent) == 1
@@ -239,7 +245,11 @@ def test_a_dry_run_still_notifies_nobody(
     monkeypatch.setattr(discovery_module, "send_telegram_message", _capture(sent))
 
     conn = connect()
-    run_discovery(conn, DiscoveryOptions(dry_run=True, only_sources=frozenset({"greenhouse"})))
+    run_discovery(
+        conn,
+        default_scope(conn),
+        DiscoveryOptions(dry_run=True, only_sources=frozenset({"greenhouse"})),
+    )
     assert sent == []
 
 
@@ -253,6 +263,7 @@ def test_a_dry_run_records_no_last_success(
     conn = connect()
     run_discovery(
         conn,
+        default_scope(conn),
         DiscoveryOptions(dry_run=True, notify=False, only_sources=frozenset({"greenhouse"})),
     )
     assert last_success(conn, DISCOVERY_JOB) is None
@@ -266,7 +277,11 @@ def test_a_successful_run_records_its_last_success(
     monkeypatch.setattr(discovery_module, "load_ats_feeds", _fake_feeds)
     monkeypatch.setattr(discovery_module, "fetch_greenhouse_jobs", _one_greenhouse_job)
     conn = connect()
-    run_discovery(conn, DiscoveryOptions(notify=False, only_sources=frozenset({"greenhouse"})))
+    run_discovery(
+        conn,
+        default_scope(conn),
+        DiscoveryOptions(notify=False, only_sources=frozenset({"greenhouse"})),
+    )
     assert last_success(conn, DISCOVERY_JOB) is not None
 
 
@@ -282,7 +297,11 @@ def test_a_failing_run_leaves_the_previous_last_success_alone(
     monkeypatch.setattr(discovery_module, "fetch_remoteok_jobs", _raise)
     conn = connect()
     record_success(conn, DISCOVERY_JOB, at="2026-06-01T09:00:00Z")
-    run_discovery(conn, DiscoveryOptions(notify=False, only_sources=frozenset({"remoteok"})))
+    run_discovery(
+        conn,
+        default_scope(conn),
+        DiscoveryOptions(notify=False, only_sources=frozenset({"remoteok"})),
+    )
     assert last_success(conn, DISCOVERY_JOB) == "2026-06-01T09:00:00Z"
 
 
@@ -308,6 +327,7 @@ def test_full_run_aggregates_and_notifies_once(
     progress_events: list[tuple[str, str]] = []
     aggregate = run_discovery(
         conn,
+        default_scope(conn),
         DiscoveryOptions(only_sources=frozenset({"greenhouse", "remoteok"})),
         progress=lambda source, stage: progress_events.append((source, stage)),  # pyright: ignore[reportUnknownLambdaType, reportUnknownMemberType]
     )
@@ -320,7 +340,7 @@ def test_full_run_aggregates_and_notifies_once(
     assert ("remoteok", "done") in progress_events
 
     # Persisted through the single write path; summaries written.
-    assert len(list_jobs(conn)) == 2
+    assert len(list_jobs(conn, default_scope(conn))) == 2
     incoming = discovery_env / "data" / "incoming"
     assert (incoming / "greenhouse_latest.json").is_file()
     aggregate_file = json.loads((incoming / "job_imports_run.json").read_text(encoding="utf-8"))
@@ -343,10 +363,11 @@ def test_dry_run_writes_nothing_and_notify_gate(
     conn = connect()
     aggregate = run_discovery(
         conn,
+        default_scope(conn),
         DiscoveryOptions(dry_run=True, notify=False, only_sources=frozenset({"greenhouse"})),
     )
     assert aggregate["new_prospects"] == 1
-    assert list_jobs(conn) == []
+    assert list_jobs(conn, default_scope(conn)) == []
     assert not (discovery_env / "data" / "incoming").exists()
     assert not (discovery_env / "data" / "discovery").exists()
     assert sent == []
@@ -383,7 +404,8 @@ def test_a_lapsed_hold_is_not_counted_as_a_hold_skip(
     monkeypatch.setattr(discovery_module, "fetch_greenhouse_jobs", two_postings)
 
     aggregate = run_discovery(
-        connect(),
+        (conn := connect()),
+        default_scope(conn),
         DiscoveryOptions(dry_run=True, notify=False, only_sources=frozenset({"greenhouse"})),
     )
     summaries = cast("list[dict[str, object]]", aggregate["source_summaries"])
@@ -427,22 +449,22 @@ def test_a_posting_skipped_for_a_hold_is_judged_again_once_the_hold_lapses(
     conn = connect()
 
     hold_until("2999-12-31")
-    held = run_discovery(conn, options)
+    held = run_discovery(conn, default_scope(conn), options)
     assert cast("list[dict[str, object]]", held["source_summaries"])[0]["skipped_hold"] == 1
-    assert list_jobs(conn) == []
+    assert list_jobs(conn, default_scope(conn)) == []
 
     # Still held on the next run: skipped as seen, not judged again.
-    still_held = run_discovery(conn, options)
+    still_held = run_discovery(conn, default_scope(conn), options)
     assert cast("list[dict[str, object]]", still_held["source_summaries"])[0]["skipped_seen"] == 1
-    assert list_jobs(conn) == []
+    assert list_jobs(conn, default_scope(conn)) == []
 
     hold_until("2020-01-01")
-    lapsed = run_discovery(conn, options)
+    lapsed = run_discovery(conn, default_scope(conn), options)
     assert cast("list[dict[str, object]]", lapsed["source_summaries"])[0]["skipped_seen"] == 0
-    assert [job["company"] for job in list_jobs(conn)] == ["Held Co"]
+    assert [job["company"] for job in list_jobs(conn, default_scope(conn))] == ["Held Co"]
 
     # Once judged and tracked, the seen store skips it as before.
-    again = run_discovery(conn, options)
+    again = run_discovery(conn, default_scope(conn), options)
     assert cast("list[dict[str, object]]", again["source_summaries"])[0]["skipped_seen"] == 1
 
 
@@ -526,6 +548,7 @@ def test_dry_run_never_notifies_even_with_notify_on(
     conn = connect()
     aggregate = run_discovery(
         conn,
+        default_scope(conn),
         DiscoveryOptions(dry_run=True, notify=True, only_sources=frozenset({"greenhouse"})),
     )
     assert aggregate["new_prospects"] == 1
@@ -616,6 +639,7 @@ def test_board_errors_are_recorded_per_source(
     try:
         summary = run_discovery(
             conn,
+            default_scope(conn),
             DiscoveryOptions(dry_run=True, notify=False, only_sources=frozenset({"greenhouse"})),
         )
     finally:
@@ -649,6 +673,7 @@ def test_the_summary_reports_the_count_the_actor_was_given(
     conn = connect()
     aggregate = run_discovery(
         conn,
+        default_scope(conn),
         DiscoveryOptions(
             dry_run=True,
             notify=False,
@@ -673,6 +698,7 @@ def test_a_run_without_apify_claims_no_count(
     conn = connect()
     aggregate = run_discovery(
         conn,
+        default_scope(conn),
         DiscoveryOptions(
             dry_run=True, notify=False, only_sources=frozenset({"greenhouse"}), apify_count=150
         ),
@@ -692,6 +718,7 @@ def test_an_unroutable_watchlist_entry_is_reported_and_the_run_continues(
     conn = connect()
     aggregate = run_discovery(
         conn,
+        default_scope(conn),
         DiscoveryOptions(dry_run=True, notify=False, only_sources=frozenset({"greenhouse"})),
     )
     summaries = aggregate["source_summaries"]

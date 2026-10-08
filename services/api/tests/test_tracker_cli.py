@@ -61,22 +61,22 @@ def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
 def test_a_numeric_selector_is_the_job_id(db: sqlite3.Connection) -> None:
     # Stated change from the old CLI, which indexed into the CSV by row
     # number and therefore moved whenever a row above it was removed.
-    assert resolve_selector(db, "2")["company"] == "Example Labs"
+    assert resolve_selector(db, default_scope(db), "2")["company"] == "Example Labs"
 
 
 def test_a_unique_substring_matches_one_row(db: sqlite3.Connection) -> None:
-    assert resolve_selector(db, "Labs")["id"] == "2"
-    assert resolve_selector(db, "product")["company"] == "Other Works"
+    assert resolve_selector(db, default_scope(db), "Labs")["id"] == "2"
+    assert resolve_selector(db, default_scope(db), "product")["company"] == "Other Works"
 
 
 def test_the_url_is_searchable_too(db: sqlite3.Connection) -> None:
-    assert resolve_selector(db, "example.com/3")["company"] == "Other Works"
+    assert resolve_selector(db, default_scope(db), "example.com/3")["company"] == "Other Works"
 
 
 def test_an_ambiguous_selector_aborts_and_lists_the_candidates(db: sqlite3.Connection) -> None:
     """Never resolved by picking one: the operator narrows it themselves."""
     with pytest.raises(SelectorError) as excinfo:
-        resolve_selector(db, "Example")
+        resolve_selector(db, default_scope(db), "Example")
     message = str(excinfo.value)
     assert "ambiguous" in message
     assert "Example Co" in message
@@ -85,17 +85,17 @@ def test_an_ambiguous_selector_aborts_and_lists_the_candidates(db: sqlite3.Conne
 
 def test_a_selector_matching_nothing_is_an_error(db: sqlite3.Connection) -> None:
     with pytest.raises(SelectorError, match="no tracker rows match"):
-        resolve_selector(db, "nothing here")
+        resolve_selector(db, default_scope(db), "nothing here")
     with pytest.raises(SelectorError, match="no job with id"):
-        resolve_selector(db, "999")
+        resolve_selector(db, default_scope(db), "999")
     with pytest.raises(SelectorError, match="empty selector"):
-        resolve_selector(db, "   ")
+        resolve_selector(db, default_scope(db), "   ")
 
 
 def test_an_ambiguous_selector_changes_nothing(db: sqlite3.Connection) -> None:
-    before = [job["status"] for job in list_jobs(db)]
+    before = [job["status"] for job in list_jobs(db, default_scope(db))]
     assert main(["shortlist", "Example"]) == 1
-    assert [job["status"] for job in list_jobs(db)] == before
+    assert [job["status"] for job in list_jobs(db, default_scope(db))] == before
 
 
 # --- the transitions ---------------------------------------------------------
@@ -108,12 +108,12 @@ def test_each_verb_sets_its_status(db: sqlite3.Connection) -> None:
         ("interviewing", "interviewing"),
     ):
         assert main([verb, "1"]) == 0
-        assert get_job(db, 1)["status"] == expected
+        assert get_job(db, default_scope(db), 1)["status"] == expected
 
 
 def test_applied_seeds_the_outreach_block_and_the_follow_up(db: sqlite3.Connection) -> None:
     assert main(["applied", "1", "--applied-date", "2026-08-01"]) == 0
-    job = get_job(db, 1)
+    job = get_job(db, default_scope(db), 1)
     assert job["status"] == "applied"
     assert job["applied_date"] == "2026-08-01"
     assert job["next_action"] == "follow up if no reply by 2026-08-08"
@@ -124,14 +124,14 @@ def test_applied_seeds_the_outreach_block_and_the_follow_up(db: sqlite3.Connecti
 
 def test_reject_records_the_reason(db: sqlite3.Connection) -> None:
     assert main(["reject", "2", "hybrid,", "region", "policy"]) == 0
-    job = get_job(db, 2)
+    job = get_job(db, default_scope(db), 2)
     assert job["status"] == "rejected"
     assert job["rejection_reason"] == "hybrid, region policy"
 
 
 def test_reject_without_a_reason_still_works(db: sqlite3.Connection) -> None:
     assert main(["reject", "2"]) == 0
-    assert get_job(db, 2)["status"] == "rejected"
+    assert get_job(db, default_scope(db), 2)["status"] == "rejected"
 
 
 # --- add ---------------------------------------------------------------------
@@ -152,14 +152,14 @@ def test_add_routes_through_the_shared_scoring_path(db: sqlite3.Connection) -> N
         )
         == 0
     )
-    added = resolve_selector(db, "Fresh Co")
+    added = resolve_selector(db, default_scope(db), "Fresh Co")
     assert added["status"] == "prospect"
     # Scored on the way in, like a discovered row.
     assert added["score"] != ""
 
 
 def test_add_refuses_a_duplicate_url(db: sqlite3.Connection) -> None:
-    before = len(list_jobs(db))
+    before = len(list_jobs(db, default_scope(db)))
     assert (
         main(
             [
@@ -174,7 +174,7 @@ def test_add_refuses_a_duplicate_url(db: sqlite3.Connection) -> None:
         )
         == 1
     )
-    assert len(list_jobs(db)) == before
+    assert len(list_jobs(db, default_scope(db))) == before
 
 
 def test_add_without_a_company_is_refused(db: sqlite3.Connection) -> None:
@@ -185,26 +185,26 @@ def test_add_without_a_company_is_refused(db: sqlite3.Connection) -> None:
 
 
 def test_rank_puts_the_nearest_to_sending_first(db: sqlite3.Connection) -> None:
-    set_status(db, 1, "prospect")
-    set_status(db, 2, "tailored_cv_requested")
-    set_status(db, 3, "shortlisted")
-    order = [job["id"] for job in rank_active(list_jobs(db))]
+    set_status(db, default_scope(db), 1, "prospect")
+    set_status(db, default_scope(db), 2, "tailored_cv_requested")
+    set_status(db, default_scope(db), 3, "shortlisted")
+    order = [job["id"] for job in rank_active(list_jobs(db, default_scope(db)))]
     assert order == ["2", "3", "1"]
 
 
 def test_score_breaks_ties_within_a_stage(db: sqlite3.Connection) -> None:
-    ranked = rank_active(list_jobs(db))
+    ranked = rank_active(list_jobs(db, default_scope(db)))
     # All three are prospects, so the higher fit_score leads.
     assert [job["id"] for job in ranked] == ["1", "2", "3"]
 
 
 def test_rejected_rows_never_appear_in_the_queue(db: sqlite3.Connection) -> None:
-    set_status(db, 1, "rejected")
-    assert "1" not in [job["id"] for job in rank_active(list_jobs(db))]
+    set_status(db, default_scope(db), 1, "rejected")
+    assert "1" not in [job["id"] for job in rank_active(list_jobs(db, default_scope(db)))]
 
 
 def test_status_counts_cover_every_legal_status(db: sqlite3.Connection) -> None:
-    counts = status_counts(list_jobs(db))
+    counts = status_counts(list_jobs(db, default_scope(db)))
     assert counts["prospect"] == 3
     assert counts["rejected"] == 0
 
@@ -232,10 +232,10 @@ def test_reevaluate_without_a_stored_description_is_skipped(
     the real one. Reporting it as skipped is the only answer that does not
     quietly destroy the score it claims to refresh (spec 033).
     """
-    before = get_job(db, 1)
+    before = get_job(db, default_scope(db), 1)
     assert main(["reevaluate", "1"]) == 2
     assert "no stored description" in capsys.readouterr().err
-    assert get_job(db, 1)["fit_score"] == before["fit_score"]
+    assert get_job(db, default_scope(db), 1)["fit_score"] == before["fit_score"]
 
 
 def test_reevaluate_rescores_against_the_current_config(
@@ -249,7 +249,7 @@ def test_reevaluate_rescores_against_the_current_config(
     from harrier.screening.normalized import make_normalized_job
     from harrier.screening.rules import score_job
 
-    job = get_job(db, 1)
+    job = get_job(db, default_scope(db), 1)
     description = (
         "We are hiring a senior frontend engineer for a fully remote role across "
         "Europe. You will work in TypeScript and React, own delivery end to end, "
@@ -269,7 +269,7 @@ def test_reevaluate_rescores_against_the_current_config(
     )
 
     assert main(["reevaluate", "1"]) == 0
-    rescored = get_job(db, 1)
+    rescored = get_job(db, default_scope(db), 1)
     assert rescored["fit_score"] == str(expected)
     assert rescored["score"] == rescored["fit_score"]
     assert rescored["signals"] != ""
@@ -282,17 +282,17 @@ def test_reevaluate_rescores_against_the_current_config(
 def test_review_lists_only_rows_awaiting_a_decision(db: sqlite3.Connection) -> None:
     """applied and interviewing are decided: the next move is someone
     else's. review passed everything to the ranker and listed them."""
-    set_status(db, 1, "applied")
-    set_status(db, 2, "interviewing")
-    queued = rank_active(list_jobs(db), statuses=UNDECIDED_STATUSES)
+    set_status(db, default_scope(db), 1, "applied")
+    set_status(db, default_scope(db), 2, "interviewing")
+    queued = rank_active(list_jobs(db, default_scope(db)), statuses=UNDECIDED_STATUSES)
     assert [job["id"] for job in queued] == ["3"]
 
 
 def test_next_still_shows_decided_but_active_rows(db: sqlite3.Connection) -> None:
     # next answers "what am I working on", which includes a sent
     # application waiting on a reply.
-    set_status(db, 1, "applied")
-    assert "1" in [job["id"] for job in rank_active(list_jobs(db))]
+    set_status(db, default_scope(db), 1, "applied")
+    assert "1" in [job["id"] for job in rank_active(list_jobs(db, default_scope(db)))]
 
 
 def test_an_undated_row_sorts_behind_a_dated_one(db: sqlite3.Connection) -> None:
@@ -300,9 +300,13 @@ def test_an_undated_row_sorts_behind_a_dated_one(db: sqlite3.Connection) -> None
     the queue (review finding on PR #27)."""
     from harrier.tracker import update_fields
 
-    update_fields(db, 1, {"added_at": "", "fit_score": "70"})
-    update_fields(db, 2, {"added_at": "2026-08-01", "fit_score": "70"})
-    ranked = [job["id"] for job in rank_active(list_jobs(db)) if job["id"] in {"1", "2"}]
+    update_fields(db, default_scope(db), 1, {"added_at": "", "fit_score": "70"})
+    update_fields(db, default_scope(db), 2, {"added_at": "2026-08-01", "fit_score": "70"})
+    ranked = [
+        job["id"]
+        for job in rank_active(list_jobs(db, default_scope(db)))
+        if job["id"] in {"1", "2"}
+    ]
     assert ranked == ["2", "1"]
 
 
@@ -310,7 +314,7 @@ def test_a_malformed_applied_date_is_refused_by_the_parser(db: sqlite3.Connectio
     # Reached date.fromisoformat and escaped as a traceback before.
     with pytest.raises(SystemExit):
         main(["applied", "1", "--applied-date", "not-a-date"])
-    assert get_job(db, 1)["status"] == "prospect"
+    assert get_job(db, default_scope(db), 1)["status"] == "prospect"
 
 
 def test_a_bad_limit_is_refused_by_the_parser(db: sqlite3.Connection) -> None:
@@ -322,9 +326,9 @@ def test_a_bad_limit_is_refused_by_the_parser(db: sqlite3.Connection) -> None:
 def test_add_refuses_a_duplicate_company_and_title(db: sqlite3.Connection) -> None:
     """The reachable third dedupe path for a manual add: no URL, same
     company and title as a tracked row."""
-    before = len(list_jobs(db))
+    before = len(list_jobs(db, default_scope(db)))
     assert main(["add", "--company", "Example Co", "--title", "Senior Frontend Engineer"]) == 1
-    assert len(list_jobs(db)) == before
+    assert len(list_jobs(db, default_scope(db))) == before
 
 
 def test_reevaluate_uses_the_active_model(db: sqlite3.Connection) -> None:
@@ -339,7 +343,7 @@ def test_reevaluate_uses_the_active_model(db: sqlite3.Connection) -> None:
     from harrier.screening.policy import policy_version
 
     save_description_cache(
-        get_job(db, 1)["url"],
+        get_job(db, default_scope(db), 1)["url"],
         "Remote across Europe. TypeScript and React, testing and ownership, a small "
         "team building developer tools with care for observability and performance.",
     )
@@ -356,7 +360,7 @@ def test_reevaluate_uses_the_active_model(db: sqlite3.Connection) -> None:
     write_bytes_atomic(active_model_path(), data)
 
     assert main(["reevaluate", "1"]) == 0
-    job = get_job(db, 1)
+    job = get_job(db, default_scope(db), 1)
     identity = model_identity(data)
     assert job["signals"].startswith(f"scorer=model:{identity}")
     assert job["scoring_version"] == policy_version(load_candidate_config(db), model=identity)
@@ -371,8 +375,8 @@ def test_reevaluate_reports_a_previous_score_of_zero_as_zero(
     from harrier.screening.descriptions import save_description_cache
     from harrier.tracker.store import update_fields
 
-    job = get_job(db, 1)
-    update_fields(db, 1, {"fit_score": "0", "score": "0"})
+    job = get_job(db, default_scope(db), 1)
+    update_fields(db, default_scope(db), 1, {"fit_score": "0", "score": "0"})
     save_description_cache(job["url"], "Remote across Europe. TypeScript and React.")
     assert main(["reevaluate", "1"]) == 0
     assert "rescored 0 ->" in capsys.readouterr().out

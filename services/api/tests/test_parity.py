@@ -30,6 +30,7 @@ from harrier.parity import (
 )
 from harrier.parity.checklist import parse_decisions, write_checklist
 from harrier.parity.diff import PATH_KEYS, RunSummaryError, source_summaries
+from harrier.tracks import default_scope
 
 MATRIX = """# Matrix
 
@@ -435,10 +436,10 @@ def test_a_shadow_run_never_reaches_the_paid_source(
 
     monkeypatch.setattr("harrier.discovery.fetch_apify_linkedin_jobs", explode)
     monkeypatch.setenv("APIFY_TOKEN", "present-but-must-not-be-used")
-    summary_out = run_discovery(db, DiscoveryOptions(shadow=True, notify=False))
+    summary_out = run_discovery(db, default_scope(db), DiscoveryOptions(shadow=True, notify=False))
     assert "apify_linkedin" not in cast("list[str]", summary_out["sources_run"])
 
 
 def test_a_shadow_run_writes_nothing_to_the_tracker(db: sqlite3.Connection) -> None:
-    run_discovery(db, DiscoveryOptions(shadow=True, notify=False))
+    run_discovery(db, default_scope(db), DiscoveryOptions(shadow=True, notify=False))
     assert db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0

@@ -71,7 +71,7 @@ def described(job_id: int) -> None:
 
     conn = connect()
     save_description_cache(
-        get_job(conn, job_id)["url"],
+        get_job(conn, default_scope(conn), job_id)["url"],
         "Remote across Europe. TypeScript and React, testing and ownership.",
     )
     conn.close()
@@ -91,7 +91,7 @@ def test_the_cli_and_the_api_call_the_same_function(job_id: int, client: TestCli
     Both paths are driven through a patched action. If either grew its own
     copy of the rules, its call would not arrive here.
     """
-    real_row = get_job(connect(), job_id)
+    real_row = get_job((c := connect()), default_scope(c), job_id)
 
     with patch("harrier.tracker.actions.change_status") as action:
         action.return_value = real_row
@@ -114,12 +114,12 @@ def test_rescore_goes_through_the_same_function(
     job_id: int, client: TestClient, described: None
 ) -> None:
     with patch("harrier.tracker.actions.rescore") as action:
-        action.return_value = rescore(connect(), str(job_id))
+        action.return_value = rescore((c := connect()), default_scope(c), str(job_id))
         main(["reevaluate", str(job_id)])
         cli_call = action.call_args
 
     with patch("harrier.tracker.actions.rescore") as action:
-        action.return_value = rescore(connect(), str(job_id))
+        action.return_value = rescore((c := connect()), default_scope(c), str(job_id))
         client.post(f"/tracker/{job_id}/rescore", headers=auth())
         api_call = action.call_args
 
@@ -224,8 +224,8 @@ def test_api_rejection_text_never_becomes_a_candidate_decision(
         assert response.status_code == 200, response.text
         assert response.json()["status"] == "rejected"
 
-    applied_event = list_events(conn, job_id)[-1]
-    unapplied_event = list_events(conn, unapplied)[-1]
+    applied_event = list_events(conn, default_scope(conn), job_id)[-1]
+    unapplied_event = list_events(conn, default_scope(conn), unapplied)[-1]
     assert (applied_event["kind"], applied_event["actor"], applied_event["reason_code"]) == (
         "outcome",
         "company",
@@ -243,7 +243,7 @@ def _last_event(job: int) -> dict[str, str]:
 
     conn = connect()
     try:
-        return list_events(conn, job)[-1]
+        return list_events(conn, default_scope(conn), job)[-1]
     finally:
         conn.close()
 
@@ -284,7 +284,7 @@ def test_a_company_code_is_not_a_rejection_code(job_id: int, client: TestClient)
         headers=auth(),
     )
     assert response.status_code == 422
-    assert get_job(connect(), job_id)["status"] == "prospect"
+    assert get_job((c := connect()), default_scope(c), job_id)["status"] == "prospect"
     assert _event_count() == before
 
 
@@ -347,7 +347,7 @@ def test_company_outcome_refuses_an_unapplied_row(job_id: int, client: TestClien
     )
     assert response.status_code == 409
     assert "no application or invited interview was recorded" in response.json()["detail"]
-    assert get_job(connect(), job_id)["status"] == "prospect"
+    assert get_job((c := connect()), default_scope(c), job_id)["status"] == "prospect"
     assert _event_count() == before
 
 
@@ -373,7 +373,7 @@ def test_the_outcome_route_and_the_cli_call_the_same_function(
 ) -> None:
     """Spec 042's pairing, for the company's outcome: both paths are driven
     through a patched action, and both must arrive with the same arguments."""
-    real_row = get_job(connect(), job_id)
+    real_row = get_job((c := connect()), default_scope(c), job_id)
 
     with patch("harrier.tracker.actions.record_company_outcome") as action:
         action.return_value = real_row
@@ -394,7 +394,9 @@ def test_the_outcome_route_and_the_cli_call_the_same_function(
 def test_the_same_refusal_reaches_the_cli(env: Path, job_id: int) -> None:
     """The same message on both sides, which is what the shared action buys."""
     with pytest.raises(TrackerActionError, match="only recorded on a rejection"):
-        change_status(connect(), str(job_id), "shortlist", reason="because")
+        change_status(
+            (c := connect()), default_scope(c), str(job_id), "shortlist", reason="because"
+        )
 
 
 # --- the transitions require the token ---------------------------------------
@@ -581,7 +583,7 @@ def test_the_queue_matches_the_cli_ordering(env: Path, client: TestClient) -> No
             },
             scope=default_scope(conn),
         )
-    expected = [row["id"] for row in next_up(conn)]
+    expected = [row["id"] for row in next_up(conn, default_scope(conn))]
     conn.close()
 
     over_http = [str(row["id"]) for row in client.get("/tracker/queue").json()]
@@ -614,7 +616,7 @@ def test_a_change_over_http_is_visible_to_the_cli(
     assert refused.status_code == 409
     client.post(f"/tracker/{job_id}/status", json={"verb": "shortlist"}, headers=auth())
     conn: sqlite3.Connection = connect()
-    assert get_job(conn, job_id)["status"] == "shortlisted"
+    assert get_job(conn, default_scope(conn), job_id)["status"] == "shortlisted"
     conn.close()
 
 

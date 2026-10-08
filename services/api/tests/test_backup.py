@@ -216,7 +216,7 @@ def test_a_verified_archive_restores_to_a_readable_tracker(data: Path, tmp_path:
 
     conn = sqlite3.connect(target / DB_FILENAME)
     conn.row_factory = sqlite3.Row
-    rows = list_jobs(conn)
+    rows = list_jobs(conn, default_scope(conn))
     conn.close()
     assert len(rows) == 3
 

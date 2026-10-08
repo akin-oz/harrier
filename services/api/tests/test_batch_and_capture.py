@@ -17,6 +17,7 @@ from harrier.sources.batch_exports import (
     read_export_rows,
 )
 from harrier.tracker import list_jobs
+from harrier.tracks import default_scope
 from harrier_api.app import create_app
 
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
@@ -82,6 +83,7 @@ def test_add_captured_job_scores_and_marks_manual(capture_env: Path) -> None:
     conn = connect()
     result = add_captured_job(
         conn,
+        default_scope(conn),
         company="Acme",
         title="Senior Frontend Engineer",
         location="Remote, Europe",
@@ -89,16 +91,18 @@ def test_add_captured_job_scores_and_marks_manual(capture_env: Path) -> None:
         description="Remote Europe role with TypeScript and React. " * 200,
     )
     assert result.status == "added"
-    job = list_jobs(conn)[0]
+    job = list_jobs(conn, default_scope(conn))[0]
     assert job["status"] == "prospect"
     assert "manual_added=" in job["notes"]
     assert "score=" in job["notes"]
     assert job["source_label"].startswith("manual:")
 
-    duplicate = add_captured_job(conn, company="Acme", title="Senior Frontend Engineer")
+    duplicate = add_captured_job(
+        conn, default_scope(conn), company="Acme", title="Senior Frontend Engineer"
+    )
     assert duplicate.status == "duplicate"
 
-    invalid = add_captured_job(conn, company="", title="X")
+    invalid = add_captured_job(conn, default_scope(conn), company="", title="X")
     assert invalid.status == "invalid"
 
 
@@ -128,7 +132,7 @@ def test_capture_endpoints_status_contract(capture_env: Path) -> None:
         from harrier.screening.descriptions import load_cached_description
 
         conn = connect()
-        assert len(list_jobs(conn)) == 1
+        assert len(list_jobs(conn, default_scope(conn))) == 1
         conn.close()
         assert len(load_cached_description("https://example.com/jobs/1")) == 4000
 
@@ -146,7 +150,7 @@ def test_capture_endpoints_status_contract(capture_env: Path) -> None:
         )
         assert response.status_code == 200
         conn = connect()
-        beta = next(job for job in list_jobs(conn) if job["company"] == "Beta")
+        beta = next(job for job in list_jobs(conn, default_scope(conn)) if job["company"] == "Beta")
         assert beta["source"] == "manual"
         conn.close()
 
@@ -164,7 +168,7 @@ def test_the_capture_get_changes_nothing(capture_env: Path) -> None:
         assert "Add this posting to the tracker?" in response.text
 
     conn = connect()
-    assert list_jobs(conn) == []
+    assert list_jobs(conn, default_scope(conn)) == []
     conn.close()
 
 
@@ -207,7 +211,7 @@ def test_submitting_the_confirmation_form_adds_the_job(capture_env: Path) -> Non
         assert "back to job posting" in response.text
 
     conn = connect()
-    assert len(list_jobs(conn)) == 1
+    assert len(list_jobs(conn, default_scope(conn))) == 1
     conn.close()
 
 
@@ -222,7 +226,7 @@ def test_the_form_without_the_token_is_refused(capture_env: Path) -> None:
         assert response.status_code == 403
 
     conn = connect()
-    assert list_jobs(conn) == []
+    assert list_jobs(conn, default_scope(conn)) == []
     conn.close()
 
 
@@ -232,7 +236,7 @@ def test_the_json_post_without_the_token_is_refused(capture_env: Path) -> None:
         assert response.status_code == 403
 
     conn = connect()
-    assert list_jobs(conn) == []
+    assert list_jobs(conn, default_scope(conn)) == []
     conn.close()
 
 
@@ -256,6 +260,7 @@ def test_captured_description_truncated_at_4000(capture_env: Path) -> None:
     conn = connect()
     add_captured_job(
         conn,
+        default_scope(conn),
         company="Gamma",
         title="Frontend Engineer",
         url="https://example.com/jobs/9",
@@ -288,8 +293,8 @@ def test_read_export_rows_rejects_bad_shapes(tmp_path: Path) -> None:
 
 def test_whitespace_source_defaults_to_manual(capture_env: Path) -> None:
     conn = connect()
-    add_captured_job(conn, company="Delta", title="Engineer", source="   ")
-    job = next(job for job in list_jobs(conn) if job["company"] == "Delta")
+    add_captured_job(conn, default_scope(conn), company="Delta", title="Engineer", source="   ")
+    job = next(job for job in list_jobs(conn, default_scope(conn)) if job["company"] == "Delta")
     assert job["source"] == "manual"
 
 
@@ -305,10 +310,11 @@ def test_cache_write_failure_does_not_break_capture(
     conn = connect()
     result = add_captured_job(
         conn,
+        default_scope(conn),
         company="Epsilon",
         title="Engineer",
         url="https://example.com/jobs/50",
         description="some description",
     )
     assert result.status == "added"
-    assert any(job["company"] == "Epsilon" for job in list_jobs(conn))
+    assert any(job["company"] == "Epsilon" for job in list_jobs(conn, default_scope(conn)))

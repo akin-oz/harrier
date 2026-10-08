@@ -19,6 +19,7 @@ from harrier.outreach.contacts import (
     update_contact_status,
 )
 from harrier.tracker import get_job, list_contacts, list_jobs, update_fields
+from harrier.tracks import Scope
 
 DUE_OUTREACH_ACTIONS = {"find contacts", "send first outreach", "send follow-up"}
 
@@ -139,17 +140,18 @@ def refresh_outreach_fields(row: dict[str, str], contact_rows: list[dict[str, st
         refresh_primary_next_action_from_outreach(row)
 
 
-def _persist_outreach_fields(conn: sqlite3.Connection, row: dict[str, str]) -> None:
+def _persist_outreach_fields(conn: sqlite3.Connection, scope: Scope, row: dict[str, str]) -> None:
     update_fields(
         conn,
+        scope,
         int(row["id"]),
         {name: row.get(name, "") for name in OUTREACH_ROW_FIELDS},
     )
 
 
-def sync_tracker_outreach(conn: sqlite3.Connection) -> list[dict[str, str]]:
+def sync_tracker_outreach(conn: sqlite3.Connection, scope: Scope) -> list[dict[str, str]]:
     contacts = list_contacts(conn)
-    rows = list_jobs(conn)
+    rows = list_jobs(conn, scope)
     for row in rows:
         refresh_outreach_fields(
             row,
@@ -157,14 +159,14 @@ def sync_tracker_outreach(conn: sqlite3.Connection) -> list[dict[str, str]]:
                 contacts, row.get("company", ""), row.get("title", ""), row.get("url", "")
             ),
         )
-        _persist_outreach_fields(conn, row)
+        _persist_outreach_fields(conn, scope, row)
     return rows
 
 
 def mark_job_outreach_sent(
-    conn: sqlite3.Connection, job_id: int, *, sent_at: str | None = None
+    conn: sqlite3.Connection, scope: Scope, job_id: int, *, sent_at: str | None = None
 ) -> dict[str, str]:
-    row = get_job(conn, job_id)
+    row = get_job(conn, scope, job_id)
     sent_at = sent_at or today_iso()
     current = normalize(row.get("outreach_status", ""))
     # Legal transitions only: ready (or fresh) -> sent, sent -> follow_up_sent
@@ -177,6 +179,7 @@ def mark_job_outreach_sent(
     refresh_primary_next_action_from_outreach(row)
     update_fields(
         conn,
+        scope,
         job_id,
         {
             "outreach_status": row["outreach_status"],
@@ -193,9 +196,9 @@ def mark_job_outreach_sent(
 
 
 def mark_job_outreach_replied(
-    conn: sqlite3.Connection, job_id: int, *, replied_at: str | None = None
+    conn: sqlite3.Connection, scope: Scope, job_id: int, *, replied_at: str | None = None
 ) -> dict[str, str]:
-    row = get_job(conn, job_id)
+    row = get_job(conn, scope, job_id)
     replied_at = replied_at or today_iso()
     row["outreach_status"] = "replied"
     row["last_outreach_at"] = replied_at
@@ -203,6 +206,7 @@ def mark_job_outreach_replied(
     row["next_action"] = "continue conversation with contact"
     update_fields(
         conn,
+        scope,
         job_id,
         {
             "outreach_status": "replied",
@@ -222,23 +226,25 @@ def mark_job_outreach_replied(
     return row
 
 
-def snooze_job_outreach(conn: sqlite3.Connection, job_id: int, until_date: str) -> dict[str, str]:
+def snooze_job_outreach(
+    conn: sqlite3.Connection, scope: Scope, job_id: int, until_date: str
+) -> dict[str, str]:
     date.fromisoformat(until_date)  # validate early
     updates = {
         "outreach_status": "snoozed",
         "next_outreach_action": f"snoozed until {until_date}",
         "next_action": f"snoozed until {until_date}",
     }
-    return update_fields(conn, job_id, updates)
+    return update_fields(conn, scope, job_id, updates)
 
 
 def set_best_contact_for_job(
-    conn: sqlite3.Connection, job_id: int, linkedin_url: str
+    conn: sqlite3.Connection, scope: Scope, job_id: int, linkedin_url: str
 ) -> dict[str, str] | None:
     """Pin a specific contact as the job's best contact (spec 016 port of
     set_best_contact_for_job); returns None when the contact is not linked
     to the job."""
-    row = get_job(conn, job_id)
+    row = get_job(conn, scope, job_id)
     contacts = list_contacts(conn)
     linked = contacts_for_job(
         contacts, row.get("company", ""), row.get("title", ""), row.get("url", "")
@@ -256,7 +262,7 @@ def set_best_contact_for_job(
         "contacts_found": str(len(linked)),
         "outreach_status": (row.get("outreach_status", "") or "").strip() or "ready",
     }
-    return update_fields(conn, job_id, updates)
+    return update_fields(conn, scope, job_id, updates)
 
 
 def filter_outreach_rows(
@@ -275,5 +281,5 @@ def filter_outreach_rows(
     return due
 
 
-def outreach_due_rows(conn: sqlite3.Connection) -> list[dict[str, str]]:
-    return filter_outreach_rows(sync_tracker_outreach(conn), due_only=True)
+def outreach_due_rows(conn: sqlite3.Connection, scope: Scope) -> list[dict[str, str]]:
+    return filter_outreach_rows(sync_tracker_outreach(conn, scope), due_only=True)

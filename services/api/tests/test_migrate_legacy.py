@@ -9,6 +9,7 @@ from harrier.db import connect
 from harrier.tracker import CONTACT_FIELDS, TRACKER_FIELDS, list_contacts, list_jobs
 from harrier.tracker.export import export_csv
 from harrier.tracker.migrate_legacy import MigrationError, migrate
+from harrier.tracks import default_scope
 
 SYNTHETIC_JOBS: list[dict[str, str]] = [
     {
@@ -88,7 +89,7 @@ def test_migration_counts_and_field_fidelity(tmp_path: Path, csv_pair: tuple[Pat
     assert report.jobs_imported == len(SYNTHETIC_JOBS)
     assert report.contacts_imported == len(SYNTHETIC_CONTACTS)
 
-    jobs = list_jobs(conn)
+    jobs = list_jobs(conn, default_scope(conn))
     acme = jobs[0]
     for name in TRACKER_FIELDS:
         expected = SYNTHETIC_JOBS[0].get(name, "")
@@ -109,7 +110,7 @@ def test_unknown_status_preserved_not_invented(tmp_path: Path, csv_pair: tuple[P
     jobs_csv, contacts_csv = csv_pair
     conn = connect(tmp_path / "t.db")
     report = migrate(conn, jobs_csv, contacts_csv)
-    gamma = list_jobs(conn)[2]
+    gamma = list_jobs(conn, default_scope(conn))[2]
     assert gamma["status"] == "prospect"
     assert "legacy_status=weird_legacy_status" in gamma["notes"]
     assert report.unknown_statuses == {"weird_legacy_status": 1}
@@ -123,7 +124,7 @@ def test_duplicate_url_aborts_importing_nothing(tmp_path: Path) -> None:
     conn = connect(tmp_path / "t.db")
     with pytest.raises(MigrationError, match="url appears 2 times"):
         migrate(conn, jobs_csv, None)
-    assert list_jobs(conn) == []
+    assert list_jobs(conn, default_scope(conn)) == []
 
 
 def test_second_migration_requires_replace(tmp_path: Path, csv_pair: tuple[Path, Path]) -> None:
@@ -134,7 +135,7 @@ def test_second_migration_requires_replace(tmp_path: Path, csv_pair: tuple[Path,
         migrate(conn, jobs_csv, contacts_csv)
     report = migrate(conn, jobs_csv, contacts_csv, replace=True)
     assert report.jobs_imported == len(SYNTHETIC_JOBS)
-    assert len(list_jobs(conn)) == len(SYNTHETIC_JOBS)
+    assert len(list_jobs(conn, default_scope(conn))) == len(SYNTHETIC_JOBS)
 
 
 def test_replace_refuses_over_decision_history(tmp_path: Path, csv_pair: tuple[Path, Path]) -> None:
@@ -146,12 +147,12 @@ def test_replace_refuses_over_decision_history(tmp_path: Path, csv_pair: tuple[P
     jobs_csv, contacts_csv = csv_pair
     conn = connect(tmp_path / "t.db")
     migrate(conn, jobs_csv, contacts_csv)
-    first = list_jobs(conn)[0]
-    set_status(conn, int(first["id"]), "shortlisted")
+    first = list_jobs(conn, default_scope(conn))[0]
+    set_status(conn, default_scope(conn), int(first["id"]), "shortlisted")
 
     with pytest.raises(MigrationError, match="decision history"):
         migrate(conn, jobs_csv, contacts_csv, replace=True)
-    assert len(list_jobs(conn)) == len(SYNTHETIC_JOBS)
+    assert len(list_jobs(conn, default_scope(conn))) == len(SYNTHETIC_JOBS)
     assert len(list_contacts(conn)) == len(SYNTHETIC_CONTACTS)
 
 
@@ -159,14 +160,14 @@ def test_export_reimport_round_trip(tmp_path: Path, csv_pair: tuple[Path, Path])
     jobs_csv, contacts_csv = csv_pair
     conn = connect(tmp_path / "a.db")
     migrate(conn, jobs_csv, contacts_csv)
-    first = list_jobs(conn)
+    first = list_jobs(conn, default_scope(conn))
 
     out_dir = tmp_path / "export"
-    exported_jobs, exported_contacts = export_csv(conn, out_dir)
+    exported_jobs, exported_contacts = export_csv(conn, default_scope(conn), out_dir)
 
     conn2 = connect(tmp_path / "b.db")
     migrate(conn2, exported_jobs, exported_contacts)
-    second = list_jobs(conn2)
+    second = list_jobs(conn2, default_scope(conn2))
 
     for row_a, row_b in zip(first, second, strict=True):
         for name in TRACKER_FIELDS:
@@ -187,7 +188,7 @@ def test_aborted_replace_leaves_existing_data_intact(
     with pytest.raises(MigrationError, match="url appears 2 times"):
         migrate(conn, bad_csv, None, replace=True)
 
-    assert len(list_jobs(conn)) == len(SYNTHETIC_JOBS)
+    assert len(list_jobs(conn, default_scope(conn))) == len(SYNTHETIC_JOBS)
     assert len(list_contacts(conn)) == len(SYNTHETIC_CONTACTS)
 
 
@@ -198,7 +199,7 @@ def test_export_restores_legacy_status_and_strips_marker(
     conn = connect(tmp_path / "t.db")
     migrate(conn, jobs_csv, contacts_csv)
 
-    exported_jobs, _ = export_csv(conn, tmp_path / "export")
+    exported_jobs, _ = export_csv(conn, default_scope(conn), tmp_path / "export")
     with exported_jobs.open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
     gamma = rows[2]
@@ -213,9 +214,9 @@ def test_reimport_of_export_does_not_double_mark(
     jobs_csv, contacts_csv = csv_pair
     conn = connect(tmp_path / "a.db")
     migrate(conn, jobs_csv, contacts_csv)
-    exported_jobs, exported_contacts = export_csv(conn, tmp_path / "export")
+    exported_jobs, exported_contacts = export_csv(conn, default_scope(conn), tmp_path / "export")
 
     conn2 = connect(tmp_path / "b.db")
     migrate(conn2, exported_jobs, exported_contacts)
-    gamma = list_jobs(conn2)[2]
+    gamma = list_jobs(conn2, default_scope(conn2))[2]
     assert gamma["notes"].count("legacy_status=") == 1

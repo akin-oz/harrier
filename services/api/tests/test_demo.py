@@ -42,6 +42,7 @@ from harrier.mail.watch import fetch_recent_messages
 from harrier.notify import send_telegram_message
 from harrier.screening.http import request_text
 from harrier.sources.feeds import parse_ats_feeds
+from harrier.tracks import default_scope
 from harrier_api.app import create_app
 from harrier_api.demo import PROFILE_SEEDS, demo_db_path, seed_demo_db, seed_profile_documents
 
@@ -172,7 +173,7 @@ def test_every_indexed_fixture_file_exists() -> None:
 def test_demo_discovery_runs_offline_and_screens_the_fixture_boards(demo_env: Path) -> None:
     conn = connect(demo_env / "demo.db")
     try:
-        summary = run_discovery(conn, DiscoveryOptions(notify=False))
+        summary = run_discovery(conn, default_scope(conn), DiscoveryOptions(notify=False))
     finally:
         conn.close()
     # Apify is the one paid, non-fixtured source and must not be attempted.
@@ -195,7 +196,7 @@ def test_demo_discovery_needs_no_environment_keys(
         with caplog.at_level("WARNING"):
             # notify stays on: the run must reach the notify branch and decline
             # it, which is where the missing-token warning came from.
-            summary = run_discovery(conn, DiscoveryOptions(notify=True))
+            summary = run_discovery(conn, default_scope(conn), DiscoveryOptions(notify=True))
     finally:
         conn.close()
     for entry in cast("list[object]", summary["source_summaries"]):
@@ -252,7 +253,7 @@ def test_reseeding_drops_discovery_state_so_a_second_run_finds_things(
     seed_demo_db()
     conn = connect(demo_db_path())
     try:
-        first = run_discovery(conn, DiscoveryOptions(notify=False))
+        first = run_discovery(conn, default_scope(conn), DiscoveryOptions(notify=False))
     finally:
         conn.close()
     assert first["new_prospects"] == 8
@@ -260,7 +261,7 @@ def test_reseeding_drops_discovery_state_so_a_second_run_finds_things(
     seed_demo_db()
     conn = connect(demo_db_path())
     try:
-        second = run_discovery(conn, DiscoveryOptions(notify=False))
+        second = run_discovery(conn, default_scope(conn), DiscoveryOptions(notify=False))
     finally:
         conn.close()
     assert second["new_prospects"] == 8

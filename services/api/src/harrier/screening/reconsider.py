@@ -35,6 +35,7 @@ from harrier.screening.policy import policy_version
 from harrier.screening.rules import CandidateConfig
 from harrier.screening.seen import SeenDecision, load_seen, save_seen
 from harrier.tracker.store import list_jobs
+from harrier.tracks import Scope
 
 # The statuses that represent a decision by the operator rather than by a
 # rule. Reconsideration never touches a posting that matches one of these.
@@ -65,7 +66,7 @@ class ReconsiderReport:
         )
 
 
-def human_rejected_keys(conn: sqlite3.Connection) -> set[str]:
+def human_rejected_keys(conn: sqlite3.Connection, scope: Scope) -> set[str]:
     """Normalized identities of jobs the operator has rejected.
 
     Matched on url and on company plus title, the same identities screening
@@ -73,7 +74,7 @@ def human_rejected_keys(conn: sqlite3.Connection) -> set[str]:
     different key would defeat the protection entirely.
     """
     protected: set[str] = set()
-    for job in list_jobs(conn):
+    for job in list_jobs(conn, scope):
         if job.get("status") not in HUMAN_DECIDED:
             continue
         url = normalize(job.get("url", ""))
@@ -88,6 +89,7 @@ def human_rejected_keys(conn: sqlite3.Connection) -> set[str]:
 
 def reconsider_source(
     conn: sqlite3.Connection,
+    scope: Scope,
     source: str,
     candidate_cfg: CandidateConfig,
     *,
@@ -103,7 +105,7 @@ def reconsider_source(
     """
     current = policy_version(candidate_cfg)
     decisions = load_seen(source)
-    protected = human_rejected_keys(conn)
+    protected = human_rejected_keys(conn, scope)
     report = ReconsiderReport(source=source, current_policy=current, examined=len(decisions))
 
     remaining: dict[str, SeenDecision] = {}

@@ -53,11 +53,15 @@ def seed_job(
         scope=default_scope(conn),
     )
     if status == "applied":
-        set_status(conn, job_id, "applied", applied_date=applied_date or "2026-08-01")
+        set_status(
+            conn, default_scope(conn), job_id, "applied", applied_date=applied_date or "2026-08-01"
+        )
     elif status != "prospect":
-        set_status(conn, job_id, status)
+        set_status(conn, default_scope(conn), job_id, status)
     if next_outreach_action:
-        update_fields(conn, job_id, {"next_outreach_action": next_outreach_action})
+        update_fields(
+            conn, default_scope(conn), job_id, {"next_outreach_action": next_outreach_action}
+        )
     return job_id
 
 
@@ -89,7 +93,7 @@ def test_digest_renders_all_five_sections(db: sqlite3.Connection) -> None:
     )
     seed_job(db, "Ghosted Co", status="applied", applied_date="2026-07-01")
     write_event()
-    digest = build_digest(db, TARGET)
+    digest = build_digest(db, default_scope(db), TARGET)
     assert "New prospects today: 1" in digest
     assert "Fresh Co" in digest
     assert "Top 3 prospects" in digest
@@ -104,7 +108,7 @@ def test_dry_run_sends_nothing(db: sqlite3.Connection) -> None:
     def no_send(message: str) -> int:
         raise AssertionError("dry run must never send")
 
-    digest, rc = run_digest(db, TARGET, dry_run=True, send=no_send)
+    digest, rc = run_digest(db, default_scope(db), TARGET, dry_run=True, send=no_send)
     assert rc == 0
     assert digest.startswith("Daily job digest — 2026-08-10")
 
@@ -116,7 +120,7 @@ def test_live_run_sends_once(db: sqlite3.Connection) -> None:
         sent.append(message)
         return 0
 
-    digest, rc = run_digest(db, TARGET, dry_run=False, send=capture)
+    digest, rc = run_digest(db, default_scope(db), TARGET, dry_run=False, send=capture)
     assert rc == 0
     assert sent == [digest]
 
@@ -126,10 +130,12 @@ def test_legacy_auto_added_note_counts_as_added_at(db: sqlite3.Connection) -> No
     from harrier.tracker import update_fields
 
     job_id = seed_job(db, "Migrated Co", added_at="")
-    update_fields(db, job_id, {"notes": "auto_added=2026-08-10; source_label=greenhouse"})
+    update_fields(
+        db, default_scope(db), job_id, {"notes": "auto_added=2026-08-10; source_label=greenhouse"}
+    )
     seeded = seed_job(db, "Seeded Co", added_at="")
-    update_fields(db, seeded, {"notes": "tier_a_seed=2026-08-10"})
-    digest = build_digest(db, TARGET)
+    update_fields(db, default_scope(db), seeded, {"notes": "tier_a_seed=2026-08-10"})
+    digest = build_digest(db, default_scope(db), TARGET)
     assert "New prospects today: 2" in digest
     assert "Migrated Co" in digest
     assert "Seeded Co" in digest
@@ -148,7 +154,7 @@ def test_malformed_event_kind_is_skipped(db: sqlite3.Connection) -> None:
         encoding="utf-8",
     )
     write_event(company="Good Co")
-    digest = build_digest(db, TARGET)
+    digest = build_digest(db, default_scope(db), TARGET)
     assert "interview invite: Good Co" in digest
 
 
@@ -157,10 +163,10 @@ def test_ghosted_cutoff_boundary(db: sqlite3.Connection) -> None:
     seed_job(db, "Twenty Days", status="applied", applied_date="2026-07-21")
     from harrier.tracker import list_jobs
 
-    ghosted = ghosted_applications(list_jobs(db), TARGET)
+    ghosted = ghosted_applications(list_jobs(db, default_scope(db)), TARGET)
     assert ghosted == ["Exactly 21"]
     # The rendered label must match the inclusive cutoff.
-    assert "≥21d no response" in build_digest(db, TARGET)
+    assert "≥21d no response" in build_digest(db, default_scope(db), TARGET)
 
 
 def test_outreach_grouping_excludes_wait_states(db: sqlite3.Connection) -> None:
@@ -180,7 +186,7 @@ def test_outreach_grouping_excludes_wait_states(db: sqlite3.Connection) -> None:
     )
     from harrier.tracker import list_jobs
 
-    groups = outreach_actions_due(list_jobs(db))
+    groups = outreach_actions_due(list_jobs(db, default_scope(db)))
     assert groups == {"send follow-up": ["Followup Co"]}
 
 
@@ -190,7 +196,7 @@ def test_updates_filter_dedupe_and_order(db: sqlite3.Connection) -> None:
     write_event(company="Newer", timestamp="2026-08-10T10:00:00+00:00")  # duplicate
     write_event(company="Wrong Day", timestamp="2026-08-09T10:00:00+00:00")
     write_event(company="Confirmation", kind="application_confirmation")
-    digest = build_digest(db, TARGET)
+    digest = build_digest(db, default_scope(db), TARGET)
     assert digest.index("Newer") < digest.index("Older")
     assert digest.count("Newer") == 1
     assert "Wrong Day" not in digest
@@ -208,7 +214,7 @@ def test_legacy_handler_output_prefix_is_tolerated(db: sqlite3.Connection) -> No
         "next_action": "Review the assessment.",
     }
     path.write_text(f"prefix HANDLER_OUTPUT: {json.dumps(legacy)}\n", encoding="utf-8")
-    digest = build_digest(db, TARGET)
+    digest = build_digest(db, default_scope(db), TARGET)
     assert "assessment: Legacy Co" in digest
 
 

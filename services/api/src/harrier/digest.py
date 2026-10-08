@@ -27,6 +27,7 @@ from harrier.runoutcome import (
     record_success,
 )
 from harrier.tracker import list_jobs
+from harrier.tracks import Scope
 
 DIGEST_ACTIONABLE_KINDS = {
     "interview_invite",
@@ -279,8 +280,8 @@ def schedule_health_lines(conn: sqlite3.Connection) -> list[str]:
     return [describe_age(job, recorded.get(job)) for job in SCHEDULED_JOBS]
 
 
-def build_digest(conn: sqlite3.Connection, target_date: date) -> str:
-    rows = list_jobs(conn)
+def build_digest(conn: sqlite3.Connection, scope: Scope, target_date: date) -> str:
+    rows = list_jobs(conn, scope)
     return render_digest(
         target_date,
         find_new_prospects(rows, target_date),
@@ -294,13 +295,14 @@ def build_digest(conn: sqlite3.Connection, target_date: date) -> str:
 
 def run_digest(
     conn: sqlite3.Connection,
+    scope: Scope,
     target_date: date,
     *,
     dry_run: bool = False,
     send: SendFn = send_telegram_message,
 ) -> tuple[str, int]:
     """Render the digest; send unless dry-run. Returns (digest, send rc)."""
-    digest = build_digest(conn, target_date)
+    digest = build_digest(conn, scope, target_date)
     if dry_run:
         return digest, 0
     rc = send(digest)

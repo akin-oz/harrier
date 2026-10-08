@@ -13,6 +13,7 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel
 
 from harrier.db import connect
+from harrier.tracks import Scope, default_scope
 from harrier_api.demo import demo_db_path, is_demo_mode
 
 
@@ -29,6 +30,19 @@ def get_conn() -> Iterator[sqlite3.Connection]:
 
 
 Conn = Annotated[sqlite3.Connection, Depends(get_conn)]
+
+
+def get_scope(conn: Conn) -> Scope:
+    """The track this request works in, resolved once per request (spec 092).
+
+    The default track until a later spec lets a request name one. Every
+    route that reads or writes tracker rows takes it, so no route can read
+    across tracks by forgetting.
+    """
+    return default_scope(conn)
+
+
+ScopeDep = Annotated[Scope, Depends(get_scope)]
 
 
 # --- the 503 while a host process holds the database (spec 075) ---

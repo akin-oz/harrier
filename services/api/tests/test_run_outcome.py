@@ -28,6 +28,7 @@ from harrier.runoutcome import (
     record_success,
     source_failed,
 )
+from harrier.tracks import default_scope
 
 
 @pytest.fixture
@@ -236,7 +237,7 @@ def test_a_two_month_outage_is_legible_in_the_digest(db: sqlite3.Connection) -> 
 
     stale = (datetime.now(UTC) - timedelta(days=61)).isoformat()
     record_success(db, DISCOVERY_JOB, at=stale)
-    digest = build_digest(db, datetime.now(UTC).date())
+    digest = build_digest(db, default_scope(db), datetime.now(UTC).date())
     assert "discovery: last succeeded 61 days ago" in digest
     assert digest.index("last succeeded") < digest.index("New prospects today")
 
@@ -244,7 +245,9 @@ def test_a_two_month_outage_is_legible_in_the_digest(db: sqlite3.Connection) -> 
 def test_a_job_with_no_history_is_named_in_the_digest(db: sqlite3.Connection) -> None:
     from harrier.digest import build_digest
 
-    assert "has never recorded a success" in build_digest(db, datetime.now(UTC).date())
+    assert "has never recorded a success" in build_digest(
+        db, default_scope(db), datetime.now(UTC).date()
+    )
 
 
 # --- logging ----------------------------------------------------------------

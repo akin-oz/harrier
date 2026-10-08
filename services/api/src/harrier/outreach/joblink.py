@@ -22,12 +22,13 @@ from __future__ import annotations
 import sqlite3
 
 from harrier.screening.normalized import normalize
+from harrier.tracks import Scope
 
 # The link fields, in the order a reader wants them: the key first.
 LINK_FIELDS: tuple[str, ...] = ("job_id", "company", "job_title", "job_url")
 
 
-def resolve_job_id(conn: sqlite3.Connection, link: dict[str, str]) -> str:
+def resolve_job_id(conn: sqlite3.Connection, scope: Scope, link: dict[str, str]) -> str:
     """The tracked job a link refers to, or "" when there is not one.
 
     URL first, then company and title, which is the order `find_duplicate`
@@ -42,17 +43,19 @@ def resolve_job_id(conn: sqlite3.Connection, link: dict[str, str]) -> str:
     title = normalize(link.get("job_title") or "")
     if not url and not (company and title):
         return ""
-    for job in list_jobs(conn):
+    for job in list_jobs(conn, scope):
         if url and job["url"].strip() == url:
             return str(job["id"])
     if company and title:
-        for job in list_jobs(conn):
+        for job in list_jobs(conn, scope):
             if normalize(job["company"]) == company and normalize(job["title"]) == title:
                 return str(job["id"])
     return ""
 
 
-def job_for_link(conn: sqlite3.Connection, link: dict[str, str]) -> dict[str, str] | None:
+def job_for_link(
+    conn: sqlite3.Connection, scope: Scope, link: dict[str, str]
+) -> dict[str, str] | None:
     """The job a link points at, followed by its id rather than its text.
 
     This is what makes the link survive an edit: the title in the link may be
@@ -64,7 +67,7 @@ def job_for_link(conn: sqlite3.Connection, link: dict[str, str]) -> dict[str, st
     if not identifier:
         return None
     try:
-        return get_job(conn, int(identifier))
+        return get_job(conn, scope, int(identifier))
     except (ValueError, LookupError):
         # A link to a job that has since been deleted. Reported by
         # `unresolved_links`, not repaired here: deciding what a contact
@@ -72,7 +75,7 @@ def job_for_link(conn: sqlite3.Connection, link: dict[str, str]) -> dict[str, st
         return None
 
 
-def unresolved_links(conn: sqlite3.Connection) -> list[tuple[str, str]]:
+def unresolved_links(conn: sqlite3.Connection, scope: Scope) -> list[tuple[str, str]]:
     """Every contact link that does not resolve to a job, as (contact, why).
 
     Reporting only. A link may be unresolved because the job was never
@@ -89,12 +92,12 @@ def unresolved_links(conn: sqlite3.Connection) -> list[tuple[str, str]]:
         for link in parse_linked_jobs(contact.get("linked_jobs", "")):
             if not (link.get("job_id") or "").strip():
                 problems.append((str(name), "a linked job that matches no tracked job"))
-            elif job_for_link(conn, link) is None:
+            elif job_for_link(conn, scope, link) is None:
                 problems.append((str(name), f"a link to job {link['job_id']}, which is gone"))
     return problems
 
 
-def backfill_job_ids(conn: sqlite3.Connection) -> tuple[int, int]:
+def backfill_job_ids(conn: sqlite3.Connection, scope: Scope) -> tuple[int, int]:
     """Give every existing link an id where one can be found.
 
     Returns (resolved, left alone). Runs over links written before this
@@ -116,7 +119,7 @@ def backfill_job_ids(conn: sqlite3.Connection) -> tuple[int, int]:
         for link in links:
             if (link.get("job_id") or "").strip():
                 continue
-            found = resolve_job_id(conn, link)
+            found = resolve_job_id(conn, scope, link)
             if found:
                 link["job_id"] = found
                 resolved += 1

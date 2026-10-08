@@ -52,6 +52,7 @@ from harrier.db import connect
 from harrier.profile.store import get_document, put_document
 from harrier.resume.tailor import run_tailor
 from harrier.tracker.actions import add_manually
+from harrier.tracks import default_scope
 from harrier_cli.main import main
 
 EXPERIENCE = "What relevant experience do you have?"
@@ -97,7 +98,7 @@ def capture_letter_call(monkeypatch: pytest.MonkeyPatch, response: str) -> dict[
 
 
 def add_job(db: sqlite3.Connection, url: str = "https://example.com/jobs/1") -> str:
-    _, row = add_manually(db, company=COMPANY, title=ROLE, url=url)
+    _, row = add_manually(db, default_scope(db), company=COMPANY, title=ROLE, url=url)
     assert row is not None
     return row["id"]
 
@@ -622,7 +623,11 @@ def test_confirmed_skill_enters_skills_for_its_job_only(
     seed_resume(db)
     confirmed = int(add_job(db, "https://example.com/jobs/confirmed"))
     _, other_row = add_manually(
-        db, company="Other Example Co", title=ROLE, url="https://example.com/jobs/other"
+        db,
+        default_scope(db),
+        company="Other Example Co",
+        title=ROLE,
+        url="https://example.com/jobs/other",
     )
     assert other_row is not None
     other = int(other_row["id"])
@@ -631,6 +636,7 @@ def test_confirmed_skill_enters_skills_for_its_job_only(
     def run(job_id: int) -> str:
         result = run_tailor(
             db,
+            default_scope(db),
             job_id,
             jd_text="React and TypeScript product role.",
             no_ai=True,

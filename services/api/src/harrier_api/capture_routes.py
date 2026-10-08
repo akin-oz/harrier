@@ -25,7 +25,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from harrier.capture import CaptureResult, add_captured_job
-from harrier_api.deps import Conn, DatabaseRoute
+from harrier_api.deps import Conn, DatabaseRoute, ScopeDep
 from harrier_api.localauth import (
     TOKEN_RESPONSES,
     load_or_create_token,
@@ -158,6 +158,7 @@ def capture_confirm(
 )
 def capture_from_form(
     conn: Conn,
+    scope: ScopeDep,
     company: Annotated[str, Form()] = "",
     title: Annotated[str, Form()] = "",
     location: Annotated[str, Form()] = "",
@@ -182,6 +183,7 @@ def capture_from_form(
         )
     result = add_captured_job(
         conn,
+        scope,
         company=company,
         title=title,
         location=location,
@@ -205,9 +207,10 @@ def capture_from_form(
         500: {"description": "unexpected error"},
     },
 )
-def capture_via_post(body: CaptureIn, conn: Conn) -> CaptureOut:
+def capture_via_post(body: CaptureIn, conn: Conn, scope: ScopeDep) -> CaptureOut:
     result = add_captured_job(
         conn,
+        scope,
         company=body.company,
         title=body.title,
         location=body.location,
