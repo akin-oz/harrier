@@ -1089,6 +1089,7 @@ def _academic_components(notes: str) -> list[str]:
     what matched and where, the flags, and the source's components. Nothing
     is summed, counted into a number or used to sort. A row added by hand has
     none of these notes and prints none."""
+    from harrier.screening.pipeline import url_from_note
     from harrier.sources.apify_academic import COMPONENTS
     from harrier.tracker.store import extract_note_value
 
@@ -1115,7 +1116,12 @@ def _academic_components(notes: str) -> list[str]:
             field_name, _, evidence = rest.partition(":")
             lines.append(f"{name}: '{evidence}' in {field_name}")
     for name in COMPONENTS:
-        lines.append(f"{name.replace('_', ' ')}: {extract_note_value(notes, name) or 'not stated'}")
+        value = extract_note_value(notes, name) or "not stated"
+        if name == "apply_url" and value != "not stated":
+            # Stored escaped so the notes stay parseable; shown as the
+            # posting gave it (review of PR #187).
+            value = url_from_note(value)
+        lines.append(f"{name.replace('_', ' ')}: {value}")
     return lines
 
 

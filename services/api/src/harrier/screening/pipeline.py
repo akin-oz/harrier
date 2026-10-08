@@ -386,11 +386,17 @@ def _clean_note(value: str) -> str:
 
 
 def note_url(url: str) -> str:
-    """A URL as a note value: whole, query string and `=` included, with only
-    the note separator `;` percent-encoded, so the stored link still opens
-    and still compares with a fresh one encoded the same way (review of
-    PR #187)."""
-    return url.strip().replace(";", "%3B")
+    """A URL as a note value: whole, query string and `=` included. The note
+    separator `;` is escaped as `%3B`, and `%` is escaped first as `%25`, so
+    the escape is exactly reversible (`url_from_note`) even for a link that
+    already holds `%3B`. A fresh link escaped the same way compares with the
+    stored one (review of PR #187)."""
+    return url.strip().replace("%", "%25").replace(";", "%3B")
+
+
+def url_from_note(value: str) -> str:
+    """The link as the posting gave it, for display: `note_url` undone."""
+    return value.replace("%3B", ";").replace("%25", "%")
 
 
 def normalize_link(url: str) -> str:

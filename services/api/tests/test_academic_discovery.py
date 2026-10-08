@@ -1681,3 +1681,18 @@ def test_an_apply_link_with_a_query_string_is_stored_whole_and_matches_the_next_
     discover(tmp_path, [item(2, applicationUrl=f"{link}#apply")])
     assert len(rows()) == 1
     assert f"tracker_duplicate:apply_url:{SLUG}" in reasons(seen())
+
+
+def test_an_apply_link_is_shown_as_the_posting_gave_it(
+    track: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Stored escaped, so the notes stay parseable; shown whole, including a
+    `;` and a `%3B` the link already held."""
+    link = "https://positions.example.org/apply;session=abc?ref=a%3Bb"
+    discover(tmp_path, [item(1, applicationUrl=link)])
+    [row] = rows()
+    assert ";" not in extract_note_value(row["notes"], "apply_url")
+    assert extract_note_value(row["notes"], "portal") == "portal-a"
+    capsys.readouterr()
+    assert main(["--track", SLUG, "next"]) == 0
+    assert f"apply url: {link}" in capsys.readouterr().out
