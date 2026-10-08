@@ -95,3 +95,52 @@ def status_counts(jobs: list[dict[str, str]]) -> dict[str, int]:
         if job["status"] in counts:
             counts[job["status"]] += 1
     return counts
+
+
+def rank_by_deadline(
+    jobs: list[dict[str, str]],
+    limit: int | None = None,
+    *,
+    statuses: frozenset[str] = ACTIVE_STATUSES,
+    today: str,
+) -> list[dict[str, str]]:
+    """The academic kind's queue (spec 093): nearest open deadline first, then
+    rows with no deadline, then rows whose deadline has passed. Passed rows are
+    sunk, never hidden: a call the operator forgot is the row that most needs
+    to be seen once. Within a group, pipeline stage, then id. `today` is a
+    parameter so a test can pin it.
+    """
+
+    def key(job: dict[str, str]) -> tuple[int, str, int, int]:
+        deadline = (job.get("deadline") or "").strip()
+        if deadline and deadline >= today:
+            group = 0
+        elif not deadline:
+            group = 1
+        else:
+            group = 2
+        nearest = deadline if group == 0 else ""
+        return (group, nearest, STAGE_PRIORITY.get(job["status"], 99), int(job["id"]))
+
+    active = [job for job in jobs if job["status"] in statuses]
+    ranked = sorted(active, key=key)
+    return ranked[:limit] if limit is not None else ranked
+
+
+def deadline_passed(job: dict[str, str], today: str) -> bool:
+    deadline = (job.get("deadline") or "").strip()
+    return bool(deadline) and deadline < today
+
+
+def rank_for(
+    queue: str,
+    jobs: list[dict[str, str]],
+    limit: int | None = None,
+    *,
+    statuses: frozenset[str] = ACTIVE_STATUSES,
+    today: str,
+) -> list[dict[str, str]]:
+    """The queue order a track's kind names (spec 093)."""
+    if queue == "nearest_deadline":
+        return rank_by_deadline(jobs, limit, statuses=statuses, today=today)
+    return rank_active(jobs, limit, statuses=statuses)

@@ -21,6 +21,7 @@ from typing import Literal, cast
 
 from harrier.db import data_dir
 from harrier.sources import scrub_secrets
+from harrier.tracks import InvalidSlugError, validate_slug
 
 PROTOCOL_PREFIX = "::harrier::"
 # `interrupted` is not a failure. A run whose process disappeared, which is
@@ -115,8 +116,16 @@ class RunParams:
     input_path: Path | None = None
     switches: frozenset[str] = frozenset()
     numbers: Mapping[str, int] = field(default_factory=dict[str, int])
+    # The track the run works in, by slug (spec 093). Checked against the slug
+    # rule here; the route that sets it checks the slug exists.
+    track: str | None = None
 
     def __post_init__(self) -> None:
+        if self.track is not None:
+            try:
+                validate_slug(self.track)
+            except InvalidSlugError as error:
+                raise ValueError(str(error)) from error
         if self.job_id is not None and self.job_id <= 0:
             raise ValueError(f"job id must be a positive integer, got {self.job_id!r}")
         for flag, value in self.numbers.items():
@@ -168,7 +177,13 @@ def build_command(kind: str, params: RunParams) -> list[str]:
     if kind not in PARAMETERIZED_KINDS:
         raise KeyError(kind)
     parameterized = PARAMETERIZED_KINDS[kind]
-    argv = [sys.executable, "-m", "harrier_cli.main", parameterized.verb]
+    argv = [sys.executable, "-m", "harrier_cli.main"]
+    if params.track is not None:
+        # A global flag, so it goes before the verb (spec 093). The value is a
+        # validated slug, in the `--flag=value` form this module uses for
+        # every value.
+        argv.append(f"--track={params.track}")
+    argv.append(parameterized.verb)
 
     if parameterized.takes_job:
         if params.job_id is None:

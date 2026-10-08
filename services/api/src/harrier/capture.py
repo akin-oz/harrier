@@ -49,6 +49,7 @@ def add_captured_job(
     source: str = "manual",
     description: str = "",
     enrich: bool = True,
+    deadline: str = "",
 ) -> CaptureResult:
     company = company.strip()
     title = title.strip()
@@ -57,6 +58,18 @@ def add_captured_job(
 
     description = description.strip()[:MAX_DESCRIPTION_CHARS]
     source = source.strip() or "manual"
+    if scope.track.kind == "academic":
+        return _add_academic(
+            conn,
+            scope,
+            company=company,
+            title=title,
+            location=location.strip(),
+            url=url.strip(),
+            source=source,
+            description=description,
+            deadline=deadline.strip(),
+        )
     candidate_cfg = load_candidate_config(conn)
     job = make_normalized_job(
         source=source,
@@ -82,6 +95,8 @@ def add_captured_job(
     fit = fit_score_for(job, candidate_cfg)
     row = build_tracker_row(job, fit.score, fit.reasons, fit.version)
     row["notes"] = f"{row['notes']}; manual_added={datetime.now(UTC).date().isoformat()}"
+    if deadline.strip():
+        row["deadline"] = deadline.strip()
 
     try:
         add_job(conn, row, scope=scope)
@@ -95,5 +110,49 @@ def add_captured_job(
             # The tracker insert already committed; a cache failure must not
             # turn a successful capture into a 500 (which would 409 on retry).
             # Log without job content.
+            logger.warning("description cache write failed: %s", error)
+    return CaptureResult(status="added", message=f"Added: {company}: {title}")
+
+
+def _add_academic(
+    conn: sqlite3.Connection,
+    scope: Scope,
+    *,
+    company: str,
+    title: str,
+    location: str,
+    url: str,
+    source: str,
+    description: str,
+    deadline: str,
+) -> CaptureResult:
+    """A position on an academic track, entered by hand (spec 093).
+
+    No industry candidate configuration, no fit score, no network enrichment
+    and no remote filter: the screening and scoring rules are the industry
+    kind's, and a score with no basis is worse than no score. The row is a
+    prospect holding what the operator typed. The pasted description is cached
+    as for any manual add, so the `created` event can pin its hash.
+    """
+    today = datetime.now(UTC).date().isoformat()
+    row = {
+        "company": company,
+        "title": title,
+        "location": location,
+        "url": url,
+        "source": source,
+        "added_at": today,
+        "status": "prospect",
+        "notes": f"manual_added={today}",
+        "deadline": deadline,
+    }
+    try:
+        add_job(conn, row, scope=scope)
+    except DuplicateJobError:
+        return CaptureResult(status="duplicate", message=f"Already in tracker: {company}: {title}")
+    if url and description:
+        try:
+            save_description_cache(url, description)
+        except OSError as error:
             logger.warning("description cache write failed: %s", error)
     return CaptureResult(status="added", message=f"Added: {company}: {title}")

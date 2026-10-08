@@ -7,7 +7,7 @@ legacy CSV column order and is load-bearing for export fidelity.
 
 from __future__ import annotations
 
-from harrier.tracks import TRACK_KINDS
+from harrier.tracks import KIND_RULES, TRACK_KINDS
 
 # Legacy 20-column order (old repo: scripts/job_sources.py TRACKER_FIELDS).
 TRACKER_FIELDS: tuple[str, ...] = (
@@ -62,15 +62,10 @@ STATUSES: tuple[str, ...] = (
     "rejected",
 )
 
-# Old repo: scripts/jobs.py NEXT_ACTION_DEFAULTS.
-NEXT_ACTION_DEFAULTS: dict[str, str] = {
-    "prospect": "review and decide whether to apply",
-    "shortlisted": "request tailored CV and review before applying",
-    "tailored_cv_requested": "review tailored PDF before applying",
-    "applied": "follow up if no reply within 7 days",
-    "interviewing": "prepare for interview",
-    "rejected": "",
-}
+# The industry kind's next actions (old repo: scripts/jobs.py
+# NEXT_ACTION_DEFAULTS). One definition, in `harrier.tracks.KIND_RULES`, so a
+# kind's defaults and this name cannot drift (spec 093).
+NEXT_ACTION_DEFAULTS: dict[str, str] = dict(KIND_RULES["industry"].next_action)
 
 # Legacy 17-column order (old repo: scripts/outreach_lib.py CONTACT_FIELDS).
 CONTACT_FIELDS: tuple[str, ...] = (
@@ -372,6 +367,26 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
             BEGIN SELECT RAISE(ABORT, 'a track id never changes'); END
             """,
             "CREATE INDEX idx_jobs_track_status ON jobs(track_id, status)",
+        ],
+    ),
+    (
+        9,
+        [
+            # The one date an academic call is ordered by (spec 093). Empty
+            # means no deadline. SQLite tests a CHECK on an added column
+            # against every existing row; every existing row has the default.
+            # The CHECK holds the shape; the CLI parser holds that the date
+            # exists.
+            """
+            ALTER TABLE jobs ADD COLUMN deadline TEXT NOT NULL DEFAULT ''
+            CHECK (
+                deadline = ''
+                OR (
+                    length(deadline) = 10
+                    AND deadline GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+                )
+            )
+            """,
         ],
     ),
 ]

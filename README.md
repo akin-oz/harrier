@@ -251,6 +251,19 @@ search data lives in `data/tracker.db`, credentials in `.env` and `secrets/`,
 and backups outside the repository entirely. None of it enters git in any form
 (ADR-008, docs/privacy-plan.md).
 
+A second kind of search can be tracked by hand on its own search track, for
+example university or research vacancies (specs 091 to 093, ADR-012).
+`harrier tracks add <slug> --kind academic --label <label>` creates one;
+`harrier --track <slug> add --company ... --title ... --deadline YYYY-MM-DD`
+enters a position on it, unscored; `harrier --track <slug> next` lists that
+track's positions by nearest open deadline, passed ones flagged and last. On a
+track other than the default, only `add`, `tracks list|add|archive`, `next`,
+`review`, the status verbs, `events show` and `export` run; every other command
+refuses with exit status 2 and names the track, because it reads the default
+track's configuration or profile (`services/api/tests/test_tracks_cli.py`).
+Without `--track`, every command works on the default track, as before. The
+schedule never names a track.
+
 Optional and off by default: an LLM provider for drafting (Codex CLI, Claude
 CLI, or the OpenAI and Anthropic APIs, selected by `AI_PROVIDER`), Apify for
 LinkedIn, Gmail for the inbox watch, Telegram for the digest, and Playwright for
