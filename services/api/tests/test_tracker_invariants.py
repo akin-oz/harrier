@@ -20,6 +20,7 @@ from harrier.tracker.invariants import all_breaches, check_rows, invariant_breac
 from harrier.tracker.schema import STATUSES
 from harrier.tracker.store import TrackerError, add_job, get_job, set_status, update_fields
 from harrier.tracker.transitions import transition_allowed
+from harrier.tracks import default_scope
 from harrier_cli.main import main
 
 
@@ -37,6 +38,7 @@ def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
             "source": "greenhouse",
             "location": "Remote, Europe",
         },
+        scope=default_scope(conn),
     )
     return conn
 

@@ -263,9 +263,12 @@ PDF rendering. None of them is required to run the pipeline.
   it (spec 035; `services/api/src/harrier_api/localauth.py`, proven by
   `services/api/tests/test_api_exposure.py`). That is a same-machine boundary,
   not a user model: there is no account, no tenant resolution, and no
-  isolation. Multi-tenancy is a direction
+  isolation between people. Multi-tenancy is a direction
   (ADR-009), not a feature, and spec 041 removed the config scope column that
   gestured at it rather than leave speculative generality in the schema.
+  Search tracks (spec 091) are not tenancy either: they partition one
+  person's tracker into named searches, and ADR-012 says a tenant is a data
+  directory, never a column the domain filters on.
 - **macOS is the production platform.** Scheduling is launchd. Everything else
   is portable; the scheduler is not, and reports as much on other systems
   (`services/api/tests/test_cli_decisions.py::test_a_missing_launchctl_is_reported_rather_than_raised`).

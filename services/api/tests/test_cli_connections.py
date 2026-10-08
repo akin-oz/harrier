@@ -22,6 +22,7 @@ import pytest
 import harrier_cli.main as cli
 from harrier.db import connect
 from harrier.tracker.store import add_job
+from harrier.tracks import default_scope
 
 
 @pytest.fixture
@@ -79,6 +80,7 @@ def test_a_command_that_fails_closes_its_connection(opened: list[sqlite3.Connect
                 "url": "https://boards.example.com/northwind/1",
                 "source": "greenhouse",
             },
+            scope=default_scope(seed),
         )
     finally:
         seed.close()

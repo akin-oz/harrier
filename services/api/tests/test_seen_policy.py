@@ -32,6 +32,7 @@ from harrier.screening.seen import (
     save_seen,
 )
 from harrier.tracker.store import add_job, set_status
+from harrier.tracks import default_scope
 
 
 @pytest.fixture
@@ -398,6 +399,7 @@ def test_a_job_the_operator_rejected_is_never_resurrected(
             "source": "greenhouse",
             "location": "Remote, Europe",
         },
+        scope=default_scope(db),
     )
     set_status(db, job_id, "rejected")
 
@@ -423,6 +425,7 @@ def test_a_job_the_operator_has_not_rejected_is_not_protected(
             "source": "greenhouse",
             "location": "Remote, Europe",
         },
+        scope=default_scope(db),
     )
     set_status(db, job_id, "shortlisted")
     assert human_rejected_keys(db) == set()
@@ -442,6 +445,7 @@ def test_the_protection_matches_on_company_and_title_too(
             "source": "greenhouse",
             "location": "Remote, Europe",
         },
+        scope=default_scope(db),
     )
     set_status(db, job_id, "rejected")
     assert "northwind labs|senior frontend engineer" in human_rejected_keys(db)

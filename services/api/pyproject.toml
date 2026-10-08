@@ -107,6 +107,9 @@ forbidden_modules = [
     "harrier.tracker",
     # A learned score is scoring all the same: no source may reach it (spec 077).
     "harrier.scoring",
+    # A source returns normalized jobs and does not know which track they land
+    # in; the shared screening path decides that, once (spec 091).
+    "harrier.tracks",
 ]
 
 [[tool.importlinter.contracts]]

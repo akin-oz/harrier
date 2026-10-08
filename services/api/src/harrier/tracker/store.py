@@ -39,6 +39,7 @@ from harrier.tracker.schema import (
     TRACKER_FIELDS,
 )
 from harrier.tracker.transitions import check_transition, fields_a_move_clears
+from harrier.tracks import Scope
 
 
 class TrackerError(Exception):
@@ -96,8 +97,16 @@ def find_duplicate(
     return None
 
 
-def add_job(conn: sqlite3.Connection, fields: Mapping[str, str]) -> int:
-    """Insert one job. Raises DuplicateJobError on url/external_key/company+title match."""
+def add_job(conn: sqlite3.Connection, fields: Mapping[str, str], *, scope: Scope) -> int:
+    """Insert one job in the scope's track (spec 091).
+
+    Raises DuplicateJobError on a url, external_key or company+title match.
+    The track is the scope's to say: a `track_id` in `fields` is refused
+    rather than honoured, so no caller can file a row somewhere its scope
+    was not resolved for.
+    """
+    if "track_id" in fields:
+        raise TrackerError("track_id is set from the scope, not from the fields")
     values = {name: str(fields.get(name, "") or "") for name in TRACKER_FIELDS}
     promoted = expand_notes(values["notes"])
     for key in NOTE_KEYS:
@@ -116,12 +125,17 @@ def add_job(conn: sqlite3.Connection, fields: Mapping[str, str]) -> int:
     )
     if existing is not None:
         raise DuplicateJobError(
-            f"duplicate of job id {existing['id']} ({existing['company']}: {existing['title']})"
+            f"duplicate of job id {existing['id']} in track "
+            f"{_track_slug(conn, existing['track_id'])} "
+            f"({existing['company']}: {existing['title']})"
         )
 
-    columns = [name for name in TRACKER_FIELDS] + list(NOTE_KEYS)
-    row_values = [values[name] if name != "status" else status for name in TRACKER_FIELDS]
+    columns = [name for name in TRACKER_FIELDS] + list(NOTE_KEYS) + ["track_id"]
+    row_values: list[object] = [
+        values[name] if name != "status" else status for name in TRACKER_FIELDS
+    ]
     row_values += [promoted[key] for key in NOTE_KEYS]
+    row_values.append(scope.track.id)
     placeholders = ", ".join("?" for _ in columns)
     description_sha256 = _description_sha256(values["url"])
     with conn:
@@ -151,6 +165,11 @@ def add_job(conn: sqlite3.Connection, fields: Mapping[str, str]) -> int:
             description_sha256=description_sha256,
         )
     return int(row_id)
+
+
+def _track_slug(conn: sqlite3.Connection, track_id: str) -> str:
+    row = conn.execute("SELECT slug FROM tracks WHERE id = ?", (int(track_id),)).fetchone()
+    return str(row[0]) if row is not None else f"id {track_id}"
 
 
 def get_job(conn: sqlite3.Connection, job_id: int) -> dict[str, str]:

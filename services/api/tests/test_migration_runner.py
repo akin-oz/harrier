@@ -59,9 +59,13 @@ def schema_text(path: Path) -> list[str]:
         raw.close()
 
 
-def with_a_broken_eighth(monkeypatch: pytest.MonkeyPatch) -> None:
+REAL_VERSIONS = [version for version, _ in schema.MIGRATIONS]
+REAL_MIGRATIONS = list(schema.MIGRATIONS)
+
+
+def with_a_broken_next_migration(monkeypatch: pytest.MonkeyPatch) -> None:
     """The real migrations, then one whose second statement cannot run."""
-    broken = [*schema.MIGRATIONS, (8, [PROBE_TABLE, NOT_SQL])]
+    broken = [*REAL_MIGRATIONS, (REAL_VERSIONS[-1] + 1, [PROBE_TABLE, NOT_SQL])]
     monkeypatch.setattr(schema, "MIGRATIONS", broken)
 
 
@@ -69,18 +73,18 @@ def test_a_failed_migration_leaves_no_partial_schema(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Fails on the runner at cd5665d: the probe table survived the error."""
-    with_a_broken_eighth(monkeypatch)
+    with_a_broken_next_migration(monkeypatch)
     path = tmp_path / "tracker.db"
     with pytest.raises(sqlite3.OperationalError):
         connect(path)
     assert "probe" not in tables(path)
-    assert versions(path) == [version for version, _ in schema.MIGRATIONS[:-1]]
+    assert versions(path) == REAL_VERSIONS
 
 
 def test_a_failed_migration_closes_the_connection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    with_a_broken_eighth(monkeypatch)
+    with_a_broken_next_migration(monkeypatch)
     opened: list[sqlite3.Connection] = []
     real_connect = sqlite3.connect
 
@@ -145,8 +149,7 @@ def test_two_first_opens_apply_each_migration_once(tmp_path: Path) -> None:
         assert child.returncode == 0, err
         assert out.strip() == "ok"
 
-    expected = [version for version, _ in schema.MIGRATIONS]
-    assert versions(path) == expected
+    assert versions(path) == REAL_VERSIONS
 
     alone = tmp_path / "alone" / "tracker.db"
     alone.parent.mkdir()
@@ -169,10 +172,10 @@ def test_connect_returns_a_connection_in_its_usual_transaction_mode(
 
     # After a failed migration too: the next open, with the broken
     # migration gone again, hands out an ordinary connection.
-    with_a_broken_eighth(monkeypatch)
+    with_a_broken_next_migration(monkeypatch)
     with pytest.raises(sqlite3.OperationalError):
         connect(tmp_path / "broken.db")
-    monkeypatch.setattr(schema, "MIGRATIONS", schema.MIGRATIONS[:-1])
+    monkeypatch.setattr(schema, "MIGRATIONS", REAL_MIGRATIONS)
     again = connect(tmp_path / "broken.db")
     try:
         assert again.isolation_level == MODULE_DEFAULT_ISOLATION

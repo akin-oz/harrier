@@ -33,6 +33,7 @@ from fastapi.testclient import TestClient
 
 from harrier.db import connect
 from harrier.tracker.store import add_job
+from harrier.tracks import default_scope
 from harrier_api.app import create_app
 from harrier_api.runs import (
     PARAMETERIZED_KINDS,
@@ -63,6 +64,7 @@ def _add(company: str, title: str, slug: str) -> int:
             "source": "greenhouse",
             "location": "Remote, Europe",
         },
+        scope=default_scope(conn),
     )
     conn.close()
     return identifier

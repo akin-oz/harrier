@@ -23,6 +23,7 @@ from harrier.screening.descriptions import (
 from harrier.screening.normalized import make_normalized_job, normalize
 from harrier.screening.pipeline import build_tracker_row
 from harrier.tracker import DuplicateJobError, add_job
+from harrier.tracks import default_scope
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +83,7 @@ def add_captured_job(
     row["notes"] = f"{row['notes']}; manual_added={datetime.now(UTC).date().isoformat()}"
 
     try:
-        add_job(conn, row)
+        add_job(conn, row, scope=default_scope(conn))
     except DuplicateJobError:
         return CaptureResult(status="duplicate", message=f"Already in tracker: {company}: {title}")
 

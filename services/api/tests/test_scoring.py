@@ -31,6 +31,7 @@ from harrier.screening.normalized import make_normalized_job
 from harrier.screening.policy import policy_version
 from harrier.tracker.schema import MIGRATIONS, NOTE_KEYS, TRACKER_FIELDS
 from harrier.tracker.score import SCORE_FIELDS, UNKNOWN_VERSION, score_fields, stored_score
+from harrier.tracks import default_scope
 
 
 @pytest.fixture
@@ -242,6 +243,7 @@ def test_a_row_written_before_versions_reads_as_unknown(
             "url": "https://boards.example.com/example/9",
             "fit_score": "70",
         },
+        scope=default_scope(conn),
     )
     row = get_job(conn, job_id)
     assert row["scoring_version"] == "", "the column no longer defaults blank"
@@ -325,6 +327,7 @@ def test_a_migrated_database_matches_a_fresh_one(
     brought_forward = connect(tmp_path / "stopped.db")
     fresh = connect()
     assert any(name == "job_events" for _, name, _ in schema(fresh))
+    assert any(name == "tracks" for _, name, _ in schema(fresh))
     assert schema(brought_forward) == schema(fresh)
     brought_forward.close()
     fresh.close()

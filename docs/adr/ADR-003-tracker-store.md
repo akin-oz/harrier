@@ -50,6 +50,11 @@ SQLite is the source of truth: one file, `data/tracker.db`, WAL mode. The write 
 exactly one Python module in the domain package; the API, the CLI, and scheduled runs
 all call it. Nothing else opens the database for writing.
 
+Note (ADR-012, spec 091): "the tracker" is the file in the data directory the process
+was opened on, one per person. The write path stays one module; the file it writes is
+chosen by the data directory, never by a tenant predicate. Search tracks partition one
+person's tracker as rows (`tracks`, `jobs.track_id`); they are not a second tracker.
+
 CSV keeps two roles it is genuinely good at:
 
 1. **Export**: `harrier export` writes `tracker/jobs.csv` and `tracker/contacts.csv` in

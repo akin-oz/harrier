@@ -50,6 +50,7 @@ the old code implies but does not enforce:
 | `harrier.notify` | Telegram sending, digest assembly | `send_telegram.py`, `send_daily_digest.py` |
 | `harrier.llm` | The provider seam: codex-cli, claude-cli, openai-api, anthropic-api, auto | `llm_client.py` |
 | `harrier.profile` | Candidate config, application profile, resume facts, truth sources | `application_profile.py`, `resume_facts.py` |
+| `harrier.tracks` | Search tracks: the `Track` and `Scope` values, the slug rule, the resolver (spec 091, ADR-012) | none; new |
 
 Boundary rules carried from the product invariants:
 
@@ -165,6 +166,9 @@ Details and the review-agent set land with deliverable 4 (checkpoint B).
 - Single user, single machine. There are no user accounts. A local API token and a
   trusted-host check stop a web page in another tab from driving the API, but not a
   process running as the operator (spec 035; `services/api/tests/test_api_exposure.py`).
+- Search tracks partition one person's tracker; they do not separate people. A tenant is
+  a data directory, and the domain's SQL names a track and never a tenant (ADR-012,
+  spec 091; `services/api/tests/test_tracks.py`).
 - The run registry is not a durable queue; scheduled work bypasses it by design.
 - macOS is the production platform (launchd); other platforms get manual CLI or cron.
 - SQLite truth trades direct greppability for transactions; `just export` restores it.

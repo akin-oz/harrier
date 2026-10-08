@@ -30,6 +30,7 @@ from harrier.cutover import (
 )
 from harrier.db import connect
 from harrier.tracker import add_job
+from harrier.tracks import default_scope
 
 
 def loaded(_args: list[str]) -> tuple[int, str, str]:
@@ -53,6 +54,7 @@ def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
             "url": "https://boards.example.com/exampleco/1",
             "source": "greenhouse",
         },
+        scope=default_scope(conn),
     )
     return conn
 
