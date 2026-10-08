@@ -1,8 +1,8 @@
 ---
 spec: 093
 title: An academic track can be added and its positions tracked by hand
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M9
 depends: [010, 027, 074, 075, 092]
 ---

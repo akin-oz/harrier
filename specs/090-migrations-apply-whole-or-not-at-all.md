@@ -1,8 +1,8 @@
 ---
 spec: 090
 title: A migration applies whole or not at all
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M9
 depends: [041, 060, 061, 079]
 ---

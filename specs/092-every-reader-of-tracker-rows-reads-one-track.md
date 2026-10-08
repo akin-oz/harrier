@@ -1,8 +1,8 @@
 ---
 spec: 092
 title: Every reader of tracker rows reads one track
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M9
 depends: [076, 077, 091]
 ---

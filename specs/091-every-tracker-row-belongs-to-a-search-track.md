@@ -1,8 +1,8 @@
 ---
 spec: 091
 title: Every tracker row belongs to a named search track
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M9
 depends: [023, 041, 061, 079, 090]
 ---
