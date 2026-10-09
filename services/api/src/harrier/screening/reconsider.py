@@ -91,10 +91,13 @@ def reconsider_source(
     conn: sqlite3.Connection,
     scope: Scope,
     source: str,
-    candidate_cfg: CandidateConfig,
+    candidate_cfg: CandidateConfig | None,
     *,
     dry_run: bool = True,
     key_identity: Callable[[str], set[str]] | None = None,
+    policy: str | None = None,
+    track_id: int | None = None,
+    protected_keys: frozenset[str] = frozenset(),
 ) -> ReconsiderReport:
     """Clear rejections recorded under a policy other than the current one.
 
@@ -103,8 +106,16 @@ def reconsider_source(
     The next discovery run fetches and judges them under the current rules,
     which is where the decision belongs.
     """
-    current = policy_version(candidate_cfg)
-    decisions = load_seen(source)
+    # An academic track passes its own version and its own seen state
+    # (spec 097); the industry track computes the version from its
+    # configuration, as before.
+    if policy is not None:
+        current = policy
+    elif candidate_cfg is not None:
+        current = policy_version(candidate_cfg)
+    else:
+        raise ValueError("reconsider needs a policy or a candidate configuration")
+    decisions = load_seen(source, track_id)
     protected = human_rejected_keys(conn, scope)
     report = ReconsiderReport(source=source, current_policy=current, examined=len(decisions))
 
@@ -117,7 +128,9 @@ def reconsider_source(
             continue
         report.stale += 1
         identities = key_identity(key) if key_identity else {normalize(key)}
-        if identities & protected:
+        # `protected_keys` names seen keys directly, for a source whose keys
+        # are derived from a row's identity rather than equal to it (spec 097).
+        if key in protected_keys or identities & protected:
             # The operator said no. A rule change does not overturn that.
             report.protected += 1
             remaining[key] = decision
@@ -125,5 +138,5 @@ def reconsider_source(
         report.cleared.append(key)
 
     if not dry_run and report.cleared:
-        save_seen(source, remaining)
+        save_seen(source, remaining, track_id)
     return report

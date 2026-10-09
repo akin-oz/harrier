@@ -175,10 +175,11 @@ CLI and the API, not a settings page.
 they serve the watchlist, the searches and the hold list, whose files are
 never-in-git classes. Found while reviewing spec 096, which builds the
 configuration page on these routes, and recorded here because this spec owns
-them. Not yet fixed.
+them. Closed by spec 097 (2026-10-08), which added the academic searches to
+these routes and so had to fix it first.
 
-- [ ] configuration reads require the token
-      (planned test_config_reads_require_the_token)
+- [x] configuration reads require the token
+      (`services/api/tests/test_api_exposure.py::test_config_reads_require_the_token`)
 
 ## Out of scope
 

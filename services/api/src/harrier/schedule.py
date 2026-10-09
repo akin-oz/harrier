@@ -62,6 +62,9 @@ def _require_int(value: object, field: str, context: str, *, low: int, high: int
 class CalendarTime:
     hour: int
     minute: int
+    # 1 (Monday) to 7 (Sunday), launchd's own numbering; None runs every day
+    # (spec 097). A weekly job is the academic discovery cadence.
+    weekday: int | None = None
 
 
 @dataclass(frozen=True)
@@ -209,7 +212,12 @@ def _parse_job(raw: object, index: int) -> ScheduleJob:
             minute = _require_int(
                 time_entry.get("minute", 0), "minute", f"{context} ({name})", low=0, high=59
             )
-            times.append(CalendarTime(hour=hour, minute=minute))
+            weekday: int | None = None
+            if "weekday" in time_entry:
+                weekday = _require_int(
+                    time_entry.get("weekday"), "weekday", f"{context} ({name})", low=1, high=7
+                )
+            times.append(CalendarTime(hour=hour, minute=minute, weekday=weekday))
         return ScheduleJob(name=name, command=command, kind=kind, times=tuple(times))
     if kind == "interval":
         seconds = _require_int(
@@ -277,7 +285,12 @@ def render_plist_dict(
         "RunAtLoad": False,
     }
     if job.kind == "calendar":
-        intervals = [{"Hour": time.hour, "Minute": time.minute} for time in job.times]
+        intervals: list[dict[str, int]] = []
+        for time in job.times:
+            interval = {"Hour": time.hour, "Minute": time.minute}
+            if time.weekday is not None:
+                interval["Weekday"] = time.weekday
+            intervals.append(interval)
         body["StartCalendarInterval"] = intervals if len(intervals) > 1 else intervals[0]
     else:
         body["StartInterval"] = job.seconds
@@ -305,7 +318,14 @@ def next_run_after(job: ScheduleJob, now: datetime) -> datetime:
     candidates: list[datetime] = []
     for time in job.times:
         today = now.replace(hour=time.hour, minute=time.minute, second=0, microsecond=0)
-        candidates.append(today if today > now else today + timedelta(days=1))
+        if time.weekday is None:
+            candidates.append(today if today > now else today + timedelta(days=1))
+            continue
+        # The first day on or after today with the job's weekday whose time
+        # is still ahead; a full week on when today's time has passed.
+        ahead = (time.weekday - today.isoweekday()) % 7
+        candidate = today + timedelta(days=ahead)
+        candidates.append(candidate if candidate > now else candidate + timedelta(days=7))
     return min(candidates)
 
 

@@ -26,6 +26,7 @@ config/application-profile.md
 config/story-seeds.json
 config/outreach-defaults.json
 config/application-brief.json
+config/academic-searches.json
 
 # Build inputs the image produces for itself, and host state that would either
 # bloat the context or arrive built for the wrong platform.

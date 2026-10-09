@@ -12,6 +12,7 @@ board is a real posting, which is the personal-data problem one level down.
 | File | What it is |
 |---|---|
 | `demo-jobs.json` | Synthetic tracker rows for demo mode. Invented companies at `example.com` hosts. |
+| `academic-dataset.json` | A dataset in the academic source's output shape (spec 097), replayed by demo mode with no request. Invented organisations at `example.org` hosts; one item per screening outcome. |
 | `http/index.json` | Maps fixture URLs to the files below, so demo mode reaches no network. |
 | `http/greenhouse-exampleco.json` | A Greenhouse board response, hand-written to the shape the importer parses. |
 | `http/ashby-exampleco.json` | The same, for Ashby. |

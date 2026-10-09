@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from academic_support import ACADEMIC_FIXTURE, academic_search_entry
 from conftest import auth
 from fastapi.testclient import TestClient
 
@@ -26,6 +27,7 @@ from harrier.tracker.queue import rank_by_deadline
 from harrier.tracker.schema import NEXT_ACTION_DEFAULTS, STATUSES
 from harrier.tracker.store import list_events
 from harrier.tracks import KIND_RULES, Scope, default_scope, list_tracks, resolve_scope
+from harrier.userconfig.store import ACADEMIC_SEARCHES, set_config
 from harrier_api.app import create_app
 from harrier_cli.main import build_parser, main, subcommand_name
 
@@ -237,13 +239,13 @@ def test_academic_queue_orders_by_nearest_open_deadline(
 
 # --- the allowlist ---------------------------------------------------------------
 
+# `discover` and `reconsider` left this list with spec 097: an academic
+# track discovers from its own search and reconsiders its own seen state.
 REFUSED: list[list[str]] = [
-    ["discover"],
     ["reevaluate", "1"],
     ["evaluate-prospects"],
     ["scoring", "train"],
     ["scoring", "export"],
-    ["reconsider"],
     ["find-contacts", "--job-id", "1"],
     ["tailor", "--job-id", "1"],
     ["cover-letter", "--job-id", "1"],
@@ -405,13 +407,16 @@ def test_a_malformed_deadline_is_refused(academic: Path) -> None:
 def test_academic_commands_read_no_profile_document(
     academic: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """No allowed command reads a profile document or a configuration row on
-    an academic track. Logging setup's redaction read is the one shared read
-    by design, named in the spec, and is left out of what is traced here."""
+    """No allowed command reads a profile document on an academic track, and
+    the only configuration row any of them reads is `discover`'s own search
+    (spec 097 narrows spec 093 to that one row). Logging setup's redaction
+    read is the one shared read by design, named in the spec, and is left
+    out of what is traced here."""
     assert add_position("Example Lab") == 0
     conn = connect()
     try:
         job_id = only_row(conn, scopes(conn)[1])["id"]
+        set_config(conn, ACADEMIC_SEARCHES, {SLUG: academic_search_entry()})
     finally:
         conn.close()
     capsys.readouterr()
@@ -434,10 +439,15 @@ def test_academic_commands_read_no_profile_document(
         ["events", "show", job_id],
         ["export", "--dest", str(academic.parent / "export")],
         ["tracks", "list"],
+        ["discover", "--dataset-file", str(ACADEMIC_FIXTURE), "--no-notify"],
     ):
         assert main(["--track", SLUG, *argv]) == 0, argv
     read = [s for s in statements if "profile_documents" in s or "user_config" in s]
-    assert read == [], read
+    # The one configuration read: the academic search's own row.
+    assert read, "discover read no configuration at all"
+    assert all(
+        "user_config" in s and "profile_documents" not in s and ACADEMIC_SEARCHES in s for s in read
+    ), read
 
 
 # --- export and the browser ---------------------------------------------------------

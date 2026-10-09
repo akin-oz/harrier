@@ -58,16 +58,27 @@ def env(tmp_path: Path) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+# The committed schedule's jobs: discovery, the weekly academic discovery
+# (spec 097), the digest and the mail watch. Pinned by name and cadence in
+# the test below; the install, status and uninstall tests count by it.
+JOB_COUNT = 4
+
+
 def test_committed_schedule_config_carries_the_current_cadence() -> None:
     prefix, jobs = load_schedule(CONFIG)
     assert prefix
-    names = [job.name for job in jobs]
-    assert names == ["discovery", "digest", "gmail-watch"]
-    discovery = jobs[0]
+    by_name = {job.name: job for job in jobs}
+    assert list(by_name) == ["discovery", "academic-discovery", "digest", "gmail-watch"]
+    discovery = by_name["discovery"]
     assert discovery.command == ("discover", "--scheduled")
     assert [(t.hour, t.minute) for t in discovery.times] == [(9, 0), (13, 0), (16, 0), (20, 0)]
-    assert [(t.hour, t.minute) for t in jobs[1].times] == [(20, 30)]
-    assert jobs[2].seconds == 300
+    assert [(t.hour, t.minute) for t in by_name["digest"].times] == [(20, 30)]
+    assert by_name["gmail-watch"].seconds == 300
+    # Weekly, and naming no track: the slugs come from the stored search
+    # (spec 097).
+    academic = by_name["academic-discovery"]
+    assert academic.command == ("discover", "--scheduled", "--configured-tracks")
+    assert [(t.weekday, t.hour, t.minute) for t in academic.times] == [(1, 9, 30)]
 
 
 def test_invalid_schedule_config_is_rejected(tmp_path: Path) -> None:
@@ -182,8 +193,8 @@ def test_next_run_after_calendar_and_interval() -> None:
 def test_install_writes_three_plists_at_the_real_repo_path(env: dict[str, Any]) -> None:
     launchctl = FakeLaunchctl()
     result = install_schedule(**env, launchctl=launchctl)
-    assert len(result.written) == 3
-    assert len(result.loaded) == 3
+    assert len(result.written) == JOB_COUNT
+    assert len(result.loaded) == JOB_COUNT
     for path in result.written:
         body = plistlib.loads(path.read_bytes())
         assert body["WorkingDirectory"] == str(env["root"])
@@ -192,7 +203,7 @@ def test_install_writes_three_plists_at_the_real_repo_path(env: dict[str, Any]) 
         # directory at all keeps a real account name out of the fixture.
         assert "/Users/" not in json.dumps(body, default=str)
     bootstraps = [call for call in launchctl.calls if call[0] == "bootstrap"]
-    assert len(bootstraps) == 3
+    assert len(bootstraps) == JOB_COUNT
 
 
 def test_install_defaults_to_the_resolved_repo_root(tmp_path: Path) -> None:
@@ -226,7 +237,12 @@ def test_status_detects_drift(env: dict[str, Any]) -> None:
         now=datetime(2026, 8, 10, 10, 0),
         launchctl=FakeLaunchctl(print_output=loaded_output, print_code=0),
     )
-    assert [status.name for status in statuses] == ["discovery", "digest", "gmail-watch"]
+    assert [status.name for status in statuses] == [
+        "discovery",
+        "academic-discovery",
+        "digest",
+        "gmail-watch",
+    ]
     assert all(status.installed for status in statuses)
     assert all(status.loaded for status in statuses)
     assert not any(status.drifted for status in statuses)
@@ -258,7 +274,7 @@ def test_uninstall_removes_plists(env: dict[str, Any]) -> None:
         config_path=env["config_path"], agents_dir=env["agents_dir"], launchctl=launchctl
     )
     assert result.ok
-    assert len(result.removed) == 3
+    assert len(result.removed) == JOB_COUNT
     assert list(env["agents_dir"].glob("*.plist")) == []
     assert all(call[0] == "bootout" for call in launchctl.calls)
     # A second uninstall is harmless.
@@ -421,7 +437,7 @@ def test_unload_failure_keeps_the_plist(env: dict[str, Any]) -> None:
     assert result.removed == []
     # A job that will not unload keeps its plist rather than running with
     # no on-disk definition (review finding).
-    assert len(list(env["agents_dir"].glob("*.plist"))) == 3
+    assert len(list(env["agents_dir"].glob("*.plist"))) == JOB_COUNT
     assert all("unload failed" in line for line in result.lines)
 
 
@@ -439,7 +455,7 @@ def test_not_loaded_job_uninstalls_cleanly(env: dict[str, Any]) -> None:
         launchctl=NotLoadedLaunchctl(),
     )
     assert result.ok
-    assert len(result.removed) == 3
+    assert len(result.removed) == JOB_COUNT
 
 
 def test_load_failure_is_reported(env: dict[str, Any]) -> None:
@@ -451,9 +467,59 @@ def test_load_failure_is_reported(env: dict[str, Any]) -> None:
             return 0, "", ""
 
     result = install_schedule(**env, launchctl=FailingLaunchctl())
-    assert len(result.written) == 3
+    assert len(result.written) == JOB_COUNT
     assert result.loaded == []
     # The failure must reach the caller, not just the printed lines.
     assert not result.ok
-    assert len(result.failures) == 3
+    assert len(result.failures) == JOB_COUNT
     assert any("load failed" in line for line in result.lines)
+
+
+def test_a_weekday_time_renders_the_weekday_key(env: dict[str, Any]) -> None:
+    """A calendar time may name a weekday (spec 097), rendered as launchd's
+    own `Weekday` key, and the next run lands on that weekday. Every daily
+    job still renders hours and minutes only."""
+    prefix, jobs = load_schedule(CONFIG)
+    rendered = {
+        job.name: render_plist_dict(
+            job,
+            prefix,
+            root=env["root"],
+            interpreter=env["interpreter"],
+            log_directory=env["log_directory"],
+        )["StartCalendarInterval"]
+        for job in jobs
+        if job.kind == "calendar"
+    }
+    assert rendered["academic-discovery"] == {"Weekday": 1, "Hour": 9, "Minute": 30}
+    assert rendered["digest"] == {"Hour": 20, "Minute": 30}
+    assert all("Weekday" not in entry for entry in rendered["discovery"])
+    weekly = next(job for job in jobs if job.name == "academic-discovery")
+    # 2026-08-10 is a Monday: before 09:30 the run is that morning, after
+    # it the run is the next Monday.
+    assert next_run_after(weekly, datetime(2026, 8, 10, 8, 0)) == datetime(2026, 8, 10, 9, 30)
+    assert next_run_after(weekly, datetime(2026, 8, 10, 10, 0)) == datetime(2026, 8, 17, 9, 30)
+    assert next_run_after(weekly, datetime(2026, 8, 12, 10, 0)) == datetime(2026, 8, 17, 9, 30)
+
+
+def test_a_weekday_outside_one_to_seven_is_refused(tmp_path: Path) -> None:
+    bad = tmp_path / "schedule.json"
+    bad.write_text(
+        json.dumps(
+            {
+                "jobs": [
+                    {
+                        "name": "weekly",
+                        "command": ["discover"],
+                        "trigger": {
+                            "kind": "calendar",
+                            "times": [{"weekday": 8, "hour": 9, "minute": 0}],
+                        },
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ScheduleConfigError, match=r"weekly.*weekday must be 1-7"):
+        load_schedule(bad)

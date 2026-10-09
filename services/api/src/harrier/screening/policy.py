@@ -152,3 +152,18 @@ def policy_version(candidate_cfg: CandidateConfig, *, model: str | None = None) 
     }
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=True, default=str)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:VERSION_LENGTH]
+
+
+def academic_policy_version(fingerprint: dict[str, Any]) -> str:
+    """The version an academic decision carries (spec 097).
+
+    A digest of the search entry's deciding fields, the source fields they
+    read, the deadline rule and the matcher's rules, as
+    `harrier.academic.search.policy_fingerprint` lists them. The model is
+    `none`, passed explicitly: no industry configuration, no industry rule
+    table and no learned model enters it, so editing those reopens no
+    academic decision, and editing the search reopens no industry one.
+    """
+    payload = {"academic": fingerprint, "model": "none"}
+    encoded = json.dumps(payload, sort_keys=True, ensure_ascii=True, default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:VERSION_LENGTH]

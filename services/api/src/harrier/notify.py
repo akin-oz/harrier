@@ -97,3 +97,37 @@ def build_telegram_message(
             break
         lines.extend(entry)
     return "\n".join(lines).rstrip()[:TELEGRAM_MESSAGE_LIMIT]
+
+
+def build_academic_telegram_message(
+    label: str,
+    kept: list[dict[str, object]],
+    *,
+    fetched: int,
+    failed: str = "",
+) -> str:
+    """An academic track's discovery summary (spec 097).
+
+    The track's label, the counts, and for each kept row only its title,
+    organisation, deadline and URL: the deadline stands where the industry
+    message shows a score. Never a search term, a flag or description text.
+    """
+    lines: list[str] = []
+    if failed:
+        lines.append(f"DISCOVERY FAILED on {label}: {failed}")
+    else:
+        lines.append(f"Discovery ok on {label}: {fetched} fetched, {len(kept)} new")
+    lines.append("")
+    for index, row in enumerate(kept[:8], start=1):
+        deadline = str(row.get("deadline", "") or "") or "no deadline"
+        entry = [
+            f"{index}. {row.get('company', 'Unknown')}: {row.get('title', 'Unknown')}",
+            f"   deadline: {deadline}",
+            f"   {row.get('url', '')}",
+            "",
+        ]
+        candidate = "\n".join([*lines, *entry]).rstrip()
+        if len(candidate) > TELEGRAM_MESSAGE_LIMIT:
+            break
+        lines.extend(entry)
+    return "\n".join(lines).rstrip()[:TELEGRAM_MESSAGE_LIMIT]

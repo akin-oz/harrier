@@ -36,8 +36,12 @@ FEEDS = "feeds"
 LINKEDIN_SEARCHES = "linkedin_searches"
 DISCOVERY = "discovery"
 COMPANY_HOLDS = "company_holds"
+# One object keyed by track slug, each value that track's search entry
+# (spec 097). Store only: no file fallback, because a loose file would be a
+# second home for the search (ADR-009, decision 2).
+ACADEMIC_SEARCHES = "academic_searches"
 
-KINDS = (FEEDS, LINKEDIN_SEARCHES, DISCOVERY, COMPANY_HOLDS)
+KINDS = (FEEDS, LINKEDIN_SEARCHES, DISCOVERY, COMPANY_HOLDS, ACADEMIC_SEARCHES)
 
 
 class ConfigError(ValueError):
@@ -118,7 +122,7 @@ def _validate_holds(items: list[object]) -> list[HoldEntry]:
     return entries
 
 
-def _validate(kind: str, value: object) -> object:
+def _validate(kind: str, value: object, *, on_read: bool = False) -> object:
     """Reject a value that its readers would later mishandle, and normalize
     what survives. Used on both the write and the read path: a bad value
     stored once would otherwise surface as a confusing failure inside
@@ -130,6 +134,18 @@ def _validate(kind: str, value: object) -> object:
     """
     if kind not in KINDS:
         raise ConfigError(f"unknown configuration kind {kind!r}; expected one of {KINDS}")
+    if kind == ACADEMIC_SEARCHES:
+        # Imported here: the search module reads the source's constants and
+        # the slug rule, and this store sits below both.
+        from harrier.academic.search import SearchError, validate_searches
+
+        # A write enforces the hard limits on the ceilings; a read checks the
+        # shape, and the ceilings are clamped where the entry is used
+        # (spec 035's rule, spec 097).
+        try:
+            return validate_searches(value, enforce_limits=not on_read)
+        except SearchError as exc:
+            raise ConfigError(str(exc)) from exc
     if kind == DISCOVERY:
         if not isinstance(value, dict):
             raise ConfigError(f"{kind} must be a JSON object, got {type(value).__name__}")
@@ -178,7 +194,7 @@ def get_config(conn: sqlite3.Connection, kind: str) -> object | None:
     # database, a restored backup, or a future migration can all put a bad
     # value here, and the read path was coercing rather than refusing, so
     # a stored [7] reached discovery as ["7"] (review finding on PR #20).
-    return _validate(kind, parsed)
+    return _validate(kind, parsed, on_read=True)
 
 
 def delete_config(conn: sqlite3.Connection, kind: str) -> bool:

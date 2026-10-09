@@ -29,6 +29,9 @@ class NormalizedJob(TypedDict):
     remote_signal: str
     metadata: dict[str, object]
     raw_payload: object
+    # An ISO date, or empty (spec 097). Only the academic source fills it;
+    # every other source returns it empty.
+    deadline: str
 
 
 def normalize(text: str) -> str:
@@ -56,6 +59,7 @@ def make_normalized_job(
     raw_payload: object | None = None,
     board_key: str = "",
     source_label: str = "",
+    deadline: str = "",
 ) -> NormalizedJob:
     external_id = str(external_id or "").strip()
     url = str(url or "").strip()
@@ -84,6 +88,7 @@ def make_normalized_job(
         remote_signal=str(remote_signal or "").strip(),
         metadata=metadata or {},
         raw_payload=raw_payload if raw_payload is not None else {},
+        deadline=str(deadline or "").strip(),
     )
 
 

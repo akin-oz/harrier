@@ -89,14 +89,15 @@ rewrite. Changing any of them requires an explicit spec.
   returns it. Filtering, scoring, remote-only enforcement, EMEA scoping, dedupe, and
   tracker append happen once, in the shared screening path. No per-source scoring
   logic, ever.
-- **Remote-only and EMEA scope are enforced.** Hybrid and onsite are rejected
-  on location signals; the deliberate scoping of negative hints to the
-  location field (not descriptions) is documented in
+- **Remote-only and EMEA scope are enforced on the industry kind.** Hybrid
+  and onsite are rejected on location signals; the deliberate scoping of
+  negative hints to the location field (not descriptions) is documented in
   harrier.screening.rules and pinned by
   services/api/tests/test_screening.py. EU-permit and EU-entity phrases
   ("EU work permit required", "must be based in EU", "EU-based contractor")
   are positive scoring signals, never filters: the candidate can contract
-  through an EU legal entity.
+  through an EU legal entity. An academic track's region scope is the
+  `countries` of its search entry, applied by its source (spec 097).
 - **Nothing auto-sends.** Outreach, applications, and emails are drafted; a human
   sends them. Telegram notifications are the only outbound messages. Contact discovery
   stages candidates for approval; nothing writes contacts directly.
@@ -987,14 +988,15 @@ rewrite. Changing any of them requires an explicit spec.
   returns it. Filtering, scoring, remote-only enforcement, EMEA scoping, dedupe, and
   tracker append happen once, in the shared screening path. No per-source scoring
   logic, ever.
-- **Remote-only and EMEA scope are enforced.** Hybrid and onsite are rejected
-  on location signals; the deliberate scoping of negative hints to the
-  location field (not descriptions) is documented in
+- **Remote-only and EMEA scope are enforced on the industry kind.** Hybrid
+  and onsite are rejected on location signals; the deliberate scoping of
+  negative hints to the location field (not descriptions) is documented in
   harrier.screening.rules and pinned by
   services/api/tests/test_screening.py. EU-permit and EU-entity phrases
   ("EU work permit required", "must be based in EU", "EU-based contractor")
   are positive scoring signals, never filters: the candidate can contract
-  through an EU legal entity.
+  through an EU legal entity. An academic track's region scope is the
+  `countries` of its search entry, applied by its source (spec 097).
 - **Nothing auto-sends.** Outreach, applications, and emails are drafted; a human
   sends them. Telegram notifications are the only outbound messages. Contact discovery
   stages candidates for approval; nothing writes contacts directly.

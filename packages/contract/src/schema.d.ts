@@ -2152,6 +2152,13 @@ export interface operations {
                     "application/json": components["schemas"]["ConfigOut"][];
                 };
             };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description A host process holds the tracker database (spec 075). */
             503: {
                 headers: {
@@ -2182,6 +2189,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ConfigOut"];
                 };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description No such configuration kind. */
             404: {

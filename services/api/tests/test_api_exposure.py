@@ -387,3 +387,18 @@ def test_the_bookmarklet_path_still_reaches_the_tracker(client: TestClient) -> N
     conn: sqlite3.Connection = connect()
     assert len(list_jobs(conn, default_scope(conn))) == 1
     conn.close()
+
+
+def test_config_reads_require_the_token(client: TestClient) -> None:
+    """The configuration reads serve the watchlist, the searches, the hold
+    list and the academic searches, which describe the operator's own search.
+    Without the token both answer 403 and carry no value (spec 023's open
+    item, closed by spec 097)."""
+    for path in ("/config", "/config/feeds", "/config/academic_searches"):
+        refused = client.get(path)
+        assert refused.status_code == 403, path
+        assert "value" not in refused.text, path
+        allowed = client.get(path, headers=auth())
+        assert allowed.status_code == 200, path
+    kinds = {entry["kind"] for entry in client.get("/config", headers=auth()).json()}
+    assert "academic_searches" in kinds

@@ -1,0 +1,31 @@
+{
+  "example-track": {
+    "areas": [
+      {
+        "label": "Example area",
+        "terms": [
+          { "text": "example modelling" },
+          { "text": "uberbeispiel", "prefix": true }
+        ]
+      }
+    ],
+    "require_area_match": false,
+    "position": {
+      "terms": [{ "text": "researcher" }, { "text": "research engineer" }],
+      "in": ["title", "position_type"]
+    },
+    "exclude": [
+      { "terms": [{ "text": "lecturer" }], "in": ["title"] },
+      { "terms": [{ "text": "Excluded Example College" }], "in": ["organisation"] }
+    ],
+    "countries": ["FR", "IT"],
+    "window_days": 14,
+    "flag_phrases": {
+      "eligibility": ["example eligibility phrase"],
+      "funding": ["example funding phrase"],
+      "language": ["example language phrase"]
+    },
+    "funding_flag_values": ["example unfunded value"],
+    "ceilings": { "max_results": 200, "max_charge_usd": 1.0 }
+  }
+}

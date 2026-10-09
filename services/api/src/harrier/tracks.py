@@ -86,6 +86,7 @@ def refuse_if_archived(scope: Scope) -> None:
 
 
 QueueOrder = Literal["stage_then_score", "nearest_deadline"]
+ScreeningGates = Literal["industry", "academic"]
 
 
 @dataclass(frozen=True)
@@ -102,6 +103,10 @@ class KindRules:
     next_action: Mapping[str, str] = field(default_factory=dict[str, str])
     seeds_follow_up: bool = True
     queue: QueueOrder = "stage_then_score"
+    # Which gates `screen_jobs` applies to this kind's discovery (spec 097).
+    # Industry: today's gates, unchanged. Academic: the search entry's gates,
+    # with no industry title hint, remote gate, hold list or score.
+    screening: ScreeningGates = "industry"
 
 
 KIND_RULES: dict[str, KindRules] = {
@@ -151,6 +156,7 @@ KIND_RULES: dict[str, KindRules] = {
         },
         seeds_follow_up=False,
         queue="nearest_deadline",
+        screening="academic",
     ),
 }
 
@@ -176,12 +182,16 @@ NON_DEFAULT_OPERATIONS: frozenset[str] = frozenset(
         "export",
         "list",
         "counts",
+        # Spec 097: discovery from the track's own search entry, and
+        # reconsideration of its own seen state.
+        "discover",
+        "reconsider",
     }
 )
 
 # The allowed operations that write a tracker row; an archived track refuses them.
 WRITE_OPERATIONS: frozenset[str] = frozenset(
-    {"add", "shortlist", "track", "applied", "interviewing", "reject"}
+    {"add", "shortlist", "track", "applied", "interviewing", "reject", "discover"}
 )
 
 
