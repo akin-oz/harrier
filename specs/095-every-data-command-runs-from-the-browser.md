@@ -283,7 +283,9 @@ otherwise. Synthetic rows only.
 - [x] No real posting, company, person or tracker count appears in a fixture,
       a test name or a screenshot (ADR-008). Every fixture is invented.
       Limitation: a property of the diff, not something a test asserts.
-- [ ] All gates green on the pull request
+- [x] All gates green on the pull request (`just check` passes after merging
+      main: 2404 Python tests, 130 web tests, the contract regenerated with no
+      diff, `aie check` and the spec structure check)
 
 ## Honest limitations
 
