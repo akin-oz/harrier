@@ -166,6 +166,6 @@ EXPOSE 8000
 
 # 0.0.0.0 is the container's interface, not an exposure decision: the compose
 # file publishes to 127.0.0.1 only. TrustedHostMiddleware already allows
-# localhost, 127.0.0.1, [::1] and 0.0.0.0, so reaching this from the host
+# localhost, 127.0.0.1 and 0.0.0.0, so reaching this from the host
 # browser passes and any other hostname gets a 400 (localauth.TRUSTED_HOSTS).
 CMD ["uvicorn", "harrier_api.app:app", "--host", "0.0.0.0", "--port", "8000"]

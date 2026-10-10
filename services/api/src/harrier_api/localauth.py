@@ -55,7 +55,10 @@ TOKEN_ENV = "HARRIER_API_TOKEN"
 # of them: it is an ordinary name that DNS resolves, so a page on a network
 # whose DNS an attacker controls could rebind it to 127.0.0.1 and pass this
 # check. The tests reach the app as `localhost` instead (spec 083).
-TRUSTED_HOSTS = ("localhost", "127.0.0.1", "[::1]", "0.0.0.0")
+# `[::1]` is not listed either: Starlette's middleware takes the host as the
+# text before the first colon, so a bracketed IPv6 host can never match, and
+# nothing listens on IPv6 loopback (spec 084).
+TRUSTED_HOSTS = ("localhost", "127.0.0.1", "0.0.0.0")
 
 
 def token_path() -> Path:

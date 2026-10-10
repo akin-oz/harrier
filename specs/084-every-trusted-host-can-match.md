@@ -85,20 +85,20 @@ is the only new file, and specs are public, so
 
 ## Acceptance criteria
 
-- [ ] `GET /health` with Host `[::1]`, and with Host `[::1]:8000`, answers
-      400 (planned test_ipv6_loopback_is_not_a_trusted_host)
-- [ ] `GET /health` with each name in `TRUSTED_HOSTS`, bare and with `:8000`,
-      answers 200 (planned test_every_trusted_host_reaches_a_route)
-- [ ] with `[::1]` put back into `TRUSTED_HOSTS`, that test fails and names
+- [x] `GET /health` with Host `[::1]`, and with Host `[::1]:8000`, answers
+      400 (`services/api/tests/test_api_exposure.py::test_ipv6_loopback_is_not_a_trusted_host`)
+- [x] `GET /health` with each name in `TRUSTED_HOSTS`, bare and with `:8000`,
+      answers 200 (`services/api/tests/test_api_exposure.py::test_every_trusted_host_reaches_a_route`)
+- [x] with `[::1]` put back into `TRUSTED_HOSTS`, that test fails and names
       `[::1]`, and the pull request records the run
-- [ ] `TRUSTED_HOSTS` is `("localhost", "127.0.0.1", "0.0.0.0")`, with a
+- [x] `TRUSTED_HOSTS` is `("localhost", "127.0.0.1", "0.0.0.0")`, with a
       comment saying why `[::1]` is absent
-- [ ] the `Dockerfile` comment above `CMD` names `localhost`, `127.0.0.1` and
+- [x] the `Dockerfile` comment above `CMD` names `localhost`, `127.0.0.1` and
       `0.0.0.0` only
-- [ ] specs 051 and 083 quote the list without `[::1]`
-- [ ] `just check` passes
+- [x] specs 051 and 083 quote the list without `[::1]`
+- [x] `just check` passes
 
-The planned tests go in `services/api/tests/test_api_exposure.py`.
+The tests are in `services/api/tests/test_api_exposure.py`.
 
 ## Honest limitations
 
