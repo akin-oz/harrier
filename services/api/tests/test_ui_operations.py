@@ -24,6 +24,7 @@ field at all.
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Iterator
 from contextlib import suppress
@@ -574,3 +575,393 @@ def test_a_date_reaches_argv_only_as_a_calendar_date() -> None:
         RunParams(dates={"--date": datetime(2026, 10, 9, 1, 2)})
     with pytest.raises(ValueError, match="must be one of"):
         build_command("reconsider", RunParams(choices={"--source": "--apply"}))
+
+
+# --- spec 095: every command that works on the operator's data ------------------
+
+
+def _second_track() -> None:
+    from harrier.tracks import add_track
+
+    conn = connect()
+    add_track(conn, "second", "academic", "Second")
+    conn.close()
+
+
+def _job_id() -> int:
+    conn = connect()
+    try:
+        return int(conn.execute("SELECT id FROM jobs ORDER BY id LIMIT 1").fetchone()[0])
+    finally:
+        conn.close()
+
+
+NEW_RUNS: dict[str, tuple[str, str]] = {
+    "events-backfill": ("/ops/events/backfill", "harrier.tracker.store.backfill_events"),
+    "evaluate-prospects": ("/ops/evaluate-prospects", "harrier.offers.evaluate_prospects"),
+    "scoring-export": ("/ops/scoring/export", "harrier.scoring.export.export_features"),
+    "discovery": ("/ops/discover", "harrier.discovery.run_discovery"),
+}
+
+
+@pytest.mark.parametrize("kind", sorted(NEW_RUNS))
+def test_every_new_route_calls_the_cli_verbs_function(
+    kind: str, client: TestClient, manager: RunManager
+) -> None:
+    """Runs: the argv the route started, run as the CLI, reaches the
+    function the verb calls. The requests are below, driven through both
+    surfaces with the function patched."""
+    path, function = NEW_RUNS[kind]
+    run = started(manager, client.post(path, headers=auth()))
+    assert run.kind == kind
+    with patch(function) as domain, suppress(Exception):
+        main(as_cli(run))
+    assert domain.call_args is not None, f"{path} did not reach {function}"
+
+
+def test_every_new_request_calls_the_cli_verbs_function(
+    env: Path, client: TestClient, tmp_path: Path
+) -> None:
+    job = _job_id()
+    brief = {"evidence": ["an invented line of evidence"]}
+
+    # events show
+    with patch("harrier.tracker.store.list_events", return_value=[]) as domain:
+        main(["events", "show", str(job)])
+        client.get(f"/tracker/{job}/events")
+    cli_call, api_call = domain.call_args_list
+    assert cli_call.args[2] == api_call.args[2] == job
+
+    # brief show
+    with patch("harrier.apply.brief.brief_text", return_value=None) as domain:
+        main(["brief", "show", str(job)])
+        client.get(f"/apply/{job}/brief", headers=auth())
+    cli_call, api_call = domain.call_args_list
+    assert cli_call.args[1] == api_call.args[1] == job
+
+    # brief set: the CLI reads a file, the route takes the body
+    from harrier.apply.brief import parse_brief
+
+    brief_file = tmp_path / "brief.json"
+    brief_file.write_text(json.dumps(brief), encoding="utf-8")
+    with patch("harrier.apply.brief.store_brief", return_value=parse_brief(brief)) as domain:
+        main(["brief", "set", str(job), "--file", str(brief_file)])
+        client.put(f"/apply/{job}/brief", json=brief, headers=auth())
+    cli_call, api_call = domain.call_args_list
+    assert cli_call.args[1] == api_call.args[1] == job
+    assert json.loads(cli_call.args[2]) == json.loads(api_call.args[2]) == brief
+
+    # check, and check --link-contacts
+    with (
+        patch("harrier.tracker.invariants.check_rows", return_value=[]) as rows,
+        patch("harrier.outreach.joblink.unresolved_links", return_value=[]) as links,
+    ):
+        main(["check"])
+        client.get("/ops/check", headers=auth())
+    assert rows.call_count == 2 and links.call_count == 2
+    with patch("harrier.outreach.joblink.backfill_job_ids", return_value=(0, 0)) as domain:
+        main(["check", "--link-contacts"])
+        client.post("/ops/check/link-contacts", json={"confirm": True}, headers=auth())
+    assert domain.call_count == 2
+
+
+def _legacy_rejection(company: str) -> int:
+    """A row decided before history was recorded, so it has no events."""
+    conn = connect()
+    try:
+        cursor = conn.execute(
+            "INSERT INTO jobs (company, title, url, source, status, rejection_reason, "
+            "added_at, created_at, updated_at) VALUES (?, ?, ?, 'greenhouse', 'rejected', "
+            "'hybrid', '2026-03-02', '2026-03-02 09:00:00', '2026-03-03 09:00:00')",
+            (company, "Platform Engineer", f"https://boards.example.com/{company}/1"),
+        )
+        conn.commit()
+        assert cursor.lastrowid is not None
+        return int(cursor.lastrowid)
+    finally:
+        conn.close()
+
+
+def test_history_lists_a_jobs_events_in_order(env: Path, client: TestClient) -> None:
+    from harrier.tracker.actions import change_status
+    from harrier.tracker.store import backfill_events
+
+    job = _job_id()
+    conn = connect()
+    change_status(conn, default_scope(conn), str(job), "shortlist")
+    change_status(conn, default_scope(conn), str(job), "reject", reason="hybrid after all")
+    conn.close()
+
+    events = client.get(f"/tracker/{job}/events").json()
+    # The add, then the two moves, in the order they were made.
+    assert [(e["from_status"], e["to_status"]) for e in events] == [
+        ("", "prospect"),
+        ("prospect", "shortlisted"),
+        ("shortlisted", "rejected"),
+    ]
+    assert events[-1]["reason_text"] == "hybrid after all"
+    # The code reads in the domain's words, so the browser holds no table.
+    from harrier.tracker.reasons import label_of
+
+    assert events[-1]["reason_code"]
+    assert events[-1]["reason_label"] == label_of(events[-1]["reason_code"])
+    assert not any(e["backfilled"] for e in events)
+
+    legacy = _legacy_rejection("Invented Fjord")
+    conn = connect()
+    backfill_events(conn, default_scope(conn))
+    conn.close()
+    reconstructed = client.get(f"/tracker/{legacy}/events").json()
+    assert reconstructed and all(e["backfilled"] for e in reconstructed)
+
+    # Any track, and only that track's jobs.
+    from harrier.tracks import resolve_scope
+
+    _second_track()
+    conn = connect()
+    elsewhere = add_job(
+        conn,
+        {"company": "Invented Lab", "title": "Research Engineer", "source": "manual"},
+        scope=resolve_scope(conn, "second"),
+    )
+    conn.close()
+    on_second = client.get(f"/tracker/{elsewhere}/events", params={"track": "second"})
+    assert on_second.status_code == 200, on_second.text
+    assert client.get(f"/tracker/{job}/events", params={"track": "second"}).status_code == 404
+
+
+def test_an_empty_body_changes_nothing(client: TestClient, manager: RunManager, env: Path) -> None:
+    backfill = as_cli(started(manager, client.post("/ops/events/backfill", headers=auth())))
+    assert "--dry-run" in backfill
+
+    evaluation = as_cli(started(manager, client.post("/ops/evaluate-prospects", headers=auth())))
+    assert "--apply" not in evaluation
+
+    with patch("harrier.outreach.joblink.backfill_job_ids") as link:
+        refused = client.post("/ops/check/link-contacts", headers=auth())
+        also = client.post("/ops/check/link-contacts", json={}, headers=auth())
+    assert refused.status_code == also.status_code == 409
+    assert "confirm" in refused.json()["detail"]
+    assert link.call_args is None, "an empty body linked contacts"
+
+    # Each write is its explicit field.
+    write = client.post("/ops/events/backfill", json={"dry_run": False}, headers=auth())
+    assert "--dry-run" not in as_cli(started(manager, write))
+    reject = client.post("/ops/evaluate-prospects", json={"apply": True}, headers=auth())
+    assert "--apply" in as_cli(started(manager, reject))
+
+
+def test_the_brief_round_trips_and_a_bad_brief_is_400(
+    env: Path, client: TestClient, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    job = _job_id()
+    assert client.get(f"/apply/{job}/brief", headers=auth()).status_code == 404
+
+    brief = {
+        "never_name": ["Invented Client Ltd"],
+        "guidance_url": "https://careers.example.com/guidance",
+        "employer_guidance": "Say what you built.",
+        "letter": {"max_words": 250, "paragraphs": 3},
+        "answers": {"max_sentences": 4},
+        "evidence": ["an invented line of evidence"],
+        "views": {"Why us?": "An invented view."},
+        "compensation_number": "100",
+    }
+    stored = client.put(f"/apply/{job}/brief", json=brief, headers=auth())
+    assert stored.status_code == 200, stored.text
+    read = client.get(f"/apply/{job}/brief", headers=auth()).json()
+    assert read["never_name"] == brief["never_name"]
+    assert read["letter"] == {"max_words": 250, "max_sentences": None, "paragraphs": 3}
+    assert read["views"] == brief["views"]
+    assert read["confirmed_skills"] == []
+
+    for bad in ({"unknown": 1}, {"evidence": "not a list"}, {"letter": {"max_words": 0}}):
+        refused = client.put(f"/apply/{job}/brief", json=bad, headers=auth())
+        assert refused.status_code == 400, refused.text
+        # The store's words, as the CLI prints them.
+        path = tmp_path / "bad.json"
+        path.write_text(json.dumps(bad), encoding="utf-8")
+        assert main(["brief", "set", str(job), "--file", str(path)]) == 1
+        assert capsys.readouterr().err.strip() == f"brief failed: {refused.json()['detail']}"
+    # Nothing a refusal sent was stored.
+    assert client.get(f"/apply/{job}/brief", headers=auth()).json()["evidence"] == brief["evidence"]
+
+
+def test_discovery_options_reach_argv_only_as_validated_values(
+    env: Path, client: TestClient, manager: RunManager
+) -> None:
+    from harrier.userconfig import DISCOVERY, set_config
+    from harrier_cli.main import build_parser
+
+    form = {
+        "dry_run": "true",
+        "notify": "false",
+        "only_source": "greenhouse",
+        "apify_count": "20",
+    }
+    argv = as_cli(started(manager, client.post("/ops/discover", data=form, headers=auth())))
+    assert argv[0] == "discover"
+    assert {"--dry-run", "--no-notify", "--only-source=greenhouse", "--apify-count=20"} <= set(argv)
+    assert "--scheduled" not in argv
+
+    for bad in ({"only_source": "--apply"}, {"apify_count": "501"}, {"apify_count": "0"}):
+        assert client.post("/ops/discover", data=bad, headers=auth()).status_code == 422, bad
+
+    # Absent, the count is the configured one, bounded where it is read.
+    conn = connect()
+    set_config(conn, DISCOVERY, {"apify_scheduled_count": 42})
+    conn.close()
+    # The first discovery is still active here, so read the shadow argv from
+    # a fresh manager rather than join it.
+    fresh = RunManager(journal_path=env / "fresh.jsonl")
+    with patch.object(fresh, "_execute", side_effect=_idle):
+        other = TestClient(create_app(run_manager=fresh))
+        shadow_argv = as_cli(
+            started(fresh, other.post("/ops/discover", data={"shadow": "true"}, headers=auth()))
+        )
+    assert "--apify-count=42" in shadow_argv
+    assert "--shadow" in shadow_argv and "--dry-run" not in shadow_argv
+    # `shadow` implies a dry run by the CLI's own rule, not a second copy here.
+    from harrier.discovery import DiscoveryOptions
+
+    parsed = build_parser().parse_args(shadow_argv)
+    assert DiscoveryOptions(shadow=parsed.shadow, dry_run=parsed.dry_run).dry_run is True
+
+
+def test_an_upload_becomes_a_run_input_and_is_removed(env: Path) -> None:
+    from harrier_api.runs import run_inputs_dir
+
+    runs = RunManager(journal_path=env / "uploads.jsonl")
+    seen: list[Any] = []
+
+    def record(kind: str, params: Any) -> list[str]:
+        seen.append(params)
+        return ["true"]
+
+    files = {
+        "dataset_file": ("export.json", b'[{"title": "Invented Role"}]', "application/json"),
+        "wellfound_file": ("wellfound.csv", b"title,company\nRole,Invented Co\n", "text/csv"),
+    }
+    with (
+        patch("harrier_api.runs.build_command", side_effect=record),
+        TestClient(create_app(run_manager=runs)) as client,
+    ):
+        response = client.post("/ops/discover", files=files, headers=auth())
+        assert response.status_code == 200, response.text
+        params = seen[0]
+        written = dict(params.input_files)
+        assert set(written) == {"--dataset-file", "--wellfound-file"}
+        for path in written.values():
+            assert path.parent == run_inputs_dir()
+            assert path.stat().st_mode & 0o077 == 0, "an upload is readable by other users"
+        assert written["--dataset-file"].read_bytes() == files["dataset_file"][1]
+        assert written["--wellfound-file"].suffix == ".csv"
+        _finished(runs, response.json()["id"])
+    assert not any(path.exists() for path in written.values()), "an upload outlived its run"
+
+    over = {"wttj_file": ("big.json", b"x" * (5 * 1024 * 1024 + 1), "application/json")}
+    refused_runs = RunManager(journal_path=env / "refused.jsonl")
+    with patch.object(refused_runs, "_execute", side_effect=_idle):
+        refused = TestClient(create_app(run_manager=refused_runs)).post(
+            "/ops/discover", files=over, headers=auth()
+        )
+    assert refused.status_code == 413
+    assert refused_runs.list_runs() == []
+    assert list(run_inputs_dir().glob("*")) == [], "a refused upload was written"
+
+
+def test_inputs_of_a_refused_attempt_are_all_removed(
+    env: Path, client: TestClient, manager: RunManager
+) -> None:
+    """An attempt that joins the discovery already active never becomes a
+    run, so every file it wrote goes, not only the first."""
+    from harrier_api.runs import run_inputs_dir
+
+    first = started(manager, client.post("/ops/discover", headers=auth()))
+    files = {
+        "dataset_file": ("a.json", b"[]", "application/json"),
+        "wellfound_file": ("b.json", b"[]", "application/json"),
+        "wttj_file": ("c.json", b"[]", "application/json"),
+    }
+    joined = client.post("/ops/discover", files=files, headers=auth())
+    assert joined.json()["id"] == first.id
+    assert list(run_inputs_dir().glob("*")) == [], "a joined attempt left files behind"
+
+
+def test_inputs_left_by_a_restart_are_swept_at_startup(env: Path) -> None:
+    from harrier_api.runs import run_inputs_dir, write_run_input
+
+    left = [write_run_input("left by a server that stopped"), write_run_input(b"[]", ".json")]
+    RunManager(journal_path=env / "kept.jsonl")
+    assert all(path.exists() for path in left), "a manager a test builds swept its files"
+    create_app()
+    assert not any(path.exists() for path in left)
+    assert run_inputs_dir().is_dir()
+
+
+def test_the_data_check_requires_the_token(env: Path, client: TestClient) -> None:
+    assert client.get("/ops/check").status_code == 403
+    body = client.get("/ops/check", headers=auth()).json()
+    assert body == {"breaches": [], "unresolved_links": []}
+
+
+def test_no_operator_content_reaches_argv(
+    env: Path, client: TestClient, manager: RunManager
+) -> None:
+    job = _job_id()
+    words = "an invented note nobody else should read"
+    stored = client.put(f"/apply/{job}/brief", json={"employer_guidance": words}, headers=auth())
+    assert stored.status_code == 200
+    assert manager.list_runs() == [], "storing a brief started a process"
+
+    hostile = "../../outside/evidence.json"
+    files = {"dataset_file": (hostile, words.encode(), "application/json")}
+    run = started(manager, client.post("/ops/discover", files=files, headers=auth()))
+    argv = " ".join(run.command)
+    assert words not in argv
+    assert "outside" not in argv and hostile not in argv
+
+
+ELSEWHERE: list[tuple[str, str, dict[str, Any]]] = [
+    ("post", "/ops/events/backfill", {"json": {}}),
+    ("get", "/apply/1/brief", {}),
+    ("put", "/apply/1/brief", {"json": {}}),
+    ("get", "/ops/check", {}),
+    ("post", "/ops/check/link-contacts", {"json": {"confirm": True}}),
+    ("post", "/ops/evaluate-prospects", {"json": {}}),
+    ("post", "/ops/scoring/export", {}),
+    ("post", "/ops/discover", {}),
+]
+
+
+def test_operations_refuse_a_non_default_track(
+    env: Path, client: TestClient, manager: RunManager
+) -> None:
+    _second_track()
+    for method, path, kwargs in ELSEWHERE:
+        response = client.request(
+            method, path, params={"track": "second"}, headers=auth(), **kwargs
+        )
+        assert response.status_code == 409, (method, path, response.text)
+        assert "not available on track second" in response.json()["detail"]
+    assert manager.list_runs() == []
+    # History is the one route that works there.
+    assert client.get("/tracker/1/events", params={"track": "second"}).status_code == 404
+
+
+def test_a_second_run_of_a_kind_returns_the_active_one(
+    client: TestClient, manager: RunManager
+) -> None:
+    for path, body in (
+        ("/ops/events/backfill", {}),
+        ("/ops/evaluate-prospects", {}),
+        ("/ops/scoring/export", None),
+    ):
+        first = client.post(path, json=body, headers=auth()).json()["id"]
+        again = client.post(path, json=body, headers=auth()).json()["id"]
+        assert again == first, path
+    discover = client.post("/ops/discover", headers=auth()).json()["id"]
+    assert client.post("/ops/discover", headers=auth()).json()["id"] == discover
+    # The no-option start the Runs panel uses is the same discovery.
+    plain = client.post("/runs", json={"kind": "discovery"}, headers=auth()).json()["id"]
+    assert plain == discover

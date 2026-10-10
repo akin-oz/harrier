@@ -18,8 +18,15 @@ const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 // evaluation, which is the densest personal content the system holds
 // (spec 047). An outreach read is a named human being who is not the
 // operator, which is the only content here about someone who never chose to
-// use this tool (spec 048). The API requires the token on both.
-const TOKENED_READS = [/\/apply\/[^/]+\/artifacts(\/|$)/, /\/outreach\//];
+// use this tool (spec 048). The API requires the token on both. A brief is
+// the operator's own notes about an application, and the data check names
+// contacts, so both are read with it too (spec 095).
+const TOKENED_READS = [
+  /\/apply\/[^/]+\/artifacts(\/|$)/,
+  /\/apply\/[^/]+\/brief$/,
+  /\/ops\/check$/,
+  /\/outreach\//,
+];
 
 function needsToken(request: Request): boolean {
   if (MUTATING.has(request.method.toUpperCase())) return true;

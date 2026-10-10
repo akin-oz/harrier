@@ -500,7 +500,11 @@ def test_every_tracker_write_that_names_a_job_declares_its_refusals(env: Path) -
         operation["operationId"]: operation
         for path, methods in spec["paths"].items()
         if path.startswith("/tracker/{selector}/")
-        for operation in methods.values()
+        # Writes only, as the name says. A read there, the history of
+        # spec 095, can never answer a track 409: `events show` runs on
+        # every track and writes nothing an archive refuses.
+        for method, operation in methods.items()
+        if method != "get"
     }
     assert operations, "the walk found no tracker write that names a job"
     named = {(operation_id, status) for operation_id in operations for status in (404, 409)}

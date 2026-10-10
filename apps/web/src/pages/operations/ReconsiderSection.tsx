@@ -1,31 +1,12 @@
 import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 
-import type { components } from "@harrier/contract";
-
 import { useRunStream } from "../../features/runs/useRunStream";
 import type { EventSourceFactory, RunOut } from "../../features/runs/useRunStream";
 import { api } from "../../shared/api/client";
 import { RunOutput, TOKEN_REFUSED, refusalMessage } from "./RunOutput";
-
-type SourceName = components["schemas"]["SourceName"];
-
-// Every source the contract names, labelled. A `Record` over the generated
-// union, so a source the domain adds is a type error here until it has a
-// label, rather than an option the page silently lacks.
-const SOURCE_LABEL: Record<SourceName, string> = {
-  greenhouse: "Greenhouse",
-  ashby: "Ashby",
-  lever: "Lever",
-  remoteok: "RemoteOK",
-  apify_linkedin: "LinkedIn (Apify)",
-  wellfound: "Wellfound",
-  wttj: "Welcome to the Jungle",
-};
-
-function isSource(value: string): value is SourceName {
-  return value in SOURCE_LABEL;
-}
+import { SOURCE_LABEL, isSource } from "./sources";
+import type { SourceName } from "./sources";
 
 /**
  * Reconsideration (spec 031). The first request reports what would be

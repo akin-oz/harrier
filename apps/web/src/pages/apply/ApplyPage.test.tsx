@@ -84,6 +84,8 @@ function stubApi(options: {
       if (url.pathname.endsWith("/artifacts")) {
         return reply(200, options.artifacts ?? []);
       }
+      // No brief stored, as the API answers it (spec 095).
+      if (url.pathname.endsWith("/brief")) return reply(404, { detail: "no brief" });
       if (url.pathname.startsWith("/api/apply/")) {
         const answer = options.start ?? {
           code: 200,

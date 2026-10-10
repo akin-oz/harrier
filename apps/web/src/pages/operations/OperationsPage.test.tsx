@@ -68,10 +68,21 @@ function runBody(id: string, kind: string, state = "running") {
   };
 }
 
+// A multipart body is kept as its text; anything else was JSON.
+function parsed(raw: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return raw;
+  }
+}
+
 function stubApi(
   options: {
     schedule?: unknown;
     refuse?: Record<string, { status: number; detail: string }>;
+    check?: unknown;
+    linked?: unknown;
   } = {},
 ): Call[] {
   const calls: Call[] = [];
@@ -85,7 +96,7 @@ function stubApi(
         calls.push({
           url: url.pathname,
           method: request.method,
-          body: raw === "" ? null : JSON.parse(raw),
+          body: raw === "" ? null : parsed(raw),
           token: request.headers.get("X-Harrier-Token"),
         });
       };
@@ -110,6 +121,18 @@ function stubApi(
         return reply(200, runBody(`re${String(calls.length)}`, "reconsider"));
       }
       if (url.pathname === "/api/ops/digest") return reply(200, runBody("digest1", "digest"));
+      if (url.pathname === "/api/ops/check") {
+        return reply(200, options.check ?? { breaches: [], unresolved_links: [] });
+      }
+      if (url.pathname === "/api/ops/check/link-contacts") {
+        return reply(200, options.linked ?? { linked: 0, unmatched: 0 });
+      }
+      if (url.pathname === "/api/ops/events/backfill") return reply(200, runBody("bf1", "x"));
+      if (url.pathname === "/api/ops/evaluate-prospects") {
+        return reply(200, runBody(`ev${String(calls.length)}`, "evaluate-prospects"));
+      }
+      if (url.pathname === "/api/ops/scoring/export") return reply(200, runBody("sx1", "x"));
+      if (url.pathname === "/api/ops/discover") return reply(200, runBody("disc1", "discovery"));
       if (url.pathname.startsWith("/api/runs/")) {
         const id = url.pathname.split("/")[3] ?? "";
         return reply(200, runBody(id, "any"));
@@ -405,8 +428,167 @@ test("every operations write carries the token and no read does", async () => {
 
   const ops = calls.filter((call) => call.url.startsWith("/api/ops/"));
   for (const call of ops) {
-    if (call.method === "GET") expect(call.token).toBeNull();
+    // The data check names contacts, so it is the one read with the token.
+    if (call.method === "GET" && call.url !== "/api/ops/check") expect(call.token).toBeNull();
     else expect(call.token).toBe("test-token");
   }
   expect(ops.some((call) => call.method === "GET")).toBe(true);
+});
+
+// --- spec 095: data checks, decision history, evaluation, export, discovery ---
+
+test("data checks list each finding in the domain's words", async () => {
+  stubApi({
+    check: {
+      breaches: [{ job_id: "4", breach: "applied with no applied date" }],
+      unresolved_links: [
+        { contact: "Avery Invented", breach: "a linked job that matches no tracked job" },
+      ],
+    },
+  });
+  renderPage();
+
+  expect(await screen.findByText("job 4: applied with no applied date")).toBeTruthy();
+  expect(
+    screen.getByText("contact Avery Invented: a linked job that matches no tracked job"),
+  ).toBeTruthy();
+  expect(screen.queryByText("Nothing to report.")).toBeNull();
+});
+
+test("a clean data check says there is nothing to report", async () => {
+  stubApi();
+  renderPage();
+
+  expect(await screen.findByText("Nothing to report.")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Link contact ids…" })).toBeNull();
+});
+
+test("linking contact ids is a separate confirmed action that names the count", async () => {
+  const calls = stubApi({
+    check: {
+      breaches: [],
+      unresolved_links: [
+        { contact: "Avery Invented", breach: "a linked job that matches no tracked job" },
+        { contact: "Blake Invented", breach: "a linked job that matches no tracked job" },
+      ],
+    },
+    linked: { linked: 1, unmatched: 1 },
+  });
+  const user = userEvent.setup();
+  renderPage();
+
+  await user.click(await screen.findByRole("button", { name: "Link contact ids…" }));
+  expect(posted(calls, "/ops/check/link-contacts")).toHaveLength(0);
+  const confirm = screen.getByRole("group", { name: "Confirm linking" });
+  expect(confirm.textContent).toContain("2 contact links resolve nowhere now");
+  await user.click(screen.getByRole("button", { name: "Link them" }));
+  expect(await screen.findByText("Linked 1; 1 left unmatched.")).toBeTruthy();
+  expect(posted(calls, "/ops/check/link-contacts")[0]?.body).toEqual({ confirm: true });
+});
+
+test("a dry backfill comes first and writing names the count it will write", async () => {
+  const calls = stubApi();
+  const user = userEvent.setup();
+  renderPage();
+
+  await user.click(
+    await screen.findByRole("button", { name: "Count what a backfill would write" }),
+  );
+  await waitFor(() => {
+    expect(posted(calls, "/ops/events/backfill")).toHaveLength(1);
+  });
+  expect(posted(calls, "/ops/events/backfill")[0]?.body).toEqual({ dry_run: true });
+  // Not offered while the count is still running.
+  expect(screen.queryByRole("button", { name: /reconstructed events$/ })).toBeNull();
+  act(() => {
+    lastSource().emit({ type: "log_line", line: "would write 7 events" });
+    lastSource().emit({ type: "state_change", state: "succeeded", exit_code: 0 });
+  });
+  await user.click(await screen.findByRole("button", { name: "Write the 7 reconstructed events" }));
+  await waitFor(() => {
+    expect(posted(calls, "/ops/events/backfill")).toHaveLength(2);
+  });
+  expect(posted(calls, "/ops/events/backfill")[1]?.body).toEqual({ dry_run: false });
+});
+
+test("batch evaluation offers rejection only after a report, naming the count", async () => {
+  const calls = stubApi();
+  const user = userEvent.setup();
+  renderPage();
+
+  await user.type(await screen.findByLabelText("Confidence to reject, 0 to 1"), "0.9");
+  await user.click(screen.getByRole("button", { name: "Evaluate, reject nothing" }));
+  await waitFor(() => {
+    expect(posted(calls, "/ops/evaluate-prospects")).toHaveLength(1);
+  });
+  expect(posted(calls, "/ops/evaluate-prospects")[0]?.body).toEqual({
+    apply: false,
+    threshold: 0.9,
+    limit: null,
+    refresh: false,
+    include_borderline: false,
+  });
+  expect(screen.queryByRole("button", { name: /^Reject the/ })).toBeNull();
+  act(() => {
+    lastSource().emit({ type: "log_line", line: "would_reject=3" });
+    lastSource().emit({ type: "state_change", state: "succeeded", exit_code: 0 });
+  });
+  await user.click(
+    await screen.findByRole("button", { name: "Reject the 3 prospects as the system's decision" }),
+  );
+  await waitFor(() => {
+    expect(posted(calls, "/ops/evaluate-prospects")).toHaveLength(2);
+  });
+  expect(posted(calls, "/ops/evaluate-prospects")[1]?.body).toMatchObject({
+    apply: true,
+    threshold: 0.9,
+  });
+});
+
+test("the feature export runs here and training is said to stay on the host", async () => {
+  const calls = stubApi();
+  const user = userEvent.setup();
+  renderPage();
+
+  expect(await screen.findByText(/Training runs on the host/)).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "Write the feature export" }));
+  await waitFor(() => {
+    expect(posted(calls, "/ops/scoring/export")).toHaveLength(1);
+  });
+});
+
+test("discovery options and an upload are sent as multipart and stream on the runs panel", async () => {
+  const calls = stubApi();
+  // jsdom serialises a FormData request body as "[object FormData]", so the
+  // fields are read as the page appends them.
+  const appended: [string, unknown][] = [];
+  const append = vi.spyOn(FormData.prototype, "append").mockImplementation((name, value) => {
+    appended.push([name, value]);
+  });
+  const user = userEvent.setup();
+  renderPage();
+
+  await user.click(await screen.findByLabelText(/^Dry run, write nothing/));
+  await user.click(screen.getByLabelText("Send the Telegram summary"));
+  await user.selectOptions(screen.getByLabelText("Only one source"), "greenhouse");
+  const file = new File(['[{"title": "Invented Role"}]'], "export.json", {
+    type: "application/json",
+  });
+  await user.upload(screen.getByLabelText("Apify dataset export"), file);
+  await user.click(screen.getByRole("button", { name: "Run discovery with these options" }));
+  await waitFor(() => {
+    expect(posted(calls, "/ops/discover")).toHaveLength(1);
+  });
+  append.mockRestore();
+  const fields = new Map(appended);
+  expect(fields.get("dry_run")).toBe("true");
+  expect(fields.get("notify")).toBe("false");
+  expect(fields.get("only_source")).toBe("greenhouse");
+  expect(fields.get("dataset_file")).toBe(file);
+  // Left empty, the count is the configured one, decided by the server.
+  expect(fields.has("apify_count")).toBe(false);
+  expect(fields.has("wellfound_file")).toBe(false);
+  // The run is the Runs panel's: it shows there, and its buttons wait.
+  expect(await screen.findByText(/run disc1/)).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Run discovery" })).toHaveProperty("disabled", true);
 });

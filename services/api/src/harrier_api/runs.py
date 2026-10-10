@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import sys
 import uuid
@@ -67,6 +68,12 @@ class ParameterizedKind:
     (`reconsider --source`). `dates` names flags whose value is a calendar
     date, rendered by this module (`digest --date`). The verb may be two
     words, a command and its subcommand (`config check-feeds`).
+
+    Spec 095 adds `fractions`, flags whose value is a number between 0 and 1
+    (`evaluate-prospects --threshold`), and `input_flags`, the flags that take
+    one of several files this process wrote (`discover --dataset-file` and
+    its two siblings). `input_flag` stays the one file a kind's free text
+    goes to.
     """
 
     verb: str
@@ -76,6 +83,8 @@ class ParameterizedKind:
     takes_job: bool = True
     choices: Mapping[str, frozenset[str]] = field(default_factory=dict[str, frozenset[str]])
     dates: frozenset[str] = frozenset()
+    fractions: frozenset[str] = frozenset()
+    input_flags: frozenset[str] = frozenset()
 
 
 PARAMETERIZED_KINDS: dict[str, ParameterizedKind] = {
@@ -125,6 +134,30 @@ PARAMETERIZED_KINDS: dict[str, ParameterizedKind] = {
         dates=frozenset({"--date"}),
         takes_job=False,
     ),
+    # Commands that work on the operator's data (spec 095).
+    "events-backfill": ParameterizedKind(
+        "events backfill",
+        switches=frozenset({"--dry-run"}),
+        takes_job=False,
+    ),
+    "evaluate-prospects": ParameterizedKind(
+        "evaluate-prospects",
+        switches=frozenset({"--apply", "--refresh", "--include-borderline"}),
+        numbers=frozenset({"--limit"}),
+        fractions=frozenset({"--threshold"}),
+        takes_job=False,
+    ),
+    "scoring-export": ParameterizedKind("scoring export", takes_job=False),
+    # `KIND_COMMANDS["discovery"]` stays the no-option form `POST /runs`
+    # starts. Both lock on the same kind, so one discovery runs at a time.
+    "discovery": ParameterizedKind(
+        "discover",
+        switches=frozenset({"--dry-run", "--no-notify", "--shadow"}),
+        numbers=frozenset({"--apify-count"}),
+        choices={"--only-source": frozenset(SOURCE_ORDER)},
+        input_flags=frozenset({"--dataset-file", "--wellfound-file", "--wttj-file"}),
+        takes_job=False,
+    ),
 }
 
 
@@ -159,6 +192,9 @@ class RunParams:
     # targets, because joining the dry run would tell the operator that a
     # send had started.
     target: str | None = None
+    fractions: Mapping[str, float] = field(default_factory=dict[str, float])
+    # Files this process wrote, by the flag that passes each (spec 095).
+    input_files: Mapping[str, Path] = field(default_factory=dict[str, Path])
 
     def __post_init__(self) -> None:
         if self.track is not None:
@@ -178,14 +214,28 @@ class RunParams:
             # A datetime is a date, and would render with its time attached.
             if type(value) is not date:
                 raise ValueError(f"{flag} must be a calendar date, got {value!r}")
+        for flag, value in self.fractions.items():
+            if isinstance(value, bool) or not math.isfinite(value):
+                raise ValueError(f"{flag} must be a finite number, got {value!r}")
+            if not 0 <= value <= 1:
+                raise ValueError(f"{flag} must be between 0 and 1, got {value!r}")
+
+    @property
+    def files(self) -> tuple[Path, ...]:
+        """Every file this attempt wrote, so none outlives it (spec 095)."""
+        single = () if self.input_path is None else (self.input_path,)
+        return (*single, *self.input_files.values())
 
 
 def run_inputs_dir() -> Path:
     return data_dir() / "runs" / "inputs"
 
 
-def write_run_input(text: str) -> Path:
+def write_run_input(text: str | bytes, suffix: str = ".txt") -> Path:
     """Put the operator's free text on disk so it never reaches argv.
+
+    Bytes are written as they arrived: an uploaded export is the operator's
+    file, not text this process decodes (spec 095).
 
     Owner-readable only, and owner-readable from the moment it exists. The
     first version wrote the file and then chmodded it, which left it at the
@@ -202,11 +252,30 @@ def write_run_input(text: str) -> Path:
     # mkdir's mode is ignored when the directory already exists, and this one
     # may predate the fix.
     directory.chmod(0o700)
-    path = directory / f"{uuid.uuid4().hex}.txt"
+    path = directory / f"{uuid.uuid4().hex}{suffix}"
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        handle.write(text)
+    data = text if isinstance(text, bytes) else text.encode("utf-8")
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(data)
     return path
+
+
+def sweep_run_inputs() -> list[Path]:
+    """Remove every run input left in the inputs directory.
+
+    A file there belongs to a run, and is removed when that run ends. One
+    still there when a run manager starts belongs to a server that stopped
+    mid-run, and no run will ever consume it (spec 095).
+    """
+    directory = run_inputs_dir()
+    if not directory.is_dir():
+        return []
+    removed: list[Path] = []
+    for path in directory.iterdir():
+        if path.is_file():
+            path.unlink(missing_ok=True)
+            removed.append(path)
+    return removed
 
 
 def build_command(kind: str, params: RunParams) -> list[str]:
@@ -255,6 +324,14 @@ def build_command(kind: str, params: RunParams) -> list[str]:
         if flag not in parameterized.dates:
             raise ValueError(f"{kind} does not accept {flag}")
         argv.append(f"{flag}={params.dates[flag].isoformat()}")
+    for flag in sorted(params.fractions):
+        if flag not in parameterized.fractions:
+            raise ValueError(f"{kind} does not accept {flag}")
+        argv.append(f"{flag}={float(params.fractions[flag])!r}")
+    for flag in sorted(params.input_files):
+        if flag not in parameterized.input_flags:
+            raise ValueError(f"{kind} does not accept {flag}")
+        argv.append(f"{flag}={params.input_files[flag]}")
 
     if params.input_path is not None:
         if parameterized.input_flag is None:
@@ -324,7 +401,8 @@ class Run:
     # the kinds that act on everything, which keeps their one-at-a-time
     # behaviour exactly as it was (spec 047).
     target: str = ""
-    input_path: Path | None = None
+    # Every file this process wrote for the run, removed when it ends.
+    input_paths: tuple[Path, ...] = ()
 
 
 class RunManager:
@@ -347,7 +425,14 @@ class RunManager:
         journal_path: Path | None = None,
         kind_commands: dict[str, list[str]] | None = None,
         grace_seconds: float = 5.0,
+        *,
+        sweep_inputs: bool = False,
     ) -> None:
+        # The server's own manager sweeps run inputs a stopped server left
+        # behind (spec 095). Off by default, so a test that builds a manager
+        # beside files it wrote itself keeps them.
+        if sweep_inputs:
+            sweep_run_inputs()
         self._journal_path = (
             journal_path if journal_path is not None else data_dir() / "runs" / "journal.jsonl"
         )
@@ -398,13 +483,20 @@ class RunManager:
             # the operator's own words on every double click.
             self._discard_input(params)
             return active
-        command = list(self._kind_commands[kind]) if params is None else build_command(kind, params)
+        try:
+            command = (
+                list(self._kind_commands[kind]) if params is None else build_command(kind, params)
+            )
+        except (KeyError, ValueError):
+            # Refused before it became a run: its files go with the refusal.
+            self._discard_input(params)
+            raise
         run = Run(
             id=uuid.uuid4().hex[:12],
             kind=kind,
             command=command,
             target=target,
-            input_path=None if params is None else params.input_path,
+            input_paths=() if params is None else params.files,
         )
         self._runs[run.id] = run
         self._journal(run)
@@ -413,9 +505,10 @@ class RunManager:
 
     @staticmethod
     def _discard_input(params: RunParams | None) -> None:
-        if params is None or params.input_path is None:
-            return
-        params.input_path.unlink(missing_ok=True)
+        # Every file, not only the first: an attempt with three uploads that
+        # joined a run left two behind when this removed `input_path` alone.
+        for path in () if params is None else params.files:
+            path.unlink(missing_ok=True)
 
     async def cancel(self, run_id: str) -> Run | None:
         """Request cancellation and return immediately; the state change lands
@@ -459,10 +552,9 @@ class RunManager:
             self._cleanup_input(run)
 
     def _cleanup_input(self, run: Run) -> None:
-        if run.input_path is None:
-            return
-        run.input_path.unlink(missing_ok=True)
-        run.input_path = None
+        for path in run.input_paths:
+            path.unlink(missing_ok=True)
+        run.input_paths = ()
 
     async def _run_process(self, run: Run) -> None:
         await self._set_state(run, "running")

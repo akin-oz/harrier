@@ -79,6 +79,34 @@
         "title": "AddJobOut",
         "type": "object"
       },
+      "AnswerLimitsOut": {
+        "properties": {
+          "max_sentences": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Sentences"
+          },
+          "max_words": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Words"
+          }
+        },
+        "title": "AnswerLimitsOut",
+        "type": "object"
+      },
       "AnswersIn": {
         "properties": {
           "questions": {
@@ -197,6 +225,150 @@
           }
         },
         "title": "Body_captureJobFromForm",
+        "type": "object"
+      },
+      "Body_runDiscover": {
+        "properties": {
+          "apify_count": {
+            "anyOf": [
+              {
+                "maximum": 500.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apify Count"
+          },
+          "dataset_file": {
+            "anyOf": [
+              {
+                "contentMediaType": "application/octet-stream",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dataset File"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "notify": {
+            "default": true,
+            "title": "Notify",
+            "type": "boolean"
+          },
+          "only_source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceName"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "shadow": {
+            "default": false,
+            "title": "Shadow",
+            "type": "boolean"
+          },
+          "wellfound_file": {
+            "anyOf": [
+              {
+                "contentMediaType": "application/octet-stream",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wellfound File"
+          },
+          "wttj_file": {
+            "anyOf": [
+              {
+                "contentMediaType": "application/octet-stream",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wttj File"
+          }
+        },
+        "title": "Body_runDiscover",
+        "type": "object"
+      },
+      "BriefOut": {
+        "description": "A stored brief, as the store parsed it. Every field is present, empty\nwhen the brief does not set it, so the page can show it as fields.",
+        "properties": {
+          "answers": {
+            "$ref": "#/components/schemas/AnswerLimitsOut"
+          },
+          "compensation_number": {
+            "title": "Compensation Number",
+            "type": "string"
+          },
+          "confirmed_skills": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Confirmed Skills",
+            "type": "array"
+          },
+          "employer_guidance": {
+            "title": "Employer Guidance",
+            "type": "string"
+          },
+          "evidence": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "guidance_url": {
+            "title": "Guidance Url",
+            "type": "string"
+          },
+          "letter": {
+            "$ref": "#/components/schemas/LetterLimitsOut"
+          },
+          "never_name": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Never Name",
+            "type": "array"
+          },
+          "views": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Views",
+            "type": "object"
+          }
+        },
+        "required": [
+          "never_name",
+          "guidance_url",
+          "employer_guidance",
+          "letter",
+          "answers",
+          "evidence",
+          "views",
+          "compensation_number",
+          "confirmed_skills"
+        ],
+        "title": "BriefOut",
         "type": "object"
       },
       "CandidateOut": {
@@ -470,6 +642,31 @@
         "title": "CoverLetterIn",
         "type": "object"
       },
+      "DataCheckOut": {
+        "description": "What `check` reports, in the domain's words. A contact is named by\nits name or profile URL, which is why the route requires the token.",
+        "properties": {
+          "breaches": {
+            "items": {
+              "$ref": "#/components/schemas/InvariantBreachOut"
+            },
+            "title": "Breaches",
+            "type": "array"
+          },
+          "unresolved_links": {
+            "items": {
+              "$ref": "#/components/schemas/UnresolvedLinkOut"
+            },
+            "title": "Unresolved Links",
+            "type": "array"
+          }
+        },
+        "required": [
+          "breaches",
+          "unresolved_links"
+        ],
+        "title": "DataCheckOut",
+        "type": "object"
+      },
       "DatabaseHeldOut": {
         "properties": {
           "detail": {
@@ -601,6 +798,65 @@
         "title": "EvaluateIn",
         "type": "object"
       },
+      "EvaluateProspectsIn": {
+        "description": "Evaluate and report; reject nothing unless `apply`. An absent field\nis the CLI's own default, so each default has one definition.",
+        "properties": {
+          "apply": {
+            "default": false,
+            "title": "Apply",
+            "type": "boolean"
+          },
+          "include_borderline": {
+            "default": false,
+            "title": "Include Borderline",
+            "type": "boolean"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit"
+          },
+          "refresh": {
+            "default": false,
+            "title": "Refresh",
+            "type": "boolean"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold"
+          }
+        },
+        "title": "EvaluateProspectsIn",
+        "type": "object"
+      },
+      "EventsBackfillIn": {
+        "description": "A dry run unless the body says otherwise: the counts first.",
+        "properties": {
+          "dry_run": {
+            "default": true,
+            "title": "Dry Run",
+            "type": "boolean"
+          }
+        },
+        "title": "EventsBackfillIn",
+        "type": "object"
+      },
       "FindContactsIn": {
         "properties": {
           "best_only": {
@@ -695,6 +951,83 @@
           "built_at"
         ],
         "title": "HealthOut",
+        "type": "object"
+      },
+      "InvariantBreachOut": {
+        "properties": {
+          "breach": {
+            "title": "Breach",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "breach"
+        ],
+        "title": "InvariantBreachOut",
+        "type": "object"
+      },
+      "JobEventOut": {
+        "description": "One recorded decision about a job (spec 079). `backfilled` marks an\nevent reconstructed after the fact, whose time is not the decision's.",
+        "properties": {
+          "actor": {
+            "title": "Actor",
+            "type": "string"
+          },
+          "at": {
+            "title": "At",
+            "type": "string"
+          },
+          "backfilled": {
+            "title": "Backfilled",
+            "type": "boolean"
+          },
+          "fit_score": {
+            "title": "Fit Score",
+            "type": "string"
+          },
+          "from_status": {
+            "title": "From Status",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "reason_code": {
+            "title": "Reason Code",
+            "type": "string"
+          },
+          "reason_label": {
+            "title": "Reason Label",
+            "type": "string"
+          },
+          "reason_text": {
+            "title": "Reason Text",
+            "type": "string"
+          },
+          "to_status": {
+            "title": "To Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "at",
+          "kind",
+          "actor",
+          "from_status",
+          "to_status",
+          "reason_code",
+          "reason_label",
+          "reason_text",
+          "fit_score",
+          "backfilled"
+        ],
+        "title": "JobEventOut",
         "type": "object"
       },
       "JobOut": {
@@ -876,6 +1209,76 @@
           "deadline_passed"
         ],
         "title": "JobOut",
+        "type": "object"
+      },
+      "LetterLimitsOut": {
+        "properties": {
+          "max_sentences": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Sentences"
+          },
+          "max_words": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Words"
+          },
+          "paragraphs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paragraphs"
+          }
+        },
+        "title": "LetterLimitsOut",
+        "type": "object"
+      },
+      "LinkContactsIn": {
+        "description": "Linking edits stored contacts, so an empty body refuses.",
+        "properties": {
+          "confirm": {
+            "default": false,
+            "title": "Confirm",
+            "type": "boolean"
+          }
+        },
+        "title": "LinkContactsIn",
+        "type": "object"
+      },
+      "LinkContactsOut": {
+        "description": "What the write did, counted when it ran rather than when it was\npreviewed.",
+        "properties": {
+          "linked": {
+            "title": "Linked",
+            "type": "integer"
+          },
+          "unmatched": {
+            "title": "Unmatched",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "linked",
+          "unmatched"
+        ],
+        "title": "LinkContactsOut",
         "type": "object"
       },
       "MailEventOut": {
@@ -1598,6 +2001,24 @@
         "title": "TrackOut",
         "type": "object"
       },
+      "UnresolvedLinkOut": {
+        "properties": {
+          "breach": {
+            "title": "Breach",
+            "type": "string"
+          },
+          "contact": {
+            "title": "Contact",
+            "type": "string"
+          }
+        },
+        "required": [
+          "contact",
+          "breach"
+        ],
+        "title": "UnresolvedLinkOut",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -1952,6 +2373,220 @@
           }
         },
         "summary": "Read Artifact"
+      }
+    },
+    "/apply/{selector}/brief": {
+      "get": {
+        "description": "`brief show`. A read that requires the token: a brief holds the\noperator's own notes about an application (specs 047, 095).",
+        "operationId": "getBrief",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The search track to work in; the default track when omitted.",
+            "in": "query",
+            "name": "track",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9-]{0,31}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The search track to work in; the default track when omitted.",
+              "title": "Track"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BriefOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the store refused the brief, in its words"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "no such job, or no brief stored for it"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track may not run this operation, or it is archived"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
+          }
+        },
+        "summary": "Get Brief"
+      },
+      "put": {
+        "description": "`brief set`, with the brief as the body instead of a host file.\n\nThe body is any JSON object, so the store's checks decide what a brief\nis: an unknown key or a wrong type is 400 in the store's words, as the\nCLI prints them, never a 422 written by this layer (spec 095).",
+        "operationId": "putBrief",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The search track to work in; the default track when omitted.",
+            "in": "query",
+            "name": "track",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9-]{0,31}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The search track to work in; the default track when omitted.",
+              "title": "Track"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BriefOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the store refused the brief, in its words"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "no such job, or no brief stored for it"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track may not run this operation, or it is archived"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
+          }
+        },
+        "summary": "Put Brief"
       }
     },
     "/apply/{selector}/cover-letter": {
@@ -3001,6 +3636,184 @@
         "summary": "Take Backup"
       }
     },
+    "/ops/check": {
+      "get": {
+        "description": "`check` without `--link-contacts`: reports, and changes nothing.",
+        "operationId": "checkData",
+        "parameters": [
+          {
+            "description": "The search track to work in; the default track when omitted.",
+            "in": "query",
+            "name": "track",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9-]{0,31}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The search track to work in; the default track when omitted.",
+              "title": "Track"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataCheckOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track parameter named no track"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track may not run this operation, or it is archived"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
+          }
+        },
+        "summary": "Check Data"
+      }
+    },
+    "/ops/check/link-contacts": {
+      "post": {
+        "description": "`check --link-contacts`: gives existing contact links the job id they\nwere written without, and drops nothing (spec 036).",
+        "operationId": "linkContactIds",
+        "parameters": [
+          {
+            "description": "The search track to work in; the default track when omitted.",
+            "in": "query",
+            "name": "track",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9-]{0,31}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The search track to work in; the default track when omitted.",
+              "title": "Track"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkContactsIn",
+                "default": {
+                  "confirm": false
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkContactsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track parameter named no track"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the request needs its explicit field"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
+          }
+        },
+        "summary": "Link Contact Ids"
+      }
+    },
     "/ops/digest": {
       "post": {
         "description": "`digest` as a run. The send is single-flight per day: a second request\nwhile one runs joins it, and a day already delivered is refused with the\ntime it went (spec 050).",
@@ -3095,6 +3908,300 @@
           }
         },
         "summary": "Run Digest Route"
+      }
+    },
+    "/ops/discover": {
+      "post": {
+        "description": "`discover` with its options, as a run.\n\nEach upload is read and checked against the cap before any is written,\nso a refused request writes nothing. Each is then written owner-only to\nthe run inputs and passed by path; the run removes them when it ends. No\nbrowser-supplied path reaches argv. `shadow` is passed as `--shadow`\nalone: the CLI's options make it a dry run, one definition of that rule.",
+        "operationId": "runDiscover",
+        "parameters": [
+          {
+            "description": "The search track to work in; the default track when omitted.",
+            "in": "query",
+            "name": "track",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9-]{0,31}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The search track to work in; the default track when omitted.",
+              "title": "Track"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_runDiscover"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track parameter named no track"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "discovery from the browser is the default track's"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "an upload is larger than the cap"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
+          }
+        },
+        "summary": "Run Discover"
+      }
+    },
+    "/ops/evaluate-prospects": {
+      "post": {
+        "description": "`evaluate-prospects` as a run: it calls a model per prospect.",
+        "operationId": "evaluateProspects",
+        "parameters": [
+          {
+            "description": "The search track to work in; the default track when omitted.",
+            "in": "query",
+            "name": "track",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9-]{0,31}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The search track to work in; the default track when omitted.",
+              "title": "Track"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvaluateProspectsIn",
+                "default": {
+                  "apply": false,
+                  "include_borderline": false,
+                  "refresh": false
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track parameter named no track"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track may not run this operation, or it is archived"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
+          }
+        },
+        "summary": "Evaluate Prospects Route"
+      }
+    },
+    "/ops/events/backfill": {
+      "post": {
+        "description": "`events backfill` as a run: it walks the whole tracker.",
+        "operationId": "backfillEvents",
+        "parameters": [
+          {
+            "description": "The search track to work in; the default track when omitted.",
+            "in": "query",
+            "name": "track",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9-]{0,31}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The search track to work in; the default track when omitted.",
+              "title": "Track"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventsBackfillIn",
+                "default": {
+                  "dry_run": true
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track parameter named no track"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track may not run this operation, or it is archived"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
+          }
+        },
+        "summary": "Backfill Events Route"
       }
     },
     "/ops/feeds": {
@@ -3328,6 +4435,89 @@
           }
         },
         "summary": "Get Schedule"
+      }
+    },
+    "/ops/scoring/export": {
+      "post": {
+        "description": "`scoring export` as a run. Training reads only the export and needs\nscikit-learn, which the image does not install, so it stays on the host\n(spec 077).",
+        "operationId": "exportScoringFeatures",
+        "parameters": [
+          {
+            "description": "The search track to work in; the default track when omitted.",
+            "in": "query",
+            "name": "track",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9-]{0,31}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The search track to work in; the default track when omitted.",
+              "title": "Track"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track parameter named no track"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track may not run this operation, or it is archived"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
+          }
+        },
+        "summary": "Export Scoring Features"
       }
     },
     "/outreach/backfill-posters": {
@@ -4972,6 +6162,99 @@
           }
         },
         "summary": "List Queue"
+      }
+    },
+    "/tracker/{selector}/events": {
+      "get": {
+        "description": "`events show`: a job's history, in the order it was recorded.\n\nNo token, on any track. Its free text is the same class as the `notes`\nand `rejection_reason` that `GET /jobs` serves without one (spec 095).",
+        "operationId": "listJobEvents",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The search track to work in; the default track when omitted.",
+            "in": "query",
+            "name": "track",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9-]{0,31}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The search track to work in; the default track when omitted.",
+              "title": "Track"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/JobEventOut"
+                  },
+                  "title": "Response Listjobevents",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the selector named no job, or more than one"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track may not run this operation, or it is archived"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
+          }
+        },
+        "summary": "List Job Events"
       }
     },
     "/tracker/{selector}/outcome": {

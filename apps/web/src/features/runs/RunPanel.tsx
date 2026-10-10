@@ -15,8 +15,12 @@ export type { EventSourceFactory };
 
 export function RunPanel({
   createEventSource = (url: string) => new EventSource(url),
+  stream: shared,
 }: {
   createEventSource?: EventSourceFactory;
+  // A stream the caller also starts runs on, so a discovery started with
+  // options elsewhere on the page streams here, on this panel (spec 095).
+  stream?: ReturnType<typeof useRunStream>;
 }) {
   const queryClient = useQueryClient();
   // Collapsed by default. A healthy run is thousands of lines nobody needs
@@ -25,7 +29,8 @@ export function RunPanel({
   const [expanded, setExpanded] = useState(false);
   const logRef = useRef<HTMLPreElement | null>(null);
 
-  const stream = useRunStream(createEventSource);
+  const own = useRunStream(createEventSource);
+  const stream = shared ?? own;
   const { run, lines, progress, disconnected, failed } = stream;
 
   useEffect(() => {

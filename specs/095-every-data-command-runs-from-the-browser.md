@@ -68,6 +68,14 @@ guarded path, approved under this spec.
   export, and discovery's options and uploads.
 - Tests beside each changed file.
 
+Amended at implementation (2026-10-10), three more web files the behavior
+below needs: `entities/job/JobTable.tsx` gains a `renderDetails` slot under
+the job, because the History disclosure must show on a track that takes no
+writes, whose table has no Actions column (spec 093); `features/runs/RunPanel.tsx`
+takes an optional shared run stream, so a discovery started with options
+streams on that panel as stated below; and `shared/api/client.ts` sends the
+token on the two new reads that require it.
+
 **Not touched**: the schema, the domain, the CLI's behavior, the tracker,
 Apply, Outreach and Inbox routes that exist, and anything spec 096 owns.
 
@@ -102,6 +110,15 @@ require it: its free text (`reason_text`) is the same class as the `notes`
 and `rejection_reason` that `GET /jobs` serves without the token, which is
 the asymmetry spec 047 states and accepts for tracker reads.
 
+Amended at implementation (2026-10-10). `discover` is on the non-default
+allowlist, because the command line runs an academic track's discovery from
+its own search (spec 097). `POST /ops/discover` declares that operation and
+refuses a non-default track itself, with the same 409 wording, so the
+browser's discovery stays the default track's. History answers each event's
+code with `reason_label`, the code's words from `harrier.tracker.reasons`,
+so the browser holds no label table. `GET /apply/{selector}/brief` answers
+the brief as parsed fields (`BriefOut`), every field present.
+
 Decision history backfill, batch evaluation, the scoring export and discovery
 are runs: each walks the whole tracker, calls a model, or reaches the
 network. The rest are small reads and writes and answer as requests, which
@@ -134,7 +151,12 @@ click is not the schedule.
   and `wttj_file` arrive as multipart uploads, at most 5 MB each (413
   above it). Each is written to the run-scoped input directory with spec
   047's owner-only mode, its path passed with `--flag=path`, and removed when
-  the run ends. No browser-supplied path ever reaches argv.
+  the run ends. No browser-supplied path ever reaches argv. One file per
+  flag; the command line's flags repeat, the route's do not. A file is named
+  `.csv` when the upload's name ends in `.csv` and `.json` otherwise, because
+  the importer reads by suffix. When `apify_count` is absent the route
+  passes the configured count (`scheduled_apify_count`), bounded where it is
+  read, as spec 035 bounds it.
 
 ### The pages
 
@@ -202,54 +224,78 @@ skips spec 094's operation declaration.
 API tests in `services/api/tests/test_ui_operations.py` (new) unless named
 otherwise. Synthetic rows only.
 
-- [ ] Each route in the table calls the function the CLI verb calls, and a
+- [x] Each route in the table calls the function the CLI verb calls, and a
       test drives both surfaces through it in spec 042's shape
-      (planned test_every_new_route_calls_the_cli_verbs_function)
-- [ ] History lists a job's events in order, marks backfilled ones, and
+      (`services/api/tests/test_ui_operations.py::test_every_new_route_calls_the_cli_verbs_function`
+      for the runs, `::test_every_new_request_calls_the_cli_verbs_function`
+      for the requests)
+- [x] History lists a job's events in order, marks backfilled ones, and
       works on a non-default track
-      (planned test_history_lists_a_jobs_events_in_order)
-- [ ] With an empty body the backfill, the link and the evaluation write
+      (`services/api/tests/test_ui_operations.py::test_history_lists_a_jobs_events_in_order`)
+- [x] With an empty body the backfill, the link and the evaluation write
       nothing; each write needs its explicit field
-      (planned test_an_empty_body_changes_nothing)
-- [ ] The brief round-trips through the routes and a bad brief is 400 with
-      the store's message (planned test_the_brief_round_trips_and_a_bad_brief_is_400)
-- [ ] Discovery's options reach argv as closed choices and bounded numbers,
+      (`services/api/tests/test_ui_operations.py::test_an_empty_body_changes_nothing`)
+- [x] The brief round-trips through the routes and a bad brief is 400 with
+      the store's message
+      (`services/api/tests/test_ui_operations.py::test_the_brief_round_trips_and_a_bad_brief_is_400`)
+- [x] Discovery's options reach argv as closed choices and bounded numbers,
       an unknown source is 422, and `shadow` implies a dry run
-      (planned test_discovery_options_reach_argv_only_as_validated_values)
-- [ ] An upload is written owner-only to the run inputs, passed by path, and
+      (`services/api/tests/test_ui_operations.py::test_discovery_options_reach_argv_only_as_validated_values`)
+- [x] An upload is written owner-only to the run inputs, passed by path, and
       removed when the run ends; one over the cap is 413; when an attempt
       never becomes a run, every file it wrote is removed, not only the
       first; and run inputs left by a server that stopped mid-run are swept
       when the run manager starts
-      (planned test_an_upload_becomes_a_run_input_and_is_removed,
-      planned test_inputs_of_a_refused_attempt_are_all_removed,
-      planned test_inputs_left_by_a_restart_are_swept_at_startup)
-- [ ] `GET /ops/check` requires the token
-      (planned test_the_data_check_requires_the_token)
-      (planned test_an_upload_becomes_a_run_input_and_is_removed)
-- [ ] No brief text and no browser-supplied path appears in any run's argv
-      (planned test_no_operator_content_reaches_argv)
-- [ ] Every route here except history answers 409 on a non-default track
-      (planned test_operations_refuse_a_non_default_track)
-- [ ] The new run kinds are single-active per kind
-      (planned test_a_second_run_of_a_kind_returns_the_active_one)
-- [ ] Web: the history disclosure, the brief panel, and the operations
+      (`services/api/tests/test_ui_operations.py::test_an_upload_becomes_a_run_input_and_is_removed`,
+      `::test_inputs_of_a_refused_attempt_are_all_removed`,
+      `::test_inputs_left_by_a_restart_are_swept_at_startup`)
+- [x] `GET /ops/check` requires the token
+      (`services/api/tests/test_ui_operations.py::test_the_data_check_requires_the_token`)
+- [x] No brief text and no browser-supplied path appears in any run's argv
+      (`services/api/tests/test_ui_operations.py::test_no_operator_content_reaches_argv`)
+- [x] Every route here except history answers 409 on a non-default track
+      (`services/api/tests/test_ui_operations.py::test_operations_refuse_a_non_default_track`)
+- [x] The new run kinds are single-active per kind
+      (`services/api/tests/test_ui_operations.py::test_a_second_run_of_a_kind_returns_the_active_one`)
+- [x] Web: the history disclosure, the brief panel, and the operations
       sections behave as described, each refusal shown in the domain's words
-      (planned web tests beside each changed component)
-- [ ] `just contract` regenerates the contract and the web app type-checks
+      (`JobHistory.test.tsx`: "the history is read on demand, in order, in the track's own words",
+      "a refused history is shown in the API's words",
+      "a job with no recorded events says so";
+      `BriefPanel.test.tsx`: "a stored brief is shown as fields, not JSON",
+      "saving sends the whole brief in one request, keeping what it does not edit",
+      "a refusal is shown in the store's words and the input is kept",
+      "a question can be added and removed";
+      `OperationsPage.test.tsx`: "data checks list each finding in the domain's words",
+      "a clean data check says there is nothing to report",
+      "linking contact ids is a separate confirmed action that names the count",
+      "a dry backfill comes first and writing names the count it will write",
+      "batch evaluation offers rejection only after a report, naming the count",
+      "the feature export runs here and training is said to stay on the host",
+      "discovery options and an upload are sent as multipart and stream on the runs panel")
+- [x] `just contract` regenerates the contract and the web app type-checks
       against it with no hand-written request or response shape
-- [ ] Each test above fails with its behavior removed, checked by removing
+- [x] Each test above fails with its behavior removed, checked by removing
       each behavior in turn, recorded in the pull request
-- [ ] The web changes pass the Impeccable detector and an accessibility pass
-- [ ] No real posting, company, person or tracker count appears in a fixture,
-      a test name or a screenshot (ADR-008)
+- [ ] The web changes pass the Impeccable detector and an accessibility pass.
+      The detector hook reported no issue on any changed web file; no
+      separate accessibility audit was run, so this stays open
+- [x] No real posting, company, person or tracker count appears in a fixture,
+      a test name or a screenshot (ADR-008). Every fixture is invented.
+      Limitation: a property of the diff, not something a test asserts.
 - [ ] All gates green on the pull request
 
 ## Honest limitations
 
-- **Spec 050's page is not built yet.** This spec extends it. Whichever lands
-  second carries the merge, and the coverage test in spec 096 holds both to
-  the same list.
+- **Spec 050's page landed first.** This spec extends it. The coverage test
+  in spec 096 holds both to the same list. Spec 050 already gave
+  `ParameterizedKind` its closed-choice flags (`choices`); this spec adds
+  `fractions` (`--threshold`) and `input_flags` (the three uploads).
+- **A dry run's count is read from the command's own line.** The page names
+  the count a write will act on from `would write N events` and
+  `would_reject=N` in the run's log. If the command's wording changes, the
+  write button stops appearing rather than naming a wrong number.
+- **One upload per discovery flag.** The command line takes several of each.
 - **The browser shows a dry run's preview, not a lock.** Between the preview
   and the write another process can change the tracker; the write reports
   what it did.
