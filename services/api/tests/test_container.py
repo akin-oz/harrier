@@ -241,6 +241,11 @@ PYPROJECT = ROOT / "services" / "api" / "pyproject.toml"
 # absence is asserted rather than assumed.
 BUILD_ONLY_GROUPS = {"dev"}
 
+# Not a feature of this image. The local container runs on SQLite; the
+# Postgres store is the hosted deployment's, and which image serves it is
+# spec 110's decision. Spec 103 keeps a local install unchanged.
+NOT_IN_THE_LOCAL_IMAGE = {"postgres"}
+
 
 def dependency_groups() -> set[str]:
     """The group names declared in `pyproject.toml`, read from the file.
@@ -258,7 +263,9 @@ def dependency_groups() -> set[str]:
     return groups
 
 
-@pytest.mark.parametrize("group", sorted(dependency_groups() - BUILD_ONLY_GROUPS))
+@pytest.mark.parametrize(
+    "group", sorted(dependency_groups() - BUILD_ONLY_GROUPS - NOT_IN_THE_LOCAL_IMAGE)
+)
 def test_the_image_installs_every_feature_dependency_group(group: str) -> None:
     """Optional on a laptop is not optional in an image.
 

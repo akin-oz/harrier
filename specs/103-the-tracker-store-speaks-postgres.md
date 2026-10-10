@@ -213,33 +213,34 @@ Matching error classes and messages for callers is spec 112's.
 
 ## Acceptance criteria
 
-- [ ] With `HARRIER_DATABASE_URL` unset, the full suite passes with no
+- [x] With `HARRIER_DATABASE_URL` unset, the full suite passes with no
       test changed in behavior, and `just demo` starts as before.
-- [ ] `harrier store migrate` on an empty Postgres database prints
-      `postgres 0 -> 9`; a second run prints `postgres 9 -> 9` (planned
-      test_migrate_applies_the_baseline_once).
-- [ ] Two concurrent `harrier store migrate` runs leave one version row
-      per version (planned test_two_first_migrations_apply_once_on_postgres).
-- [ ] The parity test passes and fails when one Postgres column is
+- [x] `harrier store migrate` on an empty Postgres database prints
+      `postgres 0 -> 9`; a second run prints `postgres 9 -> 9`
+      (`services/api/tests/test_postgres_store.py::test_migrate_applies_the_baseline_once`).
+- [x] Two concurrent `harrier store migrate` runs leave one version row
+      per version
+      (`services/api/tests/test_postgres_store.py::test_two_first_migrations_apply_once_on_postgres`).
+- [x] The parity test passes and fails when one Postgres column is
       renamed, one default changed, or one probe's constraint removed;
-      the pull request records each of those three runs (planned
-      test_both_dialects_build_the_same_tracker).
-- [ ] Every probe in the Behavior table is asserted against both dialects.
-- [ ] The spec 090 broken-migration test runs against both dialects.
-- [ ] A migration after version 9 with an empty Postgres or SQLite list
-      fails a test that names the version (planned
-      test_every_new_migration_declares_both_dialects).
-- [ ] A connection failure's message and logs do not contain the password
-      (planned test_a_connection_failure_never_prints_the_password).
-- [ ] An unsupported scheme, a missing driver, a store behind the code, and
+      the pull request records each of those three runs
+      (`services/api/tests/test_dialect_parity.py::test_both_dialects_build_the_same_tracker`).
+- [x] Every probe in the Behavior table is asserted against both dialects.
+- [x] The spec 090 broken-migration test runs against both dialects.
+- [x] A migration after version 9 with an empty Postgres or SQLite list
+      fails a test that names the version
+      (`services/api/tests/test_postgres_store.py::test_every_new_migration_declares_both_dialects`).
+- [x] A connection failure's message and logs do not contain the password
+      (`services/api/tests/test_postgres_store.py::test_a_connection_failure_never_prints_the_password`).
+- [x] An unsupported scheme, a missing driver, a store behind the code, and
       a data command with a Postgres URL each exit 1 with the text under
       Failure modes.
 - [ ] CI's `check-python` job runs the Postgres tests, and fails when its
       Postgres service is removed (recorded in the pull request).
-- [ ] ADR-013 decision 5 carries the amended text and note.
-- [ ] `services/api/src/harrier/tracker/schema.py` is the only file holding
+- [x] ADR-013 decision 5 carries the amended text and note.
+- [x] `services/api/src/harrier/tracker/schema.py` is the only file holding
       Postgres DDL.
-- [ ] `just check` passes.
+- [x] `just check` passes.
 
 ## Honest limitations
 
@@ -322,3 +323,58 @@ Behavior above already describe these answers.
 - Backup, `doctor --integrity`, cutover, legacy import and the host lease.
   They stay SQLite only; spec 112 states how each refuses on Postgres.
 - Native timestamp types.
+
+## Amendment (2026-10-10, during implementation)
+
+- **The Postgres statements are a parallel list, not a field of each
+  entry (Scope item 3).** `MIGRATIONS` stays a list of `(version,
+  statements)` pairs. The SQLite runner in `harrier/db.py` and six
+  existing test files (`test_migration_runner.py`, `test_runs.py`,
+  `test_scoring.py`, `test_tracker_invariants.py`, `test_tracks.py`,
+  `test_userconfig.py`) unpack it in that shape, and a third field on every
+  entry would have changed all of them for no change in behavior. The
+  Postgres side is `POSTGRES_MIGRATIONS` in the same module,
+  `services/api/src/harrier/tracker/schema.py`. `undeclared_dialects`
+  holds the two lists together: every version after the baseline must
+  appear in both with at least one statement, and a test names the
+  version that does not
+  (`services/api/tests/test_postgres_store.py::test_every_new_migration_declares_both_dialects`).
+  The property Scope item 3 asks for is the same; only the layout differs.
+- **The Postgres runner lives in `harrier/pgstore.py`, not in
+  `_apply_schema` (Scope item 5).** It is
+  `harrier.pgstore.apply_postgres_migrations`. Kept out of `harrier.db`,
+  the SQLite open path never imports psycopg, so a local install without
+  the `postgres` group opens SQLite exactly as before. The runner takes the
+  advisory lock and re-reads the version inside each migration's
+  transaction, as Scope item 5 states.
+- **psycopg is installed for tests.** It is the optional `postgres` group in
+  `services/api/pyproject.toml`, and the dev group includes that group, so
+  `uv sync` in development and CI installs it and the Postgres tests can
+  run.
+- ADR-013 decision 5 records both layout changes beside its amended text.
+- **One difference the baseline cannot close: `job_runs.job` may be NULL
+  on SQLite.** It is `TEXT PRIMARY KEY` without `NOT NULL`, and SQLite
+  allows NULL in such a key; a Postgres primary key never does. The parity
+  test names this one difference in `KNOWN_NULLABILITY_DIFFERENCES` and
+  proves it is real
+  (`services/api/tests/test_dialect_parity.py::test_the_known_difference_is_real`),
+  so any other nullability difference still fails. Closing it is a SQLite
+  migration that rebuilds `job_runs`, which changes the local schema and
+  needs its own spec.
+- **The local image does not install the `postgres` group.**
+  `services/api/tests/test_container.py` requires every optional group to be
+  installed in the image or named as excluded. It is named in
+  `NOT_IN_THE_LOCAL_IMAGE`: the local container runs on SQLite, Scope item 2
+  keeps a local install unchanged, and the hosted image is spec 110's.
+- **`harrier store` skips logging setup on both dialects.** Logging setup
+  opens SQLite through `connect`, which migrates, so `store migrate` would
+  always have printed `N -> N`. On SQLite `store status` reads the file
+  without writing and prints no `behind:` line, since any ordinary open
+  migrates it.
+- **The refusal text is one constant,** `harrier.pgstore.POSTGRES_NOT_YET`,
+  used by the CLI and the API.
+- **"A store behind the code" is refused where a store is opened for use,**
+  by `harrier.pgstore.open_postgres_store`
+  (`services/api/tests/test_postgres_store.py::test_opening_an_unmigrated_store_is_refused`).
+  No CLI command opens one for use until spec 112, so no command exits 1
+  for it yet; `harrier store status` reports it instead.

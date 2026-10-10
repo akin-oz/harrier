@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pg_support import fresh_database
 
 from harrier import db
 from harrier.db import BUSY_TIMEOUT_MS, connect
@@ -79,6 +80,36 @@ def test_a_failed_migration_leaves_no_partial_schema(
         connect(path)
     assert "probe" not in tables(path)
     assert versions(path) == REAL_VERSIONS
+
+
+def test_a_failed_migration_leaves_no_partial_schema_on_postgres(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Postgres counterpart of the test above (spec 103). The baseline
+    commits in its own transaction; the broken migration after it rolls
+    back whole, and the next run starts that migration again."""
+    import psycopg
+
+    from harrier.pgstore import migrate_postgres
+
+    real = list(schema.POSTGRES_MIGRATIONS)
+    baseline = real[-1][0]
+    with fresh_database() as url:
+        monkeypatch.setattr(
+            schema, "POSTGRES_MIGRATIONS", [*real, (baseline + 1, [PROBE_TABLE, NOT_SQL])]
+        )
+        with pytest.raises(psycopg.Error):
+            migrate_postgres(url)
+
+        with psycopg.connect(url, autocommit=True) as conn:
+            probe = conn.execute("SELECT to_regclass('probe')").fetchone()
+            recorded = conn.execute("SELECT version FROM schema_version ORDER BY 1").fetchall()
+        assert probe == (None,)
+        assert [row[0] for row in recorded] == [baseline]
+
+        # A later run retries the same migration, here with the fault gone.
+        monkeypatch.setattr(schema, "POSTGRES_MIGRATIONS", [*real, (baseline + 1, [PROBE_TABLE])])
+        assert migrate_postgres(url) == (baseline, baseline + 1)
 
 
 def test_a_failed_migration_closes_the_connection(

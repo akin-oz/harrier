@@ -11,6 +11,26 @@ jobs:
   check-python:
     name: Python (ruff, pyright, import-linter, pytest)
     runs-on: ubuntu-latest
+    # The Postgres store's tests run here (spec 103). GitHub sets CI=true, so
+    # tests/pg_support.py fails the run, rather than skipping, when this
+    # service is missing or unreachable (spec 039).
+    services:
+      postgres:
+        # Supabase creates new projects on Postgres 17 (spec 103).
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        # Tests start only after the server accepts connections.
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # A throwaway CI database, not a credential.
+      HARRIER_TEST_POSTGRES_URL: postgresql://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
