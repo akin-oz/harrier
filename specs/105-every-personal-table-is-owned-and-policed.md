@@ -1,8 +1,8 @@
 ---
 spec: 105
 title: Every personal table is owned and policed
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [103]
 ---
