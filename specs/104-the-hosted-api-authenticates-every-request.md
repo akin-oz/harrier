@@ -1,8 +1,8 @@
 ---
 spec: 104
 title: The hosted API authenticates every request
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [006, 035, 083, 084, 102, 103, 105, 112]
 ---
