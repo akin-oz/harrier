@@ -1,8 +1,8 @@
 ---
 spec: 108
 title: Hosted scheduling
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [106, 107]
 ---
