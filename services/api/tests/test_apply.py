@@ -204,7 +204,7 @@ def test_generate_answers_propagates_ai_error(
 
     monkeypatch.setattr(answers_module, "generate_text", boom)
     with pytest.raises(RuntimeError, match="AI request failed"):
-        generate_answer_set(db, "exampleco", "Senior Software Engineer", ["Why?"])
+        generate_answer_set(db, "exampleco", "Senior Software Engineer", ["Why?"], kind="industry")
 
 
 def test_generated_answers_with_banned_phrases_are_refused(
@@ -238,7 +238,9 @@ def test_generated_answers_with_banned_phrases_are_refused(
 
     monkeypatch.setattr(answers_module, "generate_text", fake_generate)
     with pytest.raises(ValueError) as caught:
-        generate_answer_set(db, "exampleco", "Senior Software Engineer", DEFAULT_QUESTIONS)
+        generate_answer_set(
+            db, "exampleco", "Senior Software Engineer", DEFAULT_QUESTIONS, kind="industry"
+        )
     for phrase in ("i am thrilled", "i am passionate about", "amazing opportunity", "cutting-edge"):
         assert f"banned phrase: {phrase}" in str(caught.value)
 
@@ -362,7 +364,7 @@ def test_internal_dump_language_refuses_the_letter(
 
     monkeypatch.setattr(letters_module, "generate_text", dump_response)
     with pytest.raises(ValueError) as caught:
-        generate_cover_letter(db, "examplesoft", "Senior Product Engineer")
+        generate_cover_letter(db, "examplesoft", "Senior Product Engineer", kind="industry")
     for phrase in (
         "fit:",
         "tailored for",
@@ -402,6 +404,7 @@ def test_write_cover_letter_artifacts_creates_md_html_pdf(
         template_dir=REPO_ROOT / "templates",
         render=fake_render,
         validate=passing_validate,
+        kind="industry",
     )
     assert artifacts["markdown"].exists()
     assert artifacts["html"].exists()
@@ -431,6 +434,7 @@ def test_write_cover_letter_artifacts_fails_when_pdf_not_created(
             output_dir=tmp_path / "letters",
             template_dir=REPO_ROOT / "templates",
             render=no_render,
+            kind="industry",
         )
 
 
@@ -471,6 +475,7 @@ def test_a_letter_that_fails_the_gate_removes_the_earlier_pdf_and_keeps_the_draf
             template_dir=REPO_ROOT / "templates",
             render=fake_render,
             validate=failing_validate,
+            kind="industry",
         )
 
     assert not paths["pdf"].exists()
@@ -499,6 +504,7 @@ def test_a_letter_render_that_raises_removes_the_earlier_pdf(
             output_dir=directory,
             template_dir=REPO_ROOT / "templates",
             render=crashing_render,
+            kind="industry",
         )
 
     assert not paths["pdf"].exists()
@@ -528,7 +534,7 @@ def test_generate_cover_letter_propagates_ai_error(
 
     monkeypatch.setattr(letters_module, "generate_text", boom)
     with pytest.raises(RuntimeError, match="AI request failed"):
-        generate_cover_letter(db, "exampleco", "Senior Software Engineer")
+        generate_cover_letter(db, "exampleco", "Senior Software Engineer", kind="industry")
 
 
 def test_generate_cover_letter_validates_three_paragraphs(
@@ -548,7 +554,7 @@ def test_generate_cover_letter_validates_three_paragraphs(
 
     monkeypatch.setattr(letters_module, "generate_text", two_paragraph_response)
     with pytest.raises(ValueError, match="three short paragraphs"):
-        generate_cover_letter(db, "examplesoft", "Senior Product Engineer")
+        generate_cover_letter(db, "examplesoft", "Senior Product Engineer", kind="industry")
 
 
 # ---------------------------------------------------------------------------
@@ -598,7 +604,7 @@ def test_a_forbidden_phrase_refuses_the_cover_letter(
     _store_forbidden(db, "Product Engineering")
     monkeypatch.setattr(letters_module, "generate_text", _letter_response)
     with pytest.raises(ValueError, match="forbidden phrase: Product Engineering"):
-        generate_cover_letter(db, "examplesoft", "Senior Product Engineer")
+        generate_cover_letter(db, "examplesoft", "Senior Product Engineer", kind="industry")
 
 
 def test_a_clean_cover_letter_passes_the_forbidden_list(
@@ -606,7 +612,7 @@ def test_a_clean_cover_letter_passes_the_forbidden_list(
 ) -> None:
     _store_forbidden(db, "world-class expert")
     monkeypatch.setattr(letters_module, "generate_text", _letter_response)
-    letter = generate_cover_letter(db, "examplesoft", "Senior Product Engineer")
+    letter = generate_cover_letter(db, "examplesoft", "Senior Product Engineer", kind="industry")
     assert letter.full_version
 
 
@@ -616,7 +622,9 @@ def test_a_forbidden_phrase_refuses_the_answers(
     _store_forbidden(db, "typescript product features")
     monkeypatch.setattr(answers_module, "generate_text", _answers_stub())
     with pytest.raises(ValueError, match="forbidden phrase: typescript product features"):
-        generate_answer_set(db, "examplesoft", "Senior Product Engineer", ["Why this role?"])
+        generate_answer_set(
+            db, "examplesoft", "Senior Product Engineer", ["Why this role?"], kind="industry"
+        )
 
 
 def test_a_forbidden_phrase_in_an_answer_note_refuses_the_answers(
@@ -627,7 +635,9 @@ def test_a_forbidden_phrase_in_an_answer_note_refuses_the_answers(
         answers_module, "generate_text", _answers_stub("Mention being an open source maintainer.")
     )
     with pytest.raises(ValueError, match="forbidden phrase: open source maintainer"):
-        generate_answer_set(db, "examplesoft", "Senior Product Engineer", ["Why this role?"])
+        generate_answer_set(
+            db, "examplesoft", "Senior Product Engineer", ["Why this role?"], kind="industry"
+        )
 
 
 def test_an_unreadable_resume_facts_document_refuses_the_letter(
@@ -639,4 +649,4 @@ def test_an_unreadable_resume_facts_document_refuses_the_letter(
     put_document(db, "resume_framing", "industry.json", "json", "{}")
     monkeypatch.setattr(letters_module, "generate_text", _letter_response)
     with pytest.raises(ValueError, match="resume_facts document is not valid JSON"):
-        generate_cover_letter(db, "examplesoft", "Senior Product Engineer")
+        generate_cover_letter(db, "examplesoft", "Senior Product Engineer", kind="industry")

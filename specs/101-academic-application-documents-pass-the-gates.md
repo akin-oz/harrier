@@ -209,9 +209,9 @@ continues. It does not refuse: some calls are reviewed on a rolling basis.
       with the track's profile; a letter quoting a fragment outside the
       truth documents is refused, as on the default track
       (planned test_academic_letters_pass_the_same_claims_checks).
-- [ ] The industry prompts are byte-identical to today's, and every
+- [x] The industry prompts are byte-identical to today's, and every
       prompt of both kinds contains its shared truth-rule block
-      (planned test_both_kinds_share_every_truth_rule).
+      (`services/api/tests/test_academic_documents.py::test_both_kinds_share_every_truth_rule`).
 - [ ] Migration 11 owns every `application_profile` row by the default
       track with content unchanged; a default-track cover letter's prompt
       payload is identical before and after
@@ -220,13 +220,13 @@ continues. It does not refuse: some calls are reviewed on a rolling basis.
       under their names on the scope's track, and refuses an empty
       markdown file, JSON that is not an object, and any other extension
       (planned test_profile_put_stores_an_application_profile).
-- [ ] A 3-page academic PDF and a 2-page industry PDF each fail the gate
-      (planned test_page_gate_reads_the_kind).
-- [ ] A passed deadline prints the warning and the command still runs
-      (planned test_a_passed_deadline_warns_and_continues).
-- [ ] `tailor` on the default track's demo job produces the same markdown
+- [x] A 3-page academic PDF and a 2-page industry PDF each fail the gate
+      (`services/api/tests/test_academic_documents.py::test_page_gate_reads_the_kind`).
+- [x] A passed deadline prints the warning and the command still runs
+      (`services/api/tests/test_academic_documents.py::test_a_passed_deadline_warns_and_continues`).
+- [x] `tailor` on the default track's demo job produces the same markdown
       as before this change
-      (planned test_industry_tailor_is_unchanged_by_kind_prompts).
+      (`services/api/tests/test_academic_documents.py::test_industry_tailor_is_unchanged_by_kind_prompts`).
 - [ ] `test_academic_commands_read_no_profile_document` passes with
       `tailor`, `cover-letter` and `answers` added to its exceptions.
 - [ ] `config/resume-framing.academic.example.json` and
@@ -320,3 +320,41 @@ states:
 - Running these commands from the browser on an academic track.
 - Owning any kind other than `resume_framing` and `application_profile`.
 - Changes to the truth gate (spec 100) or to the claims rules themselves.
+
+## Amendment (2026-10-10, during implementation)
+
+Three gaps, found while building the prompts, the CV shape and the page
+gate. Each is a consequence of behavior the spec already states.
+
+- **The PDF's section order is the template's.** `render_html`
+  (`services/api/src/harrier/resume/htmlrender.py`) fills fixed slots in
+  `templates/resume-template.html`, where education sits in the footer.
+  Reordering only the markdown would leave the PDF a committee reads in
+  the industry order. `KindRules.cv_template` names the template:
+  industry keeps `resume-template.html` unchanged, academic uses
+  `templates/resume-template-academic.html`, with the sections in the
+  academic order and the same stylesheet. Proved by
+  `services/api/tests/test_academic_documents.py::test_the_academic_cv_puts_education_before_achievements`.
+- **The letter check held three paragraphs and 240 words on every
+  letter.** `cover_letter_violations`
+  (`services/api/src/harrier/apply/letters.py`) refused any letter outside
+  that shape, so an academic letter of one to two pages with no word count
+  (decision 2) could never pass. The paragraph count and word cap now come
+  from the kind (`KindRules.letter_paragraphs`, `letter_max_words`):
+  three and 240 on the industry kind as before, none on the academic,
+  where the 1 or 2 page gate holds the length. A brief's stated limits
+  still replace either. The eight-word floor on a paragraph, the banned
+  phrasing and the bullet-list rule hold for both. Proved by
+  `services/api/tests/test_academic_documents.py::test_the_academic_letter_has_no_word_count_or_paragraph_count`.
+- **A shared block is more than one segment.** The industry prompts carry
+  truth rules between voice rules (the letter's "Every fact about the
+  candidate" line sits among its length rules), so a byte-identical
+  industry prompt cannot be one voice block followed by one shared block.
+  Each prompt's shared part is one constant, a tuple of segments
+  (`TAILOR_SHARED`, `LETTER_SHARED`, `ANSWERS_SHARED`), and each kind's
+  voice (`services/api/src/harrier/voices.py`) is the segments between
+  them. A truth rule still exists in one place, used by both kinds.
+  `KindRules` holds the voices, and `tailor_prompt`, `letter_prompt` and
+  `answers_prompt` assemble a kind's prompt from its voice and the shared
+  constant, each taking the kind explicitly. Proved by
+  `services/api/tests/test_academic_documents.py::test_both_kinds_share_every_truth_rule`.

@@ -58,6 +58,8 @@ from harrier.resume.content import (
     load_skill_vocabulary,
     load_truth_sources,
 )
+from harrier.tracks import rules_for
+from harrier.voices import assemble
 
 logger = logging.getLogger(__name__)
 
@@ -90,22 +92,12 @@ BANNED_PHRASES = [
     "this incredible opportunity",
 ]
 
-SYSTEM_PROMPT_BASE = (
-    """You generate recruiter-facing draft answers for the candidate's job application questions.
-
-Write like a thoughtful senior engineer writing quickly but carefully.
-
-Core voice:
-- direct
-- practical
-- low-fluff
-- slightly compressed
-- grounded
-- understated
-- evidence-first
-- recruiter-facing, not theatrical
-
-Non-negotiable rules:
+# The rules every kind's answers prompt carries, whatever its voice
+# (spec 101): truthfulness, no invention, the banned phrasing, the claims
+# rules and the return format. The kind supplies the voice before them
+# (`harrier.voices`).
+ANSWERS_SHARED: tuple[str, ...] = (
+    """Non-negotiable rules:
 - Truthful only.
 - Do not invent experience, tools, domains, or responsibilities.
 - Every fact about the candidate comes from resume_truth_source_md or latest_project_achievements_md.
@@ -152,8 +144,13 @@ Return strict JSON only with this shape:
 }
 
 FORMATTING: Never use em dashes anywhere in the output. Use commas, semicolons, colons, or hyphens instead.
-"""
+""",
 )
+
+
+def answers_prompt(kind: str) -> str:
+    """The application answers prompt for a track of this kind (spec 101)."""
+    return assemble(rules_for(kind).answers_voice, ANSWERS_SHARED)
 
 
 @dataclass
@@ -519,6 +516,8 @@ def generate_answer_set(
     tracker_row: dict[str, str] | None = None,
     jd_text: str | None = None,
     brief: Brief = EMPTY_BRIEF,
+    *,
+    kind: str,
 ) -> list[AnswerDraft]:
     flags = requirement_flags(jd_text or "", brief.employer_guidance)
     candidate = load_candidate_document(conn)
@@ -544,7 +543,7 @@ def generate_answer_set(
         brief=brief,
     )
     prompt = (
-        SYSTEM_PROMPT_BASE
+        answers_prompt(kind)
         + style_guidance_prompt(load_profile_json(conn))
         + brief_instructions(brief, "answers")
     )

@@ -467,6 +467,7 @@ def test_a_failed_letter_run_reports_its_pdf_as_absent(
             "A full letter.",
             render=fake_render,
             validate=failing_validate,
+            kind="industry",
         )
     conn.close()
 

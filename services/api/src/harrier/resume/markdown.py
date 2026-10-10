@@ -15,6 +15,7 @@ from harrier.resume.dashes import dash_marks, describe
 from harrier.resume.facts import role_period_label
 from harrier.resume.heading import role_heading
 from harrier.resume.plan import ContentPlan, validate_content_plan
+from harrier.tracks import INDUSTRY_CV_SECTIONS, rules_for
 
 _TR_MAP = str.maketrans("çğıöşüÇĞİÖŞÜ", "cgiosuCGIOSU")
 
@@ -124,11 +125,19 @@ def build_markdown(
     sources: TruthSources,
     plan: ContentPlan,
     as_of: date | None = None,
+    *,
+    kind: str,
 ) -> str:
-    """Assemble the resume markdown from a validated plan."""
+    """Assemble the resume markdown from a validated plan, in the section
+    order of the track's kind (spec 101): education after experience on the
+    industry kind, straight after the profile on the academic."""
     plan_errors = validate_content_plan(plan, bundle)
     if plan_errors:
         raise ValueError("invalid resume content plan: " + "; ".join(plan_errors))
+
+    order = rules_for(kind).cv_sections
+    if sorted(order) != sorted(INDUSTRY_CV_SECTIONS):
+        raise ValueError(f"the {kind} CV section order is not a permutation of the CV sections")
 
     achievements = _section_bullets(
         bundle,
@@ -136,20 +145,7 @@ def build_markdown(
         plan.selected_achievements,
         list(bundle.default_achievements),
     )
-    lines = [
-        f"# {bundle.name}",
-        plan.title,
-        f"{bundle.location} | {bundle.email} | {normalize_visible_url_text(bundle.linkedin)}",
-        "",
-        "## PROFILE",
-        plan.profile,
-        "",
-        "## SELECTED ACHIEVEMENTS",
-        *[f"- {bullet}" for bullet in achievements],
-        "",
-        "## EXPERIENCE",
-        "",
-    ]
+    experience = ["## EXPERIENCE", ""]
     for role in bundle.roles:
         bullets = _section_bullets(
             bundle,
@@ -157,7 +153,7 @@ def build_markdown(
             plan.role_bullets.get(role.id, []),
             list(role.default_bullets),
         )
-        lines.extend(
+        experience.extend(
             [
                 f"### {role_heading(role.organization, role.title, role.employment_type)}",
                 plan.role_periods[role.id],
@@ -165,18 +161,31 @@ def build_markdown(
                 "",
             ]
         )
-    lines.extend(
-        [
-            "## EDUCATION",
-            *_education_lines(bundle),
+    # Each section ends with the blank line that separates it from the next;
+    # the last one's is dropped, so the industry order joins to exactly the
+    # text it always has.
+    sections = {
+        "## PROFILE": ["## PROFILE", plan.profile, ""],
+        "## SELECTED ACHIEVEMENTS": [
+            "## SELECTED ACHIEVEMENTS",
+            *[f"- {bullet}" for bullet in achievements],
             "",
-            "## CERTIFICATIONS",
-            *bundle.certifications,
-            "",
-            "## TECHNICAL SKILLS",
-            ", ".join(plan.skills),
-        ]
-    )
+        ],
+        "## EXPERIENCE": experience,
+        "## EDUCATION": ["## EDUCATION", *_education_lines(bundle), ""],
+        "## CERTIFICATIONS": ["## CERTIFICATIONS", *bundle.certifications, ""],
+        "## TECHNICAL SKILLS": ["## TECHNICAL SKILLS", ", ".join(plan.skills), ""],
+    }
+    lines = [
+        f"# {bundle.name}",
+        plan.title,
+        f"{bundle.location} | {bundle.email} | {normalize_visible_url_text(bundle.linkedin)}",
+        "",
+    ]
+    for heading in order:
+        lines.extend(sections[heading])
+    if lines[-1] == "":
+        lines.pop()
     markdown = "\n".join(lines)
     markdown_errors = validate_rendered_markdown(markdown, plan, bundle)
     if markdown_errors:

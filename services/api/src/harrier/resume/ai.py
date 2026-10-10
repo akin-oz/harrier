@@ -16,21 +16,25 @@ from typing import cast
 from harrier.llm import LLMClientError, generate_text
 from harrier.llm.jsonparse import loads_tolerant
 from harrier.resume.content import ResumeBundle, TruthSources
+from harrier.tracks import rules_for
+from harrier.voices import assemble
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT_TAILOR = """\
-You rank verified resume evidence for a target job.
-
-SOURCE OF TRUTH:
+# The rules every kind's ranking prompt carries, whatever its voice: IDs from
+# the pool only, nothing inferred from the posting, and the return format
+# (spec 101). The kind supplies the opening line and rule 3, what evidence
+# to prefer (`harrier.voices`).
+TAILOR_SHARED: tuple[str, ...] = (
+    """SOURCE OF TRUTH:
 - Candidate source data and the verified bullet pool are factual truth.
 - The job description is only a relevance signal. It is never a source of candidate facts.
 
 HARD RULES:
 1. Return only IDs from the supplied bullet_pool. Do not write, rephrase, infer, or add evidence.
 2. Never infer a technology, responsibility, metric, domain, seniority, or professional identity from the job description.
-3. Prefer the strongest supported evidence: measurable outcomes, scale, ownership, architecture decisions, production impact, reliability/observability, and technical leadership.
-4. Do not select evidence that semantically duplicates a selected achievement. Different evidence types are more valuable than keyword repetition.
+""",
+    """4. Do not select evidence that semantically duplicates a selected achievement. Different evidence types are more valuable than keyword repetition.
 5. Exact keyword matching is weaker than strong relevant evidence. Do not select generic evidence merely because it mirrors JD wording.
 6. A technology can be prioritized only when it appears in candidate evidence. Do not treat the most recent technology as the only or strongest technology.
 7. Do not attempt to set the professional title, profile, skills order, or dates. Those are derived and validated by the application.
@@ -43,7 +47,13 @@ Return strict JSON only. Each array is an ordered preference list; the applicati
   "role3_bullets": ["id", ...],
   "selected_achievements": ["id", ...]
 }
-"""
+""",
+)
+
+
+def tailor_prompt(kind: str) -> str:
+    """The bullet ranking prompt for a track of this kind (spec 101)."""
+    return assemble(rules_for(kind).tailor_voice, TAILOR_SHARED)
 
 
 def _validate_bullet_ids(
@@ -87,6 +97,8 @@ def build_ai_tailored_content(
     company: str,
     role: str,
     archetype: str | None = None,
+    *,
+    kind: str,
 ) -> dict[str, list[str]] | None:
     """Ask the model for evidence orderings; None on any failure."""
     payload = {
@@ -98,7 +110,7 @@ def build_ai_tailored_content(
         "archetype": archetype or "general",
     }
     try:
-        output_text = generate_text(SYSTEM_PROMPT_TAILOR, json.dumps(payload, ensure_ascii=False))
+        output_text = generate_text(tailor_prompt(kind), json.dumps(payload, ensure_ascii=False))
     except LLMClientError as exc:
         logger.warning("AI tailoring request failed: %s", exc)
         return None

@@ -1,6 +1,7 @@
 """HTML render from the repo templates (spec 013 port).
 
-templates/resume-template.html and .css hold placeholders only; every
+templates/resume-template.html (industry), resume-template-academic.html
+(academic, spec 101) and the shared .css hold placeholders only; every
 value is escaped, and an unresolved placeholder fails the render.
 """
 
@@ -14,9 +15,9 @@ from typing import cast
 from harrier.resume.content import ResumeBundle
 from harrier.resume.heading import RoleHeadingError, split_role_heading
 from harrier.resume.markdown import normalize_visible_url_text
+from harrier.tracks import rules_for
 
 TEMPLATE_DIR = Path("templates")
-HTML_TEMPLATE = "resume-template.html"
 CSS_TEMPLATE = "resume-template.css"
 
 
@@ -126,9 +127,14 @@ def _render_experience_html(entries: list[dict[str, object]]) -> str:
     return "\n".join(articles)
 
 
-def render_html(markdown: str, bundle: ResumeBundle, template_dir: Path | None = None) -> str:
+def render_html(
+    markdown: str, bundle: ResumeBundle, template_dir: Path | None = None, *, kind: str
+) -> str:
+    """The CV's HTML. Sections are read from the markdown by heading, and
+    the template the kind names places them, so the PDF has the kind's
+    section order too (spec 101)."""
     directory = template_dir if template_dir is not None else TEMPLATE_DIR
-    template = _read_template(directory, HTML_TEMPLATE)
+    template = _read_template(directory, rules_for(kind).cv_template)
     css = _read_template(directory, CSS_TEMPLATE)
     template = re.sub(r'<link rel="preconnect"[^>]+>\s*', "", template)
     template = re.sub(

@@ -132,6 +132,19 @@ def deadline_passed(job: dict[str, str], today: str) -> bool:
     return bool(deadline) and deadline < today
 
 
+def deadline_warning(job: dict[str, str], today: str) -> str | None:
+    """What `tailor`, `cover-letter` and `answers` print when the row's
+    deadline has passed, or None when it has not or there is none.
+
+    A warning, never a refusal: some calls are reviewed on a rolling basis
+    (spec 101). `today` is an ISO date, a parameter so a test can pin it.
+    """
+    if not deadline_passed(job, today):
+        return None
+    deadline = (job.get("deadline") or "").strip()
+    return f"warning: the deadline for this call passed on {deadline}"
+
+
 def rank_for(
     queue: str,
     jobs: list[dict[str, str]],

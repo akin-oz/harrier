@@ -70,7 +70,9 @@ def brief(**fields: object) -> Brief:
 
 
 def letter(db: sqlite3.Connection, with_brief: Brief = EMPTY_BRIEF, posting: str = POSTING):
-    return generate_cover_letter(db, COMPANY, ROLE, jd_text=posting, brief=with_brief)
+    return generate_cover_letter(
+        db, COMPANY, ROLE, jd_text=posting, brief=with_brief, kind="industry"
+    )
 
 
 def refusal(db: sqlite3.Connection, with_brief: Brief, posting: str = POSTING) -> str:
@@ -193,6 +195,7 @@ def test_a_never_name_in_an_answer_note_refuses_the_set(
             [EXPERIENCE],
             jd_text=POSTING,
             brief=brief(never_name=["Northwind Retail"]),
+            kind="industry",
         )
 
 
@@ -239,6 +242,7 @@ def test_an_answer_over_the_stated_sentence_limit_is_refused(
             [EXPERIENCE],
             jd_text=POSTING,
             brief=brief(answers={"max_sentences": 1}),
+            kind="industry",
         )
     assert "over the stated limit: answers.max_sentences 1, answer 1 medium has 2" in str(
         caught.value
@@ -268,6 +272,7 @@ def test_abbreviations_and_versions_do_not_split_sentences(
         [EXPERIENCE],
         jd_text=POSTING,
         brief=brief(answers={"max_sentences": 1}),
+        kind="industry",
     )
     assert drafts[0].medium_answer == medium
 
@@ -357,7 +362,12 @@ def test_a_work_authorization_question_is_not_sent_to_the_model(
     model_must_not_be_called(monkeypatch)
     posting = f"{POSTING} {REQUIREMENTS['work_authorization']}"
     drafts = generate_answer_set(
-        db, COMPANY, ROLE, ["Are you authorized to work in the EU?"], jd_text=posting
+        db,
+        COMPANY,
+        ROLE,
+        ["Are you authorized to work in the EU?"],
+        jd_text=posting,
+        kind="industry",
     )
     assert drafts[0].medium_answer == "[[TODO: your answer]]"
     assert drafts[0].notes == [f'Flag (work_authorization): "{REQUIREMENTS["work_authorization"]}"']
@@ -373,7 +383,7 @@ def test_an_opinion_question_without_a_view_is_a_placeholder(
     db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     model_must_not_be_called(monkeypatch)
-    drafts = generate_answer_set(db, COMPANY, ROLE, [OPINION], jd_text=POSTING)
+    drafts = generate_answer_set(db, COMPANY, ROLE, [OPINION], jd_text=POSTING, kind="industry")
     assert drafts[0].medium_answer == "[[TODO: your own view]]"
 
 
@@ -382,7 +392,7 @@ def test_love_working_here_is_not_an_opinion_question(
 ) -> None:
     question = "Why would you love working here?"
     stub_answers(monkeypatch, [answer(CHECKOUT, GROUNDED_CLAIMS[:1]) | {"question": question}])
-    drafts = generate_answer_set(db, COMPANY, ROLE, [question], jd_text=POSTING)
+    drafts = generate_answer_set(db, COMPANY, ROLE, [question], jd_text=POSTING, kind="industry")
     assert drafts[0].medium_answer == CHECKOUT
 
 
@@ -398,7 +408,9 @@ def test_a_supplied_view_is_sent_and_counts_as_evidence(
 
     monkeypatch.setattr(answers_module, "generate_text", fake)
     with_view = brief(views={OPINION: VIEW})
-    drafts = generate_answer_set(db, COMPANY, ROLE, [OPINION], jd_text=POSTING, brief=with_view)
+    drafts = generate_answer_set(
+        db, COMPANY, ROLE, [OPINION], jd_text=POSTING, brief=with_view, kind="industry"
+    )
     assert seen["operator_views"] == {OPINION: VIEW}
     assert drafts[0].medium_answer == VIEW
 
@@ -420,6 +432,7 @@ def test_the_salary_answer_quotes_the_posted_range(
         [SALARY],
         jd_text=PAID_POSTING,
         brief=brief(compensation_number="EUR 12,345"),
+        kind="industry",
     )
     assert drafts[0].medium_answer == (
         "Draft for you to edit. This is not advice. "
@@ -437,7 +450,9 @@ def test_the_salary_question_is_not_sent_to_the_model(
         return json.dumps({"answers": [answer(CHECKOUT, GROUNDED_CLAIMS[:1])]})
 
     monkeypatch.setattr(answers_module, "generate_text", fake)
-    drafts = generate_answer_set(db, COMPANY, ROLE, [SALARY, EXPERIENCE], jd_text=PAID_POSTING)
+    drafts = generate_answer_set(
+        db, COMPANY, ROLE, [SALARY, EXPERIENCE], jd_text=PAID_POSTING, kind="industry"
+    )
     assert sent == [[EXPERIENCE]]
     assert drafts[0].question == SALARY
     assert drafts[1].medium_answer == CHECKOUT
@@ -447,7 +462,7 @@ def test_salary_without_range_or_number_says_so_and_asks(
     db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     model_must_not_be_called(monkeypatch)
-    drafts = generate_answer_set(db, COMPANY, ROLE, [SALARY], jd_text=POSTING)
+    drafts = generate_answer_set(db, COMPANY, ROLE, [SALARY], jd_text=POSTING, kind="industry")
     assert drafts[0].medium_answer == (
         "Draft for you to edit. This is not advice. "
         "Posted range: none in the posting. My number: [[TODO: your number]]"
@@ -485,6 +500,7 @@ def write(
             render=render,
             validate=validate,
             review=review,
+            kind="industry",
         )
     except NeedsInputError:
         return markdown_path, None

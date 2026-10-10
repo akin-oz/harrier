@@ -56,9 +56,25 @@ def render_pdf(html_text: str, pdf_path: Path, margin_mm: int = 10) -> None:
         ) from exc
 
 
-def validate_rendered_pdf(pdf_path: Path, html_text: str, intended_pages: int = 1) -> list[str]:
+def allowed_pages_text(allowed_pages: tuple[int, ...]) -> str:
+    """The allowed counts as the gate's message names them: "1", "1 or 2"."""
+    counts = [str(count) for count in sorted(allowed_pages)]
+    if len(counts) == 1:
+        return counts[0]
+    return f"{', '.join(counts[:-1])} or {counts[-1]}"
+
+
+def validate_rendered_pdf(
+    pdf_path: Path, html_text: str, *, allowed_pages: tuple[int, ...]
+) -> list[str]:
     """Practical post-render checks; PDF layout checks are necessarily
-    heuristic."""
+    heuristic.
+
+    `allowed_pages` is the track kind's (`KindRules.pages`): exactly one page
+    on the industry kind, one or two on the academic (spec 101).
+    """
+    if not allowed_pages:
+        raise ValueError("the PDF gate needs at least one allowed page count")
     errors: list[str] = []
     if not pdf_path.exists() or pdf_path.stat().st_size == 0:
         return ["PDF was not created or is empty"]
@@ -79,8 +95,9 @@ def validate_rendered_pdf(pdf_path: Path, html_text: str, intended_pages: int = 
     match = re.search(r"^Pages:\s+(\d+)\s*$", result.stdout, flags=re.MULTILINE)
     if not match:
         errors.append("rendered PDF has no readable page count")
-    elif int(match.group(1)) != intended_pages:
-        errors.append(f"rendered PDF has {match.group(1)} pages; expected {intended_pages}")
+    elif int(match.group(1)) not in allowed_pages:
+        expected = allowed_pages_text(allowed_pages)
+        errors.append(f"rendered PDF has {match.group(1)} pages; expected {expected}")
     return errors
 
 

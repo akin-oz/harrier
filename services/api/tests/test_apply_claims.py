@@ -35,7 +35,7 @@ from harrier.apply.profile import profile_text
 from harrier.db import connect
 from harrier.profile.store import put_document
 from harrier.resume.content import load_skill_vocabulary, load_truth_sources
-from harrier.tracks import default_scope
+from harrier.tracks import TRACK_KINDS, default_scope
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PROFILE_JSON_PATH = REPO_ROOT / "config" / "application-profile.example.json"
@@ -145,7 +145,7 @@ def answer(
 
 
 def generate(db: sqlite3.Connection, role: str = ROLE) -> LetterDraft:
-    return generate_cover_letter(db, COMPANY, role, jd_text=POSTING)
+    return generate_cover_letter(db, COMPANY, role, jd_text=POSTING, kind="industry")
 
 
 def refusal(db: sqlite3.Connection, role: str = ROLE) -> str:
@@ -219,7 +219,12 @@ def test_a_grounded_answer_set_passes_every_rule(
 ) -> None:
     stub_answers(monkeypatch, [answer(f"{CHECKOUT} {INVOICES}", GROUNDED_CLAIMS)])
     drafts = generate_answer_set(
-        db, COMPANY, ROLE, ["What relevant experience do you have?"], jd_text=POSTING
+        db,
+        COMPANY,
+        ROLE,
+        ["What relevant experience do you have?"],
+        jd_text=POSTING,
+        kind="industry",
     )
     assert drafts[0].medium_answer == f"{CHECKOUT} {INVOICES}"
 
@@ -249,7 +254,7 @@ def test_an_answer_with_invented_evidence_is_refused(
     claims = [*GROUNDED_CLAIMS, candidate(sentence, "Ran the payments platform team")]
     stub_answers(monkeypatch, [answer(f"{CHECKOUT} {INVOICES} {sentence}", claims)])
     with pytest.raises(ClaimCheckError, match="unverified evidence"):
-        generate_answer_set(db, COMPANY, ROLE, ["Why?"], jd_text=POSTING)
+        generate_answer_set(db, COMPANY, ROLE, ["Why?"], jd_text=POSTING, kind="industry")
 
 
 def test_a_banned_phrase_refuses_the_answers(
@@ -257,7 +262,7 @@ def test_a_banned_phrase_refuses_the_answers(
 ) -> None:
     stub_answers(monkeypatch, [answer(f"{CHECKOUT} I am thrilled to apply.", GROUNDED_CLAIMS)])
     with pytest.raises(ClaimCheckError, match="banned phrase"):
-        generate_answer_set(db, COMPANY, ROLE, ["Why?"], jd_text=POSTING)
+        generate_answer_set(db, COMPANY, ROLE, ["Why?"], jd_text=POSTING, kind="industry")
 
 
 def test_a_letter_over_240_words_is_refused_not_trimmed(
@@ -388,7 +393,7 @@ def test_evidence_in_the_truth_and_the_posting_passes(
     candidate did it."""
     stub_letter(monkeypatch, letter_json())
     posting = f"{POSTING} {CHECKOUT_EVIDENCE}."
-    letter = generate_cover_letter(db, COMPANY, ROLE, jd_text=posting)
+    letter = generate_cover_letter(db, COMPANY, ROLE, jd_text=posting, kind="industry")
     assert CHECKOUT in letter.full_version
 
 
@@ -399,7 +404,9 @@ def test_evidence_in_the_posting_and_the_profile_gets_the_posting_message(
     claims = [*GROUNDED_CLAIMS, candidate(sentence, PROFILE_LINE)]
     stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {sentence}", claims))
     with pytest.raises(ClaimCheckError) as caught:
-        generate_cover_letter(db, COMPANY, ROLE, jd_text=f"{POSTING} {PROFILE_LINE}.")
+        generate_cover_letter(
+            db, COMPANY, ROLE, jd_text=f"{POSTING} {PROFILE_LINE}.", kind="industry"
+        )
     message = str(caught.value)
     assert "posting text cited as candidate evidence" in message
     assert "application profile cited" not in message
@@ -413,7 +420,12 @@ def test_the_answers_path_names_posting_text_cited_as_candidate_evidence(
     stub_answers(monkeypatch, [answer(f"{CHECKOUT} {INVOICES} {sentence}", claims)])
     with pytest.raises(ClaimCheckError, match="posting text cited as candidate evidence"):
         generate_answer_set(
-            db, COMPANY, ROLE, ["What relevant experience do you have?"], jd_text=POSTING
+            db,
+            COMPANY,
+            ROLE,
+            ["What relevant experience do you have?"],
+            jd_text=POSTING,
+            kind="industry",
         )
 
 
@@ -441,7 +453,12 @@ def test_with_no_profile_stored_profile_text_is_unverified_and_nothing_raises(
 def test_both_prompts_forbid_citing_the_posting_or_profile_for_the_candidate() -> None:
     """The prompt text is the decision here: the rule is either sent or not.
     Whether the model obeys it is not testable (spec 069 Limitations)."""
-    for prompt in (letters_module.SYSTEM_PROMPT_BASE, answers_module.SYSTEM_PROMPT_BASE):
+    prompts = [
+        build(kind)
+        for build in (letters_module.letter_prompt, answers_module.answers_prompt)
+        for kind in TRACK_KINDS
+    ]
+    for prompt in prompts:
         flat = " ".join(prompt.split())
         assert (
             "Never cite job_description_text or the application profile as candidate evidence"
@@ -482,7 +499,7 @@ def test_employer_evidence_quoted_without_markers_passes(
     sentence = "Examplesoft ships the billing export weekly."
     claims = [*GROUNDED_CLAIMS, employer(sentence, "We ship the billing export weekly")]
     stub_letter(monkeypatch, letter_json(first=f"{sentence} {PARAGRAPH_ONE}", claims=claims))
-    letter = generate_cover_letter(db, COMPANY, ROLE, jd_text=MARKED_POSTING)
+    letter = generate_cover_letter(db, COMPANY, ROLE, jd_text=MARKED_POSTING, kind="industry")
     assert sentence in letter.full_version
 
 
@@ -493,7 +510,7 @@ def test_employer_evidence_absent_after_marker_removal_is_still_refused(
     claims = [*GROUNDED_CLAIMS, employer(sentence, "We ship the billing export daily")]
     stub_letter(monkeypatch, letter_json(first=f"{sentence} {PARAGRAPH_ONE}", claims=claims))
     with pytest.raises(ClaimCheckError, match="employer evidence not in posting"):
-        generate_cover_letter(db, COMPANY, ROLE, jd_text=MARKED_POSTING)
+        generate_cover_letter(db, COMPANY, ROLE, jd_text=MARKED_POSTING, kind="industry")
 
 
 def test_a_plain_claim_sentence_matches_output_that_carries_markers(
@@ -736,6 +753,7 @@ def test_a_letter_with_a_placeholder_writes_markdown_and_no_pdf(
             letter.full_version,
             output_dir=tmp_path,
             render=render,
+            kind="industry",
         )
     assert caught.value.placeholders == [PLACEHOLDER]
     assert caught.value.markdown_path.is_file()
@@ -772,6 +790,7 @@ def test_a_placeholder_run_removes_the_pdf_and_html_of_an_earlier_run(
         template_dir=REPO_ROOT / "templates",
         render=render,
         validate=validate,
+        kind="industry",
     )
     assert paths["pdf"].is_file()
     assert paths["html"].is_file()
@@ -780,7 +799,14 @@ def test_a_placeholder_run_removes_the_pdf_and_html_of_an_earlier_run(
     draft = generate(db)
     with pytest.raises(NeedsInputError):
         write_cover_letter_artifacts(
-            db, COMPANY, ROLE, None, draft.short_version, draft.full_version, tmp_path
+            db,
+            COMPANY,
+            ROLE,
+            None,
+            draft.short_version,
+            draft.full_version,
+            tmp_path,
+            kind="industry",
         )
     assert PLACEHOLDER in paths["markdown"].read_text(encoding="utf-8")
     assert not paths["pdf"].exists()
@@ -794,7 +820,14 @@ def test_a_bracketed_insert_is_a_placeholder_too(
     letter = generate(db)
     with pytest.raises(NeedsInputError) as caught:
         write_cover_letter_artifacts(
-            db, COMPANY, ROLE, None, letter.short_version, letter.full_version, tmp_path
+            db,
+            COMPANY,
+            ROLE,
+            None,
+            letter.short_version,
+            letter.full_version,
+            tmp_path,
+            kind="industry",
         )
     assert caught.value.placeholders == ["[Insert a short example here]"]
 
@@ -1014,7 +1047,7 @@ def test_a_passing_first_response_calls_the_model_once(
     answer_calls = stub_sequence(
         monkeypatch, answers_module, [passing_answers(), refused_answers()]
     )
-    generate_answer_set(db, COMPANY, ROLE, [QUESTION], jd_text=POSTING)
+    generate_answer_set(db, COMPANY, ROLE, [QUESTION], jd_text=POSTING, kind="industry")
     assert len(letter_calls) == 1
     assert len(answer_calls) == 1
 
@@ -1036,7 +1069,7 @@ def test_a_placeholder_is_not_retried(
         answer(f"{CHECKOUT} {PLACEHOLDER}", [candidate(CHECKOUT, CHECKOUT_EVIDENCE)])
     )
     calls = stub_sequence(monkeypatch, answers_module, [with_placeholder, passing_answers()])
-    drafts = generate_answer_set(db, COMPANY, ROLE, [QUESTION], jd_text=POSTING)
+    drafts = generate_answer_set(db, COMPANY, ROLE, [QUESTION], jd_text=POSTING, kind="industry")
     assert len(calls) == 1
     assert PLACEHOLDER in drafts[0].medium_answer
 
@@ -1046,7 +1079,7 @@ def test_the_retry_logs_the_first_refusals(
 ) -> None:
     stub_sequence(monkeypatch, answers_module, [refused_answers(), passing_answers()])
     with caplog.at_level(logging.WARNING, logger=answers_module.__name__):
-        generate_answer_set(db, COMPANY, ROLE, [QUESTION], jd_text=POSTING)
+        generate_answer_set(db, COMPANY, ROLE, [QUESTION], jd_text=POSTING, kind="industry")
     retries = [
         record.getMessage()
         for record in caplog.records
@@ -1206,7 +1239,7 @@ def refused_versions(
     empty list when the letter passes."""
     stub_letter(monkeypatch, letter_json(" ".join([CHECKOUT, INVOICES, *sentences])))
     try:
-        generate_cover_letter(db, COMPANY, ROLE, jd_text=posting, brief=brief)
+        generate_cover_letter(db, COMPANY, ROLE, jd_text=posting, brief=brief, kind="industry")
     except ClaimCheckError as caught:
         return caught.violations
     return []
@@ -1233,7 +1266,7 @@ def test_a_grounded_version_passes_in_an_answer(
     with_versions(db, PIPELINE)
     medium = f"Every billing change I shipped went through review. {CHECKOUT} {INVOICES}"
     stub_answers(monkeypatch, [answer(medium, GROUNDED_CLAIMS, short=STACK)])
-    drafts = generate_answer_set(db, COMPANY, ROLE, [QUESTION], jd_text=POSTING)
+    drafts = generate_answer_set(db, COMPANY, ROLE, [QUESTION], jd_text=POSTING, kind="industry")
     assert drafts[0].short_answer == STACK
 
 

@@ -359,9 +359,20 @@ def _cmd_profile_list(_args: argparse.Namespace) -> int:
         return 0
 
 
+def _warn_if_deadline_passed(row: dict[str, str]) -> None:
+    """The passed-deadline warning `tailor`, `cover-letter` and `answers`
+    print before they run on (spec 101)."""
+    from harrier.tracker.queue import deadline_warning
+
+    warning = deadline_warning(row, date.today().isoformat())
+    if warning is not None:
+        print(warning, file=sys.stderr)
+
+
 def _cmd_tailor(args: argparse.Namespace) -> int:
     from harrier.resume.content import ResumeBundleError
     from harrier.resume.tailor import run_tailor
+    from harrier.tracker import get_job
 
     jd_text: str | None = None
     if args.jd_text:
@@ -375,6 +386,9 @@ def _cmd_tailor(args: argparse.Namespace) -> int:
 
     with closing(connect()) as conn:
         scope = _scope(conn, args)
+        # An unknown job raises here as it did inside run_tailor; `main`
+        # reports it.
+        _warn_if_deadline_passed(get_job(conn, scope, args.job_id))
         try:
             result = run_tailor(conn, scope, args.job_id, jd_text=jd_text, no_ai=args.no_ai)
         except (ResumeBundleError, ValueError, RuntimeError) as error:
@@ -422,6 +436,7 @@ def _cmd_cover_letter(args: argparse.Namespace) -> int:
         scope = _scope(conn, args)
         try:
             row = get_job(conn, scope, args.job_id)
+            _warn_if_deadline_passed(row)
             if not jd_text:
                 jd_text = load_cached_description(row.get("url", "")) or None
             brief = load_brief(conn, args.job_id)
@@ -434,6 +449,7 @@ def _cmd_cover_letter(args: argparse.Namespace) -> int:
                 jd_text=jd_text,
                 extra_notes=notes,
                 brief=brief,
+                kind=scope.track.kind,
             )
             artifacts = write_cover_letter_artifacts(
                 conn,
@@ -446,6 +462,7 @@ def _cmd_cover_letter(args: argparse.Namespace) -> int:
                     claims=letter.claims,
                     flags=tuple(requirement_flags(jd_text or "", brief.employer_guidance)),
                 ),
+                kind=scope.track.kind,
             )
         except NeedsInputError as needs:
             # The draft is written and only the operator can finish it. Its own
@@ -479,6 +496,7 @@ def _cmd_answers(args: argparse.Namespace) -> int:
         scope = _scope(conn, args)
         try:
             row = get_job(conn, scope, args.job_id)
+            _warn_if_deadline_passed(row)
             if not jd_text:
                 jd_text = load_cached_description(row.get("url", "")) or None
             questions = parse_questions(args.question, args.questions_file)
@@ -492,6 +510,7 @@ def _cmd_answers(args: argparse.Namespace) -> int:
                 tracker_row=row,
                 jd_text=jd_text,
                 brief=brief,
+                kind=scope.track.kind,
             )
             content = render_markdown(
                 row.get("company", ""),
