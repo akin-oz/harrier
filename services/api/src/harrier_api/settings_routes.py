@@ -186,6 +186,10 @@ COMMAND_PLACES: dict[str, Place] = {
     # Spec 103 added these after spec 096 was approved; placed on merging it.
     "store migrate": TerminalOnly(_STORE),
     "store status": TerminalOnly(_STORE),
+    # Spec 098 added this after spec 096 was approved, and named its place.
+    "profile split-resume": TerminalOnly(
+        "A one-time migration of the stored resume into facts and a framing (spec 098)."
+    ),
 }
 
 HostFact = Literal["schedule", "gmail_token", "model", "image", "database_owner", "profile"]

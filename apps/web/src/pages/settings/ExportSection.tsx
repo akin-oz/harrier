@@ -18,8 +18,10 @@ async function fetchCsv(name: Download, slug: string | null): Promise<Blob> {
       : await api.GET("/ops/export/contacts.csv", { parseAs: "blob" });
   if (result.error !== undefined)
     throw new Error(refusalMessage(result.error, `${name} was refused`));
-  if (!(result.data instanceof Blob))
-    throw new Error("refused: the local API token was not accepted");
+  // No body is the token refusal, the only declared outcome without one
+  // (spec 035). Not `instanceof Blob`: the body's Blob can come from another
+  // realm than the page's, and on Node 22 under jsdom it does.
+  if (result.data === undefined) throw new Error("refused: the local API token was not accepted");
   return result.data;
 }
 

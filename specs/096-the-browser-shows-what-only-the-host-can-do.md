@@ -235,6 +235,7 @@ without placing it fails the test.
 | `review-followup` | Repository upkeep: it reads pull request reviews. |
 | `parity checklist`, `parity status`, `parity diff` | Repository upkeep: they compare against the old system. |
 | `store migrate`, `store status` | Store upkeep (spec 103): they apply or report the store's schema migrations, which an operator runs deliberately. Added 2026-10-10, when spec 103's commands reached this branch and the three-way test named them as placed nowhere. |
+| `profile split-resume` | A one-time migration of the stored resume into facts and a framing (spec 098, which named this place). Added 2026-10-10, when spec 098's command reached this branch and the three-way test named it as placed nowhere. |
 
 `demo-run` is routed: `POST /runs` with kind `demo` starts it (spec 006), and
 the list says it is a harness for the run panel.
