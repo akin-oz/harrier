@@ -44,6 +44,7 @@ export function JobTable({
   emptyMessage,
   statusLabel,
   renderActions,
+  renderDetails,
   keepOrder = false,
   deadlineLed = false,
 }: {
@@ -51,6 +52,10 @@ export function JobTable({
   emptyMessage: string;
   statusLabel: (status: JobStatus) => string;
   renderActions?: (job: Job) => ReactNode;
+  // Read-only detail under the job, passed in for the same layering reason.
+  // Not in the Actions column, which a track that takes no writes omits
+  // (spec 093), while a row's history reads on every track (spec 095).
+  renderDetails?: (job: Job) => ReactNode;
   keepOrder?: boolean;
   deadlineLed?: boolean;
 }) {
@@ -142,6 +147,7 @@ export function JobTable({
                   )}
                 </span>
                 <span className="job-table__meta">{metaLine(job)}</span>
+                {renderDetails?.(job)}
               </td>
               {!deadlineLed && (
                 <td className="job-table__num job-table__lead">

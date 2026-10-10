@@ -20,7 +20,7 @@ from pydantic import BaseModel
 
 from harrier_api.deps import DatabaseRoute
 from harrier_api.localauth import TOKEN_RESPONSES, require_token
-from harrier_api.runmodels import Manager, RunOut, run_out
+from harrier_api.runmodels import RUN_CONFLICT_RESPONSES, Manager, RunOut, run_out
 from harrier_api.runs import RunParams
 
 mail_router = APIRouter(route_class=DatabaseRoute)
@@ -112,7 +112,7 @@ def list_mail_events(limit: Annotated[int | None, Query(ge=1, le=500)] = None) -
     "/mail/watch",
     operation_id="runMailWatch",
     dependencies=[Depends(require_token)],
-    responses=TOKEN_RESPONSES,
+    responses={**TOKEN_RESPONSES, **RUN_CONFLICT_RESPONSES},
 )
 async def run_mail_watch(body: WatchIn, manager: Manager) -> RunOut:
     """The same `gmail-watch` verb the CLI runs, as a run.

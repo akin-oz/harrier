@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { components } from "@harrier/contract";
 
 import { api } from "../../shared/api/client";
+import { refusalMessage } from "../../shared/api/refusal";
 import "../../shared/ui/run.css";
 import "./RunPanel.css";
 import { TERMINAL_STATES, useRunStream } from "./useRunStream";
@@ -15,8 +16,12 @@ export type { EventSourceFactory };
 
 export function RunPanel({
   createEventSource = (url: string) => new EventSource(url),
+  stream: shared,
 }: {
   createEventSource?: EventSourceFactory;
+  // A stream the caller also starts runs on, so a discovery started with
+  // options elsewhere on the page streams here, on this panel (spec 095).
+  stream?: ReturnType<typeof useRunStream>;
 }) {
   const queryClient = useQueryClient();
   // Collapsed by default. A healthy run is thousands of lines nobody needs
@@ -25,7 +30,8 @@ export function RunPanel({
   const [expanded, setExpanded] = useState(false);
   const logRef = useRef<HTMLPreElement | null>(null);
 
-  const stream = useRunStream(createEventSource);
+  const own = useRunStream(createEventSource);
+  const stream = shared ?? own;
   const { run, lines, progress, disconnected, failed } = stream;
 
   useEffect(() => {
@@ -44,7 +50,9 @@ export function RunPanel({
     mutationFn: async (kind: RunKind) => {
       const { data, error } = await api.POST("/runs", { body: { kind } });
       if (error !== undefined) {
-        throw new Error(`start failed: ${JSON.stringify(error)}`);
+        // A run of this kind already active with other options is refused
+        // in words (review of PR #208); show them, not the JSON.
+        throw new Error(refusalMessage(error, `start failed: ${JSON.stringify(error)}`));
       }
       // The contract now declares 403, so a refusal is a shape the caller has
       // to handle rather than one it can assume away (spec 035). A missing

@@ -1,22 +1,23 @@
-import type { components } from "@harrier/contract";
-
 import { TERMINAL_STATES, useRunStream } from "../../features/runs/useRunStream";
 import "../../shared/ui/run.css";
 
+export { refusalMessage } from "../../shared/api/refusal";
+export type { Refusal } from "../../shared/api/refusal";
+
 export type RunStream = ReturnType<typeof useRunStream>;
 
-// What an operations route answers when it refuses, as the contract declares
-// it: the domain's words on a 404 or a 409, the hold on a 503, and the field
-// errors on a 422. Named from the generated types, so a body the contract
-// changes fails the type check here rather than reaching the operator as the
-// fallback (spec 082's pattern).
-export type Refusal =
-  | components["schemas"]["ErrorOut"]
-  | components["schemas"]["DatabaseHeldOut"]
-  | components["schemas"]["HTTPValidationError"];
-
-export function refusalMessage(error: Refusal, fallback: string): string {
-  return typeof error.detail === "string" ? error.detail : fallback;
+/**
+ * A count a finished run printed, read from the CLI's own line (for example
+ * `would_reject=3`), or null when the run printed none. Used only to name a
+ * preview in the next action's label: the write recounts and reports what it
+ * actually did (spec 095).
+ */
+export function countIn(lines: readonly string[], pattern: RegExp): number | null {
+  for (const line of [...lines].reverse()) {
+    const found = pattern.exec(line);
+    if (found?.[1] !== undefined) return Number(found[1]);
+  }
+  return null;
 }
 
 // A route that answered with no body refused the local token; that is the

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { Job } from "../../entities/job";
 import { StatusPill } from "../../entities/job";
 import { ArtifactList } from "../../features/apply/ArtifactList";
+import { BriefPanel } from "../../features/brief/BriefPanel";
 import { TERMINAL_STATES, useRunStream } from "../../features/runs/useRunStream";
 import type { EventSourceFactory, RunOut } from "../../features/runs/useRunStream";
 import { api } from "../../shared/api/client";
@@ -381,6 +382,8 @@ export function ApplyPage({
           )}
         </div>
       </div>
+
+      <BriefPanel jobId={job.id} />
 
       <ArtifactList jobId={job.id} onGenerate={select} />
     </section>
