@@ -67,6 +67,12 @@ class ParameterizedKind:
     switches: frozenset[str] = frozenset()
     numbers: frozenset[str] = frozenset()
     takes_job: bool = True
+    # A directory this process chose, never one a request named: where
+    # `backup` writes (spec 096).
+    destination_flag: str | None = None
+    # An archive this process found in its own listing, passed as the verb's
+    # one positional argument (spec 096).
+    takes_archive: bool = False
 
 
 PARAMETERIZED_KINDS: dict[str, ParameterizedKind] = {
@@ -93,7 +99,31 @@ PARAMETERIZED_KINDS: dict[str, ParameterizedKind] = {
         switches=frozenset({"--dry-run"}),
         takes_job=False,
     ),
+    # Spec 096. The retention is the CLI's default, so no `--keep` is offered.
+    "backup": ParameterizedKind("backup", takes_job=False, destination_flag="--dest"),
+    "verify-backup": ParameterizedKind("verify-backup", takes_job=False, takes_archive=True),
 }
+
+
+@dataclass(frozen=True)
+class HiddenDirectory:
+    """A directory whose path never reaches the run's event stream.
+
+    The commands a run executes print the paths they wrote, and on the host
+    those carry the home directory. Within a run that names one of these, a
+    file inside the directory is shown by its name and the directory itself
+    by `shown_as`, so the archive a backup wrote reaches the browser as a
+    name and never as a path (spec 096).
+    """
+
+    path: Path
+    shown_as: str
+
+    def hide(self, text: str) -> str:
+        root = str(self.path).rstrip(os.sep)
+        if not root:
+            return text
+        return text.replace(root + os.sep, "").replace(root, self.shown_as)
 
 
 @dataclass(frozen=True)
@@ -119,6 +149,20 @@ class RunParams:
     # The track the run works in, by slug (spec 093). Checked against the slug
     # rule here; the route that sets it checks the slug exists.
     track: str | None = None
+    # Both chosen by the server, never by a request (spec 096).
+    destination: Path | None = None
+    archive: Path | None = None
+    hidden: tuple[HiddenDirectory, ...] = ()
+
+    @property
+    def target(self) -> str:
+        """What the run acts on, and so what it locks against: a job by id,
+        an archive by name, or everything."""
+        if self.job_id is not None:
+            return str(self.job_id)
+        if self.archive is not None:
+            return self.archive.name
+        return ""
 
     def __post_init__(self) -> None:
         if self.track is not None:
@@ -205,6 +249,20 @@ def build_command(kind: str, params: RunParams) -> list[str]:
         if parameterized.input_flag is None:
             raise ValueError(f"{kind} takes no input file")
         argv.append(f"{parameterized.input_flag}={params.input_path}")
+
+    if params.destination is not None:
+        if parameterized.destination_flag is None:
+            raise ValueError(f"{kind} takes no destination")
+        argv.append(f"{parameterized.destination_flag}={params.destination}")
+
+    if parameterized.takes_archive:
+        if params.archive is None:
+            raise ValueError(f"{kind} acts on an archive and none was given")
+        # After `--`, so the path is the positional argument whatever it
+        # begins with.
+        argv.extend(["--", str(params.archive)])
+    elif params.archive is not None:
+        raise ValueError(f"{kind} takes no archive")
     return argv
 
 
@@ -237,6 +295,24 @@ def scrub_event_data(data: dict[str, object]) -> dict[str, object]:
     return scrubbed
 
 
+def hide_directory(data: dict[str, object], directory: HiddenDirectory) -> dict[str, object]:
+    """Every string an event carries, with that directory's path removed."""
+    hidden: dict[str, object] = {}
+    for key, value in data.items():
+        if isinstance(value, str):
+            hidden[key] = directory.hide(value)
+        elif isinstance(value, dict):
+            hidden[key] = hide_directory(cast("dict[str, object]", value), directory)
+        elif isinstance(value, list):
+            hidden[key] = [
+                directory.hide(item) if isinstance(item, str) else item
+                for item in cast("list[object]", value)
+            ]
+        else:
+            hidden[key] = value
+    return hidden
+
+
 @dataclass
 class RunEvent:
     id: int
@@ -261,6 +337,7 @@ class Run:
     # behaviour exactly as it was (spec 047).
     target: str = ""
     input_path: Path | None = None
+    hidden: tuple[HiddenDirectory, ...] = ()
 
 
 class RunManager:
@@ -325,7 +402,7 @@ class RunManager:
         # A kind that acts on everything locks on the empty target, which is
         # the one-at-a-time behaviour discovery always had. Kinds never
         # collide with each other because the lock is on the pair.
-        target = "" if params is None or params.job_id is None else str(params.job_id)
+        target = "" if params is None else params.target
         active = self.active_run(kind, target)
         if active is not None:
             # This attempt never becomes a run, so the input file written for
@@ -341,6 +418,7 @@ class RunManager:
             command=command,
             target=target,
             input_path=None if params is None else params.input_path,
+            hidden=() if params is None else params.hidden,
         )
         self._runs[run.id] = run
         self._journal(run)
@@ -455,10 +533,11 @@ class RunManager:
         covered (review finding on PR #39). Doing it here makes the property
         hold for every future caller without anyone remembering.
         """
+        scrubbed = scrub_event_data(data)
+        for directory in run.hidden:
+            scrubbed = hide_directory(scrubbed, directory)
         async with self._condition:
-            run.events.append(
-                RunEvent(id=len(run.events) + 1, type=event_type, data=scrub_event_data(data))
-            )
+            run.events.append(RunEvent(id=len(run.events) + 1, type=event_type, data=scrubbed))
             self._condition.notify_all()
 
     async def _set_state(self, run: Run, state: RunState) -> None:
@@ -493,6 +572,10 @@ class RunManager:
             "started_at": run.started_at,
             "ended_at": run.ended_at,
             "exit_code": run.exit_code,
+            # An archive's name for a verification, so its result outlives a
+            # restart and the backups list can still mark it (spec 096). A
+            # job id otherwise, or empty.
+            "target": run.target,
         }
         with self._journal_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record) + "\n")
@@ -533,6 +616,7 @@ class RunManager:
                 started_at=(str(record["started_at"]) if record.get("started_at") else None),
                 ended_at=(str(record["ended_at"]) if record.get("ended_at") else None),
                 exit_code=(int(str(exit_code_raw)) if exit_code_raw is not None else None),
+                target=str(record.get("target") or ""),
             )
 
 

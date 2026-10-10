@@ -5,6 +5,7 @@ import type { Job } from "../entities/job";
 import { ApplyPage } from "../pages/apply/ApplyPage";
 import { InboxPage } from "../pages/inbox/InboxPage";
 import { OutreachPage } from "../pages/outreach/OutreachPage";
+import { SettingsPage } from "../pages/settings/SettingsPage";
 import { TrackerPage } from "../pages/tracker/TrackerPage";
 import { TracksPage } from "../pages/tracks/TracksPage";
 import {
@@ -34,6 +35,9 @@ const SECTIONS = [
   { id: "tracker", label: "Tracker", defaultOnly: false },
   { id: "outreach", label: "Outreach", defaultOnly: true },
   { id: "inbox", label: "Inbox", defaultOnly: true },
+  // Last, since it is visited least often (spec 096). The install's own
+  // settings, the same on every track.
+  { id: "settings", label: "Settings", defaultOnly: false },
 ] as const;
 
 type Section = (typeof SECTIONS)[number]["id"] | "tracks";
@@ -138,6 +142,7 @@ function Main({
   onOpen: (track: Track) => void;
 }) {
   if (section === "tracks") return <TracksPage onOpen={onOpen} />;
+  if (section === "settings") return <SettingsPage />;
   if (tracksState.isError) {
     return (
       <p role="alert" className="app-notice app-notice--error">

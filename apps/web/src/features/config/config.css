@@ -1,0 +1,281 @@
+/* Configuration editors (spec 096). The app's plain anatomy: 1px borders,
+   the small radius, the raised surface for controls. */
+
+.config-section {
+  display: grid;
+  gap: var(--space-4);
+}
+.config-muted {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.config-kind {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-raised);
+}
+.config-kind__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.config-kind__title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: none;
+}
+.config-kind__description {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  max-width: 70ch;
+}
+.config-kind__form {
+  display: grid;
+  gap: var(--space-3);
+}
+.config-kind__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.config-kind__blocked {
+  font-size: 12px;
+  color: var(--color-danger);
+}
+.config-kind__confirm {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-sm);
+  background: var(--color-danger-bg);
+}
+.config-kind__question {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text);
+}
+.config-kind__refusal {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-danger);
+  overflow-wrap: anywhere;
+}
+.config-kind__notice {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  min-height: 1em;
+}
+
+/* Where the value comes from, said in words: a filled mark for the store,
+   an outlined one for the file, so it does not rest on colour. */
+.config-source {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.config-source::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1.5px solid currentcolor;
+}
+.config-source--store {
+  color: var(--color-accent-text);
+}
+.config-source--store::before {
+  background: currentcolor;
+}
+
+.config-field {
+  display: grid;
+  gap: var(--space-1);
+  font-size: 13px;
+}
+.config-field__label {
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+.config-field__help {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+.config-field__lines,
+.config-field__number,
+.config-field__text,
+.config-field__date {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+.config-field__lines {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+  width: 100%;
+}
+.config-field__number {
+  width: 10ch;
+}
+.config-field__text {
+  width: 100%;
+  min-width: 14ch;
+}
+.config-field__lines:focus-visible,
+.config-field__number:focus-visible,
+.config-field__text:focus-visible,
+.config-field__date:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+.config-field__number[aria-invalid="true"] {
+  border-color: var(--color-danger);
+}
+
+.config-unrouted {
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--color-border-strong);
+  background: var(--color-bg-sunken);
+  font-size: 12px;
+}
+.config-unrouted__lead {
+  margin: 0 0 var(--space-1);
+  color: var(--color-text-secondary);
+}
+.config-unrouted__list {
+  margin: 0;
+  padding-left: var(--space-4);
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.config-holds {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.config-holds th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+  padding: var(--space-1) var(--space-2);
+}
+.config-holds td {
+  padding: var(--space-1) var(--space-2);
+  vertical-align: middle;
+}
+.config-holds__expired .config-field__text {
+  color: var(--color-text-tertiary);
+  text-decoration: line-through;
+}
+.config-hold-state {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+.config-hold-state--expired {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.config-button {
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 12px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-raised);
+  color: var(--color-text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.config-button:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-accent-text);
+}
+.config-button:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+.config-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.config-button--primary:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-accent-text);
+  font-weight: 600;
+}
+.config-button--danger:not(:disabled),
+.config-button--danger:hover:not(:disabled) {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+  font-weight: 600;
+}
+.config-button--quiet {
+  border-color: transparent;
+  background: none;
+  color: var(--color-text-secondary);
+}
+
+.config-import {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
+}
+.config-import__report {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.config-import__report p {
+  margin: 0;
+}
+.config-import__lines {
+  margin: 0;
+  padding-left: var(--space-4);
+  font-family: var(--font-mono);
+}
+
+.config-readonly {
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--color-bg-sunken);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.config-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

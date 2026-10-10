@@ -274,6 +274,67 @@ def create_backup(
     )
 
 
+@dataclass(frozen=True)
+class ArchiveInfo:
+    """One archive in the backups directory, by name: never by path.
+
+    The name is what the browser sees and sends back (spec 096). A path would
+    carry the host's home directory into a response, and taking one back
+    would let a request name any file the server can read.
+    """
+
+    name: str
+    size_bytes: int
+    modified_at: str
+
+
+def list_archives(directory: Path | None = None) -> list[ArchiveInfo]:
+    """The archives `create_backup` wrote into `directory`, newest first.
+
+    Read-only, and only files with the archive name shape: a stray file in
+    the directory is not an archive, and listing it would offer to verify
+    it. A directory that is absent or unreadable lists nothing; the caller
+    says so in words (spec 096).
+    """
+    target = directory if directory is not None else backup_dir()
+    try:
+        candidates = list(target.glob(f"{ARCHIVE_PREFIX}*{ARCHIVE_SUFFIX}"))
+    except OSError:
+        return []
+    archives: list[ArchiveInfo] = []
+    for path in candidates:
+        try:
+            if not path.is_file():
+                continue
+            stat = path.stat()
+        except OSError:
+            continue
+        archives.append(
+            ArchiveInfo(
+                name=path.name,
+                size_bytes=stat.st_size,
+                modified_at=datetime.fromtimestamp(stat.st_mtime, UTC).isoformat(
+                    timespec="seconds"
+                ),
+            )
+        )
+    # The name carries the UTC timestamp it was taken at, so it sorts as time.
+    return sorted(archives, key=lambda item: item.name, reverse=True)
+
+
+def listed_archive(name: str, directory: Path | None = None) -> Path | None:
+    """The archive of that name, only when the listing contains it.
+
+    Matched against the listing rather than joined onto the directory, so a
+    name with a separator or a dot segment can never reach a file outside
+    it: such a name is simply not in the list (spec 096).
+    """
+    target = directory if directory is not None else backup_dir()
+    if any(item.name == name for item in list_archives(target)):
+        return target / name
+    return None
+
+
 def _safe_extract(tar: tarfile.TarFile, into: Path) -> None:
     """Extract, refusing any member that would escape the target directory.
 

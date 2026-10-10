@@ -182,6 +182,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/config/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Configuration
+         * @description `harrier config import`: the same function, overwriting each stored
+         *     kind that has a file in the checkout.
+         */
+        post: operations["importConfig"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/config/{kind}": {
         parameters: {
             query?: never;
@@ -645,6 +666,137 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/backups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Backups
+         * @description The archives in the backups directory the container mounts (spec 064),
+         *     newest first.
+         */
+        get: operations["listBackups"];
+        put?: never;
+        /**
+         * Take Backup
+         * @description `harrier backup` as a run, into the directory the listing reads, with
+         *     the CLI's own retention. The run reports the archive by name.
+         */
+        post: operations["takeBackup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/backups/{name}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify Backup
+         * @description `harrier verify-backup` on an archive from the listing. A name the
+         *     listing does not contain is 404, and a path is never such a name.
+         */
+        post: operations["verifyBackup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/commands": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Command Places
+         * @description Every CLI subcommand in its one place, so the page renders the list
+         *     from here rather than from a copy typed into it.
+         */
+        get: operations["listCommandPlaces"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/feeds/routing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Route Feeds
+         * @description Which watchlist lines no importer handles, in spec 041's words.
+         *
+         *     Stores nothing and fetches nothing: it runs the router discovery runs,
+         *     so the editor cannot disagree with it about a URL.
+         */
+        post: operations["routeFeeds"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/host": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Host Facts
+         * @description The facts the host panel shows beside each command (spec 096's table).
+         */
+        get: operations["getHostFacts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Profile Documents
+         * @description `harrier profile list`: names and dates, never contents.
+         */
+        get: operations["listProfileDocuments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tracker": {
         parameters: {
             query?: never;
@@ -822,6 +974,18 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ActiveModelOut */
+        ActiveModelOut: {
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "active" | "missing" | "invalid";
+            /** Trained At */
+            trained_at: string | null;
+            /** Version */
+            version: string | null;
+        };
         /** AddJobIn */
         AddJobIn: {
             /** Company */
@@ -867,6 +1031,17 @@ export interface components {
              */
             questions?: string;
         };
+        /** ArchiveOut */
+        ArchiveOut: {
+            /** Modified At */
+            modified_at: string;
+            /** Name */
+            name: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /** Verification */
+            verification: ("passed" | "failed" | "running") | null;
+        };
         /**
          * ArtifactOut
          * @description One artifact kind for a job, present or not.
@@ -896,6 +1071,16 @@ export interface components {
             dry_run?: boolean;
             /** Limit */
             limit?: number | null;
+        };
+        /** BackupsOut */
+        BackupsOut: {
+            /** Archives */
+            archives: components["schemas"]["ArchiveOut"][];
+            /**
+             * Directory
+             * @enum {string}
+             */
+            directory: "present" | "absent";
         };
         /** Body_captureJobFromForm */
         Body_captureJobFromForm: {
@@ -998,6 +1183,17 @@ export interface components {
             /** Ok */
             ok: boolean;
         };
+        /** CommandPlacesOut */
+        CommandPlacesOut: {
+            /** Host */
+            host: components["schemas"]["HostCommandOut"][];
+            /** Panel */
+            panel: components["schemas"]["HostPanelRowOut"][];
+            /** Routed */
+            routed: components["schemas"]["RoutedCommandOut"][];
+            /** Terminal */
+            terminal: components["schemas"]["TerminalCommandOut"][];
+        };
         /**
          * CompanyOutcomeCode
          * @enum {string}
@@ -1024,6 +1220,17 @@ export interface components {
         ConfigErrorOut: {
             /** Detail */
             detail: string;
+        };
+        /** ConfigImportOut */
+        ConfigImportOut: {
+            /** Imported */
+            imported: components["schemas"]["ImportedKindOut"][];
+            /** Report */
+            report: string[];
+            /** Skipped */
+            skipped: string[];
+            /** Total */
+            total: number;
         };
         /** ConfigIn */
         ConfigIn: {
@@ -1149,6 +1356,16 @@ export interface components {
              */
             jd_text?: string;
         };
+        /** FeedLinesIn */
+        FeedLinesIn: {
+            /** Urls */
+            urls: string[];
+        };
+        /** FeedRoutingOut */
+        FeedRoutingOut: {
+            /** Unrouted */
+            unrouted: components["schemas"]["UnroutedFeedOut"][];
+        };
         /** FindContactsIn */
         FindContactsIn: {
             /**
@@ -1158,6 +1375,16 @@ export interface components {
             best_only?: boolean;
             /** Max Items */
             max_items?: number | null;
+        };
+        /** GmailTokenOut */
+        GmailTokenOut: {
+            /** Age Days */
+            age_days: number | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "present" | "absent" | "not_configured";
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1181,6 +1408,66 @@ export interface components {
             revision: string;
             /** Version */
             version: string;
+        };
+        /** HostCommandOut */
+        HostCommandOut: {
+            /** Command */
+            command: string;
+            /** Reason */
+            reason: string;
+            /** Shown */
+            shown: string;
+        };
+        /**
+         * HostFactsOut
+         * @description What the container can read about each host-only command, and no more.
+         *
+         *     The two facts it cannot read are typed as the one value `unknown`, so
+         *     the contract itself cannot carry a healthy answer for them (spec 096).
+         */
+        HostFactsOut: {
+            /**
+             * Database Owner
+             * @constant
+             */
+            database_owner: "unknown";
+            gmail_token: components["schemas"]["GmailTokenOut"];
+            /** Image Revision */
+            image_revision: string;
+            model: components["schemas"]["ActiveModelOut"];
+            /** Newest Feature Export */
+            newest_feature_export: string | null;
+            /** Schedule */
+            schedule: components["schemas"]["ScheduledJobOut"][];
+            /**
+             * Schedule Definition
+             * @enum {string}
+             */
+            schedule_definition: "present" | "absent" | "invalid";
+            /**
+             * Schedule Installed
+             * @constant
+             */
+            schedule_installed: "unknown";
+        };
+        /** HostPanelRowOut */
+        HostPanelRowOut: {
+            /** Commands */
+            commands: string[];
+            /**
+             * Fact
+             * @enum {string}
+             */
+            fact: "schedule" | "gmail_token" | "model" | "image" | "database_owner" | "profile";
+        };
+        /** ImportedKindOut */
+        ImportedKindOut: {
+            /** Count */
+            count: number;
+            /** Kind */
+            kind: string;
+            /** Unit */
+            unit: string;
         };
         /** JobOut */
         JobOut: {
@@ -1358,6 +1645,17 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** ProfileDocumentOut */
+        ProfileDocumentOut: {
+            /** Format */
+            format: string;
+            /** Kind */
+            kind: string;
+            /** Name */
+            name: string;
+            /** Updated At */
+            updated_at: string;
+        };
         /**
          * RejectionCode
          * @enum {string}
@@ -1370,6 +1668,15 @@ export interface components {
             job: components["schemas"]["JobOut"];
             /** Previous */
             previous: string;
+        };
+        /** RoutedCommandOut */
+        RoutedCommandOut: {
+            /** Command */
+            command: string;
+            /** Note */
+            note: string | null;
+            /** Route */
+            route: string;
         };
         /**
          * RunEventOut
@@ -1417,10 +1724,24 @@ export interface components {
              */
             state: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "interrupted";
         };
+        /** ScheduledJobOut */
+        ScheduledJobOut: {
+            /** Cadence */
+            cadence: string;
+            /** Last Success At */
+            last_success_at: string | null;
+            /** Name */
+            name: string;
+        };
         /** SessionOut */
         SessionOut: {
             /** Token */
             token: string;
+        };
+        /** SettingsErrorOut */
+        SettingsErrorOut: {
+            /** Detail */
+            detail: string;
         };
         /** SnoozeIn */
         SnoozeIn: {
@@ -1455,6 +1776,13 @@ export interface components {
              * @default false
              */
             no_ai?: boolean;
+        };
+        /** TerminalCommandOut */
+        TerminalCommandOut: {
+            /** Command */
+            command: string;
+            /** Reason */
+            reason: string;
         };
         /** TrackIn */
         TrackIn: {
@@ -1495,6 +1823,13 @@ export interface components {
             status_labels: {
                 [key: string]: string;
             };
+        };
+        /** UnroutedFeedOut */
+        UnroutedFeedOut: {
+            /** Message */
+            message: string;
+            /** Url */
+            url: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -2158,6 +2493,60 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
+        };
+    };
+    importConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigImportOut"];
+                };
+            };
+            /** @description a file holds a value the store refuses */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsErrorOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no configuration file was found */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsErrorOut"];
+                };
             };
             /** @description A host process holds the tracker database (spec 075). */
             503: {
@@ -3531,6 +3920,246 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SessionOut"];
+                };
+            };
+        };
+    };
+    listBackups: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupsOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    takeBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    verifyBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no archive of that name in the listing */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsErrorOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    listCommandPlaces: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandPlacesOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    routeFeeds: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FeedLinesIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeedRoutingOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    getHostFacts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostFactsOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
+        };
+    };
+    listProfileDocuments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileDocumentOut"][];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
                 };
             };
         };

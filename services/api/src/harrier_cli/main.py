@@ -1408,24 +1408,14 @@ def _cmd_events(args: argparse.Namespace) -> int:
 
 
 def _cmd_config(args: argparse.Namespace) -> int:
-    from harrier.sources.feeds import FEEDS_PATH, read_line_config
     from harrier.userconfig import (
-        COMPANY_HOLDS,
-        DISCOVERY,
-        DISCOVERY_PATH,
-        FEEDS,
-        HOLDS_PATH,
-        KINDS,
-        LINKEDIN_SEARCHES,
-        SEARCH_URLS_PATH,
         ConfigError,
-        HoldEntry,
         delete_config,
         get_config,
         list_config,
-        read_hold_file_raw,
         set_config,
     )
+    from harrier.userconfig.importer import import_config_files
 
     conn = connect()
 
@@ -1451,32 +1441,14 @@ def _cmd_config(args: argparse.Namespace) -> int:
             print(f"{args.kind} {'removed' if removed else 'was not stored'}")
             return 0 if removed else 1
         else:
-            # import: read each committed or local file once into the store.
-            # Every file is read before anything is stored, so a malformed
-            # hold date refuses the whole import rather than half of it
-            # (spec 052).
-            sources: dict[str, list[str] | list[HoldEntry]] = {
-                FEEDS: read_line_config(FEEDS_PATH),
-                LINKEDIN_SEARCHES: read_line_config(SEARCH_URLS_PATH),
-                COMPANY_HOLDS: read_hold_file_raw(HOLDS_PATH),
-            }
-            imported = 0
-            for kind, values in sources.items():
-                if not values:
-                    print(f"{kind}: no file to import, skipped")
-                    continue
-                set_config(conn, kind, values)
-                print(f"{kind}: {len(values)} entries imported")
-                imported += 1
-            settings = _settings_from_file(DISCOVERY_PATH)
-            if settings:
-                set_config(conn, DISCOVERY, settings)
-                print(f"{DISCOVERY}: {len(settings)} settings imported")
-                imported += 1
-            if not imported:
+            # import: the same function `POST /config/import` calls (spec 096).
+            result = import_config_files(conn)
+            for line in result.report:
+                print(line)
+            if not result.imported:
                 print("nothing to import; no configuration files found", file=sys.stderr)
                 return 1
-            print(f"imported {imported} of {len(KINDS)} kinds")
+            print(f"imported {len(result.imported)} of {result.total} kinds")
     except (ConfigError, json.JSONDecodeError, OSError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
@@ -1832,24 +1804,6 @@ def _cmd_review_followup(args: argparse.Namespace) -> int:
     if any(state.outstanding for state in states):
         exit_code = exit_code or 3
     return exit_code
-
-
-def _settings_from_file(path: Path) -> dict[str, object]:
-    from typing import cast
-
-    try:
-        parsed: object = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    if not isinstance(parsed, dict):
-        return {}
-    # The committed example carries a _comment key for the reader; it is not
-    # a setting and must not become one.
-    return {
-        key: value
-        for key, value in cast("dict[str, object]", parsed).items()
-        if not key.startswith("_")
-    }
 
 
 def _cmd_parity(args: argparse.Namespace) -> int:

@@ -19,7 +19,17 @@ const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 // (spec 047). An outreach read is a named human being who is not the
 // operator, which is the only content here about someone who never chose to
 // use this tool (spec 048). The API requires the token on both.
-const TOKENED_READS = [/\/apply\/[^/]+\/artifacts(\/|$)/, /\/outreach\//];
+//
+// Configuration is the watchlist, the searches and the hold list, which
+// describe the operator's own search (spec 097 closed spec 023's open item).
+// The Settings reads name archives, model metadata and profile documents,
+// which describe the operator's own data (spec 096).
+const TOKENED_READS = [
+  /\/apply\/[^/]+\/artifacts(\/|$)/,
+  /\/outreach\//,
+  /\/config(\/|$)/,
+  /\/settings\//,
+];
 
 function needsToken(request: Request): boolean {
   if (MUTATING.has(request.method.toUpperCase())) return true;

@@ -1,0 +1,166 @@
+.settings-page {
+  display: grid;
+  gap: var(--space-5);
+  max-width: 1100px;
+}
+.settings-page__heading {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.settings-page__lead {
+  margin: calc(-1 * var(--space-4)) 0 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  max-width: 75ch;
+}
+.settings-section {
+  display: grid;
+  gap: var(--space-3);
+}
+.settings-section__heading {
+  margin: 0;
+  padding-bottom: var(--space-1);
+  font-size: 14px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--color-border);
+}
+.settings-muted {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  max-width: 75ch;
+}
+.settings-error,
+.settings-refusal {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-danger);
+  overflow-wrap: anywhere;
+}
+.settings-refusal {
+  font-family: var(--font-mono);
+  padding: 10px var(--space-3);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-sm);
+  background: var(--color-danger-bg);
+}
+.settings-result {
+  margin: 0;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+.settings-empty {
+  margin: 0;
+  padding: var(--space-4);
+  text-align: center;
+  color: var(--color-text-tertiary);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+}
+
+.settings-button {
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 12px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-raised);
+  color: var(--color-text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.settings-button:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-accent-text);
+}
+.settings-button:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+.settings-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-backups {
+  display: grid;
+  gap: var(--space-3);
+}
+.settings-backups__toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.settings-backups__run {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.settings-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-raised);
+}
+.settings-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-sunken);
+}
+.settings-table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: middle;
+}
+.settings-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.settings-table code {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.settings-table__number,
+.settings-table__muted {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+}
+
+/* The verification state reads by its words and its weight, not by hue. */
+.settings-verification {
+  font-size: 12px;
+  white-space: nowrap;
+}
+.settings-verification--passed {
+  color: var(--color-text);
+}
+.settings-verification--failed {
+  color: var(--color-danger);
+  font-weight: 600;
+}
+.settings-verification--running {
+  color: var(--color-text-secondary);
+  font-style: italic;
+}
+
+.settings-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

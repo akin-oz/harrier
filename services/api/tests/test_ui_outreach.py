@@ -144,6 +144,8 @@ def test_every_parameterized_kind_is_reachable_from_a_page(env: Path) -> None:
         "outreach-draft": "/outreach/{selector}/draft",
         "backfill-posters": "/outreach/backfill-posters",
         "gmail-watch": "/mail/watch",
+        "backup": "/settings/backups",
+        "verify-backup": "/settings/backups/{name}/verify",
     }
     assert set(routed) == set(PARAMETERIZED_KINDS), "a parameterized kind has no route"
     for path in routed.values():

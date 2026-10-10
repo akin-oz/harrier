@@ -1,6 +1,48 @@
 {
   "components": {
     "schemas": {
+      "ActiveModelOut": {
+        "properties": {
+          "state": {
+            "enum": [
+              "active",
+              "missing",
+              "invalid"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "trained_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trained At"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "state",
+          "trained_at",
+          "version"
+        ],
+        "title": "ActiveModelOut",
+        "type": "object"
+      },
       "AddJobIn": {
         "properties": {
           "company": {
@@ -90,6 +132,46 @@
         "title": "AnswersIn",
         "type": "object"
       },
+      "ArchiveOut": {
+        "properties": {
+          "modified_at": {
+            "title": "Modified At",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "verification": {
+            "anyOf": [
+              {
+                "enum": [
+                  "passed",
+                  "failed",
+                  "running"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verification"
+          }
+        },
+        "required": [
+          "name",
+          "size_bytes",
+          "modified_at",
+          "verification"
+        ],
+        "title": "ArchiveOut",
+        "type": "object"
+      },
       "ArtifactOut": {
         "description": "One artifact kind for a job, present or not.\n\nCarries the filename rather than the path: the operator does not need the\nabsolute location, and it would put the home directory into every\nresponse for nothing.",
         "properties": {
@@ -144,6 +226,31 @@
           }
         },
         "title": "BackfillIn",
+        "type": "object"
+      },
+      "BackupsOut": {
+        "properties": {
+          "archives": {
+            "items": {
+              "$ref": "#/components/schemas/ArchiveOut"
+            },
+            "title": "Archives",
+            "type": "array"
+          },
+          "directory": {
+            "enum": [
+              "present",
+              "absent"
+            ],
+            "title": "Directory",
+            "type": "string"
+          }
+        },
+        "required": [
+          "directory",
+          "archives"
+        ],
+        "title": "BackupsOut",
         "type": "object"
       },
       "Body_captureJobFromForm": {
@@ -293,6 +400,46 @@
         "title": "CaptureOut",
         "type": "object"
       },
+      "CommandPlacesOut": {
+        "properties": {
+          "host": {
+            "items": {
+              "$ref": "#/components/schemas/HostCommandOut"
+            },
+            "title": "Host",
+            "type": "array"
+          },
+          "panel": {
+            "items": {
+              "$ref": "#/components/schemas/HostPanelRowOut"
+            },
+            "title": "Panel",
+            "type": "array"
+          },
+          "routed": {
+            "items": {
+              "$ref": "#/components/schemas/RoutedCommandOut"
+            },
+            "title": "Routed",
+            "type": "array"
+          },
+          "terminal": {
+            "items": {
+              "$ref": "#/components/schemas/TerminalCommandOut"
+            },
+            "title": "Terminal",
+            "type": "array"
+          }
+        },
+        "required": [
+          "routed",
+          "host",
+          "terminal",
+          "panel"
+        ],
+        "title": "CommandPlacesOut",
+        "type": "object"
+      },
       "CompanyOutcomeCode": {
         "enum": [
           "company_rejected",
@@ -339,6 +486,43 @@
           "detail"
         ],
         "title": "ConfigErrorOut",
+        "type": "object"
+      },
+      "ConfigImportOut": {
+        "properties": {
+          "imported": {
+            "items": {
+              "$ref": "#/components/schemas/ImportedKindOut"
+            },
+            "title": "Imported",
+            "type": "array"
+          },
+          "report": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Report",
+            "type": "array"
+          },
+          "skipped": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Skipped",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "imported",
+          "skipped",
+          "report",
+          "total"
+        ],
+        "title": "ConfigImportOut",
         "type": "object"
       },
       "ConfigIn": {
@@ -560,6 +744,38 @@
         "title": "EvaluateIn",
         "type": "object"
       },
+      "FeedLinesIn": {
+        "properties": {
+          "urls": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Urls",
+            "type": "array"
+          }
+        },
+        "required": [
+          "urls"
+        ],
+        "title": "FeedLinesIn",
+        "type": "object"
+      },
+      "FeedRoutingOut": {
+        "properties": {
+          "unrouted": {
+            "items": {
+              "$ref": "#/components/schemas/UnroutedFeedOut"
+            },
+            "title": "Unrouted",
+            "type": "array"
+          }
+        },
+        "required": [
+          "unrouted"
+        ],
+        "title": "FeedRoutingOut",
+        "type": "object"
+      },
       "FindContactsIn": {
         "properties": {
           "best_only": {
@@ -580,6 +796,36 @@
           }
         },
         "title": "FindContactsIn",
+        "type": "object"
+      },
+      "GmailTokenOut": {
+        "properties": {
+          "age_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Age Days"
+          },
+          "state": {
+            "enum": [
+              "present",
+              "absent",
+              "not_configured"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "age_days"
+        ],
+        "title": "GmailTokenOut",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -654,6 +900,145 @@
           "built_at"
         ],
         "title": "HealthOut",
+        "type": "object"
+      },
+      "HostCommandOut": {
+        "properties": {
+          "command": {
+            "title": "Command",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "shown": {
+            "title": "Shown",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "shown",
+          "reason"
+        ],
+        "title": "HostCommandOut",
+        "type": "object"
+      },
+      "HostFactsOut": {
+        "description": "What the container can read about each host-only command, and no more.\n\nThe two facts it cannot read are typed as the one value `unknown`, so\nthe contract itself cannot carry a healthy answer for them (spec 096).",
+        "properties": {
+          "database_owner": {
+            "const": "unknown",
+            "title": "Database Owner",
+            "type": "string"
+          },
+          "gmail_token": {
+            "$ref": "#/components/schemas/GmailTokenOut"
+          },
+          "image_revision": {
+            "title": "Image Revision",
+            "type": "string"
+          },
+          "model": {
+            "$ref": "#/components/schemas/ActiveModelOut"
+          },
+          "newest_feature_export": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Newest Feature Export"
+          },
+          "schedule": {
+            "items": {
+              "$ref": "#/components/schemas/ScheduledJobOut"
+            },
+            "title": "Schedule",
+            "type": "array"
+          },
+          "schedule_definition": {
+            "enum": [
+              "present",
+              "absent",
+              "invalid"
+            ],
+            "title": "Schedule Definition",
+            "type": "string"
+          },
+          "schedule_installed": {
+            "const": "unknown",
+            "title": "Schedule Installed",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schedule_definition",
+          "schedule",
+          "schedule_installed",
+          "gmail_token",
+          "model",
+          "newest_feature_export",
+          "image_revision",
+          "database_owner"
+        ],
+        "title": "HostFactsOut",
+        "type": "object"
+      },
+      "HostPanelRowOut": {
+        "properties": {
+          "commands": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Commands",
+            "type": "array"
+          },
+          "fact": {
+            "enum": [
+              "schedule",
+              "gmail_token",
+              "model",
+              "image",
+              "database_owner",
+              "profile"
+            ],
+            "title": "Fact",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fact",
+          "commands"
+        ],
+        "title": "HostPanelRowOut",
+        "type": "object"
+      },
+      "ImportedKindOut": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "count",
+          "unit"
+        ],
+        "title": "ImportedKindOut",
         "type": "object"
       },
       "JobOut": {
@@ -984,6 +1369,34 @@
         "title": "OutreachRowOut",
         "type": "object"
       },
+      "ProfileDocumentOut": {
+        "properties": {
+          "format": {
+            "title": "Format",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "name",
+          "format",
+          "updated_at"
+        ],
+        "title": "ProfileDocumentOut",
+        "type": "object"
+      },
       "RejectionCode": {
         "enum": [
           "not_remote",
@@ -1026,6 +1439,36 @@
           "job"
         ],
         "title": "RescoreOut",
+        "type": "object"
+      },
+      "RoutedCommandOut": {
+        "properties": {
+          "command": {
+            "title": "Command",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "route": {
+            "title": "Route",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "route",
+          "note"
+        ],
+        "title": "RoutedCommandOut",
         "type": "object"
       },
       "RunEventOut": {
@@ -1188,6 +1631,36 @@
         "title": "RunOut",
         "type": "object"
       },
+      "ScheduledJobOut": {
+        "properties": {
+          "cadence": {
+            "title": "Cadence",
+            "type": "string"
+          },
+          "last_success_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Success At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "cadence",
+          "last_success_at"
+        ],
+        "title": "ScheduledJobOut",
+        "type": "object"
+      },
       "SessionOut": {
         "properties": {
           "token": {
@@ -1199,6 +1672,19 @@
           "token"
         ],
         "title": "SessionOut",
+        "type": "object"
+      },
+      "SettingsErrorOut": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "SettingsErrorOut",
         "type": "object"
       },
       "SnoozeIn": {
@@ -1279,6 +1765,24 @@
           }
         },
         "title": "TailorIn",
+        "type": "object"
+      },
+      "TerminalCommandOut": {
+        "properties": {
+          "command": {
+            "title": "Command",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "reason"
+        ],
+        "title": "TerminalCommandOut",
         "type": "object"
       },
       "TrackIn": {
@@ -1379,6 +1883,24 @@
           "status_labels"
         ],
         "title": "TrackOut",
+        "type": "object"
+      },
+      "UnroutedFeedOut": {
+        "properties": {
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "message"
+        ],
+        "title": "UnroutedFeedOut",
         "type": "object"
       },
       "ValidationError": {
@@ -2303,6 +2825,58 @@
           }
         },
         "summary": "List Configuration"
+      }
+    },
+    "/config/import": {
+      "post": {
+        "description": "`harrier config import`: the same function, overwriting each stored\nkind that has a file in the checkout.",
+        "operationId": "importConfig",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigImportOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsErrorOut"
+                }
+              }
+            },
+            "description": "a file holds a value the store refuses"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsErrorOut"
+                }
+              }
+            },
+            "description": "no configuration file was found"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
+          }
+        },
+        "summary": "Import Configuration"
       }
     },
     "/config/{kind}": {
@@ -4096,6 +4670,233 @@
           }
         },
         "summary": "Get Session"
+      }
+    },
+    "/settings/backups": {
+      "get": {
+        "description": "The archives in the backups directory the container mounts (spec 064),\nnewest first.",
+        "operationId": "listBackups",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          }
+        },
+        "summary": "List Backups"
+      },
+      "post": {
+        "description": "`harrier backup` as a run, into the directory the listing reads, with\nthe CLI's own retention. The run reports the archive by name.",
+        "operationId": "takeBackup",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          }
+        },
+        "summary": "Take Backup"
+      }
+    },
+    "/settings/backups/{name}/verify": {
+      "post": {
+        "description": "`harrier verify-backup` on an archive from the listing. A name the\nlisting does not contain is 404, and a path is never such a name.",
+        "operationId": "verifyBackup",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsErrorOut"
+                }
+              }
+            },
+            "description": "no archive of that name in the listing"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify Backup"
+      }
+    },
+    "/settings/commands": {
+      "get": {
+        "description": "Every CLI subcommand in its one place, so the page renders the list\nfrom here rather than from a copy typed into it.",
+        "operationId": "listCommandPlaces",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandPlacesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          }
+        },
+        "summary": "List Command Places"
+      }
+    },
+    "/settings/feeds/routing": {
+      "post": {
+        "description": "Which watchlist lines no importer handles, in spec 041's words.\n\nStores nothing and fetches nothing: it runs the router discovery runs,\nso the editor cannot disagree with it about a URL.",
+        "operationId": "routeFeeds",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedLinesIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedRoutingOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Route Feeds"
+      }
+    },
+    "/settings/host": {
+      "get": {
+        "description": "The facts the host panel shows beside each command (spec 096's table).",
+        "operationId": "getHostFacts",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostFactsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
+          }
+        },
+        "summary": "Host Facts"
+      }
+    },
+    "/settings/profile": {
+      "get": {
+        "description": "`harrier profile list`: names and dates, never contents.",
+        "operationId": "listProfileDocuments",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProfileDocumentOut"
+                  },
+                  "title": "Response Listprofiledocuments",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
+          }
+        },
+        "summary": "List Profile Documents"
       }
     },
     "/tracker": {
