@@ -50,6 +50,8 @@ function stubApi(): string[] {
       if (url.pathname === "/api/jobs") return reply([ROW]);
       if (url.pathname === "/api/health") return reply({ status: "ok" });
       if (url.pathname === "/api/apply/1/artifacts") return reply([]);
+      // No brief stored for the row, as the API answers it (spec 095).
+      if (url.pathname === "/api/apply/1/brief") return reply({ detail: "no brief" }, 404);
       if (url.pathname === "/api/settings/commands") {
         return reply({ routed: [], host: [], terminal: [], panel: [] });
       }

@@ -18,7 +18,9 @@ const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 // evaluation, which is the densest personal content the system holds
 // (spec 047). An outreach read is a named human being who is not the
 // operator, which is the only content here about someone who never chose to
-// use this tool (spec 048). The API requires the token on both.
+// use this tool (spec 048). The API requires the token on both. A brief is
+// the operator's own notes about an application, and the data check names
+// contacts, so both are read with it too (spec 095).
 //
 // Configuration is the watchlist, the searches and the hold list, which
 // describe the operator's own search (spec 097 closed spec 023's open item).
@@ -28,6 +30,8 @@ const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 // this header so it never sits in a URL (spec 096).
 const TOKENED_READS = [
   /\/apply\/[^/]+\/artifacts(\/|$)/,
+  /\/apply\/[^/]+\/brief$/,
+  /\/ops\/check$/,
   /\/outreach\//,
   /\/config(\/|$)/,
   /\/settings\//,

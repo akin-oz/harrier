@@ -511,6 +511,12 @@ def test_the_letter_markdown_ends_with_verify_and_next_action(
     assert markdown.rstrip().endswith(f"Read {path} once against the posting.")
 
 
+def test_the_review_lists_a_number_in_inline_code(db: sqlite3.Connection, tmp_path: Path) -> None:
+    """Spec 113: the checklist reads the same number tokens as C5."""
+    path, _ = write(db, tmp_path, f"{PARAGRAPH_ONE} I led `12` engineers.", Review())
+    assert "- Number: 12" in path.read_text(encoding="utf-8")
+
+
 @pytest.mark.parametrize(
     ("full", "flags", "expected"),
     [

@@ -1422,3 +1422,77 @@ def test_the_longest_term_names_the_version(
     with_versions(db, PIPELINE)
     sentence = "I ran the event pipeline on Apache Kafka 3."
     assert refused_versions(db, monkeypatch, sentence) == [unclaimed("3", sentence)]
+
+
+# --- spec 113: a number in inline code or underscore emphasis is a number ----------
+
+IN_CODE = "I led `12` engineers on the billing team."
+
+
+def test_a_number_in_inline_code_needs_a_claim(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {IN_CODE}"))
+    assert violations(db) == [f"number without evidence: 12 (in: {IN_CODE})"]
+
+
+def test_a_number_in_underscore_emphasis_needs_a_claim(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sentence = "I led _12_ engineers on the billing team."
+    stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {sentence}"))
+    assert violations(db) == [f"number without evidence: 12 (in: {sentence})"]
+
+
+def test_a_claimed_number_in_inline_code_passes(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_versions(db, "Led 12 engineers on the billing team.")
+    claims = [*GROUNDED_CLAIMS, candidate(IN_CODE, "Led 12 engineers on the billing team")]
+    stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {IN_CODE}", claims))
+    assert IN_CODE in generate(db).full_version
+
+
+def test_a_rate_read_from_markup_keeps_its_scope(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The truth line holds `1,200` as a total in inline code. The claim
+    cites it, so the rewrite as a rate is a change of scope, not a number
+    without evidence."""
+    with_versions(db, "Processed `1,200` invoices for the reporting team.")
+    sentence = "I processed 1,200 invoices a month for the reporting team."
+    claims = [
+        candidate(CHECKOUT, "Built the checkout flow in TypeScript and React"),
+        candidate(sentence, "Processed `1,200` invoices for the reporting team"),
+    ]
+    stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {sentence}", claims))
+    assert violations(db) == [f"number changed scope: 1,200 (in: {sentence})"]
+
+
+def test_a_number_in_markup_no_longer_drops_a_grounded_version(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both readings of the line now find `3` and `2`, so the `3` the truth
+    states stays exempt and the invented `2` is refused."""
+    with_versions(db, PIPELINE)
+    sentence = "I ran the event pipeline on **Kafka** 3 and `2` replicas."
+    assert refused_versions(db, monkeypatch, sentence) == [unclaimed("2", sentence)]
+
+
+def test_the_word_before_a_repeated_number_drops_its_markup(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sentence = "I ran `deploy` 3 times and `rollback` 3 times in the drill."
+    stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {sentence}"))
+    assert violations(db) == [
+        f'number without evidence: 3 (after "deploy" in: {sentence})',
+        f'number without evidence: 3 (after "rollback" in: {sentence})',
+    ]
+
+
+def test_markup_inside_a_word_does_not_make_a_number(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sentence = "I renamed retry_3 and a`12`b and 1_000 in the billing service."
+    stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {sentence}"))
+    assert sentence in generate(db).full_version

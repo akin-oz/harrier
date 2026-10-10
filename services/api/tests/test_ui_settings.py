@@ -83,20 +83,6 @@ def leaf_commands() -> set[str]:
     return leaves
 
 
-# Routes spec 095 builds, which has not landed on this branch yet. Each is
-# asserted absent, so the merge that brings one in fails here until it is
-# removed from this set, and the set ends empty.
-PENDING_ROUTES = {
-    "GET /tracker/{selector}/events",
-    "POST /ops/events/backfill",
-    "GET /apply/{selector}/brief",
-    "PUT /apply/{selector}/brief",
-    "GET /ops/check",
-    "POST /ops/evaluate-prospects",
-    "POST /ops/scoring/export",
-}
-
-
 def app_routes() -> set[str]:
     """Every route as `METHOD /path`, read from the OpenAPI document: the
     document is what the web app's client is generated from (ADR-005)."""
@@ -121,12 +107,7 @@ def test_every_cli_subcommand_has_exactly_one_place(env: Path) -> None:
     for command, place in COMMAND_PLACES.items():
         if not isinstance(place, Routed):
             continue
-        if place.route in PENDING_ROUTES:
-            assert place.route not in routes, (
-                f"{place.route} exists now: take it out of PENDING_ROUTES"
-            )
-        else:
-            assert place.route in routes, f"{command}: no route {place.route}"
+        assert place.route in routes, f"{command}: no route {place.route}"
 
     # A browser button that runs a host-only or terminal-only command is what
     # this spec must not introduce: no run kind executes one.

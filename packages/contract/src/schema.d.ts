@@ -62,6 +62,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/apply/{selector}/brief": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Brief
+         * @description `brief show`. A read that requires the token: a brief holds the
+         *     operator's own notes about an application (specs 047, 095).
+         */
+        get: operations["getBrief"];
+        /**
+         * Put Brief
+         * @description `brief set`, with the brief as the body instead of a host file.
+         *
+         *     The body is any JSON object, so the store's checks decide what a brief
+         *     is: an unknown key or a wrong type is 400 in the store's words, as the
+         *     CLI prints them, never a 422 written by this layer (spec 095).
+         */
+        put: operations["putBrief"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/apply/{selector}/cover-letter": {
         parameters: {
             query?: never;
@@ -336,6 +365,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ops/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Check Data
+         * @description `check` without `--link-contacts`: reports, and changes nothing.
+         */
+        get: operations["checkData"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ops/check/link-contacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Link Contact Ids
+         * @description `check --link-contacts`: gives existing contact links the job id they
+         *     were written without, and drops nothing (spec 036).
+         */
+        post: operations["linkContactIds"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ops/digest": {
         parameters: {
             query?: never;
@@ -352,6 +422,72 @@ export interface paths {
          *     time it went (spec 050).
          */
         post: operations["runDigest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ops/discover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Discover
+         * @description `discover` with its options, as a run.
+         *
+         *     Each upload is read and checked against the cap before any is written,
+         *     so a refused request writes nothing. Each is then written owner-only to
+         *     the run inputs and passed by path; the run removes them when it ends. No
+         *     browser-supplied path reaches argv. `shadow` is passed as `--shadow`
+         *     alone: the CLI's options make it a dry run, one definition of that rule.
+         */
+        post: operations["runDiscover"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ops/evaluate-prospects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Evaluate Prospects Route
+         * @description `evaluate-prospects` as a run: it calls a model per prospect.
+         */
+        post: operations["evaluateProspects"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ops/events/backfill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Backfill Events Route
+         * @description `events backfill` as a run: it walks the whole tracker.
+         */
+        post: operations["backfillEvents"];
         delete?: never;
         options?: never;
         head?: never;
@@ -505,6 +641,28 @@ export interface paths {
         get: operations["getSchedule"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ops/scoring/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Export Scoring Features
+         * @description `scoring export` as a run. Training reads only the export and needs
+         *     scikit-learn, which the image does not install, so it stays on the host
+         *     (spec 077).
+         */
+        post: operations["exportScoringFeatures"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1026,6 +1184,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tracker/{selector}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Job Events
+         * @description `events show`: a job's history, in the order it was recorded.
+         *
+         *     No token, on any track. Its free text is the same class as the `notes`
+         *     and `rejection_reason` that `GET /jobs` serves without one (spec 095).
+         */
+        get: operations["listJobEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tracker/{selector}/outcome": {
         parameters: {
             query?: never;
@@ -1196,6 +1377,13 @@ export interface components {
             /** Status */
             status: string;
         };
+        /** AnswerLimitsOut */
+        AnswerLimitsOut: {
+            /** Max Sentences */
+            max_sentences?: number | null;
+            /** Max Words */
+            max_words?: number | null;
+        };
         /** AnswersIn */
         AnswersIn: {
             /**
@@ -1304,6 +1492,58 @@ export interface components {
              * @default
              */
             url?: string;
+        };
+        /** Body_runDiscover */
+        Body_runDiscover: {
+            /** Apify Count */
+            apify_count?: number | null;
+            /** Dataset File */
+            dataset_file?: string | null;
+            /**
+             * Dry Run
+             * @default false
+             */
+            dry_run?: boolean;
+            /**
+             * Notify
+             * @default true
+             */
+            notify?: boolean;
+            only_source?: components["schemas"]["SourceName"] | null;
+            /**
+             * Shadow
+             * @default false
+             */
+            shadow?: boolean;
+            /** Wellfound File */
+            wellfound_file?: string | null;
+            /** Wttj File */
+            wttj_file?: string | null;
+        };
+        /**
+         * BriefOut
+         * @description A stored brief, as the store parsed it. Every field is present, empty
+         *     when the brief does not set it, so the page can show it as fields.
+         */
+        BriefOut: {
+            answers: components["schemas"]["AnswerLimitsOut"];
+            /** Compensation Number */
+            compensation_number: string;
+            /** Confirmed Skills */
+            confirmed_skills: string[];
+            /** Employer Guidance */
+            employer_guidance: string;
+            /** Evidence */
+            evidence: string[];
+            /** Guidance Url */
+            guidance_url: string;
+            letter: components["schemas"]["LetterLimitsOut"];
+            /** Never Name */
+            never_name: string[];
+            /** Views */
+            views: {
+                [key: string]: string;
+            };
         };
         /** CandidateOut */
         CandidateOut: {
@@ -1470,6 +1710,17 @@ export interface components {
              */
             notes?: string;
         };
+        /**
+         * DataCheckOut
+         * @description What `check` reports, in the domain's words. A contact is named by
+         *     its name or profile URL, which is why the route requires the token.
+         */
+        DataCheckOut: {
+            /** Breaches */
+            breaches: components["schemas"]["InvariantBreachOut"][];
+            /** Unresolved Links */
+            unresolved_links: components["schemas"]["UnresolvedLinkOut"][];
+        };
         /** DatabaseHeldOut */
         DatabaseHeldOut: {
             /** Detail */
@@ -1559,6 +1810,43 @@ export interface components {
              * @default
              */
             jd_text?: string;
+        };
+        /**
+         * EvaluateProspectsIn
+         * @description Evaluate and report; reject nothing unless `apply`. An absent field
+         *     is the CLI's own default, so each default has one definition.
+         */
+        EvaluateProspectsIn: {
+            /**
+             * Apply
+             * @default false
+             */
+            apply?: boolean;
+            /**
+             * Include Borderline
+             * @default false
+             */
+            include_borderline?: boolean;
+            /** Limit */
+            limit?: number | null;
+            /**
+             * Refresh
+             * @default false
+             */
+            refresh?: boolean;
+            /** Threshold */
+            threshold?: number | null;
+        };
+        /**
+         * EventsBackfillIn
+         * @description A dry run unless the body says otherwise: the counts first.
+         */
+        EventsBackfillIn: {
+            /**
+             * Dry Run
+             * @default true
+             */
+            dry_run?: boolean;
         };
         /** FeedLinesIn */
         FeedLinesIn: {
@@ -1663,6 +1951,40 @@ export interface components {
             /** Unit */
             unit: string;
         };
+        /** InvariantBreachOut */
+        InvariantBreachOut: {
+            /** Breach */
+            breach: string;
+            /** Job Id */
+            job_id: string;
+        };
+        /**
+         * JobEventOut
+         * @description One recorded decision about a job (spec 079). `backfilled` marks an
+         *     event reconstructed after the fact, whose time is not the decision's.
+         */
+        JobEventOut: {
+            /** Actor */
+            actor: string;
+            /** At */
+            at: string;
+            /** Backfilled */
+            backfilled: boolean;
+            /** Fit Score */
+            fit_score: string;
+            /** From Status */
+            from_status: string;
+            /** Kind */
+            kind: string;
+            /** Reason Code */
+            reason_code: string;
+            /** Reason Label */
+            reason_label: string;
+            /** Reason Text */
+            reason_text: string;
+            /** To Status */
+            to_status: string;
+        };
         /** JobOut */
         JobOut: {
             /** Added At */
@@ -1734,6 +2056,37 @@ export interface components {
             updated_at: string;
             /** Url */
             url: string;
+        };
+        /** LetterLimitsOut */
+        LetterLimitsOut: {
+            /** Max Sentences */
+            max_sentences?: number | null;
+            /** Max Words */
+            max_words?: number | null;
+            /** Paragraphs */
+            paragraphs?: number | null;
+        };
+        /**
+         * LinkContactsIn
+         * @description Linking edits stored contacts, so an empty body refuses.
+         */
+        LinkContactsIn: {
+            /**
+             * Confirm
+             * @default false
+             */
+            confirm?: boolean;
+        };
+        /**
+         * LinkContactsOut
+         * @description What the write did, counted when it ran rather than when it was
+         *     previewed.
+         */
+        LinkContactsOut: {
+            /** Linked */
+            linked: number;
+            /** Unmatched */
+            unmatched: number;
         };
         /**
          * MailEventOut
@@ -2079,6 +2432,13 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /** UnresolvedLinkOut */
+        UnresolvedLinkOut: {
+            /** Breach */
+            breach: string;
+            /** Contact */
+            contact: string;
+        };
         /** UnroutedFeedOut */
         UnroutedFeedOut: {
             /** Message */
@@ -2292,6 +2652,166 @@ export interface operations {
                 content?: never;
             };
             /** @description no such job, artifact kind, or the artifact is not produced yet */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description the track may not run this operation, or it is archived */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
+        };
+    };
+    getBrief: {
+        parameters: {
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
+            header?: never;
+            path: {
+                selector: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BriefOut"];
+                };
+            };
+            /** @description the store refused the brief, in its words */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no such job, or no brief stored for it */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description the track may not run this operation, or it is archived */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
+        };
+    };
+    putBrief: {
+        parameters: {
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
+            header?: never;
+            path: {
+                selector: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BriefOut"];
+                };
+            };
+            /** @description the store refused the brief, in its words */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no such job, or no brief stored for it */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -3187,6 +3707,142 @@ export interface operations {
             };
         };
     };
+    checkData: {
+        parameters: {
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DataCheckOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the track parameter named no track */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description the track may not run this operation, or it is archived */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
+        };
+    };
+    linkContactIds: {
+        parameters: {
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["LinkContactsIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkContactsOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the track parameter named no track */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description the request needs its explicit field */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
+        };
+    };
     runDigest: {
         parameters: {
             query?: {
@@ -3229,6 +3885,225 @@ export interface operations {
                 };
             };
             /** @description the request needs its explicit field */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
+        };
+    };
+    runDiscover: {
+        parameters: {
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_runDiscover"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the track parameter named no track */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description discovery from the browser is the default track's */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description an upload is larger than the cap */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
+        };
+    };
+    evaluateProspects: {
+        parameters: {
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["EvaluateProspectsIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the track parameter named no track */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description the track may not run this operation, or it is archived */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
+        };
+    };
+    backfillEvents: {
+        parameters: {
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["EventsBackfillIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the track parameter named no track */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description the track may not run this operation, or it is archived */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3587,6 +4462,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScheduleOut"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
+        };
+    };
+    exportScoringFeatures: {
+        parameters: {
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the track parameter named no track */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description the track may not run this operation, or it is archived */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
             /** @description A host process holds the tracker database (spec 075). */
@@ -4955,6 +5896,67 @@ export interface operations {
                 };
             };
             /** @description the track parameter named no track */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description the track may not run this operation, or it is archived */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
+        };
+    };
+    listJobEvents: {
+        parameters: {
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
+            header?: never;
+            path: {
+                selector: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobEventOut"][];
+                };
+            };
+            /** @description the selector named no job, or more than one */
             404: {
                 headers: {
                     [name: string]: unknown;

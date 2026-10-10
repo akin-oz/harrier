@@ -16,19 +16,20 @@ from __future__ import annotations
 import datetime as dt
 import io
 from enum import StrEnum
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from harrier.discovery import SOURCE_ORDER
+from harrier.discovery import APIFY_MAX_COUNT, SOURCE_ORDER
 from harrier.tracks import DEFAULT_TRACK_ID
 from harrier.tracks import Scope as TrackScope
 from harrier_api.deps import Conn, DatabaseRoute, ErrorOut, scope_for
 from harrier_api.localauth import TOKEN_RESPONSES, require_token
 from harrier_api.runmodels import Manager, RunOut, run_out
-from harrier_api.runs import RunParams, backup_hidden_directories
+from harrier_api.runs import RunParams, backup_hidden_directories, write_run_input
 
 ops_router = APIRouter(route_class=DatabaseRoute)
 
@@ -319,6 +320,274 @@ def list_profile_documents(conn: Conn) -> list[ProfileDocumentOut]:
     from harrier.profile import list_documents
 
     return [ProfileDocumentOut.model_validate(doc) for doc in list_documents(conn)]
+
+
+# --- spec 095: the commands that work on the operator's data ---------------------
+
+# What an upload may weigh. The batch exports are small text files; the cap is
+# there so a wrong file cannot fill the disk (spec 095).
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+
+
+class InvariantBreachOut(BaseModel):
+    job_id: str
+    breach: str
+
+
+class UnresolvedLinkOut(BaseModel):
+    contact: str
+    breach: str
+
+
+class DataCheckOut(BaseModel):
+    """What `check` reports, in the domain's words. A contact is named by
+    its name or profile URL, which is why the route requires the token."""
+
+    breaches: list[InvariantBreachOut]
+    unresolved_links: list[UnresolvedLinkOut]
+
+
+@ops_router.get(
+    "/ops/check",
+    operation_id="checkData",
+    dependencies=[Depends(require_token)],
+    responses=TOKEN_RESPONSES,
+)
+def check_data(
+    conn: Conn, scope: Annotated[TrackScope, Depends(scope_for("check"))]
+) -> DataCheckOut:
+    """`check` without `--link-contacts`: reports, and changes nothing."""
+    from harrier.outreach.joblink import unresolved_links
+    from harrier.tracker.invariants import check_rows
+    from harrier.tracker.store import list_jobs
+
+    return DataCheckOut(
+        breaches=[
+            InvariantBreachOut(job_id=str(job_id), breach=breach)
+            for job_id, breach in check_rows(list_jobs(conn, scope))
+        ],
+        unresolved_links=[
+            UnresolvedLinkOut(contact=who, breach=breach)
+            for who, breach in unresolved_links(conn, scope)
+        ],
+    )
+
+
+class LinkContactsIn(BaseModel):
+    """Linking edits stored contacts, so an empty body refuses."""
+
+    confirm: bool = False
+
+
+class LinkContactsOut(BaseModel):
+    """What the write did, counted when it ran rather than when it was
+    previewed."""
+
+    linked: int
+    unmatched: int
+
+
+@ops_router.post(
+    "/ops/check/link-contacts",
+    operation_id="linkContactIds",
+    dependencies=[Depends(require_token)],
+    responses=REFUSAL_RESPONSES,
+)
+def link_contact_ids(
+    conn: Conn,
+    scope: Annotated[TrackScope, Depends(scope_for("check"))],
+    body: LinkContactsIn = LinkContactsIn(),  # noqa: B008
+) -> LinkContactsOut:
+    """`check --link-contacts`: gives existing contact links the job id they
+    were written without, and drops nothing (spec 036)."""
+    from harrier.outreach.joblink import backfill_job_ids
+
+    if not body.confirm:
+        raise HTTPException(
+            status_code=409,
+            detail="linking writes job ids into stored contacts; send confirm: true to link them",
+        )
+    linked, unmatched = backfill_job_ids(conn, scope)
+    return LinkContactsOut(linked=linked, unmatched=unmatched)
+
+
+class EventsBackfillIn(BaseModel):
+    """A dry run unless the body says otherwise: the counts first."""
+
+    dry_run: bool = True
+
+
+@ops_router.post(
+    "/ops/events/backfill",
+    operation_id="backfillEvents",
+    dependencies=[Depends(require_token)],
+    responses=TOKEN_RESPONSES,
+)
+async def backfill_events_route(
+    manager: Manager,
+    scope: Annotated[TrackScope, Depends(scope_for("events backfill"))],
+    body: EventsBackfillIn = EventsBackfillIn(),  # noqa: B008
+) -> RunOut:
+    """`events backfill` as a run: it walks the whole tracker."""
+    del scope  # the default track's; any other is refused by the dependency
+    params = RunParams(
+        switches=frozenset({"--dry-run"}) if body.dry_run else frozenset(),
+        target="count" if body.dry_run else "write",
+    )
+    return run_out(await manager.start("events-backfill", params))
+
+
+class EvaluateProspectsIn(BaseModel):
+    """Evaluate and report; reject nothing unless `apply`. An absent field
+    is the CLI's own default, so each default has one definition."""
+
+    apply: bool = False
+    threshold: float | None = Field(default=None, ge=0, le=1)
+    limit: int | None = Field(default=None, ge=1)
+    refresh: bool = False
+    include_borderline: bool = False
+
+
+@ops_router.post(
+    "/ops/evaluate-prospects",
+    operation_id="evaluateProspects",
+    dependencies=[Depends(require_token)],
+    responses=TOKEN_RESPONSES,
+)
+async def evaluate_prospects_route(
+    manager: Manager,
+    scope: Annotated[TrackScope, Depends(scope_for("evaluate-prospects"))],
+    body: EvaluateProspectsIn = EvaluateProspectsIn(),  # noqa: B008
+) -> RunOut:
+    """`evaluate-prospects` as a run: it calls a model per prospect."""
+    del scope
+    switches = {
+        flag
+        for flag, wanted in (
+            ("--apply", body.apply),
+            ("--refresh", body.refresh),
+            ("--include-borderline", body.include_borderline),
+        )
+        if wanted
+    }
+    params = RunParams(
+        switches=frozenset(switches),
+        numbers={} if body.limit is None else {"--limit": body.limit},
+        fractions={} if body.threshold is None else {"--threshold": body.threshold},
+        target="apply" if body.apply else "report",
+    )
+    return run_out(await manager.start("evaluate-prospects", params))
+
+
+@ops_router.post(
+    "/ops/scoring/export",
+    operation_id="exportScoringFeatures",
+    dependencies=[Depends(require_token)],
+    responses=TOKEN_RESPONSES,
+)
+async def export_scoring_features(
+    manager: Manager, scope: Annotated[TrackScope, Depends(scope_for("scoring export"))]
+) -> RunOut:
+    """`scoring export` as a run. Training reads only the export and needs
+    scikit-learn, which the image does not install, so it stays on the host
+    (spec 077)."""
+    del scope
+    return run_out(await manager.start("scoring-export", RunParams()))
+
+
+DISCOVER_RESPONSES: dict[int | str, dict[str, Any]] = {
+    409: {"model": ErrorOut, "description": "discovery from the browser is the default track's"},
+    413: {"model": ErrorOut, "description": "an upload is larger than the cap"},
+    **TOKEN_RESPONSES,
+}
+
+
+def _suffix(upload: UploadFile) -> str:
+    """The importer reads a `.csv` as CSV and anything else as JSON, so the
+    suffix is chosen from that closed set, never taken from the upload."""
+    return ".csv" if (upload.filename or "").lower().endswith(".csv") else ".json"
+
+
+@ops_router.post(
+    "/ops/discover",
+    operation_id="runDiscover",
+    dependencies=[Depends(require_token)],
+    responses=DISCOVER_RESPONSES,
+)
+async def run_discover(
+    manager: Manager,
+    conn: Conn,
+    scope: Annotated[TrackScope, Depends(scope_for("discover"))],
+    dry_run: Annotated[bool, Form()] = False,
+    notify: Annotated[bool, Form()] = True,
+    shadow: Annotated[bool, Form()] = False,
+    only_source: Annotated[SourceName | None, Form()] = None,
+    apify_count: Annotated[int | None, Form(ge=1, le=APIFY_MAX_COUNT)] = None,
+    dataset_file: Annotated[UploadFile | None, File()] = None,
+    wellfound_file: Annotated[UploadFile | None, File()] = None,
+    wttj_file: Annotated[UploadFile | None, File()] = None,
+) -> RunOut:
+    """`discover` with its options, as a run.
+
+    Each upload is read and checked against the cap before any is written,
+    so a refused request writes nothing. Each is then written owner-only to
+    the run inputs and passed by path; the run removes them when it ends. No
+    browser-supplied path reaches argv. `shadow` is passed as `--shadow`
+    alone: the CLI's options make it a dry run, one definition of that rule.
+    """
+    from harrier.discovery import scheduled_apify_count
+
+    if scope.track.id != DEFAULT_TRACK_ID:
+        # `discover` runs on an academic track from its own search entry on
+        # the command line (spec 097); from the browser it is the default
+        # track's (spec 095).
+        raise HTTPException(
+            status_code=409, detail=f"discover is not available on track {scope.track.slug}"
+        )
+    uploads = {
+        flag: upload
+        for flag, upload in (
+            ("--dataset-file", dataset_file),
+            ("--wellfound-file", wellfound_file),
+            ("--wttj-file", wttj_file),
+        )
+        if upload is not None
+    }
+    contents: dict[str, tuple[bytes, str]] = {}
+    for flag, upload in uploads.items():
+        data = await upload.read(MAX_UPLOAD_BYTES + 1)
+        if len(data) > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"{flag.removeprefix('--')} is larger than 5 MB; nothing was written",
+            )
+        contents[flag] = (data, _suffix(upload))
+    written: dict[str, Path] = {}
+    try:
+        for flag, (data, suffix) in contents.items():
+            written[flag] = write_run_input(data, suffix)
+    except OSError:
+        # Every file this attempt wrote, not only the first.
+        for path in written.values():
+            path.unlink(missing_ok=True)
+        raise
+    switches = {
+        flag
+        for flag, wanted in (
+            ("--dry-run", dry_run),
+            ("--no-notify", not notify),
+            ("--shadow", shadow),
+        )
+        if wanted
+    }
+    count = apify_count if apify_count is not None else scheduled_apify_count(conn=conn)
+    params = RunParams(
+        switches=frozenset(switches),
+        numbers={"--apify-count": count},
+        choices={} if only_source is None else {"--only-source": only_source.value},
+        input_files=written,
+    )
+    return run_out(await manager.start("discovery", params))
 
 
 # --- the export, as two downloads (spec 096's amendment 4) ---

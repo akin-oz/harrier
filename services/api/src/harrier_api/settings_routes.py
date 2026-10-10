@@ -115,11 +115,14 @@ COMMAND_PLACES: dict[str, Place] = {
     "outreach-draft": Routed("POST /outreach/{selector}/draft"),
     "backfill-posters": Routed("POST /outreach/backfill-posters"),
     "gmail-watch": Routed("POST /mail/watch"),
-    "discover": Routed("POST /runs", note="Started as a run of kind discovery."),
+    "discover": Routed(
+        "POST /ops/discover",
+        note="With its options and uploads; POST /runs with kind discovery starts it with none.",
+    ),
     "demo-run": Routed(
         "POST /runs", note="A harness for the run panel, started as a run of kind demo (spec 006)."
     ),
-    "check": Routed("GET /ops/check"),
+    "check": Routed("GET /ops/check", note="With --link-contacts: POST /ops/check/link-contacts."),
     "evaluate-prospects": Routed("POST /ops/evaluate-prospects"),
     "scoring export": Routed("POST /ops/scoring/export"),
     "reconsider": Routed("POST /ops/reconsider"),

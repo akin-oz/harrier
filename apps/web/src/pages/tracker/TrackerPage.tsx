@@ -6,6 +6,7 @@ import type { Job, JobStatus } from "../../entities/job";
 import { RunPanel } from "../../features/runs/RunPanel";
 import { AddJob } from "../../features/tracker/AddJob";
 import { JobActions } from "../../features/tracker/JobActions";
+import { JobHistory } from "../../features/tracker/JobHistory";
 import { api } from "../../shared/api/client";
 import {
   statusLabel,
@@ -219,6 +220,7 @@ export function TrackerPage({ track, onApply }: { track: Track; onApply?: (job: 
           statusLabel={label}
           keepOrder={view !== "all"}
           deadlineLed={!track.is_default}
+          renderDetails={(job) => <JobHistory job={job} track={track} />}
           renderActions={
             writable ? (job) => <JobActions job={job} track={track} onApply={onApply} /> : undefined
           }

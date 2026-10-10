@@ -207,3 +207,23 @@
   border-radius: 50%;
   background: currentcolor;
 }
+
+.ops-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+.ops-check input:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+.ops-list {
+  margin: 0;
+  padding-left: var(--space-4);
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}

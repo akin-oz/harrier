@@ -19,6 +19,20 @@ export function refusalMessage(error: Refusal, fallback: string): string {
   return typeof error.detail === "string" ? error.detail : fallback;
 }
 
+/**
+ * A count a finished run printed, read from the CLI's own line (for example
+ * `would_reject=3`), or null when the run printed none. Used only to name a
+ * preview in the next action's label: the write recounts and reports what it
+ * actually did (spec 095).
+ */
+export function countIn(lines: readonly string[], pattern: RegExp): number | null {
+  for (const line of [...lines].reverse()) {
+    const found = pattern.exec(line);
+    if (found?.[1] !== undefined) return Number(found[1]);
+  }
+  return null;
+}
+
 // A route that answered with no body refused the local token; that is the
 // only declared outcome without one (spec 035).
 export const TOKEN_REFUSED = "refused: the local API token was not accepted";

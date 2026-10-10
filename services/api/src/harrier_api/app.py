@@ -454,6 +454,61 @@ def tracker_counts(
     return counts(conn, scope)
 
 
+class JobEventOut(BaseModel):
+    """One recorded decision about a job (spec 079). `backfilled` marks an
+    event reconstructed after the fact, whose time is not the decision's."""
+
+    at: str
+    kind: str
+    actor: str
+    from_status: str
+    to_status: str
+    reason_code: str
+    # How the code reads, from `harrier.tracker.reasons`; empty with no code.
+    reason_label: str
+    reason_text: str
+    fit_score: str
+    backfilled: bool
+
+
+@tracker_router.get(
+    "/tracker/{selector}/events",
+    operation_id="listJobEvents",
+    responses={
+        404: {"model": ErrorOut, "description": "the selector named no job, or more than one"}
+    },
+)
+def list_job_events(
+    selector: str,
+    conn: Conn,
+    scope: Annotated[TrackScope, Depends(scope_for("events show"))],
+) -> list[JobEventOut]:
+    """`events show`: a job's history, in the order it was recorded.
+
+    No token, on any track. Its free text is the same class as the `notes`
+    and `rejection_reason` that `GET /jobs` serves without one (spec 095).
+    """
+    from harrier.tracker.reasons import REASON_CODES
+    from harrier.tracker.store import list_events
+
+    job_id = _job_id_for(conn, scope, selector)
+    return [
+        JobEventOut(
+            at=event["at"],
+            kind=event["kind"],
+            actor=event["actor"],
+            from_status=event["from_status"],
+            to_status=event["to_status"],
+            reason_code=event["reason_code"],
+            reason_label=REASON_CODES.get(event["reason_code"], ("", ""))[1],
+            reason_text=event["reason_text"],
+            fit_score=event["fit_score"],
+            backfilled=event["backfilled"] == "1",
+        )
+        for event in list_events(conn, scope, job_id)
+    ]
+
+
 # --- apply: artifacts for one job (spec 047) ---
 
 apply_router = APIRouter(route_class=DatabaseRoute)
@@ -658,6 +713,117 @@ def read_artifact(
         media_type=artifact.media_type,
         filename=artifact.path.name,
     )
+
+
+# --- apply: the application brief (spec 066, routed by spec 095) ---
+
+
+class LetterLimitsOut(BaseModel):
+    max_words: int | None = None
+    max_sentences: int | None = None
+    paragraphs: int | None = None
+
+
+class AnswerLimitsOut(BaseModel):
+    max_words: int | None = None
+    max_sentences: int | None = None
+
+
+class BriefOut(BaseModel):
+    """A stored brief, as the store parsed it. Every field is present, empty
+    when the brief does not set it, so the page can show it as fields."""
+
+    never_name: list[str]
+    guidance_url: str
+    employer_guidance: str
+    letter: LetterLimitsOut
+    answers: AnswerLimitsOut
+    evidence: list[str]
+    views: dict[str, str]
+    compensation_number: str
+    confirmed_skills: list[str]
+
+
+BRIEF_ERRORS: dict[int | str, dict[str, Any]] = {
+    400: {"model": ErrorOut, "description": "the store refused the brief, in its words"},
+    404: {"model": ErrorOut, "description": "no such job, or no brief stored for it"},
+    **TOKEN_RESPONSES,
+}
+
+
+def _brief_out(raw: object) -> BriefOut:
+    from harrier.apply.brief import parse_brief
+
+    brief = parse_brief(raw)
+    return BriefOut(
+        never_name=list(brief.never_name),
+        guidance_url=brief.guidance_url,
+        employer_guidance=brief.employer_guidance,
+        letter=LetterLimitsOut(
+            max_words=brief.letter.max_words,
+            max_sentences=brief.letter.max_sentences,
+            paragraphs=brief.letter.paragraphs,
+        ),
+        answers=AnswerLimitsOut(
+            max_words=brief.answers.max_words, max_sentences=brief.answers.max_sentences
+        ),
+        evidence=list(brief.evidence),
+        views=dict(brief.views),
+        compensation_number=brief.compensation_number,
+        confirmed_skills=list(brief.confirmed_skills),
+    )
+
+
+@apply_router.get(
+    "/apply/{selector}/brief",
+    operation_id="getBrief",
+    dependencies=[Depends(require_token)],
+    responses=BRIEF_ERRORS,
+)
+def get_brief(
+    selector: str, conn: Conn, scope: Annotated[TrackScope, Depends(scope_for("brief show"))]
+) -> BriefOut:
+    """`brief show`. A read that requires the token: a brief holds the
+    operator's own notes about an application (specs 047, 095)."""
+    import json
+
+    from harrier.apply.brief import brief_text
+
+    job_id = _job_id_for(conn, scope, selector)
+    content = brief_text(conn, job_id)
+    if content is None:
+        raise HTTPException(status_code=404, detail=f"no brief for job {job_id}")
+    return _brief_out(json.loads(content))
+
+
+@apply_router.put(
+    "/apply/{selector}/brief",
+    operation_id="putBrief",
+    dependencies=[Depends(require_token)],
+    responses=BRIEF_ERRORS,
+)
+def put_brief(
+    selector: str,
+    body: dict[str, Any],
+    conn: Conn,
+    scope: Annotated[TrackScope, Depends(scope_for("brief set"))],
+) -> BriefOut:
+    """`brief set`, with the brief as the body instead of a host file.
+
+    The body is any JSON object, so the store's checks decide what a brief
+    is: an unknown key or a wrong type is 400 in the store's words, as the
+    CLI prints them, never a 422 written by this layer (spec 095).
+    """
+    import json
+
+    from harrier.apply.brief import BriefError, store_brief
+
+    job_id = _job_id_for(conn, scope, selector)
+    try:
+        store_brief(conn, job_id, json.dumps(body))
+    except BriefError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return _brief_out(body)
 
 
 runs_router = APIRouter(route_class=DatabaseRoute)
@@ -937,7 +1103,9 @@ def create_app(run_manager: RunManager | None = None, spa_dir: Path | None = Non
         version=API_VERSION,
         description="Local-first job search automation API.",
     )
-    app.state.run_manager = run_manager if run_manager is not None else RunManager()
+    app.state.run_manager = (
+        run_manager if run_manager is not None else RunManager(sweep_inputs=True)
+    )
 
     @app.exception_handler(DatabaseOwnedByHost)
     async def database_held(request: Request, error: DatabaseOwnedByHost) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
