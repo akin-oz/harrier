@@ -193,33 +193,42 @@ span from "did not" runs past "e.g." to the end of the line.
 
 ## Acceptance criteria
 
-- [ ] Every row of the Problem table is refused, and every row of the
+- [x] Every row of the Problem table is refused, and every row of the
       worked table gives its stated result
-      (planned test_every_negation_shape_is_read).
-- [ ] The six existing polarity cases in
+      (`services/api/tests/test_honesty.py::test_every_negation_shape_is_read`,
+      `test_a_denial_reaches_from_its_start_to_the_end_of_the_line`; the
+      markup and non-breaking space rows are in
+      `test_markup_and_spacing_do_not_hide_a_marker`).
+- [x] The six existing polarity cases in
       `services/api/tests/test_honesty.py::test_a_negated_sentence_does_not_verify_the_claim_it_denies`
       and `test_a_plain_assertion_still_verifies` pass unchanged.
-- [ ] Every disclaimer heading test in `services/api/tests/test_honesty.py`
+- [x] Every disclaimer heading test in `services/api/tests/test_honesty.py`
       passes unchanged.
-- [ ] A marker hidden by inline markup, a double space, a tab or a
-      non-breaking space is read (planned test_markup_and_spacing_do_not_hide_a_marker).
-- [ ] A marker inside a hyphenated word or a longer word is not read
-      (planned test_a_marker_matches_whole_words_only).
-- [ ] An early sentence boundary never shortens a negated span: a false
+- [x] A marker hidden by inline markup, a double space, a tab or a
+      non-breaking space is read
+      (`services/api/tests/test_honesty.py::test_markup_and_spacing_do_not_hide_a_marker`).
+- [x] A marker inside a hyphenated word or a longer word is not read
+      (`services/api/tests/test_honesty.py::test_a_marker_matches_whole_words_only`).
+- [x] An early sentence boundary never shortens a negated span: a false
       split inside a negated sentence leaves everything after the marker
-      negated (planned test_an_abbreviation_does_not_end_a_negation).
-- [ ] C2 refuses a letter quoting "lead the team" against a truth that says
+      negated
+      (`services/api/tests/test_honesty.py::test_an_abbreviation_does_not_end_a_negation`,
+      `test_an_early_boundary_cannot_admit_the_subject_of_a_denial`).
+- [x] C2 refuses a letter quoting "lead the team" against a truth that says
       "I didn't lead the team", and C8 refuses a skill whose only truth line
-      is "I haven't used Rust"
-      (planned test_letter_claims_read_contracted_negations).
-- [ ] A resume bullet whose only truth line is negated in a form the old
+      is a contracted denial
+      (`services/api/tests/test_apply_claims.py::test_letter_claims_read_contracted_negations`).
+- [x] A resume bullet whose only truth line is negated in a form the old
       list missed is refused with today's refusal message
-      (planned test_a_bullet_denied_by_a_contraction_is_refused).
-- [ ] `NEGATIONS` and `_is_negated` are replaced by the two marker lists
-      and the span reader; no other module gains a negation list.
-- [ ] Spec 087's sentence on "Haven't run Kafka 3 in production" and
-      "Moved to Kafka 3 without downtime" is amended to the new results.
-- [ ] `uv run ruff check`, `uv run pyright` and `just check` pass.
+      (`services/api/tests/test_resume.py::test_a_bullet_denied_by_a_contraction_is_refused`).
+- [x] `NEGATIONS` and `_is_negated` are replaced by the two marker lists
+      (`SENTENCE_NEGATORS`, `EXCLUSION_MARKERS`) and the span reader
+      (`denial_start`) in `services/api/src/harrier/resume/content.py`; no
+      other module gains a negation list.
+- [x] Spec 087's sentence on "Haven't run Kafka 3 in production" and
+      "Moved to Kafka 3 without downtime" is amended to the new results
+      (`services/api/tests/test_apply_claims.py::test_a_version_is_grounded_only_by_asserting_text`).
+- [x] `uv run ruff check`, `uv run pyright` and `just check` pass.
 
 ## Honest limitations
 
@@ -286,3 +295,21 @@ was denying. Reword the truth line, or accept that the claim goes.
 - Negation in job descriptions, screening or scoring.
 - Any language other than English.
 - Academic documents (spec 101) and the resume document split (spec 098).
+
+## Amendment (2026-10-10, during implementation)
+
+- **`lines_containing` returns only the asserting text of a line with a
+  denial in it.** The spec said it returns the raw lines that hold an
+  asserting occurrence. Its callers read beyond the fragment: the version
+  exemption reads every version on the line (spec 087), C6 reads the rate
+  beside a number, and the brief's confirmed-skill check searches the line
+  for the skill as a whole word. With the raw line returned, "Ran Kafka in
+  production. Never ran Kafka 3." grounded `Kafka 3` through its denied
+  half, which the old whole-line rule never allowed. A line with nothing
+  denied still comes back raw, as spec 068 says. A line with a denial
+  comes back cut where the denial begins, with inline markup removed,
+  because the cut is found in the reduced text
+  (`services/api/tests/test_honesty.py::test_lines_containing_returns_only_the_asserting_text`,
+  `services/api/tests/test_apply_claims.py::test_a_version_is_grounded_only_by_asserting_text`).
+  This narrows spec 068's "`lines_containing` and `evidence_lines` still
+  return the raw lines" to lines with no denied text.

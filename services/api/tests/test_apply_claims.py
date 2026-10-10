@@ -663,6 +663,30 @@ def test_a_role_title_term_is_not_a_skill_claim(
     assert generate(db, role).full_version
 
 
+# --- spec 100: a contracted denial verifies nothing ---------------------------
+
+
+def test_letter_claims_read_contracted_negations(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C2 and C8 read the truth through the same gate, so a line the old
+    phrase list could not see as a denial verified the claim it denies."""
+    # Above the disclaimer heading, so only the polarity rule can refuse them.
+    disclaimers = "## Claims I must not make"
+    denials = "I didn't lead the support team.\nI haven't used Kubernetes in production.\n\n"
+    truth = TRUTH.replace(disclaimers, denials + disclaimers)
+    put_document(db, "resume_truth", "truth.md", "markdown", truth)
+
+    sentence = "I led the support team."
+    claims = [*GROUNDED_CLAIMS, candidate(sentence, "lead the support team")]
+    stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {sentence}", claims))
+    assert "unverified evidence: lead the support team" in refusal(db)
+
+    last = "I would be glad to talk about the billing work and how it ran on Kubernetes."
+    stub_letter(monkeypatch, letter_json(last=last))
+    assert "unverified skill" in refusal(db)
+
+
 # --- C9: enforcement language --------------------------------------------------
 
 
@@ -1333,6 +1357,23 @@ def test_years_money_and_multipliers_after_a_term_are_not_versions(
         unclaimed("$40k", money),
         unclaimed("10x", multiplier),
     ]
+
+
+def test_a_version_is_grounded_only_by_asserting_text(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec 087's two polarity examples, read by spec 100's gate, and the
+    denied half of a line, which no version is read from."""
+    refused = [unclaimed("3", ON_KAFKA)]
+
+    with_versions(db, "Haven't run Kafka 3 in production.")
+    assert refused_versions(db, monkeypatch, ON_KAFKA) == refused
+
+    with_versions(db, "Moved to Kafka 3 without downtime.")
+    assert refused_versions(db, monkeypatch, ON_KAFKA) == []
+
+    with_versions(db, "Ran Kafka in production. Never ran Kafka 3.")
+    assert refused_versions(db, monkeypatch, ON_KAFKA) == refused
 
 
 def test_a_demo_line_does_not_ground_a_version(

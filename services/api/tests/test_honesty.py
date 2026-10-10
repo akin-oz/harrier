@@ -113,6 +113,125 @@ def test_a_plain_assertion_still_verifies() -> None:
     )
 
 
+# --- polarity: every negation shape a truth document writes (spec 100) -------
+
+# Each of these verified the fragment beside it under the ten space-padded
+# phrases the gate used to read.
+DENIALS_THE_OLD_LIST_MISSED = [
+    ("I didn't lead the team.", "lead the team"),
+    ("Didn't lead the team.", "lead the team"),
+    ("Not responsible for hiring.", "responsible for hiring"),
+    ("I wasn't responsible for hiring.", "responsible for hiring"),
+    ("It isn't a system I owned.", "a system I owned"),
+    ("I'm not a people manager.", "a people manager"),
+    ("I haven't run Kafka in production.", "run Kafka in production"),
+    ("I can't claim ownership of the budget.", "ownership of the budget"),
+    ("I cannot claim ownership of the budget.", "ownership of the budget"),
+    ("I don't manage people.", "manage people"),
+    ("I had no direct reports.", "direct reports"),
+    ("No direct reports.", "direct reports"),
+    ("None of the hiring was mine.", "the hiring was mine"),
+    ("Neither led the team nor owned the budget.", "owned the budget"),
+    ("Owned all services except billing.", "billing"),
+    ("Owned all services excluding billing.", "billing"),
+    ("Owned all services other than billing.", "billing"),
+    ("Owned all services apart from billing.", "billing"),
+    ("Shipped the API (not the mobile app).", "the mobile app"),
+    ("Shipped the API (did not own the mobile app).", "own the mobile app"),
+    ("Shipped the API,never owned the mobile app.", "owned the mobile app"),
+    ("Never: owned the budget.", "owned the budget"),
+    ("I failed to ship the mobile app.", "ship the mobile app"),
+    ("I lacked ownership of the budget.", "ownership of the budget"),
+    ("I didn\u2019t lead the team.", "lead the team"),
+]
+
+
+@pytest.mark.parametrize(("line", "fragment"), DENIALS_THE_OLD_LIST_MISSED)
+def test_every_negation_shape_is_read(line: str, fragment: str) -> None:
+    assert not sources(line).contains(fragment)
+
+
+# The worked table in spec 100: what each line still verifies, and what not.
+@pytest.mark.parametrize(
+    ("line", "fragment", "verifies"),
+    [
+        ("Owned all services except billing.", "Owned all services", True),
+        ("Moved to Kafka 3 without downtime.", "Moved to Kafka 3", True),
+        ("Moved to Kafka 3 without downtime.", "downtime", False),
+        ("Shipped the API (not the mobile app) and led the team.", "led the team", False),
+        ("Led the team (I did not).", "Led the team", False),
+        ("Shipped the API. Did not own the mobile app.", "Shipped the API", True),
+        ("Shipped the API. Did not own the mobile app.", "own the mobile app", False),
+        ("Did not own the mobile app. Shipped the API.", "Shipped the API", False),
+        ("Claims that I led the team are not true.", "led the team", False),
+        ("Built a no-code editor.", "no-code editor", True),
+        ("Shipped the API; never owned the mobile app.", "Shipped the API", True),
+    ],
+)
+def test_a_denial_reaches_from_its_start_to_the_end_of_the_line(
+    line: str, fragment: str, verifies: bool
+) -> None:
+    assert sources(line).contains(fragment) is verifies
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "I did `not` own the mobile app.",
+        "I did **not** own the mobile app.",
+        "I did  not own the mobile app.",
+        "I did\tnot own the mobile app.",
+        "I did\u00a0not own the mobile app.",
+    ],
+)
+def test_markup_and_spacing_do_not_hide_a_marker(line: str) -> None:
+    assert not sources(line).contains("own the mobile app")
+
+
+@pytest.mark.parametrize(
+    ("line", "fragment"),
+    [
+        ("Built a no-code editor for the sales team.", "for the sales team"),
+        ("Wrote a notable migration guide.", "migration guide"),
+        ("Tied a knot in the release train.", "the release train"),
+        ("Fixed nothing-to-commit errors in CI.", "errors in CI"),
+        ("Ran a not-for-profit hackathon.", "hackathon"),
+        ("Joined a nonprofit board.", "board"),
+        ("Kept the exception budget under review.", "under review"),
+    ],
+)
+def test_a_marker_matches_whole_words_only(line: str, fragment: str) -> None:
+    assert sources(line).contains(fragment)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "I did not use e.g. Kafka in production.",
+        "I did not work in the U.S. Kafka team in production.",
+        "I did not work with J. Doe on Kafka in production.",
+    ],
+)
+def test_an_abbreviation_does_not_end_a_negation(line: str) -> None:
+    """A period inside an abbreviation is not a sentence boundary, and even
+    if it were read as one, a denial runs to the end of the line."""
+    assert not sources(line).contains("Kafka in production")
+
+
+def test_an_early_boundary_cannot_admit_the_subject_of_a_denial() -> None:
+    assert not sources("The claim that I led the U.S. team is not true.").contains(
+        "I led the U.S. team"
+    )
+
+
+def test_lines_containing_returns_only_the_asserting_text() -> None:
+    """A check reading the line a fragment was cut from must not read a
+    number, a version or a skill from its denied part (spec 100)."""
+    line = "Used `Golang` daily. Never used Go 1.22 in production."
+    assert sources(line).lines_containing("Used Golang") == ["Used Golang daily."]
+    assert sources(line).lines_containing("Go 1.22") == []
+
+
 # --- case: a real claim is not dropped over capitalisation ------------------
 
 

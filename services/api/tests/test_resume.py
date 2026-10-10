@@ -873,6 +873,15 @@ def test_bullet_failing_truth_check_refuses_rather_than_omitting(bundle: ResumeB
     assert raised.value.bullet_id == "r1_b2"
 
 
+def test_a_bullet_denied_by_a_contraction_is_refused(bundle: ResumeBundle) -> None:
+    """The truth line holds the bullet word for word, inside a sentence that
+    denies it. The old phrase list read no contraction (spec 100)."""
+    denied = f"I didn't do this one: {bundle.bullet_pool['r1_b1']}"
+    with pytest.raises(UnverifiedClaimError) as raised:
+        resolve_bullets(bundle, TruthSources(truth_text=denied, achievements_text=""), ["r1_b1"])
+    assert raised.value.bullet_id == "r1_b1"
+
+
 def test_bundle_validation_rejects_invalid_bullet_count() -> None:
     raw = load_raw_bundle()
     roles = cast("list[dict[str, object]]", raw["roles"])
