@@ -1,7 +1,7 @@
 ---
 spec: 001
 title: Repo scaffold and toolchain
-status: accepted
+status: shipped
 approved: yes
 milestone: M0
 depends: []
@@ -23,9 +23,9 @@ The monorepo skeleton from ADR-007 does not exist yet: no Python project, no web
 
 ## Acceptance criteria
 
-- [ ] just check runs both type-checks, both linters, both (empty) test suites and exits 0
-- [ ] just gate exists so the turn-end hook stops passing vacuously
-- [ ] lefthook blocks a commit without a Spec: NNN trailer from a plain terminal
+- [x] just check runs both type-checks, both linters, both (empty) test suites and exits 0
+- [x] just gate exists so the turn-end hook stops passing vacuously
+- [x] lefthook blocks a commit without a Spec: NNN trailer from a plain terminal
 
 ## Proof / origin
 

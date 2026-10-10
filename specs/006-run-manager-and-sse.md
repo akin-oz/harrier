@@ -1,7 +1,7 @@
 ---
 spec: 006
 title: Run manager, SSE channel, live run streaming
-status: shipped
+status: in-progress
 approved: yes
 milestone: M1
 depends: [005]
@@ -80,13 +80,13 @@ the demo command's registration as a user-visible kind.
 
 ## Acceptance criteria
 
-- [ ] A started demo run streams progress and log events to the browser live
-- [ ] Cancel terminates the subprocess; the run ends state=cancelled
+- [x] A started demo run streams progress and log events to the browser live
+- [x] Cancel terminates the subprocess; the run ends state=cancelled
 - [ ] Reconnect mid-run replays missed events (tested via Last-Event-ID)
-- [ ] Second start during an active run returns the active run id
+- [x] Second start during an active run returns the active run id
 - [ ] Journal lines written per state change; GET /runs lists a finished run
       after server restart (journal-backed)
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 ## Proof / origin
 

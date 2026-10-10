@@ -1,7 +1,7 @@
 ---
 spec: 024
 title: Cutover and archive
-status: shipped
+status: in-progress
 approved: yes
 milestone: M5
 depends: [022]

@@ -1,7 +1,7 @@
 ---
 spec: 044
 title: The repository stops describing one person's real job search
-status: in-progress
+status: shipped
 approved: yes
 approved-note: >
   Approved by Akin in session on 2026-08-13, verbally rather than by editing
@@ -156,7 +156,7 @@ that earned them.
       `test_the_rule_scans_its_own_file`
 - [x] each new check fails against the state that preceded it, executed rather
       than asserted
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 ## Proof / origin
 

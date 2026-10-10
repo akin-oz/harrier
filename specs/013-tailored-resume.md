@@ -88,7 +88,7 @@ a public repo.
 
 ## Acceptance criteria
 
-- [ ] Behavior pins ported from the old tests/test_tailor_resume.py on
+- [x] Behavior pins ported from the old tests/test_tailor_resume.py on
       the synthetic fixture: internal-label scrubbing, grounded header,
       completed-anniversary years, frontend evidence never promoted to
       full-stack from the JD, genuine full-stack evidence can support the
@@ -96,10 +96,10 @@ a public repo.
       never Present, quantified evidence outranks generic matching,
       unsupported JD technology cannot enter skills, fit evaluation
       statuses and candidate questions
-- [ ] A run with a failing PDF gate leaves the tracker row unchanged
-- [ ] Bundle validation rejects a plan whose evidence appears twice
+- [x] A run with a failing PDF gate leaves the tracker row unchanged
+- [x] Bundle validation rejects a plan whose evidence appears twice
       across achievements and experience
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 ## Proof / origin
 

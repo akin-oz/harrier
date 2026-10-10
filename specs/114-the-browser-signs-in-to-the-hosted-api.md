@@ -1,8 +1,8 @@
 ---
 spec: 114
 title: The browser signs in to the hosted API
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [104]
 ---

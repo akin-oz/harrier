@@ -1,7 +1,7 @@
 ---
 spec: 063
 title: The resume role heading has one definition that the writer, the parser, and the validator share
-status: accepted
+status: in-progress
 approved: yes
 milestone: M8
 depends: [013, 062]
@@ -185,7 +185,7 @@ spec was approved describing the new ones, because
 fails on a test symbol that is not yet defined; the implementing change
 named them.
 
-- [ ] With the separator changed to ` | ` in its one definition, for
+- [x] With the separator changed to ` | ` in its one definition, for
   the duration of one test: the markdown role heading is written with
   ` | `; `render_html` shows the first role's company and title
   unchanged from the unpatched render; `parse_bundle` refuses an
@@ -200,12 +200,12 @@ named them.
   above was its failing form. It fails again if any one of the three
   sites goes back to its own copy of the separator (each tried during
   implementation).
-- [ ] The heading line for the example bundle's first role is asserted
+- [x] The heading line for the example bundle's first role is asserted
   literally, character for character including U+2014 and the
   `(Freelance)` suffix, so changing the separator is a visible,
   deliberate act:
   `test_role_heading_line_is_written_exactly_as_it_always_was`.
-- [ ] Output is unchanged. The proof is the literal heading line
+- [x] Output is unchanged. The proof is the literal heading line
   above, which is the only line whose construction moves, together
   with the existing render tests passing unedited
   (`test_html_header_uses_grounded_markdown_title`,
@@ -213,22 +213,22 @@ named them.
   `test_title_containing_the_separator_stays_one_role`). A reviewer who
   wants more can diff the markdown for the example bundle between
   `main` and the branch; that is a check, not a criterion.
-- [ ] Spec 062's separator tests pass unedited:
+- [x] Spec 062's separator tests pass unedited:
   `test_organization_containing_the_title_separator_is_refused`,
   `test_organization_ending_in_a_dash_is_refused_as_punctuation`,
   `test_organization_with_commas_elsewhere_still_splits_exactly`
   (both renamed by spec 071, see "Amended by spec 071"),
   `test_title_containing_the_separator_stays_one_role`.
-- [ ] `render_html` on a markdown whose `## EXPERIENCE` section holds a
+- [x] `render_html` on a markdown whose `## EXPERIENCE` section holds a
   `### ` line with no separator raises `ValueError` matching `role
   heading 1 has no title separator`, and `role heading 2` when the
   second heading is the broken one, and the message carries none of the
   line's text:
   `test_role_heading_with_no_separator_has_a_named_error`.
-- [ ] A role with a separator in its organization and no title is
+- [x] A role with a separator in its organization and no title is
   refused with both problems named in the one error:
   `test_bad_organization_is_still_named_when_the_title_is_missing`.
-- [ ] A role with an empty employment type writes a heading with no
+- [x] A role with an empty employment type writes a heading with no
   suffix and no trailing space, and it splits back to the same
   organization and title:
   `test_role_without_an_employment_type_has_no_suffix_and_splits_back`.
@@ -240,11 +240,11 @@ named them.
   formats. `TITLE_SEPARATOR` and `_splits_at_its_end` no longer exist
   in `content.py`. Checked by the reviewer against the diff, not by a
   test: a test that reads source text is a last resort.
-- [ ] The import-linter contracts stay kept, and `heading.py` imports
+- [x] The import-linter contracts stay kept, and `heading.py` imports
   nothing from `harrier.resume`, so `content.py`, `markdown.py`, and
   `htmlrender.py` can all import it without a cycle.
-- [ ] The diff touches only the five files in Scope and this spec.
-- [ ] `just gate` passes.
+- [x] The diff touches only the five files in Scope and this spec.
+- [x] `just gate` passes.
 
 ## Amendments after the local review of PR #77
 

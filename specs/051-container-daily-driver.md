@@ -1,7 +1,7 @@
 ---
 spec: 051
 title: The API and UI stay up without being started by hand
-status: accepted
+status: in-progress
 approved: yes
 milestone: M8
 depends: [006, 011, 020, 021, 035, 038]
@@ -391,7 +391,7 @@ Proving symbols are named at implementation.
 - [x] the README documents the Docker Desktop start-on-login setting as machine
       configuration the repository cannot enforce, and does not claim otherwise
 - [x] `just dev` continues to work unchanged for anyone who prefers it
-- [ ] all gates green on PR
+- [x] all gates green on PR
 
 ## Proof / origin
 

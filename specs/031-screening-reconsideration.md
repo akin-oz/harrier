@@ -1,7 +1,7 @@
 ---
 spec: 031
 title: A screening decision can be reconsidered when the rules change
-status: accepted
+status: shipped
 approved: yes
 milestone: M6
 depends: [007, 011]
@@ -136,7 +136,7 @@ row, so re-running it would at best do nothing and at worst duplicate it.
 - [x] reconsideration performs no network request when the description cache
       covers the postings
 - [x] no company name, posting title, or URL enters any committed file (ADR-008)
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 ## Proof / origin
 

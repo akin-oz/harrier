@@ -1,7 +1,7 @@
 ---
 spec: 045
 title: The repository's claims are true and its gates actually gate
-status: in-progress
+status: shipped
 approved: yes
 approved-note: >
   Approved by Akin in session on 2026-08-13, verbally rather than by editing
@@ -239,7 +239,7 @@ spec 044.
       `services/api/tests/test_guards.py::test_the_commit_guard_denies_every_proven_bypass`,
       `::test_the_commit_guard_allows_ordinary_work`,
       `::test_a_git_config_write_of_core_hookspath_is_denied`)
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 ## Proof / origin
 

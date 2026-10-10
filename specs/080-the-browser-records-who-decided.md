@@ -1,7 +1,7 @@
 ---
 spec: 080
 title: The browser records a company's response apart from the candidate's rejection
-status: accepted
+status: shipped
 approved: yes
 milestone: M8
 depends: [042, 056, 079]
@@ -277,7 +277,7 @@ Spec 079 is amended to say so before either is approved.
 - [x] `pnpm type-check`, `pnpm lint`, `uv run ruff check`, `uv run pyright`
       pass
 - [x] No real tracker row appears in a fixture (ADR-008)
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 ## Honest limitations
 

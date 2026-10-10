@@ -1,7 +1,7 @@
 ---
 spec: 035
 title: The local API is not an open door
-status: in-progress
+status: shipped
 approved: yes
 milestone: M6
 depends: [006, 023]
@@ -149,7 +149,7 @@ board identified and the one that needs no compromise to reach.
 - [x] the bookmarklet capture path still works, proven end to end
 - [x] no credential, host name, or account identifier is written to a
       committed file (ADR-008)
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 ## Proof / origin
 

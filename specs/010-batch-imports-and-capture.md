@@ -1,7 +1,7 @@
 ---
 spec: 010
 title: Batch imports, capture endpoints, bookmarklets
-status: shipped
+status: in-progress
 approved: yes
 milestone: M2
 depends: [007, 008]
@@ -65,16 +65,16 @@ Deliberate changes, stated:
 
 ## Acceptance criteria
 
-- [ ] Wellfound and WTTJ normalization pins from the old
+- [x] Wellfound and WTTJ normalization pins from the old
       tests/test_feed_importers.py pass
-- [ ] CSV and JSON export reading round-trips, including the
+- [x] CSV and JSON export reading round-trips, including the
       items/results container shape
 - [ ] Capture pins from the old tests/test_job_server.py pass against the
       new endpoints: 200/400/409/500 for GET and POST, 4000-char
       description truncation, source defaults to manual
-- [ ] A captured job goes through score_job and lands with the
+- [x] A captured job goes through score_job and lands with the
       manual_added note; a duplicate returns 409
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 ## Proof / origin
 

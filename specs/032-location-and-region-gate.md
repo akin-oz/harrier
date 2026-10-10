@@ -1,7 +1,7 @@
 ---
 spec: 032
 title: The location gate rejects the roles it exists to find
-status: accepted
+status: shipped
 approved: yes
 milestone: M6
 depends: [007, 031]
@@ -151,7 +151,7 @@ change. `test_a_remote_european_location_is_allowed` keeps them passing.
 - [x] a provider workplace-type field is not discarded when a city is present
 - [x] no real posting, company, or board name enters a fixture or a test name
       (ADR-008)
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 ## Proof / origin
 

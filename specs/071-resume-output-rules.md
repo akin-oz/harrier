@@ -1,7 +1,7 @@
 ---
 spec: 071
 title: The tailored resume leads with what the posting needs, keeps canonical titles and years, and writes no dashes as punctuation
-status: accepted
+status: shipped
 approved: yes
 milestone: M8
 depends: [013, 062, 063, 066, 070]
@@ -93,7 +93,7 @@ synthetic bundle and the spec 070 Weflow fixture.
       with synthetic values
 - [x] each criterion's test fails when its behavior is removed: checked by
       disabling each behavior in turn (19 mutants, all failed a test)
-- [ ] `npx aie check` and `just check` green
+- [x] `npx aie check` and `just check` green
 
 ## What the implementation decided
 

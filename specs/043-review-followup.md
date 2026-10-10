@@ -1,7 +1,7 @@
 ---
 spec: 043
 title: The review loop closes itself
-status: in-progress
+status: shipped
 approved: yes
 milestone: M7
 depends: [028]
@@ -248,7 +248,7 @@ protect a counter would have been the wrong trade.
       request, `--wait` beside it or not, and `--wait` alone still waits and
       asks (the amendment below on dry runs;
       `tests/test_cli_decisions.py::test_a_dry_run_never_waits_and_never_asks`)
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 ## Proof / origin
 

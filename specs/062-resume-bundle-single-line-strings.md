@@ -1,7 +1,7 @@
 ---
 spec: 062
 title: Bundle strings the resume markdown emits are single lines that cannot forge structure
-status: accepted
+status: in-progress
 approved: yes
 milestone: M8
 depends: [013, 059]
@@ -277,26 +277,26 @@ named them. Every test mutates the example bundle and calls
 `parse_bundle`, and each assertion checks the `ResumeBundleError`
 message for the named path.
 
-- [ ] A line feed in each Rule 1 field raises with `<path> must be a
+- [x] A line feed in each Rule 1 field raises with `<path> must be a
   single line`, parametrized over every path in the Rule 1 list:
   `test_line_break_in_any_emitted_bundle_string_is_refused_by_name`.
-- [ ] Each of the ten boundary characters in `certifications[0]` raises
+- [x] Each of the ten boundary characters in `certifications[0]` raises
   with `certifications[0] must be a single line`:
   `test_every_line_boundary_character_is_refused`.
-- [ ] A value ending in a line feed, with nothing after it, raises, for
+- [x] A value ending in a line feed, with nothing after it, raises, for
   `candidate.name` and `bullet_pool[r1_b1]`:
   `test_trailing_line_break_is_refused`.
-- [ ] U+2028 in an education `degree` and in a `school` raises with
+- [x] U+2028 in an education `degree` and in a `school` raises with
   spec 059's `education[0] <field> must be a single line`:
   `test_education_line_boundary_beyond_cr_lf_is_refused`.
-- [ ] The reproduction's `profile_summary` payload raises with
+- [x] The reproduction's `profile_summary` payload raises with
   `profile_summary must be a single line`:
   `test_profile_summary_cannot_inject_an_unverified_achievement`.
-- [ ] `## PROFILE`, `### x`, and `   ## x` raise with `<path> must not
+- [x] `## PROFILE`, `### x`, and `   ## x` raise with `<path> must not
   start with a heading marker` for `candidate.primary_identity`,
   `candidate.location`, `all_skills[0]`, and `certifications[0]`:
   `test_heading_marker_at_an_unmarked_line_start_is_refused`.
-- [ ] A `name`, an `organization`, and a pool bullet starting with `#`
+- [x] A `name`, an `organization`, and a pool bullet starting with `#`
   parse, and `render_html` shows each once with the role count and the
   section contents otherwise unchanged:
   `test_values_behind_a_writer_marker_may_start_with_hash`.
@@ -308,34 +308,34 @@ message for the named path.
   space or a tab, raises with the same message. Since spec 071 it is
   refused as a dash used as punctuation, naming the mark:
   `test_organization_ending_in_a_dash_is_refused_as_punctuation`.
-- [ ] An organization with a leading U+2014, or one without spaces on
+- [x] An organization with a leading U+2014, or one without spaces on
   both sides, parses and renders as the company unchanged. Since spec 071
   the separator is a comma and a dash is refused, so the case is a comma
   without a following space:
   `test_organization_with_commas_elsewhere_still_splits_exactly`.
-- [ ] A `title` containing the separator parses and renders with the
+- [x] A `title` containing the separator parses and renders with the
   company intact and the full title:
   `test_title_containing_the_separator_stays_one_role`.
-- [ ] Every string value in the example bundle, one at a time, is given
+- [x] Every string value in the example bundle, one at a time, is given
   a forged `## ` section, once after a line feed and once as the whole
   value. For each, either a gate before the markdown refuses, or no
   line of the markdown starts with the forged heading. The test walks
   the bundle rather than a list, so a field the writer starts emitting
   later fails here without anyone adding it:
   `test_no_bundle_string_carries_a_line_break_or_heading_into_the_markdown`.
-- [ ] A bundle breaking Rule 1 in two fields and Rule 2 in a third
+- [x] A bundle breaking Rule 1 in two fields and Rule 2 in a third
   raises once, and the message names all three:
   `test_every_line_problem_is_reported_in_one_error`.
-- [ ] `run_tailor` on a stored bundle with a line feed in a
+- [x] `run_tailor` on a stored bundle with a line feed in a
   certification raises `ResumeBundleError`, writes nothing under the
   output directory, and leaves the tracker status unchanged (uses the
   existing `tailor_env` fixture):
   `test_bundle_with_a_line_break_fails_tailor_before_any_file_is_written`.
-- [ ] The unmodified example bundle still parses. The `bundle` fixture
+- [x] The unmodified example bundle still parses. The `bundle` fixture
   proves it, so every fixture-driven test fails otherwise.
-- [ ] The diff touches only `content.py`, `test_resume.py`, and this
+- [x] The diff touches only `content.py`, `test_resume.py`, and this
   spec, where it names the tests.
-- [ ] `just gate` passes.
+- [x] `just gate` passes.
 
 ## Amendments after the local review of PR #73
 

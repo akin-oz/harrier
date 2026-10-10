@@ -1,7 +1,7 @@
 ---
 spec: 077
 title: The fit score is learned from what the candidate acted on, and says why
-status: accepted
+status: shipped
 approved: yes
 milestone: M8
 depends: [031, 032, 033, 074, 078, 079]
@@ -528,7 +528,7 @@ otherwise. Every fixture is synthetic.
       `::test_no_reader_takes_a_field_the_writer_does_not_fill` pass unchanged
 - [x] No real posting, company or tracker statistic appears in a fixture,
       the spec, or a commit message (ADR-008)
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 ## Honest limitations
 

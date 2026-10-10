@@ -1,7 +1,7 @@
 ---
 spec: 074
 title: Host commands run inside the container while it owns the database
-status: accepted
+status: in-progress
 approved: yes
 milestone: M8
 depends: [050, 051, 061, 064]
@@ -195,7 +195,7 @@ autouse in both test files, so no test can reach a real container. Tests in
       harrier` all three run on the host. The pull request records each
       command, its exit code, and whether it was delegated. No paths, no job
       or mail output. gmail-watch needs the token moved first (Migration)
-- [ ] all gates green on the pull request
+- [x] all gates green on the pull request
 
 ## What the implementation decided
 

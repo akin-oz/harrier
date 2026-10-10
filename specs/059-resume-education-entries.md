@@ -1,7 +1,7 @@
 ---
 spec: 059
 title: The resume PDF renders every education entry in bundle order
-status: accepted
+status: in-progress
 approved: yes
 milestone: M8
 depends: [013]
@@ -132,53 +132,53 @@ is one page; this spec does not loosen it.
 
 Every test named here is in `services/api/tests/test_resume.py`.
 
-- [ ] `parse_bundle` on the example bundle with
+- [x] `parse_bundle` on the example bundle with
   `education: [{"degree": "MSc, X", "school": "U1"}, {"degree": "BSc,
   Y", "school": "U2"}]` yields entries in that order:
   `test_education_entries_keep_bundle_order`.
-- [ ] `parse_bundle` on `education: ["MSc, X", "U1"]` raises
+- [x] `parse_bundle` on `education: ["MSc, X", "U1"]` raises
   `ResumeBundleError` whose message contains `education must be a list
   of {degree, school} objects`:
   `test_education_flat_line_list_is_refused_by_name`.
-- [ ] `parse_bundle` on an entry lacking `school` raises with
+- [x] `parse_bundle` on an entry lacking `school` raises with
   `education[0] missing school`:
   `test_education_entry_missing_school_is_refused`. A blank `degree`
   raises with `education[1] missing degree`:
   `test_education_entry_with_empty_degree_is_refused`.
-- [ ] A carriage return or line feed in `degree` or `school` raises
+- [x] A carriage return or line feed in `degree` or `school` raises
   with `education[0] <field> must be a single line`:
   `test_education_line_break_in_either_field_is_refused`.
-- [ ] A `school` of `### Not A Degree`, `## CERTIFICATIONS`, or the
+- [x] A `school` of `### Not A Degree`, `## CERTIFICATIONS`, or the
   same behind leading spaces raises with `education[0] school must not
   start with a heading marker`:
   `test_education_school_that_looks_like_a_heading_is_refused`.
-- [ ] A `degree` of `### odd` renders as one entry with its school:
+- [x] A `degree` of `### odd` renders as one entry with its school:
   `test_degree_starting_with_heading_marker_stays_one_entry`.
-- [ ] An empty `education` list is valid, the markdown section is
+- [x] An empty `education` list is valid, the markdown section is
   empty, and the PDF keeps the `Education` label with no entry blocks:
   `test_empty_education_is_valid_and_renders_an_empty_block`.
-- [ ] The markdown resume for a two-entry bundle contains, under
+- [x] The markdown resume for a two-entry bundle contains, under
   `## EDUCATION`, the lines `### MSc, X`, `U1`, `### BSc, Y`, `U2` in
   that order:
   `test_markdown_writes_each_degree_as_a_heading_then_its_school`.
-- [ ] `render_html` on that markdown produces HTML in which the MSc
+- [x] `render_html` on that markdown produces HTML in which the MSc
   degree text appears before the bachelor's degree text, both schools
   appear, and the output contains no `{{` placeholder:
   `test_html_renders_every_degree_newest_first`. The existing render
   test `test_html_header_uses_grounded_markdown_title` keeps passing.
-- [ ] `render_html` with a template still containing
+- [x] `render_html` with a template still containing
   `{{education_degree}}` raises `ValueError` naming that placeholder:
   `test_stale_template_with_old_education_placeholders_fails_the_render`.
-- [ ] `templates/resume-template.html` contains `{{education_html}}`
+- [x] `templates/resume-template.html` contains `{{education_html}}`
   and neither old placeholder. Without the new placeholder
   `test_html_renders_every_degree_newest_first` finds no entry blocks
   and fails.
 - [ ] `config/resume-content.example.json` uses the new shape with two
   synthetic entries. The `bundle` fixture parses that file, so every
   fixture-driven test fails on the old shape.
-- [ ] A degree string of `<b>x</b>` renders escaped in the HTML:
+- [x] A degree string of `<b>x</b>` renders escaped in the HTML:
   `test_html_escapes_degree_text`.
-- [ ] `just gate` passes.
+- [x] `just gate` passes.
 
 ## Proof / origin
 

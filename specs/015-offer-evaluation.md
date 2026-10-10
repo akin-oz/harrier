@@ -68,14 +68,14 @@ out to other scripts through subprocess.
 
 ## Acceptance criteria
 
-- [ ] A skip verdict at or above the threshold rejects only with
+- [x] A skip verdict at or above the threshold rejects only with
       --apply set and writes an audit entry; without the flag the row
       is untouched and no audit entry is written
-- [ ] An existing report gates re-evaluation unless --refresh is given
-- [ ] An invalid confidence value can never clear the auto-reject
+- [x] An existing report gates re-evaluation unless --refresh is given
+- [x] An invalid confidence value can never clear the auto-reject
       threshold
-- [ ] Story capture deduplicates by story_id and respects the bound
-- [ ] The assembled prompt contains no hardcoded personal content
+- [x] Story capture deduplicates by story_id and respects the bound
+- [x] The assembled prompt contains no hardcoded personal content
       (proven against the synthetic fixtures)
 - [x] All gates green on PR (PR #12)
 

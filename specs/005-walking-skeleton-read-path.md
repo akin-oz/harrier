@@ -54,13 +54,13 @@ those types. Until this lands, the contract-drift gate checks nothing.
 
 ## Acceptance criteria
 
-- [ ] `just contract` is deterministic: running it twice produces no diff
-- [ ] A route change without regeneration fails the contract-drift CI job
-- [ ] An invented field access in apps/web fails `tsc`
-- [ ] API tests cover /jobs empty, seeded, filtered, and invalid-status 422
-- [ ] The GUI lists the migrated real rows locally (manual verification) and
+- [x] `just contract` is deterministic: running it twice produces no diff
+- [x] A route change without regeneration fails the contract-drift CI job
+- [x] An invented field access in apps/web fails `tsc`
+- [x] API tests cover /jobs empty, seeded, filtered, and invalid-status 422
+- [x] The GUI lists the migrated real rows locally (manual verification) and
       fixture rows in demo mode
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 ## Proof / origin
 

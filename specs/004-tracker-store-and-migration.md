@@ -1,7 +1,7 @@
 ---
 spec: 004
 title: Tracker store, profile tables, and legacy migration
-status: shipped
+status: in-progress
 approved: yes
 milestone: M1
 depends: [002, 003]
@@ -89,17 +89,17 @@ the key=value store hiding in the notes column
 
 ## Acceptance criteria
 
-- [ ] Migration against synthetic fixtures mirroring the legacy shapes
+- [x] Migration against synthetic fixtures mirroring the legacy shapes
       (including multiline quoted notes) asserts row counts and per-field
       fidelity against the source
 - [ ] Migration against the real CSVs (local run, read-only source) imports
       every record; reported counts equal the source record counts
-- [ ] An illegal status value raises; applied seeds the outreach block
-- [ ] Duplicate url in source aborts the migration with the duplicate list
-- [ ] Export then reimport round-trips
-- [ ] Profile import from the old repo followed by export reproduces the
+- [x] An illegal status value raises; applied seeds the outreach block
+- [x] Duplicate url in source aborts the migration with the duplicate list
+- [x] Export then reimport round-trips
+- [x] Profile import from the old repo followed by export reproduces the
       source documents byte-identically
-- [ ] All gates green; this PR proves the spec-gate check (flips spec 002)
+- [x] All gates green; this PR proves the spec-gate check (flips spec 002)
 
 ## Proof / origin
 

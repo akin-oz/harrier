@@ -1,7 +1,7 @@
 ---
 spec: 029
 title: A failed run must not look like a quiet one
-status: accepted
+status: shipped
 approved: yes
 milestone: M6
 depends: [011, 019]
@@ -146,7 +146,7 @@ path. Both now fail.
       cost-gate skip appears in it
 - [x] no personal data enters the log configuration, the `job_runs` table, or
       the digest schedule section: job names and timestamps only (ADR-008)
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 ## Proof / origin
 

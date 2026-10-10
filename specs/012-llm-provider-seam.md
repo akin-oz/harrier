@@ -69,17 +69,17 @@ everywhere, and so the bypass class of bug cannot recur.
 
 ## Acceptance criteria
 
-- [ ] Behavior pins ported from the old tests/test_llm_client.py pass:
+- [x] Behavior pins ported from the old tests/test_llm_client.py pass:
       codex-cli default config, auto picks openai-api on key when codex
       is missing, provider aliases plus AI_MODEL override, per-provider
       model env without AI_MODEL, auto fallback after a provider error
       hits providers in order with their default models
-- [ ] Unknown provider raises; a fixed provider returning empty output
+- [x] Unknown provider raises; a fixed provider returning empty output
       raises; auto with all providers failing raises with every error
       named
-- [ ] No module outside harrier.llm imports harrier.llm.providers
+- [x] No module outside harrier.llm imports harrier.llm.providers
       (import-linter contract)
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 ## Proof / origin
 

@@ -1,7 +1,7 @@
 ---
 spec: 069
 title: Candidate evidence quoted from the posting or the application profile is named as such
-status: accepted
+status: shipped
 approved: yes
 milestone: M8
 depends: [065, 066]
@@ -152,7 +152,7 @@ no-profile case.
       expected message this spec changes
 - [x] no real profile, truth or posting content in any test
 - [x] `uv run ruff check` and `uv run pyright` clean
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 ## Proof / origin
 

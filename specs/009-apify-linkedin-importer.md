@@ -67,15 +67,15 @@ backfill, and outreach:
 
 ## Acceptance criteria
 
-- [ ] Pins from the old tests/test_import_apify_linkedin_jobs.py pass:
+- [x] Pins from the old tests/test_import_apify_linkedin_jobs.py pass:
       default count 150, actor input shape, wrapped-payload unwrap,
       field mapping, dataset-file loading (hybrid/non-EMEA/dedupe pins
       already live in the spec 007 suite)
-- [ ] linkedin_job_id handles both URL shapes and currentJobId
-- [ ] Poster extraction pins: flat keys, nested keys, guest HTML section,
+- [x] linkedin_job_id handles both URL shapes and currentJobId
+- [x] Poster extraction pins: flat keys, nested keys, guest HTML section,
       and the /in/ URL requirement
-- [ ] cache_job_descriptions caches all jobs with url and description
-- [ ] All gates green on PR
+- [x] cache_job_descriptions caches all jobs with url and description
+- [x] All gates green on PR
 
 ## Proof / origin
 

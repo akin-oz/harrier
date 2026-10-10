@@ -1,7 +1,7 @@
 ---
 spec: 028
 title: Agent teams: principal review and open-source readiness
-status: in-progress
+status: shipped
 approved: yes
 milestone: M6
 depends: [003]
@@ -127,7 +127,7 @@ deserves defending.
 - [x] a test asserts the two directions of membership, so a renamed agent
       or an orphaned one fails CI rather than being discovered when the
       board is convened
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 Every criterion above maps to a test in
 `services/api/tests/test_governance.py`, one per line:

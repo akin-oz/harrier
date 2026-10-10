@@ -1,7 +1,7 @@
 ---
 spec: 095
 title: Every command that works on the operator's data can be run from the browser
-status: accepted
+status: in-progress
 approved: yes
 milestone: M9
 depends: [042, 047, 050, 066, 077, 079, 094]

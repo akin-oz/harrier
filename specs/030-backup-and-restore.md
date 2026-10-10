@@ -1,7 +1,7 @@
 ---
 spec: 030
 title: A backup that can be restored, and a restore that is exercised
-status: accepted
+status: shipped
 approved: yes
 milestone: M6
 depends: [003]
@@ -144,7 +144,7 @@ rather than the live file.
       verified archive
 - [x] no archive path, machine name, or account name is written to any
       committed file (ADR-008)
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 ## Proof / origin
 

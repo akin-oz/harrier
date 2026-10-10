@@ -1,7 +1,7 @@
 ---
 spec: 025
 title: Feed health: report and prune dead boards
-status: in-progress
+status: shipped
 approved: yes
 milestone: M6
 depends: [023]
@@ -127,7 +127,7 @@ Every symbol below is in services/api/tests/test_feed_health.py.
       configuration, and nothing is written to a committed file:
       `test_the_report_names_only_boards_the_operator_configured`. Pruning
       writes to the config store, never to `config/feeds.txt`
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 Three behaviours were found during implementation that the spec did not
 cover, each with its own test rather than being decided silently:

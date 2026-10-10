@@ -1,7 +1,7 @@
 ---
 spec: 089
 title: Upgrade @akinlabs/ai-engineering from 0.2.0 to 0.6.2 without changing what it enforces
-status: accepted
+status: shipped
 approved: yes
 milestone: M8
 depends: [001, 002, 045]
@@ -70,13 +70,13 @@ Failure modes:
 
 ## Acceptance criteria
 
-- [ ] `package.json` and `pnpm-lock.yaml` resolve `@akinlabs/ai-engineering` to 0.6.2
-- [ ] `.ai/blueprint.yaml` disables `hook.spec-trailer`, `rule.spec-trailer`, `permission.protect-guardrails`, with a comment per entry
-- [ ] `git diff` of the synced output touches only generated banners; `.claude/settings.json` and `.claude/hooks/` are unchanged
-- [ ] `CLAUDE.md` and `AGENTS.md` contain no `## Rule: spec-trailer` section
-- [ ] `.github/workflows/ci.yml` uses `akin-oz/ai-engineering@v0.6.2` and the stale comment about the `v0` tag is gone
-- [ ] `docs/aie-feedback.md` marks gaps 1, 2, 3 and 8 as closed, naming 0.3.0
-- [ ] `npx aie check` exits 0 and `just check` is green
+- [x] `package.json` and `pnpm-lock.yaml` resolve `@akinlabs/ai-engineering` to 0.6.2
+- [x] `.ai/blueprint.yaml` disables `hook.spec-trailer`, `rule.spec-trailer`, `permission.protect-guardrails`, with a comment per entry
+- [x] `git diff` of the synced output touches only generated banners; `.claude/settings.json` and `.claude/hooks/` are unchanged
+- [x] `CLAUDE.md` and `AGENTS.md` contain no `## Rule: spec-trailer` section
+- [x] `.github/workflows/ci.yml` uses `akin-oz/ai-engineering@v0.6.2` and the stale comment about the `v0` tag is gone
+- [x] `docs/aie-feedback.md` marks gaps 1, 2, 3 and 8 as closed, naming 0.3.0
+- [x] `npx aie check` exits 0 and `just check` is green
 
 ## Proof / origin
 

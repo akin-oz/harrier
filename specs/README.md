@@ -10,7 +10,7 @@ Spec-gated execution: nothing changes observable behavior without an approved sp
 spec: NNN
 title: short imperative title
 status: proposed | accepted | in-progress | shipped
-approved: no
+approved: yes
 milestone: M0..M9
 depends: [NNN, ...]
 ```

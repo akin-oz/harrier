@@ -1,7 +1,7 @@
 ---
 spec: 011
 title: Discovery orchestrator, summaries, Telegram notify
-status: shipped
+status: in-progress
 approved: yes
 milestone: M2
 depends: [008, 009, 010]
@@ -66,19 +66,19 @@ manager converge: discovery becomes a live-streamed run in the GUI.
 
 ## Acceptance criteria
 
-- [ ] Old pins pass: CLI default apify count 150, override passes through
+- [x] Old pins pass: CLI default apify count 150, override passes through
       to the Apify fetch
 - [ ] A full orchestrated dry run over monkeypatched sources produces the
       aggregate shape with correct totals and sends nothing
-- [ ] Exactly one Telegram message for N sources when prospects exist and
+- [x] Exactly one Telegram message for N sources when prospects exist and
       notify is on
-- [ ] Scheduled policy: Apify included on a weekday morning, excluded on an
+- [x] Scheduled policy: Apify included on a weekday morning, excluded on an
       evening and on a weekend (injected clock)
-- [ ] Dry runs write no tracker rows, no seen state, no summaries
-- [ ] notify returns 2 without network when the token is missing
-- [ ] Discovery is startable from the GUI and streams per-source progress
+- [x] Dry runs write no tracker rows, no seen state, no summaries
+- [x] notify returns 2 without network when the token is missing
+- [x] Discovery is startable from the GUI and streams per-source progress
       (browser-verified with a dry-run)
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 ## Proof / origin
 

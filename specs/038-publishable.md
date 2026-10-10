@@ -1,7 +1,7 @@
 ---
 spec: 038
 title: Publishable: a licence, and guardians that are what they say
-status: accepted
+status: shipped
 approved: yes
 milestone: M6
 depends: [028]
@@ -116,7 +116,7 @@ incorrectly is not caught, and no automated check would catch it.
 - [x] `contract-guardian` has no instruction that writes a generated artifact
 - [x] `repo_root` has one definition, asserted by a test that fails if a
       second appears
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 ## Proof / origin
 
