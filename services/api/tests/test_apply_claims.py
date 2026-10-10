@@ -1032,3 +1032,98 @@ def test_the_retry_logs_the_first_refusals(
     ]
     assert len(retries) == 1
     assert f"claim sentence not in output: {REWORDED}" in retries[0]
+
+
+# --- spec 086: a number refusal names its sentence ---------------------------------
+
+MENTORED = "I mentored 4 engineers on the team."
+
+
+def violations(db: sqlite3.Connection) -> list[str]:
+    with pytest.raises(ClaimCheckError) as caught:
+        generate(db)
+    return caught.value.violations
+
+
+def test_a_number_refusal_names_its_sentence(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    short = f"I build product features. {MENTORED}"
+    stub_letter(monkeypatch, letter_json(short=short))
+    assert violations(db) == [f"number without evidence: 4 (in: {MENTORED})"]
+
+
+def test_a_scope_refusal_names_its_sentence(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sentence = "I processed 1,200 invoices a month with the billing service."
+    claims = [candidate(CHECKOUT, CHECKOUT_EVIDENCE), candidate(sentence, INVOICES_EVIDENCE)]
+    stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {sentence}", claims))
+    assert violations(db) == [f"number changed scope: 1,200 (in: {sentence})"]
+
+
+def test_the_same_number_in_two_sentences_is_refused_in_each(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workshops = "I ran 4 workshops for the support staff."
+    stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {MENTORED} {workshops}"))
+    assert violations(db) == [
+        f"number without evidence: 4 (in: {MENTORED})",
+        f"number without evidence: 4 (in: {workshops})",
+    ]
+
+
+def test_a_sentence_in_both_letter_versions_is_refused_once(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {MENTORED}", short=MENTORED))
+    assert violations(db) == [f"number without evidence: 4 (in: {MENTORED})"]
+
+
+def test_a_repeated_number_in_one_sentence_names_the_word_before_it(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`40%` and `40` are one value, so each is told apart by the word before
+    it. The `3` inside `300` is not the value 3, so `3` keeps the plain form."""
+    pages = "I cut load time by 40% across 40 product pages."
+    drills = "I ran 3 drills before 300 tickets arrived."
+    stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {pages} {drills}"))
+    assert violations(db) == [
+        f'number without evidence: 40% (after "by" in: {pages})',
+        f'number without evidence: 40 (after "across" in: {pages})',
+        f"number without evidence: 3 (in: {drills})",
+        f"number without evidence: 300 (in: {drills})",
+    ]
+
+
+def test_a_repeated_number_that_opens_its_sentence_says_first_word(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pages = "40 product pages loaded faster once I cut load time by 40%."
+    joined = "12 engineers joined the billing team after the launch."
+    stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {pages} {joined}"))
+    assert violations(db) == [
+        f"number without evidence: 40 (first word of: {pages})",
+        f'number without evidence: 40% (after "by" in: {pages})',
+        f"number without evidence: 12 (in: {joined})",
+    ]
+
+
+def test_a_field_without_end_punctuation_is_its_own_sentence(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The short version and the full version are joined by a blank line. A
+    short version with no end punctuation is still quoted alone."""
+    short = "Billing work across 4 teams"
+    stub_letter(monkeypatch, letter_json(short=short))
+    assert violations(db) == [f"number without evidence: 4 (in: {short})"]
+
+
+def test_the_retry_receives_the_sentence_of_a_number_refusal(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = letter_json(f"{CHECKOUT} {INVOICES} {MENTORED}")
+    calls = stub_sequence(monkeypatch, letters_module, [first, letter_json()])
+    generate(db)
+    retry = json.loads(calls[1][1])["retry"]
+    assert retry["refusals"] == [f"number without evidence: 4 (in: {MENTORED})"]
