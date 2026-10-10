@@ -1,8 +1,8 @@
 ---
 spec: 099
 title: An academic track holds its own framing over the shared facts
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M9
 depends: [004, 034, 074, 090, 091, 093, 097, 098]
 ---
