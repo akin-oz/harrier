@@ -1,0 +1,209 @@
+.ops-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.ops-page__heading {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.ops-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-raised);
+}
+.ops-section__heading {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ops-note,
+.ops-muted {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+.ops-muted {
+  color: var(--color-text-tertiary);
+}
+.ops-note code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-sunken);
+}
+.ops-error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-danger);
+}
+.ops-error p {
+  margin: 0 0 var(--space-2);
+}
+.ops-outcome {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ops-actions {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.ops-section button {
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-bg-raised);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13px;
+}
+.ops-section button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.ops-section button:focus-visible,
+.ops-field select:focus-visible,
+.ops-field input:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+/* A button that changes stored state or sends something reads as such by
+   its border and weight, not by hue alone. */
+.ops-section .ops-button--caution {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+  font-weight: 600;
+}
+.ops-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.ops-field select,
+.ops-field input {
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-bg-raised);
+  color: var(--color-text);
+}
+.ops-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-sm);
+  background: var(--color-danger-bg);
+  font-size: 13px;
+}
+.ops-confirm p {
+  margin: 0;
+}
+
+.ops-run {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ops-run__state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: 13px;
+}
+.ops-run__refusal {
+  margin: 0;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  padding: 10px var(--space-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-danger);
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+.ops-table-scroll {
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+.ops-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.ops-table th,
+.ops-table td {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: top;
+}
+.ops-table thead th {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-sunken);
+}
+.ops-table tbody th {
+  font-weight: 500;
+  white-space: nowrap;
+}
+.ops-table tbody tr:last-child th,
+.ops-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.ops-records {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.ops-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-strong);
+  color: var(--color-text-secondary);
+}
+.ops-badge--overdue {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+  font-weight: 600;
+}
+.ops-badge__mark {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: currentcolor;
+}

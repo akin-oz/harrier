@@ -15,11 +15,12 @@ import sys
 import uuid
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Literal, cast
 
 from harrier.db import data_dir
+from harrier.discovery import SOURCE_ORDER
 from harrier.sources import scrub_secrets
 from harrier.tracks import InvalidSlugError, validate_slug
 
@@ -60,6 +61,12 @@ class ParameterizedKind:
     The property spec 047 asked for is unchanged and is now easier to state:
     a flag name reaching argv came from one of these sets, and a value
     reaching argv is an int or a path this process chose.
+
+    Spec 050 adds two more closed sets. `choices` maps a flag to the values
+    it may take, so a value reaching argv for it is one of a fixed set
+    (`reconsider --source`). `dates` names flags whose value is a calendar
+    date, rendered by this module (`digest --date`). The verb may be two
+    words, a command and its subcommand (`config check-feeds`).
     """
 
     verb: str
@@ -67,6 +74,8 @@ class ParameterizedKind:
     switches: frozenset[str] = frozenset()
     numbers: frozenset[str] = frozenset()
     takes_job: bool = True
+    choices: Mapping[str, frozenset[str]] = field(default_factory=dict[str, frozenset[str]])
+    dates: frozenset[str] = frozenset()
 
 
 PARAMETERIZED_KINDS: dict[str, ParameterizedKind] = {
@@ -91,6 +100,29 @@ PARAMETERIZED_KINDS: dict[str, ParameterizedKind] = {
     "gmail-watch": ParameterizedKind(
         "gmail-watch",
         switches=frozenset({"--dry-run"}),
+        takes_job=False,
+    ),
+    # The Operations page (spec 050).
+    "check-feeds": ParameterizedKind(
+        "config check-feeds",
+        switches=frozenset({"--prune"}),
+        takes_job=False,
+    ),
+    "reconsider": ParameterizedKind(
+        "reconsider",
+        switches=frozenset({"--apply"}),
+        choices={"--source": frozenset(SOURCE_ORDER)},
+        takes_job=False,
+    ),
+    "backup": ParameterizedKind(
+        "backup",
+        switches=frozenset({"--no-prune"}),
+        takes_job=False,
+    ),
+    "digest": ParameterizedKind(
+        "digest",
+        switches=frozenset({"--dry-run"}),
+        dates=frozenset({"--date"}),
         takes_job=False,
     ),
 }
@@ -119,6 +151,14 @@ class RunParams:
     # The track the run works in, by slug (spec 093). Checked against the slug
     # rule here; the route that sets it checks the slug exists.
     track: str | None = None
+    choices: Mapping[str, str] = field(default_factory=dict[str, str])
+    dates: Mapping[str, date] = field(default_factory=dict[str, date])
+    # What the run locks against, for a kind that takes no job (spec 050).
+    # It never reaches argv. Two attempts with the same target join one run.
+    # A dry digest and a sending one for the same day take different
+    # targets, because joining the dry run would tell the operator that a
+    # send had started.
+    target: str | None = None
 
     def __post_init__(self) -> None:
         if self.track is not None:
@@ -134,6 +174,10 @@ class RunParams:
             # distance with a message about the wrong thing.
             if isinstance(value, bool):
                 raise ValueError(f"{flag} must be an integer, got {value!r}")
+        for flag, value in self.dates.items():
+            # A datetime is a date, and would render with its time attached.
+            if type(value) is not date:
+                raise ValueError(f"{flag} must be a calendar date, got {value!r}")
 
 
 def run_inputs_dir() -> Path:
@@ -183,7 +227,7 @@ def build_command(kind: str, params: RunParams) -> list[str]:
         # validated slug, in the `--flag=value` form this module uses for
         # every value.
         argv.append(f"--track={params.track}")
-    argv.append(parameterized.verb)
+    argv.extend(parameterized.verb.split())
 
     if parameterized.takes_job:
         if params.job_id is None:
@@ -200,12 +244,32 @@ def build_command(kind: str, params: RunParams) -> list[str]:
         if flag not in parameterized.numbers:
             raise ValueError(f"{kind} does not accept {flag}")
         argv.append(f"{flag}={params.numbers[flag]}")
+    for flag in sorted(params.choices):
+        allowed = parameterized.choices.get(flag)
+        if allowed is None:
+            raise ValueError(f"{kind} does not accept {flag}")
+        if params.choices[flag] not in allowed:
+            raise ValueError(f"{flag} must be one of {', '.join(sorted(allowed))}")
+        argv.append(f"{flag}={params.choices[flag]}")
+    for flag in sorted(params.dates):
+        if flag not in parameterized.dates:
+            raise ValueError(f"{kind} does not accept {flag}")
+        argv.append(f"{flag}={params.dates[flag].isoformat()}")
 
     if params.input_path is not None:
         if parameterized.input_flag is None:
             raise ValueError(f"{kind} takes no input file")
         argv.append(f"{parameterized.input_flag}={params.input_path}")
     return argv
+
+
+def _target(params: RunParams | None) -> str:
+    """The lock key: the route's chosen target, else the job, else the kind."""
+    if params is None:
+        return ""
+    if params.target is not None:
+        return params.target
+    return "" if params.job_id is None else str(params.job_id)
 
 
 def _now() -> str:
@@ -325,7 +389,7 @@ class RunManager:
         # A kind that acts on everything locks on the empty target, which is
         # the one-at-a-time behaviour discovery always had. Kinds never
         # collide with each other because the lock is on the pair.
-        target = "" if params is None or params.job_id is None else str(params.job_id)
+        target = _target(params)
         active = self.active_run(kind, target)
         if active is not None:
             # This attempt never becomes a run, so the input file written for

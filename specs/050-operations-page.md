@@ -38,8 +38,8 @@ says the installed and loaded state is the host's to report.
 
 | Route | CLI verb | Domain function | Shape |
 |---|---|---|---|
-| `GET /ops/feeds` | `check-feeds` | `load_feeds_for_check`, `check_feeds` | run |
-| `POST /ops/feeds/prune` | `check-feeds --prune` | `prune_dead` | request |
+| `POST /ops/feeds` | `config check-feeds` | `load_feeds_for_check`, `check_feeds` | run |
+| `POST /ops/feeds/prune` | `config check-feeds --prune` | `check_feeds`, then `prune_dead` | run |
 | `POST /ops/reconsider` | `reconsider` | `reconsider_source` | run |
 | `GET /ops/schedule` | none: what the container can read in place of `schedule status` | the last-success records (spec 029) and the schedule definition | request |
 | `POST /ops/backup` | `backup` | `create_backup` | run |
@@ -47,9 +47,23 @@ says the installed and loaded state is the host's to report.
 | `GET /ops/profile` | `profile list` | the profile store reader | request |
 
 Feed health is a run because it makes a network request per configured board.
-Reconsideration, backup and digest are runs because each walks the whole
-tracker or the whole data directory. The schedule read is a read of the
-database and the schedule definition, and answers as a request.
+Pruning is a run for the same reason: `config check-feeds --prune` probes every
+board again and prunes what that probe finds dead, so it never prunes on a
+stale result. Reconsideration, backup and digest are runs because each walks
+the whole tracker or the whole data directory. The schedule read is a read of
+the database and the schedule definition, and answers as a request.
+
+Starting a run is never a GET (amended at implementation, 2026-10-10). Any
+page the operator has open can make a GET to this API without the token, so
+`GET /ops/feeds` would have let it start network probes. The check is
+`POST /ops/feeds` with the token. Its results are the run's log, read through
+`GET /runs/{id}/events`, which needs no token; that is the "feed results are
+reads" this spec states.
+
+`POST /ops/reconsider` takes the `track` parameter (spec 094) and passes a
+non-default track to the CLI as `--track`, because `reconsider` works on an
+academic track's own seen state (spec 097). The digest is the default
+track's; any other is refused with 409.
 
 `GET /ops/schedule` reads the last-success records and the schedule
 definition (amendment 2 in the note at the end). It reports, for each
@@ -57,6 +71,21 @@ scheduled job, its cadence and when it last succeeded, and says the installed
 and loaded state is the host's to report, naming the command that reports it
 (`harrier schedule status`). It does not call `schedule_status`, which asks
 `launchctl`.
+
+The badge rule, stated at implementation (2026-10-10): a record is overdue
+when the job has never recorded a success, when the time is unreadable, or
+when the last success is older than twice the longest gap between the job's
+scheduled runs (`OVERDUE_GAPS` and `job_health` in `harrier.schedule`). One
+missed run is a laptop asleep at the scheduled minute; two in a row is a job
+that stopped. A record within that limit reads "within its cadence", never
+"healthy", because whether launchd still has the job is not known here.
+Which records a job writes is read from its command: `discover` writes
+`discovery`, `discover --configured-tracks` one record per configured
+academic track, `digest` writes `digest`, and `gmail-watch` is expected to
+write `mail-watch`. Nothing writes a `mail-watch` record today, which is the
+same gap the digest's schedule line has, so the page shows the watch as never
+having succeeded. That is what the records hold; the gap is recorded as out
+of scope in the pull request rather than fixed here.
 
 Removed by spec 096 before this spec was built: `POST /ops/schedule/install`
 and `POST /ops/schedule/uninstall` (the container cannot load a launchd job),
@@ -83,12 +112,20 @@ rather than pretending it is inert.
 | `POST /ops/reconsider` | `source` | absent | Every source, as the CLI does. |
 | `POST /ops/digest` | `dry_run` | `true` | Produce the digest text and send nothing. Sending is the explicit `false`. |
 | `POST /ops/digest` | `date` | absent | Today, as the CLI does. |
-| `POST /ops/feeds/prune` | `confirm` | `false` | Refuse, for the same reason: it edits stored configuration. |
-| `POST /ops/backup` | `keep` | the CLI's own default | Retention is the CLI's decision, not a second copy of it here. |
+| `POST /ops/digest` | `resend` | `false` | Refuse a day already delivered, with the time it went. `true` is the explicit request that sends it again. |
+| `POST /ops/feeds/prune` | `confirm` | `false` | Refuse with 409: it edits stored configuration. |
+| `POST /ops/backup` | `prune` | `false` | Take the archive and delete nothing (`harrier backup --no-prune`). `true` applies the CLI's own retention, which is the CLI's decision, not a second copy of it here. |
 
 `dry_run` defaulting to `true` on the digest inverts the CLI's default,
 which sends. That is deliberate: a request whose body was dropped, or a
 client that forgot the field, must not send a message to a real person.
+
+The backup row was `keep`, defaulting to the CLI's own value, when this spec
+was approved. That contradicted the criterion that an empty-body backup
+deletes nothing, because `create_backup` always pruned to `keep`. Amended at
+implementation (2026-10-10): `create_backup` takes `keep=None` to delete
+nothing, `harrier backup` gains `--no-prune` to pass it, and the route sends
+`--no-prune` unless the body asks for `prune`. The CLI's default is unchanged.
 
 ### Three operations that need marking, not just wiring
 
@@ -113,6 +150,20 @@ per-target lock already refuses a second concurrent run for the same key
 (spec 047), and a digest already delivered for that date is refused with a
 message saying when it went, rather than sent again. Re-sending deliberately
 is a separate explicit request.
+
+Nothing recorded a delivery by day when this spec was approved, so the
+refusal had nothing to read. Amended at implementation (2026-10-10):
+`run_digest` records each delivery under `digest:<day>` in the run-outcome
+records (spec 029) beside the `digest` success it already wrote, and
+`delivered_at` in `harrier.digest` reads it. The CLI still sends without a
+per-day limit; only the route refuses. The lock key for a digest run is the
+day and whether it sends, so a double click joins the send in flight while a
+preview of the same day is a separate run.
+
+`harrier digest` prints two progress steps on the run protocol (ADR-004):
+step 1 once the digest exists, step 2 once Telegram accepted it. The exit
+status alone cannot tell "produced, not delivered" from "never produced",
+because a failed send and a crash both exit 1.
 
 **Pruning dead feeds edits stored configuration.** It removes boards from the
 watchlist. It is a separate action from checking, never a checkbox on the
@@ -199,48 +250,96 @@ Failure modes this must not introduce:
 
 ## Acceptance criteria
 
-Proving symbols are named at implementation.
+Proving symbols are named at implementation. Python tests are in
+`services/api/tests/test_ui_operations.py` unless named otherwise; web tests
+are in `OperationsPage.test.tsx`.
 
-- [ ] every verb in the route table has a route calling the same domain
+- [x] every verb in the route table has a route calling the same domain
       function as the CLI verb, asserted in the shape spec 042 established
+      (`services/api/tests/test_ui_operations.py::test_every_operations_route_calls_the_cli_verbs_function`,
+      `::test_the_schedule_reads_the_definition_the_cli_installs`,
+      `::test_the_profile_list_is_the_one_the_cli_prints`)
 - [ ] moved to spec 096 (amendments 5 and 6): the CLI-only list is derived
       by a test that enumerates the CLI's subcommands and the routed ones, and
       fails when a new verb is added with no place (spec 096's planned
       test_every_cli_subcommand_has_exactly_one_place)
 - [ ] moved to spec 096 with it: no route exists for any command in the
       terminal-only list, asserted by the same test
-- [ ] reconsideration defaults to reporting and requires a separate action to
+- [x] reconsideration defaults to reporting and requires a separate action to
       apply, proven by a test that the default changes nothing
-- [ ] with an empty body no route applies a change, sends a message or
+      (`services/api/tests/test_ui_operations.py::test_reconsideration_reports_by_default_and_applies_on_request`,
+      `OperationsPage.test.tsx::reconsideration reports first and offers clearing only after the report`)
+- [x] with an empty body no route applies a change, sends a message or
       prunes stored configuration, proven by a test that posts an empty body
       to each and asserts it
-- [ ] `POST /ops/backup` on an empty body writes an archive and deletes
+      (`services/api/tests/test_ui_operations.py::test_an_empty_body_applies_sends_or_prunes_nothing`,
+      run with an empty object and with no body at all)
+- [x] `POST /ops/backup` on an empty body writes an archive and deletes
       nothing, proven by a test that asserts the retention prune did not run
-- [ ] a second non-dry digest for the same target date is refused with a
+      (`services/api/tests/test_ui_operations.py::test_an_empty_backup_writes_an_archive_and_deletes_nothing`;
+      the retention still applies when asked,
+      `::test_pruning_is_the_cli_s_own_retention_when_asked`)
+- [x] a second non-dry digest for the same target date is refused with a
       message saying when the first went, proven by a test that posts twice
       and asserts one delivery
-- [ ] "nothing is eligible to clear" and the all-current-rules case remain
+      (`services/api/tests/test_ui_operations.py::test_a_second_digest_for_the_same_day_is_refused_and_one_is_delivered`,
+      `::test_a_double_click_joins_the_send_already_in_flight`,
+      `::test_resending_is_its_own_explicit_request`, and
+      `OperationsPage.test.tsx::a day already sent is refused in the server's words and resending is explicit`)
+- [x] "nothing is eligible to clear" and the all-current-rules case remain
       distinct strings on both sides
-- [ ] `GET /ops/schedule` reports, for each scheduled job, its cadence and
+      (`services/api/tests/test_ui_operations.py::test_nothing_eligible_keeps_the_domain_s_words`,
+      `OperationsPage.test.tsx::the report keeps the CLI's words, so the two zero outcomes stay apart`;
+      the CLI side is
+      `services/api/tests/test_seen_policy.py::test_nothing_eligible_is_not_reported_as_everything_current`)
+- [x] `GET /ops/schedule` reports, for each scheduled job, its cadence and
       its last-success time from the records, and says the installed and
       loaded state is the host's to report; a test asserts a job with no
       recent success does not render as healthy, and that no installed or
       loaded state renders as healthy (amended by spec 096)
+      (`services/api/tests/test_ui_operations.py::test_the_schedule_marks_a_job_with_no_recent_success_and_claims_no_install_state`,
+      `::test_an_unreadable_schedule_is_reported_in_the_loader_s_words`,
+      `::test_overdue_is_twice_the_longest_gap`,
+      `::test_a_success_just_inside_the_limit_is_not_overdue`,
+      `OperationsPage.test.tsx::a job with no recent success reads as overdue and nothing reads as healthy`,
+      `OperationsPage.test.tsx::the installed and loaded state is the host's to report, with the command`)
 - [ ] a failed backup verification reports that no archive was written, and a
-      test asserts no archive is left behind
-- [ ] a digest that is produced but not delivered is distinguishable from one
+      test asserts no archive is left behind. The API half holds: the run
+      fails in the domain's words and leaves no archive
+      (`services/api/tests/test_ui_operations.py::test_a_backup_that_fails_verification_leaves_no_archive`).
+      The sentence that no archive was written belongs to the backups
+      section, which spec 096 builds on the Settings page (amendment 5), so
+      this stays open until it lands there.
+- [x] a digest that is produced but not delivered is distinguishable from one
       that was never produced
-- [ ] pruning dead feeds is a separate action from checking them, and reports
+      (`services/api/tests/test_ui_operations.py::test_a_digest_produced_and_not_delivered_says_so`,
+      `OperationsPage.test.tsx::a digest produced and not delivered is told apart from one never produced`,
+      `OperationsPage.test.tsx::a delivered digest says so`)
+- [x] pruning dead feeds is a separate action from checking them, and reports
       each removed URL
-- [ ] every operations write requires the token; schedule status, feed results
+      (`OperationsPage.test.tsx::checking feeds changes nothing and pruning is a separate confirmed action`,
+      a prune without `confirm` refused in
+      `services/api/tests/test_ui_operations.py::test_an_empty_body_applies_sends_or_prunes_nothing`,
+      and each removed URL printed by the verb the run executes,
+      `services/api/tests/test_feed_health.py::test_prune_names_every_board_it_removed`)
+- [x] every operations write requires the token; schedule status, feed results
       and the profile list are reads and do not
-- [ ] the generated client carries every new route and no hand-written request
+      (`services/api/tests/test_ui_operations.py::test_every_operations_write_requires_the_token`,
+      `::test_the_schedule_and_the_profile_list_are_tokenless_reads`,
+      `OperationsPage.test.tsx::every operations write carries the token and no read does`)
+- [x] the generated client carries every new route and no hand-written request
       or response shape appears in `apps/web`
-- [ ] no personal data enters a committed fixture, a test name, or a
-      screenshot
+      (`services/api/tests/test_ui_operations.py::test_every_operations_route_is_in_the_contract`,
+      and the contract drift gate, which regenerates and fails on a diff)
+- [x] no personal data enters a committed fixture, a test name, or a
+      screenshot. Every fixture is an invented company, chat or archive.
+      Limitation: this is a property of the diff rather than something a test
+      can assert.
 - [ ] moved to spec 096 with the list: spec 042's open criterion is marked
       satisfied, citing spec 096's test
-- [ ] all gates green on PR
+- [x] all gates green on PR (`just check` passes: 2354 Python tests, 116 web
+      tests, the contract regenerated with no diff, `aie check` and the spec
+      structure check)
 
 ## Proof / origin
 
@@ -257,10 +356,14 @@ comment in `_cmd_reconsider`. The last-success records are
 
 ## Out of scope
 
-Any change to what a domain function does. Authentication design, spec 035.
+Any change to what a domain function does, apart from the two additions this
+spec needed and states above: `create_backup(keep=None)` and the per-day
+delivery record `run_digest` writes. Each leaves every existing caller's
+behaviour as it was. Authentication design, spec 035.
 Buttons for the CLI-only commands. A general job scheduler in the UI: this page
 reports what the container can read about the schedule and installs nothing,
-and inventing schedules in the browser is a different product. Editing profile documents in the browser;
+and inventing schedules in the browser is a different product. Editing profile
+documents in the browser;
 the page lists them and the CLI imports and exports them.
 
 ## Migration
