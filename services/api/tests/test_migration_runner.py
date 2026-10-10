@@ -85,18 +85,18 @@ def test_a_failed_migration_leaves_no_partial_schema(
 def test_a_failed_migration_leaves_no_partial_schema_on_postgres(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The Postgres counterpart of the test above (spec 103). The baseline
-    commits in its own transaction; the broken migration after it rolls
-    back whole, and the next run starts that migration again."""
+    """The Postgres counterpart of the test above (spec 103). Each real
+    migration commits in its own transaction; the broken migration after
+    them rolls back whole, and the next run starts that migration again."""
     import psycopg
 
     from harrier.pgstore import migrate_postgres
 
     real = list(schema.POSTGRES_MIGRATIONS)
-    baseline = real[-1][0]
+    latest = real[-1][0]
     with fresh_database() as url:
         monkeypatch.setattr(
-            schema, "POSTGRES_MIGRATIONS", [*real, (baseline + 1, [PROBE_TABLE, NOT_SQL])]
+            schema, "POSTGRES_MIGRATIONS", [*real, (latest + 1, [PROBE_TABLE, NOT_SQL])]
         )
         with pytest.raises(psycopg.Error):
             migrate_postgres(url)
@@ -105,11 +105,11 @@ def test_a_failed_migration_leaves_no_partial_schema_on_postgres(
             probe = conn.execute("SELECT to_regclass('probe')").fetchone()
             recorded = conn.execute("SELECT version FROM schema_version ORDER BY 1").fetchall()
         assert probe == (None,)
-        assert [row[0] for row in recorded] == [baseline]
+        assert [row[0] for row in recorded] == [version for version, _ in real]
 
         # A later run retries the same migration, here with the fault gone.
-        monkeypatch.setattr(schema, "POSTGRES_MIGRATIONS", [*real, (baseline + 1, [PROBE_TABLE])])
-        assert migrate_postgres(url) == (baseline, baseline + 1)
+        monkeypatch.setattr(schema, "POSTGRES_MIGRATIONS", [*real, (latest + 1, [PROBE_TABLE])])
+        assert migrate_postgres(url) == (latest, latest + 1)
 
 
 def test_a_failed_migration_closes_the_connection(

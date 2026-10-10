@@ -227,7 +227,10 @@ run the update once more. One text for both dialects, naming no tenant.
 
 An unknown track is `kind="refused"`, message `unknown track`, on both:
 the seam maps the Postgres foreign key on `jobs.track_id` to the SQLite
-trigger's text. A Postgres error's message is the server's primary
+trigger's text. After spec 105's migration 10 that key is the composite
+`(owner_id, track_id)` reference to `tracks (owner_id, id)`, so the mapping
+matches it by the constraint spec 105 names, not by the baseline's
+single-column key (note added by spec 105, 2026-10-10). A Postgres error's message is the server's primary
 message, never its `DETAIL`, which quotes the row's values. Every probe in
 spec 103's parity table that is refused raises the same class, kind and
 message on both stores.

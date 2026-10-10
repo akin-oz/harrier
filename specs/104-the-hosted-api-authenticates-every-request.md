@@ -397,6 +397,15 @@ same property.
   between statements: the read-back in step 3 differs, the request is
   answered 500, and no domain statement runs.
 - **A route reaches `get_conn` without claims.** 500, nothing opened.
+- **A request's transaction runs as the table owner or as `service_role`.**
+  Added 2026-10-10 from spec 105. Row security does not apply to a role
+  with `BYPASSRLS`, so such a request would see and write every owner's
+  rows, and the database cannot refuse it (spec 105 proves the bypass,
+  `services/api/tests/test_owner_policy.py::test_a_bypassrls_role_sees_every_owner`). The guards are this
+  spec's: start refuses a login role that can bypass (The login role), and
+  step 3's read-back answers 500 when `current_user` is not
+  `authenticated`. Spec 105's catalog test refuses an `authenticated` role
+  with `BYPASSRLS`. The criterion below proves the result inside a request.
 - **Another owner's run id.** 404 `run not found`.
 - **Starting a run hosted.** 501 until spec 106.
 - **A token in the query string.** Not read; without a header the request
@@ -488,6 +497,9 @@ The request transaction (Postgres tests, run in CI as spec 103 requires):
 - [ ] Inside a request, `current_user` is `authenticated`, `auth.uid()` is
       the token's `sub`, and `auth.jwt()` is its payload
       (planned test_the_request_transaction_runs_as_its_user).
+- [ ] Added 2026-10-10 from spec 105: inside a request, `current_user` is
+      `authenticated` and its `rolbypassrls` in `pg_roles` is false
+      (planned test_a_request_never_runs_as_a_bypassrls_role).
 - [ ] After the request, the same pooled connection reports the login role
       and no claims (planned test_identity_ends_with_the_request).
 - [ ] A connection in autocommit mode is detected by the read-back: 500,
