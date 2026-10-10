@@ -58,8 +58,10 @@ ADR-008). There is no encrypted-in-repo class.
 
 - All personal data (candidate profile, resume truth sources, bullet pool,
   application narrative, interview prep, tracker rows, contacts) lives in the
-  local database or local files, never in git in any form. Never paste its
-  contents into public files, fixtures, tests, code, or commit messages.
+  local database or local files, or, in the hosted deployment, in the owner's
+  rows and storage objects under row-level policy (ADR-013). It is never in
+  git in any form. Never paste its contents into public files, fixtures,
+  tests, code, or commit messages.
 - Live credentials never enter git. `.env` and OAuth material stay local;
   committed `.example` files document shapes with placeholder values only.
 - Generated artifacts, reports, state, logs, and backups are never-in-git.
@@ -108,8 +110,10 @@ rewrite. Changing any of them requires an explicit spec.
   hyphen with spaces on both sides, as punctuation (spec 071).
 - **Verified content only.** Resume and answer content comes from the verified truth
   sources. AI selects and orders; it never invents claims.
-- **Local-first.** No cloud dependencies beyond Apify, the AI providers, Telegram,
-  Gmail API, and Hunter. All LLM calls go through the provider seam in
+- **Local-first.** The local product has no cloud dependencies beyond Apify, the AI
+  providers, Telegram, Gmail API, and Hunter. The hosted deployment (ADR-013) adds
+  Supabase, Fly.io and Vercel, and offers only the API LLM providers. All LLM calls
+  go through the provider seam in
   `services/api/src/harrier/llm/`, selected by env (`AI_PROVIDER`), pluggable across
   codex-cli, claude-cli, openai-api, anthropic-api.
 
@@ -957,8 +961,10 @@ ADR-008). There is no encrypted-in-repo class.
 
 - All personal data (candidate profile, resume truth sources, bullet pool,
   application narrative, interview prep, tracker rows, contacts) lives in the
-  local database or local files, never in git in any form. Never paste its
-  contents into public files, fixtures, tests, code, or commit messages.
+  local database or local files, or, in the hosted deployment, in the owner's
+  rows and storage objects under row-level policy (ADR-013). It is never in
+  git in any form. Never paste its contents into public files, fixtures,
+  tests, code, or commit messages.
 - Live credentials never enter git. `.env` and OAuth material stay local;
   committed `.example` files document shapes with placeholder values only.
 - Generated artifacts, reports, state, logs, and backups are never-in-git.
@@ -1007,8 +1013,10 @@ rewrite. Changing any of them requires an explicit spec.
   hyphen with spaces on both sides, as punctuation (spec 071).
 - **Verified content only.** Resume and answer content comes from the verified truth
   sources. AI selects and orders; it never invents claims.
-- **Local-first.** No cloud dependencies beyond Apify, the AI providers, Telegram,
-  Gmail API, and Hunter. All LLM calls go through the provider seam in
+- **Local-first.** The local product has no cloud dependencies beyond Apify, the AI
+  providers, Telegram, Gmail API, and Hunter. The hosted deployment (ADR-013) adds
+  Supabase, Fly.io and Vercel, and offers only the API LLM providers. All LLM calls
+  go through the provider seam in
   `services/api/src/harrier/llm/`, selected by env (`AI_PROVIDER`), pluggable across
   codex-cli, claude-cli, openai-api, anthropic-api.
 
