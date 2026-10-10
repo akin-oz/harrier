@@ -1,8 +1,8 @@
 ---
 spec: 112
 title: The tracker domain runs on either store
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [076, 079, 090, 092, 103, 105]
 ---
