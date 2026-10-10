@@ -1,8 +1,8 @@
 ---
 spec: 110
 title: Deploy pipeline and environments
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [103, 104, 105]
 ---

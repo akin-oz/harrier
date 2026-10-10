@@ -58,7 +58,7 @@ from harrier.resume.content import (
     load_skill_vocabulary,
     load_truth_sources,
 )
-from harrier.tracks import rules_for
+from harrier.tracks import Scope, rules_for
 from harrier.voices import assemble
 
 logger = logging.getLogger(__name__)
@@ -345,8 +345,10 @@ def build_answers_payload(
     tracker_row: dict[str, str] | None = None,
     jd_text: str | None = None,
     brief: Brief = EMPTY_BRIEF,
+    *,
+    scope: Scope,
 ) -> dict[str, object]:
-    profile = load_profile_json(conn)
+    profile = load_profile_json(conn, scope)
     candidate = load_candidate_document(conn)
     sources = load_truth_sources(conn)
     candidate_block_raw = candidate.get("candidate")
@@ -375,7 +377,7 @@ def build_answers_payload(
             "resume_truth_source_md": sources.truth_text,
             "latest_project_achievements_md": sources.achievements_text,
             "candidate_json": candidate,
-            "application_profile_md": load_profile_markdown(conn),
+            "application_profile_md": load_profile_markdown(conn, scope),
             "application_profile_json": profile,
         },
     }
@@ -517,8 +519,11 @@ def generate_answer_set(
     jd_text: str | None = None,
     brief: Brief = EMPTY_BRIEF,
     *,
-    kind: str,
+    scope: Scope,
 ) -> list[AnswerDraft]:
+    """Answers for a job on the scope's track: its kind's prompt, its own
+    application profile, and every check (specs 065, 101)."""
+    kind = scope.track.kind
     flags = requirement_flags(jd_text or "", brief.employer_guidance)
     candidate = load_candidate_document(conn)
     built: dict[int, AnswerDraft] = {}
@@ -541,15 +546,18 @@ def generate_answer_set(
         tracker_row=tracker_row,
         jd_text=jd_text,
         brief=brief,
+        scope=scope,
     )
     prompt = (
         answers_prompt(kind)
-        + style_guidance_prompt(load_profile_json(conn))
+        + style_guidance_prompt(load_profile_json(conn, scope))
         + brief_instructions(brief, "answers")
     )
     output_text = request_answers(prompt, payload)
     try:
-        drafts = _checked_answers(conn, output_text, company, role, model_questions, jd_text, brief)
+        drafts = _checked_answers(
+            conn, output_text, company, role, model_questions, jd_text, brief, scope
+        )
     except ClaimCheckError as refusal:
         # One retry that says what failed (spec 085). The whole set is asked
         # for again, because a violation does not say which answer it is from.
@@ -557,7 +565,9 @@ def generate_answer_set(
             "answers refused on attempt 1, retrying once: %s", "; ".join(refusal.violations)
         )
         output_text = request_answers(prompt, retry_payload(payload, refusal, output_text))
-        drafts = _checked_answers(conn, output_text, company, role, model_questions, jd_text, brief)
+        drafts = _checked_answers(
+            conn, output_text, company, role, model_questions, jd_text, brief, scope
+        )
 
     model_drafts = iter(drafts)
     return [
@@ -573,6 +583,7 @@ def _checked_answers(
     model_questions: list[str],
     jd_text: str | None,
     brief: Brief,
+    scope: Scope,
 ) -> list[AnswerDraft]:
     """One response parsed and put through every check. Raises
     `ClaimCheckError` with every violation when it is refused."""
@@ -604,7 +615,7 @@ def _checked_answers(
         company=company,
         role=role,
         vocabulary=load_skill_vocabulary(conn),
-        profile=profile_text(conn),
+        profile=profile_text(conn, scope),
     )
     forbidden_phrases = load_forbidden_phrases(conn)
     violations: list[str] = []

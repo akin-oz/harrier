@@ -32,6 +32,7 @@ from harrier.tracker import list_jobs
 from harrier.tracker.reasons import CANDIDATE, COMPANY, SYSTEM, codes_for
 from harrier.tracker.selector import SelectorError
 from harrier.tracker.store import TrackerError
+from harrier.tracks import DEFAULT_TRACK_ID
 from harrier.tracks import Scope as TrackScope
 from harrier_api.capture_routes import capture_router
 from harrier_api.demo import demo_db_path, is_demo_mode, seed_demo_db
@@ -557,6 +558,7 @@ class ArtifactOut(BaseModel):
 
 APPLY_ERRORS: dict[int | str, dict[str, str]] = {
     404: {"description": "no job matched the selector"},
+    409: {"description": "application documents from the browser are the default track's"},
     **TOKEN_RESPONSES,
 }
 
@@ -576,13 +578,27 @@ def _job_id_for(conn: sqlite3.Connection, scope: TrackScope, selector: str) -> i
 
 
 def _apply_params(
-    conn: sqlite3.Connection, scope: TrackScope, selector: str, text: str, *, no_ai: bool
+    conn: sqlite3.Connection,
+    scope: TrackScope,
+    operation: str,
+    selector: str,
+    text: str,
+    *,
+    no_ai: bool,
 ) -> RunParams:
-    """Resolve the selector and stage the free text, in that order.
+    """Refuse another track, resolve the selector and stage the free text, in
+    that order.
 
     The order matters: staging first would write a file for a job that does
     not exist, and nothing would ever consume or remove it.
     """
+    if scope.track.id != DEFAULT_TRACK_ID:
+        # These run on an academic track from the command line (spec 101);
+        # from the browser they are the default track's, as `discover` is
+        # (spec 095).
+        raise HTTPException(
+            status_code=409, detail=f"{operation} is not available on track {scope.track.slug}"
+        )
     job_id = _job_id_for(conn, scope, selector)
     stripped = text.strip()
     return RunParams(
@@ -606,7 +622,7 @@ async def tailor_resume(
     manager: Manager,
 ) -> RunOut:
     """The same `tailor` verb the CLI runs, as a run (spec 047)."""
-    params = _apply_params(conn, scope, selector, body.jd_text, no_ai=body.no_ai)
+    params = _apply_params(conn, scope, "tailor", selector, body.jd_text, no_ai=body.no_ai)
     return run_out(await manager.start("tailor", params))
 
 
@@ -623,7 +639,7 @@ async def draft_cover_letter(
     scope: Annotated[TrackScope, Depends(scope_for("cover-letter"))],
     manager: Manager,
 ) -> RunOut:
-    params = _apply_params(conn, scope, selector, body.notes, no_ai=False)
+    params = _apply_params(conn, scope, "cover-letter", selector, body.notes, no_ai=False)
     return run_out(await manager.start("cover-letter", params))
 
 
@@ -640,7 +656,7 @@ async def draft_answers(
     scope: Annotated[TrackScope, Depends(scope_for("answers"))],
     manager: Manager,
 ) -> RunOut:
-    params = _apply_params(conn, scope, selector, body.questions, no_ai=False)
+    params = _apply_params(conn, scope, "answers", selector, body.questions, no_ai=False)
     return run_out(await manager.start("answers", params))
 
 
@@ -657,7 +673,7 @@ async def evaluate_offer_route(
     scope: Annotated[TrackScope, Depends(scope_for("evaluate"))],
     manager: Manager,
 ) -> RunOut:
-    params = _apply_params(conn, scope, selector, body.jd_text, no_ai=False)
+    params = _apply_params(conn, scope, "evaluate", selector, body.jd_text, no_ai=False)
     return run_out(await manager.start("evaluate", params))
 
 

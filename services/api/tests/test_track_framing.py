@@ -100,11 +100,13 @@ def at_version_ten(path: Path) -> None:
 
 
 def test_migration_11_keeps_every_document_and_owns_the_framing(
-    data_dir: Path, tmp_path: Path
+    data_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     data_dir.mkdir(parents=True)
     path = data_dir / "tracker.db"
     at_version_ten(path)
+    # Through 11 only: 12 gives the application profile to a track (spec 101).
+    monkeypatch.setattr(schema, "MIGRATIONS", [m for m in schema.MIGRATIONS if m[0] <= 11])
     conn = connect(path)
     try:
         assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] >= 11
@@ -147,8 +149,9 @@ def test_migration_11_owns_the_framing_on_postgres(monkeypatch: pytest.MonkeyPat
                         "VALUES (%s, %s, %s, %s, %s)",
                         (kind, name, fmt, content, updated_at),
                     )
-        monkeypatch.setattr(schema, "POSTGRES_MIGRATIONS", real)
-        assert migrate_postgres(url)[1] >= 11
+        # Through 11 only: 12 gives the application profile to a track (spec 101).
+        monkeypatch.setattr(schema, "POSTGRES_MIGRATIONS", [m for m in real if m[0] <= 11])
+        assert migrate_postgres(url)[1] == 11
         with psycopg.connect(url, autocommit=True) as conn:
             found = conn.execute(
                 "SELECT owner_id::text, kind, track_id, content FROM profile_documents"

@@ -1,8 +1,8 @@
 ---
 spec: 111
 title: Sign-up, export and deletion
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [104, 105, 107]
 ---

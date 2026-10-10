@@ -1,8 +1,8 @@
 ---
 spec: 107
 title: Artifacts and run state in Storage
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [105, 106]
 ---

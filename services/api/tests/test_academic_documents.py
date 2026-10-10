@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from resume_support import REPO_ROOT, example_bundle_raw, store_example
+from resume_support import REPO_ROOT, example_bundle_raw, example_documents, store_example
 from test_apply_claims import (
     CHECKOUT,
     COMPANY,
@@ -142,12 +142,30 @@ def _capture(monkeypatch: pytest.MonkeyPatch, module: object, response: str) -> 
     return seen
 
 
+def _scope_of_kind(conn: sqlite3.Connection, kind: str) -> Scope:
+    """The default track for the industry kind; otherwise a new track of the
+    kind, holding a copy of the default track's application profile, which
+    every track owns for itself (spec 101)."""
+    if kind == "industry":
+        return default_scope(conn)
+    add_track(conn, "lab", kind, "Example lab search")
+    scope = resolve_scope(conn, "lab")
+    rows = conn.execute(
+        "SELECT name, format, content FROM profile_documents "
+        "WHERE kind = 'application_profile' AND track_id = 1"
+    ).fetchall()
+    for name, fmt, content in rows:
+        put_document(conn, "application_profile", name, fmt, content, track_id=scope.track.id)
+    return scope
+
+
 @pytest.mark.parametrize("kind", TRACK_KINDS)
 def test_each_generator_sends_its_kinds_prompt(
     kind: str, db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    scope = _scope_of_kind(db, kind)
     letters = _capture(monkeypatch, letters_module, letter_json())
-    letters_module.generate_cover_letter(db, COMPANY, ROLE, jd_text=POSTING, kind=kind)
+    letters_module.generate_cover_letter(db, COMPANY, ROLE, jd_text=POSTING, scope=scope)
     assert letters == [letters_module.letter_prompt(kind)]
 
     claims = [candidate(CHECKOUT, "Built the checkout flow in TypeScript and React")]
@@ -155,12 +173,12 @@ def test_each_generator_sends_its_kinds_prompt(
         monkeypatch, answers_module, json.dumps({"answers": [answer(CHECKOUT, claims)]})
     )
     answers_module.generate_answer_set(
-        db, COMPANY, ROLE, ["What relevant experience do you have?"], jd_text=POSTING, kind=kind
+        db, COMPANY, ROLE, ["What relevant experience do you have?"], jd_text=POSTING, scope=scope
     )
     assert answers[0].startswith(answers_module.answers_prompt(kind))
 
     store_example(db)
-    bundle = load_bundle(db)
+    bundle = load_bundle(db, default_scope(db))
     ranking = _capture(monkeypatch, ai_module, "{}")
     ai_module.build_ai_tailored_content(
         bundle, load_truth_sources(db), "a posting", "Example Co", "Engineer", kind=kind
@@ -283,6 +301,11 @@ def _tailor_job(
     title: str = "Research Software Engineer",
 ) -> int:
     store_example(conn)
+    if scope.track.id != default_scope(conn).track.id:
+        # A non-default track reads only a framing of its own (spec 099).
+        framing = json.dumps(example_documents()[1])
+        name = f"{scope.track.kind}.json"
+        put_document(conn, "resume_framing", name, "json", framing, track_id=scope.track.id)
     pool = cast("dict[str, str]", example_bundle_raw()["bullet_pool"])
     put_document(conn, "resume_truth", "truth.md", "markdown", "\n".join(pool.values()))
     return add_job(

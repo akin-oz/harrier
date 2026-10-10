@@ -2262,7 +2262,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description the track may not run this operation, or it is archived */
+            /** @description application documents from the browser are the default track's */
             409: {
                 headers: {
                     [name: string]: unknown;

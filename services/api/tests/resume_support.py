@@ -22,6 +22,7 @@ from harrier.resume.documents import (
     merge_documents,
     split_document,
 )
+from harrier.tracks import DEFAULT_TRACK_ID, Scope, Track
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FACTS_EXAMPLE = REPO_ROOT / "config" / "resume-facts.example.json"
@@ -60,3 +61,17 @@ def store_resume(conn: sqlite3.Connection, raw: dict[str, object]) -> None:
 
 def store_example(conn: sqlite3.Connection) -> None:
     store_documents(conn, *example_documents())
+
+
+# The default track as migration 8 seeds it, for a call that needs a scope
+# without opening a database to resolve one.
+DEFAULT_SCOPE = Scope(
+    track=Track(
+        id=DEFAULT_TRACK_ID,
+        slug="job",
+        kind="industry",
+        label="Job search",
+        created_at="",
+        archived_at="",
+    )
+)

@@ -1,8 +1,8 @@
 ---
 spec: 106
 title: Tenant credentials and run isolation
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [104, 105]
 ---

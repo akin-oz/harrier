@@ -238,12 +238,28 @@ NON_DEFAULT_OPERATIONS: frozenset[str] = frozenset(
         # Spec 099: the track's own resume framing over the shared facts.
         "profile put",
         "profile check",
+        # Spec 101: application documents from the track's own framing and
+        # application profile, through the same truth and claims gates.
+        "tailor",
+        "cover-letter",
+        "answers",
     }
 )
 
 # The allowed operations that write a tracker row; an archived track refuses them.
 WRITE_OPERATIONS: frozenset[str] = frozenset(
-    {"add", "shortlist", "track", "applied", "interviewing", "reject", "discover", "profile put"}
+    {
+        "add",
+        "shortlist",
+        "track",
+        "applied",
+        "interviewing",
+        "reject",
+        "discover",
+        "profile put",
+        # Spec 079: a CV that passes its gate moves the row.
+        "tailor",
+    }
 )
 
 

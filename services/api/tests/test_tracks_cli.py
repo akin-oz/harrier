@@ -241,15 +241,14 @@ def test_academic_queue_orders_by_nearest_open_deadline(
 
 # `discover` and `reconsider` left this list with spec 097: an academic
 # track discovers from its own search and reconsiders its own seen state.
+# `tailor`, `cover-letter` and `answers` left it with spec 101: an academic
+# track writes its own documents through the same gates.
 REFUSED: list[list[str]] = [
     ["reevaluate", "1"],
     ["evaluate-prospects"],
     ["scoring", "train"],
     ["scoring", "export"],
     ["find-contacts", "--job-id", "1"],
-    ["tailor", "--job-id", "1"],
-    ["cover-letter", "--job-id", "1"],
-    ["answers", "--job-id", "1"],
     ["evaluate", "--job-id", "1"],
     ["outreach-draft", "--job-id", "1"],
     ["company-outcome", "1", "ghosted"],
@@ -412,8 +411,10 @@ def test_academic_commands_read_no_profile_document(
     (spec 097 narrows spec 093 to that one row). Logging setup's redaction
     read is the one shared read by design, named in the spec, and is left
     out of what is traced here. `profile put` and `profile check` read the
-    track's resume content by design (spec 099) and are not run here; their
-    reads are pinned in test_track_framing.py."""
+    track's resume content by design (spec 099), and `tailor`,
+    `cover-letter` and `answers` read the track's own framing and application
+    profile (spec 101); they are not run here, and their reads are pinned in
+    test_track_framing.py and test_academic_documents.py."""
     assert add_position("Example Lab") == 0
     conn = connect()
     try:

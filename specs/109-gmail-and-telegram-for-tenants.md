@@ -1,8 +1,8 @@
 ---
 spec: 109
 title: Gmail and Telegram for tenants
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [106]
 ---

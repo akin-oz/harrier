@@ -439,6 +439,17 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
             """,
         ],
     ),
+    (
+        12,
+        [
+            # The application profile is a track's own, like its framing
+            # (spec 101). The only one that can exist is the default track's.
+            """
+            UPDATE profile_documents SET track_id = 1
+            WHERE kind = 'application_profile' AND track_id IS NULL
+            """,
+        ],
+    ),
 ]
 
 # --- Postgres (spec 103, ADR-013) ---
@@ -920,6 +931,14 @@ POSTGRES_MIGRATIONS: list[tuple[int, list[str]]] = [
     (POSTGRES_BASELINE_VERSION, POSTGRES_BASELINE),
     (10, POSTGRES_OWNERS),
     (11, POSTGRES_TRACK_OWNED_DOCUMENTS),
+    # Spec 101: SQLite's migration 12. Every owner has a track 1 (migration 10).
+    (
+        12,
+        [
+            "UPDATE profile_documents SET track_id = 1 "
+            "WHERE kind = 'application_profile' AND track_id IS NULL",
+        ],
+    ),
 ]
 
 

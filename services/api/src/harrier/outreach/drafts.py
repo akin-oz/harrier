@@ -34,6 +34,7 @@ from harrier.outreach.messages import (
 )
 from harrier.resume.content import load_truth_sources
 from harrier.screening.descriptions import load_cached_description
+from harrier.tracks import default_scope
 
 logger = logging.getLogger(__name__)
 
@@ -251,8 +252,9 @@ def generate_ai_outreach(
             "resume_truth_source_md": sources.truth_text,
             "latest_project_achievements_md": sources.achievements_text,
             "candidate_json": load_candidate_document(conn),
-            "application_profile_md": load_profile_markdown(conn),
-            "application_profile_json": load_profile_json(conn),
+            # Outreach runs on the default track only (spec 093).
+            "application_profile_md": load_profile_markdown(conn, default_scope(conn)),
+            "application_profile_json": load_profile_json(conn, default_scope(conn)),
         },
     }
     try:

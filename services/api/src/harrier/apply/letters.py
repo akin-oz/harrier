@@ -57,7 +57,7 @@ from harrier.resume.content import (
 )
 from harrier.resume.markdown import normalize_visible_role_title, normalize_visible_url_text
 from harrier.resume.pdf import render_pdf, render_validated_pdf, validate_rendered_pdf
-from harrier.tracks import rules_for
+from harrier.tracks import Scope, rules_for
 from harrier.voices import assemble
 
 logger = logging.getLogger(__name__)
@@ -211,6 +211,8 @@ def build_cover_letter_payload(
     jd_text: str | None = None,
     extra_notes: str | None = None,
     brief: Brief = EMPTY_BRIEF,
+    *,
+    scope: Scope,
 ) -> dict[str, object]:
     tracker_metadata = None
     if tracker_row:
@@ -246,8 +248,8 @@ def build_cover_letter_payload(
             "resume_truth_source_md": sources.truth_text,
             "latest_project_achievements_md": sources.achievements_text,
             "candidate_json": candidate,
-            "application_profile_md": load_profile_markdown(conn),
-            "application_profile_json": load_profile_json(conn),
+            "application_profile_md": load_profile_markdown(conn, scope),
+            "application_profile_json": load_profile_json(conn, scope),
         },
     }
 
@@ -380,8 +382,11 @@ def generate_cover_letter(
     extra_notes: str | None = None,
     brief: Brief = EMPTY_BRIEF,
     *,
-    kind: str,
+    scope: Scope,
 ) -> LetterDraft:
+    """The letter for a job on the scope's track: its kind's prompt, its own
+    application profile, and every check (specs 065, 101)."""
+    kind = scope.track.kind
     payload = build_cover_letter_payload(
         conn,
         company,
@@ -391,11 +396,12 @@ def generate_cover_letter(
         jd_text=jd_text,
         extra_notes=extra_notes,
         brief=brief,
+        scope=scope,
     )
     system_prompt = letter_prompt(kind) + brief_instructions(brief, "letter")
     output_text = _request_letter(system_prompt, payload)
     try:
-        return _checked_letter(conn, output_text, company, role, jd_text, brief, kind)
+        return _checked_letter(conn, output_text, company, role, jd_text, brief, scope)
     except ClaimCheckError as refusal:
         # One retry that says what failed (spec 085). Parse and transport
         # failures are not refusals and are not caught here.
@@ -403,7 +409,7 @@ def generate_cover_letter(
             "cover letter refused on attempt 1, retrying once: %s", "; ".join(refusal.violations)
         )
         output_text = _request_letter(system_prompt, retry_payload(payload, refusal, output_text))
-    return _checked_letter(conn, output_text, company, role, jd_text, brief, kind)
+    return _checked_letter(conn, output_text, company, role, jd_text, brief, scope)
 
 
 def _request_letter(system_prompt: str, payload: dict[str, object]) -> str:
@@ -425,7 +431,7 @@ def _checked_letter(
     role: str,
     jd_text: str | None,
     brief: Brief,
-    kind: str,
+    scope: Scope,
 ) -> LetterDraft:
     """One response parsed and put through every check. Raises
     `ClaimCheckError` with every violation when it is refused."""
@@ -439,7 +445,7 @@ def _checked_letter(
         "full_version": normalize_cover_letter_text(parsed["full_version"], is_full=True),
     }
     texts = [letter["short_version"], letter["full_version"]]
-    violations = cover_letter_violations(letter, brief.letter, kind=kind)
+    violations = cover_letter_violations(letter, brief.letter, kind=scope.track.kind)
     violations.extend(
         f"named a redacted name: {name}"
         for name in never_name_hits(brief.never_name, "\n".join(texts))
@@ -456,7 +462,7 @@ def _checked_letter(
         company=company,
         role=role,
         vocabulary=load_skill_vocabulary(conn),
-        profile=profile_text(conn),
+        profile=profile_text(conn, scope),
     )
     violations.extend(check_claims(texts, claims, context))
     if violations:

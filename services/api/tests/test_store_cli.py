@@ -126,13 +126,13 @@ def test_store_refuses_a_postgres_store_ahead_of_the_code(
     import psycopg
 
     with psycopg.connect(pg_url, autocommit=True) as conn:
-        conn.execute("INSERT INTO schema_version (version) VALUES (12)")
+        conn.execute("INSERT INTO schema_version (version) VALUES (99)")
 
     for command in ("status", "migrate"):
         code, out, err = run(["store", command], capsys)
         assert (code, out) == (1, ""), command
         assert err.startswith("error: "), command
-        assert "version 12" in err and f"({POSTGRES_LATEST})" in err, command
+        assert "version 99" in err and f"({POSTGRES_LATEST})" in err, command
 
 
 def test_store_commands_on_sqlite(sqlite_store: Path, capsys: pytest.CaptureFixture[str]) -> None:

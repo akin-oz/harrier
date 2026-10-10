@@ -344,7 +344,7 @@ def _cmd_profile_split_resume(args: argparse.Namespace) -> int:
 
 
 def _cmd_profile_put(args: argparse.Namespace) -> int:
-    from harrier.resume.framing import put_framing
+    from harrier.resume.framing import put_application_profile, put_framing
 
     path = Path(args.file)
     try:
@@ -355,7 +355,11 @@ def _cmd_profile_put(args: argparse.Namespace) -> int:
         print(f"profile put failed: cannot read --file: {error}", file=sys.stderr)
         return 1
     with closing(connect()) as conn:
-        outcome = put_framing(conn, _scope(conn, args), text)
+        scope = _scope(conn, args)
+        if args.kind == "application_profile":
+            outcome = put_application_profile(conn, scope, path.suffix, text)
+        else:
+            outcome = put_framing(conn, scope, text)
     stream = sys.stdout if outcome.exit_code == 0 else sys.stderr
     for line in outcome.lines:
         print(line, file=stream)
@@ -474,7 +478,7 @@ def _cmd_cover_letter(args: argparse.Namespace) -> int:
                 jd_text=jd_text,
                 extra_notes=notes,
                 brief=brief,
-                kind=scope.track.kind,
+                scope=scope,
             )
             artifacts = write_cover_letter_artifacts(
                 conn,
@@ -535,7 +539,7 @@ def _cmd_answers(args: argparse.Namespace) -> int:
                 tracker_row=row,
                 jd_text=jd_text,
                 brief=brief,
-                kind=scope.track.kind,
+                scope=scope,
             )
             content = render_markdown(
                 row.get("company", ""),
@@ -2384,10 +2388,17 @@ def build_parser() -> argparse.ArgumentParser:
     profile_split.set_defaults(func=_cmd_profile_split_resume)
 
     profile_put = profile_sub.add_parser(
-        "put", help="store the track's resume framing, checked against the facts (spec 099)"
+        "put",
+        help="store the track's resume framing or application profile (specs 099, 101)",
     )
-    profile_put.add_argument("kind", choices=["resume_framing"], help="the document kind")
-    profile_put.add_argument("--file", required=True, help="a JSON file holding the framing")
+    profile_put.add_argument(
+        "kind", choices=["resume_framing", "application_profile"], help="the document kind"
+    )
+    profile_put.add_argument(
+        "--file",
+        required=True,
+        help="the framing as JSON, or the application profile as .md or .json",
+    )
     profile_put.set_defaults(func=_cmd_profile_put)
 
     profile_check = profile_sub.add_parser(
