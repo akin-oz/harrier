@@ -103,7 +103,9 @@ def run_tailor(
 
     # Skills the candidate confirmed in this job's brief count for this job
     # only (spec 071 O9).
-    bundle = with_confirmed_skills(load_bundle(conn), load_brief(conn, job_id).confirmed_skills)
+    bundle = with_confirmed_skills(
+        load_bundle(conn, scope), load_brief(conn, job_id).confirmed_skills
+    )
     sources = load_truth_sources(conn)
 
     plan = build_content_plan(bundle, jd_text or "", requested_role)

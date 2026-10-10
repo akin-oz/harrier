@@ -42,7 +42,8 @@ class ApplicationProfileError(ValueError):
 
 def _document(conn: sqlite3.Connection, kind: str, fmt: str) -> str | None:
     row = conn.execute(
-        "SELECT content FROM profile_documents WHERE kind = ? AND format = ? ORDER BY name LIMIT 1",
+        "SELECT content FROM profile_documents "
+        "WHERE kind = ? AND format = ? AND track_id IS NULL ORDER BY name LIMIT 1",
         (kind, fmt),
     ).fetchone()
     return str(row[0]) if row is not None else None
@@ -53,7 +54,7 @@ def profile_text(conn: sqlite3.Connection) -> str:
     stored. Read only to name where misattributed evidence came from
     (spec 069), so it neither parses nor raises."""
     rows = conn.execute(
-        "SELECT content FROM profile_documents WHERE kind = ? ORDER BY name",
+        "SELECT content FROM profile_documents WHERE kind = ? AND track_id IS NULL ORDER BY name",
         (APPLICATION_PROFILE_KIND,),
     ).fetchall()
     return "\n".join(str(row[0]) for row in rows)

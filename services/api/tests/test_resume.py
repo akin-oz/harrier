@@ -1120,7 +1120,9 @@ def test_failing_pdf_gate_leaves_tracker_row_unchanged(tailor_env: int) -> None:
 
 def _seed_earlier_resume(conn: Any) -> dict[str, Path]:
     """The PDF, HTML and evaluation a successful earlier run left for the job."""
-    paths = resume_paths_for(load_bundle(conn).name, "Example Co", "Senior Frontend Engineer")
+    paths = resume_paths_for(
+        load_bundle(conn, default_scope(conn)).name, "Example Co", "Senior Frontend Engineer"
+    )
     paths["pdf"].parent.mkdir(parents=True, exist_ok=True)
     paths["pdf"].write_bytes(b"%PDF-1.4 earlier run")
     paths["html"].write_text("<html>earlier run</html>", encoding="utf-8")

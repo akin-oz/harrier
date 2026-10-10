@@ -294,6 +294,8 @@ class ProfileDocumentOut(BaseModel):
     name: str
     format: str
     updated_at: str
+    # `shared`, or `track <slug>` for a document one track owns (spec 099).
+    owner: str
 
 
 @ops_router.get("/ops/profile", operation_id="listProfileDocuments")

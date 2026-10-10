@@ -68,10 +68,11 @@ def test_store_migrate_prints_before_and_after_on_postgres(
 ) -> None:
     monkeypatch.setenv(URL_VARIABLE, pg_url)
 
-    # Spec 105 names the numbers: the baseline (9) and migration 10.
-    assert run(["store", "migrate"], capsys) == (0, "postgres 0 -> 10\n", "")
-    assert run(["store", "migrate"], capsys) == (0, "postgres 10 -> 10\n", "")
-    assert run(["store", "status"], capsys) == (0, "postgres 10\n", "")
+    # The newest migration, whichever spec added it (105, then 099).
+    assert run(["store", "migrate"], capsys) == (0, f"postgres 0 -> {POSTGRES_LATEST}\n", "")
+    latest = f"postgres {POSTGRES_LATEST} -> {POSTGRES_LATEST}\n"
+    assert run(["store", "migrate"], capsys) == (0, latest, "")
+    assert run(["store", "status"], capsys) == (0, f"postgres {POSTGRES_LATEST}\n", "")
     # The Postgres path never touches the local file.
     assert not default_db_path().exists()
 

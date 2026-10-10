@@ -411,7 +411,9 @@ def test_academic_commands_read_no_profile_document(
     the only configuration row any of them reads is `discover`'s own search
     (spec 097 narrows spec 093 to that one row). Logging setup's redaction
     read is the one shared read by design, named in the spec, and is left
-    out of what is traced here."""
+    out of what is traced here. `profile put` and `profile check` read the
+    track's resume content by design (spec 099) and are not run here; their
+    reads are pinned in test_track_framing.py."""
     assert add_position("Example Lab") == 0
     conn = connect()
     try:

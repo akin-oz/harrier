@@ -170,10 +170,17 @@ def owners_seen(conn: PgConnection, table: str) -> set[UUID]:
 # --- the local store ---
 
 
-def test_the_local_schema_names_no_tenant(tmp_path: Path) -> None:
+def test_the_local_schema_names_no_tenant(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """SQLite records version 10 and changes nothing: no owner column, no
-    users table, fresh or brought forward from version 9 (ADR-012 point 3)."""
-    latest = max(version for version, _ in MIGRATIONS)
+    users table, fresh or brought forward from version 9 (ADR-012 point 3).
+    Later migrations are left out, so "nothing else" is migration 10's; a
+    fresh store at the newest version names no tenant either."""
+    with closing(connect(tmp_path / "newest.db")) as conn:
+        for table in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'"):
+            columns = {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table[0]})")}
+            assert not columns & {"owner_id", "owner", "tenant_id"}, table[0]
+    monkeypatch.setattr(schema, "MIGRATIONS", [(v, s) for v, s in MIGRATIONS if v <= 10])
+    latest = 10
     at_nine = tmp_path / "nine.db"
     with closing(sqlite3.connect(at_nine)) as raw:
         raw.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
@@ -594,10 +601,17 @@ UNIQUENESS_RULES: tuple[tuple[str, str, str], ...] = (
         "INSERT INTO user_config (kind) VALUES ('watchlist')",
         "INSERT INTO user_config (kind) VALUES ('watchlist')",
     ),
+    # A shared document and a track's own, each unique per owner (spec 099
+    # replaced the one constraint with these two partial indexes).
     (
-        "profile_documents_owner_id_kind_name_key",
+        "idx_profile_documents_shared",
         "INSERT INTO profile_documents (kind, name) VALUES ('truth', 'synthetic')",
         "INSERT INTO profile_documents (kind, name) VALUES ('truth', 'synthetic')",
+    ),
+    (
+        "idx_profile_documents_owned",
+        "INSERT INTO profile_documents (kind, name, track_id) VALUES ('resume_framing', 'x', 1)",
+        "INSERT INTO profile_documents (kind, name, track_id) VALUES ('resume_framing', 'x', 1)",
     ),
     (
         "job_runs_pkey",

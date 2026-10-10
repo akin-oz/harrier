@@ -398,6 +398,47 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
     # The runner still records the version, so both histories keep one
     # numbering.
     (10, []),
+    (
+        11,
+        [
+            # A profile document is owned by one track or shared by all
+            # (spec 099, spec 091's design note). NULL is shared. SQLite
+            # treats NULLs as distinct in a plain UNIQUE, so uniqueness is two
+            # partial indexes. A rebuild, as migration 7, because the inline
+            # UNIQUE (kind, name) cannot be dropped. `track_id` goes last, as
+            # Postgres's ADD COLUMN puts it, so the two stores keep one column
+            # order (spec 103).
+            """
+            CREATE TABLE profile_documents_new (
+                id INTEGER PRIMARY KEY,
+                kind TEXT NOT NULL,
+                name TEXT NOT NULL,
+                format TEXT NOT NULL DEFAULT 'text',
+                content TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                track_id INTEGER REFERENCES tracks(id)
+            )
+            """,
+            # The one framing that can exist is the default track's (spec 098).
+            """
+            INSERT INTO profile_documents_new
+                (id, kind, name, format, content, updated_at, track_id)
+            SELECT id, kind, name, format, content, updated_at,
+                CASE kind WHEN 'resume_framing' THEN 1 END
+            FROM profile_documents
+            """,
+            "DROP TABLE profile_documents",
+            "ALTER TABLE profile_documents_new RENAME TO profile_documents",
+            """
+            CREATE UNIQUE INDEX idx_profile_documents_shared
+            ON profile_documents (kind, name) WHERE track_id IS NULL
+            """,
+            """
+            CREATE UNIQUE INDEX idx_profile_documents_owned
+            ON profile_documents (track_id, kind, name) WHERE track_id IS NOT NULL
+            """,
+        ],
+    ),
 ]
 
 # --- Postgres (spec 103, ADR-013) ---
@@ -592,6 +633,7 @@ OWNER_SCOPED_KEYS: dict[tuple[str, tuple[str, ...]], tuple[str, ...] | None] = {
     ("tracks", ("owner_id", "slug")): ("slug",),
     ("user_config", ("owner_id", "kind")): ("kind",),
     ("profile_documents", ("owner_id", "kind", "name")): ("kind", "name"),
+    ("profile_documents", ("owner_id", "track_id", "kind", "name")): ("track_id", "kind", "name"),
     ("job_runs", ("owner_id", "job")): ("job",),
     ("tracks", ("owner_id", "id")): ("id",),
     # What job_events references, so an event stays inside its job's owner.
@@ -848,9 +890,36 @@ POSTGRES_OWNERS: list[str] = [
     f"GRANT EXECUTE ON FUNCTION auth.uid() TO {TENANT_ROLE}",
 ]
 
+# Spec 099: SQLite's migration 11, without its rebuild, and per owner. A
+# track is (owner_id, id) since migration 10, so the reference carries the
+# owner, and each partial index leads with owner_id as every per-owner key
+# does. A shared row's NULL track_id leaves the reference unchecked.
+POSTGRES_TRACK_OWNED_DOCUMENTS: list[str] = [
+    "ALTER TABLE profile_documents ADD COLUMN track_id bigint",
+    (
+        "ALTER TABLE profile_documents ADD FOREIGN KEY (owner_id, track_id) "
+        "REFERENCES tracks (owner_id, id)"
+    ),
+    "ALTER TABLE profile_documents DROP CONSTRAINT profile_documents_owner_id_kind_name_key",
+    "UPDATE profile_documents SET track_id = 1 WHERE kind = 'resume_framing'",
+    """
+    CREATE UNIQUE INDEX idx_profile_documents_shared
+    ON profile_documents (owner_id, kind, name) WHERE track_id IS NULL
+    """,
+    """
+    CREATE UNIQUE INDEX idx_profile_documents_owned
+    ON profile_documents (owner_id, track_id, kind, name) WHERE track_id IS NOT NULL
+    """,
+    # The dropped constraint was the table's whole-table index on owner_id,
+    # which the policy's filter uses; the partial indexes cover only part of
+    # the table each (spec 105).
+    "CREATE INDEX idx_profile_documents_owner ON profile_documents(owner_id)",
+]
+
 POSTGRES_MIGRATIONS: list[tuple[int, list[str]]] = [
     (POSTGRES_BASELINE_VERSION, POSTGRES_BASELINE),
     (10, POSTGRES_OWNERS),
+    (11, POSTGRES_TRACK_OWNED_DOCUMENTS),
 ]
 
 

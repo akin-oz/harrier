@@ -222,43 +222,47 @@ keeps asserting that for them.
 
 ## Acceptance criteria
 
-- [ ] Migration 10 on a version 9 store keeps every row's id, content and
+- [x] Migration 10 on a version 9 store keeps every row's id, content and
       `updated_at`, owns `resume_framing` rows by the default track and
       shares the rest; `profile export` output for shared documents is
       byte-identical before and after
-      (planned test_migration_10_keeps_every_document_and_owns_the_framing).
-- [ ] A failure inside migration 10 leaves the store at version 9 with the
-      old table (planned test_migration_10_is_whole_or_nothing).
-- [ ] The two partial unique indexes refuse a second shared `(kind, name)`
+      (`services/api/tests/test_track_framing.py::test_migration_11_keeps_every_document_and_owns_the_framing`;
+      on Postgres, `test_migration_11_owns_the_framing_on_postgres`).
+- [x] A failure inside migration 10 leaves the store at version 9 with the
+      old table (`services/api/tests/test_track_framing.py::test_migration_11_is_whole_or_nothing`).
+- [x] The two partial unique indexes refuse a second shared `(kind, name)`
       and a second owned `(track, kind, name)`, and allow one owned and one
       shared row of the same kind and name
-      (planned test_profile_documents_unique_per_owner).
-- [ ] `put_document` refuses a shared `resume_framing` and an owned row of
-      any other kind (planned test_only_the_framing_is_owned).
-- [ ] An academic track's framing is read by `load_bundle` on that track
+      (`services/api/tests/test_track_framing.py::test_profile_documents_unique_per_owner`).
+- [x] `put_document` refuses a shared `resume_framing` and an owned row of
+      any other kind (`services/api/tests/test_track_framing.py::test_only_the_framing_is_owned`).
+- [x] An academic track's framing is read by `load_bundle` on that track
       and by no reader on any other track; the default track's bundle is
-      unchanged by it (planned test_a_track_reads_only_its_own_framing).
-- [ ] `load_bundle` on a track with no framing refuses with the message
+      unchanged by it (`services/api/tests/test_track_framing.py::test_a_track_reads_only_its_own_framing`).
+- [x] `load_bundle` on a track with no framing refuses with the message
       naming `profile put`, and never reads another track's framing
-      (planned test_no_framing_means_no_fallback).
-- [ ] `profile put resume_framing --file` stores a valid framing
+      (`services/api/tests/test_track_framing.py::test_no_framing_means_no_fallback`); two framings on one track
+      are refused (`services/api/tests/test_track_framing.py::test_two_framings_on_one_track_are_refused`).
+- [x] `profile put resume_framing --file` stores a valid framing
       byte-for-byte on the scope's track, and refuses an invalid one,
       a facts key, missing facts and an archived track, writing nothing
-      (planned test_profile_put_validates_before_it_writes).
-- [ ] `profile check` exits 0 for a valid bundle whose bullets are all
+      (`services/api/tests/test_track_framing.py::test_profile_put_validates_before_it_writes`).
+- [x] `profile check` exits 0 for a valid bundle whose bullets are all
       supported, and 1 listing the ids of unsupported bullets, printing no
-      bullet text (planned test_profile_check_reports_bullet_ids_only).
-- [ ] `profile list` shows each document's owner, and `profile export`
+      bullet text (`services/api/tests/test_track_framing.py::test_profile_check_reports_bullet_ids_only`).
+- [x] `profile list` shows each document's owner, and `profile export`
       writes owned documents under `tracks/<slug>/`
-      (planned test_profile_list_and_export_show_the_owner).
-- [ ] `test_academic_commands_read_no_profile_document` passes with
-      `profile put` and `profile check` named as the exceptions.
-- [ ] `tailor` on the demo job produces the same markdown before and after
-      migration 10 (planned test_tailored_markdown_is_unchanged_by_ownership).
-- [ ] `profile put` and `profile check` are placed in `COMMAND_CLASSES`;
+      (`services/api/tests/test_track_framing.py::test_profile_list_and_export_show_the_owner`).
+- [x] `test_academic_commands_read_no_profile_document` passes with
+      `profile put` and `profile check` named as the exceptions
+      (`services/api/tests/test_tracks_cli.py::test_academic_commands_read_no_profile_document`).
+- [x] `tailor` on the demo job produces the same markdown after migration
+      10: the run reads the framing the default track owns
+      (`services/api/tests/test_resume.py::test_tailored_markdown_is_unchanged_by_the_split`).
+- [x] `profile put` and `profile check` are placed in `COMMAND_CLASSES`;
       the parser walk test passes.
-- [ ] `uv run ruff check`, `uv run pyright`, `just contract` (no diff) and
-      `just check` pass.
+- [x] `uv run ruff check`, `uv run pyright`, `just contract` and
+      `just check` pass. The contract diff is the `owner` field below.
 
 ## Honest limitations
 
@@ -338,3 +342,43 @@ writes it there. Then, for each academic track:
   implemented its profile list shows the owner `profile list` prints.
 - Deleting a profile document, or a framing when its track is archived.
 - Tenancy (spec 102): `owner_id` is a separate column in the hosted schema.
+
+## Amendment (2026-10-10, during implementation)
+
+- **Migration 10 is migration 11.** Spec 105 shipped first and took
+  version 10 (Postgres only, an empty SQLite entry). Every "migration 10"
+  above means migration 11, and "version 9" in the failure modes means
+  version 10. On Postgres, migration 10 made a track `(owner_id, id)` and
+  `profile_documents` unique on `(owner_id, kind, name)`, so migration 11
+  references `(owner_id, track_id)`, drops that constraint, and leads both
+  partial indexes with `owner_id`; each owner's framing goes to that
+  owner's own track 1. `OWNER_SCOPED_KEYS` maps the owned index to its
+  SQLite form (`services/api/tests/test_track_framing.py::test_migration_11_owns_the_framing_on_postgres`).
+  The dropped constraint was the table's one whole-table index on
+  `owner_id`, which spec 105 requires for the policy's filter, so migration
+  11 adds `idx_profile_documents_owner`. Spec 105's per-owner uniqueness
+  test names the two partial indexes in place of the constraint, and its
+  "nothing but a version row" check stops at migration 10
+  (`services/api/tests/test_owner_policy.py::test_uniqueness_is_per_owner`,
+  `test_every_table_is_owned_or_declared`, `test_the_local_schema_names_no_tenant`).
+- **`track_id` is the last column, and Postgres adds it rather than
+  rebuilding.** Spec 103 shipped first, so migration 11 declares both
+  dialects. Postgres's `ADD COLUMN` appends, and the dialect parity test
+  holds the two stores to one column order, so the SQLite rebuild puts
+  `track_id` last too. Postgres drops migration 10's
+  `profile_documents_owner_id_kind_name_key` and creates the two partial
+  indexes per owner (`services/api/tests/test_dialect_parity.py`).
+- **`GET /ops/profile` returns `owner`.** Spec 050's route returns the list
+  the CLI prints (`services/api/tests/test_ui_operations.py::test_the_profile_list_is_the_one_the_cli_prints`),
+  and the CLI now prints the owner, so `ProfileDocumentOut` gains `owner`
+  and the generated contract gains the field. The web app does not show it
+  yet; that stays out of scope.
+- **The vocabulary and the never-claim list no longer refuse a missing
+  framing.** Spec 098 refused one half of the pair for every reader. With a
+  framing per track there is no single half to miss, and these readers use
+  only the facts, so they refuse the old single document and read the
+  shared facts. `load_bundle` still refuses a track with no framing.
+- **Readers that took a scope-free bundle now pass one.** `tailor` passes
+  its scope; the artifact listing passes the request's; `evaluate` and
+  `brief set` pass the default track's, the only track they run on
+  (spec 093).

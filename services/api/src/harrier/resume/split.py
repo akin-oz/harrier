@@ -30,6 +30,7 @@ from harrier.resume.documents import (
     field_paths,
     split_document,
 )
+from harrier.tracks import DEFAULT_TRACK_ID
 
 PRESPLIT_KIND = "resume_data_presplit"
 
@@ -100,13 +101,14 @@ def split_resume(conn: sqlite3.Connection, *, write: bool) -> SplitOutcome:
         if getattr(original, field.name) != getattr(rebuilt, field.name):
             return _refuse(f"split would change the bundle: {field.name}")
 
-    plan = [
-        (FACTS_KIND, FACTS_NAME, facts),
-        (FRAMING_KIND, FRAMING_NAME, framing),
+    # The facts are shared; the framing is the default track's (spec 099).
+    plan: list[tuple[str, str, dict[str, object], int | None]] = [
+        (FACTS_KIND, FACTS_NAME, facts, None),
+        (FRAMING_KIND, FRAMING_NAME, framing, DEFAULT_TRACK_ID),
     ]
     if not write:
         lines: list[str] = []
-        for kind, document_name, document in plan:
+        for kind, document_name, document, _ in plan:
             lines.append(f"{kind}/{document_name}:")
             lines.extend(f"  {path}" for path in field_paths(document))
         lines.append("dry run: nothing written; run with --write to store")
@@ -115,8 +117,8 @@ def split_resume(conn: sqlite3.Connection, *, write: bool) -> SplitOutcome:
     put_documents_and_rekind(
         conn,
         [
-            (kind, document_name, "json", _dumped(document))
-            for kind, document_name, document in plan
+            (kind, document_name, "json", _dumped(document), track_id)
+            for kind, document_name, document, track_id in plan
         ],
         (RESUME_DATA_KIND, name, PRESPLIT_KIND),
     )

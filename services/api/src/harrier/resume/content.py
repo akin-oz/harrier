@@ -15,10 +15,12 @@ import sqlite3
 from dataclasses import dataclass, field
 from typing import cast
 
+from harrier.profile.store import owned_documents
 from harrier.resume import heading as heading_module
 from harrier.resume.dashes import dash_marks, describe
 from harrier.resume.documents import FACTS_KIND, FRAMING_KIND, merge_documents
 from harrier.resume.heading import role_heading, split_role_heading
+from harrier.tracks import Scope
 
 RESUME_DATA_KIND = "resume_data"
 RESUME_TRUTH_KIND = "resume_truth"
@@ -756,11 +758,21 @@ def forbidden_hits(phrases: tuple[str, ...], text: str) -> list[str]:
 
 
 def _document_by_kind(conn: sqlite3.Connection, kind: str) -> str | None:
+    """The first shared document of a kind. An owned row is never read here
+    (spec 099)."""
     row = conn.execute(
-        "SELECT content FROM profile_documents WHERE kind = ? ORDER BY name LIMIT 1",
+        "SELECT content FROM profile_documents WHERE kind = ? AND track_id IS NULL "
+        "ORDER BY name LIMIT 1",
         (kind,),
     ).fetchone()
     return str(row[0]) if row is not None else None
+
+
+def _any_framing(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM profile_documents WHERE kind = ? LIMIT 1", (FRAMING_KIND,)
+    ).fetchone()
+    return row is not None
 
 
 SPLIT_COMMAND = "harrier profile split-resume"
@@ -776,18 +788,12 @@ def _json_object(content: str, kind: str) -> dict[str, object]:
     return cast("dict[str, object]", raw)
 
 
-def _stored_documents(
-    conn: sqlite3.Connection,
-) -> tuple[dict[str, object], dict[str, object]] | None:
-    """The facts and the framing, or None when no resume content is stored.
-
-    The old single document is refused rather than read, alone or beside
-    the pair, and so is one half of the pair without the other (spec 098).
-    """
+def _stored_facts(conn: sqlite3.Connection) -> str | None:
+    """The shared facts document, after refusing the old single document,
+    alone or beside the new shape (spec 098)."""
     data = _document_by_kind(conn, RESUME_DATA_KIND)
     facts = _document_by_kind(conn, FACTS_KIND)
-    framing = _document_by_kind(conn, FRAMING_KIND)
-    if data is not None and (facts is not None or framing is not None):
+    if data is not None and (facts is not None or _any_framing(conn)):
         raise ResumeBundleError(
             f"both {RESUME_DATA_KIND} and {FACTS_KIND}/{FRAMING_KIND} are stored; keep one shape"
         )
@@ -795,12 +801,32 @@ def _stored_documents(
         raise ResumeBundleError(
             f"resume content is still one {RESUME_DATA_KIND} document; run {SPLIT_COMMAND}"
         )
-    if facts is None and framing is None:
-        return None
-    if facts is None or framing is None:
-        missing = FACTS_KIND if facts is None else FRAMING_KIND
-        raise ResumeBundleError(f"no {missing} document in the profile store")
-    return _json_object(facts, FACTS_KIND), _json_object(framing, FRAMING_KIND)
+    return facts
+
+
+def framing_name(scope: Scope) -> str:
+    """A track's framing is named after its kind (specs 098, 099)."""
+    return f"{scope.track.kind}.json"
+
+
+def _stored_framing(conn: sqlite3.Connection, scope: Scope) -> str | None:
+    """The framing the scope's track owns. Never another track's: there is
+    no fallback (spec 099)."""
+    owned = owned_documents(conn, FRAMING_KIND, scope.track.id)
+    if len(owned) > 1:
+        names = ", ".join(name for name, _ in owned)
+        raise ResumeBundleError(
+            f"track {scope.track.slug} owns more than one resume framing: {names}"
+        )
+    return owned[0][1] if owned else None
+
+
+def no_framing_message(scope: Scope) -> str:
+    slug = scope.track.slug
+    return (
+        f"track {slug} has no resume framing; store one with "
+        f"harrier --track {slug} profile put resume_framing --file PATH"
+    )
 
 
 def bundle_from_documents(facts: dict[str, object], framing: dict[str, object]) -> ResumeBundle:
@@ -814,14 +840,33 @@ def bundle_from_documents(facts: dict[str, object], framing: dict[str, object]) 
     return bundle
 
 
-def load_bundle(conn: sqlite3.Connection) -> ResumeBundle:
-    documents = _stored_documents(conn)
-    if documents is None:
+def load_facts(conn: sqlite3.Connection) -> dict[str, object]:
+    """The shared facts, or a refusal naming what to run."""
+    facts = _stored_facts(conn)
+    if facts is None:
+        raise ResumeBundleError(
+            f"no {FACTS_KIND} document; run {SPLIT_COMMAND} first, "
+            "or see config/resume-facts.example.json"
+        )
+    return _json_object(facts, FACTS_KIND)
+
+
+def load_bundle(conn: sqlite3.Connection, scope: Scope) -> ResumeBundle:
+    """The shared facts and the scope's own framing, as one bundle."""
+    facts = _stored_facts(conn)
+    framing = _stored_framing(conn, scope)
+    if facts is None and framing is None and not _any_framing(conn):
         raise ResumeBundleError(
             f"no {FACTS_KIND} or {FRAMING_KIND} document in the profile store; "
             "see config/resume-facts.example.json and config/resume-framing.example.json"
         )
-    return bundle_from_documents(*documents)
+    if facts is None:
+        raise ResumeBundleError(f"no {FACTS_KIND} document in the profile store")
+    if framing is None:
+        raise ResumeBundleError(no_framing_message(scope))
+    return bundle_from_documents(
+        _json_object(facts, FACTS_KIND), _json_object(framing, FRAMING_KIND)
+    )
 
 
 def _facts_fields(conn: sqlite3.Connection) -> dict[str, object]:
@@ -832,8 +877,8 @@ def _facts_fields(conn: sqlite3.Connection) -> dict[str, object]:
     document that cannot be read is refused rather than read as empty: that
     would skip every check built on it silently.
     """
-    documents = _stored_documents(conn)
-    return documents[0] if documents is not None else {}
+    facts = _stored_facts(conn)
+    return _json_object(facts, FACTS_KIND) if facts is not None else {}
 
 
 def load_forbidden_phrases(conn: sqlite3.Connection) -> tuple[str, ...]:

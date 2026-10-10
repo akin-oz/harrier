@@ -636,7 +636,7 @@ def test_an_unreadable_resume_facts_document_refuses_the_letter(
     """A broken document must not read as an empty list. Skipping the check
     because the list could not be read is the silent pass spec 034 removed."""
     put_document(db, "resume_facts", "resume-facts.json", "json", "{not json")
-    put_document(db, "resume_framing", "industry.json", "json", "{}")
+    put_document(db, "resume_framing", "industry.json", "json", "{}", track_id=1)
     monkeypatch.setattr(letters_module, "generate_text", _letter_response)
     with pytest.raises(ValueError, match="resume_facts document is not valid JSON"):
         generate_cover_letter(db, "examplesoft", "Senior Product Engineer")
