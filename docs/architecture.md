@@ -185,13 +185,45 @@ and `services/api/tests/test_dialect_parity.py` holds the two stores to the
 same tables, defaults and refusals. Spec 112 ports the domain's reads and
 writes to it.
 
+On Postgres every personal row has an owner (spec 105). Migration 10 in
+`schema.py` gives each table in `OWNED_TABLES` an `owner_id` column that
+defaults to `auth.uid()` and references `auth.users`, and one policy,
+`owner_only`: the policed role, `harrier_tenant`, sees and stores only rows whose
+`owner_id` is its own. Row security is enabled and forced on every table.
+Unique keys lead with `owner_id`, each owner has their own track 1, and a
+job or event can reference only its own owner's track or job. Migration 10
+is Postgres only (`SINGLE_DIALECT_MIGRATIONS`): SQLite records version 10 and
+changes nothing, so the local schema names no tenant. The catalog test,
+`services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared`,
+fails naming any table that is
+neither owned nor declared unowned, lacks the column, the forced policy or
+an owner index, or carries an unexpected grant, view or definer function.
+The isolation tests in the same file act as two synthetic owners
+(`services/api/tests/test_owner_policy.py::test_owner_a_reads_nothing_of_owner_b`,
+`services/api/tests/test_owner_policy.py::test_owner_a_cannot_write_as_owner_b`).
+Supabase's Data API role, `authenticated`, holds no privilege on any harrier
+table, so harrier's write path is the only one
+(`services/api/tests/test_owner_policy.py::test_the_data_api_role_reaches_no_harrier_table`). Plain Postgres has none of
+Supabase's auth objects, so `services/api/tests/pg_support.py` installs a
+test shim before migrating: the `anon`, `authenticated` and `service_role`
+roles, an `auth.users` table and an `auth.uid()` function. No migration
+creates them, and migration 10 refuses a store without them.
+
+This polices rows; it does not yet serve anyone. Nothing authenticates a
+request until spec 104, and the domain does not run on Postgres until spec
+112, so no owner can reach their rows through harrier. A role with
+`BYPASSRLS`, such as Supabase's `service_role`, sees every owner's rows
+(`services/api/tests/test_owner_policy.py::test_a_bypassrls_role_sees_every_owner`); keeping requests off such
+a role is spec 104's. The shim is not Supabase, and a run of these tests
+against a real project is spec 110's.
+
 No other hosted component exists yet. Specs 103 to 112 sequence the build:
 the Postgres store (103, approved), API authentication (104), row-level
-policy (105), tenant credentials and run isolation (106), artifacts in
-Storage (107), hosted scheduling (108), Gmail and Telegram for tenants
-(109), the deploy pipeline (110), sign-up, export and deletion (111), and
-the domain on either store (112). Specs 104 to 112 stay `approved: no`
-until refined.
+policy (105, approved), tenant credentials and run isolation (106),
+artifacts in Storage (107), hosted scheduling (108), Gmail and Telegram for
+tenants (109), the deploy pipeline (110), sign-up, export and deletion
+(111), and the domain on either store (112). Specs 104 and 106 to 112 stay
+`approved: no` until refined.
 
 ## Honest limitations
 

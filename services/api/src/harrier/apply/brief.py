@@ -22,6 +22,7 @@ from harrier.resume.content import (
     load_bundle,
     load_truth_sources,
 )
+from harrier.tracks import default_scope
 
 APPLICATION_BRIEF_KIND = "application_brief"
 
@@ -186,7 +187,8 @@ def _check_confirmed_skills(conn: sqlite3.Connection, skills: tuple[str, ...]) -
     if not skills:
         return
     try:
-        bundle = load_bundle(conn)
+        # `brief set` runs on the default track only (spec 093).
+        bundle = load_bundle(conn, default_scope(conn))
         sources = load_truth_sources(conn)
     except ResumeBundleError as exc:
         raise BriefError(f"confirmed_skills cannot be checked: {exc}") from exc

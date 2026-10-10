@@ -2200,6 +2200,8 @@ export interface components {
             kind: string;
             /** Name */
             name: string;
+            /** Owner */
+            owner: string;
             /** Updated At */
             updated_at: string;
         };

@@ -66,7 +66,9 @@ _MEDIA_TYPES: dict[str, str] = {
 }
 
 
-def _resume_paths(conn: sqlite3.Connection, company: str, role: str) -> dict[str, Path] | None:
+def _resume_paths(
+    conn: sqlite3.Connection, scope: Scope, company: str, role: str
+) -> dict[str, Path] | None:
     """None when the resume bundle is not configured.
 
     The resume filename carries the candidate's name, so without a bundle
@@ -75,7 +77,7 @@ def _resume_paths(conn: sqlite3.Connection, company: str, role: str) -> dict[str
     guess: nothing can be produced until the bundle exists.
     """
     try:
-        bundle = load_bundle(conn)
+        bundle = load_bundle(conn, scope)
     except ResumeBundleError:
         return None
     return resume_paths_for(bundle.name, company, role)
@@ -87,7 +89,7 @@ def _paths_by_kind(conn: sqlite3.Connection, scope: Scope, job_id: int) -> dict[
     role = row.get("title", "")
 
     paths: dict[str, Path] = {}
-    resume = _resume_paths(conn, company, role)
+    resume = _resume_paths(conn, scope, company, role)
     if resume is not None:
         paths["resume-pdf"] = resume["pdf"]
         paths["resume-markdown"] = resume["markdown"]

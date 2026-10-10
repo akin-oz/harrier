@@ -1,8 +1,8 @@
 ---
 spec: 101
 title: Academic application documents pass the truth and claims gates
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M9
 depends: [014, 034, 065, 069, 071, 074, 079, 093, 097, 098, 099, 100]
 ---
@@ -279,14 +279,16 @@ migration 10 (spec 099). Then, for each academic track:
 - **Refusing a run after the deadline.** Would block rolling calls.
   Declined in favour of a warning.
 
-## Open decisions for Akin
+## Decisions recorded (Akin, 2026-10-10)
 
-1. **The academic section order.** Profile, education, achievements,
-   experience. The alternative puts experience before achievements.
-2. **The academic letter's length.** The prompt asks for one to two
-   pages and gives no word count. The industry prompt's word cap is not
-   copied.
-3. **The deadline warning** rather than a refusal.
+Approved as written, so each open decision keeps the behavior the spec
+states:
+
+1. **The academic section order** is profile, education, selected
+   achievements, experience, certifications, technical skills.
+2. **The academic letter's length** is one to two pages, with no word
+   count.
+3. **A passed deadline warns** and the command continues.
 
 ## Proof / origin
 

@@ -23,6 +23,7 @@ from harrier.offers.report import ARCHETYPES, build_report
 from harrier.offers.stories import capture_stories, load_seed_stories
 from harrier.resume.content import load_bundle, load_truth_sources
 from harrier.resume.facts import professional_experience_label
+from harrier.tracks import default_scope
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +119,8 @@ def report_path_for(company: str, role: str) -> Path:
 
 def build_system_prompt(conn: sqlite3.Connection) -> str:
     """Assemble the persona header from data (stated change)."""
-    bundle = load_bundle(conn)
+    # `evaluate` runs on the default track only (spec 093).
+    bundle = load_bundle(conn, default_scope(conn))
     candidate = load_candidate_document(conn)
     compensation_raw = candidate.get("compensation")
     compensation = (

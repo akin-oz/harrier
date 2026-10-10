@@ -20,8 +20,9 @@ is only one caller. Reads carry no token at all
 
 Hosted, the API is on the internet and serves many owners from one
 Postgres store. ADR-013 decision 3 says each request carries a verified
-Supabase JWT and runs its transaction as the `authenticated` role with that
-token's claims set, so `auth.uid()` resolves inside the database. A request
+Supabase JWT and runs its transaction as the `harrier_tenant` role with
+that token's claims set, so `auth.uid()` resolves inside the database
+(decision 3 as amended by spec 105; Amendment below). A request
 without a valid token is answered 401 and opens no transaction. Decision 4
 says a run started from a request records its owner. The Consequences say
 this spec states which of spec 035's guards carry over.
@@ -78,7 +79,8 @@ This spec is the server side of hosted authentication. The browser's half
    transaction (Behavior, "The request transaction").
 6. **The API's login role is checked at start.** The hosted API refuses to
    start when its database login can bypass row-level security or can act
-   as the service role.
+   as the service role, and when the store is not at the version the code
+   needs (Behavior, "The store version").
 7. **Runs know their owner.** A run started hosted records the requesting
    `sub`; listing, reading, cancelling and streaming a run are limited to
    its owner. Starting a run hosted is refused until spec 106 gives runs
@@ -121,6 +123,15 @@ table does not cover stops the change.
 
 Local mode ignores the last three, so a developer's environment cannot
 switch the local API into a half-hosted state by accident.
+
+Hosted, these variables come from the process environment only. On Fly
+there is no `.env`: `HARRIER_DATABASE_URL` is a Fly secret, and the others
+are Fly secrets or the app's `[env]` settings, provisioned by spec 110. The
+API reads no `.env` file itself (`grep -rn dotenv services/api/src` finds
+nothing); locally a `.env` reaches the container only through
+`docker-compose.yml`'s `env_file` (`docker-compose.yml:51-53`). A `.env`
+file in the working directory therefore cannot switch an API into hosted
+mode. (post-merge review of PRs #194 and #207, 2026-10-10)
 
 ### The token
 
@@ -223,7 +234,7 @@ For a request that passed the middleware, `get_conn` hosted:
    statements are never prepared, which a transaction-mode pooler does not
    support (Supabase connection guide, psycopg prepared statements page).
 2. Opens a transaction and, before any other statement, runs
-   `SET LOCAL ROLE authenticated` and
+   `SET LOCAL ROLE harrier_tenant` and
    `SELECT set_config('request.jwt.claims', <claims JSON>, true)`.
 3. Reads back `current_user` and `current_setting('request.jwt.claims',
    true)::jsonb ->> 'sub'` in the same transaction. If either is not what
@@ -246,20 +257,41 @@ The claims set are the whole verified payload, so `auth.uid()` and
 `auth.jwt()` read what Supabase's own Data API would give them.
 
 Hosted mode creates no table, grants no privilege and adds no migration.
-Granting `authenticated` access to the personal tables is spec 105's, in
-the same migration as the policies, so no state exists in which
-`authenticated` can read rows no policy guards.
+Granting `harrier_tenant` access to the personal tables is spec 105's, in
+the same migration as the policies (migration 10), so no state exists in
+which `harrier_tenant` can read rows no policy guards. `authenticated`,
+the role Supabase's Data API switches to, holds no privilege on any
+harrier table (spec 105, Amendment), so the request transaction never
+uses it.
+
+### The store version
+
+At start, hosted, the API reads the store's version once, inside the
+transaction that runs the login-role checks below, as `harrier_tenant`
+(the login role holds no grant of its own; spec 105 grants `SELECT` on
+`schema_version` to `harrier_tenant`). It refuses to start when the
+version is behind or ahead of `target_version()`
+(`services/api/src/harrier/pgstore.py:152-156`), with the texts of
+`check_postgres_version` (`pgstore.py:227-237`). Requests do not check the
+version again: `get_conn` takes a pooled connection and never calls
+`open_postgres_store` (`pgstore.py:239-247`), whose `postgres_version`
+runs two catalog queries per open (`pgstore.py:159-165`). A refusal at
+start is what enforces spec 110's "migrations apply before a new API
+version serves": an image newer than the store does not serve.
+(post-merge review of PRs #194 and #207, 2026-10-10)
 
 ### The login role
 
 The API connects as a dedicated login role, called `harrier_api` in the
-documents, that is `NOINHERIT`, a member of `authenticated` and of nothing
-else. At start, hosted, the API refuses to start when its login role:
+documents, that is `NOINHERIT`, a member of `harrier_tenant` and of
+nothing else. Migration 10 creates `harrier_tenant` (spec 105, Amendment);
+the operator grants it to `harrier_api`. At start, hosted, the API refuses
+to start when its login role:
 
 - is a superuser or has `BYPASSRLS`;
 - is a member, directly or through another role, of `service_role` or
   `postgres`;
-- cannot `SET ROLE authenticated`;
+- cannot `SET ROLE harrier_tenant`;
 - owns any table in the `public` schema (an owner bypasses row-level
   security unless it is forced; spec 105 forces it, and this check does not
   rely on that).
@@ -365,6 +397,11 @@ same property.
   hosted`, exit 1.
 - **Login role too strong.** Any check under "The login role" fails: start
   refused naming the check, never the URL or password, exit 1.
+- **Store behind or ahead of the code.** The version read at start (The
+  store version) differs from `target_version()`: start refused with
+  `check_postgres_version`'s text, exit 1. A deploy that serves before it
+  migrates therefore fails to start rather than failing per request.
+  (post-merge review of PRs #194 and #207, 2026-10-10)
 - **Service credential in the environment.** Start refused naming the
   variable, not its value, exit 1.
 - **Missing token.** 401 `missing`. No connection is taken from the pool.
@@ -397,6 +434,17 @@ same property.
   between statements: the read-back in step 3 differs, the request is
   answered 500, and no domain statement runs.
 - **A route reaches `get_conn` without claims.** 500, nothing opened.
+- **A request's transaction runs as the table owner or as `service_role`.**
+  Added 2026-10-10 from spec 105. Row security does not apply to a role
+  with `BYPASSRLS`, so such a request would see and write every owner's
+  rows, and the database cannot refuse it (spec 105 proves the bypass,
+  `services/api/tests/test_owner_policy.py::test_a_bypassrls_role_sees_every_owner`). The guards are this
+  spec's: start refuses a login role that can bypass (The login role), and
+  step 3's read-back answers 500 when `current_user` is not
+  `harrier_tenant`. Spec 105's catalog test refuses a `harrier_tenant`
+  role with `BYPASSRLS`
+  (`services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared`).
+  The criterion below proves the result inside a request.
 - **Another owner's run id.** 404 `run not found`.
 - **Starting a run hosted.** 501 until spec 106.
 - **A token in the query string.** Not read; without a header the request
@@ -426,9 +474,20 @@ Start-up:
       (planned test_hosted_start_refuses_incomplete_configuration,
       parametrized over each case).
 - [ ] A login role that is a superuser, has `BYPASSRLS`, is a member of
-      `service_role`, cannot `SET ROLE authenticated`, or owns a table in
+      `service_role`, cannot `SET ROLE harrier_tenant`, or owns a table in
       `public` is refused at start, one case each
       (planned test_hosted_start_refuses_a_login_role_that_can_bypass_policy).
+- [ ] A store one version behind `target_version()`, and one ahead, are
+      each refused at start with `check_postgres_version`'s text, exit 1;
+      a store at the target version starts, and a request after start
+      runs no statement against `schema_version`
+      (planned test_hosted_start_checks_the_store_version_once).
+      (post-merge review of PRs #194 and #207, 2026-10-10)
+- [ ] With `HARRIER_AUTH=supabase` written in a `.env` file in the working
+      directory and absent from the process environment, the API starts
+      in local mode
+      (planned test_hosted_mode_is_read_from_the_process_environment_only).
+      (post-merge review of PRs #194 and #207, 2026-10-10)
 - [ ] `app.py` no longer holds `POSTGRES_NOT_YET`; the API on a Postgres URL
       without hosted mode exits 1 with this spec's text.
 
@@ -485,9 +544,12 @@ Routes and contract:
 
 The request transaction (Postgres tests, run in CI as spec 103 requires):
 
-- [ ] Inside a request, `current_user` is `authenticated`, `auth.uid()` is
+- [ ] Inside a request, `current_user` is `harrier_tenant`, `auth.uid()` is
       the token's `sub`, and `auth.jwt()` is its payload
       (planned test_the_request_transaction_runs_as_its_user).
+- [ ] Added 2026-10-10 from spec 105: inside a request, `current_user` is
+      `harrier_tenant` and its `rolbypassrls` in `pg_roles` is false
+      (planned test_a_request_never_runs_as_a_bypassrls_role).
 - [ ] After the request, the same pooled connection reports the login role
       and no claims (planned test_identity_ends_with_the_request).
 - [ ] A connection in autocommit mode is detected by the read-back: 500,
@@ -529,18 +591,19 @@ Gates:
 
 ## Honest limitations
 
-- After this spec, the hosted API authenticates and does nothing useful.
-  `authenticated` has no privilege on the personal tables until spec 105,
-  so every data route fails with a permission error answered 500; runs are
-  refused until spec 106; the browser cannot sign in until the browser
-  spec. Hosted mode must not be offered to anyone before 105 ships, and
-  spec 110's deploy gate is where that is enforced.
+- Spec 105 landed before this spec (build order 103, 105, 112, 104), so
+  `harrier_tenant`, its grants and its policies exist before hosted mode
+  can first start. After this spec the hosted API serves the tracker's
+  routes under that policy, on the domain spec 112 ports. Runs are still
+  refused until spec 106, file-backed routes read the image until spec 107
+  (below), and the browser cannot sign in until spec 114.
 - The CI Postgres is plain `postgres:17`, not Supabase. The tests create
   the `authenticated`, `anon` and `service_role` roles and an `auth.uid()`
-  and `auth.jwt()` that read `request.jwt.claims`. That is Supabase's
-  documented behavior as far as it is documented; the exact function body
-  is not in the guides (Proof / origin). The first staging deploy must
-  compare `\sf auth.uid` with the shim (spec 110).
+  and `auth.jwt()` that read `request.jwt.claims`, and migration 10
+  creates `harrier_tenant`. That is Supabase's documented behavior as far
+  as it is documented; the exact function body is not in the guides
+  (Proof / origin). Spec 110's first slice, which lands before spec 112,
+  compares `\sf auth.uid` with the shim on a real Supabase staging project.
 - A revoked signing key is still trusted for up to 5 minutes, or up to an
   hour while the key endpoint is unreachable. A deleted or signed-out user's
   token works until it expires, one hour by default.
@@ -588,7 +651,7 @@ the API refuses `HS256`.
 - **Merge specs 104 and 105.** There would be no state in which hosted mode
   starts without policies. The diff would hold the auth boundary and every
   table's policy at once, which `change-boundary` asks to split. Not
-  chosen; the honest limitation and spec 110's gate cover the gap.
+  chosen; spec 105 lands first, so no such state is ever deployed.
 - **A cookie session set by the API.** Lets `EventSource` and the
   bookmarklet work. Vercel and Fly are different sites, so the cookie is
   third-party and `SameSite=None`, which browsers increasingly block, and
@@ -724,10 +787,11 @@ it is used:
 
 - `auth.uid()` reads `sub` from `request.jwt.claims`. The guides describe
   the result, not the body; setting the whole claims object is also what
-  PostgREST does. Checked with `\sf auth.uid` on staging.
+  PostgREST does. Checked with `\sf auth.uid` on staging, in spec 110's
+  first slice.
 - Supabase's connection pooler accepts a custom login role such as
-  `harrier_api`. Not stated in the guides read for this spec; spec 110
-  checks it, and the direct connection is the fallback.
+  `harrier_api`. Not stated in the guides read for this spec; spec 110's
+  first slice checks it, and the direct connection is the fallback.
 - New Supabase projects sign with an asymmetric key by default. Not found
   in the docs; the spec does not depend on it, because the API refuses
   `HS256` and spec 110 makes the current key asymmetric.
@@ -740,16 +804,41 @@ it is used:
 
 ## Out of scope
 
-- Grants to `authenticated`, `owner_id`, and row-level policies: spec 105.
+- Grants to `harrier_tenant`, `owner_id`, and row-level policies: spec 105.
 - A run's database identity and credentials, and lifting the 501: spec 106.
 - Files in Storage: spec 107.
 - Sign-up, invitations, export and deletion: spec 111.
 - The SPA: sign-in, sending the bearer token, the API base URL, `fetch`
   streaming, and a hosted capture page: spec 114 (Open decision 8).
-- Creating the Supabase project, the `harrier_api` role, Fly health
-  checks, and the deploy gate that keeps hosted mode closed until spec 105
-  ships: spec 110.
+- Creating the Supabase project, the `harrier_api` role, Fly secrets and
+  health checks, and running migrations before a deploy serves: spec 110.
 - The CLI on Postgres: spec 112. The hosted deployment has no tenant CLI
-  (ADR-013 decision 4).
+  (ADR-013 decision 4); how a run's CLI process fits that decision is
+  spec 106's.
 - Multi-factor requirements on `aal`, rate limiting, and audit logging of
   successful requests.
+
+## Amendment (2026-10-10)
+
+Before this spec was approved, spec 105 landed with the policed role named
+`harrier_tenant`, not `authenticated` (spec 105, Amendment). Supabase's
+Data API switches to `authenticated`, so granting harrier's tables to it
+would have opened a second write path past `harrier.tracker`. ADR-013
+decision 3 carries the same change. This spec follows it:
+
+- The request transaction runs `SET LOCAL ROLE harrier_tenant`, the
+  read-back expects `harrier_tenant`, the login role is a member of
+  `harrier_tenant`, and the start check is `SET ROLE harrier_tenant`.
+  `authenticated` stays where it means the JWT's `aud` and `role` claims
+  or Supabase's Data API role.
+- Honest limitations no longer assume spec 105 lands after this spec, and
+  Out of scope drops the deploy gate that was to hold hosted mode closed
+  until it did.
+
+The post-merge review of PRs #194 and #207 (2026-10-10) added two findings
+here, each with its own criterion:
+
+- The store version is read once at start and a behind or ahead store
+  refuses the start (The store version). It is not checked per request.
+- Hosted configuration comes from the process environment, set by Fly
+  secrets, never from a `.env` file (Configuration).

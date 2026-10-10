@@ -1803,6 +1803,10 @@
             "title": "Name",
             "type": "string"
           },
+          "owner": {
+            "title": "Owner",
+            "type": "string"
+          },
           "updated_at": {
             "title": "Updated At",
             "type": "string"
@@ -1812,7 +1816,8 @@
           "kind",
           "name",
           "format",
-          "updated_at"
+          "updated_at",
+          "owner"
         ],
         "title": "ProfileDocumentOut",
         "type": "object"

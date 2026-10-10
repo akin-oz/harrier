@@ -11,17 +11,22 @@ that cannot run DDL (ADR-013 decision 3), and a deploy migrates once rather
 than every machine on its first request. `harrier store migrate` is the one
 path that applies migrations.
 
-A URL carries a password. Every error raised here is built from the host,
-port and database name, never from the URL, and the driver's own message is
-scrubbed of the password before it is quoted. Spec 035 is the record of a
-credential leaking through an exception string.
+A URL carries a password. A connection error is built from the host, port
+and database name, never from the URL, and the driver's own message is
+scrubbed of the password, in both its encoded and decoded forms, before it
+is quoted. The driver's error is not chained to the one raised, so it
+cannot be found as `__context__` either. Errors from a migration's
+statements are the driver's own; `harrier store migrate` prints only the
+server's primary message, which quotes SQL, not the URL. Spec 035 is the
+record of a credential leaking through an exception string.
 """
 
 from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 from urllib.parse import unquote, urlsplit
 
@@ -65,12 +70,21 @@ class StoreVersionError(StoreError):
     """The store's schema version is not the one this code needs."""
 
 
+class StoreMigrationRefused(StoreError):
+    """A migration's own precheck refused this store (spec 105).
+
+    The message is the text the migration raises, which names no URL.
+    """
+
+
 @dataclass(frozen=True)
 class StoreTarget:
     """Which store this process opens."""
 
     dialect: Literal["sqlite", "postgres"]
-    url: str = ""
+    # Out of the repr: the URL carries the password, and a repr is what an
+    # assertion or a log line prints (post-merge privacy review of PR #207).
+    url: str = field(default="", repr=False)
 
     @property
     def is_postgres(self) -> bool:
@@ -84,20 +98,45 @@ class _Where:
     host: str
     port: str
     database: str
-    password: str
+    # Both forms: libpq quotes the URL as written, still percent-encoded,
+    # when it refuses it, and the decoded form when it quotes a parameter.
+    passwords: tuple[str, ...]
 
     def describe(self) -> str:
         return f"{self.host}:{self.port}/{self.database}"
 
 
 def store_target(environ: Mapping[str, str] | None = None) -> StoreTarget:
-    """The store `HARRIER_DATABASE_URL` names. Raises StoreUrlError."""
-    env = os.environ if environ is None else environ
-    raw = env.get(URL_VARIABLE, "").strip()
+    """The store `HARRIER_DATABASE_URL` names. Raises StoreUrlError.
+
+    Read from the process environment and, when it is not set there, from
+    `.env` in the working directory, the CLI's rule (spec 011). The CLI loads
+    `.env` and the API does not, so without this a URL set only in `.env`
+    made the CLI refuse while the API served SQLite (review of PR #207).
+    An exported value, even an empty one, wins over the file.
+    """
+    if environ is None:
+        if URL_VARIABLE in os.environ:
+            raw = os.environ[URL_VARIABLE]
+        else:
+            from harrier.envfile import read_env_file
+
+            raw = read_env_file(Path(".env")).get(URL_VARIABLE, "")
+    else:
+        raw = environ.get(URL_VARIABLE, "")
+    raw = raw.strip()
     if not raw:
         return StoreTarget("sqlite")
-    if urlsplit(raw).scheme != POSTGRES_SCHEME:
-        raise StoreUrlError(f"{URL_VARIABLE} must be empty or a postgresql:// URL")
+    # The scheme exactly as libpq accepts it, and a host and port that parse:
+    # anything else failed later as a traceback or an unrelated driver
+    # message (post-merge data integrity review of PR #207).
+    refused = StoreUrlError(f"{URL_VARIABLE} must be empty or a postgresql:// URL")
+    if not raw.startswith(f"{POSTGRES_SCHEME}://"):
+        raise refused
+    try:
+        _where(raw)
+    except ValueError:
+        raise refused from None
     return StoreTarget("postgres", raw)
 
 
@@ -107,13 +146,17 @@ def _where(url: str) -> _Where:
         host=parts.hostname or "localhost",
         port=str(parts.port or 5432),
         database=parts.path.lstrip("/") or "postgres",
-        password=unquote(parts.password or ""),
+        passwords=tuple(
+            form for form in (parts.password or "", unquote(parts.password or "")) if form
+        ),
     )
 
 
 def _scrub(message: str, where: _Where) -> str:
-    if where.password:
-        message = message.replace(where.password, "***")
+    # Longest first, so a decoded form inside an encoded one cannot leave a
+    # fragment of the other behind.
+    for password in sorted(set(where.passwords), key=len, reverse=True):
+        message = message.replace(password, "***")
     return " ".join(message.split())
 
 
@@ -136,10 +179,15 @@ def postgres_connect(url: str) -> psycopg.Connection[tuple[object, ...]]:
     try:
         return psycopg.connect(url, autocommit=True, connect_timeout=10)
     except psycopg.Error as error:
-        raise StoreConnectionError(
+        message = (
             f"cannot connect to the Postgres store at {where.describe()}: "
             f"{_scrub(str(error), where)}"
-        ) from None
+        )
+    # Raised after the except block, not inside it. `from None` only hides
+    # the driver's error from a printed traceback; it stays attached as
+    # `__context__`, and its text may quote the password (post-merge review
+    # of PR #207).
+    raise StoreConnectionError(message)
 
 
 def target_version() -> int:
@@ -168,6 +216,8 @@ def apply_postgres_migrations(conn: psycopg.Connection[tuple[object, ...]]) -> t
     Postgres DDL is transactional, so a statement that fails rolls back the
     whole migration and leaves no version row.
     """
+    import psycopg
+
     from harrier.tracker.schema import POSTGRES_MIGRATIONS, POSTGRES_VERSION_TABLE
 
     before = postgres_version(conn)
@@ -186,7 +236,15 @@ def apply_postgres_migrations(conn: psycopg.Connection[tuple[object, ...]]) -> t
                 # As bytes: psycopg types a query as a literal string, and
                 # these are built from the schema's constants. Sent without
                 # parameters, so nothing in them is read as a placeholder.
-                conn.execute(statement.encode())
+                try:
+                    conn.execute(statement.encode())
+                except psycopg.errors.RaiseException as error:
+                    # Only a migration's precheck raises during DDL, and its
+                    # text is the refusal (spec 105). Raised inside the
+                    # transaction, so the migration rolls back whole.
+                    raise StoreMigrationRefused(
+                        error.diag.message_primary or f"migration {version} was refused"
+                    ) from None
             conn.execute("INSERT INTO schema_version (version) VALUES (%s)", (version,))
     return before, postgres_version(conn)
 

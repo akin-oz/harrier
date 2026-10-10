@@ -25,54 +25,120 @@ PROFILE_SOURCES: dict[str, tuple[str, str]] = {
 INTERVIEW_PREP_DIR = "interview-prep"
 
 
-_UPSERT = """
+# The kinds a track owns (spec 099). Every other kind is shared by every
+# track. The write path holds this rule rather than a CHECK, so a later spec
+# can widen it without rebuilding the table.
+TRACK_OWNED_KINDS: frozenset[str] = frozenset({"resume_framing"})
+
+
+class ProfileDocumentError(ValueError):
+    pass
+
+
+# One upsert per owner, each naming the partial index it can conflict on
+# (migration 10): NULL is shared, and SQLite treats NULLs as distinct.
+_UPSERT_SHARED = """
     INSERT INTO profile_documents (kind, name, format, content, updated_at)
     VALUES (?, ?, ?, ?, datetime('now'))
-    ON CONFLICT (kind, name) DO UPDATE SET
+    ON CONFLICT (kind, name) WHERE track_id IS NULL DO UPDATE SET
+        format = excluded.format,
+        content = excluded.content,
+        updated_at = datetime('now')
+"""
+_UPSERT_OWNED = """
+    INSERT INTO profile_documents (track_id, kind, name, format, content, updated_at)
+    VALUES (?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT (track_id, kind, name) WHERE track_id IS NOT NULL DO UPDATE SET
         format = excluded.format,
         content = excluded.content,
         updated_at = datetime('now')
 """
 
 
-def put_document(conn: sqlite3.Connection, kind: str, name: str, fmt: str, content: str) -> None:
+def _upsert(
+    conn: sqlite3.Connection, kind: str, name: str, fmt: str, content: str, track_id: int | None
+) -> None:
+    if kind in TRACK_OWNED_KINDS and track_id is None:
+        raise ProfileDocumentError(f"{kind} is owned by a track; it cannot be shared")
+    if kind not in TRACK_OWNED_KINDS and track_id is not None:
+        raise ProfileDocumentError(f"{kind} is shared by every track; it cannot be owned")
+    if track_id is None:
+        conn.execute(_UPSERT_SHARED, (kind, name, fmt, content))
+    else:
+        conn.execute(_UPSERT_OWNED, (track_id, kind, name, fmt, content))
+
+
+def put_document(
+    conn: sqlite3.Connection,
+    kind: str,
+    name: str,
+    fmt: str,
+    content: str,
+    *,
+    track_id: int | None = None,
+) -> None:
+    """Write one document: shared when `track_id` is None, else owned by that
+    track. Which kinds may be owned is `TRACK_OWNED_KINDS` (spec 099)."""
     with conn:
-        conn.execute(_UPSERT, (kind, name, fmt, content))
+        _upsert(conn, kind, name, fmt, content, track_id)
 
 
 def put_documents_and_rekind(
     conn: sqlite3.Connection,
-    documents: Sequence[tuple[str, str, str, str]],
+    documents: Sequence[tuple[str, str, str, str, int | None]],
     rekind: tuple[str, str, str],
 ) -> None:
-    """Write each `(kind, name, format, content)` and move the row named by
-    `(kind, name)` to the third value's kind, in one transaction: all of it
-    or none of it (spec 098). The moved row keeps its name, content and
-    `updated_at`."""
+    """Write each `(kind, name, format, content, track_id)` and move the shared
+    row named by `(kind, name)` to the third value's kind, in one
+    transaction: all of it or none of it (spec 098). The moved row keeps its
+    name, content and `updated_at`."""
     old_kind, name, new_kind = rekind
     with conn:
-        for document in documents:
-            conn.execute(_UPSERT, document)
+        for kind, document_name, fmt, content, track_id in documents:
+            _upsert(conn, kind, document_name, fmt, content, track_id)
         conn.execute(
-            "UPDATE profile_documents SET kind = ? WHERE kind = ? AND name = ?",
+            "UPDATE profile_documents SET kind = ? "
+            "WHERE kind = ? AND name = ? AND track_id IS NULL",
             (new_kind, old_kind, name),
         )
 
 
 def get_document(conn: sqlite3.Connection, kind: str, name: str) -> str | None:
+    """A shared document. No reader of a shared kind sees an owned row."""
     # Positional access: works with any row factory, not only harrier.db.connect's.
     row = conn.execute(
-        "SELECT content FROM profile_documents WHERE kind = ? AND name = ?", (kind, name)
+        "SELECT content FROM profile_documents WHERE kind = ? AND name = ? AND track_id IS NULL",
+        (kind, name),
     ).fetchone()
     return str(row[0]) if row is not None else None
 
 
-def list_documents(conn: sqlite3.Connection) -> list[dict[str, str]]:
-    columns = ("kind", "name", "format", "updated_at")
+def owned_documents(conn: sqlite3.Connection, kind: str, track_id: int) -> list[tuple[str, str]]:
+    """Every `(name, content)` of this kind that the track owns, by name."""
     rows = conn.execute(
-        f"SELECT {', '.join(columns)} FROM profile_documents ORDER BY kind, name"
+        "SELECT name, content FROM profile_documents WHERE kind = ? AND track_id = ? ORDER BY name",
+        (kind, track_id),
     ).fetchall()
-    return [dict(zip(columns, (str(value) for value in row), strict=True)) for row in rows]
+    return [(str(row[0]), str(row[1])) for row in rows]
+
+
+def list_documents(conn: sqlite3.Connection) -> list[dict[str, str]]:
+    """Every document, with its owner: `shared`, or `track <slug>`."""
+    rows = conn.execute(
+        "SELECT p.kind, p.name, p.format, p.updated_at, t.slug "
+        "FROM profile_documents p LEFT JOIN tracks t ON t.id = p.track_id "
+        "ORDER BY p.kind, p.name, t.slug"
+    ).fetchall()
+    return [
+        {
+            "kind": str(row[0]),
+            "name": str(row[1]),
+            "format": str(row[2]),
+            "updated_at": str(row[3]),
+            "owner": "shared" if row[4] is None else f"track {row[4]}",
+        }
+        for row in rows
+    ]
 
 
 def _format_for(path: Path) -> str:
@@ -128,12 +194,18 @@ def import_from(conn: sqlite3.Connection, old_root: Path) -> tuple[list[str], li
 
 
 def export_to(conn: sqlite3.Connection, dest: Path) -> list[Path]:
-    """Write every document to dest/<kind>/<name>, byte-identical to import."""
+    """Write every document byte-identical to import: a shared one to
+    dest/<kind>/<name>, a track's own to dest/tracks/<slug>/<kind>/<name>
+    (spec 099)."""
     written: list[Path] = []
-    rows = conn.execute("SELECT kind, name, content FROM profile_documents").fetchall()
+    rows = conn.execute(
+        "SELECT p.kind, p.name, p.content, t.slug "
+        "FROM profile_documents p LEFT JOIN tracks t ON t.id = p.track_id"
+    ).fetchall()
     for row in rows:
         kind, name, content = (str(row[0]), str(row[1]), str(row[2]))
-        target = dest / kind / name
+        base = dest if row[3] is None else dest / "tracks" / str(row[3])
+        target = base / kind / name
         target.parent.mkdir(parents=True, exist_ok=True)
         _write_exact(target, content)
         written.append(target)

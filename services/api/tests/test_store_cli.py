@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import sys
 import uuid
 from collections.abc import Iterator
 from contextlib import closing
@@ -20,7 +21,8 @@ from pg_support import fresh_database
 import harrier.logsetup as logsetup
 from harrier.db import default_db_path
 from harrier.pgstore import URL_VARIABLE, StoreUrlError
-from harrier.tracker.schema import MIGRATIONS
+from harrier.tracker import schema
+from harrier.tracker.schema import MIGRATIONS, POSTGRES_MIGRATIONS
 from harrier_api.app import create_app
 from harrier_cli.main import main
 
@@ -32,6 +34,7 @@ SCHEME_REFUSAL = "error: HARRIER_DATABASE_URL must be empty or a postgresql:// U
 # Nothing listens on port 1, so a connection is refused at once.
 UNREACHABLE_URL = "postgresql://someone@127.0.0.1:1/nowhere"
 SQLITE_LATEST = max(version for version, _ in MIGRATIONS)
+POSTGRES_LATEST = max(version for version, _ in POSTGRES_MIGRATIONS)
 
 
 def run(argv: list[str], capsys: pytest.CaptureFixture[str]) -> tuple[int, str, str]:
@@ -65,11 +68,38 @@ def test_store_migrate_prints_before_and_after_on_postgres(
 ) -> None:
     monkeypatch.setenv(URL_VARIABLE, pg_url)
 
-    assert run(["store", "migrate"], capsys) == (0, "postgres 0 -> 9\n", "")
-    assert run(["store", "migrate"], capsys) == (0, "postgres 9 -> 9\n", "")
-    assert run(["store", "status"], capsys) == (0, "postgres 9\n", "")
+    # The newest migration, whichever spec added it (105, then 099).
+    assert run(["store", "migrate"], capsys) == (0, f"postgres 0 -> {POSTGRES_LATEST}\n", "")
+    latest = f"postgres {POSTGRES_LATEST} -> {POSTGRES_LATEST}\n"
+    assert run(["store", "migrate"], capsys) == (0, latest, "")
+    assert run(["store", "status"], capsys) == (0, f"postgres {POSTGRES_LATEST}\n", "")
     # The Postgres path never touches the local file.
     assert not default_db_path().exists()
+
+
+def test_a_failed_migration_exits_1_with_the_drivers_message(
+    pg_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A statement the server refuses escaped `harrier store` as a driver
+    traceback (post-merge review of PR #207). It is one error line now,
+    quoting the server's message and never the URL."""
+    real = list(schema.POSTGRES_MIGRATIONS)
+    broken = real[-1][0] + 1
+    monkeypatch.setattr(schema, "POSTGRES_MIGRATIONS", [*real, (broken, ["THIS IS NOT SQL"])])
+    monkeypatch.setenv(URL_VARIABLE, pg_url)
+
+    code, out, err = run(["store", "migrate"], capsys)
+
+    assert (code, out) == (1, "")
+    assert err == 'error: a migration failed: syntax error at or near "THIS"\n'
+    # The baseline before it committed; the broken migration left no row.
+    assert run(["store", "status"], capsys) == (
+        0,
+        f"postgres {real[-1][0]}\nbehind: {broken} expected\n",
+        "",
+    )
 
 
 def test_store_status_reports_behind_on_an_unmigrated_store(
@@ -79,7 +109,11 @@ def test_store_status_reports_behind_on_an_unmigrated_store(
 ) -> None:
     monkeypatch.setenv(URL_VARIABLE, pg_url)
 
-    assert run(["store", "status"], capsys) == (0, "postgres 0\nbehind: 9 expected\n", "")
+    assert run(["store", "status"], capsys) == (
+        0,
+        f"postgres 0\nbehind: {POSTGRES_LATEST} expected\n",
+        "",
+    )
 
 
 def test_store_refuses_a_postgres_store_ahead_of_the_code(
@@ -98,7 +132,7 @@ def test_store_refuses_a_postgres_store_ahead_of_the_code(
         code, out, err = run(["store", command], capsys)
         assert (code, out) == (1, ""), command
         assert err.startswith("error: "), command
-        assert "version 12" in err and "(9)" in err, command
+        assert "version 12" in err and f"({POSTGRES_LATEST})" in err, command
 
 
 def test_store_commands_on_sqlite(sqlite_store: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -186,3 +220,47 @@ def test_the_api_refuses_to_start_on_a_postgres_url(monkeypatch: pytest.MonkeyPa
         create_app()
     assert f"error: {invalid.value}\n" == SCHEME_REFUSAL
     assert not default_db_path().exists()
+
+
+def test_a_url_in_dotenv_reaches_the_api_as_it_reaches_the_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The CLI loads `.env` and the API did not, so a URL set only there made
+    the CLI refuse while the API served SQLite: the mixed-store case spec 103
+    exists to prevent (post-merge review of PR #207)."""
+    monkeypatch.delenv(URL_VARIABLE, raising=False)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(f"{URL_VARIABLE}={UNREACHABLE_URL}\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError) as refused:
+        create_app()
+    assert str(refused.value) == SPEC_112_REFUSAL.removeprefix("error: ").rstrip("\n")
+
+    code, _, err = run(["tracks", "list"], capsys)
+    assert (code, err) == (1, SPEC_112_REFUSAL)
+    assert not default_db_path().exists()
+
+
+def test_an_exported_value_wins_over_dotenv_for_the_api_too(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An exported variable, even empty, is never overridden by `.env`: the
+    CLI's rule (spec 011), now the API's as well."""
+    monkeypatch.setenv(URL_VARIABLE, "")
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(f"{URL_VARIABLE}={UNREACHABLE_URL}\n", encoding="utf-8")
+
+    create_app()
+
+
+def test_a_postgres_url_without_the_driver_exits_1_naming_the_install(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The refusal spec 103 names for a missing driver, through the CLI and
+    its exit status, not only the function (post-merge review of PR #207)."""
+    monkeypatch.setitem(sys.modules, "psycopg", None)
+    monkeypatch.setenv(URL_VARIABLE, UNREACHABLE_URL)
+    code, _, err = run(["store", "status"], capsys)
+    assert code == 1
+    assert err.startswith("error: ")
+    assert "uv sync --group postgres" in err

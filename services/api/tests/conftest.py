@@ -99,6 +99,10 @@ OPERATOR_DATA_DIRS = _operator_data_dirs()
 # the first test module, and unconditionally so an inherited value cannot win.
 SESSION_DATA_DIR = Path(tempfile.mkdtemp(prefix="harrier-tests-")) / "data"
 os.environ["HARRIER_DATA_DIR"] = str(SESSION_DATA_DIR)
+# The local store, whatever the operator's shell or `.env` names. An exported
+# empty value wins over `.env` (spec 011), so a hosted URL there never reaches
+# a test, which sets its own when it wants Postgres (spec 060, spec 103).
+os.environ["HARRIER_DATABASE_URL"] = ""
 atexit.register(shutil.rmtree, SESSION_DATA_DIR.parent, ignore_errors=True)
 
 GUARD_PROBE_EVENT = "harrier.tests.operator_data_guard_probe"
@@ -210,6 +214,7 @@ def _data_dir(  # pyright: ignore[reportUnusedFunction]
     that sets `HARRIER_DATA_DIR` itself still gets its own value.
     """
     monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("HARRIER_DATABASE_URL", "")
 
 
 @pytest.fixture(autouse=True)
