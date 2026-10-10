@@ -235,7 +235,7 @@ Matching error classes and messages for callers is spec 112's.
 - [x] An unsupported scheme, a missing driver, a store behind the code, and
       a data command with a Postgres URL each exit 1 with the text under
       Failure modes.
-- [ ] CI's `check-python` job runs the Postgres tests, and fails when its
+- [x] CI's `check-python` job runs the Postgres tests, and fails when its
       Postgres service is removed (recorded in the pull request).
 - [x] ADR-013 decision 5 carries the amended text and note.
 - [x] `services/api/src/harrier/tracker/schema.py` is the only file holding
