@@ -4,7 +4,7 @@ title: The hosted API authenticates every request
 status: proposed
 approved: no
 milestone: M10
-depends: [035, 083, 084, 103]
+depends: [035, 083, 084, 103, 112]
 ---
 
 # Spec 104: The hosted API authenticates every request
