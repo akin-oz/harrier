@@ -1,8 +1,8 @@
 ---
 spec: 098
 title: Resume content splits into shared facts and an industry framing, on the default track
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M9
 depends: [004, 013, 034, 059, 062, 065, 071, 074, 091, 093, 097]
 ---
