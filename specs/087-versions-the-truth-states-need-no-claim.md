@@ -122,7 +122,11 @@ Supporting lines are the lines `TruthSources.contains` reads
 (`services/api/src/harrier/resume/content.py`): the truth and achievements
 documents, plus the brief evidence and views that `with_operator_evidence`
 adds (spec 066, B4 and B7). Lines under a "claims I must not make" heading
-and negated lines are not supporting lines (spec 034).
+are not supporting lines (spec 034). Within a supporting line, the denied
+text (spec 100) grounds no version; the asserting text before it does.
+"Moved to Kafka 3 without downtime" grounds `Kafka 3`, and "Ran Kafka in
+production. Never ran Kafka 3." does not
+(`services/api/tests/test_apply_claims.py::test_a_version_is_grounded_only_by_asserting_text`).
 
 These never ground a version:
 

@@ -125,8 +125,10 @@ Each comparable line is divided into negated spans and asserting text.
 
 A sentence starts at the start of the line or after a sentence boundary: a
 `.`, `!`, `?` or `;` followed by whitespace. A period is not a boundary
-when the token it ends is a single letter or already holds a period
-(`U.S.`, `e.g.`, `i.e.`).
+when the token it ends is an abbreviation: a single letter, or letters
+joined by periods (`J.`, `U.S.`, `e.g.`, `i.e.`). A period after a number
+(`Kafka 3.`, `Kafka 3.6.`) or a word is one, and so is a period standing
+alone.
 
 The span runs to the end of the line, not the end of the sentence, on
 purpose. A boundary found in the wrong place would otherwise end a
@@ -313,3 +315,12 @@ was denying. Reword the truth line, or accept that the claim goes.
   `services/api/tests/test_apply_claims.py::test_a_version_is_grounded_only_by_asserting_text`).
   This narrows spec 068's "`lines_containing` and `evidence_lines` still
   return the raw lines" to lines with no denied text.
+- **A number before a period ends a sentence** (review of PR #206). The
+  rule above read "a single letter or a token that already holds a period",
+  which made `3` in "Moved to Kafka 3. Never used Kubernetes." and `3.6` in
+  "Kafka 3.6." non-boundaries, so the asserted first sentence was denied
+  with the second. The rule now names abbreviations only. A period standing
+  alone at the start of a line also raised `IndexError` in the gate; it is
+  now a boundary
+  (`services/api/tests/test_honesty.py::test_a_denial_reaches_from_its_start_to_the_end_of_the_line`,
+  `test_a_period_standing_alone_ends_a_sentence`).

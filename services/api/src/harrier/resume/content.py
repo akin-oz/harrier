@@ -558,6 +558,9 @@ def _whole_words(phrases: tuple[str, ...], *extra: str) -> re.Pattern[str]:
 _NEGATOR = _whole_words(SENTENCE_NEGATORS, r"[a-z]+n't")
 _EXCLUSION = _whole_words(EXCLUSION_MARKERS)
 _SENTENCE_END = re.compile(r"[.!?;](?=\s)")
+# The run of non-space text a period ends; empty when the period stands alone.
+_LAST_TOKEN = re.compile(r"\S*$")
+_ABBREVIATION = re.compile(r"[^\W\d_](?:\.[^\W\d_])*")
 
 
 # Inline code and paired emphasis are formatting. A model quoting a truth
@@ -621,13 +624,14 @@ def asserting_lines(document: str) -> list[str]:
 def _sentence_start(text: str, position: int) -> int:
     """Where the sentence holding `position` starts: after the last `.`,
     `!`, `?` or `;` before it that is followed by whitespace. A period ending
-    a single letter or a token that already holds a period (`U.S.`, `e.g.`)
-    ends no sentence."""
+    an abbreviation (a single letter, or letters joined by periods: `J.`,
+    `U.S.`, `e.g.`) ends no sentence. One ending a number (`Kafka 3.`,
+    `Kafka 3.6.`) or a word does."""
     start = 0
     for end in _SENTENCE_END.finditer(text, 0, position):
         if end.group() == ".":
-            token = text[: end.start()].rsplit(maxsplit=1)[-1].lstrip("([{\"'")
-            if len(token) <= 1 or "." in token:
+            token = _LAST_TOKEN.search(text, 0, end.start())
+            if token is not None and _ABBREVIATION.fullmatch(token.group().lstrip("([{\"'")):
                 continue
         start = end.end()
     return start

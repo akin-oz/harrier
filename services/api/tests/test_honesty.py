@@ -166,6 +166,11 @@ def test_every_negation_shape_is_read(line: str, fragment: str) -> None:
         ("Claims that I led the team are not true.", "led the team", False),
         ("Built a no-code editor.", "no-code editor", True),
         ("Shipped the API; never owned the mobile app.", "Shipped the API", True),
+        # A period after a number ends a sentence; only abbreviations do not
+        # (review finding on PR #206).
+        ("Moved to Kafka 3. Never used Kubernetes.", "Moved to Kafka 3", True),
+        ("Moved to Kafka 3.6. Never used Kubernetes.", "Moved to Kafka 3.6", True),
+        ("Moved to Kafka 3. Never used Kubernetes.", "used Kubernetes", False),
     ],
 )
 def test_a_denial_reaches_from_its_start_to_the_end_of_the_line(
@@ -216,6 +221,19 @@ def test_an_abbreviation_does_not_end_a_negation(line: str) -> None:
     """A period inside an abbreviation is not a sentence boundary, and even
     if it were read as one, a denial runs to the end of the line."""
     assert not sources(line).contains("Kafka in production")
+
+
+@pytest.mark.parametrize(
+    ("line", "fragment", "verifies"),
+    [
+        (". Never used Kubernetes.", "used Kubernetes", False),
+        ("Shipped the API . Never used Kubernetes.", "Shipped the API", True),
+    ],
+)
+def test_a_period_standing_alone_ends_a_sentence(line: str, fragment: str, verifies: bool) -> None:
+    """A period with no token before it is a boundary, and reading it does
+    not raise."""
+    assert sources(line).contains(fragment) is verifies
 
 
 def test_an_early_boundary_cannot_admit_the_subject_of_a_denial() -> None:
