@@ -418,19 +418,26 @@ None for data. `just container-up` after it ships.
   would sit beside the database where the operator does not look, and a
   download is what the operator asked for when they pressed export.
 
-## Open decisions for Akin
+## Decisions by Akin (2026-10-10)
 
-1. **Showing the Gmail token's age.** Recommendation: yes; it is file
-   metadata, and an old token is the most common reason the watch stops.
-2. **Where the Settings page sits in the navigation.** Recommendation: last,
-   after Operations, since it is visited least often.
-3. **Formula cells, added after approval.** Neutralize them in the browser
-   downloads only, as written above, or also in `harrier export`.
-   Recommendation: downloads only, because the command's files are read back
-   by the legacy import and an apostrophe would change the imported text.
-4. **The profile list's token, found at implementation (2026-10-10).**
-   Decided by Akin on 2026-10-10: `GET /ops/profile` requires the token, as
-   this spec's routes do. Implemented on this branch (amendment 5).
+These were open decisions when the spec was approved. Akin decided each on
+2026-10-10, and each is built as decided.
+
+1. **Showing the Gmail token's age.** Yes. It is file metadata, and an old
+   token is the most common reason the watch stops. `GET /settings/host`
+   reports the token's presence and age in days, never its name or contents
+   (`services/api/tests/test_ui_settings.py::test_host_facts_never_carry_a_secret_or_claim_health`).
+2. **Where the Settings page sits in the navigation.** Last, after
+   Operations, since it is visited least often
+   (`App.test.tsx::Settings is the last section, and the same on every track`).
+3. **Formula cells, added after approval.** Neutralized in the browser
+   downloads only. `harrier export` writes cells unchanged, because its
+   files are read back by the legacy import and an apostrophe would change
+   the imported text
+   (`services/api/tests/test_ui_settings.py::test_a_download_neutralizes_formula_cells`).
+4. **The profile list's token, found at implementation.** `GET /ops/profile`
+   requires the token, as this spec's routes do (amendment 5)
+   (`services/api/tests/test_ui_settings.py::test_the_profile_list_requires_the_token`).
 
 ## Proof / origin
 
