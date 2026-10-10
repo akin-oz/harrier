@@ -283,14 +283,17 @@ None for the local product. A Postgres store is created only by
 
 ## Open decisions for Akin
 
-1. **Driver.** psycopg 3 in an optional `postgres` group (recommended), or
-   SQLAlchemy Core (Options weighed).
-2. **Postgres history.** A baseline at version 9 (recommended), or replay
-   migrations 1 to 9 in Postgres dialect.
-3. **Timestamps.** Text with SQLite's formats (recommended, no contract
-   change), or native `timestamptz` with a contract change.
-4. **Local Postgres tests.** Opt-in by test URL and required in CI
-   (recommended), or `just check` starts a Postgres container itself.
+Akin took the recommended answer to each on 2026-10-10. Scope and
+Behavior above already describe these answers.
+
+1. **Driver: psycopg 3** in an optional `postgres` group. SQLAlchemy Core
+   was the alternative (Options weighed).
+2. **Postgres history: a baseline at version 9.** Replaying migrations 1 to
+   9 in Postgres dialect was the alternative.
+3. **Timestamps: text in SQLite's formats,** so no contract change. Native
+   `timestamptz` would change the contract and is its own spec if wanted.
+4. **Postgres tests: opt-in locally by test URL, required in CI.** Having
+   `just check` start a Postgres container was the alternative.
 
 ## Proof / origin
 
