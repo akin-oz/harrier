@@ -516,6 +516,12 @@ PR 2 (behavior):
 - [ ] `docs/architecture.md` describes the domain on either store and no
       longer says "until spec 112".
 - [ ] `just check` passes.
+- [ ] No domain insert supplies an `id`; every new id comes from the store.
+      An explicit id would refuse on another owner's row with the primary
+      key's message and so reveal that the id is taken (planned
+      test_no_domain_insert_supplies_an_id). Spec 105's follow-up makes an
+      explicit id a refusal on Postgres (post-merge review of PR #216,
+      2026-10-10).
 
 ## Honest limitations
 

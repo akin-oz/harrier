@@ -76,7 +76,12 @@ env file or deploy path is classified before it is added; hosted logs
 follow written redaction and prompt-logging rules; hosted migrations take
 the URL from the shell, not `.env`; and an error reporter never records
 frame locals unscrubbed (post-merge review of PRs #194 and #207,
-2026-10-10).
+2026-10-10). The deploy grants `harrier_tenant` to the API's login role as
+a named step, since migration 10 creates the role with no member; and the
+staging run migrates as a non-superuser role shaped like Supabase's
+`postgres` (`CREATEROLE`, `BYPASSRLS`, not superuser), because every test
+so far runs as a superuser and cannot show a missing grant (post-merge
+review of PR #216, 2026-10-10).
 
 ## Proof / origin
 

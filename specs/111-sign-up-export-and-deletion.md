@@ -43,7 +43,11 @@ spec's to decide. Deleting an owner's events and tracks neither disables
 a trigger nor locks the shared table: `harrier_refuse()` stands aside
 only under a transaction-local setting that a service-role-only deletion
 function sets, and every other session is still refused (post-merge
-review of PRs #194 and #207, 2026-10-10).
+review of PRs #194 and #207, 2026-10-10). Because the sign-up trigger
+gives every user a track 1, no auth user can be deleted at all until this
+spec's deletion runs, including a user who never used harrier, and the
+Supabase dashboard's delete fails the same way (post-merge review of PR
+#216, 2026-10-10).
 
 ## Proof / origin
 
