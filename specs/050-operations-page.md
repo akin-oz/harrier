@@ -27,6 +27,11 @@ loaded, and nothing says so until somebody thinks to ask. `schedule status` repo
 next run, and an operator who has to remember to run it is an operator who will
 not. That is the single strongest reason this page exists.
 
+As amended by spec 096 (see the note at the end), the page cannot ask launchd:
+the API runs in a container that has no `launchctl`. It shows when each
+scheduled job last succeeded, which is where a job that stopped shows up, and
+says the installed and loaded state is the host's to report.
+
 ## Scope
 
 ### Routes
@@ -36,26 +41,35 @@ not. That is the single strongest reason this page exists.
 | `GET /ops/feeds` | `check-feeds` | `load_feeds_for_check`, `check_feeds` | run |
 | `POST /ops/feeds/prune` | `check-feeds --prune` | `prune_dead` | request |
 | `POST /ops/reconsider` | `reconsider` | `reconsider_source` | run |
-| `GET /ops/schedule` | `schedule status` | `schedule_status` | request |
-| `POST /ops/schedule/install` | `schedule install` | the installer | request |
-| `POST /ops/schedule/uninstall` | `schedule uninstall` | the uninstaller | request |
+| `GET /ops/schedule` | none: what the container can read in place of `schedule status` | the last-success records (spec 029) and the schedule definition | request |
 | `POST /ops/backup` | `backup` | `create_backup` | run |
 | `POST /ops/digest` | `digest` | `run_digest` | run |
-| `GET /ops/parity` | `parity` | the parity report | run |
-| `POST /ops/export` | `export` | the exporter | run |
 | `GET /ops/profile` | `profile list` | the profile store reader | request |
 
 Feed health is a run because it makes a network request per configured board.
-Reconsideration, backup, digest, parity and export are runs because each walks
-the whole tracker or the whole data directory. Schedule status is a read of
-local state and answers as a request.
+Reconsideration, backup and digest are runs because each walks the whole
+tracker or the whole data directory. The schedule read is a read of the
+database and the schedule definition, and answers as a request.
+
+`GET /ops/schedule` reads the last-success records and the schedule
+definition (amendment 2 in the note at the end). It reports, for each
+scheduled job, its cadence and when it last succeeded, and says the installed
+and loaded state is the host's to report, naming the command that reports it
+(`harrier schedule status`). It does not call `schedule_status`, which asks
+`launchctl`.
+
+Removed by spec 096 before this spec was built: `POST /ops/schedule/install`
+and `POST /ops/schedule/uninstall` (the container cannot load a launchd job),
+`GET /ops/parity` (repository upkeep, terminal only), and `POST /ops/export`,
+which becomes the two downloads spec 096 builds (`GET /ops/export/jobs.csv`,
+`GET /ops/export/contacts.csv`).
 
 ### Request fields, and defaults that do nothing
 
-Five of these routes can change something or spend something, so their
+Four of these routes can change something or spend something, so their
 request shapes are named here rather than left to the implementation. With an
-empty body, none of them applies a change, sends a message, installs a job or
-prunes stored configuration.
+empty body, none of them applies a change, sends a message or prunes stored
+configuration.
 
 `POST /ops/backup` is the one that still does something on an empty body: it
 writes an archive. That is deliberate rather than an exception smuggled in.
@@ -69,7 +83,6 @@ rather than pretending it is inert.
 | `POST /ops/reconsider` | `source` | absent | Every source, as the CLI does. |
 | `POST /ops/digest` | `dry_run` | `true` | Produce the digest text and send nothing. Sending is the explicit `false`. |
 | `POST /ops/digest` | `date` | absent | Today, as the CLI does. |
-| `POST /ops/schedule/install` | `confirm` | `false` | Refuse. Installing loads launchd jobs, so it takes an explicit confirmation in the body rather than being the effect of a single click. |
 | `POST /ops/feeds/prune` | `confirm` | `false` | Refuse, for the same reason: it edits stored configuration. |
 | `POST /ops/backup` | `keep` | the CLI's own default | Retention is the CLI's decision, not a second copy of it here. |
 
@@ -111,6 +124,13 @@ This is the criterion spec 042 left open, and the reason it is load-bearing:
 a UI that quietly covers less than it appears to is the same defect class as a
 document that overclaims.
 
+Amended by spec 096 (amendments 5 and 6): the list moves to the Settings page
+and becomes spec 096's three-way list, in which every subcommand is routed,
+run on the host, or terminal only. Spec 096's test (planned
+test_every_cli_subcommand_has_exactly_one_place) replaces the test described
+below. The table and the test are kept here as the record of what spec 042
+fixed.
+
 The page lists every command that has no button, with the command to run and
 the reason it has none. Spec 042 fixed the list and the reasons:
 
@@ -133,8 +153,11 @@ exists to prevent.
 
 Sections in the order an operator checks them: schedule and last-success ages
 first, because that is the silent-failure surface; then discovery runs, which
-exist today; then feed health, reconsideration, backup; then config, which
-exists today; then the CLI-only list, last and plainly.
+exist today; then feed health, reconsideration and the digest.
+
+Amended by spec 096 (amendment 5): configuration, backups and the CLI-only
+list move to the Settings page, which spec 096 builds. The Operations page
+keeps runs and reports.
 
 ## Inputs, outputs, failure modes
 
@@ -144,13 +167,16 @@ exists today; then the CLI-only list, last and plainly.
 
 Failure modes that must reach the operator:
 
-- **launchd is absent or the plists are not loaded.** `schedule_status` reports
-  installed, loaded, drift and next run as separate facts, and the page shows
-  them separately. "Installed but not loaded" is the state a silent failure
-  hides in, and it must be legible as its own condition rather than folded
-  into a single green badge.
-- **Drift between the installed plist and the rendered one.** Reported as
-  drift, naming what differs.
+- **launchd is absent or the plists are not loaded.** The container can see
+  neither (amended by spec 096). The schedule section says the installed and
+  loaded state is the host's to report, and names `harrier schedule status`
+  as the command that reports it. It shows when each job last succeeded,
+  because a job that is installed but not loaded stops recording successes,
+  and that absence is what the container can see.
+- **Drift between the installed plist and the rendered one.** The host's to
+  report, by the same command.
+- **The schedule definition is missing or malformed.** Reported in the
+  definition loader's words, never as a healthy schedule.
 - **No boards are configured.** `check-feeds` treats it as an error and exits
   nonzero. The page says no boards are configured rather than showing an empty
   healthy list.
@@ -161,13 +187,13 @@ Failure modes that must reach the operator:
 - **The digest fails to send.** `run_digest` returns a nonzero code. The digest
   text was still produced and the page shows it, distinguishing "no digest" from
   "digest not delivered".
-- **Parity fails.** It compares against the old system, which may be absent on
-  a fresh clone. Absence is reported as not-applicable rather than as a failure.
 
 Failure modes this must not introduce:
 
 - A button for anything in the CLI-only table.
 - A schedule badge that reads healthy while a job has not succeeded recently.
+- An installed or loaded state shown as healthy, which the container cannot
+  know (spec 096).
 - A destructive operation without a separate, deliberate second action.
 - A second implementation of any report.
 
@@ -177,16 +203,17 @@ Proving symbols are named at implementation.
 
 - [ ] every verb in the route table has a route calling the same domain
       function as the CLI verb, asserted in the shape spec 042 established
-- [ ] the CLI-only list is derived by a test that enumerates the CLI's
-      subcommands and the routed ones, and fails when a new verb is added with
-      neither a route nor a line in the table
-- [ ] no route exists for any command in the CLI-only table, asserted by the
-      same test
+- [ ] moved to spec 096 (amendments 5 and 6): the CLI-only list is derived
+      by a test that enumerates the CLI's subcommands and the routed ones, and
+      fails when a new verb is added with no place (spec 096's planned
+      test_every_cli_subcommand_has_exactly_one_place)
+- [ ] moved to spec 096 with it: no route exists for any command in the
+      terminal-only list, asserted by the same test
 - [ ] reconsideration defaults to reporting and requires a separate action to
       apply, proven by a test that the default changes nothing
-- [ ] with an empty body no route applies a change, sends a message, installs
-      a job or prunes stored configuration, proven by a test that posts an
-      empty body to each and asserts it
+- [ ] with an empty body no route applies a change, sends a message or
+      prunes stored configuration, proven by a test that posts an empty body
+      to each and asserts it
 - [ ] `POST /ops/backup` on an empty body writes an archive and deletes
       nothing, proven by a test that asserts the retention prune did not run
 - [ ] a second non-dry digest for the same target date is refused with a
@@ -194,45 +221,71 @@ Proving symbols are named at implementation.
       and asserts one delivery
 - [ ] "nothing is eligible to clear" and the all-current-rules case remain
       distinct strings on both sides
-- [ ] `installed`, `loaded`, `drifted`, `last_exit_status` and `next_run` reach
-      the response as separate fields per job, and the `problem` property
-      decides the badge, so a test asserts an installed-but-not-loaded schedule
-      does not render as healthy
+- [ ] `GET /ops/schedule` reports, for each scheduled job, its cadence and
+      its last-success time from the records, and says the installed and
+      loaded state is the host's to report; a test asserts a job with no
+      recent success does not render as healthy, and that no installed or
+      loaded state renders as healthy (amended by spec 096)
 - [ ] a failed backup verification reports that no archive was written, and a
       test asserts no archive is left behind
 - [ ] a digest that is produced but not delivered is distinguishable from one
       that was never produced
 - [ ] pruning dead feeds is a separate action from checking them, and reports
       each removed URL
-- [ ] absence of the old system renders parity as not-applicable rather than
-      failed
 - [ ] every operations write requires the token; schedule status, feed results
       and the profile list are reads and do not
 - [ ] the generated client carries every new route and no hand-written request
       or response shape appears in `apps/web`
 - [ ] no personal data enters a committed fixture, a test name, or a
       screenshot
-- [ ] spec 042's open criterion is marked satisfied, citing the test above
+- [ ] moved to spec 096 with the list: spec 042's open criterion is marked
+      satisfied, citing spec 096's test
 - [ ] all gates green on PR
 
 ## Proof / origin
 
 The CLI-only table and its reasons are copied from spec 042, which set them.
 The domain functions are the imports in `_cmd_check_feeds`, `_cmd_reconsider`,
-`_cmd_backup`, `_cmd_digest`, `_cmd_parity`, `_cmd_export`, `_cmd_schedule` and
-the profile handlers in `services/api/src/harrier_cli/main.py`. The
+`_cmd_backup`, `_cmd_digest` and the profile handlers in
+`services/api/src/harrier_cli/main.py`. The
 "nothing is eligible to clear" distinction is a review finding recorded in a
-comment in `_cmd_reconsider`. `schedule_status` is in
-`services/api/src/harrier/schedule.py`.
+comment in `_cmd_reconsider`. The last-success records are
+`harrier.runoutcome` (spec 029); the schedule definition is
+`config/schedule.json`, read by `load_schedule` in
+`services/api/src/harrier/schedule.py`. The container boundary behind spec
+096's amendments: ADR-010, specs 061 and 074.
 
 ## Out of scope
 
 Any change to what a domain function does. Authentication design, spec 035.
 Buttons for the CLI-only commands. A general job scheduler in the UI: this page
-reports on launchd and installs the rendered plists, and inventing schedules in
-the browser is a different product. Editing profile documents in the browser;
+reports what the container can read about the schedule and installs nothing,
+and inventing schedules in the browser is a different product. Editing profile documents in the browser;
 the page lists them and the CLI imports and exports them.
 
 ## Migration
 
 None.
+
+## Note (2026-10-10): amended by spec 096 before it was built
+
+Spec 096 amended this spec before any of it was built. Spec 050 was written
+for an API on the host; ADR-010 then moved the API into a container that has
+no `launchctl`, cannot write `~/Library/LaunchAgents`, and cannot see a host
+path. The six amendments, applied in the text above:
+
+1. `POST /ops/schedule/install` and `POST /ops/schedule/uninstall` are
+   removed. The container cannot load a launchd job.
+2. `GET /ops/schedule` reads the last-success records and the schedule
+   definition, and says the installed state is the host's to report.
+3. `GET /ops/parity` is removed. Parity is repository upkeep, which stays
+   terminal-only by the decision of 2026-10-08.
+4. `POST /ops/export` becomes the two downloads spec 096 builds.
+5. Configuration, backups and the CLI-only list move to the Settings page;
+   the Operations page keeps runs and reports.
+6. The CLI-only list becomes spec 096's three-way list: routed, run on the
+   host, or terminal only.
+
+The acceptance criteria name the routes as amended. The criteria about the
+CLI-only list, and spec 042's open criterion, are marked as moved to spec 096,
+which builds the list, its page and its test.
