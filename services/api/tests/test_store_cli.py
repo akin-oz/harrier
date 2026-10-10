@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import sys
 import uuid
 from collections.abc import Iterator
 from contextlib import closing
@@ -192,3 +193,47 @@ def test_the_api_refuses_to_start_on_a_postgres_url(monkeypatch: pytest.MonkeyPa
         create_app()
     assert f"error: {invalid.value}\n" == SCHEME_REFUSAL
     assert not default_db_path().exists()
+
+
+def test_a_url_in_dotenv_reaches_the_api_as_it_reaches_the_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The CLI loads `.env` and the API did not, so a URL set only there made
+    the CLI refuse while the API served SQLite: the mixed-store case spec 103
+    exists to prevent (post-merge review of PR #207)."""
+    monkeypatch.delenv(URL_VARIABLE, raising=False)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(f"{URL_VARIABLE}={UNREACHABLE_URL}\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError) as refused:
+        create_app()
+    assert str(refused.value) == SPEC_112_REFUSAL.removeprefix("error: ").rstrip("\n")
+
+    code, _, err = run(["tracks", "list"], capsys)
+    assert (code, err) == (1, SPEC_112_REFUSAL)
+    assert not default_db_path().exists()
+
+
+def test_an_exported_value_wins_over_dotenv_for_the_api_too(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An exported variable, even empty, is never overridden by `.env`: the
+    CLI's rule (spec 011), now the API's as well."""
+    monkeypatch.setenv(URL_VARIABLE, "")
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(f"{URL_VARIABLE}={UNREACHABLE_URL}\n", encoding="utf-8")
+
+    create_app()
+
+
+def test_a_postgres_url_without_the_driver_exits_1_naming_the_install(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The refusal spec 103 names for a missing driver, through the CLI and
+    its exit status, not only the function (post-merge review of PR #207)."""
+    monkeypatch.setitem(sys.modules, "psycopg", None)
+    monkeypatch.setenv(URL_VARIABLE, UNREACHABLE_URL)
+    code, _, err = run(["store", "status"], capsys)
+    assert code == 1
+    assert err.startswith("error: ")
+    assert "uv sync --group postgres" in err

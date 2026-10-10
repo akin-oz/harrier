@@ -45,7 +45,8 @@ The rest of the domain (the write path, readers, upserts, `COLLATE NOCASE`,
 nine modules (`tracker/store.py`, `tracks.py`, `userconfig/store.py`,
 `profile/store.py`, `runoutcome.py`, `mail/watch.py`, `logredact.py`,
 `apply/profile.py`, `resume/content.py`) and the `sqlite3.Connection`
-annotation in about thirty more. That is spec 112. Splitting here keeps
+annotation in 37 more (46 files under `services/api/src` match
+`git grep -l 'sqlite3\.Connection'`, counted 2026-10-10). That is spec 112. Splitting here keeps
 each change reviewable against its spec, as `change-boundary` asks.
 
 ## Scope
@@ -217,7 +218,9 @@ Matching error classes and messages for callers is spec 112's.
       test changed in behavior, and `just demo` starts as before.
 - [x] `harrier store migrate` on an empty Postgres database prints
       `postgres 0 -> 9`; a second run prints `postgres 9 -> 9`
-      (`services/api/tests/test_postgres_store.py::test_migrate_applies_the_baseline_once`).
+      (`services/api/tests/test_store_cli.py::test_store_migrate_prints_before_and_after_on_postgres`;
+      the versions it returns:
+      `services/api/tests/test_postgres_store.py::test_migrate_applies_the_baseline_once`).
 - [x] Two concurrent `harrier store migrate` runs leave one version row
       per version
       (`services/api/tests/test_postgres_store.py::test_two_first_migrations_apply_once_on_postgres`).
@@ -225,18 +228,31 @@ Matching error classes and messages for callers is spec 112's.
       renamed, one default changed, or one probe's constraint removed;
       the pull request records each of those three runs
       (`services/api/tests/test_dialect_parity.py::test_both_dialects_build_the_same_tracker`).
-- [x] Every probe in the Behavior table is asserted against both dialects.
-- [x] The spec 090 broken-migration test runs against both dialects.
+- [x] Every probe in the Behavior table is asserted against both dialects
+      (`services/api/tests/test_dialect_parity.py::test_a_probe_is_refused_or_accepted_on_both`).
+- [x] The spec 090 broken-migration test runs against both dialects
+      (`services/api/tests/test_migration_runner.py::test_a_failed_migration_leaves_no_partial_schema_on_postgres`).
 - [x] A migration after version 9 with an empty Postgres or SQLite list
       fails a test that names the version
       (`services/api/tests/test_postgres_store.py::test_every_new_migration_declares_both_dialects`).
 - [x] A connection failure's message and logs do not contain the password
-      (`services/api/tests/test_postgres_store.py::test_a_connection_failure_never_prints_the_password`).
-- [x] An unsupported scheme, a missing driver, a store behind the code, and
-      a data command with a Postgres URL each exit 1 with the text under
-      Failure modes.
-- [x] CI's `check-python` job runs the Postgres tests, and fails when its
-      Postgres service is removed (recorded in the pull request).
+      (`services/api/tests/test_postgres_store.py::test_a_connection_failure_never_prints_the_password`;
+      the scrub itself, which a refused port never exercises:
+      `services/api/tests/test_postgres_store.py::test_a_percent_encoded_password_never_reaches_the_message`).
+- [x] An unsupported scheme, a missing driver, and a data command with a
+      Postgres URL each exit 1 with the text under Failure modes
+      (`services/api/tests/test_store_cli.py::test_an_unsupported_url_is_refused_before_anything_opens`,
+      `services/api/tests/test_store_cli.py::test_a_postgres_url_without_the_driver_exits_1_naming_the_install`,
+      `services/api/tests/test_store_cli.py::test_a_data_command_is_refused_on_a_postgres_url`).
+      A store behind the code is refused where a store is opened for use
+      (`services/api/tests/test_postgres_store.py::test_opening_an_unmigrated_store_is_refused`)
+      and reported by `harrier store status`; no command exits 1 for it
+      until spec 112 opens one for use (see Amendment).
+- [x] CI's `check-python` job runs the Postgres tests against its
+      `postgres:17` service (run 38063479933: 2453 passed, none skipped).
+      Without a server under `CI=true` they fail rather than skip; that was
+      run locally and recorded in PR #207, not as a CI run with the service
+      removed (see Corrections).
 - [x] ADR-013 decision 5 carries the amended text and note.
 - [x] `services/api/src/harrier/tracker/schema.py` is the only file holding
       Postgres DDL.
@@ -378,3 +394,44 @@ Behavior above already describe these answers.
   (`services/api/tests/test_postgres_store.py::test_opening_an_unmigrated_store_is_refused`).
   No CLI command opens one for use until spec 112, so no command exits 1
   for it yet; `harrier store status` reports it instead.
+
+## Corrections after the post-merge review (2026-10-10)
+
+PR #207 merged with no review, because the review service was rate
+limited. A review run afterwards found these, corrected here and in the
+same change's code:
+
+- **The API now reads the URL from `.env` too.** The CLI loads `.env`; the
+  API did not, so a URL set only there made the CLI refuse while the API
+  served SQLite, the case Scope item 7 exists to prevent.
+  `harrier.pgstore.store_target` reads the variable from the environment
+  and, when it is not set there, from `.env`, through the CLI's own parser
+  (`services/api/src/harrier/envfile.py`). An exported value, even empty,
+  wins
+  (`services/api/tests/test_store_cli.py::test_a_url_in_dotenv_reaches_the_api_as_it_reaches_the_cli`,
+  `services/api/tests/test_store_cli.py::test_an_exported_value_wins_over_dotenv_for_the_api_too`).
+- **The scrub covers the encoded password.** libpq quotes a URL it refuses
+  as written, still percent-encoded; the scrub replaced only the decoded
+  form, so a password with an invalid escape was printed whole. The two
+  earlier password tests connect to a closed port, whose message never
+  quotes the password, so they passed with the scrub removed.
+- **`StoreTarget` no longer shows its URL in its repr**
+  (`services/api/tests/test_postgres_store.py::test_a_store_target_never_shows_its_password`).
+- **A malformed URL is refused like any other.** A bad port or host raised
+  a bare `ValueError`, and a scheme in another case passed here and failed
+  in libpq with an unrelated message
+  (`services/api/tests/test_postgres_store.py::test_a_malformed_url_is_refused_like_any_other`).
+- **Tests never read an operator's URL.** `services/api/tests/conftest.py`
+  sets `HARRIER_DATABASE_URL` empty for the session and for every test, so
+  a hosted URL in the operator's shell or `.env` cannot reach the suite
+  (spec 060). Without it, a run started beside such a `.env` fails at
+  collection.
+- **Two acceptance boxes said more than was proven.** "A store behind the
+  code exits 1" contradicted the Amendment; it is reworded to what holds.
+  "Fails when its Postgres service is removed" was ticked in PR #209 on a
+  passing CI run and a local stand-in; it is reworded to say so.
+- **The amended text quoted under Behavior is the proposal.** The text that
+  landed is `docs/adr/ADR-013-hosted-multi-tenant-deployment.md` decision
+  5, which says the dialects are held to the same versions in one module
+  rather than "in one entry", and that this applies to each migration
+  after the baseline.

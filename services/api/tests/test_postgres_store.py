@@ -331,3 +331,45 @@ def test_a_store_ahead_of_the_code_is_refused() -> None:
         assert str(ahead) in str(refused.value)
         assert str(LATEST) in str(refused.value)
         assert recorded_versions(url) == [*ALL_VERSIONS, ahead]
+
+
+def test_a_percent_encoded_password_never_reaches_the_message() -> None:
+    """libpq quotes the URL's text as written, still percent-encoded, when it
+    refuses it. Scrubbing only the decoded password let the encoded one
+    through (post-merge privacy review of PR #207). No server is needed:
+    the driver refuses the URL before it connects."""
+    secret = f"synthetic{uuid.uuid4().hex}"
+    encoded = f"{secret}%40at%zz"
+    url = f"postgresql://harrier:{encoded}@127.0.0.1:1/harrier"
+
+    with pytest.raises(StoreConnectionError) as refused:
+        postgres_connect(url)
+
+    shown = "".join(traceback.format_exception(refused.value))
+    assert secret not in shown
+
+
+def test_a_store_target_never_shows_its_password() -> None:
+    secret = f"synthetic{uuid.uuid4().hex}"
+    target = store_target(
+        {"HARRIER_DATABASE_URL": f"postgresql://harrier:{secret}@db.example.test/h"}
+    )
+    assert target.is_postgres
+    assert secret not in repr(target)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql://harrier@127.0.0.1:notaport/harrier",
+        "postgresql://harrier@[::1/harrier",
+        "PostgreSQL://harrier@127.0.0.1/harrier",
+    ],
+)
+def test_a_malformed_url_is_refused_like_any_other(url: str) -> None:
+    """A bad port or host raised a bare ValueError traceback, and a scheme in
+    another case passed here and failed in libpq with an unrelated message
+    (post-merge data integrity review of PR #207)."""
+    with pytest.raises(StoreUrlError) as refused:
+        store_target({"HARRIER_DATABASE_URL": url})
+    assert str(refused.value) == "HARRIER_DATABASE_URL must be empty or a postgresql:// URL"

@@ -51,17 +51,10 @@ if TYPE_CHECKING:
 def load_project_env(path: Path | None = None) -> None:
     """Load .env from the working directory (spec 011; launchd wrappers rely
     on it). Existing environment variables are never overridden."""
-    env_path = path if path is not None else Path(".env")
-    if not env_path.is_file():
-        return
-    for raw_line in env_path.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        if key and key not in os.environ:
+    from harrier.envfile import read_env_file
+
+    for key, value in read_env_file(path if path is not None else Path(".env")).items():
+        if key not in os.environ:
             os.environ[key] = value
 
 
