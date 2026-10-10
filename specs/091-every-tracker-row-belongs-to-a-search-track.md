@@ -1,7 +1,7 @@
 ---
 spec: 091
 title: Every tracker row belongs to a named search track
-status: accepted
+status: shipped
 approved: yes
 milestone: M9
 depends: [023, 041, 061, 079, 090]
@@ -421,7 +421,7 @@ database is built under `tmp_path` with synthetic rows.
       amended
 - [x] No real tracker row, count, institution or person appears in a
       fixture, this spec, the ADR or a commit message (ADR-008)
-- [ ] All gates green on the pull request
+- [x] All gates green on the pull request
 
 ## Honest limitations
 

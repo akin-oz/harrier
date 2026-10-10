@@ -1,7 +1,7 @@
 ---
 spec: 014
 title: Cover letters and application answers
-status: shipped
+status: in-progress
 approved: yes
 milestone: M3
 depends: [013]
@@ -85,7 +85,7 @@ candidate and his stack), and the old tests pin personal profile content.
 - [ ] Deterministic answers fill their templates from profile data
       (salary from the candidate document, availability, interest with
       the product signal)
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 ## Proof / origin
 

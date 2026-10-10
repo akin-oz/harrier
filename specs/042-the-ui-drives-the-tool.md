@@ -1,7 +1,7 @@
 ---
 spec: 042
 title: The UI drives the tool, not just the tracker table
-status: accepted
+status: shipped
 approved: yes
 milestone: M7
 depends: [026, 035]

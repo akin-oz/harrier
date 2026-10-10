@@ -1,7 +1,7 @@
 ---
 spec: 064
 title: A backup can be taken while the container runs
-status: draft
+status: in-progress
 approved: yes
 milestone: M8
 depends: [030, 051, 061]
@@ -207,7 +207,7 @@ applied to spec 051 in the same change.
 - [ ] Spec 061's class table text is amended as stated above, in the same
       change. Open: spec 061 is not yet in git, so the amendment is applied
       to its working copy and lands when spec 061 is committed.
-- [ ] Once spec 061's delegation exists: on the host with the container
+- [x] Once spec 061's delegation exists: on the host with the container
       running, `harrier backup` is delegated and exits 0, and
       `harrier backup --dest /tmp/x` exits 75. Proved by spec 061's class
       table tests, extended with these two vector cases.

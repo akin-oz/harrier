@@ -1,7 +1,7 @@
 ---
 spec: 034
 title: The truth gate refuses rather than omits, and the README stops overclaiming
-status: accepted
+status: shipped
 approved: yes
 milestone: M6
 depends: [013, 014]
@@ -166,7 +166,7 @@ validator.
       and every surface without a gate says so
 - [x] no candidate content enters a committed fixture; the examples are
       synthetic and double as the test data (ADR-008)
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 ## Proof / origin
 

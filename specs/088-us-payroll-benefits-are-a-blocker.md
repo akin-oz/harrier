@@ -1,7 +1,7 @@
 ---
 spec: 088
 title: A posting that offers only US payroll benefits ranks with the postings the candidate cannot take
-status: accepted
+status: shipped
 approved: yes
 milestone: M8
 depends: [078]
@@ -174,7 +174,7 @@ posting is synthetic, with an invented company.
       (extend `tests/test_seen_policy.py::test_the_blocker_tables_move_the_policy_version`)
 - [x] The spec 078 tests pass unchanged
 - [x] No real posting or company appears in a fixture (ADR-008)
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 ## Out of scope
 

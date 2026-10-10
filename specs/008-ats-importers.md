@@ -54,14 +54,14 @@ Deliberate changes from the old code, stated:
 
 ## Acceptance criteria
 
-- [ ] Normalization pins from the old tests/test_feed_importers.py pass:
+- [x] Normalization pins from the old tests/test_feed_importers.py pass:
       greenhouse token/company/external_id, ashby API shape incl.
       compensation string, ashby HTML fallback on API 404, lever
       normalization, lever EU API base selection
-- [ ] fetch_many isolates a failing board and reports its error
-- [ ] The import-linter contract fails on a sources module importing
+- [x] fetch_many isolates a failing board and reports its error
+- [x] The import-linter contract fails on a sources module importing
       screening policy or the tracker
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 ## Proof / origin
 

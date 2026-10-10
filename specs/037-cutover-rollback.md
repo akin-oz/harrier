@@ -1,7 +1,7 @@
 ---
 spec: 037
 title: Cutover survives a failure after the point of no return
-status: accepted
+status: shipped
 approved: yes
 milestone: M6
 depends: [024]
@@ -134,7 +134,7 @@ to avoid (review finding on PR #37).
       scheduler (a separate rehearsal command is out of scope, above)
 - [x] no machine name, account name, or absolute home path is written to a
       committed file (ADR-008)
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 ## Proof / origin
 

@@ -1,7 +1,7 @@
 ---
 spec: 090
 title: A migration applies whole or not at all
-status: accepted
+status: shipped
 approved: yes
 milestone: M9
 depends: [041, 060, 061, 079]
@@ -168,7 +168,7 @@ otherwise. Every database is built under `tmp_path` with synthetic rows.
       described in the amendment (the test itself cannot run there)
 - [x] Each test above fails with its behavior removed, checked by removing
       each behavior in turn and recorded in the pull request
-- [ ] All gates green on the pull request
+- [x] All gates green on the pull request
 
 ## Honest limitations
 

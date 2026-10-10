@@ -1,7 +1,7 @@
 ---
 spec: 093
 title: An academic track can be added and its positions tracked by hand
-status: accepted
+status: shipped
 approved: yes
 milestone: M9
 depends: [010, 027, 074, 075, 092]
@@ -342,7 +342,7 @@ synthetic.
       each behavior in turn and recorded in the pull request
 - [x] No real position, institution, person, deadline or tracker count
       appears in a fixture, this spec or a commit message (ADR-008)
-- [ ] All gates green on the pull request
+- [x] All gates green on the pull request
 
 ## Honest limitations
 

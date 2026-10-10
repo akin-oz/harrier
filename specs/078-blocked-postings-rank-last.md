@@ -1,7 +1,7 @@
 ---
 spec: 078
 title: A posting the candidate cannot take ranks below every posting they can
-status: accepted
+status: shipped
 approved: yes
 milestone: M8
 depends: [031, 032, 033]
@@ -204,7 +204,7 @@ posting is synthetic, with an invented company.
       `test_no_reader_takes_a_field_the_writer_does_not_fill` and
       `test_the_arithmetic_floor_is_derived_from_the_rules` pass unchanged
 - [x] No real posting or company appears in a fixture (ADR-008)
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 ## Honest limitations
 

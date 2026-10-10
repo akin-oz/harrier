@@ -23,9 +23,9 @@ No CI exists. The governance chain needs its authoritative half: gates that make
 
 ## Acceptance criteria
 
-- [ ] a PR with a commit missing a trailer fails the spec-gate job
-- [ ] a PR referencing an unapproved spec fails
-- [ ] all jobs green on the scaffold
+- [x] a PR with a commit missing a trailer fails the spec-gate job
+- [x] a PR referencing an unapproved spec fails
+- [x] all jobs green on the scaffold
 
 ## Proof / origin
 

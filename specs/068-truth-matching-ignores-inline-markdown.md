@@ -1,7 +1,7 @@
 ---
 spec: 068
 title: Evidence matching ignores inline markdown code and emphasis markers
-status: draft
+status: shipped
 approved: yes
 milestone: M8
 depends: [034, 065]
@@ -183,7 +183,7 @@ boundaries` (the C9 case from the same refusal) still does not.
 - [x] spec 065's existing tests pass unchanged
 - [x] no real truth-document content in any test
 - [x] `uv run ruff check` and `uv run pyright` clean
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 ## Proof / origin
 

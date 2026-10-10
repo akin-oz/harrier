@@ -1,7 +1,7 @@
 ---
 spec: 070
 title: The fit evaluation rates each posting requirement on the evidence that names it, and every gap becomes a question
-status: accepted
+status: in-progress
 approved: yes
 milestone: M8
 depends: [013, 066]
@@ -141,12 +141,12 @@ classification config's complement rule.
 | Weflow: AWS and PostgreSQL are not Direct | `test_weflow_aws_and_postgresql_are_not_direct` |
 | Weflow: section 4 non-empty, at least three questions | `test_weflow_report_has_gaps_and_at_least_three_questions` |
 
-- [ ] the three existing fit-evaluation tests in
+- [x] the three existing fit-evaluation tests in
       `services/api/tests/test_resume.py` are updated to the new statuses,
       keeping what each pins (architecture supported, no invented game or
       AI experience, no assumed salary)
 - [ ] each criterion's test fails when its behavior is removed
-- [ ] `just check` green
+- [x] `just check` green
 
 ## What the implementation decided
 

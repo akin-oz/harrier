@@ -1,7 +1,7 @@
 ---
 spec: 094
 title: The browser works in a chosen search track, and manages tracks
-status: accepted
+status: shipped
 approved: yes
 milestone: M9
 depends: [042, 080, 091, 092, 093]
@@ -311,7 +311,7 @@ otherwise. Every database is built under `tmp_path` with synthetic rows.
       at phone and desktop width, recorded in the pull request
 - [x] No real track, position, institution or person appears in a fixture,
       a test name or a screenshot (ADR-008)
-- [ ] All gates green on the pull request
+- [x] All gates green on the pull request
 
 ## Honest limitations
 

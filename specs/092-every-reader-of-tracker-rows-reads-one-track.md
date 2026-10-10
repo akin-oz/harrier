@@ -1,7 +1,7 @@
 ---
 spec: 092
 title: Every reader of tracker rows reads one track
-status: accepted
+status: shipped
 approved: yes
 milestone: M9
 depends: [076, 077, 091]
@@ -264,7 +264,7 @@ synthetic rows to both.
       each behavior in turn and recorded in the pull request
 - [x] No real tracker row, count or posting appears in a fixture, this
       spec or a commit message (ADR-008)
-- [ ] All gates green on the pull request
+- [x] All gates green on the pull request
 
 ## Honest limitations
 

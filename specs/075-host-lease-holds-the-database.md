@@ -1,7 +1,7 @@
 ---
 spec: 075
 title: A host lease keeps the container out while a host run holds the database
-status: accepted
+status: shipped
 approved: yes
 milestone: M8
 depends: [061, 074]
@@ -216,7 +216,7 @@ autouse, so no test reaches a real container. Tests in
       `job_count`'s old type
 - [x] each test above fails with its behavior removed: checked by removing
       each behavior in turn (17 mutants, all failed a test)
-- [ ] all gates green on the pull request
+- [x] all gates green on the pull request
 
 ## What the implementation decided
 

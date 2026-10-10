@@ -1,7 +1,7 @@
 ---
 spec: 081
 title: Blocked postings stay last under the learned score
-status: accepted
+status: shipped
 approved: yes
 milestone: M8
 depends: [077, 078]
@@ -131,7 +131,7 @@ Tests in `services/api/tests/test_scoring_model.py`.
 - [x] Spec 077 is amended to point here
 - [x] No real posting, company or tracker statistic appears in a fixture,
       the spec or a commit message (ADR-008)
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 ## Honest limitations
 

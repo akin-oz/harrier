@@ -1,7 +1,7 @@
 ---
 spec: 097
 title: An academic track finds new positions on its own, from a configured Apify source
-status: accepted
+status: in-progress
 approved: yes
 milestone: M9
 depends: [009, 011, 020, 021, 022, 023, 029, 031, 033, 035, 052, 091, 092, 093, 094]
@@ -848,7 +848,7 @@ Schedule, governance and gates
       configuration reads, and the web app type-checks against it
 - [ ] Each test above fails with its behavior removed, recorded in the
       pull request
-- [ ] All gates green on the pull request
+- [x] All gates green on the pull request
 
 ## Honest limitations
 

@@ -1,7 +1,7 @@
 ---
 spec: 061
 title: The host refuses to open the tracker database while the container owns it
-status: accepted
+status: in-progress
 approved: yes
 milestone: M8
 depends: [020, 030, 051, 060]
@@ -309,7 +309,7 @@ otherwise.
       reports `ok`. The pull request records each command, its exit code and
       the verdict line only. No paths, no job output (the repository is
       public; spec 046 records pull request bodies as a past leak)
-- [ ] all gates green on the pull request
+- [x] all gates green on the pull request
 
 ## What the implementation decided
 

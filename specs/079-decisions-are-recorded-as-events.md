@@ -1,7 +1,7 @@
 ---
 spec: 079
 title: Every decision on a job is recorded, with who made it and why
-status: accepted
+status: shipped
 approved: yes
 milestone: M8
 depends: [031, 033, 036, 072]
@@ -296,7 +296,7 @@ rows are synthetic.
 - [x] No reason text, company or title appears in a log line written by this
       code (`test_event_writes_log_no_reason_text`)
 - [x] No real tracker row appears in a fixture (ADR-008)
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 ## What this gives spec 077
 

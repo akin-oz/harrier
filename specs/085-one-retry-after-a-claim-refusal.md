@@ -1,7 +1,7 @@
 ---
 spec: 085
 title: A refused letter or answer set gets one automatic retry with its refusals
-status: accepted
+status: shipped
 approved: yes
 milestone: M8
 depends: [058, 065, 066]
@@ -178,34 +178,34 @@ Every test stubs `generate_text` with synthetic responses, and calls
 `generate_cover_letter`, `generate_answer_set` or the CLI, never a helper
 alone, so taking the retry out of the decision fails the test.
 
-- [ ] A letter stub that returns a C1-refused response first and a passing
+- [x] A letter stub that returns a C1-refused response first and a passing
       response second gives a draft built from the second response, and the
       stub was called twice (`test_a_refused_letter_is_retried_once_and_the_second_draft_is_kept`)
-- [ ] The same for an answer set, with the markdown written from the second
+- [x] The same for an answer set, with the markdown written from the second
       response (`test_a_refused_answer_set_is_retried_once_and_the_second_set_is_written`)
-- [ ] On the second call, the system prompt equals the first call's, and the
+- [x] On the second call, the system prompt equals the first call's, and the
       user input parses to the first payload plus `retry`, whose `refusals`
       equals the first refusal's violations in order and whose
       `previous_response` equals the first raw response (`test_the_retry_sends_the_refusals_and_the_previous_response`)
-- [ ] A stub that returns two different refused responses raises
+- [x] A stub that returns two different refused responses raises
       `ClaimCheckError` with the second response's violations and not the
       first's, and the stub was called exactly twice (`test_a_second_refusal_fails_with_its_own_violations`)
-- [ ] `harrier answers` against two refused responses exits 1, prints
+- [x] `harrier answers` against two refused responses exits 1, prints
       `answers failed:` to stderr, and writes no file (`test_cli_answers_exits_1_after_two_refusals`)
-- [ ] A passing first response calls the stub once (`test_a_passing_first_response_calls_the_model_once`)
-- [ ] A first response with a malformed `claims` list fails with `failed to
+- [x] A passing first response calls the stub once (`test_a_passing_first_response_calls_the_model_once`)
+- [x] A first response with a malformed `claims` list fails with `failed to
       parse AI response` after one call (`test_a_parse_failure_is_not_retried`)
-- [ ] A first response holding only a placeholder writes the draft and calls
+- [x] A first response holding only a placeholder writes the draft and calls
       the stub once (`test_a_placeholder_is_not_retried`)
-- [ ] A retry that passes logs one WARNING line that starts with
+- [x] A retry that passes logs one WARNING line that starts with
       `answers refused on attempt 1, retrying once:` and contains the first
       violation (`test_the_retry_logs_the_first_refusals`)
-- [ ] The existing refusal tests in `test_apply_claims.py` still pass
+- [x] The existing refusal tests in `test_apply_claims.py` still pass
       unchanged. Their stubs return the same refused response on every call,
       so each now refuses after two calls instead of one.
-- [ ] Spec 065's "Refusal (N1, C1 to C9)" bullet gains one sentence: the
+- [x] Spec 065's "Refusal (N1, C1 to C9)" bullet gains one sentence: the
       refusal is raised after one automatic retry also refuses (spec 085).
-- [ ] `just check` passes
+- [x] `just check` passes
 
 The tests are in `services/api/tests/test_apply_claims.py`.
 

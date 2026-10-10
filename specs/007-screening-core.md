@@ -67,13 +67,13 @@ Deliberate changes from the old code, stated:
 
 ## Acceptance criteria
 
-- [ ] All ScreeningTests and RequestTests behavior pins from the old repo's
+- [x] All ScreeningTests and RequestTests behavior pins from the old repo's
       tests/test_job_sources.py pass against the port
-- [ ] The documented false-positive cases stay accepted: "Remote (Home
+- [x] The documented false-positive cases stay accepted: "Remote (Home
       Office)" location passes, "flex remote" passes, US offices mentioned
       only in the description do not reject an EMEA-remote role
-- [ ] EU-permit phrases raise the score and appear in no rejection path
-- [ ] The import-linter contract restricting sources to
+- [x] EU-permit phrases raise the score and appear in no rejection path
+- [x] The import-linter contract restricting sources to
       harrier.screening.normalized lands with the sources package itself
       (spec 008); until then there is nothing for it to bind to
 - [x] A description cache entry is replaced whole or not at all. A save
@@ -82,7 +82,7 @@ Deliberate changes from the old code, stated:
       completed save stores the same bytes as before (the 2026-10-06
       amendment below;
       `tests/test_screening.py::test_a_description_entry_is_replaced_whole_or_not_at_all`)
-- [ ] All gates green on PR
+- [x] All gates green on PR
 
 ## Proof / origin
 
