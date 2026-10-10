@@ -49,7 +49,12 @@ export function BackupsSection({ createEventSource }: { createEventSource: Event
     }
   }, [run, queryClient]);
 
+  // Each action clears the other's refusal when it starts, so what is on
+  // screen is the current action's answer (review of PR #214).
   const take = useMutation({
+    onMutate: () => {
+      verify.reset();
+    },
     mutationFn: async (): Promise<RunOut> => {
       // Spec 050's route. An empty body takes an archive and deletes none.
       const { data, error } = await api.POST("/ops/backup", { body: {} });
@@ -66,6 +71,9 @@ export function BackupsSection({ createEventSource }: { createEventSource: Event
   });
 
   const verify = useMutation({
+    onMutate: () => {
+      take.reset();
+    },
     mutationFn: async (name: string): Promise<RunOut> => {
       const { data, error } = await api.POST("/settings/backups/{name}/verify", {
         params: { path: { name } },

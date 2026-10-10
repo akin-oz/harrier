@@ -322,7 +322,9 @@ def list_archives(directory: Path | None = None) -> list[ArchiveInfo]:
     archives: list[ArchiveInfo] = []
     for path in candidates:
         try:
-            if not path.is_file():
+            # A link named like an archive would list, and verify, whatever it
+            # points at, so only regular files count (review of PR #214).
+            if path.is_symlink() or not path.is_file():
                 continue
             stat = path.stat()
         except OSError:
@@ -367,14 +369,27 @@ def _safe_extract(tar: tarfile.TarFile, into: Path) -> None:
     tar.extractall(into, filter="data")
 
 
-def verify_archive(archive: Path) -> int:
-    """Open the database inside the archive and query it. Returns the row count."""
+def verify_archive(archive: Path, *, follow_symlinks: bool = True) -> int:
+    """Open the database inside the archive and query it. Returns the row count.
+
+    `follow_symlinks=False` is the browser's flow (spec 096): it opens the file
+    without following a link, so a link that appears between the listing and
+    the run is refused rather than read. The host command keeps the default
+    and verifies any path it is given.
+    """
+    if not follow_symlinks and archive.is_symlink():
+        raise BackupError(f"{archive.name} is a symbolic link; only an archive itself is verified")
     if not archive.is_file():
         raise BackupError(f"no archive at {archive}")
-    with tempfile.TemporaryDirectory() as workspace:
+    flags = os.O_RDONLY | (0 if follow_symlinks else os.O_NOFOLLOW)
+    try:
+        descriptor = os.open(archive, flags)
+    except OSError as error:
+        raise BackupError(f"cannot open {archive}: {error.strerror}") from error
+    with tempfile.TemporaryDirectory() as workspace, os.fdopen(descriptor, "rb") as handle:
         target = Path(workspace)
         try:
-            with tarfile.open(archive, "r:gz") as tar:
+            with tarfile.open(fileobj=handle, mode="r:gz") as tar:
                 _safe_extract(tar, target)
         except tarfile.TarError as error:
             raise BackupError(f"{archive} is not a readable archive: {error}") from error

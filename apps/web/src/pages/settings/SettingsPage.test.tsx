@@ -265,3 +265,29 @@ test("a backups list refused for its token says so", async () => {
     "refused: the local API token was not accepted",
   );
 });
+
+test("starting a backup clears a verification's refusal", async () => {
+  stubApi((call) =>
+    call.path === `/api/settings/backups/${ARCHIVE}/verify`
+      ? { status: 404, body: { detail: `no archive named ${ARCHIVE} in the backups list` } }
+      : handler({
+          archives: [
+            {
+              name: ARCHIVE,
+              size_bytes: 1048576,
+              modified_at: "2026-03-01T02:00:00+00:00",
+              verification: null,
+            },
+          ],
+        })(call),
+  );
+  renderPage();
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: `Verify ${ARCHIVE}` }));
+  expect((await screen.findByRole("alert")).textContent).toContain("in the backups list");
+
+  await user.click(screen.getByRole("button", { name: "Take a backup" }));
+  await waitFor(() => {
+    expect(screen.queryByText(/in the backups list/)).toBeNull();
+  });
+});

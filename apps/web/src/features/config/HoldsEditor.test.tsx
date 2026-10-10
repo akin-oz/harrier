@@ -105,3 +105,18 @@ test("a refused hold keeps the rows as typed", async () => {
     "Forever Co Ltd",
   );
 });
+
+test("removing a row keeps every other row's own field", async () => {
+  // Each row is keyed by an id of its own, not its position, so removing a
+  // row above leaves the field below in place rather than handing it the
+  // next row's value (review of PR #214).
+  stubApi(() => undefined);
+  renderHolds();
+  const user = userEvent.setup();
+  const held = screen.getByLabelText<HTMLInputElement>("Company, Held Co");
+
+  await user.click(screen.getByRole("button", { name: "Remove Lapsed Co" }));
+
+  expect(held.isConnected).toBe(true);
+  expect(held.value).toBe("Held Co");
+});

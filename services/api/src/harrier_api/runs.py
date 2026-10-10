@@ -170,7 +170,12 @@ PARAMETERIZED_KINDS: dict[str, ParameterizedKind] = {
         takes_job=False,
     ),
     # Spec 096: an archive from the Settings page's listing.
-    "verify-backup": ParameterizedKind("verify-backup", takes_job=False, takes_archive=True),
+    "verify-backup": ParameterizedKind(
+        "verify-backup",
+        switches=frozenset({"--no-follow"}),
+        takes_job=False,
+        takes_archive=True,
+    ),
 }
 
 

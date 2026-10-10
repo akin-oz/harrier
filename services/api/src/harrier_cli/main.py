@@ -1643,7 +1643,7 @@ def _cmd_verify_backup(args: argparse.Namespace) -> int:
     from harrier.backup import BackupError, verify_archive
 
     try:
-        rows = verify_archive(Path(args.archive))
+        rows = verify_archive(Path(args.archive), follow_symlinks=not args.no_follow)
     except BackupError as error:
         print(f"archive is not usable: {error}", file=sys.stderr)
         return 1
@@ -2675,6 +2675,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     verify_backup = sub.add_parser("verify-backup", help="open an archive and query it")
     verify_backup.add_argument("archive")
+    verify_backup.add_argument(
+        "--no-follow",
+        action="store_true",
+        help="refuse a symbolic link rather than read what it points at (the browser's flow)",
+    )
     verify_backup.set_defaults(func=_cmd_verify_backup)
 
     doctor = sub.add_parser(

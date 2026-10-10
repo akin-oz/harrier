@@ -517,6 +517,44 @@ def test_a_failed_verification_marks_the_archive(env: Path) -> None:
         assert marked[0]["verification"] == "failed"
 
 
+def test_a_symlink_in_the_backups_directory_is_neither_listed_nor_verified(
+    env: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A link named like an archive would list, and verify, whatever it points
+    at. The browser's flow ignores links and opens without following one;
+    the host's `verify-backup <path>` still takes any path (review of PR #214)."""
+    from harrier.backup import BackupError, verify_archive
+
+    elsewhere = env / "elsewhere"
+    outside = create_backup(elsewhere).archive
+    backups = env / "backups"
+    backups.mkdir()
+    link = backups / f"{ARCHIVE_PREFIX}2026-02-02-000000{ARCHIVE_SUFFIX}"
+    link.symlink_to(outside)
+
+    with TestClient(create_app()) as client:
+        listed = client.get("/settings/backups", headers=auth()).json()
+        assert listed["archives"] == []
+        refused = client.post(f"/settings/backups/{link.name}/verify", headers=auth())
+        assert refused.status_code == 404
+
+    # Should a link appear between the listing and the run, the run refuses
+    # it: the route's verification opens without following a link.
+    real = create_backup(backups).archive
+    manager = RunManager(journal_path=env / "data" / "runs" / "journal.jsonl")
+    with TestClient(create_app(run_manager=manager)) as client:
+        started = client.post(f"/settings/backups/{real.name}/verify", headers=auth())
+        run = manager.get(started.json()["id"])
+        assert run is not None and "--no-follow" in run.command
+        assert wait_for(client, run.id) == "succeeded"
+    with pytest.raises(BackupError, match="symbolic link"):
+        verify_archive(link, follow_symlinks=False)
+
+    # The host command is unchanged: it follows the path it is given.
+    assert main(["verify-backup", str(link)]) == 0
+    assert "opens and holds" in capsys.readouterr().out
+
+
 def test_a_backup_reports_the_archive_by_name_never_its_path(env: Path) -> None:
     manager = RunManager(journal_path=env / "data" / "runs" / "journal.jsonl")
     with TestClient(create_app(run_manager=manager)) as client:

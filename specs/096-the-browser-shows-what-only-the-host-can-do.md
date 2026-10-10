@@ -400,7 +400,7 @@ amended here and in the section it touches, in the same change.
 
 ## Note (2026-10-10): behavior settled in review of PR #214
 
-The review found four behaviors this spec had not written down. Each is
+The reviews found six behaviors this spec had not written down. Each is
 stated here and proved by a test.
 
 - **A demo reads only its own backups.** In demo mode the backups
@@ -422,6 +422,19 @@ stated here and proved by a test.
   rather than rewritten
   (`services/api/tests/test_ui_settings.py::test_a_hidden_directory_is_matched_only_as_a_whole_path`,
   `services/api/tests/test_ui_settings.py::test_a_run_hides_its_directories_without_touching_a_sibling`).
+- **A link in the backups directory is neither listed nor verified.** Only
+  regular files are archives. The browser's verification runs
+  `verify-backup --no-follow`, a switch added for it, which opens the file
+  without following a link, so a link that appears after the listing is
+  refused too. `verify-backup <path>` on the host is unchanged and follows
+  the path it is given
+  (`services/api/tests/test_ui_settings.py::test_a_symlink_in_the_backups_directory_is_neither_listed_nor_verified`).
+- **Hold rows keep their own fields, and the backups section shows only the
+  current action's refusal.** Each hold row has an id of its own while it
+  is edited, never saved, and starting a backup or a verification clears
+  the other's refusal
+  (`HoldsEditor.test.tsx::removing a row keeps every other row's own field`,
+  `SettingsPage.test.tsx::starting a backup clears a verification's refusal`).
 - **A refused backup says why.** "Take a backup" shows a run conflict or a
   held database in the server's words; only an answer with no body reads
   as the token refusal

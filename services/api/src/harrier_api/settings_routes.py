@@ -435,7 +435,14 @@ async def verify_backup(name: str, manager: Manager) -> RunOut:
         raise HTTPException(status_code=404, detail=f"no archive named {name} in the backups list")
     # Locked per archive, and recorded under its name so the list can mark
     # the result.
-    params = RunParams(archive=archive, hidden=backup_hidden_directories(), target=name)
+    # Opened without following a link, so one that appears after the
+    # listing is refused (review of PR #214).
+    params = RunParams(
+        archive=archive,
+        switches=frozenset({"--no-follow"}),
+        hidden=backup_hidden_directories(),
+        target=name,
+    )
     return run_out(await manager.start(VERIFY_KIND, params))
 
 

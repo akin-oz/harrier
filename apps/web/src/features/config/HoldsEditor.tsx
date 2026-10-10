@@ -1,23 +1,31 @@
-import { useId } from "react";
-
 import { KindFrame } from "./KindFrame";
 import { useKindEditor } from "./useKindEditor";
 import type { ConfigEntry } from "./useKindEditor";
 
 interface HoldRow {
+  // The row's own identity while it is edited, so React keeps each field with
+  // its row when a row above is removed. Never saved (review of PR #214).
+  id: number;
   company: string;
   until: string;
+}
+
+let lastRowId = 0;
+
+function nextRowId(): number {
+  lastRowId += 1;
+  return lastRowId;
 }
 
 function toRows(value: unknown): HoldRow[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item: unknown): HoldRow[] => {
-    if (typeof item === "string") return [{ company: item, until: "" }];
+    if (typeof item === "string") return [{ id: nextRowId(), company: item, until: "" }];
     if (typeof item === "object" && item !== null && "company" in item) {
       const company = typeof item.company === "string" ? item.company : "";
       const until =
         "hold_until" in item && typeof item.hold_until === "string" ? item.hold_until : "";
-      return [{ company, until }];
+      return [{ id: nextRowId(), company, until }];
     }
     return [];
   });
@@ -61,7 +69,6 @@ export function HoldsEditor({
 }) {
   const editor = useKindEditor(entry, toRows, fromRows);
   const rows = editor.draft;
-  const baseId = useId();
 
   function update(index: number, change: Partial<HoldRow>): void {
     editor.setDraft(rows.map((row, at) => (at === index ? { ...row, ...change } : row)));
@@ -97,10 +104,7 @@ export function HoldsEditor({
               const expired = row.until !== "" && row.until < today;
               const label = row.company.trim() || `row ${String(index + 1)}`;
               return (
-                <tr
-                  key={`${baseId}-${String(index)}`}
-                  className={expired ? "config-holds__expired" : undefined}
-                >
+                <tr key={row.id} className={expired ? "config-holds__expired" : undefined}>
                   <td>
                     <input
                       className="config-field__text"
@@ -154,7 +158,7 @@ export function HoldsEditor({
           type="button"
           className="config-button"
           onClick={() => {
-            editor.setDraft([...rows, { company: "", until: "" }]);
+            editor.setDraft([...rows, { id: nextRowId(), company: "", until: "" }]);
           }}
         >
           Add a company
