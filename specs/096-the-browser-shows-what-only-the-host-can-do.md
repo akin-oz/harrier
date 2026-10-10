@@ -224,7 +224,10 @@ without placing it fails the test.
   094, 095 or this one.
 - **Run on the host**, shown on the Settings page with its command:
   `schedule install`, `schedule uninstall`, `schedule status`,
-  `gmail-oauth`, `scoring train`, `doctor`, `profile export`.
+  `gmail-oauth`, `scoring train`, `doctor`, `profile export`, and
+  `profile put` (added 2026-10-10, when spec 099's command reached this
+  branch: it reads a framing file from a host path, as `profile export`
+  writes to one).
 - **Terminal only**, listed on the Settings page with the reason:
 
 | Command | Why it has no place in the browser |
@@ -236,6 +239,7 @@ without placing it fails the test.
 | `parity checklist`, `parity status`, `parity diff` | Repository upkeep: they compare against the old system. |
 | `store migrate`, `store status` | Store upkeep (spec 103): they apply or report the store's schema migrations, which an operator runs deliberately. Added 2026-10-10, when spec 103's commands reached this branch and the three-way test named them as placed nowhere. |
 | `profile split-resume` | A one-time migration of the stored resume into facts and a framing (spec 098, which named this place). Added 2026-10-10, when spec 098's command reached this branch and the three-way test named it as placed nowhere. |
+| `profile check` | Checks a track's resume content against the truth sources (spec 099). It reads only the database, so a route could run it; none exists yet. Added 2026-10-10, when spec 099's command reached this branch and the three-way test named it as placed nowhere. |
 
 `demo-run` is routed: `POST /runs` with kind `demo` starts it (spec 006), and
 the list says it is a harness for the run panel.

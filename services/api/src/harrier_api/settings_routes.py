@@ -170,6 +170,12 @@ COMMAND_PLACES: dict[str, Place] = {
         "harrier profile export --to <directory>",
         "Writes the documents into a host directory the container cannot see.",
     ),
+    # Spec 099 added this after spec 096 was approved; placed on merging it.
+    "profile put": OnHost(
+        "harrier profile put resume_framing --file <path>",
+        "Reads a framing file from a host path the container cannot see (spec 099). "
+        "For another track, put --track <slug> before profile.",
+    ),
     # --- terminal only ---
     "restore": TerminalOnly(
         "Replaces the live database; the case for running it is one where the operator "
@@ -190,6 +196,11 @@ COMMAND_PLACES: dict[str, Place] = {
     # Spec 098 added this after spec 096 was approved, and named its place.
     "profile split-resume": TerminalOnly(
         "A one-time migration of the stored resume into facts and a framing (spec 098)."
+    ),
+    # Spec 099 added this after spec 096 was approved; placed on merging it.
+    "profile check": TerminalOnly(
+        "Checks a track's resume content against the truth sources (spec 099). "
+        "Added after this page was specified, and not routed yet."
     ),
 }
 

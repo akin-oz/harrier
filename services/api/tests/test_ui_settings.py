@@ -138,7 +138,10 @@ def test_the_page_reads_the_list_from_the_api(client: TestClient) -> None:
 
 # --- shown commands -------------------------------------------------------------
 
-SHOWN = re.compile(r"(harrier|just)( (--[a-z][a-z-]*|[a-z][a-z-]*|<[a-z][a-z ]*>))*")
+# A word may hold an underscore so a line can name a fixed kind such as
+# `resume_framing` (spec 099). A path, a home directory or a typed value
+# still cannot appear: `/`, `~` and digits are not word characters here.
+SHOWN = re.compile(r"(harrier|just)( (--[a-z][a-z-]*|[a-z][a-z_-]*|<[a-z][a-z ]*>))*")
 
 
 def shown_commands() -> list[str]:
