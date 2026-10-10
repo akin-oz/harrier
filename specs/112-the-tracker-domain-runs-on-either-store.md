@@ -135,17 +135,42 @@ API (`harrier_api/app.py:931-932`), both with `POSTGRES_NOT_YET`
     one, as spec 103 established.
 11. **psycopg has two importers.** An import-linter contract in
     `services/api/pyproject.toml` forbids `psycopg` everywhere except
-    `harrier.pgstore` and `harrier.connection`.
+    `harrier.pgstore` and `harrier.connection`. The post-merge review of
+    PRs #194 and #207 (data integrity 6, 2026-10-10) asked for this
+    contract independently. Today `harrier/pgstore.py` is the only module
+    under `services/api/src` that imports `psycopg` (checked with `grep`
+    for `import psycopg` and `from psycopg`), and nothing enforces it.
+    `just check` runs `lint-imports` (`justfile:75`).
 12. **Docs.** `docs/architecture.md`'s hosted section says the domain runs
     on either store, names `harrier/connection.py`, and stops saying "until
     spec 112". `specs/103-the-tracker-store-speaks-postgres.md` is not
     edited.
+13. **Store-neutral names leave `pgstore.py`.** `StoreError` and its
+    subclasses (`services/api/src/harrier/pgstore.py:48-72`), `StoreTarget`
+    (`:75-84`) and `store_target` (`:100-108`), and the gate text
+    `POSTGRES_NOT_YET`
+    (`:43-45`) move into `harrier.connection`. `harrier.pgstore` keeps only
+    driver code: connecting, the version reads and the migration runner.
+    The CLI and the API import them from `harrier.connection`
+    (`harrier_cli/main.py:33`, `harrier_api/app.py:30` today). They are the
+    same classes, moved, not new ones. (post-merge review of PRs #194 and
+    #207, architecture 6, 2026-10-10)
+14. **`scrub_secrets` recognises a Postgres URL's password.**
+    `services/api/src/harrier/sources/__init__.py:27-43` scrubs
+    `password=` query parameters and Telegram bot paths, not the password
+    in a URL's userinfo. Once runs open Postgres, a driver message that
+    quotes the URL would reach run summaries and events unscrubbed
+    (Behavior). (post-merge review of PRs #194 and #207, privacy 3,
+    2026-10-10)
+15. **`harrier store migrate` reports from under the lock** (Behavior).
+    (post-merge review of PRs #194 and #207, data integrity 4, 2026-10-10)
 
 **Delivery.** One spec, two pull requests in order (Open decision 9).
 PR 1 is a refactor with no change in behavior: items 1, 2 (SQLite only), 3,
-and `with conn:` replaced by `transaction()`. No SQL text and no exception
-class changes in it; the suite passes with only annotation and fixture-type
-edits. PR 2 is the behavior: items 2 (Postgres), 4 to 12.
+13, and `with conn:` replaced by `transaction()`. No SQL text and no
+exception class changes in it; the suite passes with only annotation,
+import and fixture-type edits. PR 2 is the behavior: items 2 (Postgres), 4
+to 12, 14 and 15.
 
 ## Behavior
 
@@ -326,6 +351,29 @@ names a Postgres store; the API serves one only once spec 104
 authenticates every request`. An unauthenticated API on a shared store is
 what ADR-013 decision 3 forbids.
 
+**A Postgres URL's password is scrubbed.** `scrub_secrets`
+(`services/api/src/harrier/sources/__init__.py:33-43`) also replaces the
+password in the userinfo of a `postgres://` or `postgresql://` URL with
+`REDACTED`, keeping the scheme, user, host, port and database. Today it
+leaves `postgresql://user:pw@host/db` as written; only a `password=` query
+parameter is scrubbed (run against a synthetic URL, 2026-10-10). The
+pgstore connection error already scrubs its own message
+(`pgstore.py:142-149`); this covers every other text that reaches a run
+summary, an event or the exception boundary through `scrub_secrets`.
+(post-merge review of PRs #194 and #207, privacy 3, 2026-10-10)
+
+**`harrier store migrate` reports what it found under the lock.**
+`apply_postgres_migrations` reads `before` at `pgstore.py:182`, before it
+takes the advisory lock at `:187`, so two runs started together on an
+empty store each print `postgres 0 -> 10` (`harrier_cli/main.py:1421`)
+though each migration was applied once. After this spec the runner reads
+`before` under the migration lock and holds a session-level advisory lock
+on the same key from that read until its last migration commits. Each
+migration still runs in its own transaction, whole or not at all (spec
+090). A second run waits, then finds the store at the target and prints
+`postgres 10 -> 10`. (post-merge review of PRs #194 and #207, data
+integrity 4, 2026-10-10)
+
 ## Failure modes
 
 - **SQLite older than 3.35.** `harrier.db.connect` raises `StoreError`:
@@ -358,6 +406,18 @@ what ADR-013 decision 3 forbids.
   Behavior, exit 1, nothing opened.
 - **Postgres tests without a server.** Skipped locally, failed in CI
   (`CI=true`), as spec 103 and spec 039 require.
+- **A driver or library message quotes a Postgres URL.** The password is
+  `REDACTED` wherever `scrub_secrets` runs; the host and database stay,
+  so the message still says which store failed. (post-merge review of
+  PRs #194 and #207, 2026-10-10)
+- **Two `harrier store migrate` runs at once.** The second waits for the
+  first's lock, applies nothing, and reports the version it found under
+  the lock. Neither reports a migration it did not apply. A run killed
+  while holding the session lock releases it when its connection closes.
+  (post-merge review of PRs #194 and #207, 2026-10-10)
+- **A module other than `harrier.pgstore` or `harrier.connection` imports
+  `psycopg`.** `lint-imports` fails, and so does `just check`.
+  (post-merge review of PRs #194 and #207, 2026-10-10)
 
 ## Acceptance criteria
 
@@ -373,6 +433,12 @@ PR 1 (refactor):
 - [ ] The full suite passes; the only test edits are annotations and
       fixture types, and the PR lists the files.
 - [ ] No SQL text and no exception class changes in this PR.
+- [ ] `StoreError` and its subclasses, `StoreTarget`, `store_target` and
+      `POSTGRES_NOT_YET` are defined in `harrier.connection`, not in
+      `harrier.pgstore`, and no module under `services/api/src` imports
+      them from `harrier.pgstore`
+      (planned test_store_neutral_names_live_in_connection).
+      (post-merge review of PRs #194 and #207, 2026-10-10)
 
 PR 2 (behavior):
 
@@ -431,11 +497,31 @@ PR 2 (behavior):
       to the new texts.
 - [ ] The import-linter contract fails when a third module imports
       `psycopg` (recorded in the PR).
+- [ ] The import-linter contract confining `psycopg` to `harrier.pgstore`
+      and `harrier.connection` is in `services/api/pyproject.toml`, and
+      `lint-imports` in `just check` passes with it.
+      (post-merge review of PRs #194 and #207, 2026-10-10)
+- [ ] `scrub_secrets` replaces the password in a `postgresql://` and a
+      `postgres://` URL's userinfo with `REDACTED` and keeps user, host,
+      port and database; a URL with no password is unchanged
+      (planned test_scrub_secrets_hides_a_postgres_url_password).
+      (post-merge review of PRs #194 and #207, 2026-10-10)
+- [ ] Two `harrier store migrate` runs started together on an empty
+      Postgres store apply each migration once, one reports
+      `postgres 0 -> <target>` and the other `postgres <target> -> <target>`
+      (planned test_concurrent_migrate_runs_report_what_each_found).
+      (post-merge review of PRs #194 and #207, 2026-10-10)
 - [ ] `services/api/src/harrier/tracker/schema.py` and
       `packages/contract` do not change.
 - [ ] `docs/architecture.md` describes the domain on either store and no
       longer says "until spec 112".
 - [ ] `just check` passes.
+- [ ] No domain insert supplies an `id`; every new id comes from the store.
+      An explicit id would refuse on another owner's row with the primary
+      key's message and so reveal that the id is taken (planned
+      test_no_domain_insert_supplies_an_id). Spec 105's follow-up makes an
+      explicit id a refusal on Postgres (post-merge review of PR #216,
+      2026-10-10).
 
 ## Honest limitations
 
@@ -585,8 +671,8 @@ rewrites the three upserts.
 
 ## Out of scope
 
-- Authentication, the `authenticated` role, and the API on Postgres:
-  spec 104.
+- Authentication, the request role (`harrier_tenant`, spec 105's
+  Amendment), and the API on Postgres: spec 104.
 - `owner_id` and row-level policy: spec 105.
 - Per-owner credentials and run isolation: spec 106.
 - Files under `data/` (the description cache, scoring models, artifacts,
