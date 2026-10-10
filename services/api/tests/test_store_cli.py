@@ -8,6 +8,7 @@ skip locally without a test server. Every URL and password here is synthetic.
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 import sys
 import uuid
@@ -20,11 +21,11 @@ from pg_support import fresh_database
 
 import harrier.logsetup as logsetup
 from harrier.db import default_db_path
-from harrier.pgstore import URL_VARIABLE, StoreUrlError
+from harrier.pgstore import URL_VARIABLE, StoreUrlError, store_target
 from harrier.tracker import schema
 from harrier.tracker.schema import MIGRATIONS, POSTGRES_MIGRATIONS
 from harrier_api.app import create_app
-from harrier_cli.main import main
+from harrier_cli.main import load_project_env, main
 
 SPEC_112_REFUSAL = (
     "error: HARRIER_DATABASE_URL names a Postgres store; only harrier store runs on it "
@@ -52,7 +53,9 @@ def pg_url() -> Iterator[str]:
 
 @pytest.fixture()
 def sqlite_store(monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.delenv(URL_VARIABLE, raising=False)
+    # Empty, not unset: unset, `.env` in pytest's working directory would
+    # choose the store (review of PR #218).
+    monkeypatch.setenv(URL_VARIABLE, "")
     monkeypatch.delenv("HARRIER_DEMO", raising=False)
     # Logging is set up once per process, and importing the API already did
     # it. Reset, so a command that set it up again would open, and migrate,
@@ -125,14 +128,17 @@ def test_store_refuses_a_postgres_store_ahead_of_the_code(
     assert run(["store", "migrate"], capsys)[0] == 0
     import psycopg
 
+    # One past the newest version this code knows, whatever that is.
+    ahead = POSTGRES_LATEST + 1
+
     with psycopg.connect(pg_url, autocommit=True) as conn:
-        conn.execute("INSERT INTO schema_version (version) VALUES (99)")
+        conn.execute(f"INSERT INTO schema_version (version) VALUES ({ahead})".encode())
 
     for command in ("status", "migrate"):
         code, out, err = run(["store", command], capsys)
         assert (code, out) == (1, ""), command
         assert err.startswith("error: "), command
-        assert "version 99" in err and f"({POSTGRES_LATEST})" in err, command
+        assert f"version {ahead}" in err and f"({POSTGRES_LATEST})" in err, command
 
 
 def test_store_commands_on_sqlite(sqlite_store: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -222,14 +228,16 @@ def test_the_api_refuses_to_start_on_a_postgres_url(monkeypatch: pytest.MonkeyPa
     assert not default_db_path().exists()
 
 
+@pytest.mark.dotenv_fallback
 def test_a_url_in_dotenv_reaches_the_api_as_it_reaches_the_cli(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The CLI loads `.env` and the API did not, so a URL set only there made
     the CLI refuse while the API served SQLite: the mixed-store case spec 103
     exists to prevent (post-merge review of PR #207)."""
-    monkeypatch.delenv(URL_VARIABLE, raising=False)
+    # Into tmp_path before the variable goes, so no other `.env` is read.
     monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv(URL_VARIABLE)
     (tmp_path / ".env").write_text(f"{URL_VARIABLE}={UNREACHABLE_URL}\n", encoding="utf-8")
 
     with pytest.raises(RuntimeError) as refused:
@@ -253,14 +261,68 @@ def test_an_exported_value_wins_over_dotenv_for_the_api_too(
     create_app()
 
 
+@pytest.mark.parametrize("command", ["status", "migrate"])
 def test_a_postgres_url_without_the_driver_exits_1_naming_the_install(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    command: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The refusal spec 103 names for a missing driver, through the CLI and
-    its exit status, not only the function (post-merge review of PR #207)."""
+    its exit status, not only the function (post-merge review of PR #207).
+    `migrate` checks for the driver on its own path before it imports
+    psycopg, so it is run too (review of PR #218)."""
     monkeypatch.setitem(sys.modules, "psycopg", None)
     monkeypatch.setenv(URL_VARIABLE, UNREACHABLE_URL)
-    code, _, err = run(["store", "status"], capsys)
+    code, _, err = run(["store", command], capsys)
     assert code == 1
     assert err.startswith("error: ")
     assert "uv sync --group postgres" in err
+
+
+def test_a_postgres_url_in_dotenv_never_reaches_a_sqlite_test(
+    sqlite_store: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The `sqlite_store` fixture deleted the variable conftest pins empty, so
+    `.env` in pytest's working directory chose the store, and SQLite tests
+    ran `harrier store migrate` against the database it named (review of PR
+    #218). The `.env` here names a closed port, so nothing is reached even
+    when the pin is lost."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(f"{URL_VARIABLE}={UNREACHABLE_URL}\n", encoding="utf-8")
+
+    assert run(["store", "status"], capsys) == (0, "sqlite 0\n", "")
+
+
+def test_the_first_line_for_a_key_wins_in_the_cli_loader(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The CLI's loader never overwrote a key, including one it had just set
+    from an earlier line, so the first line won. The shared parser made the
+    last one win, a change no spec recorded (review of PR #218)."""
+    name = "HARRIER_TEST_DUPLICATED_KEY"
+    # Set, then deleted, so the teardown removes what the loader writes.
+    monkeypatch.setenv(name, "")
+    monkeypatch.delenv(name)
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"{name}=first\n{name}=second\n", encoding="utf-8")
+
+    load_project_env(env_file)
+
+    assert os.environ[name] == "first"
+
+
+@pytest.mark.dotenv_fallback
+def test_the_first_line_for_the_url_wins_in_dotenv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The same rule for the store, read by the API through `store_target` and
+    by the CLI through its loader: an empty first line keeps SQLite."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv(URL_VARIABLE)
+    (tmp_path / ".env").write_text(
+        f"{URL_VARIABLE}=\n{URL_VARIABLE}={UNREACHABLE_URL}\n", encoding="utf-8"
+    )
+
+    assert store_target().dialect == "sqlite"
+    assert run(["store", "status"], capsys) == (0, "sqlite 0\n", "")

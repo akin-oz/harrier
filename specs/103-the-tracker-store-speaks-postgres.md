@@ -45,9 +45,11 @@ The rest of the domain (the write path, readers, upserts, `COLLATE NOCASE`,
 nine modules (`tracker/store.py`, `tracks.py`, `userconfig/store.py`,
 `profile/store.py`, `runoutcome.py`, `mail/watch.py`, `logredact.py`,
 `apply/profile.py`, `resume/content.py`) and the `sqlite3.Connection`
-annotation in 37 more (46 files under `services/api/src` match
-`git grep -l 'sqlite3\.Connection'`, counted 2026-10-10). That is spec 112. Splitting here keeps
-each change reviewable against its spec, as `change-boundary` asks.
+annotation in 39 more. 48 files match
+`git grep -l 'sqlite3\.Connection' -- services/api/src | wc -l`, the nine
+among them, counted 2026-10-10 on main after PR #219. That is spec 112.
+Splitting here keeps each change reviewable against its spec, as
+`change-boundary` asks.
 
 ## Scope
 
@@ -263,7 +265,7 @@ Matching error classes and messages for callers is spec 112's.
 - Nothing reads or writes tracker rows on Postgres after this spec. It
   proves the store exists and refuses what SQLite refuses; spec 112 makes
   the domain use it.
-- The parity test compares shapes (columns, type affinity, nullability,
+- The parity test compares shapes (columns, types, nullability,
   defaults, unique constraints, foreign keys) and a fixed list of refusals
   and acceptances. A CHECK or trigger added to one dialect and not reached
   by a probe is not caught. TRUNCATE has no SQLite counterpart, so no
@@ -452,3 +454,52 @@ same change's code:
   5, which says the dialects are held to the same versions in one module
   rather than "in one entry", and that this applies to each migration
   after the baseline.
+
+### Second review, of PR #218 (2026-10-10)
+
+A review of the corrections above found these, corrected in the change
+that adds this list:
+
+- **The suite could still read an operator's URL.** The `sqlite_store`
+  fixture in `services/api/tests/test_store_cli.py` deleted the variable
+  `conftest.py` pins empty, so `.env` in pytest's working directory chose
+  the store, and SQLite tests ran `harrier store migrate` against the
+  database it named. The fixture now sets it empty. An audit of
+  `services/api/tests` found one other test that removes it, and it tests
+  the `.env` fallback; it now moves to `tmp_path` first. An autouse
+  fixture in `conftest.py` fails any test that leaves the variable unset,
+  unless the test is marked `dotenv_fallback` and runs under its own
+  `tmp_path`
+  (`services/api/tests/test_store_cli.py::test_a_postgres_url_in_dotenv_never_reaches_a_sqlite_test`).
+- **A malformed URL's refusal no longer carries the parse error.** It was
+  raised inside `except ValueError`, so the ValueError stayed as
+  `__context__`. A raw `/` in the password makes that error quote the
+  password. The refusal is now raised after the block
+  (`services/api/tests/test_postgres_store.py::test_a_malformed_url_is_refused_like_any_other`).
+- **A password in the query string is scrubbed.** libpq takes
+  `?password=` too, and quotes it as written when it refuses it. Only the
+  authority's password was scrubbed
+  (`services/api/tests/test_postgres_store.py::test_a_password_in_the_query_string_never_reaches_the_error`).
+- **The first line for a key in `.env` wins again.** The CLI's loader
+  never overwrote a key it had set, so the first line won. The shared
+  parser made the last one win, a change nothing recorded.
+  `harrier.envfile.read_env_file` keeps the first again, for the CLI and
+  for `store_target`
+  (`services/api/tests/test_store_cli.py::test_the_first_line_for_a_key_wins_in_the_cli_loader`,
+  `services/api/tests/test_store_cli.py::test_the_first_line_for_the_url_wins_in_dotenv`).
+- **The missing-driver refusal is tested on `store migrate` too.** That
+  path checks for the driver on its own
+  (`services/api/tests/test_store_cli.py::test_a_postgres_url_without_the_driver_exits_1_naming_the_install`).
+- **The parity test compares types, not affinities.** Every Postgres type
+  of one affinity matched, so `varchar(4)` passed for `text` and `integer`
+  for a `bigint` id. A TEXT column must now be `text` with no length, an
+  INTEGER column that holds a row id `bigint`, and any other INTEGER
+  column `integer`
+  (`services/api/tests/test_dialect_parity.py::test_a_narrower_postgres_type_is_a_difference`).
+- **The SQLite half of the UTC check can fail on a UTC host.** It ran in
+  the host's zone, so a default that read local time matched UTC there.
+  The test now runs the process in a zone that is not UTC
+  (`services/api/tests/test_dialect_parity.py::test_the_sqlite_side_runs_in_a_zone_that_is_not_utc`,
+  `services/api/tests/test_dialect_parity.py::test_both_dialects_build_the_same_tracker`).
+- The count of files with the `sqlite3.Connection` annotation under
+  Problem is recounted, with its command.

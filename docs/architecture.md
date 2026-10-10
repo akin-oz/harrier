@@ -190,14 +190,23 @@ On Postgres every personal row has an owner (spec 105). Migration 10 in
 defaults to `auth.uid()` and references `auth.users`, and one policy,
 `owner_only`: the policed role, `harrier_tenant`, sees and stores only rows whose
 `owner_id` is its own. Row security is enabled and forced on every table.
-Unique keys lead with `owner_id`, each owner has their own track 1, and a
-job or event can reference only its own owner's track or job. Migration 10
-is Postgres only (`SINGLE_DIALECT_MIGRATIONS`): SQLite records version 10 and
-changes nothing, so the local schema names no tenant. The catalog test,
+Every unique key on an owned table leads with `owner_id`, except the
+primary key `id` of the tables numbered from one global sequence
+(`GLOBAL_ID_TABLES`): the tenant role may write every column of those
+tables but `id` (migration 13), so no key a tenant can write into tells one
+owner what another holds
+(`services/api/tests/test_owner_policy.py::test_an_owner_cannot_choose_or_change_an_id`).
+Each owner has their own track 1, and a job or event can reference only its
+own owner's track or job. Migrations 10 and 12 are Postgres only
+(`SINGLE_DIALECT_MIGRATIONS`): SQLite records those versions and changes
+nothing, so the local schema names no tenant. The catalog test,
 `services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared`,
-fails naming any table that is
-neither owned nor declared unowned, lacks the column, the forced policy or
-an owner index, or carries an unexpected grant, view or definer function.
+fails naming any table that is neither owned nor declared unowned, lacks
+the column, the forced policy or an owner index, has a unique key that
+breaks the rule above, a rule, or an owner other than the migrating role,
+or carries an unexpected table, column, sequence or function grant, view,
+definer function, default privilege, or tenant role attribute or
+membership.
 The isolation tests in the same file act as two synthetic owners
 (`services/api/tests/test_owner_policy.py::test_owner_a_reads_nothing_of_owner_b`,
 `services/api/tests/test_owner_policy.py::test_owner_a_cannot_write_as_owner_b`).
@@ -206,8 +215,10 @@ table, so harrier's write path is the only one
 (`services/api/tests/test_owner_policy.py::test_the_data_api_role_reaches_no_harrier_table`). Plain Postgres has none of
 Supabase's auth objects, so `services/api/tests/pg_support.py` installs a
 test shim before migrating: the `anon`, `authenticated` and `service_role`
-roles, an `auth.users` table and an `auth.uid()` function. No migration
-creates them, and migration 10 refuses a store without them.
+roles, an `auth.users` table, an `auth.uid()` function, and Supabase's
+default privileges, which grant those roles everything the migrating role
+creates in `public`. No migration creates them, and migration 10 refuses a
+store without the roles and the auth objects.
 
 This polices rows; it does not yet serve anyone. Nothing authenticates a
 request until spec 104, and the domain does not run on Postgres until spec

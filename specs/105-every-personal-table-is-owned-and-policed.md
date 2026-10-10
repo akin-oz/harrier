@@ -534,9 +534,31 @@ schema `public` from `pg_class` and fails, naming the table, when:
   tests against a real staging project is spec 110's.
 - **Ids still leak volume.** `jobs`, `contacts`, `profile_documents`,
   `user_config` and `job_events` keep one global identity sequence each.
-  An owner who sees ids 10 and 40 knows rows were created between them.
-  No content leaks. Per-owner ids for every table would close it, at the
-  cost of a numbering trigger on each; not done.
+  An owner who sees their own ids 10 and 40 knows others created rows
+  between them. No content leaks. Since migration 12 an owner cannot write
+  an id, so the sharper channels the post-merge review found are closed:
+  probing whether an id exists through the duplicate refusal, and taking
+  the id another owner's next insert is due
+  (`services/api/tests/test_owner_policy.py::test_an_owner_cannot_choose_or_change_an_id`).
+  The gap between an owner's own ids remains. Per-owner ids for every
+  table would close it, at the cost of a numbering trigger on each; not
+  done.
+- **The boundary holds against a forgotten predicate, not an injected
+  statement.** SQL that runs as `harrier_tenant` can call
+  `set_config('request.jwt.claims', ...)` and become another owner, or run
+  `RESET ROLE` and return to the login role. Row security confines what
+  harrier's own statements see; it does not confine a statement an
+  attacker writes. Spec 104 keeps the login role privilege-free, so
+  `RESET ROLE` gains nothing.
+- **Row counts cross owners.** `pg_class.reltuples` and the `pg_stat_*`
+  views show each table's approximate size and activity to any role.
+  An owner can read how many rows all owners hold together, never whose
+  or what. Not closed.
+- **Advisory locks are not policed.** `pg_advisory_xact_lock` is a builtin
+  every role may call. An owner who knows another owner's id can take
+  that owner's track-numbering key, and so wait on, or delay, the other's
+  track inserts. Owner ids are random UUIDs that no harrier response
+  returns for another owner, so this needs a leaked id. Not closed.
 - **The catalog compares policy text as Postgres prints it.** A Postgres
   major version that prints the expression differently fails the test
   without a real change. The isolation tests are the behavioral proof;
@@ -771,3 +793,138 @@ Akin approved all three on 2026-10-10. Implementation found the rest.
   has `BYPASSRLS`, and the tests run as superuser; spec 110's staging
   check confirms the first.
 
+## Post-merge review (2026-10-10)
+
+Two reviews of PR #216, after it merged, found the gaps below. Migration 10
+is merged history, so every schema correction is a new migration 13,
+Postgres only: `SINGLE_DIALECT_MIGRATIONS` declares it with its reason and
+`MIGRATIONS` holds `(13, [])`. The reviews called it migration 11; specs
+099 and 101 took migrations 11 and 12 first. This section amends Behavior's Grants and
+catalog lists where it says so. Each fix has a test that failed before it,
+or a mutation of the migration that its test catches now and did not
+before; the pull request carries the runs.
+
+1. **The shim had none of Supabase's default privileges** (high). Supabase
+   grants every table, sequence and function its migrating role creates in
+   `public` to `anon`, `authenticated` and `service_role`. The shim did
+   not, so the tables arrived with no grant to revoke, and deleting
+   migration 10's revokes passed every test. `services/api/tests/pg_support.py`
+   now grants `USAGE ON SCHEMA public` to the three roles and runs `ALTER
+   DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES, SEQUENCES,
+   FUNCTIONS` to them, as the role the tests migrate with. Deleting the
+   table revoke, deleting the sequence revoke, or leaving `contacts` out of
+   the table revoke now fails
+   (`services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared`).
+2. **An owner could choose or change an id** (high). `jobs`, `contacts`,
+   `profile_documents`, `user_config` and `job_events` number every owner's
+   rows from one sequence (`GLOBAL_ID_TABLES` in
+   `services/api/src/harrier/tracker/schema.py`). An explicit id told an
+   owner whether another owner held it, through the duplicate refusal, and
+   could take the id another owner's next insert was due, blocking it.
+   Migration 13 revokes `INSERT` and `UPDATE` on those tables from
+   `harrier_tenant` and grants `INSERT` and `UPDATE` (only `INSERT` on
+   `job_events`) on every column but `id`. The column list is read from the
+   catalog when the migration runs. An owner's explicit-id insert and id
+   update are refused with `42501`, `permission denied for table <t>`, and
+   the other owner's next insert gets the id the first tried to take
+   (`services/api/tests/test_owner_policy.py::test_an_owner_cannot_choose_or_change_an_id`). This amends the
+   Grants list: on these tables `harrier_tenant` holds `SELECT` and
+   `DELETE` (`SELECT` on `job_events`) on the table, and its writes on the
+   columns.
+3. **Numbering locked before the policy** (medium). `harrier_number_track()`
+   runs before the policy's `WITH CHECK`, so for a row naming another owner
+   it took that owner's advisory lock: an owner could wait on another's
+   open track insert, and so learn of it. Migration 13 replaces the
+   function. When `auth.uid()` is not null and the row's `owner_id` is not
+   it, the function returns the row unnumbered and takes no lock, and the
+   policy refuses it with the row security message at once
+   (`services/api/tests/test_owner_policy.py::test_an_owner_never_waits_on_another_owners_track`). A session
+   without claims, as an operator command runs (spec 108), numbers as
+   before. A role that bypasses the policy, carrying one owner's claims and
+   inserting another owner's track without an id, is now refused by the
+   primary key's NOT NULL instead of numbered.
+4. **The tenant role was taken as found** (medium). Migration 10 creates
+   `harrier_tenant` only when absent, so a role made earlier, or altered
+   since, kept any attribute. Migration 13 refuses with `migration 13 found
+   harrier_tenant a member of another role; the tenant role must be a
+   member of none` when the role belongs to any role, since it could `SET
+   ROLE` to it whatever `NOINHERIT` says. It runs `ALTER ROLE
+   harrier_tenant NOLOGIN NOINHERIT NOBYPASSRLS NOSUPERUSER NOCREATEDB
+   NOCREATEROLE NOREPLICATION` when any of those attributes is set, and
+   only then: a migrating role that is not a superuser, as Supabase's
+   `postgres` is not, may not name `SUPERUSER` at all. Roles belong to the
+   whole server, so both tests run migration 13's statements inside a
+   transaction that is rolled back
+   (`services/api/tests/test_owner_policy.py::test_migration_13_resets_the_tenant_roles_attributes`,
+   `services/api/tests/test_owner_policy.py::test_migration_13_refuses_a_tenant_role_that_is_a_member`).
+5. **Catalog gaps.** The catalog test now also fails, naming the object, on
+   each of these, and each is proven by a breach
+   (`services/api/tests/test_owner_policy.py::test_the_catalog_names_each_breach`):
+   - a column grant to `PUBLIC`, `anon`, `authenticated` or `service_role`,
+     or a column grant to `harrier_tenant` other than item 2's;
+   - `EXECUTE` on a function in `public` for `anon`, `authenticated`,
+     `service_role` or `harrier_tenant`;
+   - a unique index on an owned table that does not lead with `owner_id`.
+     The one exception is the primary key `(id)` of a table in
+     `GLOBAL_ID_TABLES`, whose `id` the tenant role cannot write;
+   - a table owned by any role other than the one that migrated the store;
+   - `harrier_tenant` with `SUPERUSER`, `BYPASSRLS`, `LOGIN`, `INHERIT`,
+     `CREATEDB`, `CREATEROLE` or `REPLICATION`, or a member of any role;
+   - `CREATE` on schema `public` for `anon`, `authenticated`,
+     `service_role` or `harrier_tenant`;
+   - a default privilege of the migrating role, in `public` or global, that
+     grants to one of those roles;
+   - a rule on any table in `public`;
+   - a `SECURITY DEFINER` function whose configuration lacks
+     `search_path=""`.
+
+   For the store to pass the default-privilege rule on Supabase, migration
+   12 revokes the migrating role's default privileges in `public` on
+   tables, sequences and functions from `anon`, `authenticated` and
+   `service_role`. The reviews did not name this statement; their catalog
+   rule requires it.
+6. **Untested paths.** A partial shim with `auth.users` but no
+   `auth.uid()`, and the reverse, is refused with the precheck's message
+   (`services/api/tests/test_owner_policy.py::test_migration_10_needs_both_auth_objects`). The precheck now takes
+   its role names (`auth_precheck` in `schema.py`, generating the same SQL
+   as before), and a name that does not exist, in each position, is refused
+   with the same message (`services/api/tests/test_owner_policy.py::test_migration_10_needs_every_supabase_role`).
+   A user already in `auth.users` before migration 10 gets track 1 from the
+   migration's seed and files a job with the defaults
+   (`services/api/tests/test_owner_policy.py::test_migration_10_gives_existing_users_track_one`). Migration 10 or
+   12 failing after its last statement leaves the store at the version
+   before, with its catalog unchanged
+   (`services/api/tests/test_owner_policy.py::test_a_failed_migration_leaves_no_trace_of_itself`).
+7. **The concurrency test counted any lock wait on the server.** On a
+   shared server, another session's wait ended the test's wait early, and
+   with the numbering lock removed the test still passed. It now waits for
+   the second connection's own backend to wait on an advisory lock
+   (`services/api/tests/test_owner_policy.py::test_every_owner_starts_with_track_one`). With the lock removed and
+   an unrelated waiter on the server, the old form passed and the new one
+   fails.
+8. **`as_owner` proves its role.** It asserts `current_user` is
+   `harrier_tenant` inside the transaction, so a lost role switch fails
+   every isolation test instead of running it as the superuser.
+
+The Honest limitations above record what this review left open: injected
+SQL, row counts in the statistics views, and advisory locks.
+
+9. **A global key could hide behind its per-owner form** (low). The
+   parity test mapped each declared per-owner key to its SQLite form in a
+   set, so a leftover global `UNIQUE jobs(url)` beside the per-owner
+   `idx_jobs_url` read as one key and passed; only the uniqueness test
+   caught it. The parity test now reports two Postgres keys that map to one
+   SQLite key as a difference
+   (`services/api/tests/test_dialect_parity.py::test_a_global_key_beside_its_per_owner_form_is_a_difference`).
+
+### Acceptance criteria (post-merge review)
+
+- [x] `POSTGRES_MIGRATIONS` has version 13 with the statements above;
+      `MIGRATIONS` has `(13, [])`; `SINGLE_DIALECT_MIGRATIONS` declares 13
+      as Postgres only with its reason. Migrations 10 and 11 are unchanged.
+- [x] Each test named in items 1 to 9 passes against Postgres 17 with the
+      shim.
+- [x] Each new breach in
+      `services/api/tests/test_owner_policy.py::test_the_catalog_names_each_breach`
+      is not named by the catalog check as it stood before this change.
+- [ ] CI's `check-python` job runs these tests against Postgres.
