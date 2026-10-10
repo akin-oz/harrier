@@ -15,7 +15,12 @@ from typing import Any
 
 import pytest
 from pg_support import fresh_database, new_owner, set_session_owner
-from resume_support import example_bundle_raw, example_documents, store_example
+from resume_support import (
+    example_bundle_raw,
+    example_documents,
+    single_document_raw,
+    store_example,
+)
 
 from harrier.db import connect
 from harrier.profile.store import (
@@ -25,8 +30,9 @@ from harrier.profile.store import (
     put_document,
 )
 from harrier.resume.content import ResumeBundleError, load_bundle, parse_bundle
+from harrier.resume.framing import put_framing
 from harrier.tracker import schema
-from harrier.tracks import default_scope, resolve_scope
+from harrier.tracks import ArchivedTrackError, default_scope, resolve_scope
 from harrier_cli.main import main
 
 SLUG = "lab-search"
@@ -282,9 +288,48 @@ def test_profile_put_validates_before_it_writes(
     academic.commit()
     refused(academic_framing(), "no resume_facts document; run harrier profile split-resume first")
 
+    # A different, valid framing: an archived track writes nothing, so the
+    # stored bytes stay the first file's (review of PR #219).
+    other = tmp_path / "other.json"
+    other.write_text(json.dumps(academic_framing()), encoding="utf-8")
     assert main(["tracks", "archive", SLUG]) == 0
     capsys.readouterr()
-    assert main([*put, str(good)]) == 2
+    assert main([*put, str(other)]) == 2
+    assert stored_framing(academic, track_id) == text
+    # And from code, not only through the CLI's check.
+    with pytest.raises(ArchivedTrackError):
+        put_framing(academic, resolve_scope(academic, SLUG), other.read_text(encoding="utf-8"))
+    assert stored_framing(academic, track_id) == text
+
+
+def test_a_bundle_survives_migration_11(data_dir: Path) -> None:
+    """The pair as spec 098 stored it, both shared at version 10, gives the
+    original one-document bundle on the default track after migration 11."""
+    data_dir.mkdir(parents=True)
+    path = data_dir / "tracker.db"
+    raw = sqlite3.connect(path)
+    raw.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY)")
+    for version, statements in schema.MIGRATIONS:
+        if version >= 11:
+            continue
+        for statement in statements:
+            raw.execute(statement)
+        raw.execute("INSERT INTO schema_version (version) VALUES (?)", (version,))
+    facts, framing = example_documents()
+    raw.executemany(
+        "INSERT INTO profile_documents (kind, name, format, content) VALUES (?, ?, 'json', ?)",
+        [
+            ("resume_facts", "resume-facts.json", json.dumps(facts)),
+            ("resume_framing", "industry.json", json.dumps(framing)),
+        ],
+    )
+    raw.commit()
+    raw.close()
+    conn = connect(path)
+    try:
+        assert load_bundle(conn, default_scope(conn)) == parse_bundle(single_document_raw())
+    finally:
+        conn.close()
 
 
 # --- profile check ---------------------------------------------------------------

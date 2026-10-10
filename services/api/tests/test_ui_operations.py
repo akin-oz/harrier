@@ -166,7 +166,9 @@ def test_the_schedule_reads_the_definition_the_cli_installs(client: TestClient) 
     assert str(loader.call_args.args[0]).endswith("config/schedule.json")
 
 
-def test_the_profile_list_is_the_one_the_cli_prints(client: TestClient) -> None:
+def test_the_profile_list_is_the_one_the_cli_prints(
+    client: TestClient, capsys: pytest.CaptureFixture[str]
+) -> None:
     documents = [
         {
             "kind": "truth",
@@ -181,9 +183,12 @@ def test_the_profile_list_is_the_one_the_cli_prints(client: TestClient) -> None:
         patch("harrier_cli.main.list_documents", return_value=documents) as cli_side,
     ):
         body = client.get("/ops/profile", headers=auth()).json()
+        capsys.readouterr()
         assert main(["profile", "list"]) == 0
     assert route_side.call_args is not None and cli_side.call_args is not None
     assert body == documents
+    # What the CLI printed holds the same owner the route returned.
+    assert "truth/invented (markdown, updated t) (shared)" in capsys.readouterr().out
 
 
 def test_every_operations_route_is_in_the_contract(env: Path) -> None:

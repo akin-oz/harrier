@@ -15,7 +15,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import cast
 
-from harrier.profile.store import put_documents_and_rekind
+from harrier.profile.store import owned_documents, put_documents_and_rekind
 from harrier.resume.content import (
     RESUME_DATA_KIND,
     ResumeBundleError,
@@ -65,8 +65,16 @@ def split_resume(conn: sqlite3.Connection, *, write: bool) -> SplitOutcome:
             f"both {RESUME_DATA_KIND} and {FACTS_KIND}/{FRAMING_KIND} are stored; keep one shape"
         )
     if not data_names:
-        if has_facts and has_framing:
+        # Split means the facts and the default track's own framing: a
+        # framing another track owns is not the split's output (review of
+        # PR #219).
+        if has_facts and owned_documents(conn, FRAMING_KIND, DEFAULT_TRACK_ID):
             return SplitOutcome(0, (f"already split: {FACTS_KIND} and {FRAMING_KIND} are stored",))
+        if has_facts:
+            return _refuse(
+                f"no {RESUME_DATA_KIND} document to split, and the default track has no "
+                f"{FRAMING_KIND}; store one with harrier profile put {FRAMING_KIND} --file PATH"
+            )
         return _refuse(f"no {RESUME_DATA_KIND} document to split")
     if len(data_names) > 1:
         return _refuse(f"more than one {RESUME_DATA_KIND} document: {', '.join(data_names)}")

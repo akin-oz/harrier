@@ -18,12 +18,14 @@ import pytest
 from resume_support import (
     example_bundle_raw,
     example_documents,
+    single_document_raw,
     store_documents,
     store_example,
 )
 
+import harrier.resume.split as split_module
 from harrier.db import connect
-from harrier.profile.store import put_document, put_documents_and_rekind
+from harrier.profile.store import ProfileDocumentError, put_document, put_documents_and_rekind
 from harrier.resume.content import (
     ResumeBundleError,
     bundle_from_documents,
@@ -33,7 +35,7 @@ from harrier.resume.content import (
     parse_bundle,
 )
 from harrier.resume.documents import FACTS_KIND, FRAMING_KIND, split_document
-from harrier.resume.split import PRESPLIT_KIND
+from harrier.resume.split import PRESPLIT_KIND, split_resume
 from harrier.tracks import default_scope
 from harrier_cli.main import main
 
@@ -70,10 +72,13 @@ def documents(conn: sqlite3.Connection) -> list[tuple[str, str, str]]:
 
 
 def test_split_bundle_equals_the_one_document_bundle() -> None:
-    raw = example_bundle_raw()
+    """Against the original one-document example as it was committed, not
+    the pair's own merge (review of PR #212)."""
+    raw = single_document_raw()
     facts, framing, unplaced = split_document(raw)
     assert unplaced == []
     assert bundle_from_documents(facts, framing) == parse_bundle(raw)
+    assert bundle_from_documents(*example_documents()) == parse_bundle(raw)
     # The committed examples are that split, comments apart.
     committed_facts, committed_framing = example_documents()
     assert {k: v for k, v in committed_facts.items() if k != "_comment"} == {
@@ -274,15 +279,22 @@ def test_split_resume_refuses_an_unplaced_key(
         ("unparseable", 1, "invalid resume content bundle"),
         ("two", 1, "more than one resume_data document"),
         ("presplit", 1, "resume_data_presplit/resume-content.json is already stored"),
+        ("unplaced", 1, "keys the split cannot place: favourite_colour"),
+        ("framing elsewhere", 1, "the default track has no resume_framing"),
     ],
 )
+@pytest.mark.parametrize("write", [True, False], ids=["write", "dry-run"])
 def test_split_resume_failure_modes(
     db: sqlite3.Connection,
     capsys: pytest.CaptureFixture[str],
     setup: str,
     code: int,
     message: str,
+    write: bool,
 ) -> None:
+    """Every refusal is the same with or without --write: a dry run never
+    reports success over a blocker the write would refuse (review of PR
+    #212)."""
     if setup == "both":
         store_old_shape(db, example_bundle_raw())
         store_example(db)
@@ -296,9 +308,87 @@ def test_split_resume_failure_modes(
     elif setup == "presplit":
         store_old_shape(db, example_bundle_raw())
         put_document(db, PRESPLIT_KIND, "resume-content.json", "json", "{}")
+    elif setup == "unplaced":
+        store_old_shape(db, {**example_bundle_raw(), "favourite_colour": "teal"})
+    elif setup == "framing elsewhere":
+        # The facts, and a framing only another track owns.
+        facts, framing = example_documents()
+        put_document(db, FACTS_KIND, "resume-facts.json", "json", json.dumps(facts))
+        assert main(["tracks", "add", ACADEMIC, "--kind", "academic", "--label", "Lab"]) == 0
+        capsys.readouterr()
+        lab = db.execute("SELECT id FROM tracks WHERE slug = ?", (ACADEMIC,)).fetchone()[0]
+        put_document(db, FRAMING_KIND, "academic.json", "json", json.dumps(framing), track_id=lab)
     before = documents(db)
-    assert main(["profile", "split-resume", "--write"]) == code
+    argv = ["profile", "split-resume", *(["--write"] if write else [])]
+    assert main(argv) == code
     assert message in capsys.readouterr().err
+    assert documents(db) == before
+
+
+def test_the_split_rolls_back_a_failure_partway(db: sqlite3.Connection) -> None:
+    """A failure after the pair is written leaves the store as it was: the
+    rename of the original is refused here by a trigger (review of PR #212)."""
+    store_old_shape(db, example_bundle_raw())
+    db.execute(
+        "CREATE TRIGGER refuse_the_rename BEFORE UPDATE OF kind ON profile_documents "
+        "BEGIN SELECT RAISE(ABORT, 'refused for the test'); END"
+    )
+    db.commit()
+    before = documents(db)
+    with pytest.raises(sqlite3.DatabaseError, match="refused for the test"):
+        split_resume(db, write=True)
+    assert documents(db) == before
+
+
+def test_a_split_that_would_change_the_bundle_writes_nothing(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The equality guard: a split that loses a field is refused, whatever
+    the table says (review of PR #212)."""
+    store_old_shape(db, example_bundle_raw())
+    real = split_module.split_document
+
+    def lossy(raw: dict[str, object]) -> tuple[dict[str, object], dict[str, object], list[str]]:
+        facts, framing, unplaced = real(raw)
+        framing.pop("profile_summary")
+        return facts, framing, unplaced
+
+    monkeypatch.setattr(split_module, "split_document", lossy)
+    before = documents(db)
+    assert main(["profile", "split-resume", "--write"]) == 1
+    assert "split would change the bundle: profile_summary" in capsys.readouterr().err
+    assert documents(db) == before
+
+
+def test_a_role_key_in_the_wrong_document_is_refused() -> None:
+    """A framing role cannot rewrite a facts role's title, and a facts role
+    cannot carry a framing field (review of PR #212)."""
+    facts, framing = example_documents()
+    framing["roles"][0]["title"] = "Invented Title"
+    facts["roles"][0]["competencies"] = ["invented"]
+    with pytest.raises(ResumeBundleError) as refused:
+        bundle_from_documents(facts, framing)
+    message = str(refused.value)
+    assert "resume_framing: roles[0].title belongs in resume_facts" in message
+    assert "resume_facts: roles[0].competencies belongs in resume_framing" in message
+
+
+def test_the_old_document_beside_a_framing_alone_is_refused(db: sqlite3.Connection) -> None:
+    """`resume_data` with no facts but a track's framing is still two shapes."""
+    store_old_shape(db, example_bundle_raw())
+    put_document(db, FRAMING_KIND, "industry.json", "json", "{}", track_id=1)
+    with pytest.raises(ResumeBundleError, match="keep one shape"):
+        load_bundle(db, default_scope(db))
+
+
+def test_a_rename_with_nothing_to_move_writes_nothing(db: sqlite3.Connection) -> None:
+    before = documents(db)
+    with pytest.raises(ProfileDocumentError, match=r"no shared resume_data/absent\.json"):
+        put_documents_and_rekind(
+            db,
+            [(FACTS_KIND, "resume-facts.json", "json", "{}", None)],
+            ("resume_data", "absent.json", PRESPLIT_KIND),
+        )
     assert documents(db) == before
 
 
