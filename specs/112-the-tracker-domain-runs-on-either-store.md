@@ -493,11 +493,10 @@ tracker file opens exactly as before.
 
 ## Open decisions for Akin
 
-Each has a recommendation. Scope and Behavior above describe the
-recommended answer. Not yet answered: Akin took the recommendations of
-specs 104 and 105 on 2026-10-10, before this draft existed. One answer
-from spec 105 binds here already: the build order 103, 105, 112, 104, which
-is why this spec depends on 105 and rewrites the three upserts.
+Akin took the recommended answer to each on 2026-10-10. Scope and
+Behavior above describe those answers. The build order taken with spec
+105 the same day (103, 105, 112, 104) is why this spec depends on 105 and
+rewrites the three upserts.
 
 1. **Seam shape.** Recommended: a harrier-owned `Connection` wrapping
    either driver, with placeholder rewriting and error mapping in one
