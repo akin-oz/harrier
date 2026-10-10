@@ -38,6 +38,10 @@ from harrier.tracker.schema import (
 )
 
 BASELINE = POSTGRES_BASELINE_VERSION
+# The version a migrated store reaches: the baseline and every migration
+# after it (spec 099 added the first).
+LATEST = max(version for version, _ in POSTGRES_MIGRATIONS)
+VERSIONS = [version for version, _ in POSTGRES_MIGRATIONS]
 URL_REFUSAL = "HARRIER_DATABASE_URL must be empty or a postgresql:// URL"
 
 
@@ -131,20 +135,22 @@ def test_a_connection_failure_never_prints_the_password(
 def test_every_new_migration_declares_both_dialects() -> None:
     assert undeclared_dialects(MIGRATIONS, POSTGRES_MIGRATIONS) == []
 
-    sqlite_only = [*MIGRATIONS, (10, ["CREATE TABLE later (id INTEGER PRIMARY KEY)"])]
+    # A version after every real one, so the probe never collides with one.
+    later = max(version for version, _ in MIGRATIONS) + 1
+    sqlite_only = [*MIGRATIONS, (later, ["CREATE TABLE later (id INTEGER PRIMARY KEY)"])]
     problems = undeclared_dialects(sqlite_only, POSTGRES_MIGRATIONS)
     assert problems
-    assert all("migration 10" in problem for problem in problems)
+    assert all(f"migration {later}" in problem for problem in problems)
 
-    empty_postgres = [*POSTGRES_MIGRATIONS, (10, list[str]())]
+    empty_postgres = [*POSTGRES_MIGRATIONS, (later, list[str]())]
     problems = undeclared_dialects(sqlite_only, empty_postgres)
     assert problems
-    assert all("migration 10" in problem for problem in problems)
+    assert all(f"migration {later}" in problem for problem in problems)
 
-    postgres_only = [*POSTGRES_MIGRATIONS, (10, ["CREATE TABLE later (id bigint)"])]
+    postgres_only = [*POSTGRES_MIGRATIONS, (later, ["CREATE TABLE later (id bigint)"])]
     problems = undeclared_dialects(MIGRATIONS, postgres_only)
     assert problems
-    assert all("migration 10" in problem for problem in problems)
+    assert all(f"migration {later}" in problem for problem in problems)
 
 
 # --- migrating ---
@@ -152,10 +158,10 @@ def test_every_new_migration_declares_both_dialects() -> None:
 
 def test_migrate_applies_the_baseline_once() -> None:
     with fresh_database() as url:
-        assert migrate_postgres(url) == (0, BASELINE)
+        assert migrate_postgres(url) == (0, LATEST)
         tables_after_first = public_tables(url)
-        assert migrate_postgres(url) == (BASELINE, BASELINE)
-        assert recorded_versions(url) == [BASELINE]
+        assert migrate_postgres(url) == (LATEST, LATEST)
+        assert recorded_versions(url) == VERSIONS
         assert public_tables(url) == tables_after_first
 
 
@@ -201,8 +207,8 @@ def test_two_first_migrations_apply_once_on_postgres() -> None:
             runner.join(timeout=60)
 
         assert failures == []
-        assert [after for _, after in outcomes] == [BASELINE, BASELINE]
-        assert recorded_versions(url) == [BASELINE]
+        assert [after for _, after in outcomes] == [LATEST, LATEST]
+        assert recorded_versions(url) == VERSIONS
         tables = public_tables(url)
         assert len(tables) == len(set(tables))
         assert {"jobs", "tracks", "job_events", "schema_version"} <= set(tables)
@@ -216,7 +222,7 @@ def test_opening_an_unmigrated_store_is_refused() -> None:
         with pytest.raises(StoreVersionError) as refused:
             open_postgres_store(url)
         assert str(refused.value) == (
-            f"the Postgres store is at version 0; this code needs {BASELINE}. "
+            f"the Postgres store is at version 0; this code needs {LATEST}. "
             "Run harrier store migrate."
         )
         # Refusing did not migrate it.
@@ -236,16 +242,16 @@ def test_opening_a_migrated_store_succeeds() -> None:
 def test_a_store_ahead_of_the_code_is_refused() -> None:
     with fresh_database() as url:
         migrate_postgres(url)
-        ahead = BASELINE + 1
+        ahead = LATEST + 1
         rows(url, "INSERT INTO schema_version (version) VALUES (%s) RETURNING version", (ahead,))
 
         with pytest.raises(StoreVersionError) as refused:
             open_postgres_store(url)
         assert str(ahead) in str(refused.value)
-        assert str(BASELINE) in str(refused.value)
+        assert str(LATEST) in str(refused.value)
 
         with pytest.raises(StoreVersionError) as refused:
             migrate_postgres(url)
         assert str(ahead) in str(refused.value)
-        assert str(BASELINE) in str(refused.value)
-        assert recorded_versions(url) == [BASELINE, ahead]
+        assert str(LATEST) in str(refused.value)
+        assert recorded_versions(url) == [*VERSIONS, ahead]

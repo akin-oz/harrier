@@ -166,7 +166,15 @@ def test_the_schedule_reads_the_definition_the_cli_installs(client: TestClient) 
 
 
 def test_the_profile_list_is_the_one_the_cli_prints(client: TestClient) -> None:
-    documents = [{"kind": "truth", "name": "invented", "format": "markdown", "updated_at": "t"}]
+    documents = [
+        {
+            "kind": "truth",
+            "name": "invented",
+            "format": "markdown",
+            "updated_at": "t",
+            "owner": "shared",
+        }
+    ]
     with (
         patch("harrier.profile.list_documents", return_value=documents) as route_side,
         patch("harrier_cli.main.list_documents", return_value=documents) as cli_side,

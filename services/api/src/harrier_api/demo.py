@@ -21,9 +21,9 @@ from pathlib import Path
 
 from harrier.db import DB_FILENAME, connect, data_dir
 from harrier.demo import is_demo_mode, repo_root
-from harrier.profile import put_document
+from harrier.profile.store import TRACK_OWNED_KINDS, put_document
 from harrier.tracker import add_job
-from harrier.tracks import default_scope
+from harrier.tracks import DEFAULT_TRACK_ID, default_scope
 
 FIXTURE_ENV = "HARRIER_DEMO_FIXTURE"
 
@@ -92,7 +92,10 @@ def seed_profile_documents(conn: sqlite3.Connection) -> list[str]:
         if not path.is_file():
             missing.append(relative)
             continue
-        put_document(conn, kind, name, fmt, path.read_text(encoding="utf-8"))
+        # A framing is owned by a track: the demo's is the default track's
+        # (spec 099). Every other example is shared.
+        track_id = DEFAULT_TRACK_ID if kind in TRACK_OWNED_KINDS else None
+        put_document(conn, kind, name, fmt, path.read_text(encoding="utf-8"), track_id=track_id)
     return missing
 
 

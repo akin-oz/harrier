@@ -350,11 +350,43 @@ def _cmd_profile_split_resume(args: argparse.Namespace) -> int:
     return outcome.exit_code
 
 
+def _cmd_profile_put(args: argparse.Namespace) -> int:
+    from harrier.resume.framing import put_framing
+
+    path = Path(args.file)
+    try:
+        # As read, byte for byte: no newline translation (spec 099).
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            text = handle.read()
+    except (OSError, UnicodeError) as error:
+        print(f"profile put failed: cannot read --file: {error}", file=sys.stderr)
+        return 1
+    with closing(connect()) as conn:
+        outcome = put_framing(conn, _scope(conn, args), text)
+    stream = sys.stdout if outcome.exit_code == 0 else sys.stderr
+    for line in outcome.lines:
+        print(line, file=stream)
+    return outcome.exit_code
+
+
+def _cmd_profile_check(args: argparse.Namespace) -> int:
+    from harrier.resume.framing import check_resume
+
+    with closing(connect()) as conn:
+        outcome = check_resume(conn, _scope(conn, args))
+    for line in outcome.lines:
+        print(line)
+    return outcome.exit_code
+
+
 def _cmd_profile_list(_args: argparse.Namespace) -> int:
     with closing(connect()) as conn:
         documents = list_documents(conn)
         for doc in documents:
-            print(f"{doc['kind']}/{doc['name']} ({doc['format']}, updated {doc['updated_at']})")
+            print(
+                f"{doc['kind']}/{doc['name']} ({doc['format']}, updated {doc['updated_at']}) "
+                f"({doc['owner']})"
+            )
         print(f"{len(documents)} documents")
         return 0
 
@@ -2192,12 +2224,14 @@ COMMAND_CLASSES: dict[str, CommandClass] = {
     "evaluate": CommandClass(DATABASE, path_options=("jd_file",)),
     "outreach-draft": CommandClass(DATABASE, path_options=("jd_file", "input_file")),
     "brief set": CommandClass(DATABASE, path_options=("file",)),
+    "profile put": CommandClass(DATABASE, path_options=("file",)),
     # Its default destination is mounted at /app/backups (spec 064).
     "backup": CommandClass(DATABASE, path_options=("dest",)),
     # The database, data/, config/, env and network only.
     "check": _DB,
     "profile list": _DB,
     "profile split-resume": _DB,
+    "profile check": _DB,
     "brief show": _DB,
     "evaluate-prospects": _DB,
     "find-contacts": _DB,
@@ -2320,6 +2354,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--write", action="store_true", help="store the two documents; without it, a dry run"
     )
     profile_split.set_defaults(func=_cmd_profile_split_resume)
+
+    profile_put = profile_sub.add_parser(
+        "put", help="store the track's resume framing, checked against the facts (spec 099)"
+    )
+    profile_put.add_argument("kind", choices=["resume_framing"], help="the document kind")
+    profile_put.add_argument("--file", required=True, help="a JSON file holding the framing")
+    profile_put.set_defaults(func=_cmd_profile_put)
+
+    profile_check = profile_sub.add_parser(
+        "check", help="validate the track's resume content and its bullets' truth (spec 099)"
+    )
+    profile_check.set_defaults(func=_cmd_profile_check)
 
     discover = sub.add_parser("discover", help="run discovery over all sources (spec 011)")
     discover.add_argument(

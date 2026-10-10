@@ -47,7 +47,8 @@ def store_documents(
     conn: sqlite3.Connection, facts: dict[str, object], framing: dict[str, object]
 ) -> None:
     put_document(conn, FACTS_KIND, FACTS_NAME, "json", json.dumps(facts))
-    put_document(conn, FRAMING_KIND, FRAMING_NAME, "json", json.dumps(framing))
+    # The industry framing is the default track's (spec 099).
+    put_document(conn, FRAMING_KIND, FRAMING_NAME, "json", json.dumps(framing), track_id=1)
 
 
 def store_resume(conn: sqlite3.Connection, raw: dict[str, object]) -> None:

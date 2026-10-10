@@ -389,6 +389,47 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
             """,
         ],
     ),
+    (
+        10,
+        [
+            # A profile document is owned by one track or shared by all
+            # (spec 099, spec 091's design note). NULL is shared. SQLite
+            # treats NULLs as distinct in a plain UNIQUE, so uniqueness is two
+            # partial indexes. A rebuild, as migration 7, because the inline
+            # UNIQUE (kind, name) cannot be dropped. `track_id` goes last, as
+            # Postgres's ADD COLUMN puts it, so the two stores keep one column
+            # order (spec 103).
+            """
+            CREATE TABLE profile_documents_new (
+                id INTEGER PRIMARY KEY,
+                kind TEXT NOT NULL,
+                name TEXT NOT NULL,
+                format TEXT NOT NULL DEFAULT 'text',
+                content TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                track_id INTEGER REFERENCES tracks(id)
+            )
+            """,
+            # The one framing that can exist is the default track's (spec 098).
+            """
+            INSERT INTO profile_documents_new
+                (id, kind, name, format, content, updated_at, track_id)
+            SELECT id, kind, name, format, content, updated_at,
+                CASE kind WHEN 'resume_framing' THEN 1 END
+            FROM profile_documents
+            """,
+            "DROP TABLE profile_documents",
+            "ALTER TABLE profile_documents_new RENAME TO profile_documents",
+            """
+            CREATE UNIQUE INDEX idx_profile_documents_shared
+            ON profile_documents (kind, name) WHERE track_id IS NULL
+            """,
+            """
+            CREATE UNIQUE INDEX idx_profile_documents_owned
+            ON profile_documents (track_id, kind, name) WHERE track_id IS NOT NULL
+            """,
+        ],
+    ),
 ]
 
 # --- Postgres (spec 103, ADR-013) ---
@@ -543,6 +584,24 @@ POSTGRES_BASELINE: list[str] = [
 
 POSTGRES_MIGRATIONS: list[tuple[int, list[str]]] = [
     (POSTGRES_BASELINE_VERSION, POSTGRES_BASELINE),
+    (
+        10,
+        [
+            # Spec 099: SQLite's migration 10, without its rebuild. The
+            # baseline's UNIQUE (kind, name) is the default-named constraint.
+            "ALTER TABLE profile_documents ADD COLUMN track_id bigint REFERENCES tracks(id)",
+            "ALTER TABLE profile_documents DROP CONSTRAINT profile_documents_kind_name_key",
+            "UPDATE profile_documents SET track_id = 1 WHERE kind = 'resume_framing'",
+            """
+            CREATE UNIQUE INDEX idx_profile_documents_shared
+            ON profile_documents (kind, name) WHERE track_id IS NULL
+            """,
+            """
+            CREATE UNIQUE INDEX idx_profile_documents_owned
+            ON profile_documents (track_id, kind, name) WHERE track_id IS NOT NULL
+            """,
+        ],
+    ),
 ]
 
 
