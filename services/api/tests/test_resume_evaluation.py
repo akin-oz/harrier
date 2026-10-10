@@ -1,19 +1,20 @@
 """Spec 070: the fit evaluation rates each posting requirement on the
 evidence that names it, and every gap becomes a question.
 
-Runs on the synthetic bundle (config/resume-content.example.json) and the
+Runs on the synthetic bundle (config/resume-facts.example.json and
+config/resume-framing.example.json) and the
 Weflow posting fixture, which is real job data with the founders' names
 removed. No candidate content appears here.
 """
 
 from __future__ import annotations
 
-import json
 from datetime import date
 from pathlib import Path
 from typing import cast
 
 import pytest
+from resume_support import example_bundle_raw
 
 from harrier.resume import ResumeBundle, parse_bundle
 from harrier.resume.evaluation import (
@@ -25,7 +26,6 @@ from harrier.resume.evaluation import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-EXAMPLE_BUNDLE_PATH = REPO_ROOT / "config" / "resume-content.example.json"
 WEFLOW = Path(__file__).parent / "fixtures" / "resume" / "weflow-senior-principal.txt"
 WEFLOW_ROLE = "Senior/Principal Software Engineer (m/f/d) - remote"
 AS_OF = date(2026, 8, 1)
@@ -33,7 +33,7 @@ AS_OF = date(2026, 8, 1)
 
 @pytest.fixture()
 def bundle() -> ResumeBundle:
-    return parse_bundle(json.loads(EXAMPLE_BUNDLE_PATH.read_text(encoding="utf-8")))
+    return parse_bundle(example_bundle_raw())
 
 
 @pytest.fixture()
@@ -244,7 +244,7 @@ def test_absent_by_default_terms_are_never_covered(bundle: ResumeBundle) -> None
 def test_a_bullet_naming_an_absent_by_default_term_still_does_not_cover_it() -> None:
     # The operator marks a dimension absent by default when the CV must not
     # claim it without confirmation, even if a bullet uses the word.
-    raw = json.loads(EXAMPLE_BUNDLE_PATH.read_text(encoding="utf-8"))
+    raw = example_bundle_raw()
     raw["bullet_pool"]["r1_b6"] = "Added AI tooling to the release pipeline."
     bundle = parse_bundle(raw)
     evaluation = evaluate_resume_fit(bundle, "Hands-on AI experience.", as_of=AS_OF)
@@ -259,7 +259,7 @@ def test_a_bullet_naming_an_absent_by_default_term_still_does_not_cover_it() -> 
     ],
 )
 def test_an_ordinary_word_does_not_name_a_technology(bullet: str, jd: str) -> None:
-    raw = json.loads(EXAMPLE_BUNDLE_PATH.read_text(encoding="utf-8"))
+    raw = example_bundle_raw()
     # Only the posting vocabulary is under test, so the bundle's own aliases
     # for these technologies are taken out.
     raw["technology_aliases"]["AWS Lambda"] = ["aws lambda"]

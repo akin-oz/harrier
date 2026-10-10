@@ -174,7 +174,7 @@ def test_the_guard_is_scoped_to_the_data_directory(real_directory: Path, tmp_pat
     elsewhere = tmp_path / "plain.txt"
     elsewhere.write_text("fine", encoding="utf-8")
     assert elsewhere.read_text(encoding="utf-8") == "fine"
-    example = repo_root() / "config" / "resume-content.example.json"
+    example = repo_root() / "config" / "resume-facts.example.json"
     assert example.read_text(encoding="utf-8")
 
 

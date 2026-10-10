@@ -339,6 +339,17 @@ def _cmd_profile_export(args: argparse.Namespace) -> int:
         return 0
 
 
+def _cmd_profile_split_resume(args: argparse.Namespace) -> int:
+    from harrier.resume.split import split_resume
+
+    with closing(connect()) as conn:
+        outcome = split_resume(conn, write=args.write)
+    stream = sys.stdout if outcome.exit_code == 0 else sys.stderr
+    for line in outcome.lines:
+        print(line, file=stream)
+    return outcome.exit_code
+
+
 def _cmd_profile_list(_args: argparse.Namespace) -> int:
     with closing(connect()) as conn:
         documents = list_documents(conn)
@@ -2140,6 +2151,7 @@ COMMAND_CLASSES: dict[str, CommandClass] = {
     # The database, data/, config/, env and network only.
     "check": _DB,
     "profile list": _DB,
+    "profile split-resume": _DB,
     "brief show": _DB,
     "evaluate-prospects": _DB,
     "find-contacts": _DB,
@@ -2253,6 +2265,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     profile_list = profile_sub.add_parser("list", help="list stored documents")
     profile_list.set_defaults(func=_cmd_profile_list)
+
+    profile_split = profile_sub.add_parser(
+        "split-resume",
+        help="split resume_data into resume_facts and resume_framing (spec 098)",
+    )
+    profile_split.add_argument(
+        "--write", action="store_true", help="store the two documents; without it, a dry run"
+    )
+    profile_split.set_defaults(func=_cmd_profile_split_resume)
 
     discover = sub.add_parser("discover", help="run discovery over all sources (spec 011)")
     discover.add_argument(

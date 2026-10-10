@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from resume_support import example_bundle_raw, store_example
 from test_apply_claims import (
     CHECKOUT,
     COMPANY,
@@ -124,9 +125,8 @@ def seed_resume(db: sqlite3.Connection) -> None:
     """The synthetic resume bundle, with a truth document holding every
     bullet and one line naming Docker, which the bundle's skills omit. That
     is the example brief's confirmed skill (spec 071 O9)."""
-    raw = (REPO_ROOT / "config" / "resume-content.example.json").read_text(encoding="utf-8")
-    put_document(db, "resume_data", "resume-content.json", "json", raw)
-    pool = cast("dict[str, str]", json.loads(raw)["bullet_pool"])
+    store_example(db)
+    pool = cast("dict[str, str]", example_bundle_raw()["bullet_pool"])
     truth = "\n".join([*pool.values(), DOCKER_TRUTH_LINE])
     put_document(db, "resume_truth", "truth.md", "markdown", truth)
 

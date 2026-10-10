@@ -118,7 +118,7 @@ services/api/tests/test_resume.py:
 | an unverifiable line refuses the artifact | `test_bullet_failing_truth_check_refuses_rather_than_omitting` |
 | an empty truth document verifies nothing | `test_an_empty_truth_document_verifies_nothing`, `test_a_document_of_only_disclaimers_verifies_nothing` |
 | an empty required section is refused | `test_an_empty_required_section_refuses_the_rendered_resume` |
-| forbidden phrases refuse the artifact | `test_a_forbidden_phrase_refuses_the_rendered_resume`, `test_a_clean_resume_reports_no_forbidden_phrases`; on the letter and answers, `test_a_forbidden_phrase_refuses_the_cover_letter`, `test_a_forbidden_phrase_refuses_the_answers`, `test_a_forbidden_phrase_in_an_answer_note_refuses_the_answers`, `test_an_unreadable_resume_data_document_refuses_the_letter` (services/api/tests/test_apply.py) |
+| forbidden phrases refuse the artifact | `test_a_forbidden_phrase_refuses_the_rendered_resume`, `test_a_clean_resume_reports_no_forbidden_phrases`; on the letter and answers, `test_a_forbidden_phrase_refuses_the_cover_letter`, `test_a_forbidden_phrase_refuses_the_answers`, `test_a_forbidden_phrase_in_an_answer_note_refuses_the_answers`, `test_an_unreadable_resume_facts_document_refuses_the_letter` (services/api/tests/test_apply.py) |
 | the letter validates its PDF and scrubs its header | `test_write_cover_letter_artifacts_fails_when_pdf_not_created`, and the header now passes through `normalize_visible_role_title` and `strip_banned_phrases` |
 | no candidate content in a fixture | the bundle and truth documents used by these tests are the synthetic ones already committed (ADR-008) |
 

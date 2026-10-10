@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from resume_support import store_documents
 
 import harrier.apply.answers as answers_module
 import harrier.apply.letters as letters_module
@@ -561,13 +562,7 @@ def test_generate_cover_letter_validates_three_paragraphs(
 
 
 def _store_forbidden(conn: sqlite3.Connection, *phrases: str) -> None:
-    put_document(
-        conn,
-        "resume_data",
-        "resume-content.json",
-        "json",
-        json.dumps({"forbidden_phrases": list(phrases)}),
-    )
+    store_documents(conn, {"forbidden_phrases": list(phrases)}, {})
 
 
 def _letter_response(system_prompt: str, user_input: str) -> str:
@@ -635,12 +630,13 @@ def test_a_forbidden_phrase_in_an_answer_note_refuses_the_answers(
         generate_answer_set(db, "examplesoft", "Senior Product Engineer", ["Why this role?"])
 
 
-def test_an_unreadable_resume_data_document_refuses_the_letter(
+def test_an_unreadable_resume_facts_document_refuses_the_letter(
     db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A broken document must not read as an empty list. Skipping the check
     because the list could not be read is the silent pass spec 034 removed."""
-    put_document(db, "resume_data", "resume-content.json", "json", "{not json")
+    put_document(db, "resume_facts", "resume-facts.json", "json", "{not json")
+    put_document(db, "resume_framing", "industry.json", "json", "{}")
     monkeypatch.setattr(letters_module, "generate_text", _letter_response)
-    with pytest.raises(ValueError, match="resume_data document is not valid JSON"):
+    with pytest.raises(ValueError, match="resume_facts document is not valid JSON"):
         generate_cover_letter(db, "examplesoft", "Senior Product Engineer")
