@@ -1,7 +1,7 @@
 """The SQLite and Postgres stores build the same tracker (spec 103).
 
-The schema has one definition with two dialects: SQLite's nine migrations
-and the Postgres baseline in `harrier.tracker.schema`. Nothing but this file
+The schema has one definition with two dialects: SQLite's migrations and
+the Postgres baseline and later migrations in `harrier.tracker.schema`. Nothing but this file
 holds them together. It opens a fresh store of each and proves that they
 have the same tables, the same columns in the same order, the same
 nullability, the same unique constraints and primary keys, and that a row
@@ -12,6 +12,15 @@ refused, or accepted, in both.
 The spec asks for this test to fail when one Postgres column is renamed, one
 default is changed, or one probe's constraint is removed. The pull request
 for spec 103 records those three runs.
+
+Since spec 105 the two stores differ on purpose: Postgres has an owner_id on
+every owned table, and some keys are per owner there and global here. Those
+differences are declared in `harrier.tracker.schema` (HOSTED_ONLY_COLUMNS,
+OWNER_SCOPED_KEYS), never skipped. This test removes the declared columns,
+maps each declared key to its SQLite form, and fails on a declaration that
+names a column or key neither store has. The Postgres side runs as the test
+superuser with one synthetic owner's claims, so each owner_id default
+resolves; the policy itself is `tests/test_owner_policy.py`'s to prove.
 
 The SQLite probes run everywhere. The Postgres side needs a server and skips
 locally without one (`tests/pg_support.py`).
@@ -28,10 +37,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 import pytest
-from pg_support import fresh_database
+from pg_support import fresh_database, new_owner, set_session_owner
 
 from harrier.db import connect
 from harrier.pgstore import migrate_postgres, postgres_connect
+from harrier.tracker.schema import HOSTED_ONLY_COLUMNS, OWNER_SCOPED_KEYS
 
 if TYPE_CHECKING:
     import psycopg
@@ -67,10 +77,13 @@ def sqlite_store(tmp_path: Path) -> Generator[sqlite3.Connection]:
 
 @contextmanager
 def postgres_store() -> Generator[PgConnection]:
-    """A fresh Postgres store, migrated by `harrier store migrate`'s path."""
+    """A fresh Postgres store, migrated by `harrier store migrate`'s path,
+    with one synthetic owner's claims set for the session (spec 105). The
+    owner exists in the shim's auth.users, so it has its track 1."""
     with fresh_database() as url:
         migrate_postgres(url)
         with closing(postgres_connect(url)) as conn:
+            set_session_owner(conn, new_owner(conn))
             yield conn
 
 
@@ -218,6 +231,77 @@ def compare_shapes(table: str, lite: Shape, pg: Shape) -> list[str]:
     return problems
 
 
+# --- the declared differences (spec 105) ---
+
+OwnerKeys = dict[tuple[str, tuple[str, ...]], tuple[str, ...] | None]
+
+
+def _keys(shape: Shape) -> set[tuple[str, ...]]:
+    return {shape.primary_key, *(columns for columns, _ in shape.unique)} - {()}
+
+
+def declared_view(
+    table: str,
+    pg: Shape,
+    hosted_columns: tuple[tuple[str, str], ...] = HOSTED_ONLY_COLUMNS,
+    owner_keys: OwnerKeys = OWNER_SCOPED_KEYS,
+) -> Shape:
+    """`pg` as SQLite should see it: hosted-only columns removed, and each
+    per-owner key in its SQLite form, or gone if only Postgres has it."""
+    hidden = {column for owner_table, column in hosted_columns if owner_table == table}
+
+    def mapped(key: tuple[str, ...]) -> tuple[str, ...] | None:
+        return owner_keys.get((table, key), key)
+
+    return Shape(
+        columns=tuple(column for column in pg.columns if column not in hidden),
+        nullable={column: v for column, v in pg.nullable.items() if column not in hidden},
+        primary_key=mapped(pg.primary_key) or (),
+        unique=frozenset(
+            (key, predicate)
+            for columns, predicate in pg.unique
+            if (key := mapped(columns)) is not None
+        ),
+    )
+
+
+def stale_declarations(
+    lite: dict[str, Shape],
+    pg: dict[str, Shape],
+    hosted_columns: tuple[tuple[str, str], ...] = HOSTED_ONLY_COLUMNS,
+    owner_keys: OwnerKeys = OWNER_SCOPED_KEYS,
+) -> list[str]:
+    """Every declaration that names something one store does not have.
+
+    A declaration that matches nothing would excuse a difference that is not
+    there, and keep excusing it after the schema moves on. Like
+    KNOWN_NULLABILITY_DIFFERENCES, a stale entry fails.
+    """
+    problems: list[str] = []
+    for table, column in hosted_columns:
+        if table not in pg or column not in pg[table].columns:
+            problems.append(f"HOSTED_ONLY_COLUMNS names {table}.{column}, not in Postgres")
+        elif table in lite and column in lite[table].columns:
+            problems.append(f"HOSTED_ONLY_COLUMNS names {table}.{column}, which SQLite has too")
+    for (table, pg_key), lite_key in owner_keys.items():
+        if table not in pg or pg_key not in _keys(pg[table]):
+            problems.append(f"OWNER_SCOPED_KEYS names {table} {list(pg_key)}, not in Postgres")
+        if pg_key[:1] != ("owner_id",):
+            problems.append(f"OWNER_SCOPED_KEYS names {table} {list(pg_key)}, not led by owner_id")
+        if lite_key is None:
+            continue
+        if lite_key != pg_key[1:]:
+            problems.append(
+                f"OWNER_SCOPED_KEYS maps {table} {list(pg_key)} to {list(lite_key)}, "
+                "not to the same key without owner_id"
+            )
+        if table not in lite or lite_key not in _keys(lite[table]):
+            problems.append(
+                f"OWNER_SCOPED_KEYS maps {table} {list(pg_key)} to {list(lite_key)}, not in SQLite"
+            )
+    return problems
+
+
 # --- defaults ---
 
 # One row per table, with only the columns it requires, in insert order (the
@@ -319,9 +403,13 @@ def test_both_dialects_build_the_same_tracker(tmp_path: Path) -> None:
             f"tables differ. Only in SQLite: {sorted(lite_tables - pg_tables)}. "
             f"Only in Postgres: {sorted(pg_tables - lite_tables)}"
         )
-        problems: list[str] = []
+        lite_shapes = {table: sqlite_shape(lite, table) for table in lite_tables}
+        pg_shapes = {table: postgres_shape(pg, table) for table in pg_tables}
+        problems = stale_declarations(lite_shapes, pg_shapes)
         for table in sorted(lite_tables):
-            problems += compare_shapes(table, sqlite_shape(lite, table), postgres_shape(pg, table))
+            problems += compare_shapes(
+                table, lite_shapes[table], declared_view(table, pg_shapes[table])
+            )
         assert not problems, "\n".join(problems)
 
         lite_rows = sqlite_rows(lite)
@@ -330,9 +418,49 @@ def test_both_dialects_build_the_same_tracker(tmp_path: Path) -> None:
             problems += compare_rows(table, lite_rows[table], pg_rows[table])
         assert not problems, "\n".join(problems)
 
+        # The hosted-only owner_id took the session's owner as its default.
+        owner = pg.execute("SELECT auth.uid()").fetchone()
+        assert owner is not None and owner[0] is not None
+        hosted = {table for table, _ in HOSTED_ONLY_COLUMNS}
+        assert {table: pg_rows[table]["owner_id"] for table in hosted} == dict.fromkeys(
+            hosted, owner[0]
+        )
+
         # The table list for the defaults is written by hand; a new table
         # must join it, or its defaults go unchecked.
         assert {table for table, _, _ in MINIMAL_ROWS} == lite_tables - {"schema_version"}
+
+
+def test_a_declaration_naming_nothing_fails() -> None:
+    """A stale OWNER_SCOPED_KEYS or HOSTED_ONLY_COLUMNS entry is a failure,
+    not a silent excuse. Shapes built by hand, so no server is needed."""
+    lite = {"t": Shape(("id", "slug"), {"id": False, "slug": False}, ("id",), frozenset())}
+    pg = {
+        "t": Shape(
+            ("id", "slug", "owner_id"),
+            {"id": False, "slug": False, "owner_id": False},
+            ("owner_id", "id"),
+            frozenset({(("owner_id", "slug"), "")}),
+        )
+    }
+    keys: OwnerKeys = {("t", ("owner_id", "id")): ("id",)}
+    columns = (("t", "owner_id"),)
+    assert stale_declarations(lite, pg, columns, keys) == []
+    view = declared_view("t", pg["t"], columns, keys)
+    # The per-owner slug key is undeclared, so it is left as it is and the
+    # comparison reports it.
+    assert compare_shapes("t", lite["t"], view) == [
+        "t: unique ['owner_id', 'slug'] where '' is in Postgres only"
+    ]
+
+    missing_key: OwnerKeys = {**keys, ("t", ("owner_id", "label")): ("label",)}
+    assert stale_declarations(lite, pg, columns, missing_key) == [
+        "OWNER_SCOPED_KEYS names t ['owner_id', 'label'], not in Postgres",
+        "OWNER_SCOPED_KEYS maps t ['owner_id', 'label'] to ['label'], not in SQLite",
+    ]
+    assert stale_declarations(lite, pg, (*columns, ("t", "tenant")), keys) == [
+        "HOSTED_ONLY_COLUMNS names t.tenant, not in Postgres"
+    ]
 
 
 def test_the_known_difference_is_real(tmp_path: Path) -> None:

@@ -65,6 +65,13 @@ class StoreVersionError(StoreError):
     """The store's schema version is not the one this code needs."""
 
 
+class StoreMigrationRefused(StoreError):
+    """A migration's own precheck refused this store (spec 105).
+
+    The message is the text the migration raises, which names no URL.
+    """
+
+
 @dataclass(frozen=True)
 class StoreTarget:
     """Which store this process opens."""
@@ -168,6 +175,8 @@ def apply_postgres_migrations(conn: psycopg.Connection[tuple[object, ...]]) -> t
     Postgres DDL is transactional, so a statement that fails rolls back the
     whole migration and leaves no version row.
     """
+    import psycopg
+
     from harrier.tracker.schema import POSTGRES_MIGRATIONS, POSTGRES_VERSION_TABLE
 
     before = postgres_version(conn)
@@ -186,7 +195,15 @@ def apply_postgres_migrations(conn: psycopg.Connection[tuple[object, ...]]) -> t
                 # As bytes: psycopg types a query as a literal string, and
                 # these are built from the schema's constants. Sent without
                 # parameters, so nothing in them is read as a placeholder.
-                conn.execute(statement.encode())
+                try:
+                    conn.execute(statement.encode())
+                except psycopg.errors.RaiseException as error:
+                    # Only a migration's precheck raises during DDL, and its
+                    # text is the refusal (spec 105). Raised inside the
+                    # transaction, so the migration rolls back whole.
+                    raise StoreMigrationRefused(
+                        error.diag.message_primary or f"migration {version} was refused"
+                    ) from None
             conn.execute("INSERT INTO schema_version (version) VALUES (%s)", (version,))
     return before, postgres_version(conn)
 

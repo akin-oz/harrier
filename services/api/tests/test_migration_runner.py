@@ -85,9 +85,9 @@ def test_a_failed_migration_leaves_no_partial_schema(
 def test_a_failed_migration_leaves_no_partial_schema_on_postgres(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The Postgres counterpart of the test above (spec 103). The baseline
-    commits in its own transaction; the broken migration after it rolls
-    back whole, and the next run starts that migration again."""
+    """The Postgres counterpart of the test above (spec 103). Each real
+    migration commits in its own transaction; the broken migration after
+    them rolls back whole, and the next run starts that migration again."""
     import psycopg
 
     from harrier.pgstore import migrate_postgres

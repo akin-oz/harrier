@@ -226,10 +226,10 @@ keeps asserting that for them.
       `updated_at`, owns `resume_framing` rows by the default track and
       shares the rest; `profile export` output for shared documents is
       byte-identical before and after
-      (`services/api/tests/test_track_framing.py::test_migration_10_keeps_every_document_and_owns_the_framing`;
-      on Postgres, `test_migration_10_owns_the_framing_on_postgres`).
+      (`services/api/tests/test_track_framing.py::test_migration_11_keeps_every_document_and_owns_the_framing`;
+      on Postgres, `test_migration_11_owns_the_framing_on_postgres`).
 - [x] A failure inside migration 10 leaves the store at version 9 with the
-      old table (`services/api/tests/test_track_framing.py::test_migration_10_is_whole_or_nothing`).
+      old table (`services/api/tests/test_track_framing.py::test_migration_11_is_whole_or_nothing`).
 - [x] The two partial unique indexes refuse a second shared `(kind, name)`
       and a second owned `(track, kind, name)`, and allow one owned and one
       shared row of the same kind and name
@@ -345,13 +345,29 @@ writes it there. Then, for each academic track:
 
 ## Amendment (2026-10-10, during implementation)
 
+- **Migration 10 is migration 11.** Spec 105 shipped first and took
+  version 10 (Postgres only, an empty SQLite entry). Every "migration 10"
+  above means migration 11, and "version 9" in the failure modes means
+  version 10. On Postgres, migration 10 made a track `(owner_id, id)` and
+  `profile_documents` unique on `(owner_id, kind, name)`, so migration 11
+  references `(owner_id, track_id)`, drops that constraint, and leads both
+  partial indexes with `owner_id`; each owner's framing goes to that
+  owner's own track 1. `OWNER_SCOPED_KEYS` maps the owned index to its
+  SQLite form (`services/api/tests/test_track_framing.py::test_migration_11_owns_the_framing_on_postgres`).
+  The dropped constraint was the table's one whole-table index on
+  `owner_id`, which spec 105 requires for the policy's filter, so migration
+  11 adds `idx_profile_documents_owner`. Spec 105's per-owner uniqueness
+  test names the two partial indexes in place of the constraint, and its
+  "nothing but a version row" check stops at migration 10
+  (`services/api/tests/test_owner_policy.py::test_uniqueness_is_per_owner`,
+  `test_every_table_is_owned_or_declared`, `test_the_local_schema_names_no_tenant`).
 - **`track_id` is the last column, and Postgres adds it rather than
-  rebuilding.** Spec 103 shipped first, so migration 10 declares both
+  rebuilding.** Spec 103 shipped first, so migration 11 declares both
   dialects. Postgres's `ADD COLUMN` appends, and the dialect parity test
   holds the two stores to one column order, so the SQLite rebuild puts
-  `track_id` last too. Postgres drops the baseline's
-  `profile_documents_kind_name_key` and creates the same two partial
-  indexes (`services/api/tests/test_dialect_parity.py`).
+  `track_id` last too. Postgres drops migration 10's
+  `profile_documents_owner_id_kind_name_key` and creates the two partial
+  indexes per owner (`services/api/tests/test_dialect_parity.py`).
 - **`GET /ops/profile` returns `owner`.** Spec 050's route returns the list
   the CLI prints (`services/api/tests/test_ui_operations.py::test_the_profile_list_is_the_one_the_cli_prints`),
   and the CLI now prints the owner, so `ProfileDocumentOut` gains `owner`
@@ -366,7 +382,3 @@ writes it there. Then, for each academic track:
   its scope; the artifact listing passes the request's; `evaluate` and
   `brief set` pass the default track's, the only track they run on
   (spec 093).
-- **Postgres tests that read 9 as the newest version** now read the newest
-  version from `POSTGRES_MIGRATIONS` (`services/api/tests/test_postgres_store.py`,
-  `services/api/tests/test_store_cli.py`,
-  `services/api/tests/test_migration_runner.py`).

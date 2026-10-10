@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from pg_support import fresh_database
+from pg_support import fresh_database, new_owner, set_session_owner
 from resume_support import example_bundle_raw, example_documents, store_example
 
 from harrier.db import connect
@@ -31,7 +31,7 @@ from harrier_cli.main import main
 
 SLUG = "lab-search"
 ACADEMIC_NAME = "academic.json"
-MIGRATION_10 = next(statements for version, statements in schema.MIGRATIONS if version == 10)
+MIGRATION_11 = next(statements for version, statements in schema.MIGRATIONS if version == 11)
 
 
 @pytest.fixture()
@@ -71,9 +71,9 @@ def rows(conn: sqlite3.Connection) -> list[tuple[Any, ...]]:
     ]
 
 
-# --- migration 10 ----------------------------------------------------------------
+# --- migration 11 ----------------------------------------------------------------
 
-NINE_DOCUMENTS = [
+EARLIER_DOCUMENTS = [
     (1, "resume_truth", "truth.md", "markdown", "- A fact.\n", "2026-01-01 00:00:00"),
     (2, "resume_facts", "resume-facts.json", "json", '{"a": 1}', "2026-01-02 00:00:00"),
     (3, "resume_framing", "industry.json", "json", '{"b": 2}', "2026-01-03 00:00:00"),
@@ -81,11 +81,11 @@ NINE_DOCUMENTS = [
 ]
 
 
-def at_version_nine(path: Path) -> None:
+def at_version_ten(path: Path) -> None:
     raw = sqlite3.connect(path)
     raw.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY)")
     for version, statements in schema.MIGRATIONS:
-        if version >= 10:
+        if version >= 11:
             continue
         for statement in statements:
             raw.execute(statement)
@@ -93,23 +93,23 @@ def at_version_nine(path: Path) -> None:
     raw.executemany(
         "INSERT INTO profile_documents (id, kind, name, format, content, updated_at) "
         "VALUES (?, ?, ?, ?, ?, ?)",
-        NINE_DOCUMENTS,
+        EARLIER_DOCUMENTS,
     )
     raw.commit()
     raw.close()
 
 
-def test_migration_10_keeps_every_document_and_owns_the_framing(
+def test_migration_11_keeps_every_document_and_owns_the_framing(
     data_dir: Path, tmp_path: Path
 ) -> None:
     data_dir.mkdir(parents=True)
     path = data_dir / "tracker.db"
-    at_version_nine(path)
+    at_version_ten(path)
     conn = connect(path)
     try:
-        assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] >= 10
+        assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] >= 11
         after = rows(conn)
-        assert [row[:6] for row in after] == NINE_DOCUMENTS
+        assert [row[:6] for row in after] == EARLIER_DOCUMENTS
         assert {row[1]: row[6] for row in after} == {
             "resume_truth": None,
             "resume_facts": None,
@@ -120,66 +120,65 @@ def test_migration_10_keeps_every_document_and_owns_the_framing(
     finally:
         conn.close()
     exported = {path.relative_to(tmp_path / "export").as_posix(): path for path in written}
-    for _, kind, name, _, content, _ in NINE_DOCUMENTS:
+    for _, kind, name, _, content, _ in EARLIER_DOCUMENTS:
         key = f"{kind}/{name}" if kind != "resume_framing" else f"tracks/job/{kind}/{name}"
         assert exported[key].read_bytes() == content.encode("utf-8")
 
 
-def test_migration_10_owns_the_framing_on_postgres(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The Postgres migration gives the same rows the same owners (spec 103
-    rule 3). Skips locally without a test server; fails in CI without one."""
+def test_migration_11_owns_the_framing_on_postgres(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The Postgres migration gives each owner's framing to that owner's own
+    track 1, and shares the rest (spec 103 rule 3, spec 105). Skips locally
+    without a test server; fails in CI without one."""
     import psycopg
 
     from harrier.pgstore import migrate_postgres
 
     real = list(schema.POSTGRES_MIGRATIONS)
     with fresh_database() as url:
-        monkeypatch.setattr(schema, "POSTGRES_MIGRATIONS", [m for m in real if m[0] < 10])
+        monkeypatch.setattr(schema, "POSTGRES_MIGRATIONS", [m for m in real if m[0] < 11])
         migrate_postgres(url)
         with psycopg.connect(url, autocommit=True) as conn:
-            for _, kind, name, fmt, content, updated_at in NINE_DOCUMENTS:
-                conn.execute(
-                    "INSERT INTO profile_documents (kind, name, format, content, updated_at) "
-                    "VALUES (%s, %s, %s, %s, %s)",
-                    (kind, name, fmt, content, updated_at),
-                )
+            owners = [new_owner(conn), new_owner(conn)]
+            for owner in owners:
+                set_session_owner(conn, owner)
+                for _, kind, name, fmt, content, updated_at in EARLIER_DOCUMENTS:
+                    conn.execute(
+                        "INSERT INTO profile_documents (kind, name, format, content, updated_at) "
+                        "VALUES (%s, %s, %s, %s, %s)",
+                        (kind, name, fmt, content, updated_at),
+                    )
         monkeypatch.setattr(schema, "POSTGRES_MIGRATIONS", real)
-        assert migrate_postgres(url)[1] >= 10
+        assert migrate_postgres(url)[1] >= 11
         with psycopg.connect(url, autocommit=True) as conn:
-            owners = dict(conn.execute("SELECT kind, track_id FROM profile_documents").fetchall())
-            contents = {
-                kind: content
-                for kind, content in conn.execute(
-                    "SELECT kind, content FROM profile_documents"
-                ).fetchall()
-            }
-    assert owners == {
-        "resume_truth": None,
-        "resume_facts": None,
-        "resume_framing": 1,
-        "application_profile": None,
-    }
-    assert contents == {kind: content for _, kind, _, _, content, _ in NINE_DOCUMENTS}
+            found = conn.execute(
+                "SELECT owner_id::text, kind, track_id, content FROM profile_documents"
+            ).fetchall()
+    for owner in owners:
+        mine = {kind: (track_id, content) for who, kind, track_id, content in found if who == owner}
+        assert mine == {
+            kind: (1 if kind == "resume_framing" else None, content)
+            for _, kind, _, _, content, _ in EARLIER_DOCUMENTS
+        }
 
 
-def test_migration_10_is_whole_or_nothing(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_migration_11_is_whole_or_nothing(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     data_dir.mkdir(parents=True)
     path = data_dir / "tracker.db"
-    at_version_nine(path)
+    at_version_ten(path)
     broken = [
-        *[(v, s) for v, s in schema.MIGRATIONS if v < 10],
-        (10, [*MIGRATION_10, "THIS IS NOT SQL"]),
+        *[(v, s) for v, s in schema.MIGRATIONS if v < 11],
+        (11, [*MIGRATION_11, "THIS IS NOT SQL"]),
     ]
     monkeypatch.setattr(schema, "MIGRATIONS", broken)
     with pytest.raises(sqlite3.OperationalError):
         connect(path)
     raw = sqlite3.connect(path)
     try:
-        assert raw.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 9
+        assert raw.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 10
         columns = [row[1] for row in raw.execute("PRAGMA table_info(profile_documents)")]
         assert "track_id" not in columns
         assert raw.execute("SELECT COUNT(*) FROM profile_documents").fetchone()[0] == len(
-            NINE_DOCUMENTS
+            EARLIER_DOCUMENTS
         )
     finally:
         raw.close()

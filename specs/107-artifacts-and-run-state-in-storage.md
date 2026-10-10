@@ -26,6 +26,10 @@ real spec, with behavior and failure modes, before approval is asked for.
 Headline, to be expanded into checkable criteria when refined: File writes
 go through one storage seam: the local file system locally, the owner-
 prefixed private bucket hosted, with a storage policy matching spec 105.
+A track id is no longer unique across owners on Postgres (spec 105), so
+every path built from one, such as academic discovery's run and incoming
+directories (`services/api/src/harrier/academic/discovery.py:153`, `:172`),
+sits under the owner's prefix hosted.
 
 ## Proof / origin
 

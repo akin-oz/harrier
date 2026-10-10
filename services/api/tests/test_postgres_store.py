@@ -32,16 +32,20 @@ from harrier.pgstore import (
 )
 from harrier.tracker.schema import (
     MIGRATIONS,
-    POSTGRES_BASELINE_VERSION,
     POSTGRES_MIGRATIONS,
+    SINGLE_DIALECT_MIGRATIONS,
+    Dialect,
     undeclared_dialects,
 )
 
-BASELINE = POSTGRES_BASELINE_VERSION
-# The version a migrated store reaches: the baseline and every migration
-# after it (spec 099 added the first).
+# What a fresh store reaches, and every version it records on the way: the
+# baseline (9), then each later migration (spec 105's 10 onwards).
 LATEST = max(version for version, _ in POSTGRES_MIGRATIONS)
-VERSIONS = [version for version, _ in POSTGRES_MIGRATIONS]
+ALL_VERSIONS = [version for version, _ in POSTGRES_MIGRATIONS]
+# A version no migration has yet, for the declaration tests.
+NEXT = LATEST + 1
+
+Declared = dict[int, tuple[Dialect, str]]
 URL_REFUSAL = "HARRIER_DATABASE_URL must be empty or a postgresql:// URL"
 
 
@@ -135,22 +139,94 @@ def test_a_connection_failure_never_prints_the_password(
 def test_every_new_migration_declares_both_dialects() -> None:
     assert undeclared_dialects(MIGRATIONS, POSTGRES_MIGRATIONS) == []
 
-    # A version after every real one, so the probe never collides with one.
-    later = max(version for version, _ in MIGRATIONS) + 1
-    sqlite_only = [*MIGRATIONS, (later, ["CREATE TABLE later (id INTEGER PRIMARY KEY)"])]
+    later = f"migration {NEXT}"
+    sqlite_only = [*MIGRATIONS, (NEXT, ["CREATE TABLE later (id INTEGER PRIMARY KEY)"])]
     problems = undeclared_dialects(sqlite_only, POSTGRES_MIGRATIONS)
     assert problems
-    assert all(f"migration {later}" in problem for problem in problems)
+    assert all(later in problem for problem in problems)
 
-    empty_postgres = [*POSTGRES_MIGRATIONS, (later, list[str]())]
+    empty_postgres = [*POSTGRES_MIGRATIONS, (NEXT, list[str]())]
     problems = undeclared_dialects(sqlite_only, empty_postgres)
     assert problems
-    assert all(f"migration {later}" in problem for problem in problems)
+    assert all(later in problem for problem in problems)
 
-    postgres_only = [*POSTGRES_MIGRATIONS, (later, ["CREATE TABLE later (id bigint)"])]
+    postgres_only = [*POSTGRES_MIGRATIONS, (NEXT, ["CREATE TABLE later (id bigint)"])]
     problems = undeclared_dialects(MIGRATIONS, postgres_only)
     assert problems
-    assert all(f"migration {later}" in problem for problem in problems)
+    assert all(later in problem for problem in problems)
+
+
+def test_a_hosted_only_migration_leaves_sqlite_empty_on_purpose() -> None:
+    """Each case of spec 105's single-dialect table for a Postgres-only
+    version after the real ones. The real declarations stay in place, so
+    only the synthetic version is judged."""
+    real: Declared = dict(SINGLE_DIALECT_MIGRATIONS)
+    declared: Declared = {**real, NEXT: ("postgres", "a synthetic reason")}
+    postgres = [*POSTGRES_MIGRATIONS, (NEXT, ["CREATE TABLE later (id bigint)"])]
+    empty_sqlite = [*MIGRATIONS, (NEXT, list[str]())]
+    with_sqlite = [*MIGRATIONS, (NEXT, ["CREATE TABLE later (id INTEGER PRIMARY KEY)"])]
+
+    # Empty SQLite list, not declared: refused, as before spec 105.
+    assert undeclared_dialects(empty_sqlite, postgres, single_dialect=real) == [
+        f"migration {NEXT} declares no sqlite statements"
+    ]
+    # Empty SQLite list, declared with a reason: accepted.
+    assert undeclared_dialects(empty_sqlite, postgres, single_dialect=declared) == []
+    # Declared Postgres only, yet SQLite statements: refused.
+    assert undeclared_dialects(with_sqlite, postgres, single_dialect=declared) == [
+        f"migration {NEXT} is postgres only but declares sqlite statements"
+    ]
+    # Declared with an empty reason: refused.
+    no_reason: Declared = {**real, NEXT: ("postgres", " ")}
+    assert undeclared_dialects(empty_sqlite, postgres, single_dialect=no_reason) == [
+        f"migration {NEXT} is postgres only without a reason"
+    ]
+    # The declared dialect itself empty: refused whatever is declared.
+    empty_postgres = [*POSTGRES_MIGRATIONS, (NEXT, list[str]())]
+    assert undeclared_dialects(empty_sqlite, empty_postgres, single_dialect=declared) == [
+        f"migration {NEXT} declares no postgres statements"
+    ]
+    # Declared, but missing from the other list altogether: refused, since
+    # that runner would never record the version.
+    assert undeclared_dialects(MIGRATIONS, postgres, single_dialect=declared) == [
+        f"migration {NEXT} declares no sqlite statements"
+    ]
+
+    # The real declaration: migration 10 is Postgres only, with a reason,
+    # and the default mapping is the one that accepts it.
+    dialect, reason = SINGLE_DIALECT_MIGRATIONS[10]
+    assert dialect == "postgres" and reason.strip()
+    assert dict(MIGRATIONS)[10] == []
+    assert dict(POSTGRES_MIGRATIONS)[10]
+    assert undeclared_dialects(MIGRATIONS, POSTGRES_MIGRATIONS, single_dialect={}) == [
+        "migration 10 declares no sqlite statements"
+    ]
+
+
+def test_a_sqlite_only_migration_leaves_postgres_empty_on_purpose() -> None:
+    """The same rule the other way round: a declared SQLite-only version may
+    leave its Postgres list empty, and nothing else may."""
+    real: Declared = dict(SINGLE_DIALECT_MIGRATIONS)
+    declared: Declared = {**real, NEXT: ("sqlite", "a synthetic reason")}
+    sqlite = [*MIGRATIONS, (NEXT, ["CREATE TABLE later (id INTEGER PRIMARY KEY)"])]
+    empty_postgres = [*POSTGRES_MIGRATIONS, (NEXT, list[str]())]
+    with_postgres = [*POSTGRES_MIGRATIONS, (NEXT, ["CREATE TABLE later (id bigint)"])]
+
+    assert undeclared_dialects(sqlite, empty_postgres, single_dialect=real) == [
+        f"migration {NEXT} declares no postgres statements"
+    ]
+    assert undeclared_dialects(sqlite, empty_postgres, single_dialect=declared) == []
+    assert undeclared_dialects(sqlite, with_postgres, single_dialect=declared) == [
+        f"migration {NEXT} is sqlite only but declares postgres statements"
+    ]
+    empty_sqlite = [*MIGRATIONS, (NEXT, list[str]())]
+    assert undeclared_dialects(empty_sqlite, empty_postgres, single_dialect=declared) == [
+        f"migration {NEXT} declares no sqlite statements"
+    ]
+    no_reason: Declared = {**real, NEXT: ("sqlite", "")}
+    assert undeclared_dialects(sqlite, empty_postgres, single_dialect=no_reason) == [
+        f"migration {NEXT} is sqlite only without a reason"
+    ]
 
 
 # --- migrating ---
@@ -161,7 +237,7 @@ def test_migrate_applies_the_baseline_once() -> None:
         assert migrate_postgres(url) == (0, LATEST)
         tables_after_first = public_tables(url)
         assert migrate_postgres(url) == (LATEST, LATEST)
-        assert recorded_versions(url) == VERSIONS
+        assert recorded_versions(url) == ALL_VERSIONS
         assert public_tables(url) == tables_after_first
 
 
@@ -208,7 +284,7 @@ def test_two_first_migrations_apply_once_on_postgres() -> None:
 
         assert failures == []
         assert [after for _, after in outcomes] == [LATEST, LATEST]
-        assert recorded_versions(url) == VERSIONS
+        assert recorded_versions(url) == ALL_VERSIONS
         tables = public_tables(url)
         assert len(tables) == len(set(tables))
         assert {"jobs", "tracks", "job_events", "schema_version"} <= set(tables)
@@ -254,4 +330,4 @@ def test_a_store_ahead_of_the_code_is_refused() -> None:
             migrate_postgres(url)
         assert str(ahead) in str(refused.value)
         assert str(LATEST) in str(refused.value)
-        assert recorded_versions(url) == [*VERSIONS, ahead]
+        assert recorded_versions(url) == [*ALL_VERSIONS, ahead]
