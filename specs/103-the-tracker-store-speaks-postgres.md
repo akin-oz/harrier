@@ -1,8 +1,8 @@
 ---
 spec: 103
 title: A Postgres store opens at the tracker's current schema
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [090, 091, 093, 102]
 ---
