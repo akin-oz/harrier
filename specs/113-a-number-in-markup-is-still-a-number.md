@@ -1,8 +1,8 @@
 ---
 spec: 113
 title: A number written in inline code or underscore emphasis is still a number
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M8
 depends: [065, 068, 086, 087]
 ---
