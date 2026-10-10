@@ -154,6 +154,8 @@ def test_every_parameterized_kind_is_reachable_from_a_page(env: Path) -> None:
         "evaluate-prospects": "/ops/evaluate-prospects",
         "scoring-export": "/ops/scoring/export",
         "discovery": "/ops/discover",
+        # Spec 096: an archive from the Settings page's listing.
+        "verify-backup": "/settings/backups/{name}/verify",
     }
     assert set(routed) == set(PARAMETERIZED_KINDS), "a parameterized kind has no route"
     for path in routed.values():

@@ -13,6 +13,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import sys
 import uuid
 from collections.abc import AsyncIterator, Mapping
@@ -86,6 +87,12 @@ class ParameterizedKind:
     dates: frozenset[str] = frozenset()
     fractions: frozenset[str] = frozenset()
     input_flags: frozenset[str] = frozenset()
+    # A directory this process chose, never one a request named: where
+    # `backup` writes (spec 096).
+    destination_flag: str | None = None
+    # An archive this process found in its own listing, passed as the verb's
+    # one positional argument (spec 096).
+    takes_archive: bool = False
 
 
 PARAMETERIZED_KINDS: dict[str, ParameterizedKind] = {
@@ -124,10 +131,13 @@ PARAMETERIZED_KINDS: dict[str, ParameterizedKind] = {
         choices={"--source": frozenset(SOURCE_ORDER)},
         takes_job=False,
     ),
+    # The browser's backup (spec 050) writes where the Settings page lists
+    # (spec 096): the server passes the directory it reads.
     "backup": ParameterizedKind(
         "backup",
         switches=frozenset({"--no-prune"}),
         takes_job=False,
+        destination_flag="--dest",
     ),
     "digest": ParameterizedKind(
         "digest",
@@ -159,7 +169,61 @@ PARAMETERIZED_KINDS: dict[str, ParameterizedKind] = {
         input_flags=frozenset({"--dataset-file", "--wellfound-file", "--wttj-file"}),
         takes_job=False,
     ),
+    # Spec 096: an archive from the Settings page's listing.
+    "verify-backup": ParameterizedKind(
+        "verify-backup",
+        switches=frozenset({"--no-follow"}),
+        takes_job=False,
+        takes_archive=True,
+    ),
 }
+
+
+# A character that can continue a path component, so a directory's path is
+# matched only where neither side continues it.
+_PATH_CHAR = r"[\w.~-]"
+
+
+@dataclass(frozen=True)
+class HiddenDirectory:
+    """A directory whose path never reaches the run's event stream.
+
+    The commands a run executes print the paths they wrote, and on the host
+    those carry the home directory. Within a run that names one of these, a
+    file inside the directory is shown by its name and the directory itself
+    by `shown_as`, so the archive a backup wrote reaches the browser as a
+    name and never as a path (spec 096).
+    """
+
+    path: Path
+    shown_as: str
+
+    def hide(self, text: str) -> str:
+        """The text with this directory's path removed, matched only as a
+        whole path: `/app/database.old` beside `/app/data` is another path
+        and is left alone, where a plain substring match turned it into
+        "the data directorybase.old" (review of PR #214)."""
+        root = str(self.path).rstrip(os.sep)
+        if not root:
+            return text
+        whole = rf"(?<!{_PATH_CHAR}){re.escape(root)}"
+        inside = re.sub(whole + re.escape(os.sep), "", text)
+        return re.sub(
+            rf"{whole}(?![\w~-]|\.{_PATH_CHAR}|{re.escape(os.sep)})",
+            lambda _: self.shown_as,
+            inside,
+        )
+
+
+def backup_hidden_directories() -> tuple[HiddenDirectory, ...]:
+    """The directories a backup or a verification must never show by path:
+    the archive is named, never located (spec 096)."""
+    from harrier.backup import backup_dir
+
+    return (
+        HiddenDirectory(backup_dir(), "the backups directory"),
+        HiddenDirectory(data_dir(), "the data directory"),
+    )
 
 
 @dataclass(frozen=True)
@@ -199,6 +263,10 @@ class RunParams:
     fractions: Mapping[str, float] = field(default_factory=dict[str, float])
     # Files this process wrote, by the flag that passes each (spec 095).
     input_files: Mapping[str, Path] = field(default_factory=dict[str, Path])
+    # Both chosen by the server, never by a request (spec 096).
+    destination: Path | None = None
+    archive: Path | None = None
+    hidden: tuple[HiddenDirectory, ...] = ()
 
     def __post_init__(self) -> None:
         if self.track is not None:
@@ -373,6 +441,20 @@ def build_command(kind: str, params: RunParams) -> list[str]:
         if parameterized.input_flag is None:
             raise ValueError(f"{kind} takes no input file")
         argv.append(f"{parameterized.input_flag}={params.input_path}")
+
+    if params.destination is not None:
+        if parameterized.destination_flag is None:
+            raise ValueError(f"{kind} takes no destination")
+        argv.append(f"{parameterized.destination_flag}={params.destination}")
+
+    if parameterized.takes_archive:
+        if params.archive is None:
+            raise ValueError(f"{kind} acts on an archive and none was given")
+        # After `--`, so the path is the positional argument whatever it
+        # begins with.
+        argv.extend(["--", str(params.archive)])
+    elif params.archive is not None:
+        raise ValueError(f"{kind} takes no archive")
     return argv
 
 
@@ -414,6 +496,24 @@ def scrub_event_data(data: dict[str, object]) -> dict[str, object]:
     return scrubbed
 
 
+def hide_directory(data: dict[str, object], directory: HiddenDirectory) -> dict[str, object]:
+    """Every string an event carries, with that directory's path removed."""
+    hidden: dict[str, object] = {}
+    for key, value in data.items():
+        if isinstance(value, str):
+            hidden[key] = directory.hide(value)
+        elif isinstance(value, dict):
+            hidden[key] = hide_directory(cast("dict[str, object]", value), directory)
+        elif isinstance(value, list):
+            hidden[key] = [
+                directory.hide(item) if isinstance(item, str) else item
+                for item in cast("list[object]", value)
+            ]
+        else:
+            hidden[key] = value
+    return hidden
+
+
 @dataclass
 class RunEvent:
     id: int
@@ -442,6 +542,7 @@ class Run:
     # What the run was asked to do, with its files by content, so a second
     # attempt joins only when it asks for the same thing (review of PR #208).
     signature: tuple[str, ...] = ()
+    hidden: tuple[HiddenDirectory, ...] = ()
 
 
 class RunManager:
@@ -545,6 +646,7 @@ class RunManager:
             target=target,
             input_paths=files,
             signature=signature,
+            hidden=() if params is None else params.hidden,
         )
         self._runs[run.id] = run
         self._journal(run)
@@ -659,10 +761,11 @@ class RunManager:
         covered (review finding on PR #39). Doing it here makes the property
         hold for every future caller without anyone remembering.
         """
+        scrubbed = scrub_event_data(data)
+        for directory in run.hidden:
+            scrubbed = hide_directory(scrubbed, directory)
         async with self._condition:
-            run.events.append(
-                RunEvent(id=len(run.events) + 1, type=event_type, data=scrub_event_data(data))
-            )
+            run.events.append(RunEvent(id=len(run.events) + 1, type=event_type, data=scrubbed))
             self._condition.notify_all()
 
     async def _set_state(self, run: Run, state: RunState) -> None:
@@ -697,6 +800,10 @@ class RunManager:
             "started_at": run.started_at,
             "ended_at": run.ended_at,
             "exit_code": run.exit_code,
+            # An archive's name for a verification, so its result outlives a
+            # restart and the backups list can still mark it (spec 096). A
+            # job id otherwise, or empty.
+            "target": run.target,
             # The files the run holds, so a server that starts after this
             # one stopped mid-run knows which inputs were this run's. File
             # names this process chose, never their content (spec 095).
@@ -763,6 +870,7 @@ class RunManager:
                 started_at=(str(record["started_at"]) if record.get("started_at") else None),
                 ended_at=(str(record["ended_at"]) if record.get("ended_at") else None),
                 exit_code=(int(str(exit_code_raw)) if exit_code_raw is not None else None),
+                target=str(record.get("target") or ""),
             )
         self._interrupted_inputs = [path for paths in held.values() for path in paths]
 

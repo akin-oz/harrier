@@ -180,7 +180,7 @@ def test_the_profile_list_is_the_one_the_cli_prints(client: TestClient) -> None:
         patch("harrier.profile.list_documents", return_value=documents) as route_side,
         patch("harrier_cli.main.list_documents", return_value=documents) as cli_side,
     ):
-        body = client.get("/ops/profile").json()
+        body = client.get("/ops/profile", headers=auth()).json()
         assert main(["profile", "list"]) == 0
     assert route_side.call_args is not None and cli_side.call_args is not None
     assert body == documents
@@ -573,11 +573,10 @@ def test_every_operations_write_requires_the_token(client: TestClient, path: str
     assert client.post(path, json={}).status_code == 403
 
 
-@pytest.mark.parametrize("path", ["/ops/schedule", "/ops/profile"])
-def test_the_schedule_and_the_profile_list_are_tokenless_reads(
-    client: TestClient, path: str
-) -> None:
-    assert client.get(path).status_code == 200
+def test_the_schedule_is_a_tokenless_read(client: TestClient) -> None:
+    # The profile list was a tokenless read here too until spec 096 (Akin's
+    # decision of 2026-10-10); test_ui_settings.py pins that it is not.
+    assert client.get("/ops/schedule").status_code == 200
 
 
 def test_every_new_kind_takes_no_job() -> None:
@@ -1151,6 +1150,8 @@ def test_every_route_that_starts_a_run_declares_the_refusal(env: Path) -> None:
         ("/ops/evaluate-prospects", "post"),
         ("/ops/scoring/export", "post"),
         ("/ops/discover", "post"),
+        # Spec 096: verifying an archive from the Settings page's list.
+        ("/settings/backups/{name}/verify", "post"),
     }
     returns_a_run = {
         (path, method)

@@ -1,0 +1,194 @@
+/* Host-only commands (spec 096): facts the container can read, and the
+   command to run on the host beside each. Nothing here is a run button. */
+
+.host-muted {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+.host-error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-danger);
+}
+
+.host-command {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.host-command__text {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 3px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-sunken);
+  user-select: all;
+  overflow-wrap: anywhere;
+}
+.host-command__copy {
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-raised);
+  color: var(--color-text);
+  cursor: pointer;
+}
+.host-command__copy:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent-text);
+}
+.host-command__copy:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+.host-command__status {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.host-panel {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-raised);
+}
+.host-panel__row {
+  display: grid;
+  grid-template-columns: minmax(10rem, 14rem) minmax(0, 1fr) minmax(0, 22rem);
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  align-items: start;
+}
+.host-panel__row:last-child {
+  border-bottom: none;
+}
+@media (max-width: 900px) {
+  .host-panel__row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.host-panel__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.host-panel__facts,
+.host-panel__commands {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.host-fact {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text);
+}
+.host-fact--absent {
+  color: var(--color-text-secondary);
+}
+/* Not knowable from here: a dashed rule and plain words, never a badge that
+   could read as healthy. */
+.host-fact--unknown {
+  color: var(--color-text-secondary);
+  font-style: italic;
+  padding-left: var(--space-2);
+  border-left: 2px dashed var(--color-border-strong);
+}
+
+.host-jobs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-1);
+  font-size: 13px;
+}
+.host-jobs__job {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.host-jobs__name {
+  font-weight: 500;
+}
+.host-jobs__cadence {
+  color: var(--color-text-secondary);
+}
+.host-jobs__success {
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.command-list {
+  display: grid;
+  gap: var(--space-4);
+}
+.command-list__heading {
+  margin: 0 0 var(--space-2);
+  font-size: 13px;
+  font-weight: 600;
+}
+.command-list__items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+.command-list__item {
+  display: grid;
+  gap: var(--space-1);
+}
+.command-list__command {
+  justify-self: start;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.command-list__reason {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  max-width: 75ch;
+}
+.command-list__routed summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+.command-list__routed summary:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+.command-list__table {
+  margin-top: var(--space-2);
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.command-list__table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+  padding: var(--space-1) var(--space-3) var(--space-1) 0;
+}
+.command-list__table td {
+  padding: var(--space-1) var(--space-3) var(--space-1) 0;
+  vertical-align: top;
+}
+.command-list__note {
+  display: block;
+  color: var(--color-text-secondary);
+}

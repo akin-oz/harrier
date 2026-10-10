@@ -6,6 +6,7 @@ import { ApplyPage } from "../pages/apply/ApplyPage";
 import { InboxPage } from "../pages/inbox/InboxPage";
 import { OperationsPage } from "../pages/operations/OperationsPage";
 import { OutreachPage } from "../pages/outreach/OutreachPage";
+import { SettingsPage } from "../pages/settings/SettingsPage";
 import { TrackerPage } from "../pages/tracker/TrackerPage";
 import { TracksPage } from "../pages/tracks/TracksPage";
 import {
@@ -38,6 +39,9 @@ const SECTIONS = [
   // Spec 050: the schedule, feeds, reconsideration and the digest, all the
   // default track's.
   { id: "operations", label: "Operations", defaultOnly: true },
+  // Last, since it is visited least often (spec 096). The install's own
+  // settings, the same on every track.
+  { id: "settings", label: "Settings", defaultOnly: false },
 ] as const;
 
 type Section = (typeof SECTIONS)[number]["id"] | "tracks";
@@ -142,6 +146,7 @@ function Main({
   onOpen: (track: Track) => void;
 }) {
   if (section === "tracks") return <TracksPage onOpen={onOpen} />;
+  if (section === "settings") return <SettingsPage />;
   if (tracksState.isError) {
     return (
       <p role="alert" className="app-notice app-notice--error">
