@@ -21,6 +21,8 @@
       "config/discovery.json",
       "config/candidate.json",
       "config/resume-content.json",
+      "config/resume-facts.json",
+      "config/resume-framing.json",
       "config/application-profile.json",
       "config/application-profile.md",
       "config/story-seeds.json",

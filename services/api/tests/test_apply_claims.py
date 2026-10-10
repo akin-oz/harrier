@@ -17,6 +17,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from resume_support import store_documents
 
 import harrier.apply.answers as answers_module
 import harrier.apply.letters as letters_module
@@ -185,23 +186,19 @@ def seed(conn: sqlite3.Connection) -> sqlite3.Connection:
         json.dumps({"candidate": {"name": "Deniz Örnek", "location": "Exampleland"}}),
     )
     put_document(conn, "resume_truth", "truth.md", "markdown", TRUTH)
-    put_document(
+    store_documents(
         conn,
-        "resume_data",
-        "resume-content.json",
-        "json",
-        json.dumps(
-            {
-                "all_skills": ["TypeScript", "React", "GraphQL", "Kubernetes"],
-                "verified_skills": ["TypeScript", "React"],
-                "technology_aliases": {
-                    "TypeScript": ["typescript"],
-                    "React": ["react", "react.js"],
-                    "GraphQL": ["graphql"],
-                    "Kubernetes": ["kubernetes", "k8s"],
-                },
-            }
-        ),
+        {
+            "all_skills": ["TypeScript", "React", "GraphQL", "Kubernetes"],
+            "verified_skills": ["TypeScript", "React"],
+            "technology_aliases": {
+                "TypeScript": ["typescript"],
+                "React": ["react", "react.js"],
+                "GraphQL": ["graphql"],
+                "Kubernetes": ["kubernetes", "k8s"],
+            },
+        },
+        {},
     )
     return conn
 
@@ -1179,26 +1176,22 @@ def with_versions(
         body += "\n## Stack\n\n" + "".join(f"{line}\n" for line in lines)
     put_document(db, "resume_truth", "truth.md", "markdown", body)
     skills = ["TypeScript", "React", "Kafka", "Apache Kafka", "Django", "Spring", "Go", "make"]
-    put_document(
+    store_documents(
         db,
-        "resume_data",
-        "resume-content.json",
-        "json",
-        json.dumps(
-            {
-                "all_skills": skills,
-                "verified_skills": [
-                    "TypeScript",
-                    "React",
-                    "Kafka",
-                    "Apache Kafka",
-                    "Django",
-                    "Spring",
-                    *verified,
-                ],
-                "technology_aliases": {},
-            }
-        ),
+        {
+            "all_skills": skills,
+            "verified_skills": [
+                "TypeScript",
+                "React",
+                "Kafka",
+                "Apache Kafka",
+                "Django",
+                "Spring",
+                *verified,
+            ],
+            "technology_aliases": {},
+        },
+        {},
     )
 
 

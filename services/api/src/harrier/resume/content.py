@@ -17,6 +17,7 @@ from typing import cast
 
 from harrier.resume import heading as heading_module
 from harrier.resume.dashes import dash_marks, describe
+from harrier.resume.documents import FACTS_KIND, FRAMING_KIND, merge_documents
 from harrier.resume.heading import role_heading, split_role_heading
 
 RESUME_DATA_KIND = "resume_data"
@@ -403,10 +404,18 @@ def _check_experience_statement(bundle: ResumeBundle, errors: list[str]) -> None
 def parse_bundle(raw: object) -> ResumeBundle:
     """Parse and validate the resume content bundle; raise ResumeBundleError
     with every problem named."""
-    errors: list[str] = []
     if not isinstance(raw, dict):
         raise ResumeBundleError("resume content bundle is not a JSON object")
-    data = cast("dict[str, object]", raw)
+    bundle, errors = _parse_bundle(cast("dict[str, object]", raw))
+    if errors:
+        raise ResumeBundleError("invalid resume content bundle: " + "; ".join(errors))
+    return bundle
+
+
+def _parse_bundle(data: dict[str, object]) -> tuple[ResumeBundle, list[str]]:
+    """The bundle and every problem with it, so a caller can say which
+    document each problem is in (spec 098)."""
+    errors: list[str] = []
     candidate_raw = data.get("candidate")
     candidate = cast("dict[str, object]", candidate_raw) if isinstance(candidate_raw, dict) else {}
     if not candidate:
@@ -496,9 +505,7 @@ def parse_bundle(raw: object) -> ResumeBundle:
     if not bundle.positioning_technologies:
         errors.append("candidate has no positioning_technologies")
     _check_markdown_structure(data, errors)
-    if errors:
-        raise ResumeBundleError("invalid resume content bundle: " + "; ".join(errors))
-    return bundle
+    return bundle, errors
 
 
 # Headings under which a truth document lists things that are NOT true: the
@@ -756,44 +763,83 @@ def _document_by_kind(conn: sqlite3.Connection, kind: str) -> str | None:
     return str(row[0]) if row is not None else None
 
 
-def load_bundle(conn: sqlite3.Connection) -> ResumeBundle:
-    content = _document_by_kind(conn, RESUME_DATA_KIND)
-    if content is None:
-        raise ResumeBundleError(
-            "no resume_data document in the profile store; "
-            "import one (see config/resume-content.example.json)"
-        )
+SPLIT_COMMAND = "harrier profile split-resume"
+
+
+def _json_object(content: str, kind: str) -> dict[str, object]:
     try:
         raw: object = json.loads(content)
     except json.JSONDecodeError as exc:
-        raise ResumeBundleError(f"resume_data document is not valid JSON: {exc}") from exc
-    return parse_bundle(raw)
+        raise ResumeBundleError(f"{kind} document is not valid JSON: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise ResumeBundleError(f"{kind} document is not an object")
+    return cast("dict[str, object]", raw)
 
 
-def _resume_data_fields(conn: sqlite3.Connection) -> dict[str, object]:
-    """The resume_data document's top-level fields, for surfaces that need a
-    few of them without the whole bundle (the letter and the answers).
+def _stored_documents(
+    conn: sqlite3.Connection,
+) -> tuple[dict[str, object], dict[str, object]] | None:
+    """The facts and the framing, or None when no resume content is stored.
+
+    The old single document is refused rather than read, alone or beside
+    the pair, and so is one half of the pair without the other (spec 098).
+    """
+    data = _document_by_kind(conn, RESUME_DATA_KIND)
+    facts = _document_by_kind(conn, FACTS_KIND)
+    framing = _document_by_kind(conn, FRAMING_KIND)
+    if data is not None and (facts is not None or framing is not None):
+        raise ResumeBundleError(
+            f"both {RESUME_DATA_KIND} and {FACTS_KIND}/{FRAMING_KIND} are stored; keep one shape"
+        )
+    if data is not None:
+        raise ResumeBundleError(
+            f"resume content is still one {RESUME_DATA_KIND} document; run {SPLIT_COMMAND}"
+        )
+    if facts is None and framing is None:
+        return None
+    if facts is None or framing is None:
+        missing = FACTS_KIND if facts is None else FRAMING_KIND
+        raise ResumeBundleError(f"no {missing} document in the profile store")
+    return _json_object(facts, FACTS_KIND), _json_object(framing, FRAMING_KIND)
+
+
+def bundle_from_documents(facts: dict[str, object], framing: dict[str, object]) -> ResumeBundle:
+    """The bundle the two documents hold. Every error names the document its
+    field is in."""
+    result = merge_documents(facts, framing)
+    bundle, errors = _parse_bundle(result.merged)
+    named = [*result.errors, *(result.name_document(error) for error in errors)]
+    if named:
+        raise ResumeBundleError("invalid resume content bundle: " + "; ".join(named))
+    return bundle
+
+
+def load_bundle(conn: sqlite3.Connection) -> ResumeBundle:
+    documents = _stored_documents(conn)
+    if documents is None:
+        raise ResumeBundleError(
+            f"no {FACTS_KIND} or {FRAMING_KIND} document in the profile store; "
+            "see config/resume-facts.example.json and config/resume-framing.example.json"
+        )
+    return bundle_from_documents(*documents)
+
+
+def _facts_fields(conn: sqlite3.Connection) -> dict[str, object]:
+    """The facts document's top-level fields, for surfaces that need a few
+    of them without the whole bundle (the letter and the answers).
 
     No document means nothing has been written, so the result is empty. A
     document that cannot be read is refused rather than read as empty: that
     would skip every check built on it silently.
     """
-    content = _document_by_kind(conn, RESUME_DATA_KIND)
-    if content is None:
-        return {}
-    try:
-        raw: object = json.loads(content)
-    except json.JSONDecodeError as exc:
-        raise ResumeBundleError(f"resume_data document is not valid JSON: {exc}") from exc
-    if not isinstance(raw, dict):
-        raise ResumeBundleError("resume_data document is not an object")
-    return cast("dict[str, object]", raw)
+    documents = _stored_documents(conn)
+    return documents[0] if documents is not None else {}
 
 
 def load_forbidden_phrases(conn: sqlite3.Connection) -> tuple[str, ...]:
     """The candidate's never-claim list, for the letter and the answers
     (spec 034)."""
-    return _str_tuple(_resume_data_fields(conn).get("forbidden_phrases"))
+    return _str_tuple(_facts_fields(conn).get("forbidden_phrases"))
 
 
 @dataclass(frozen=True)
@@ -811,7 +857,7 @@ class SkillVocabulary:
 def load_skill_vocabulary(conn: sqlite3.Connection) -> SkillVocabulary:
     """`technology_aliases` keys and aliases plus `all_skills` are the
     vocabulary. A verified skill verifies its aliases too."""
-    fields = _resume_data_fields(conn)
+    fields = _facts_fields(conn)
     aliases = _alias_dict(fields.get("technology_aliases"))
     verified_names = {name.casefold() for name in _str_tuple(fields.get("verified_skills"))}
     terms: list[str] = [*_str_tuple(fields.get("all_skills"))]

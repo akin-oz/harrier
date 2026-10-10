@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from resume_support import store_example
 
 import harrier.offers.batch as batch_module
 import harrier.offers.evaluate as evaluate_module
@@ -41,13 +42,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
     monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
     conn = connect()
-    put_document(
-        conn,
-        "resume_data",
-        "resume-content.json",
-        "json",
-        (REPO_ROOT / "config" / "resume-content.example.json").read_text(encoding="utf-8"),
-    )
+    store_example(conn)
     put_document(conn, "resume_truth", "truth.md", "markdown", "- Verified fact one.\n")
     put_document(
         conn,

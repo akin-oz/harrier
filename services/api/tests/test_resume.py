@@ -1,6 +1,7 @@
 """Behavior pins for tailored resume generation (spec 013), ported from the
 old repo's tests/test_tailor_resume.py onto the synthetic persona in
-config/resume-content.example.json (which these tests thereby prove valid).
+config/resume-facts.example.json and config/resume-framing.example.json
+(which these tests thereby prove valid).
 """
 
 import copy
@@ -13,6 +14,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from resume_support import example_bundle_raw, store_example, store_resume
 
 from harrier.db import connect
 from harrier.profile.store import put_document
@@ -36,7 +38,7 @@ from harrier.resume import (
     slugify,
     validate_content_plan,
 )
-from harrier.resume.content import load_bundle
+from harrier.resume.content import load_bundle, load_truth_sources
 from harrier.resume.dashes import dash_marks
 from harrier.resume.facts import role_period_label
 from harrier.resume.heading import role_heading, split_role_heading
@@ -52,12 +54,11 @@ from harrier.tracker import add_job, get_job
 from harrier.tracks import default_scope
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-EXAMPLE_BUNDLE_PATH = REPO_ROOT / "config" / "resume-content.example.json"
 AS_OF = date(2026, 8, 1)
 
 
 def load_raw_bundle() -> dict[str, object]:
-    return cast("dict[str, object]", json.loads(EXAMPLE_BUNDLE_PATH.read_text(encoding="utf-8")))
+    return example_bundle_raw()
 
 
 @pytest.fixture()
@@ -1073,9 +1074,8 @@ def tailor_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> int:
     monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.chdir(REPO_ROOT)
     conn = connect()
-    raw = EXAMPLE_BUNDLE_PATH.read_text(encoding="utf-8")
-    put_document(conn, "resume_data", "resume-content.json", "json", raw)
-    bundle_pool = cast("dict[str, str]", cast("dict[str, object]", json.loads(raw))["bullet_pool"])
+    store_example(conn)
+    bundle_pool = cast("dict[str, str]", example_bundle_raw()["bullet_pool"])
     put_document(conn, "resume_truth", "truth.md", "markdown", "\n".join(bundle_pool.values()))
     job_id = add_job(
         conn,
@@ -1190,7 +1190,7 @@ def test_bundle_with_a_line_break_fails_tailor_before_any_file_is_written(
     conn = connect()
     before = get_job(conn, default_scope(conn), tailor_env)
     raw = _mutated(("certifications[0]", "Real Cert\n## TECHNICAL SKILLS\nCOBOL"))
-    put_document(conn, "resume_data", "resume-content.json", "json", json.dumps(raw))
+    store_resume(conn, raw)
     output_dir = tmp_path / "resumes"
 
     with pytest.raises(ResumeBundleError, match=r"certifications\[0\] must be a single line"):
@@ -1211,6 +1211,27 @@ def test_bundle_with_a_line_break_fails_tailor_before_any_file_is_written(
         == before["status"]
         == "shortlisted"
     )
+
+
+def test_tailored_markdown_is_unchanged_by_the_split(tailor_env: int) -> None:
+    """The run reads the two stored documents; its markdown is what the one
+    object they were split from produces (spec 098)."""
+    conn = connect()
+    jd = "React and TypeScript product role."
+    bundle = parse_bundle(example_bundle_raw())
+    plan = build_content_plan(bundle, jd, "Senior Frontend Engineer")
+    expected = build_markdown(bundle, load_truth_sources(conn), plan) + "\n"
+
+    result = run_tailor(
+        conn,
+        default_scope(conn),
+        tailor_env,
+        jd_text=jd,
+        no_ai=True,
+        render=_fake_render,
+        validate=lambda pdf_path, html_text: [],
+    )
+    assert result.markdown_path.read_text(encoding="utf-8") == expected
 
 
 def test_passing_pdf_gate_updates_tracker_and_writes_artifacts(tailor_env: int) -> None:

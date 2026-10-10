@@ -8,6 +8,7 @@ byte-identically (spec 004 acceptance).
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Sequence
 from pathlib import Path
 
 # Old-repo-relative path -> (kind, format). Read-only sources.
@@ -24,18 +25,37 @@ PROFILE_SOURCES: dict[str, tuple[str, str]] = {
 INTERVIEW_PREP_DIR = "interview-prep"
 
 
+_UPSERT = """
+    INSERT INTO profile_documents (kind, name, format, content, updated_at)
+    VALUES (?, ?, ?, ?, datetime('now'))
+    ON CONFLICT (kind, name) DO UPDATE SET
+        format = excluded.format,
+        content = excluded.content,
+        updated_at = datetime('now')
+"""
+
+
 def put_document(conn: sqlite3.Connection, kind: str, name: str, fmt: str, content: str) -> None:
     with conn:
+        conn.execute(_UPSERT, (kind, name, fmt, content))
+
+
+def put_documents_and_rekind(
+    conn: sqlite3.Connection,
+    documents: Sequence[tuple[str, str, str, str]],
+    rekind: tuple[str, str, str],
+) -> None:
+    """Write each `(kind, name, format, content)` and move the row named by
+    `(kind, name)` to the third value's kind, in one transaction: all of it
+    or none of it (spec 098). The moved row keeps its name, content and
+    `updated_at`."""
+    old_kind, name, new_kind = rekind
+    with conn:
+        for document in documents:
+            conn.execute(_UPSERT, document)
         conn.execute(
-            """
-            INSERT INTO profile_documents (kind, name, format, content, updated_at)
-            VALUES (?, ?, ?, ?, datetime('now'))
-            ON CONFLICT (kind, name) DO UPDATE SET
-                format = excluded.format,
-                content = excluded.content,
-                updated_at = datetime('now')
-            """,
-            (kind, name, fmt, content),
+            "UPDATE profile_documents SET kind = ? WHERE kind = ? AND name = ?",
+            (new_kind, old_kind, name),
         )
 
 
