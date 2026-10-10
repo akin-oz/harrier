@@ -43,6 +43,15 @@ dev = [
     # the image installs --no-dev, and an import-linter contract below keeps
     # sklearn and numpy off every path except the trainer.
     "scikit-learn>=1.9.1",
+    # The Postgres store's tests run in CI and wherever a test server is
+    # named (spec 103, tests/pg_support.py).
+    {include-group = "postgres"},
+]
+# The hosted Postgres store is optional: install with `uv sync --group
+# postgres`. Without it, a postgresql:// HARRIER_DATABASE_URL is refused with
+# that instruction, and the local SQLite store is unaffected (spec 103).
+postgres = [
+    "psycopg[binary]>=3.2",
 ]
 
 [build-system]

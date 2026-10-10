@@ -4,33 +4,752 @@ title: The hosted API authenticates every request
 status: proposed
 approved: no
 milestone: M10
-depends: [035, 083, 084, 103, 112]
+depends: [006, 035, 083, 084, 102, 103, 105, 112]
 ---
 
 # Spec 104: The hosted API authenticates every request
 
 ## Problem
 
-The API has no user accounts and trusts the local host (spec 035). Hosted,
-it is reachable from the internet. ADR-013 decision 3 requires every request
-to carry a verified Supabase JWT and to run its transaction as the
-`authenticated` role.
+The API was built for one person on one machine. Spec 035 made it safe on
+that machine: a trusted-host list of loopback names, a per-install token on
+every state-changing request, a capture GET that only renders a
+confirmation page. None of that knows who is calling, because locally there
+is only one caller. Reads carry no token at all
+(`services/api/tests/test_api_exposure.py::test_reads_do_not_require_the_token`).
+
+Hosted, the API is on the internet and serves many owners from one
+Postgres store. ADR-013 decision 3 says each request carries a verified
+Supabase JWT and runs its transaction as the `authenticated` role with that
+token's claims set, so `auth.uid()` resolves inside the database. A request
+without a valid token is answered 401 and opens no transaction. Decision 4
+says a run started from a request records its owner. The Consequences say
+this spec states which of spec 035's guards carry over.
+
+Today the API cannot be hosted at all. `create_app` refuses to start while
+`HARRIER_DATABASE_URL` names a Postgres store
+(`services/api/src/harrier_api/app.py`, `POSTGRES_NOT_YET`, spec 103), and
+spec 112 ports the domain to Postgres without lifting the API's refusal.
+That refusal is correct: an API on Postgres without authentication would
+serve every owner's rows to anyone.
+
+Five things in the current code would be wrong hosted even with a token
+check bolted on:
+
+- `GET /health` opens the database, counts every row in `jobs`, and returns
+  the store's path (`app.py`, `health`). Hosted, it is the one public route.
+- `get_conn` opens a SQLite connection per request with no identity
+  (`services/api/src/harrier_api/deps.py`).
+- The run registry is one in-memory dict per process. `GET /runs` lists
+  every run and `GET /runs/{run_id}/events` streams any run to anyone who
+  knows its id (`services/api/src/harrier_api/runs.py`, `RunManager`).
+- A run's subprocess inherits the server's environment and therefore the
+  server's credentials (spec 035, Problem). Hosted, that is the operator's
+  Apify and LLM keys spent on a tenant's behalf.
+- The SPA streams runs with the browser's `EventSource`
+  (`apps/web/src/features/runs/useRunStream.ts`), which cannot send an
+  `Authorization` header.
 
 ## Scope
 
-Stub created by spec 102 to sequence the hosted build. It is refined into a
-real spec, with behavior and failure modes, before approval is asked for.
+This spec is the server side of hosted authentication. The browser's half
+(signing in, sending the token, streaming without `EventSource`) is spec
+114; Open decision 8 records why.
+
+1. **Hosted mode is explicit.** The API runs hosted only when
+   `HARRIER_AUTH=supabase`. With it, `HARRIER_SUPABASE_URL`,
+   `HARRIER_ALLOWED_HOSTS` and `HARRIER_CORS_ORIGINS` are required and
+   `HARRIER_DATABASE_URL` must name a Postgres store. Nothing about hosted
+   mode is inferred from another variable. Unset, the API is the local API
+   of spec 035, unchanged.
+2. **The spec 103 gate lifts only here.** `create_app` on a Postgres URL
+   starts only in complete hosted mode. Every other combination refuses
+   with the texts under Failure modes.
+3. **A new module, `services/api/src/harrier_api/hostedauth.py`,** holds
+   the configuration reader, the token verifier, the key cache and the
+   ASGI middleware that enforces authentication. `localauth.py` keeps the
+   local token and is not used hosted.
+4. **Every request but `GET /health` and CORS preflights needs a verified
+   bearer token,** enforced by the middleware before routing, so a route
+   cannot forget it and a refused request never reaches a dependency that
+   opens a connection.
+5. **Each request's database work runs as its user,** in one transaction
+   on a pooled connection, with the role and the claims set local to that
+   transaction (Behavior, "The request transaction").
+6. **The API's login role is checked at start.** The hosted API refuses to
+   start when its database login can bypass row-level security or can act
+   as the service role.
+7. **Runs know their owner.** A run started hosted records the requesting
+   `sub`; listing, reading, cancelling and streaming a run are limited to
+   its owner. Starting a run hosted is refused until spec 106 gives runs
+   their owner's credentials and database identity.
+8. **The event stream** accepts the token only in the `Authorization`
+   header, like every other route, and ends when the token that opened it
+   expires.
+9. **Spec 035's guards** are mapped one by one (Behavior, "What carries
+   over from spec 035").
+10. **The contract** declares the 401 response and the bearer scheme on
+    every route that can answer it, in both modes, so the document stays
+    one document (ADR-005). `packages/contract/openapi.json` and
+    `packages/contract/src/schema.d.ts` are regenerated by `just contract`.
+    A guarded path, approved under this spec.
+11. **Dependencies.** A new optional group `hosted` in
+    `services/api/pyproject.toml` holding `pyjwt[crypto]` and
+    `psycopg-pool`, and including the `postgres` group. The dev group
+    includes it, as it includes `postgres` today.
+12. **Documents.** `docs/architecture.md`'s hosted section names hosted
+    mode, its variables and this spec. `.env.example` gains the four
+    hosted variables, commented out, with placeholder values.
+
+Classification: the new module and test file sit under
+`services/api/src/` and `services/api/tests/`, which
+`config/data-classification.json` already classifies as public. No new
+directory is added. This is checked before implementation, and a path the
+table does not cover stops the change.
+
+## Behavior
+
+### Configuration
+
+| Variable | Hosted value | Use |
+|---|---|---|
+| `HARRIER_AUTH` | `supabase` | Turns hosted mode on. Unset or empty: local mode. Any other value is refused. |
+| `HARRIER_SUPABASE_URL` | `https://<ref>.supabase.co` | Issuer is this URL plus `/auth/v1`; the key set is the issuer plus `/.well-known/jwks.json`. Must be `https://`. |
+| `HARRIER_DATABASE_URL` | `postgresql://harrier_api...` | The API's own login role (below), never `postgres` or a service credential. |
+| `HARRIER_ALLOWED_HOSTS` | comma-separated host names | The API's public names, for the trusted-host check. |
+| `HARRIER_CORS_ORIGINS` | comma-separated origins | The SPA origins allowed to call the API, exact `https://` origins. |
+
+Local mode ignores the last three, so a developer's environment cannot
+switch the local API into a half-hosted state by accident.
+
+### The token
+
+A request is authenticated when its `Authorization` header is `Bearer`
+followed by a JWT that passes every check below. The scheme name is
+matched without regard to case. A token anywhere else (a query parameter,
+a cookie, the `X-Harrier-Token` header, a form field) is not read.
+
+1. The header's `alg` is `ES256` or `RS256`. `HS256` and `none` are
+   refused before any key is looked up. The legacy shared secret is never
+   configured, so a project still signing with it cannot be served.
+2. The header's `kid` names a key in the project's published key set, and
+   the signature verifies against that key.
+3. `iss` equals the configured issuer exactly.
+4. `aud` is `authenticated`, or a list containing it.
+5. `exp`, `iat` and `sub` are present. `exp` is in the future and `iat` not
+   in the future, each with a leeway of 30 seconds for clock skew. The 30
+   is a chosen value, not a measured one.
+6. `role` is `authenticated`. A token whose role is `anon` or
+   `service_role` is refused, whatever its signature.
+7. `sub` parses as a UUID.
+8. `is_anonymous` is absent or false. Invite-only sign-up (spec 102, open
+   decision 5) admits no anonymous users; this is defence in depth if the
+   project setting is ever turned on.
+
+The verified payload, exactly as signed, is the request's claims.
+
+### Keys
+
+The key set is fetched from the configured URL and cached in process for 5
+minutes. Supabase caches the same endpoint at its edge for 10 minutes and
+advises not caching longer in the application (signing keys guide, Proof /
+origin), so the two together stay inside that. A `kid` not in the cached
+set forces one refresh, at most once per 30 seconds, so a rotation is
+picked up on the first token signed with the new key and a stream of
+forged `kid` values cannot turn the API into a load generator against the
+key endpoint.
+
+When a refresh fails, the last set fetched successfully keeps verifying
+tokens whose `kid` it holds, for at most one hour after that fetch. One
+hour is Supabase's default access token lifetime (sessions guide). A token
+whose `kid` the last good set does not hold, or any token after that hour,
+is answered 503, not 401: the token may be valid, and a 401 tells the
+browser to sign the person out.
+
+At start, the API fetches the key set once. If the fetch fails it starts
+anyway, logs the failure without the URL's query or any token, and answers
+503 to authenticated routes until a fetch succeeds. `GET /health` stays
+200, so the platform does not restart a healthy process during a
+Supabase outage.
+
+### Refusals
+
+| Case | Status | `reason` | `WWW-Authenticate` |
+|---|---|---|---|
+| no `Authorization` header, or not `Bearer` | 401 | `missing` | `Bearer` |
+| signature, `alg`, `kid`, `iss`, `aud`, `role`, `sub` or `iat` check fails | 401 | `invalid` | `Bearer error="invalid_token"` |
+| `exp` passed | 401 | `expired` | `Bearer error="invalid_token"` |
+| `is_anonymous` true | 403 | `anonymous` | none |
+| key set unavailable (above) | 503 | `keys_unavailable` | none |
+
+The body is a new model, `AuthRefusalOut`, with `detail` (a fixed sentence
+per reason) and `reason` (the closed set above). The detail never quotes
+the token, a claim, or the verifier's exception text. A refused request is
+logged with its reason, method and path, never its header or claims.
+
+The 401 is declared, with `AuthRefusalOut`, on every route the hosted API
+serves except `GET /health`. The OpenAPI document gains a `bearer` HTTP
+security scheme, applied to those routes. The declaration is made by the
+route class, as `DatabaseRoute` declares the 503 today, so a new route
+cannot forget it. The 503 for unavailable keys is merged into the existing
+503 declaration so the generated type admits both bodies. The local API
+never sends either; its document is the same document, so `just contract`
+needs no mode.
+
+### What the hosted API serves
+
+| Route | Hosted |
+|---|---|
+| `GET /health` | public; reports no store detail (below) |
+| `GET /session` | not served (404); there is no local token |
+| `GET /capture/add`, `POST /capture/add-form` | not served (404); Open decision 6 |
+| `GET /docs`, `GET /redoc`, `GET /openapi.json` | not served; the contract is in the repository |
+| the SPA's static files | not served; Vercel serves the SPA (ADR-013 decision 7) |
+| every other route | bearer token required |
+
+Hosted `GET /health` opens no connection and takes no lease. It returns
+`demo: false`, `database: "postgres"`, `job_count: null`,
+`database_hold: null`, and the revision and build time as today. Counting
+`jobs` without an identity would either fail under row-level policy or, on
+a misconfigured role, count every owner's rows, and the store's location
+is no one's business. The `HealthOut` shape does not change.
+
+### The request transaction
+
+For a request that passed the middleware, `get_conn` hosted:
+
+1. Takes a connection from the pool. The pool connects as the login role
+   in `HARRIER_DATABASE_URL`, with `prepare_threshold` set to None so that
+   statements are never prepared, which a transaction-mode pooler does not
+   support (Supabase connection guide, psycopg prepared statements page).
+2. Opens a transaction and, before any other statement, runs
+   `SET LOCAL ROLE authenticated` and
+   `SELECT set_config('request.jwt.claims', <claims JSON>, true)`.
+3. Reads back `current_user` and `current_setting('request.jwt.claims',
+   true)::jsonb ->> 'sub'` in the same transaction. If either is not what
+   step 2 set, the transaction rolls back, the request is answered 500 with
+   a generic detail, and the mismatch is logged. No domain statement runs.
+   This is what catches a connection in autocommit mode or a pooler that
+   splits a transaction, where `SET LOCAL` silently does nothing.
+4. Yields the connection to the route. Domain code that opens its own
+   transaction (spec 112's seam) gets a savepoint inside this one, so the
+   role and claims hold for every statement the request runs.
+5. Commits when the route returns a response below 400, rolls back
+   otherwise and on any exception, and returns the connection to the pool.
+   `SET LOCAL` and `set_config(..., true)` end with the transaction
+   (PostgreSQL `set_config` documentation), so the next request on that
+   connection starts as the login role with no claims.
+
+`get_conn` hosted refuses with 500 if the request carries no verified
+claims, so a route that reached it some other way still runs nothing.
+The claims set are the whole verified payload, so `auth.uid()` and
+`auth.jwt()` read what Supabase's own Data API would give them.
+
+Hosted mode creates no table, grants no privilege and adds no migration.
+Granting `authenticated` access to the personal tables is spec 105's, in
+the same migration as the policies, so no state exists in which
+`authenticated` can read rows no policy guards.
+
+### The login role
+
+The API connects as a dedicated login role, called `harrier_api` in the
+documents, that is `NOINHERIT`, a member of `authenticated` and of nothing
+else. At start, hosted, the API refuses to start when its login role:
+
+- is a superuser or has `BYPASSRLS`;
+- is a member, directly or through another role, of `service_role` or
+  `postgres`;
+- cannot `SET ROLE authenticated`;
+- owns any table in the `public` schema (an owner bypasses row-level
+  security unless it is forced; spec 105 forces it, and this check does not
+  rely on that).
+
+It also refuses to start when its environment holds a variable named
+`SUPABASE_SERVICE_ROLE_KEY` or any value beginning `sb_secret_`. Run
+subprocesses inherit the environment (spec 035), so a service credential
+in the API's environment is a service credential on a request path.
+
+Creating the role and setting its password are the operator's, documented
+in `docs/architecture.md` and provisioned by spec 110. The test suite
+creates it in each throwaway database.
+
+### Runs
+
+`Run` gains `owner: str`, empty locally and the request's `sub` hosted.
+It is written to the journal with the other fields. Hosted:
+
+- `GET /runs` lists only runs whose owner is the request's `sub`.
+- `GET /runs/{run_id}`, `POST /runs/{run_id}/cancel` and
+  `GET /runs/{run_id}/events` answer 404 `run not found` for another
+  owner's run, the same answer as for an id that does not exist.
+- `RunManager.start` refuses with `RunsNotHosted` before it writes an
+  input file or spawns anything. An exception handler answers 501 with
+  `ErrorOut` detail `runs are not available on the hosted API until spec
+  106`. The refusal is in `start`, the one place every run route reaches,
+  so a new run route cannot bypass it. The 501 is declared on every route
+  that depends on the run manager and can start a run.
+- A run with an empty owner is refused by `start` hosted, which is ADR-013
+  decision 4's "a run with no owner is refused before it starts".
+
+Locally nothing changes: the owner is empty, every run is listed, and
+`start` behaves as today.
+
+### The event stream
+
+`GET /runs/{run_id}/events` hosted takes the token in the header like any
+route. The stream ends, with a final SSE comment line, when the token that
+opened it reaches its `exp`. The browser reconnects with a fresh token and
+`Last-Event-ID`, which the route already honours, so no event is lost and
+no stream outlives the authority that opened it. Tokens in query strings
+are never accepted, because request URLs reach access logs at uvicorn and
+at every proxy in front of it.
+
+The SPA's side is the browser spec's: read the stream with `fetch` and a
+`ReadableStream`, which can send headers, in both modes, so there is one
+stream implementation as spec 047 requires.
+
+### Cross-origin requests
+
+Hosted, the SPA (Vercel) and the API (Fly) are different origins.
+`CORSMiddleware` is installed hosted only, outermost, so that a 401 also
+carries the CORS headers and the browser lets the SPA read it:
+
+- allowed origins: exactly `HARRIER_CORS_ORIGINS`, no wildcard and no
+  pattern;
+- allowed methods: `GET`, `POST`, `PUT`, `DELETE`;
+- allowed request headers: `Authorization`, `Content-Type`,
+  `Last-Event-ID`;
+- credentials: not allowed. The API reads no cookie.
+
+A preflight `OPTIONS` passes without a token. A request from an origin not
+in the list gets no CORS headers, so the browser withholds the response.
+Locally no CORS middleware is installed, which `GET /session` relies on
+(spec 035).
+
+### What carries over from spec 035
+
+| Spec 035 guard | Local | Hosted |
+|---|---|---|
+| `X-Harrier-Token` on state-changing and tokened routes | required, unchanged | not read; the bearer token is required on every route but health |
+| `GET /session` | served | not served |
+| token file, 0600, created exclusively | unchanged | no file |
+| trusted hosts | `localhost`, `127.0.0.1`, `0.0.0.0` (specs 083, 084) | exactly `HARRIER_ALLOWED_HOSTS`; no loopback name |
+| no CORS headers | unchanged | exact origin list |
+| capture GET renders, a click posts | unchanged | GET and form post not served; `POST /capture/add` with bearer |
+| config shapes validated, discovery count clamped at use | unchanged | unchanged |
+| credentials scrubbed at `RunManager._append` and the exception boundary | unchanged | unchanged; `Authorization` and claims are never logged |
+
+The bearer token replaces the local token's purpose. The local token
+proves a request came from the operator's own browser, not another page in
+it. A bearer token in a header is never attached by the browser on its
+own, so a cross-site page cannot make a request carrying it, which is the
+same property.
+
+## Failure modes
+
+- **`HARRIER_AUTH` has another value.** Start refused: `error:
+  HARRIER_AUTH must be empty or supabase`, exit 1.
+- **Hosted mode on SQLite.** `HARRIER_AUTH=supabase` with no Postgres URL:
+  `error: HARRIER_AUTH=supabase needs HARRIER_DATABASE_URL to name a
+  Postgres store`, exit 1. Row-level policy exists only there.
+- **Postgres without hosted mode.** `error: the API serves a Postgres store
+  only with HARRIER_AUTH=supabase (spec 104)`, exit 1. This replaces
+  `POSTGRES_NOT_YET` in `app.py`; the CLI's text is spec 112's.
+- **A hosted variable missing or malformed.** No `HARRIER_SUPABASE_URL`, one
+  not `https://`, an empty `HARRIER_ALLOWED_HOSTS`, an empty
+  `HARRIER_CORS_ORIGINS`, or an origin that is `*`, not `https://`, or
+  carries a path: start refused naming the variable, exit 1.
+- **Demo mode hosted.** `HARRIER_DEMO` with `HARRIER_AUTH=supabase`: start
+  refused, exit 1. Demo mode seeds a local SQLite file.
+- **`hosted` group not installed.** Start refused naming `uv sync --group
+  hosted`, exit 1.
+- **Login role too strong.** Any check under "The login role" fails: start
+  refused naming the check, never the URL or password, exit 1.
+- **Service credential in the environment.** Start refused naming the
+  variable, not its value, exit 1.
+- **Missing token.** 401 `missing`. No connection is taken from the pool.
+- **Expired token.** 401 `expired`. No connection taken.
+- **Forged token.** Wrong signature, `alg` `none` or `HS256`, a header
+  `kid` naming no key after one refresh: 401 `invalid`.
+- **Wrong audience or issuer.** A token from another Supabase project, or
+  an `anon` token: 401 `invalid`.
+- **Service role token.** `role` `service_role`: 401 `invalid`. The API
+  never acts as the service role on a request path.
+- **Key rotation mid-flight.** A token signed by a new current key arrives
+  before the cache knows it: one forced refresh, then accepted. Tokens
+  signed by the previous key stay valid while Supabase still publishes it
+  ("previously used" keys stay trusted until revoked, signing keys guide).
+  After revocation, the API stops accepting them within the 5 minute
+  cache, or immediately on the next forced refresh.
+- **Key endpoint unreachable.** Last good keys for up to one hour, then 503
+  `keys_unavailable` (above). Never 401.
+- **Clock skew.** Up to 30 seconds either way accepted. Beyond it, 401
+  `expired` or `invalid`. The Fly machine's clock is assumed synchronized
+  by the platform (Honest limitations).
+- **Token for a deleted or signed-out user.** The token stays valid until
+  `exp`; Supabase removes the session row but a JWT cannot be recalled
+  (sessions guide). The request runs as a `sub` that owns no rows: reads
+  return nothing under spec 105's policy, and a write fails on the
+  `owner_id` foreign key. The window is the token's remaining lifetime.
+  Open decision 10.
+- **Pooler or connection drops `SET LOCAL`.** Autocommit, a transaction-mode
+  pooler that is not pinning the transaction, or a wrapper that commits
+  between statements: the read-back in step 3 differs, the request is
+  answered 500, and no domain statement runs.
+- **A route reaches `get_conn` without claims.** 500, nothing opened.
+- **Another owner's run id.** 404 `run not found`.
+- **Starting a run hosted.** 501 until spec 106.
+- **A token in the query string.** Not read; without a header the request
+  is 401 `missing`.
+- **Foreign Host header.** 400 from the trusted-host middleware, as
+  locally.
+- **Origin not allowed.** No CORS headers; the browser withholds the
+  response. The request itself still needs a token, so a non-browser
+  caller with a valid token is served: CORS is not authentication.
 
 ## Acceptance criteria
 
-Headline, to be expanded into checkable criteria when refined: A request
-without a valid token answers 401 and opens no transaction; a valid one runs
-as its user; the spec names which spec 035 guards carry over.
+Local mode:
+
+- [ ] With `HARRIER_AUTH` and `HARRIER_DATABASE_URL` unset, every existing
+      test passes unchanged, including all of
+      `services/api/tests/test_api_exposure.py`, and `just demo` starts as
+      before.
+- [ ] The local app installs no CORS middleware and no authentication
+      middleware (planned test_local_mode_has_no_hosted_middleware).
+
+Start-up:
+
+- [ ] Each refusal under Failure modes from "`HARRIER_AUTH` has another
+      value" to "Service credential in the environment" exits 1 with its
+      text, and none prints a URL, password or secret value
+      (planned test_hosted_start_refuses_incomplete_configuration,
+      parametrized over each case).
+- [ ] A login role that is a superuser, has `BYPASSRLS`, is a member of
+      `service_role`, cannot `SET ROLE authenticated`, or owns a table in
+      `public` is refused at start, one case each
+      (planned test_hosted_start_refuses_a_login_role_that_can_bypass_policy).
+- [ ] `app.py` no longer holds `POSTGRES_NOT_YET`; the API on a Postgres URL
+      without hosted mode exits 1 with this spec's text.
+
+Tokens:
+
+- [ ] A request without a token is 401 `missing`, and the pool hands out no
+      connection for it
+      (planned test_a_request_without_a_token_is_401_and_takes_no_connection).
+- [ ] An expired token is 401 `expired`; one expired by less than 30
+      seconds is accepted (planned test_expiry_honours_the_leeway).
+- [ ] Tokens with a wrong signature, `alg` `none`, `alg` `HS256`, an
+      unknown `kid`, a foreign `iss`, `aud` `anon`, `role` `service_role`,
+      and a non-UUID `sub` are each 401 `invalid`
+      (planned test_a_forged_or_foreign_token_is_401_invalid, one case
+      each).
+- [ ] An anonymous user's token is 403 `anonymous`
+      (planned test_an_anonymous_session_is_refused).
+- [ ] A valid token in a query string, a cookie or `X-Harrier-Token`, with
+      no header, is 401 `missing`
+      (planned test_a_token_outside_the_header_is_not_read).
+- [ ] A token signed by a key added after the cache was filled is accepted
+      after exactly one refresh, and a second unknown `kid` within 30
+      seconds causes no second fetch
+      (planned test_an_unknown_key_id_refreshes_the_key_set_once).
+- [ ] With the key endpoint failing, a token whose `kid` the last good set
+      holds is accepted within the hour and answered 503
+      `keys_unavailable` after it; a token with an unknown `kid` is 503,
+      never 401 (planned test_unreachable_keys_answer_503_not_401).
+- [ ] The key tests run against keys generated in the test and served by an
+      injected fetcher; no test reaches the network.
+- [ ] No refusal body, and no log record captured during the token tests,
+      contains the token or any claim value
+      (planned test_a_token_never_reaches_a_body_or_a_log).
+
+Routes and contract:
+
+- [ ] Walking every route of the hosted app, each one except `GET /health`
+      answers 401 without a token, and the local-only routes and the
+      documentation routes answer 404
+      (planned test_every_hosted_route_but_health_needs_a_token).
+- [ ] Every route that can answer 401 hosted declares it with
+      `AuthRefusalOut` and the bearer scheme in
+      `packages/contract/openapi.json`, and no other route does
+      (planned test_the_contract_declares_every_auth_refusal).
+- [ ] The OpenAPI document exported from the hosted app equals the one
+      exported from the local app
+      (planned test_the_contract_is_the_same_in_both_modes).
+- [ ] `just contract` leaves no diff after the regenerated files are
+      committed.
+- [ ] Hosted `GET /health` returns 200 with `database: "postgres"` and
+      `job_count: null`, opens no connection, and answers 200 while the
+      key endpoint is unreachable
+      (planned test_hosted_health_reveals_no_store_detail).
+
+The request transaction (Postgres tests, run in CI as spec 103 requires):
+
+- [ ] Inside a request, `current_user` is `authenticated`, `auth.uid()` is
+      the token's `sub`, and `auth.jwt()` is its payload
+      (planned test_the_request_transaction_runs_as_its_user).
+- [ ] After the request, the same pooled connection reports the login role
+      and no claims (planned test_identity_ends_with_the_request).
+- [ ] A connection in autocommit mode is detected by the read-back: 500,
+      and a probe statement placed after it never runs
+      (planned test_a_lost_set_local_stops_the_request).
+- [ ] Two concurrent requests with different tokens each see only their
+      own `sub` (planned test_concurrent_requests_keep_their_identities).
+- [ ] A route that raises rolls its writes back; a 4xx response rolls back
+      (planned test_a_refused_request_commits_nothing).
+
+Runs and stream:
+
+- [ ] Hosted, owner B's `GET /runs` omits owner A's run, and B's get,
+      cancel and stream of it answer 404
+      (planned test_another_owners_run_is_not_found).
+- [ ] Hosted, every run route answers 501 with the spec 106 text, and no
+      input file is written and no process spawned
+      (planned test_starting_a_run_hosted_is_refused_until_spec_106).
+- [ ] The event stream ends when its token's `exp` passes, and a reconnect
+      with a new token and `Last-Event-ID` receives the remaining events
+      (planned test_the_event_stream_ends_at_token_expiry).
+
+Cross-origin and hosts:
+
+- [ ] A preflight from an allowed origin gets the allowed methods and
+      headers; one from any other origin, including a `vercel.app`
+      subdomain not listed, gets no CORS headers; a 401 to an allowed
+      origin carries CORS headers
+      (planned test_cors_allows_only_the_configured_origins).
+- [ ] Hosted, Host `localhost` and Host `127.0.0.1` are refused and each
+      name in `HARRIER_ALLOWED_HOSTS` reaches `GET /health`
+      (planned test_hosted_trusted_hosts_are_the_configured_names).
+
+Gates:
+
+- [ ] `uv run ruff check`, `uv run pyright`, `pnpm type-check` and
+      `pnpm lint` pass.
+- [ ] `just check` passes.
+
+## Honest limitations
+
+- After this spec, the hosted API authenticates and does nothing useful.
+  `authenticated` has no privilege on the personal tables until spec 105,
+  so every data route fails with a permission error answered 500; runs are
+  refused until spec 106; the browser cannot sign in until the browser
+  spec. Hosted mode must not be offered to anyone before 105 ships, and
+  spec 110's deploy gate is where that is enforced.
+- The CI Postgres is plain `postgres:17`, not Supabase. The tests create
+  the `authenticated`, `anon` and `service_role` roles and an `auth.uid()`
+  and `auth.jwt()` that read `request.jwt.claims`. That is Supabase's
+  documented behavior as far as it is documented; the exact function body
+  is not in the guides (Proof / origin). The first staging deploy must
+  compare `\sf auth.uid` with the shim (spec 110).
+- A revoked signing key is still trusted for up to 5 minutes, or up to an
+  hour while the key endpoint is unreachable. A deleted or signed-out user's
+  token works until it expires, one hour by default.
+- The 30 second leeway and the 5 minute cache are chosen values. They are
+  constants with a comment, not configuration.
+- Clock synchronization on the Fly machine is assumed, not checked.
+- The login-role checks read the catalog at start. A grant made to the role
+  while the API runs is not seen until the next start.
+- CORS protects browsers only. Any program holding a valid token can call
+  the API from anywhere, which is what a bearer token means.
+- File-backed routes (artifacts, configuration fallbacks) read the
+  machine's disk. Hosted, no run writes there because runs are refused, and
+  spec 107 moves those files to Storage. Until then a hosted configuration
+  read can show a value from a file in the image, which is repository
+  content, not personal data.
+- No rate limiting. Spec 035 left it out, and so does this spec.
+
+## Migration
+
+None for the local product: no variable it reads changes meaning, and no
+file moves. No hosted install exists. When one does, the operator creates
+the `harrier_api` login role before the API's first start (spec 110), and
+the Supabase project must have an asymmetric signing key current, since
+the API refuses `HS256`.
+
+## Options weighed
+
+- **Infer hosted mode from a Postgres URL.** One variable fewer. A
+  misconfigured staging box with a Postgres URL and no Supabase settings
+  would then fail at the first request instead of at start, and a
+  developer pointing a local API at a test Postgres would get an
+  authenticated API by surprise. Not chosen: hosted mode is explicit.
+- **A FastAPI app-level dependency instead of middleware.** It would put
+  the security scheme into OpenAPI for free. It runs after routing and in
+  dependency order, so "no connection opened" depends on how FastAPI
+  orders dependencies. Not chosen: the middleware refuses before routing,
+  and the route class declares the contract.
+- **Verify by calling Supabase's `/auth/v1/user` on each request.** It sees
+  sign-outs at once. It costs a network round trip per request, makes
+  every request fail when Auth is slow, and is what Supabase recommends
+  only for the legacy shared secret (JWTs guide). Not chosen.
+- **Use the Supabase Data API (PostgREST) instead of a direct connection.**
+  It sets role and claims itself. It replaces harrier's write path with a
+  second one, against ADR-003 and ADR-013 decision 5. Not chosen.
+- **Merge specs 104 and 105.** There would be no state in which hosted mode
+  starts without policies. The diff would hold the auth boundary and every
+  table's policy at once, which `change-boundary` asks to split. Not
+  chosen; the honest limitation and spec 110's gate cover the gap.
+- **A cookie session set by the API.** Lets `EventSource` and the
+  bookmarklet work. Vercel and Fly are different sites, so the cookie is
+  third-party and `SameSite=None`, which browsers increasingly block, and
+  a cookie brings back the cross-site request forgery that spec 035's token
+  exists to stop. Not chosen.
+
+## Open decisions for Akin
+
+Akin took the recommended answer to each on 2026-10-10. Scope and
+Behavior above already assume them. Under decision 8 the browser's half
+is spec 114, created as a stub with this spec. Spec 105's build order
+(103, 105, 112, 104) was taken the same day, so this spec depends on 105.
+
+1. **How the API knows it is hosted.** Recommended: `HARRIER_AUTH=supabase`
+   plus `HARRIER_SUPABASE_URL`, never inferred. Alternative: hosted
+   whenever `HARRIER_DATABASE_URL` is Postgres.
+2. **Where authentication is enforced.** Recommended: an ASGI middleware
+   with a one-route public list, plus the route class for the contract.
+   Alternative: an app-level FastAPI dependency.
+3. **The request transaction.** Recommended: one transaction per request,
+   identity set once, domain transactions nested as savepoints. This
+   needs spec 112's seam to nest rather than issue its own `BEGIN`; if 112
+   is refined otherwise, this item changes with it. Alternative: the seam
+   applies role and claims at the start of every transaction it opens,
+   which costs a round trip per domain transaction.
+4. **The event stream.** Recommended: header only, `fetch` streaming in
+   the SPA in both modes, the stream ending at token expiry. Alternatives:
+   a short-lived single-use stream ticket in the query string (an extra
+   route, and the ticket lands in access logs at Fly's proxy and uvicorn,
+   so it must be single-use and short-lived to be tolerable); or a cookie
+   (Options weighed).
+5. **Runs.** Recommended: record the owner and limit every run route to it
+   now, refuse starting runs hosted with 501 until spec 106. Alternative:
+   leave runs entirely to 106 and answer 404 on every run route hosted.
+6. **The capture bookmarklet hosted.** Recommended: the GET and the form
+   post are not served hosted; a later spec gives the SPA a capture page
+   the bookmarklet navigates to, which then posts `POST /capture/add` with
+   the signed-in user's token. Alternative: a hosted confirmation page on
+   the API origin, which needs its own short-lived signed ticket because it
+   has no access to the SPA's session.
+7. **CORS origins.** Recommended: an exact list per environment, staging's
+   and production's Vercel origins, no preview deployments. Alternative: a
+   pattern for Vercel preview URLs. Anyone can deploy to `vercel.app`, so a
+   pattern loose enough to match previews can match a stranger's site.
+8. **The browser's half.** Recommended: a separate spec, now 114,
+   for sign-in with `supabase-js`, the bearer token in `client.ts`, a
+   configurable API base URL, and the `fetch` run stream. Alternative: all
+   of it here, which doubles the diff and mixes contract, server and SPA
+   review.
+9. **Testing against Supabase's database shape.** Recommended: the test
+   fixture creates the Supabase roles and an `auth.uid()` shim in each
+   throwaway database, and staging verifies the shim. Alternative: run
+   CI's Postgres service from Supabase's own Postgres image, which is
+   closer to production and heavier, and whose contents this spec has not
+   checked.
+10. **Deleted and signed-out users.** Recommended: accept the window to
+    `exp`. Alternative: a per-request check of `session_id` against
+    `auth.sessions` through a security-definer function, which the
+    sessions guide describes for sensitive actions and which costs a query
+    per request.
+11. **Keys unavailable.** Recommended: last good keys for up to one hour,
+    then 503. Alternative: 503 on the first failed refresh, which is
+    stricter on revocation and turns every Supabase blip into an outage.
+12. **Verification library.** Recommended: PyJWT with `cryptography`,
+    whose `PyJWKClient` has the key-set cache and the refresh-on-unknown
+    `kid` described above. Alternative: `joserfc` or Authlib, equally able,
+    with no feature this spec needs that PyJWT lacks.
 
 ## Proof / origin
 
-ADR-013 decisions 3 and 4; spec 035.
+- `docs/adr/ADR-013-hosted-multi-tenant-deployment.md`, decisions 3, 4 and
+  7, and Consequences (spec 035's guards).
+- `docs/adr/ADR-005-api-contract-seam.md`: one generated contract.
+- `docs/adr/ADR-004-long-running-work.md`: runs as subprocesses.
+- `specs/035-local-api-exposure.md`, `specs/083-the-test-client-host-is-not-trusted.md`,
+  `specs/084-every-trusted-host-can-match.md`: the local guards mapped
+  above.
+- `specs/006-run-manager-and-sse.md` and `services/api/src/harrier_api/runs.py`:
+  the in-memory registry and the SSE route.
+- `specs/103-the-tracker-store-speaks-postgres.md` and
+  `services/api/src/harrier_api/app.py` (`create_app`, `POSTGRES_NOT_YET`,
+  `health`): the gate this spec lifts and the public route it narrows.
+- `services/api/src/harrier_api/deps.py` (`get_conn`, `DatabaseRoute`),
+  `localauth.py`, `capture_routes.py`.
+- `apps/web/src/shared/api/client.ts` and
+  `apps/web/src/features/runs/useRunStream.ts`: how the SPA sends the local
+  token and streams runs.
+- Supabase, JWT signing keys: key set at
+  `/auth/v1/.well-known/jwks.json`, edge cache of 10 minutes and advice not
+  to cache longer, rotation (standby, current, previously used, revoked),
+  non-expired tokens of a previous key stay accepted, ES256 recommended
+  over RS256, the legacy secret not recommended.
+  https://supabase.com/docs/guides/auth/signing-keys
+- Supabase, JWTs: `iss` is `https://<ref>.supabase.co/auth/v1`; shared
+  secret projects should verify by calling `/auth/v1/user`.
+  https://supabase.com/docs/guides/auth/jwts
+- Supabase, JWT claims reference: `aud` (`authenticated` or `anon`), `role`
+  (`anon`, `authenticated`, `service_role`), `sub`, `exp`, `iat`,
+  `session_id`, `is_anonymous`.
+  https://supabase.com/docs/guides/auth/jwt-fields
+- Supabase, sessions: default access token lifetime one hour; a signed-out
+  session's row is removed but its JWT is not recalled; `session_id`
+  against `auth.sessions` for sensitive actions.
+  https://supabase.com/docs/guides/auth/sessions
+- Supabase, row-level security: `auth.uid()` returns the requesting user's
+  id or null; `service_role` has `BYPASSRLS`; tests switch identity with
+  `set local role`. https://supabase.com/docs/guides/database/postgres/row-level-security
+- Supabase, Postgres roles: `authenticator`, `anon`, `authenticated`,
+  `service_role`; a separate login role per service; `NOINHERIT`.
+  https://supabase.com/docs/guides/database/postgres/roles
+- Supabase, connecting to Postgres: direct connections and session mode
+  for long-lived servers; transaction mode does not keep session state or
+  support prepared statements.
+  https://supabase.com/docs/guides/database/connecting-to-postgres
+- PostgREST, transactions: `request.jwt.claims` and the role are
+  transaction-scoped settings. https://docs.postgrest.org/en/stable/references/transactions.html
+- PostgreSQL, `set_config(name, value, is_local)`: with `is_local` true the
+  value lasts for the current transaction only.
+  https://www.postgresql.org/docs/current/functions-admin.html
+- psycopg 3, prepared statements: `prepare_threshold = None` disables them,
+  as pooling middleware requires.
+  https://www.psycopg.org/psycopg3/docs/advanced/prepare.html
+- PyJWT, `PyJWKClient`: key-set cache lifespan, refresh on unknown `kid`
+  with a cooldown; `jwt.decode` audience, issuer, leeway, algorithms,
+  required claims. https://pyjwt.readthedocs.io/en/stable/api.html
+- MDN, `EventSource()`: the only option is `withCredentials`; no request
+  headers. https://developer.mozilla.org/en-US/docs/Web/API/EventSource/EventSource
+- RFC 6750, section 3: the `WWW-Authenticate: Bearer` challenge and
+  `error="invalid_token"`.
+
+Assumptions to verify before or during implementation, each named where
+it is used:
+
+- `auth.uid()` reads `sub` from `request.jwt.claims`. The guides describe
+  the result, not the body; setting the whole claims object is also what
+  PostgREST does. Checked with `\sf auth.uid` on staging.
+- Supabase's connection pooler accepts a custom login role such as
+  `harrier_api`. Not stated in the guides read for this spec; spec 110
+  checks it, and the direct connection is the fallback.
+- New Supabase projects sign with an asymmetric key by default. Not found
+  in the docs; the spec does not depend on it, because the API refuses
+  `HS256` and spec 110 makes the current key asymmetric.
+- A Supabase blog post gives the key set at `/auth/v1/jwks`; the guide
+  gives `/auth/v1/.well-known/jwks.json`. This spec uses the guide's path.
+- Fly's health check can send a Host header in `HARRIER_ALLOWED_HOSTS`.
+  Spec 110 configures it.
+- New Supabase secret API keys begin `sb_secret_`. Used only by the
+  start-up refusal; a wrong prefix weakens that check and nothing else.
 
 ## Out of scope
 
-Row-level policies (spec 105). Sign-up rules (spec 111).
+- Grants to `authenticated`, `owner_id`, and row-level policies: spec 105.
+- A run's database identity and credentials, and lifting the 501: spec 106.
+- Files in Storage: spec 107.
+- Sign-up, invitations, export and deletion: spec 111.
+- The SPA: sign-in, sending the bearer token, the API base URL, `fetch`
+  streaming, and a hosted capture page: spec 114 (Open decision 8).
+- Creating the Supabase project, the `harrier_api` role, Fly health
+  checks, and the deploy gate that keeps hosted mode closed until spec 105
+  ships: spec 110.
+- The CLI on Postgres: spec 112. The hosted deployment has no tenant CLI
+  (ADR-013 decision 4).
+- Multi-factor requirements on `aal`, rate limiting, and audit logging of
+  successful requests.

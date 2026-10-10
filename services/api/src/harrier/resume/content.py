@@ -518,21 +518,49 @@ DISCLAIMER_HEADINGS = (
     "claims to avoid",
 )
 
-# Sentence openings that assert the opposite of what follows. A truth
-# document saying a responsibility was not held validated the substring
-# naming that responsibility.
-NEGATIONS = (
-    " did not ",
-    " never ",
-    " have not ",
-    " has not ",
-    " was not ",
-    " were not ",
-    " no longer ",
-    " rather than ",
-    " instead of ",
-    " without ",
+# Words that deny the sentence they sit in (spec 100). A truth document
+# saying a responsibility was not held validated the substring naming that
+# responsibility. Every word ending in "n't" is one too (`_NEGATOR`).
+SENTENCE_NEGATORS = (
+    "not",
+    "no",
+    "never",
+    "none",
+    "neither",
+    "nor",
+    "no longer",
+    "cannot",
+    "failed to",
+    "lacked",
 )
+
+# Words that deny what follows them and leave what precedes them asserted:
+# "Moved to Kafka 3 without downtime" still says it moved (spec 100).
+EXCLUSION_MARKERS = (
+    "without",
+    "except",
+    "excluding",
+    "other than",
+    "apart from",
+    "rather than",
+    "instead of",
+)
+
+
+def _whole_words(phrases: tuple[str, ...], *extra: str) -> re.Pattern[str]:
+    """Phrases matched as whole words. A boundary is whitespace, the text's
+    edge, or punctuation other than a hyphen or an apostrophe, so `,never`
+    and `(not` match and `no-code` and `notable` do not."""
+    alternatives = [re.escape(p) for p in sorted(phrases, key=len, reverse=True)]
+    return re.compile(rf"(?<![\w'-])(?:{'|'.join([*alternatives, *extra])})(?![\w'-])")
+
+
+_NEGATOR = _whole_words(SENTENCE_NEGATORS, r"[a-z]+n't")
+_EXCLUSION = _whole_words(EXCLUSION_MARKERS)
+_SENTENCE_END = re.compile(r"[.!?;](?=\s)")
+# The run of non-space text a period ends; empty when the period stands alone.
+_LAST_TOKEN = re.compile(r"\S*$")
+_ABBREVIATION = re.compile(r"[^\W\d_](?:\.[^\W\d_])*")
 
 
 # Inline code and paired emphasis are formatting. A model quoting a truth
@@ -560,12 +588,6 @@ def _comparable(text: str) -> str:
     """A fragment ready to compare: markup stripped, one trailing period
     dropped, lowercased."""
     return strip_inline_markup(text).rstrip(".").lower()
-
-
-def _comparable_line(line: str) -> str:
-    """A supporting line ready to compare. The trailing period stays: a
-    fragment without one is still its substring."""
-    return strip_inline_markup(line).lower()
 
 
 def _is_disclaimer_heading(line: str) -> bool:
@@ -599,9 +621,62 @@ def asserting_lines(document: str) -> list[str]:
     return kept
 
 
-def _is_negated(line: str) -> bool:
-    padded = f" {line.strip().lower()} "
-    return any(marker in padded for marker in NEGATIONS)
+def _sentence_start(text: str, position: int) -> int:
+    """Where the sentence holding `position` starts: after the last `.`,
+    `!`, `?` or `;` before it that is followed by whitespace. A period ending
+    an abbreviation (a single letter, or letters joined by periods: `J.`,
+    `U.S.`, `e.g.`) ends no sentence. One ending a number (`Kafka 3.`,
+    `Kafka 3.6.`) or a word does."""
+    start = 0
+    for end in _SENTENCE_END.finditer(text, 0, position):
+        if end.group() == ".":
+            token = _LAST_TOKEN.search(text, 0, end.start())
+            if token is not None and _ABBREVIATION.fullmatch(token.group().lstrip("([{\"'")):
+                continue
+        start = end.end()
+    return start
+
+
+def denial_start(comparable: str) -> int:
+    """Where the denied text of a comparable line begins, or its length when
+    nothing in it is denied (spec 100).
+
+    A sentence negator denies from the start of its sentence, an exclusion
+    marker from itself. Either way the denial runs to the end of the line,
+    so a boundary found in the wrong place can move where a denial starts but
+    never end one early.
+    """
+    text = comparable.replace("\u2019", "'")
+    starts = [_sentence_start(text, match.start()) for match in _NEGATOR.finditer(text)]
+    starts.extend(match.start() for match in _EXCLUSION.finditer(text))
+    return min(starts, default=len(text))
+
+
+@dataclass(frozen=True)
+class _SupportingLine:
+    raw: str
+    # The line as fragments are compared against it (spec 068), cut where
+    # its denied text begins. The trailing period stays: a fragment without
+    # one is still its substring.
+    asserted: str
+    denied: bool
+
+    @classmethod
+    def read(cls, line: str) -> _SupportingLine:
+        reduced = strip_inline_markup(line)
+        comparable = reduced.lower()
+        cut = denial_start(comparable)
+        return cls(raw=line, asserted=comparable[:cut], denied=cut < len(comparable))
+
+    def asserted_text(self) -> str:
+        """The line a check may read: as written when nothing in it is
+        denied, otherwise its asserting text with markup removed, so no check
+        reads a number, a version or a skill from the denied part."""
+        if not self.denied:
+            return self.raw
+        reduced = strip_inline_markup(self.raw)
+        same_length = len(reduced.lower()) == len(reduced)
+        return (reduced if same_length else reduced.lower())[: len(self.asserted)].rstrip()
 
 
 @dataclass(frozen=True)
@@ -609,26 +684,27 @@ class TruthSources:
     truth_text: str
     achievements_text: str
 
-    def _supporting(self) -> list[str]:
+    def _supporting(self) -> list[_SupportingLine]:
         """Every line that can verify a claim, from both documents.
 
         Computed per call rather than cached because the dataclass is frozen
         and the documents are small; correctness here matters more than the
         microseconds.
         """
-        lines: list[str] = []
+        lines: list[_SupportingLine] = []
         for document in (self.truth_text, self.achievements_text):
-            lines.extend(line for line in asserting_lines(document) if not _is_negated(line))
+            lines.extend(_SupportingLine.read(line) for line in asserting_lines(document))
         return lines
 
     def lines_containing(self, fragment: str) -> list[str]:
         """The supporting lines that verify this fragment, so a check can
-        read the context a quoted fragment was cut from (spec 065). Lines
-        come back raw; only the comparison ignores markup (spec 068)."""
+        read the context a quoted fragment was cut from (spec 065). A line
+        comes back raw unless part of it is denied; then only its asserting
+        text comes back (spec 100). The comparison ignores markup (spec 068)."""
         check = _comparable(fragment)
         if not check:
             return []
-        return [line for line in self._supporting() if check in _comparable_line(line)]
+        return [line.asserted_text() for line in self._supporting() if check in line.asserted]
 
     def contains(self, fragment: str) -> bool:
         """Whether the truth documents actually assert this.
@@ -640,7 +716,8 @@ class TruthSources:
         - **Structure.** Lines under a "claims I must not make" heading do not
           verify the claims they list.
         - **Polarity.** "I did not own the incident response rota" does not
-          verify "own the incident response rota".
+          verify "own the incident response rota". A fragment verifies only
+          where it falls before the line's denied text (spec 100).
         - **Case.** A claim differing only in capitalisation is the same
           claim, and failing it silently dropped real evidence.
 
@@ -650,7 +727,7 @@ class TruthSources:
         check = _comparable(fragment)
         if not check:
             return False
-        return any(check in _comparable_line(line) for line in self._supporting())
+        return any(check in line.asserted for line in self._supporting())
 
 
 def require_truth(sources: TruthSources, fragment: str) -> str:

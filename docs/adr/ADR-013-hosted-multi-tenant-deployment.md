@@ -69,12 +69,33 @@ Postgres hosted), and a JWT boundary the local product never had. Chosen.
      the service role and are named as such.
 5. **One write path, per dialect.** `harrier.tracker` stays the only writer
    (ADR-003, ADR-012 point 4). The schema keeps one definition in
-   `services/api/src/harrier/tracker/`, from which SQLite and Postgres DDL
-   are produced; the hosted-only columns and policies are part of that
-   definition, marked hosted. Migrations stay harrier's own runner (spec
-   090), which gains a Postgres dialect. Postgres DDL is transactional, so
-   spec 090's whole-or-nothing rule holds natively. Supabase CLI migrations
-   are not used, because they would be a second schema definition.
+   `services/api/src/harrier/tracker/schema.py`: each migration declares
+   its SQLite and Postgres statements in that module, held to the same
+   versions, Postgres history begins with a baseline at the version the
+   local schema had when the hosted store was introduced, and a parity
+   test holds the two to the same tables, columns, defaults and refusals.
+   The hosted-only columns and policies are part of that definition,
+   marked hosted. Migrations stay harrier's own runner (spec 090) with a
+   Postgres dialect. Supabase CLI migrations are not used, because they
+   would be a second schema definition.
+
+   **Amended (spec 103).** This said SQLite and Postgres DDL "are produced"
+   from one definition. Nine migrations of SQLite history cannot be
+   regenerated without rewriting history, and a generator over triggers
+   and dialect functions is a second language to maintain. Declaring both
+   dialects in one module, with a test that fails when they disagree, is
+   the property the sentence was for.
+
+   Spec 103 planned both dialects in one entry of `MIGRATIONS` and the
+   Postgres runner as a branch of `harrier.db._apply_schema`. It was built
+   differently, and the property is the same. The Postgres statements sit
+   in a parallel list, `POSTGRES_MIGRATIONS`, in the same module.
+   `undeclared_dialects` requires every version after the baseline in both
+   lists with at least one statement
+   (`services/api/tests/test_postgres_store.py::test_every_new_migration_declares_both_dialects`).
+   The Postgres runner is `harrier.pgstore.apply_postgres_migrations`, so
+   the SQLite open path never imports the driver. Spec 103's amendment says
+   why.
 6. **Files live in Supabase Storage.** Generated artifacts and run state
    that are files locally (resumes, letters, answers, drafts, summaries,
    seen-state, trained scoring models) are objects in a private bucket

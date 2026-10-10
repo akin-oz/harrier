@@ -122,7 +122,11 @@ Supporting lines are the lines `TruthSources.contains` reads
 (`services/api/src/harrier/resume/content.py`): the truth and achievements
 documents, plus the brief evidence and views that `with_operator_evidence`
 adds (spec 066, B4 and B7). Lines under a "claims I must not make" heading
-and negated lines are not supporting lines (spec 034).
+are not supporting lines (spec 034). Within a supporting line, the denied
+text (spec 100) grounds no version; the asserting text before it does.
+"Moved to Kafka 3 without downtime" grounds `Kafka 3`, and "Ran Kafka in
+production. Never ran Kafka 3." does not
+(`services/api/tests/test_apply_claims.py::test_a_version_is_grounded_only_by_asserting_text`).
 
 These never ground a version:
 
@@ -179,11 +183,13 @@ These are decisions. Each is a consequence of V0 to V3.
   evaluation (`services/api/src/harrier/resume/evaluation.py`), offer
   evaluation (`services/api/src/harrier/offers/evaluate.py`) and C8
   (`_skill_violations` in `services/api/src/harrier/apply/claims.py`).
-- **Polarity is a list of markers** (`NEGATIONS` in
+- **Polarity is spec 100's rule** (`SENTENCE_NEGATORS`,
+  `EXCLUSION_MARKERS` and `denial_start` in
   `services/api/src/harrier/resume/content.py`). "Haven't run Kafka 3 in
-  production" is not read as negated, so it grounds `Kafka 3`. "Moved to
-  Kafka 3 without downtime" is read as negated, because the list holds
-  "without", so it grounds nothing. Both are spec 034's rule, used as is.
+  production" is denied, so it grounds nothing. "Moved to Kafka 3 without
+  downtime" grounds `Kafka 3`, because only the text after "without" is
+  denied
+  (`services/api/tests/test_apply_claims.py::test_a_version_is_grounded_only_by_asserting_text`).
 - **Grounded versions that are still refused, even through a claim:**
   `Kafka 3` against a truth that says only `Kafka 3.6`, `Kafka 3-based` or
   `Kafka 3/Spring 6`. No fragment cut from those lines holds a standalone

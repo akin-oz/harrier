@@ -170,12 +170,28 @@ SQL still names a track and never a tenant; the database applies the owner
 from the session (ADR-012 point 2). The local product described above does
 not change.
 
-No hosted component exists yet. Specs 103 to 111 sequence the build, each
-with `approved: no` until refined: the Postgres store (103), API
-authentication (104), row-level policy (105), tenant credentials and run
-isolation (106), artifacts in Storage (107), hosted scheduling (108), Gmail
-and Telegram for tenants (109), the deploy pipeline (110), and sign-up,
-export and deletion (111).
+A Postgres store can be created; nothing reads or writes tracker rows on it
+yet. `HARRIER_DATABASE_URL` chooses the store: unset or empty, the local
+SQLite store; a `postgresql://` URL, the Postgres store; any other value is
+refused (`services/api/src/harrier/pgstore.py`,
+`services/api/tests/test_postgres_store.py`). `harrier store migrate`
+applies pending migrations and `harrier store status` prints the dialect
+and version. Until spec 112 they are the only commands that run on
+Postgres: every other command and the API refuse to start while the URL
+names it (`services/api/tests/test_store_cli.py`). Opening a Postgres store
+never migrates it. The Postgres baseline, recorded as version 9, sits in
+`services/api/src/harrier/tracker/schema.py` beside the SQLite migrations,
+and `services/api/tests/test_dialect_parity.py` holds the two stores to the
+same tables, defaults and refusals. Spec 112 ports the domain's reads and
+writes to it.
+
+No other hosted component exists yet. Specs 103 to 112 sequence the build:
+the Postgres store (103, approved), API authentication (104), row-level
+policy (105), tenant credentials and run isolation (106), artifacts in
+Storage (107), hosted scheduling (108), Gmail and Telegram for tenants
+(109), the deploy pipeline (110), sign-up, export and deletion (111), and
+the domain on either store (112). Specs 104 to 112 stay `approved: no`
+until refined.
 
 ## Honest limitations
 

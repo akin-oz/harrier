@@ -27,6 +27,7 @@ from harrier.db import DatabaseOwnedByHost, connect, default_db_path, lease_dire
 from harrier.demo import repo_root
 from harrier.hostlease import oldest_hold
 from harrier.logsetup import configure_logging
+from harrier.pgstore import POSTGRES_NOT_YET, store_target
 from harrier.tracker import list_jobs
 from harrier.tracker.reasons import CANDIDATE, COMPANY, SYSTEM, codes_for
 from harrier.tracker.selector import SelectorError
@@ -1107,6 +1108,11 @@ class ApiPrefixMiddleware:
 
 
 def create_app(run_manager: RunManager | None = None, spa_dir: Path | None = None) -> FastAPI:
+    # Before anything opens SQLite. A bad HARRIER_DATABASE_URL raises
+    # StoreUrlError, and a Postgres one refuses with the CLI's text: nothing
+    # serves requests from Postgres until spec 112 (spec 103).
+    if store_target().is_postgres:
+        raise RuntimeError(POSTGRES_NOT_YET)
     # logsetup said it was called by the CLI and by the API. Only the CLI ever
     # called it, so the process serving the browser had no configured root
     # logger and no identity redaction (spec 045).
