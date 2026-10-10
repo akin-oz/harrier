@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useId, useState } from "react";
 
 import { api } from "../../shared/api/client";
+import { refusalMessage } from "../../shared/api/refusal";
 import { KindFrame } from "./KindFrame";
 import { useKindEditor } from "./useKindEditor";
 import type { ConfigEntry } from "./useKindEditor";
@@ -19,7 +20,8 @@ function toLines(text: string): string[] {
 
 async function routeFeeds(urls: readonly string[]) {
   const { data, error } = await api.POST("/settings/feeds/routing", { body: { urls: [...urls] } });
-  if (error !== undefined || data === undefined) throw new Error("could not check the watchlist");
+  if (error !== undefined) throw new Error(refusalMessage(error, "could not check the watchlist"));
+  if (data === undefined) throw new Error("refused: the local API token was not accepted");
   return data.unrouted;
 }
 

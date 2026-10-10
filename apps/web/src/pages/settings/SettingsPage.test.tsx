@@ -236,3 +236,32 @@ test("a failed backup says no archive was written", async () => {
     "The backup failed and no archive was written. backup failed: archive verification disagreed",
   );
 });
+
+test("a refused backup is shown in the server's words, not as a token refusal", async () => {
+  stubApi((call) =>
+    call.path === "/api/ops/backup"
+      ? {
+          status: 409,
+          body: { detail: "a backup is already running with other options; wait for it to end" },
+        }
+      : handler({})(call),
+  );
+  renderPage();
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Take a backup" }));
+  expect((await screen.findByRole("alert")).textContent).toBe(
+    "a backup is already running with other options; wait for it to end",
+  );
+});
+
+test("a backups list refused for its token says so", async () => {
+  // The list opens no database, so its one declared refusal is the token's
+  // 403, which has no body.
+  stubApi((call) =>
+    call.path === "/api/settings/backups" ? { status: 403, body: null } : handler({})(call),
+  );
+  renderPage();
+  expect((await screen.findByRole("alert")).textContent).toBe(
+    "refused: the local API token was not accepted",
+  );
+});

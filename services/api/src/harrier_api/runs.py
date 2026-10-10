@@ -13,6 +13,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import sys
 import uuid
 from collections.abc import AsyncIterator, Mapping
@@ -173,6 +174,11 @@ PARAMETERIZED_KINDS: dict[str, ParameterizedKind] = {
 }
 
 
+# A character that can continue a path component, so a directory's path is
+# matched only where neither side continues it.
+_PATH_CHAR = r"[\w.~-]"
+
+
 @dataclass(frozen=True)
 class HiddenDirectory:
     """A directory whose path never reaches the run's event stream.
@@ -188,10 +194,20 @@ class HiddenDirectory:
     shown_as: str
 
     def hide(self, text: str) -> str:
+        """The text with this directory's path removed, matched only as a
+        whole path: `/app/database.old` beside `/app/data` is another path
+        and is left alone, where a plain substring match turned it into
+        "the data directorybase.old" (review of PR #214)."""
         root = str(self.path).rstrip(os.sep)
         if not root:
             return text
-        return text.replace(root + os.sep, "").replace(root, self.shown_as)
+        whole = rf"(?<!{_PATH_CHAR}){re.escape(root)}"
+        inside = re.sub(whole + re.escape(os.sep), "", text)
+        return re.sub(
+            rf"{whole}(?![\w~-]|\.{_PATH_CHAR}|{re.escape(os.sep)})",
+            lambda _: self.shown_as,
+            inside,
+        )
 
 
 def backup_hidden_directories() -> tuple[HiddenDirectory, ...]:

@@ -20,8 +20,10 @@ const VERIFICATION: Record<NonNullable<Archive["verification"]>, string> = {
 };
 
 async function fetchBackups(): Promise<Backups> {
+  // The list opens no database, so its one declared refusal is the token's,
+  // which has no body: no body is that refusal, said as such.
   const { data } = await api.GET("/settings/backups");
-  if (data === undefined) throw new Error("could not list the backups");
+  if (data === undefined) throw new Error("refused: the local API token was not accepted");
   return data;
 }
 
@@ -50,7 +52,10 @@ export function BackupsSection({ createEventSource }: { createEventSource: Event
   const take = useMutation({
     mutationFn: async (): Promise<RunOut> => {
       // Spec 050's route. An empty body takes an archive and deletes none.
-      const { data } = await api.POST("/ops/backup", { body: {} });
+      const { data, error } = await api.POST("/ops/backup", { body: {} });
+      // A run conflict (409) or a held database (503) in the server's words;
+      // only an answer with no body at all is the token refusal.
+      if (error !== undefined) throw new Error(refusalMessage(error, "no backup was started"));
       if (data === undefined) throw new Error("refused: the local API token was not accepted");
       return data;
     },

@@ -27,6 +27,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from harrier.backup import backup_dir, list_archives, listed_archive
+from harrier.demo import is_demo_mode
 from harrier.runoutcome import age_in_days
 from harrier.userconfig import ConfigError
 from harrier_api.deps import Conn, DatabaseRoute
@@ -474,6 +475,12 @@ class HostFactsOut(BaseModel):
 
 
 def _gmail_token() -> GmailTokenOut:
+    # The demo reads no host file: the token named in the environment is the
+    # operator's, and its presence and age are facts about them, not the demo
+    # (review of PR #214). The model and the exports are read from the data
+    # directory, which demo mode already points at the demo's own.
+    if is_demo_mode():
+        return GmailTokenOut(state="not_configured", age_days=None)
     raw = os.environ.get(GMAIL_TOKEN_ENV, "").strip()
     if not raw:
         return GmailTokenOut(state="not_configured", age_days=None)

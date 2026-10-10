@@ -17,9 +17,10 @@ export const REFUSED_TOKEN = "refused: the local API token was not accepted";
 
 async function fetchConfig(): Promise<readonly ConfigEntry[]> {
   const { data, error } = await api.GET("/config");
-  if (error !== undefined || data === undefined) {
-    throw new Error("could not read the configuration");
+  if (error !== undefined) {
+    throw new Error(refusalMessage(error, "could not read the configuration"));
   }
+  if (data === undefined) throw new Error(REFUSED_TOKEN);
   return data;
 }
 

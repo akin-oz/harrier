@@ -50,6 +50,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from harrier.db import DB_FILENAME, check_database_ownership, data_dir
+from harrier.demo import is_demo_mode
 
 BACKUP_DIR_ENV = "HARRIER_BACKUP_DIR"
 ARCHIVE_PREFIX = "harrier-data-"
@@ -78,6 +79,16 @@ class BackupResult:
 
 
 def backup_dir() -> Path:
+    """Where archives go, and where the Settings page lists them from.
+
+    Demo mode wins over everything, the override included, and points at the
+    demo's own data directory. A demo listing the operator's real archives
+    would show real names to whoever watches it, and a demo backup written
+    beside them would count toward their retention and could push a real
+    archive out (spec 096, review of PR #214).
+    """
+    if is_demo_mode():
+        return data_dir() / "backups"
     override = os.environ.get(BACKUP_DIR_ENV, "").strip()
     if override:
         return Path(override)

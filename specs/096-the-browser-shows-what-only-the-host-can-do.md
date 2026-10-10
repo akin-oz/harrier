@@ -398,6 +398,36 @@ amended here and in the section it touches, in the same change.
    document names describe the operator's own data. Spec 050's criterion
    that called it a tokenless read is amended to match, with a dated note.
 
+## Note (2026-10-10): behavior settled in review of PR #214
+
+The review found four behaviors this spec had not written down. Each is
+stated here and proved by a test.
+
+- **A demo reads only its own backups.** In demo mode the backups
+  directory is the demo's data directory's `backups/`, whatever
+  `HARRIER_BACKUP_DIR` or the home directory say, so a demo never lists,
+  verifies or writes beside the operator's archives. The Gmail token is
+  reported as not configured in a demo; the model and the exports already
+  come from the demo's data directory
+  (`services/api/tests/test_ui_settings.py::test_a_demo_never_lists_or_verifies_the_operators_backups`).
+- **An unreadable configuration file is refused, alike on both surfaces.**
+  `config import` refuses a file it cannot read or decode with the store's
+  refusal, naming the file: 400 over HTTP, exit 1 on the command line,
+  nothing stored. It was a 500 in the browser and a traceback in the
+  terminal
+  (`services/api/tests/test_ui_settings.py::test_an_unreadable_config_file_is_refused_alike_on_both_surfaces`,
+  `services/api/tests/test_ui_settings.py::test_a_config_file_without_read_permission_is_refused_alike`).
+- **A hidden directory is matched only as a whole path.** A sibling that
+  shares its prefix, such as `database.old` beside `data`, is left whole
+  rather than rewritten
+  (`services/api/tests/test_ui_settings.py::test_a_hidden_directory_is_matched_only_as_a_whole_path`,
+  `services/api/tests/test_ui_settings.py::test_a_run_hides_its_directories_without_touching_a_sibling`).
+- **A refused backup says why.** "Take a backup" shows a run conflict or a
+  held database in the server's words; only an answer with no body reads
+  as the token refusal
+  (`SettingsPage.test.tsx::a refused backup is shown in the server's words, not as a token refusal`,
+  `SettingsPage.test.tsx::a backups list refused for its token says so`).
+
 ## Honest limitations
 
 - **The browser cannot install the schedule or refresh the mail token.** It

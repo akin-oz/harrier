@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { components } from "@harrier/contract";
 
 import { api } from "../../shared/api/client";
+import { refusalMessage } from "../../shared/api/refusal";
 
 export type CommandPlaces = components["schemas"]["CommandPlacesOut"];
 export type HostFacts = components["schemas"]["HostFactsOut"];
@@ -35,8 +36,8 @@ export function useHostFacts() {
 }
 
 async function fetchSchedule(): Promise<Schedule> {
-  const { data } = await api.GET("/ops/schedule");
-  if (data === undefined) throw new Error("could not read the schedule");
+  const { data, error } = await api.GET("/ops/schedule");
+  if (error !== undefined) throw new Error(refusalMessage(error, "could not read the schedule"));
   return data;
 }
 

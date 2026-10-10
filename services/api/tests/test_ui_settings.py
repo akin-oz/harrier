@@ -12,6 +12,7 @@ hold, archive name or path appears here (ADR-008).
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import re
@@ -405,6 +406,40 @@ def test_config_import_refuses_in_the_stores_words(client: TestClient, env: Path
     assert nothing.json()["detail"] == "nothing to import; no configuration files found"
 
 
+def test_an_unreadable_config_file_is_refused_alike_on_both_surfaces(
+    client: TestClient, env: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A file the import cannot read is the store's refusal, naming the file,
+    on the command line and over HTTP, never a traceback or a 500 (review of
+    PR #214)."""
+    write_config_files(env)
+    (env / "config" / "feeds.txt").write_bytes(b"\xff\xfe not utf-8\n")
+
+    response = client.post("/config/import", headers=auth())
+    assert response.status_code == 400
+    assert response.json()["detail"].startswith("cannot read config/feeds.txt")
+    assert main(["config", "import"]) == 1
+    assert "cannot read config/feeds.txt" in capsys.readouterr().err
+    assert stored() == {}
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads a file whatever its mode")
+def test_a_config_file_without_read_permission_is_refused_alike(
+    client: TestClient, env: Path
+) -> None:
+    write_config_files(env)
+    unreadable = env / "config" / "linkedin_search_urls.txt"
+    unreadable.chmod(0)
+    try:
+        response = client.post("/config/import", headers=auth())
+        assert response.status_code == 400
+        assert "cannot read config/linkedin_search_urls.txt" in response.json()["detail"]
+        assert main(["config", "import"]) == 1
+    finally:
+        unreadable.chmod(0o600)
+    assert stored() == {}
+
+
 def test_unrouted_watchlist_lines_are_named_in_spec_041s_words(client: TestClient) -> None:
     response = client.post(
         "/settings/feeds/routing",
@@ -508,6 +543,83 @@ def test_a_backup_reports_the_archive_by_name_never_its_path(env: Path) -> None:
         journal = (env / "data" / "runs" / "journal.jsonl").read_text(encoding="utf-8")
         records = [json.loads(line) for line in journal.splitlines()]
         assert all(record.get("inputs", []) == [] for record in records if record["id"] == run_id)
+
+
+def test_a_demo_never_lists_or_verifies_the_operators_backups(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Demo mode reads its own backups directory, never the operator's, even
+    when the operator's is named in the environment (review of PR #214)."""
+    from harrier.backup import backup_dir
+    from harrier.db import data_dir
+
+    real = tmp_path / "operator-backups"
+    real.mkdir()
+    archive = real / f"{ARCHIVE_PREFIX}2026-01-01-000000{ARCHIVE_SUFFIX}"
+    archive.write_bytes(b"a real-looking archive")
+    token = tmp_path / "operator-token.json"
+    token.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("HARRIER_BACKUP_DIR", str(real))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("GMAIL_OAUTH_TOKEN_FILE", str(token))
+    monkeypatch.setenv("HARRIER_DEMO", "1")
+
+    assert backup_dir() == data_dir() / "backups"
+    with TestClient(create_app()) as demo:
+        listed = demo.get("/settings/backups", headers=auth()).json()
+        assert listed["archives"] == []
+        refused = demo.post(f"/settings/backups/{archive.name}/verify", headers=auth())
+        assert refused.status_code == 404
+        # The operator's token is a fact about them, not the demo.
+        host = demo.get("/settings/host", headers=auth()).json()
+        assert host["gmail_token"] == {"state": "not_configured", "age_days": None}
+
+
+def test_a_hidden_directory_is_matched_only_as_a_whole_path() -> None:
+    from harrier_api.runs import HiddenDirectory
+
+    data = HiddenDirectory(Path("/srv/data"), "the data directory")
+    assert data.hide("no database at /srv/data/tracker.db") == "no database at tracker.db"
+    assert data.hide("no data directory at /srv/data.") == (
+        "no data directory at the data directory."
+    )
+    # A sibling sharing the prefix is another path, left whole.
+    assert data.hide("moved to /srv/database.old/tracker.db") == (
+        "moved to /srv/database.old/tracker.db"
+    )
+    assert data.hide("kept /srv/data.old") == "kept /srv/data.old"
+    assert data.hide("under /x/srv/data/y") == "under /x/srv/data/y"
+
+
+def test_a_run_hides_its_directories_without_touching_a_sibling(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same rule at the run manager's one choke point, through a real
+    subprocess's output."""
+    import sys
+
+    import harrier_api.runs as runs_module
+    from harrier_api.runs import HiddenDirectory, RunParams
+
+    data = env / "srv" / "data"
+    sibling = env / "srv" / "database.old"
+    line = f"copied {data}/tracker.db beside {sibling}/tracker.db"
+
+    def printing(kind: str, params: RunParams) -> list[str]:
+        del kind, params
+        return [sys.executable, "-c", f"print({line!r})"]
+
+    monkeypatch.setattr(runs_module, "build_command", printing)
+    manager = RunManager(journal_path=env / "data" / "runs" / "journal.jsonl")
+
+    async def scenario() -> list[str]:
+        params = RunParams(hidden=(HiddenDirectory(data, "the data directory"),))
+        run = await manager.start("backup", params)
+        await manager.wait(run.id)
+        return log_lines(manager, run.id)
+
+    lines = asyncio.run(scenario())
+    assert lines[0] == f"copied tracker.db beside {sibling}/tracker.db"
 
 
 # --- what the container can see about the host ----------------------------------

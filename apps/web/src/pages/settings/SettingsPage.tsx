@@ -6,6 +6,7 @@ import { ConfigSection } from "../../features/config";
 import { CommandList, HostPanel } from "../../features/host-commands";
 import type { EventSourceFactory } from "../../features/runs/useRunStream";
 import { api } from "../../shared/api/client";
+import { refusalMessage } from "../../shared/api/refusal";
 import { BackupsSection } from "./BackupsSection";
 import { ExportSection } from "./ExportSection";
 import "./SettingsPage.css";
@@ -14,8 +15,11 @@ type ProfileDocument = components["schemas"]["ProfileDocumentOut"];
 
 async function fetchProfile(): Promise<readonly ProfileDocument[]> {
   // Spec 050's route, which spec 096 reuses rather than repeating.
-  const { data } = await api.GET("/ops/profile");
-  if (data === undefined) throw new Error("could not list the profile documents");
+  const { data, error } = await api.GET("/ops/profile");
+  if (error !== undefined) {
+    throw new Error(refusalMessage(error, "could not list the profile documents"));
+  }
+  if (data === undefined) throw new Error("refused: the local API token was not accepted");
   return data;
 }
 

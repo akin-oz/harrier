@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
@@ -27,6 +28,7 @@ from harrier.userconfig.store import (
     FEEDS,
     KINDS,
     LINKEDIN_SEARCHES,
+    ConfigError,
     HoldEntry,
     set_config,
 )
@@ -59,10 +61,29 @@ class ConfigImport:
         return len(KINDS)
 
 
-def settings_from_file(path: Path) -> dict[str, object]:
+def _read[T](path: Path, read: Callable[[Path], T]) -> T:
+    """A file the import reads, or the store's refusal naming it.
+
+    An unreadable or undecodable file was a traceback on the command line and
+    a 500 in the browser, because each caller caught a different set of
+    errors. Raising the one error both callers already refuse with keeps the
+    two surfaces answering alike (spec 096, review of PR #214).
+    """
     try:
-        parsed: object = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        return read(path)
+    except (OSError, UnicodeDecodeError) as error:
+        raise ConfigError(f"cannot read {path}: {error}") from error
+
+
+def settings_from_file(path: Path) -> dict[str, object]:
+    """The discovery settings in `path`, or none when the file is absent or
+    is not a JSON object. A file that exists and cannot be read is refused."""
+    if not path.is_file():
+        return {}
+    text = _read(path, lambda target: target.read_text(encoding="utf-8"))
+    try:
+        parsed: object = json.loads(text)
+    except json.JSONDecodeError:
         return {}
     if not isinstance(parsed, dict):
         return {}
@@ -83,9 +104,9 @@ def import_config_files(conn: sqlite3.Connection) -> ConfigImport:
     `ConfigError` for that, and for any value the store refuses.
     """
     sources: dict[str, list[str] | list[HoldEntry]] = {
-        FEEDS: read_line_config(FEEDS_PATH),
-        LINKEDIN_SEARCHES: read_line_config(SEARCH_URLS_PATH),
-        COMPANY_HOLDS: read_hold_file_raw(HOLDS_PATH),
+        FEEDS: _read(FEEDS_PATH, read_line_config),
+        LINKEDIN_SEARCHES: _read(SEARCH_URLS_PATH, read_line_config),
+        COMPANY_HOLDS: _read(HOLDS_PATH, read_hold_file_raw),
     }
     result = ConfigImport()
     for kind, values in sources.items():
