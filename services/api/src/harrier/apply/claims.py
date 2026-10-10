@@ -151,7 +151,9 @@ def _without_placeholders(text: str) -> str:
 
 # --- C5 and C6: numbers -------------------------------------------------------
 
-_SURROUNDING = "()[]{}\"'.,;:!?+~*\u201c\u201d\u2018\u2019"
+# Backticks and underscores are markup around a number, not part of it, so
+# `12` and _12_ are read as 12 (spec 113).
+_SURROUNDING = "()[]{}\"'.,;:!?+~*`_\u201c\u201d\u2018\u2019"
 _NUMBER = re.compile(r"^[€$£]?(\d+(?:[.,]\d+)*)(k|m|x|%|/(?:day|week|month|year))?$", re.IGNORECASE)
 _RATE_WORDS = frozenset({"per", "each", "every", "daily", "weekly", "monthly", "annually"})
 _PERIODS = frozenset({"day", "week", "month", "year"})
