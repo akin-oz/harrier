@@ -138,39 +138,38 @@ Every test below goes through `generate_cover_letter` or
 review checklist test reads the `## To verify` section of the markdown draft
 the letter writes.
 
-- [ ] a letter saying ``I led `12` engineers.`` with no claim is refused with
+- [x] a letter saying ``I led `12` engineers.`` with no claim is refused with
       ``number without evidence: 12 (in: I led `12` engineers.)``
-      (planned test_a_number_in_inline_code_needs_a_claim)
-- [ ] the same with `_12_` is refused with the matching refusal
-      (planned test_a_number_in_underscore_emphasis_needs_a_claim)
-- [ ] a letter saying ``I led `12` engineers.``, declared as a claim whose
+      (`services/api/tests/test_apply_claims.py::test_a_number_in_inline_code_needs_a_claim`)
+- [x] the same with `_12_` is refused with the matching refusal
+      (`services/api/tests/test_apply_claims.py::test_a_number_in_underscore_emphasis_needs_a_claim`)
+- [x] a letter saying ``I led `12` engineers.``, declared as a claim whose
       evidence holds `12`, passes
-      (planned test_a_claimed_number_in_inline_code_passes)
-- [ ] a claim quoting a truth line ``Processed `1,200` invoices`` cannot be
+      (`services/api/tests/test_apply_claims.py::test_a_claimed_number_in_inline_code_passes`)
+- [x] a claim quoting a truth line ``Processed `1,200` invoices`` cannot be
       rewritten as ``1,200 invoices a month``: refused with `number changed
       scope`
-      (planned test_a_rate_read_from_markup_keeps_its_scope)
-- [ ] ``Ran **Kafka** 3 and `2` replicas.``, with `Kafka 3` in the truth
+      (`services/api/tests/test_apply_claims.py::test_a_rate_read_from_markup_keeps_its_scope`)
+- [x] ``Ran **Kafka** 3 and `2` replicas.``, with `Kafka 3` in the truth
       sources and no claim, is refused for `2` only
-      (planned test_a_number_in_markup_no_longer_drops_a_grounded_version)
-- [ ] a repeated number after a word in inline code names the word without
+      (`services/api/tests/test_apply_claims.py::test_a_number_in_markup_no_longer_drops_a_grounded_version`)
+- [x] a repeated number after a word in inline code names the word without
       its backticks
-      (planned test_the_word_before_a_repeated_number_drops_its_markup)
-- [ ] the draft's `## To verify` section lists a number written in inline
+      (`services/api/tests/test_apply_claims.py::test_the_word_before_a_repeated_number_drops_its_markup`)
+- [x] the draft's `## To verify` section lists a number written in inline
       code as `- Number: 12`
-      (planned test_the_review_lists_a_number_in_inline_code)
-- [ ] `1_000`, ``a`12`b`` and `retry_3` are still not number tokens
-      (planned test_markup_inside_a_word_does_not_make_a_number)
-- [ ] with the backtick and underscore removed from `_SURROUNDING` again, the
+      (`services/api/tests/test_apply_brief.py::test_the_review_lists_a_number_in_inline_code`)
+- [x] `1_000`, ``a`12`b`` and `retry_3` are still not number tokens
+      (`services/api/tests/test_apply_claims.py::test_markup_inside_a_word_does_not_make_a_number`)
+- [x] with the backtick and underscore removed from `_SURROUNDING` again, the
       first, second, fifth and seventh tests fail, and the pull request
       records the run
-- [ ] spec 065's C5 row and spec 068's Out of scope line say what this spec
+- [x] spec 065's C5 row and spec 068's Out of scope line say what this spec
       changed
-- [ ] `just check` passes
+- [x] `just check` passes
 
-The planned tests go in `services/api/tests/test_apply_claims.py`, apart from
-the review checklist test, which goes in
-`services/api/tests/test_apply_brief.py`.
+The tests are in `services/api/tests/test_apply_claims.py`, apart from the
+review checklist test, which is in `services/api/tests/test_apply_brief.py`.
 
 ## Honest limitations
 
