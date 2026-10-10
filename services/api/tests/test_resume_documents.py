@@ -34,6 +34,7 @@ from harrier.resume.content import (
 )
 from harrier.resume.documents import FACTS_KIND, FRAMING_KIND, split_document
 from harrier.resume.split import PRESPLIT_KIND
+from harrier.tracks import default_scope
 from harrier_cli.main import main
 
 ACADEMIC = "lab-search"
@@ -104,20 +105,20 @@ def test_every_field_lands_in_exactly_one_document() -> None:
 def test_load_bundle_refuses_each_mixed_shape(db: sqlite3.Connection) -> None:
     store_old_shape(db, example_bundle_raw())
     with pytest.raises(ResumeBundleError, match="run harrier profile split-resume"):
-        load_bundle(db)
+        load_bundle(db, default_scope(db))
     with pytest.raises(ResumeBundleError, match="run harrier profile split-resume"):
         load_skill_vocabulary(db)
 
     store_example(db)
     with pytest.raises(ResumeBundleError, match="keep one shape"):
-        load_bundle(db)
+        load_bundle(db, default_scope(db))
     with pytest.raises(ResumeBundleError, match="keep one shape"):
         load_forbidden_phrases(db)
 
     db.execute("DELETE FROM profile_documents WHERE kind IN ('resume_data', ?)", (FRAMING_KIND,))
     db.commit()
-    with pytest.raises(ResumeBundleError, match="no resume_framing document"):
-        load_bundle(db)
+    with pytest.raises(ResumeBundleError, match="track job has no resume framing"):
+        load_bundle(db, default_scope(db))
 
 
 def test_a_key_in_the_wrong_document_is_refused(db: sqlite3.Connection) -> None:
@@ -127,7 +128,7 @@ def test_a_key_in_the_wrong_document_is_refused(db: sqlite3.Connection) -> None:
     framing_candidate["email"] = "someone@example.test"
     store_documents(db, facts, framing)
     with pytest.raises(ResumeBundleError) as refused:
-        load_bundle(db)
+        load_bundle(db, default_scope(db))
     message = str(refused.value)
     assert "resume_facts: bullet_pool belongs in resume_framing" in message
     assert "resume_framing: candidate.email belongs in resume_facts" in message
@@ -139,7 +140,7 @@ def test_framing_role_must_name_a_facts_role(db: sqlite3.Connection) -> None:
     roles.append({"id": "no-such-role", "bullet_count": 2})
     store_documents(db, facts, framing)
     with pytest.raises(ResumeBundleError, match=r"resume_framing: roles\[\d+\] names unknown role"):
-        load_bundle(db)
+        load_bundle(db, default_scope(db))
 
 
 def test_a_role_framed_twice_is_refused() -> None:
@@ -182,7 +183,7 @@ def test_the_split_write_is_all_or_nothing(db: sqlite3.Connection) -> None:
     with pytest.raises(sqlite3.IntegrityError):
         put_documents_and_rekind(
             db,
-            [(FACTS_KIND, "resume-facts.json", "json", "{}")],
+            [(FACTS_KIND, "resume-facts.json", "json", "{}", None)],
             ("resume_data", "resume-content.json", PRESPLIT_KIND),
         )
     assert documents(db) == before
@@ -241,7 +242,7 @@ def test_split_resume_writes_the_pair_and_keeps_the_original(
         (PRESPLIT_KIND, "resume-content.json"),
     }
     assert stored[(PRESPLIT_KIND, "resume-content.json")] == original
-    assert load_bundle(db) == parse_bundle(raw)
+    assert load_bundle(db, default_scope(db)) == parse_bundle(raw)
     assert stored[(FACTS_KIND, "resume-facts.json")].startswith('{\n  "')
     capsys.readouterr()
 

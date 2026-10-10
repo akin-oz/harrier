@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 from collections.abc import Iterator
 from contextlib import suppress
@@ -166,7 +167,15 @@ def test_the_schedule_reads_the_definition_the_cli_installs(client: TestClient) 
 
 
 def test_the_profile_list_is_the_one_the_cli_prints(client: TestClient) -> None:
-    documents = [{"kind": "truth", "name": "invented", "format": "markdown", "updated_at": "t"}]
+    documents = [
+        {
+            "kind": "truth",
+            "name": "invented",
+            "format": "markdown",
+            "updated_at": "t",
+            "owner": "shared",
+        }
+    ]
     with (
         patch("harrier.profile.list_documents", return_value=documents) as route_side,
         patch("harrier_cli.main.list_documents", return_value=documents) as cli_side,
@@ -849,12 +858,22 @@ def test_an_upload_becomes_a_run_input_and_is_removed(env: Path) -> None:
         seen.append(params)
         return ["true"]
 
+    # The run is held until the files are read. Without the hold it could
+    # finish, and remove them, before the first stat: CI saw exactly that.
+    release = threading.Event()
+    run_process = runs._run_process  # pyright: ignore[reportPrivateUsage]
+
+    async def held(run: Run) -> None:
+        await asyncio.to_thread(release.wait, 10)
+        await run_process(run)
+
     files = {
         "dataset_file": ("export.json", b'[{"title": "Invented Role"}]', "application/json"),
         "wellfound_file": ("wellfound.csv", b"title,company\nRole,Invented Co\n", "text/csv"),
     }
     with (
         patch("harrier_api.runs.build_command", side_effect=record),
+        patch.object(runs, "_run_process", new=held),
         TestClient(create_app(run_manager=runs)) as client,
     ):
         response = client.post("/ops/discover", files=files, headers=auth())
@@ -867,6 +886,7 @@ def test_an_upload_becomes_a_run_input_and_is_removed(env: Path) -> None:
             assert path.stat().st_mode & 0o077 == 0, "an upload is readable by other users"
         assert written["--dataset-file"].read_bytes() == files["dataset_file"][1]
         assert written["--wellfound-file"].suffix == ".csv"
+        release.set()
         _finished(runs, response.json()["id"])
     assert not any(path.exists() for path in written.values()), "an upload outlived its run"
 

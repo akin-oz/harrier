@@ -7,6 +7,8 @@ legacy CSV column order and is load-bearing for export fidelity.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from harrier.tracks import KIND_RULES, TRACK_KINDS
 
 # Legacy 20-column order (old repo: scripts/job_sources.py TRACKER_FIELDS).
@@ -389,6 +391,54 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
             """,
         ],
     ),
+    # Postgres only (spec 105): the owner column and the row policy exist on
+    # the hosted store alone, because the local schema names no tenant
+    # (ADR-012 point 3). Empty on purpose, and declared so in
+    # SINGLE_DIALECT_MIGRATIONS.
+    # The runner still records the version, so both histories keep one
+    # numbering.
+    (10, []),
+    (
+        11,
+        [
+            # A profile document is owned by one track or shared by all
+            # (spec 099, spec 091's design note). NULL is shared. SQLite
+            # treats NULLs as distinct in a plain UNIQUE, so uniqueness is two
+            # partial indexes. A rebuild, as migration 7, because the inline
+            # UNIQUE (kind, name) cannot be dropped. `track_id` goes last, as
+            # Postgres's ADD COLUMN puts it, so the two stores keep one column
+            # order (spec 103).
+            """
+            CREATE TABLE profile_documents_new (
+                id INTEGER PRIMARY KEY,
+                kind TEXT NOT NULL,
+                name TEXT NOT NULL,
+                format TEXT NOT NULL DEFAULT 'text',
+                content TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                track_id INTEGER REFERENCES tracks(id)
+            )
+            """,
+            # The one framing that can exist is the default track's (spec 098).
+            """
+            INSERT INTO profile_documents_new
+                (id, kind, name, format, content, updated_at, track_id)
+            SELECT id, kind, name, format, content, updated_at,
+                CASE kind WHEN 'resume_framing' THEN 1 END
+            FROM profile_documents
+            """,
+            "DROP TABLE profile_documents",
+            "ALTER TABLE profile_documents_new RENAME TO profile_documents",
+            """
+            CREATE UNIQUE INDEX idx_profile_documents_shared
+            ON profile_documents (kind, name) WHERE track_id IS NULL
+            """,
+            """
+            CREATE UNIQUE INDEX idx_profile_documents_owned
+            ON profile_documents (track_id, kind, name) WHERE track_id IS NOT NULL
+            """,
+        ],
+    ),
 ]
 
 # --- Postgres (spec 103, ADR-013) ---
@@ -541,8 +591,335 @@ POSTGRES_BASELINE: list[str] = [
     """,
 ]
 
+# --- Owners and the row policy (spec 105, ADR-013 decision 1) ---
+#
+# Hosted only. Every table that holds personal data carries an owner_id, and
+# a forced row policy confines a session to its owner's rows. These
+# declarations are the "marked hosted" part of the one definition that
+# ADR-013 decision 5 asks for. `tests/test_owner_policy.py` holds a migrated
+# store to them, and `tests/test_dialect_parity.py` reads them to tell a
+# deliberate difference from drift.
+
+# Every table with an owner. The order is the order migration 10 looks for
+# ownerless rows: a table before the table it references, so a refusal names
+# the table that holds the row rather than its parent.
+OWNED_TABLES: tuple[str, ...] = (
+    "job_events",
+    "jobs",
+    "contacts",
+    "profile_documents",
+    "user_config",
+    "job_runs",
+    "tracks",
+)
+
+# Every other table, with the reason it has no owner.
+UNOWNED_TABLES: dict[str, str] = {
+    "schema_version": "migration bookkeeping, no personal data",
+}
+
+# Columns only the hosted store has, as (table, column).
+HOSTED_ONLY_COLUMNS: tuple[tuple[str, str], ...] = tuple(
+    (table, "owner_id") for table in OWNED_TABLES
+)
+
+# Keys that are per owner on Postgres and global on SQLite. Each maps (table,
+# the key's columns on Postgres) to the same key on SQLite: the Postgres
+# columns without the leading owner_id, or None for a key only Postgres has.
+# A key here is a primary key, a unique constraint or a unique index.
+OWNER_SCOPED_KEYS: dict[tuple[str, tuple[str, ...]], tuple[str, ...] | None] = {
+    ("jobs", ("owner_id", "url")): ("url",),
+    ("jobs", ("owner_id", "external_key")): ("external_key",),
+    ("tracks", ("owner_id", "slug")): ("slug",),
+    ("user_config", ("owner_id", "kind")): ("kind",),
+    ("profile_documents", ("owner_id", "kind", "name")): ("kind", "name"),
+    ("profile_documents", ("owner_id", "track_id", "kind", "name")): ("track_id", "kind", "name"),
+    ("job_runs", ("owner_id", "job")): ("job",),
+    ("tracks", ("owner_id", "id")): ("id",),
+    # What job_events references, so an event stays inside its job's owner.
+    # SQLite has no owner to stay inside.
+    ("jobs", ("owner_id", "id")): None,
+}
+
+Dialect = Literal["sqlite", "postgres"]
+
+# A version that applies to one dialect only: the dialect, and why. The other
+# dialect's list holds the version with no statements, on purpose, so both
+# runners record it and the two histories keep one numbering.
+# `undeclared_dialects` accepts that empty list only for a version declared
+# here with a reason (spec 105).
+SINGLE_DIALECT_MIGRATIONS: dict[int, tuple[Dialect, str]] = {
+    10: (
+        "postgres",
+        "owner_id and row-level policy (spec 105); "
+        "the local schema names no tenant (ADR-012 point 3)",
+    ),
+}
+
+MIGRATION_10_NEEDS_AUTH = (
+    "migration 10 needs Supabase's auth schema (auth.users, auth.uid()) and the "
+    "authenticated role; this store has none"
+)
+
+# The one role the owner policy serves and the one that holds harrier's
+# table privileges. A request's transaction switches to it (spec 104).
+# Supabase's Data API switches to `authenticated` instead, which holds
+# nothing here, so it can never reach these tables and harrier.tracker
+# stays the one write path (ADR-003), whatever schemas the project exposes.
+TENANT_ROLE = "harrier_tenant"
+
+# Every role a revoke names. Supabase creates anon, authenticated and
+# service_role; the tests create them in a shim (tests/pg_support.py).
+_EVERY_GRANTEE = f"PUBLIC, anon, authenticated, service_role, {TENANT_ROLE}"
+_OWNER_IS_SESSION = "owner_id = (SELECT auth.uid())"
+# Migration 8's seed (MIGRATIONS above): every owner's first track.
+_FIRST_TRACK = "1, 'job', 'industry', 'Job search'"
+# The identity sequences that stay global (spec 105, Honest limitations).
+# tracks loses its own when its id stops being an identity.
+_GLOBAL_ID_SEQUENCES = ", ".join(
+    f"{table}_id_seq"
+    for table in ("jobs", "contacts", "profile_documents", "user_config", "job_events")
+)
+
+
+def _sql_text(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _refuse_without_auth() -> str:
+    # anon and service_role are checked too, because the revokes below name
+    # them and would fail on a store without them.
+    roles = " OR ".join(
+        f"NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{role}')"
+        for role in ("authenticated", "anon", "service_role")
+    )
+    return f"""
+    DO $$
+    BEGIN
+        IF to_regclass('auth.users') IS NULL OR to_regprocedure('auth.uid()') IS NULL
+            OR {roles}
+        THEN
+            RAISE EXCEPTION {_sql_text(MIGRATION_10_NEEDS_AUTH)};
+        END IF;
+    END
+    $$
+    """
+
+
+def _create_tenant_role() -> str:
+    # A role belongs to the whole server, not to this database, so another
+    # store on the same server may have made it already, or be making it
+    # now. NOINHERIT: it gains nothing from any role it is later made a
+    # member of. NOBYPASSRLS: the policy always applies to it.
+    return f"""
+    DO $$
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{TENANT_ROLE}') THEN
+            CREATE ROLE {TENANT_ROLE} NOLOGIN NOINHERIT NOBYPASSRLS;
+        END IF;
+    EXCEPTION WHEN duplicate_object OR unique_violation THEN
+        NULL;
+    END
+    $$
+    """
+
+
+def _refuse_ownerless_rows() -> str:
+    checks = "\n".join(
+        f"IF EXISTS (SELECT 1 FROM {table}{' WHERE id <> 1' if table == 'tracks' else ''}) "
+        f"THEN RAISE EXCEPTION "
+        f"{_sql_text(f'migration 10 found rows in {table} with no owner; it cannot choose one')};"
+        " END IF;"
+        for table in OWNED_TABLES
+    )
+    return f"DO $$\nBEGIN\n{checks}\nEND\n$$"
+
+
+POSTGRES_OWNERS: list[str] = [
+    # Both prechecks raise, which rolls the whole migration back and leaves
+    # the store at version 9. No owner is ever guessed.
+    _refuse_without_auth(),
+    _refuse_ownerless_rows(),
+    _create_tenant_role(),
+    # The baseline's seeded track has no owner. Each owner gets their own
+    # track 1 below instead.
+    "ALTER TABLE tracks DISABLE TRIGGER tracks_are_never_deleted",
+    "DELETE FROM tracks WHERE id = 1",
+    "ALTER TABLE tracks ENABLE TRIGGER tracks_are_never_deleted",
+    # No ON DELETE action: deleting an auth user who still owns rows is
+    # refused. Spec 111 decides deletion.
+    *(
+        f"ALTER TABLE {table} ADD COLUMN owner_id uuid NOT NULL DEFAULT auth.uid() "
+        "REFERENCES auth.users (id)"
+        for table in OWNED_TABLES
+    ),
+    # The two references are rebuilt to carry the owner, so a row can only
+    # name a row of its own owner. Dropped first: each depends on the key it
+    # names.
+    "ALTER TABLE job_events DROP CONSTRAINT job_events_job_id_fkey",
+    "ALTER TABLE jobs DROP CONSTRAINT jobs_track_id_fkey",
+    # Every per-owner key leads with owner_id, so it is also the index the
+    # policy's filter uses.
+    "DROP INDEX idx_jobs_url",
+    "CREATE UNIQUE INDEX idx_jobs_url ON jobs(owner_id, url) WHERE url <> ''",
+    "DROP INDEX idx_jobs_external_key",
+    (
+        "CREATE UNIQUE INDEX idx_jobs_external_key ON jobs(owner_id, external_key) "
+        "WHERE external_key <> ''"
+    ),
+    "ALTER TABLE tracks DROP CONSTRAINT tracks_slug_key",
+    "ALTER TABLE tracks ADD UNIQUE (owner_id, slug)",
+    "ALTER TABLE user_config DROP CONSTRAINT user_config_kind_key",
+    "ALTER TABLE user_config ADD UNIQUE (owner_id, kind)",
+    "ALTER TABLE profile_documents DROP CONSTRAINT profile_documents_kind_name_key",
+    "ALTER TABLE profile_documents ADD UNIQUE (owner_id, kind, name)",
+    "ALTER TABLE job_runs DROP CONSTRAINT job_runs_pkey",
+    "ALTER TABLE job_runs ADD PRIMARY KEY (owner_id, job)",
+    # Track ids are per owner, so every owner's default track is 1, as it is
+    # locally, and DEFAULT_TRACK_ID keeps its meaning under the policy.
+    "ALTER TABLE tracks ALTER COLUMN id DROP IDENTITY",
+    "ALTER TABLE tracks DROP CONSTRAINT tracks_pkey",
+    "ALTER TABLE tracks ADD PRIMARY KEY (owner_id, id)",
+    "ALTER TABLE jobs ADD UNIQUE (owner_id, id)",
+    "ALTER TABLE jobs ADD FOREIGN KEY (owner_id, track_id) REFERENCES tracks (owner_id, id)",
+    "ALTER TABLE job_events ADD FOREIGN KEY (owner_id, job_id) REFERENCES jobs (owner_id, id)",
+    "CREATE INDEX idx_contacts_owner ON contacts(owner_id)",
+    "CREATE INDEX idx_job_events_owner ON job_events(owner_id)",
+    # A track inserted without an id gets one more than its owner's highest.
+    # The lock is per owner and held to the end of the transaction, so two
+    # tracks created at once by one owner get two ids. The two-key lock form
+    # never meets the runner's one-key MIGRATION_LOCK_KEY. Qualified names
+    # throughout: harrier_new_owner() fires this with an empty search_path.
+    """
+    CREATE FUNCTION harrier_number_track() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.id IS NULL THEN
+            PERFORM pg_catalog.pg_advisory_xact_lock(
+                pg_catalog.hashtext('harrier.tracks'),
+                pg_catalog.hashtext(NEW.owner_id::text)
+            );
+            SELECT coalesce(max(id), 0) + 1 INTO NEW.id
+            FROM public.tracks WHERE owner_id = NEW.owner_id;
+        END IF;
+        RETURN NEW;
+    END
+    $$
+    """,
+    """
+    CREATE TRIGGER tracks_number_per_owner BEFORE INSERT ON tracks
+    FOR EACH ROW EXECUTE FUNCTION harrier_number_track()
+    """,
+    # The baseline's refusals are row triggers, which TRUNCATE never fires,
+    # so a role with TRUNCATE could empty either table, and TRUNCATE tracks
+    # CASCADE would take every job with it. These fire for the superuser
+    # too. SQLite has no TRUNCATE, so nothing there needs them.
+    """
+    CREATE TRIGGER job_events_append_only_truncate BEFORE TRUNCATE ON job_events
+    FOR EACH STATEMENT EXECUTE FUNCTION harrier_refuse('job_events is append-only')
+    """,
+    """
+    CREATE TRIGGER tracks_are_never_truncated BEFORE TRUNCATE ON tracks
+    FOR EACH STATEMENT EXECUTE FUNCTION harrier_refuse('tracks are archived, never deleted')
+    """,
+    # Every new auth user gets track 1, whoever creates the user. A failure
+    # here fails the sign-up, which is the honest result: an owner without
+    # track 1 cannot use the product. SECURITY DEFINER with an empty
+    # search_path, as Supabase documents for this pattern.
+    f"""
+    CREATE FUNCTION harrier_new_owner() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+    BEGIN
+        INSERT INTO public.tracks (owner_id, id, slug, kind, label)
+        VALUES (NEW.id, {_FIRST_TRACK});
+        RETURN NEW;
+    END
+    $$
+    """,
+    """
+    CREATE TRIGGER harrier_new_owner AFTER INSERT ON auth.users
+    FOR EACH ROW EXECUTE FUNCTION public.harrier_new_owner()
+    """,
+    f"""
+    INSERT INTO tracks (owner_id, id, slug, kind, label)
+    SELECT id, {_FIRST_TRACK} FROM auth.users
+    """,
+    # One policy for every command (ADR-013 decision 1). USING decides what a
+    # read, update or delete sees; WITH CHECK what an insert or update
+    # stores. Without claims auth.uid() is null, so nothing matches. FORCE
+    # subjects the table owner, but not a superuser or a BYPASSRLS role.
+    *(
+        statement
+        for table in OWNED_TABLES
+        for statement in (
+            f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY",
+            f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY",
+            f"CREATE POLICY owner_only ON {table} AS PERMISSIVE FOR ALL TO {TENANT_ROLE} "
+            f"USING ({_OWNER_IS_SESSION}) WITH CHECK ({_OWNER_IS_SESSION})",
+        )
+    ),
+    # Row security on every table, so no table is the exception.
+    "ALTER TABLE schema_version ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE schema_version FORCE ROW LEVEL SECURITY",
+    f"CREATE POLICY version_readable ON schema_version FOR SELECT TO {TENANT_ROLE} USING (true)",
+    # Privileges are stated, never inherited from a default: Supabase's
+    # default for new tables in public has changed once already. Only the
+    # tenant role gets any. anon and authenticated are the Data API's roles
+    # and get none. service_role bypasses row security, so a table privilege
+    # is all that limits it, and it gets none here. A trigger fires without
+    # EXECUTE on its function, so revoking it takes nothing from a write.
+    # No grant includes TRUNCATE.
+    (f"REVOKE ALL ON {', '.join(OWNED_TABLES)}, {', '.join(UNOWNED_TABLES)} FROM {_EVERY_GRANTEE}"),
+    f"REVOKE ALL ON SEQUENCE {_GLOBAL_ID_SEQUENCES} FROM {_EVERY_GRANTEE}",
+    (
+        "REVOKE ALL ON FUNCTION harrier_refuse(), harrier_number_track(), harrier_new_owner() "
+        f"FROM {_EVERY_GRANTEE}"
+    ),
+    (
+        "GRANT SELECT, INSERT, UPDATE, DELETE "
+        f"ON jobs, contacts, profile_documents, user_config, job_runs TO {TENANT_ROLE}"
+    ),
+    # The append-only triggers refuse the rest on job_events, and
+    # tracks_are_never_deleted on tracks.
+    f"GRANT SELECT, INSERT ON job_events TO {TENANT_ROLE}",
+    f"GRANT SELECT, INSERT, UPDATE ON tracks TO {TENANT_ROLE}",
+    f"GRANT SELECT ON schema_version TO {TENANT_ROLE}",
+    # The policy calls auth.uid() as the session's role, so the tenant role
+    # must reach it. Supabase grants this to its own roles; this one is
+    # harrier's.
+    f"GRANT USAGE ON SCHEMA auth TO {TENANT_ROLE}",
+    f"GRANT EXECUTE ON FUNCTION auth.uid() TO {TENANT_ROLE}",
+]
+
+# Spec 099: SQLite's migration 11, without its rebuild, and per owner. A
+# track is (owner_id, id) since migration 10, so the reference carries the
+# owner, and each partial index leads with owner_id as every per-owner key
+# does. A shared row's NULL track_id leaves the reference unchecked.
+POSTGRES_TRACK_OWNED_DOCUMENTS: list[str] = [
+    "ALTER TABLE profile_documents ADD COLUMN track_id bigint",
+    (
+        "ALTER TABLE profile_documents ADD FOREIGN KEY (owner_id, track_id) "
+        "REFERENCES tracks (owner_id, id)"
+    ),
+    "ALTER TABLE profile_documents DROP CONSTRAINT profile_documents_owner_id_kind_name_key",
+    "UPDATE profile_documents SET track_id = 1 WHERE kind = 'resume_framing'",
+    """
+    CREATE UNIQUE INDEX idx_profile_documents_shared
+    ON profile_documents (owner_id, kind, name) WHERE track_id IS NULL
+    """,
+    """
+    CREATE UNIQUE INDEX idx_profile_documents_owned
+    ON profile_documents (owner_id, track_id, kind, name) WHERE track_id IS NOT NULL
+    """,
+    # The dropped constraint was the table's whole-table index on owner_id,
+    # which the policy's filter uses; the partial indexes cover only part of
+    # the table each (spec 105).
+    "CREATE INDEX idx_profile_documents_owner ON profile_documents(owner_id)",
+]
+
 POSTGRES_MIGRATIONS: list[tuple[int, list[str]]] = [
     (POSTGRES_BASELINE_VERSION, POSTGRES_BASELINE),
+    (10, POSTGRES_OWNERS),
+    (11, POSTGRES_TRACK_OWNED_DOCUMENTS),
 ]
 
 
@@ -550,20 +927,37 @@ def undeclared_dialects(
     sqlite: list[tuple[int, list[str]]],
     postgres: list[tuple[int, list[str]]],
     baseline: int = POSTGRES_BASELINE_VERSION,
+    single_dialect: dict[int, tuple[Dialect, str]] | None = None,
 ) -> list[str]:
     """Every version after the baseline that one dialect lacks or leaves empty.
 
     A migration that lands for one store only makes the two drift apart in a
     way the parity test may not see, so each later version must appear in
-    both lists with at least one statement (spec 103).
+    both lists with at least one statement (spec 103). The one exception is
+    a version declared in `single_dialect` (SINGLE_DIALECT_MIGRATIONS by
+    default) with a reason: the other dialect's list holds it empty on
+    purpose, and must keep it empty (spec 105). Either dialect may be the
+    one; neither may be empty without a declaration.
     """
-    sqlite_versions = {version: statements for version, statements in sqlite if version > baseline}
-    postgres_versions = {
-        version: statements for version, statements in postgres if version > baseline
+    declared = SINGLE_DIALECT_MIGRATIONS if single_dialect is None else single_dialect
+    lists: dict[Dialect, dict[int, list[str]]] = {
+        "sqlite": {version: statements for version, statements in sqlite if version > baseline},
+        "postgres": {version: statements for version, statements in postgres if version > baseline},
     }
+    versions = set(lists["sqlite"]) | set(lists["postgres"])
+    versions |= {version for version in declared if version > baseline}
     problems: list[str] = []
-    for version in sorted(set(sqlite_versions) | set(postgres_versions)):
-        for dialect, versions in (("sqlite", sqlite_versions), ("postgres", postgres_versions)):
-            if not versions.get(version):
+    for version in sorted(versions):
+        only = declared.get(version)
+        for dialect in ("sqlite", "postgres"):
+            statements = lists[dialect].get(version)
+            if only is not None and only[0] != dialect and statements is not None:
+                if statements:
+                    problems.append(
+                        f"migration {version} is {only[0]} only but declares {dialect} statements"
+                    )
+            elif not statements:
                 problems.append(f"migration {version} declares no {dialect} statements")
+        if only is not None and not only[1].strip():
+            problems.append(f"migration {version} is {only[0]} only without a reason")
     return problems

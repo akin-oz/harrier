@@ -247,7 +247,7 @@ projects on 2026-10-30. Either way, migration 10 states the result:
 - `anon` gets nothing on any table, sequence or harrier function.
 - Assumption: inserting into an identity column needs no privilege on its
   sequence, so `authenticated` gets none. Not confirmed from the
-  documentation; (planned test_an_owner_files_a_job_with_the_defaults)
+  documentation; (`services/api/tests/test_owner_policy.py::test_an_owner_files_a_job_with_the_defaults`)
   proves it or fails.
 - `service_role` gets nothing. It bypasses row security, so a table
   privilege is the only thing that limits it. A later spec whose operator
@@ -341,7 +341,7 @@ documents it.
 
 ### The catalog test
 
-(planned test_every_table_is_owned_or_declared) lists every relation in
+(`services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared`) lists every relation in
 schema `public` from `pg_class` and fails, naming the table, when:
 
 - a table is in neither `OWNED_TABLES` nor `UNOWNED_TABLES`;
@@ -373,7 +373,7 @@ schema `public` from `pg_class` and fails, naming the table, when:
   transaction runs as `authenticated` with `BYPASSRLS` false
   (written into spec 104's stub by this spec). This spec proves the bypass
   is real so that the rule rests on a fact
-  (planned test_a_bypassrls_role_sees_every_owner).
+  (`services/api/tests/test_owner_policy.py::test_a_bypassrls_role_sees_every_owner`).
 - **A session as `authenticated` with no claims.** `auth.uid()` is null:
   it reads zero rows, and an insert fails on `owner_id` NOT NULL. Fails
   closed.
@@ -427,75 +427,89 @@ schema `public` from `pg_class` and fails, naming the table, when:
 
 ## Acceptance criteria
 
-- [ ] `POSTGRES_MIGRATIONS` has version 10 with the statements under
-      Behavior; `MIGRATIONS` has `(10, [])`; `HOSTED_ONLY_MIGRATIONS`
-      declares 10 with its reason.
-- [ ] `undeclared_dialects` returns each result in the hosted-only table
-      under Behavior (planned test_a_hosted_only_migration_leaves_sqlite_empty_on_purpose,
-      in `services/api/tests/test_postgres_store.py`), and
+- [x] `POSTGRES_MIGRATIONS` has version 10 with the statements under
+      Behavior; `MIGRATIONS` has `(10, [])`; `SINGLE_DIALECT_MIGRATIONS`
+      declares 10 as Postgres only, with its reason (see Amendment).
+- [x] `undeclared_dialects` returns each result in the hosted-only table
+      under Behavior
+      (`services/api/tests/test_postgres_store.py::test_a_hosted_only_migration_leaves_sqlite_empty_on_purpose`), and
       `services/api/tests/test_postgres_store.py::test_every_new_migration_declares_both_dialects`
-      still passes.
-- [ ] A fresh SQLite store and one migrated from version 9 are at version
+      still passes; a SQLite-only version is accepted the same way
+      (`services/api/tests/test_postgres_store.py::test_a_sqlite_only_migration_leaves_postgres_empty_on_purpose`).
+- [x] A fresh SQLite store and one migrated from version 9 are at version
       10, and neither has a column named `owner_id`, `owner` or
       `tenant_id`, nor a table named `users`
-      (planned test_the_local_schema_names_no_tenant).
-- [ ] `harrier store migrate` on an empty shimmed Postgres database prints
+      (`services/api/tests/test_owner_policy.py::test_the_local_schema_names_no_tenant`).
+- [x] `harrier store migrate` on an empty shimmed Postgres database prints
       `postgres 0 -> 10`; a second run prints `postgres 10 -> 10`
       (`services/api/tests/test_store_cli.py::test_store_migrate_prints_before_and_after_on_postgres`
       and
       `services/api/tests/test_postgres_store.py::test_migrate_applies_the_baseline_once`,
       updated).
-- [ ] On a Postgres without the shim, `harrier store migrate` exits 1 with
+- [x] On a Postgres without the shim, `harrier store migrate` exits 1 with
       the auth-objects message and the store stays at version 9
-      (planned test_migration_10_needs_supabase_auth).
-- [ ] On a store at version 9 with a row in any owned table, migration 10
+      (`services/api/tests/test_owner_policy.py::test_migration_10_needs_supabase_auth`).
+- [x] On a store at version 9 with a row in any owned table, migration 10
       is refused naming that table, and the store stays at version 9
-      (planned test_migration_10_refuses_ownerless_rows).
-- [ ] The catalog test passes, and fails in each of these three runs,
+      (`services/api/tests/test_owner_policy.py::test_migration_10_refuses_ownerless_rows`).
+- [x] The catalog test passes, and fails in each of these three runs,
       recorded in the pull request: `FORCE` removed from one table, the
       policy dropped from one table, a table added without `owner_id`
-      (planned test_every_table_is_owned_or_declared).
-- [ ] For every owned table, owner A reads zero of owner B's rows, and A's
+      (`services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared`).
+- [x] For every owned table, owner A reads zero of owner B's rows, and A's
       update and delete of B's rows change zero rows
-      (planned test_owner_a_reads_nothing_of_owner_b).
-- [ ] For every owned table, A inserting a row with B's `owner_id`, and A
+      (`services/api/tests/test_owner_policy.py::test_owner_a_reads_nothing_of_owner_b`).
+- [x] For every owned table, A inserting a row with B's `owner_id`, and A
       updating its own row's `owner_id` to B's, are refused with the row
-      security message (planned test_owner_a_cannot_write_as_owner_b).
-- [ ] An insert with no claims, as `authenticated` and as `service_role`,
-      is refused by `owner_id` NOT NULL
-      (planned test_an_insert_without_an_owner_is_refused).
-- [ ] For each of the first seven rules in the uniqueness table, the
+      security message (`services/api/tests/test_owner_policy.py::test_owner_a_cannot_write_as_owner_b`).
+- [x] An insert with no claims is refused: as `harrier_tenant` by the row
+      policy, as `service_role` by its missing privilege, and as the
+      migrating superuser by `owner_id` NOT NULL (see Amendment)
+      (`services/api/tests/test_owner_policy.py::test_an_insert_without_an_owner_is_refused`).
+- [x] For each of the first seven rules in the uniqueness table, the
       same value is accepted for two owners and refused twice for one
-      (planned test_uniqueness_is_per_owner).
-- [ ] A job naming another owner's track, and an event naming another
+      (`services/api/tests/test_owner_policy.py::test_uniqueness_is_per_owner`).
+- [x] A job naming another owner's track, and an event naming another
       owner's job, are refused; the error class is the same as for an id
-      that exists nowhere (planned test_references_stay_inside_one_owner).
-- [ ] Inserting a user into `auth.users` gives that owner track 1 with slug
+      that exists nowhere (`services/api/tests/test_owner_policy.py::test_references_stay_inside_one_owner`).
+- [x] Inserting a user into `auth.users` gives that owner track 1 with slug
       `job`; two owners both have id 1; an owner's next track gets id 2;
       two concurrent inserts for one owner get distinct ids
-      (planned test_every_owner_starts_with_track_one).
-- [ ] As owner A, `INSERT INTO jobs DEFAULT VALUES` stores a row with
+      (`services/api/tests/test_owner_policy.py::test_every_owner_starts_with_track_one`).
+- [x] As owner A, `INSERT INTO jobs DEFAULT VALUES` stores a row with
       `owner_id` A and `track_id` 1, so the default and the composite
-      reference work for `authenticated`
-      (planned test_an_owner_files_a_job_with_the_defaults).
-- [ ] A role with `BYPASSRLS` reads both owners' rows
-      (planned test_a_bypassrls_role_sees_every_owner).
-- [ ] `services/api/tests/test_dialect_parity.py::test_both_dialects_build_the_same_tracker`
+      reference work for `harrier_tenant` with no sequence privilege
+      (`services/api/tests/test_owner_policy.py::test_an_owner_files_a_job_with_the_defaults`).
+- [x] A role with `BYPASSRLS` reads both owners' rows
+      (`services/api/tests/test_owner_policy.py::test_a_bypassrls_role_sees_every_owner`).
+- [x] `services/api/tests/test_dialect_parity.py::test_both_dialects_build_the_same_tracker`
       passes with the declared differences, and fails when one
       `OWNER_SCOPED_KEYS` entry names a key that does not exist.
-- [ ] Every probe in
+- [x] Every probe in
       `services/api/tests/test_dialect_parity.py::test_a_probe_is_refused_or_accepted_on_both`
       keeps its expected result on both dialects.
-- [ ] No migration statement creates a role, the `auth` schema, or
-      `auth.uid()`; only `services/api/tests/pg_support.py` does.
-- [ ] `services/api/src/harrier/tracker/schema.py` is still the only file
+- [x] No migration statement creates the `auth` schema, `auth.uid()` or a
+      Supabase role; only `services/api/tests/pg_support.py` does.
+      Migration 10 creates one role, `harrier_tenant`, when absent (see
+      Amendment).
+- [x] Acting as `authenticated` with valid claims, the role Supabase's Data
+      API uses, every owned table refuses select, insert, update and delete
+      (`services/api/tests/test_owner_policy.py::test_the_data_api_role_reaches_no_harrier_table`).
+- [x] `TRUNCATE job_events` and `TRUNCATE tracks CASCADE` are refused, even
+      for the superuser, and leave every row
+      (`services/api/tests/test_owner_policy.py::test_truncate_cannot_empty_events_or_tracks`).
+- [x] The catalog test names each of its breaches
+      (`services/api/tests/test_owner_policy.py::test_the_catalog_names_each_breach`),
+      and a stale declaration fails the parity test
+      (`services/api/tests/test_dialect_parity.py::test_a_declaration_naming_nothing_fails`).
+- [x] `services/api/src/harrier/tracker/schema.py` is still the only file
       holding Postgres DDL, and no file under `services/api/src/harrier/`
       other than it names `owner_id`.
-- [ ] ADR-013 decision 1 carries the "Amended (spec 105)" note.
-- [ ] Specs 104, 106, 107, 110, 111 and 112 carry the lines named in Scope
+- [x] ADR-013 decision 1 carries the "Amended (spec 105)" note.
+- [x] Specs 104, 106, 107, 110, 111 and 112 carry the lines named in Scope
       item 9, and nothing else in them changes.
 - [ ] CI's `check-python` job runs every new test against Postgres.
-- [ ] `just check` passes.
+- [x] `just check` passes.
 
 ## Honest limitations
 
@@ -687,3 +701,72 @@ build order in decision 1: 103, then 105, then 112, then 104.
 - Sign-up, export and deletion: spec 111.
 - Per-owner ids for tables other than `tracks`.
 - Re-ordering the existing non-unique indexes for owner-filtered queries.
+
+## Amendment (2026-10-10, during implementation)
+
+A post-merge architecture review of PR #207 found two design gaps here
+before this spec was built, and a data integrity review found a third.
+Akin approved all three on 2026-10-10. Implementation found the rest.
+
+- **The policed role is `harrier_tenant`, not `authenticated`.**
+  Supabase's Data API (PostgREST) switches to `authenticated`. Granting
+  harrier's tables to it would have let a signed-in user write rows
+  directly, past `harrier.tracker`, the one write path (ADR-003), with only
+  a deploy-time setting (spec 110) to stop it. Migration 10 creates
+  `harrier_tenant NOLOGIN NOINHERIT NOBYPASSRLS` when absent, tolerating a
+  concurrent creator, since roles are cluster wide. `owner_only` is
+  `FOR ALL TO harrier_tenant`; `version_readable` is `FOR SELECT TO
+  harrier_tenant`. The Grants list applies to `harrier_tenant`. `PUBLIC`,
+  `anon`, `authenticated` and `service_role` hold no privilege on any
+  harrier table, sequence or function. Everywhere Behavior and Failure
+  modes say a session or a policy uses `authenticated`, read
+  `harrier_tenant`. A request reaches it by `SET LOCAL ROLE harrier_tenant`
+  with the claims set; `auth.uid()` still reads the claims. Spec 104
+  carries the request side.
+- **`harrier_tenant` needs `auth`.** The policy evaluates `auth.uid()` as
+  the session role, so migration 10 grants it `USAGE ON SCHEMA auth` and
+  `EXECUTE ON FUNCTION auth.uid()`. Whether Supabase's migrating role may
+  grant on a schema its auth service owns is unverified, like the trigger
+  on `auth.users`.
+- **One-dialect migrations go either way.** `SINGLE_DIALECT_MIGRATIONS`
+  (version to the one dialect and a reason) replaces
+  `HOSTED_ONLY_MIGRATIONS`. A SQLite-only fix, such as making
+  `job_runs.job` NOT NULL (spec 103's corrections), needs the same escape.
+  A declared version missing from the other list altogether is refused,
+  since that runner would never record it.
+- **TRUNCATE is refused.** The baseline's refusals are row triggers, which
+  TRUNCATE does not fire, so `TRUNCATE job_events` and `TRUNCATE tracks
+  CASCADE` emptied them for a privileged role. Migration 10 adds
+  statement-level `BEFORE TRUNCATE` triggers with the same messages, and
+  no grant includes TRUNCATE.
+- **A refused migration exits 1.** The auth precheck raises inside the
+  migration, which escaped `harrier store migrate` as a traceback.
+  `services/api/src/harrier/pgstore.py`, which Scope does not name, gains
+  `StoreMigrationRefused`, and the command prints `error: migration 10
+  needs Supabase's auth schema (auth.users, auth.uid()) and the
+  authenticated role; this store has none`. The precheck also requires
+  `anon` and `service_role`, which the revokes name; the message is the
+  spec's and names only `authenticated`.
+- **A no-claims insert is refused by the policy first.** Postgres checks
+  `WITH CHECK` before constraints, so as `harrier_tenant` the refusal is
+  the row security message, not `owner_id` NOT NULL. `service_role` is
+  refused by missing privilege. NOT NULL refuses the superuser. It fails
+  closed every way.
+- **Missing grants refuse before the policy.** As an owner, update and
+  delete on `job_events` and delete on `tracks` fail with `permission
+  denied`, since no grant allows them.
+- **Every harrier function is revoked from every grantee,** not only
+  `harrier_new_owner()`. A trigger fires without EXECUTE on its function.
+- **An identity insert needs no sequence privilege,** as Behavior assumed.
+- **Names the spec left open:** `harrier_number_track()` behind trigger
+  `tracks_number_per_owner`, and `harrier_new_owner` on `auth.users`. The
+  numbering lock is `pg_advisory_xact_lock(hashtext('harrier.tracks'),
+  hashtext(owner_id::text))`, which never meets the runner's one-key lock.
+  `OWNED_TABLES` lists `job_events` before `jobs`, so the ownerless
+  precheck names the table that holds the row.
+- **Forced row security on `schema_version` needs a bypassing migrator.**
+  A role that owns the tables but is neither superuser nor `BYPASSRLS`
+  would read version 0 and could not record one. Supabase's `postgres`
+  has `BYPASSRLS`, and the tests run as superuser; spec 110's staging
+  check confirms the first.
+

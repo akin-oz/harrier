@@ -51,17 +51,10 @@ if TYPE_CHECKING:
 def load_project_env(path: Path | None = None) -> None:
     """Load .env from the working directory (spec 011; launchd wrappers rely
     on it). Existing environment variables are never overridden."""
-    env_path = path if path is not None else Path(".env")
-    if not env_path.is_file():
-        return
-    for raw_line in env_path.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        if key and key not in os.environ:
+    from harrier.envfile import read_env_file
+
+    for key, value in read_env_file(path if path is not None else Path(".env")).items():
+        if key not in os.environ:
             os.environ[key] = value
 
 
@@ -350,11 +343,43 @@ def _cmd_profile_split_resume(args: argparse.Namespace) -> int:
     return outcome.exit_code
 
 
+def _cmd_profile_put(args: argparse.Namespace) -> int:
+    from harrier.resume.framing import put_framing
+
+    path = Path(args.file)
+    try:
+        # As read, byte for byte: no newline translation (spec 099).
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            text = handle.read()
+    except (OSError, UnicodeError) as error:
+        print(f"profile put failed: cannot read --file: {error}", file=sys.stderr)
+        return 1
+    with closing(connect()) as conn:
+        outcome = put_framing(conn, _scope(conn, args), text)
+    stream = sys.stdout if outcome.exit_code == 0 else sys.stderr
+    for line in outcome.lines:
+        print(line, file=stream)
+    return outcome.exit_code
+
+
+def _cmd_profile_check(args: argparse.Namespace) -> int:
+    from harrier.resume.framing import check_resume
+
+    with closing(connect()) as conn:
+        outcome = check_resume(conn, _scope(conn, args))
+    for line in outcome.lines:
+        print(line)
+    return outcome.exit_code
+
+
 def _cmd_profile_list(_args: argparse.Namespace) -> int:
     with closing(connect()) as conn:
         documents = list_documents(conn)
         for doc in documents:
-            print(f"{doc['kind']}/{doc['name']} ({doc['format']}, updated {doc['updated_at']})")
+            print(
+                f"{doc['kind']}/{doc['name']} ({doc['format']}, updated {doc['updated_at']}) "
+                f"({doc['owner']})"
+            )
         print(f"{len(documents)} documents")
         return 0
 
@@ -1432,11 +1457,27 @@ def _store_postgres(command: str, url: str) -> int:
         migrate_postgres,
         postgres_connect,
         postgres_version,
+        require_driver,
         target_version,
     )
 
     if command == "migrate":
-        before, after = migrate_postgres(url)
+        # Before the import below, so a missing driver is the refusal that
+        # names the install command rather than an ImportError.
+        require_driver()
+        import psycopg
+
+        try:
+            before, after = migrate_postgres(url)
+        except psycopg.Error as error:
+            # A connection failure is a StoreConnectionError by now, so this
+            # failed after connecting, most often a statement the server
+            # refused. The server's primary message quotes SQL, never the
+            # URL; an error without one, such as a lost connection, prints
+            # its class (post-merge review of PR #207).
+            reason = error.diag.message_primary or type(error).__name__
+            print(f"error: a migration failed: {reason}", file=sys.stderr)
+            return 1
         print(f"postgres {before} -> {after}")
         return 0
     with closing(postgres_connect(url)) as conn:
@@ -2211,12 +2252,14 @@ COMMAND_CLASSES: dict[str, CommandClass] = {
     "evaluate": CommandClass(DATABASE, path_options=("jd_file",)),
     "outreach-draft": CommandClass(DATABASE, path_options=("jd_file", "input_file")),
     "brief set": CommandClass(DATABASE, path_options=("file",)),
+    "profile put": CommandClass(DATABASE, path_options=("file",)),
     # Its default destination is mounted at /app/backups (spec 064).
     "backup": CommandClass(DATABASE, path_options=("dest",)),
     # The database, data/, config/, env and network only.
     "check": _DB,
     "profile list": _DB,
     "profile split-resume": _DB,
+    "profile check": _DB,
     "brief show": _DB,
     "evaluate-prospects": _DB,
     "find-contacts": _DB,
@@ -2339,6 +2382,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--write", action="store_true", help="store the two documents; without it, a dry run"
     )
     profile_split.set_defaults(func=_cmd_profile_split_resume)
+
+    profile_put = profile_sub.add_parser(
+        "put", help="store the track's resume framing, checked against the facts (spec 099)"
+    )
+    profile_put.add_argument("kind", choices=["resume_framing"], help="the document kind")
+    profile_put.add_argument("--file", required=True, help="a JSON file holding the framing")
+    profile_put.set_defaults(func=_cmd_profile_put)
+
+    profile_check = profile_sub.add_parser(
+        "check", help="validate the track's resume content and its bullets' truth (spec 099)"
+    )
+    profile_check.set_defaults(func=_cmd_profile_check)
 
     discover = sub.add_parser("discover", help="run discovery over all sources (spec 011)")
     discover.add_argument(

@@ -19,7 +19,7 @@ cross-person reads even when application code forgets.
 
 **(a) One SQLite file per tenant on Fly volumes.** ADR-012's local model,
 hosted. Isolation stays the file system. A Fly volume attaches to one
-machine, so every tenant's requests and runs must reach the machine that
+machine (https://fly.io/docs/volumes/overview/, read 2026-10-10), so every tenant's requests and runs must reach the machine that
 holds their file; scaling is sharding by hand; backup is per volume; auth
 still has to be built. Rejected: it moves ADR-011's single-owner problem
 onto a network and solves none of the hosted questions.
@@ -32,7 +32,8 @@ work is real and is not what the product is about.
 
 **(c) Supabase Postgres with Supabase Auth and Storage; API on Fly; SPA on
 Vercel.** Row-level policy keyed by `auth.uid()` is the platform's normal
-shape. Auth issues signed JWTs the API can verify. Storage applies the same
+shape (https://supabase.com/docs/guides/database/postgres/row-level-security,
+read 2026-10-10). Auth issues signed JWTs the API can verify. Storage applies the same
 policy model to files. Fly runs a long-lived container, which the run
 manager (ADR-004), Chromium for PDF rendering and subprocess runs need and
 which a serverless function does not offer. Vercel serves the static SPA
@@ -47,16 +48,67 @@ Postgres hosted), and a JWT boundary the local product never had. Chosen.
    schema only an `owner_id uuid not null` referencing `auth.users`,
    defaulting to `auth.uid()`. Row-level security is enabled and forced on
    each, with one policy: `owner_id = auth.uid()` for every command.
+
+   **Amended (spec 105).** This named the column and the policy as if they
+   were the whole change. The baseline was written for one person, and its
+   keys assumed it. Migration 10 in
+   `services/api/src/harrier/tracker/schema.py` is hosted only: SQLite
+   records the version and changes nothing, so the local schema still
+   names no tenant (ADR-012 point 3). On Postgres:
+
+   - The column is `owner_id uuid NOT NULL DEFAULT auth.uid() REFERENCES
+     auth.users (id)`, with no `ON DELETE` action, so deleting a user who
+     still owns rows is refused. Spec 111 decides deletion.
+   - The policy is `owner_only`, `FOR ALL TO harrier_tenant`, with `USING`
+     and `WITH CHECK` both `owner_id = (SELECT auth.uid())`. The wrapped
+     call runs once per statement. Without claims it is null and matches
+     nothing, so the session reads and stores nothing.
+   - Every unique key, and `job_runs`' primary key, leads with `owner_id`.
+     Two owners may hold the same URL, slug, config kind, document name or
+     run name, and a refusal no longer tells one owner what another holds.
+   - Track ids are numbered per owner, so every owner has a track 1, created
+     by a trigger on `auth.users`, and the domain's default track keeps its
+     meaning without naming a tenant.
+   - `jobs` references `tracks (owner_id, id)` and `job_events` references
+     `jobs (owner_id, id)`, so a row cannot point at another owner's row.
+   - `schema_version` has row security enabled and forced too, with a
+     read-only policy, so no table is an exception.
+   - The policed role is `harrier_tenant`, a harrier-owned role with no
+     login, which migration 10 creates. The migration revokes every
+     privilege from `PUBLIC`, `anon`, `authenticated` and `service_role`
+     and grants `harrier_tenant` only what the domain uses. Supabase's Data
+     API switches to `authenticated`, so it reaches no harrier table, and
+     `harrier.tracker` stays the one write path. It relies on no Supabase
+     default.
+
+   `FORCE` does not bind a role with `BYPASSRLS`, and on Supabase that
+   includes `postgres` and `service_role`. The guard against a bypassing
+   connection is decision 3, enforced by spec 104.
+   `services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared`
+   holds every table in the schema to this shape, and
+   `services/api/tests/test_owner_policy.py::test_the_data_api_role_reaches_no_harrier_table`
+   proves the Data API's role is refused.
 2. **Domain SQL never names a tenant.** ADR-012 point 2 holds unchanged.
    The domain filters by track. The database filters by owner, from the
    session. No domain function takes an owner parameter.
 3. **Each request runs as its user.** The API verifies the Supabase JWT
-   (signature against the project's published keys, expiry, audience) and
-   opens the request's transaction as the `authenticated` role with that
-   token's claims set, so `auth.uid()` resolves inside the database. A
+   (signature against the project's signing keys, expiry, audience; which
+   keys and algorithms is spec 104's, since Supabase publishes asymmetric
+   keys as a key set and older projects sign with a shared secret:
+   https://supabase.com/docs/guides/auth/signing-keys) and
+   opens the request's transaction as `harrier_tenant` with that token's
+   claims set, so `auth.uid()` resolves inside the database. A
    request without a valid token is answered 401 and opens no transaction.
-   The `service_role` key is used only by migrations and by operator
-   commands that are not reachable from any HTTP route.
+   Migrations run as the schema-owner login `HARRIER_DATABASE_URL` names
+   (`harrier store migrate`, spec 103). The service role is used only by
+   operator commands that are not reachable from any HTTP route, each
+   granting itself what it needs in its own migration (spec 105).
+
+   Amended (spec 105). This said the request runs as `authenticated`, the
+   role Supabase's Data API also uses. Granting harrier's tables to it
+   would have opened a second write path past `harrier.tracker`, closed
+   only by a deploy setting. The request now switches to `harrier_tenant`,
+   which only harrier's own login role can reach.
 4. **Tenant resolution at every boundary.**
    - HTTP request: the verified JWT's `sub`.
    - Run started from a request (ADR-004): the run records the owner at
@@ -120,8 +172,10 @@ Postgres hosted), and a JWT boundary the local product never had. Chosen.
 ## Consequences
 
 - Two database dialects are a permanent cost. Every schema change is
-  written once and must produce valid DDL for both, and CI runs the tracker
-  tests against both.
+  written in both dialects in `services/api/src/harrier/tracker/schema.py`,
+  held together by the parity test (`services/api/tests/test_dialect_parity.py`,
+  spec 103). CI runs the store and parity tests against Postgres; the
+  tracker domain tests follow with spec 112.
 - The local-first and privacy invariants are amended (spec 102) to name
   the hosted deployment as the one place these vendors appear.
 - Spec 035's trusted-host and no-auth assumptions describe the local API.
@@ -133,12 +187,15 @@ Postgres hosted), and a JWT boundary the local product never had. Chosen.
 
 ## Honest limitations
 
-- Nothing hosted exists after this ADR. It is a decision and a sequence.
+- Nothing hosted existed when this ADR was accepted. Spec 103 has since
+  added the Postgres store and `harrier store`; nothing serves a tenant yet.
 - Row-level security protects rows only when the connection runs as
-  `authenticated`. A code path that uses the service role bypasses it. The
-  guard is decision 3's rule plus a test in spec 105, not the database.
-- Google's restricted Gmail scopes need app verification and a security
-  assessment before external users can grant them. Hosted Gmail watch may
+  `harrier_tenant`. A code path that uses the service role bypasses it. The
+  guard is decision 3's rule plus a test in spec 104, not the database.
+- Google's restricted Gmail scopes need app verification and, when the
+  data is stored on servers, a security assessment before external users
+  can grant them (https://developers.google.com/workspace/gmail/api/auth/scopes,
+  read 2026-10-10). Hosted Gmail watch may
   not be available at first; spec 109 decides.
 - Running LinkedIn and academic searches through Apify on tenants' behalf
   depends on each tenant's own Apify account and the terms they accept.

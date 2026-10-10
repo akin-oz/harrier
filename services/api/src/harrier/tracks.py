@@ -235,12 +235,15 @@ NON_DEFAULT_OPERATIONS: frozenset[str] = frozenset(
         # reconsideration of its own seen state.
         "discover",
         "reconsider",
+        # Spec 099: the track's own resume framing over the shared facts.
+        "profile put",
+        "profile check",
     }
 )
 
 # The allowed operations that write a tracker row; an archived track refuses them.
 WRITE_OPERATIONS: frozenset[str] = frozenset(
-    {"add", "shortlist", "track", "applied", "interviewing", "reject", "discover"}
+    {"add", "shortlist", "track", "applied", "interviewing", "reject", "discover", "profile put"}
 )
 
 
