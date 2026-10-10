@@ -115,8 +115,9 @@ This spec is the only new file, and specs are public, so
       which gains `0.0.0.0:8000`)
 - [x] a test client built with no base URL sends Host `localhost`
       (`::test_a_client_without_a_base_url_reaches_the_app_as_localhost`)
-- [x] `TRUSTED_HOSTS` is `("localhost", "127.0.0.1", "[::1]", "0.0.0.0")`,
-      and the diff adds no environment variable or parameter that changes it
+- [x] `TRUSTED_HOSTS` is `("localhost", "127.0.0.1", "0.0.0.0")`, and the
+      diff adds no environment variable or parameter that changes it. When
+      this spec shipped the list also held `[::1]`; spec 084 removed it.
 - [x] no existing `TestClient(...)` call is edited, and the full suite passes
 - [x] spec 051 quotes the new list
 - [x] `just check` passes

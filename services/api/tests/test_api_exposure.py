@@ -31,7 +31,7 @@ from harrier.sources import scrub_secrets
 from harrier.tracker.store import list_jobs
 from harrier.tracks import default_scope
 from harrier_api.app import create_app
-from harrier_api.localauth import TOKEN_HEADER, token_matches
+from harrier_api.localauth import TOKEN_HEADER, TRUSTED_HOSTS, token_matches
 
 
 @pytest.fixture
@@ -62,6 +62,22 @@ def test_a_request_with_a_foreign_host_is_refused(client: TestClient) -> None:
 @pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "localhost:8000", "0.0.0.0:8000"])
 def test_a_local_host_is_allowed(client: TestClient, host: str) -> None:
     assert client.get("/health", headers={"Host": host}).status_code == 200
+
+
+@pytest.mark.parametrize("host", ["[::1]", "[::1]:8000"])
+def test_ipv6_loopback_is_not_a_trusted_host(client: TestClient, host: str) -> None:
+    """The middleware takes the host as the text before the first colon, so a
+    bracketed IPv6 host reads as `[` and is refused (spec 084)."""
+    assert client.get("/health", headers={"Host": host}).status_code == 400
+
+
+@pytest.mark.parametrize("name", TRUSTED_HOSTS)
+@pytest.mark.parametrize("port", ["", ":8000"])
+def test_every_trusted_host_reaches_a_route(client: TestClient, name: str, port: str) -> None:
+    """A name the middleware cannot match fails here on the day it is listed,
+    so the list cannot promise a host it refuses (spec 084)."""
+    response = client.get("/health", headers={"Host": name + port})
+    assert response.status_code == 200, f"{name}{port} is listed but refused"
 
 
 def test_the_rebinding_check_applies_to_writes_too(client: TestClient) -> None:
