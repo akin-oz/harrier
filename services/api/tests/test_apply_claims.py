@@ -21,6 +21,7 @@ import pytest
 import harrier.apply.answers as answers_module
 import harrier.apply.letters as letters_module
 from harrier.apply import generate_answer_set, generate_cover_letter, write_cover_letter_artifacts
+from harrier.apply.brief import EMPTY_BRIEF, Brief
 from harrier.apply.claims import (
     ClaimCheckError,
     ClaimContext,
@@ -1127,3 +1128,297 @@ def test_the_retry_receives_the_sentence_of_a_number_refusal(
     generate(db)
     retry = json.loads(calls[1][1])["retry"]
     assert retry["refusals"] == [f"number without evidence: 4 (in: {MENTORED})"]
+
+
+# --- spec 087: a version the truth sources state needs no claim --------------------
+
+PIPELINE = "Ran the event pipeline on Kafka 3."
+ON_KAFKA = "I ran the event pipeline on Kafka 3."
+EVERY_FIRST = (
+    "Every invoicing tool Examplesoft builds for small firms is the kind of product "
+    "I want to work on next."
+)
+STACK = "Event pipelines (Kafka 3, Django)"
+
+
+def with_versions(
+    db: sqlite3.Connection,
+    *lines: str,
+    disclaimed: tuple[str, ...] = (),
+    verified: tuple[str, ...] = (),
+) -> None:
+    """The spec 087 vocabulary, and truth lines added under their own
+    heading. `disclaimed` lines go under the truth document's "Claims I must
+    not make" heading instead."""
+    body = TRUTH + "".join(f"{line}\n" for line in disclaimed)
+    if lines:
+        body += "\n## Stack\n\n" + "".join(f"{line}\n" for line in lines)
+    put_document(db, "resume_truth", "truth.md", "markdown", body)
+    skills = ["TypeScript", "React", "Kafka", "Apache Kafka", "Django", "Spring", "Go", "make"]
+    put_document(
+        db,
+        "resume_data",
+        "resume-content.json",
+        "json",
+        json.dumps(
+            {
+                "all_skills": skills,
+                "verified_skills": [
+                    "TypeScript",
+                    "React",
+                    "Kafka",
+                    "Apache Kafka",
+                    "Django",
+                    "Spring",
+                    *verified,
+                ],
+                "technology_aliases": {},
+            }
+        ),
+    )
+
+
+def refused_versions(
+    db: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+    *sentences: str,
+    posting: str = POSTING,
+    brief: Brief = EMPTY_BRIEF,
+) -> list[str]:
+    """The violations of a letter holding each sentence undeclared, or an
+    empty list when the letter passes."""
+    stub_letter(monkeypatch, letter_json(" ".join([CHECKOUT, INVOICES, *sentences])))
+    try:
+        generate_cover_letter(db, COMPANY, ROLE, jd_text=posting, brief=brief)
+    except ClaimCheckError as caught:
+        return caught.violations
+    return []
+
+
+def unclaimed(raw: str, sentence: str) -> str:
+    return f"number without evidence: {raw} (in: {sentence})"
+
+
+def test_a_version_the_truth_states_needs_no_claim(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The short version has no end punctuation, so over the joined text the
+    `3` reads as a rate from the "Every" that opens the full version. Read on
+    its own line it does not."""
+    with_versions(db, PIPELINE)
+    stub_letter(monkeypatch, letter_json(short=STACK, first=EVERY_FIRST))
+    assert generate(db).short_version == STACK
+
+
+def test_a_grounded_version_passes_in_an_answer(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_versions(db, PIPELINE)
+    medium = f"Every billing change I shipped went through review. {CHECKOUT} {INVOICES}"
+    stub_answers(monkeypatch, [answer(medium, GROUNDED_CLAIMS, short=STACK)])
+    drafts = generate_answer_set(db, COMPANY, ROLE, [QUESTION], jd_text=POSTING)
+    assert drafts[0].short_answer == STACK
+
+
+def test_an_invented_version_is_refused(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_versions(db, PIPELINE)
+    sentence = "I ran the event pipeline on Kafka 4."
+    assert refused_versions(db, monkeypatch, sentence) == [unclaimed("4", sentence)]
+
+
+def test_a_version_inside_a_longer_number_is_not_grounded(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for line in (
+        "Ran the event pipeline on Kafka 30.",
+        "Ran the event pipeline on Kafka 3.6.",
+        "Ran a Kafka 3-based event pipeline.",
+    ):
+        with_versions(db, line)
+        assert refused_versions(db, monkeypatch, ON_KAFKA) == [unclaimed("3", ON_KAFKA)], line
+
+
+def test_a_more_precise_version_than_the_truth_is_refused(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_versions(db, PIPELINE)
+    sentence = "I ran the event pipeline on Kafka 3.6."
+    assert refused_versions(db, monkeypatch, sentence) == [unclaimed("3.6", sentence)]
+
+
+def test_a_number_after_a_word_outside_the_vocabulary_still_needs_a_claim(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The spec's "led 3 squads." is also refused because a noun follows the
+    number (V1.5). "Of the teams, I led 3." ends the phrase, so only the
+    vocabulary refuses it, against a truth line that spells "led" the same
+    way."""
+    with_versions(db, "Led 3 teams.", "Hired and led 3 teams.")
+    squads = "As the lead I led 3 squads."
+    assert refused_versions(db, monkeypatch, squads) == [unclaimed("3", squads)]
+    teams = "Of the teams, I led 3."
+    assert refused_versions(db, monkeypatch, teams) == [unclaimed("3", teams)]
+
+
+def test_a_grounded_version_does_not_exempt_the_same_number_elsewhere(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_versions(db, PIPELINE)
+    sentence = "I ran Kafka 3 and led 3 workshops."
+    assert refused_versions(db, monkeypatch, sentence) == [
+        f'number without evidence: 3 (after "led" in: {sentence})'
+    ]
+
+
+def test_a_version_with_a_rate_is_not_exempt(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_versions(db, PIPELINE)
+    sentence = "I run Kafka 3, every week."
+    assert refused_versions(db, monkeypatch, sentence) == [unclaimed("3", sentence)]
+
+
+def test_a_number_followed_by_a_noun_is_not_exempt(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_versions(
+        db,
+        "Ran the event pipeline on Kafka 3.6 in production.",
+        PIPELINE,
+        "Helped make 3 senior hires.",
+    )
+    events = "I moved Kafka 3.6 million events through the pipeline."
+    years = "I have Kafka 3 plus years of tooling behind me."
+    dashboards = "I helped make 3 dashboards for finance."
+    assert refused_versions(db, monkeypatch, events, years, dashboards) == [
+        unclaimed("3.6", events),
+        unclaimed("3", years),
+        unclaimed("3", dashboards),
+    ]
+
+
+def test_years_after_a_version_are_not_a_version(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_versions(db, PIPELINE)
+    ago = "I ran Kafka 3 years ago."
+    assert refused_versions(db, monkeypatch, ago) == [unclaimed("3", ago)]
+
+    with_versions(db, "Ran Kafka 3 years in production.")
+    assert refused_versions(db, monkeypatch, ON_KAFKA) == [unclaimed("3", ON_KAFKA)]
+
+    with_versions(db, PIPELINE)
+    assert refused_versions(db, monkeypatch, ON_KAFKA, "Day to day I keep it running.") == []
+
+
+def test_years_money_and_multipliers_after_a_term_are_not_versions(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_versions(
+        db,
+        "Moved in Spring 2024.",
+        "Joined in Spring '24.",
+        "Cut the Kafka $40k bill.",
+        "Made Django 10x faster.",
+    )
+    year = "I moved the services to Spring 2024."
+    short_year = "I joined the team on Spring 24."
+    money = "I cut the bill on Kafka $40k."
+    multiplier = "I made the pages on Django 10x."
+    assert refused_versions(db, monkeypatch, year, short_year, money, multiplier) == [
+        unclaimed("2024", year),
+        unclaimed("24", short_year),
+        unclaimed("$40k", money),
+        unclaimed("10x", multiplier),
+    ]
+
+
+def test_a_demo_line_does_not_ground_a_version(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_versions(db, "Built a demo pipeline on Kafka 3.")
+    labelled = "I built a demo pipeline on Kafka 3."
+    assert refused_versions(db, monkeypatch, ON_KAFKA) == [unclaimed("3", ON_KAFKA)]
+    assert refused_versions(db, monkeypatch, labelled) == [unclaimed("3", labelled)]
+
+
+def test_only_supporting_truth_lines_ground_a_version(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    refused = [unclaimed("3", ON_KAFKA)]
+
+    with_versions(db)
+    posting = f"{POSTING} {PIPELINE}"
+    assert refused_versions(db, monkeypatch, ON_KAFKA, posting=posting) == refused
+
+    with_versions(db, disclaimed=(PIPELINE,))
+    assert refused_versions(db, monkeypatch, ON_KAFKA) == refused
+
+    with_versions(db, "Did not ship Kafka 3 to production.")
+    assert refused_versions(db, monkeypatch, ON_KAFKA) == refused
+
+    with_versions(db)
+    put_document(
+        db,
+        "application_profile",
+        "application-profile.md",
+        "markdown",
+        PROFILE_MD_PATH.read_text(encoding="utf-8") + f"\n\n{PIPELINE}\n",
+    )
+    assert refused_versions(db, monkeypatch, ON_KAFKA) == refused
+
+    with_versions(db, verified=("Kafka 3",))
+    assert refused_versions(db, monkeypatch, ON_KAFKA) == refused
+
+    with_versions(db)
+    brief = Brief(evidence=(PIPELINE,))
+    assert refused_versions(db, monkeypatch, ON_KAFKA, brief=brief) == []
+
+
+def test_a_marked_term_still_names_its_version(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_versions(db, PIPELINE)
+    assert refused_versions(db, monkeypatch, "I ran the event pipeline on **Kafka** 3.") == []
+
+
+def test_a_placeholder_between_term_and_number_breaks_the_phrase(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_versions(db, PIPELINE)
+    sentence = "I ran the event pipeline on Kafka [[TODO: cluster]] 3."
+    assert refused_versions(db, monkeypatch, sentence) == [unclaimed("3", ON_KAFKA)]
+
+
+def test_a_word_ending_in_a_term_does_not_name_a_version(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each truth line holds the same text as the output, so only where the
+    term may start decides."""
+    with_versions(db, "Ran non-Kafka 2.", "Set up my.kafka 3.")
+    hyphen = "I also ran non-Kafka 2."
+    dotted = "I also set up my.kafka 3."
+    assert refused_versions(db, monkeypatch, hyphen, dotted) == [
+        unclaimed("2", hyphen),
+        unclaimed("3", dotted),
+    ]
+
+
+def test_the_term_must_be_spelled_the_same_in_the_truth(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_versions(db, "In spring 2 engineers joined.", "Wrote the service in go 1.")
+    spring = "I moved the services to Spring 2."
+    assert refused_versions(db, monkeypatch, spring) == [unclaimed("2", spring)]
+    go = "I wrote the service in go 1."
+    assert refused_versions(db, monkeypatch, go) == [unclaimed("1", go)]
+
+
+def test_the_longest_term_names_the_version(
+    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with_versions(db, PIPELINE)
+    sentence = "I ran the event pipeline on Apache Kafka 3."
+    assert refused_versions(db, monkeypatch, sentence) == [unclaimed("3", sentence)]
