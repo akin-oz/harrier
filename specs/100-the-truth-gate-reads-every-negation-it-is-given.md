@@ -1,8 +1,8 @@
 ---
 spec: 100
 title: The truth gate reads every negation it is given
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M9
 depends: [034, 065, 068, 071, 087]
 ---
@@ -255,16 +255,12 @@ was denying. Reword the truth line, or accept that the claim goes.
   list cannot, but puts a non-deterministic judgement in the one gate that
   must be repeatable and testable offline. Declined.
 
-## Open decisions for Akin
+## Decisions recorded (Akin, 2026-10-10)
 
-1. **The head of an exclusion stays asserted** ("Moved to Kafka 3 without
-   downtime" verifies "Moved to Kafka 3"). The alternative keeps today's
-   rule and drops the whole line.
-2. **`failed to` and `lacked`** are sentence negators. They are the two
-   non-grammatical words on the list; drop them if they cost more true
-   lines than they catch.
-3. **`no`** is a sentence negator, with the numeral-label loss noted
-   above.
+1. **The head of an exclusion stays asserted.** "Moved to Kafka 3 without
+   downtime" verifies "Moved to Kafka 3".
+2. **`failed to` and `lacked` are sentence negators.**
+3. **`no` is a sentence negator,** with the numeral-label loss noted above.
 
 ## Proof / origin
 
