@@ -24,7 +24,10 @@ real spec, with behavior and failure modes, before approval is asked for.
 
 Headline, to be expanded into checkable criteria when refined: Accounts are
 created by invitation only; an owner can export everything they own and
-delete it, rows and storage objects both.
+delete it, rows and storage objects both. Deleting an auth user who still
+owns rows is refused by the `owner_id` foreign key, which has no `ON DELETE`
+action (spec 105). How deletion orders the rows and the user is this
+spec's to decide.
 
 ## Proof / origin
 

@@ -27,7 +27,10 @@ real spec, with behavior and failure modes, before approval is asked for.
 Headline, to be expanded into checkable criteria when refined: Credentials
 are stored per owner, encrypted at rest; a run records its owner and its
 environment holds only that owner's credentials; hosted offers only API LLM
-providers.
+providers. A track id is no longer unique across owners on Postgres (spec
+105), so every run key built from one, such as academic discovery's
+`discovery:<track id>` (`services/api/src/harrier/academic/discovery.py:71`),
+is qualified by owner hosted.
 
 ## Proof / origin
 

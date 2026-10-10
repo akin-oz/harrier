@@ -25,7 +25,10 @@ real spec, with behavior and failure modes, before approval is asked for.
 Headline, to be expanded into checkable criteria when refined: Staging and
 production each have a Supabase project, a Fly app and a Vercel environment
 in the EU; migrations apply before a new API version serves; no secret
-enters git.
+enters git. The deployed project's Data API does not expose the schema that
+holds harrier's tables, checked at deploy, so a tenant cannot write past
+`harrier.tracker` with their own token and the anon key (spec 105, open
+decision 6).
 
 ## Proof / origin
 
