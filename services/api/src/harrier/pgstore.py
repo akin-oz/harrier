@@ -37,6 +37,13 @@ POSTGRES_SCHEME = "postgresql"
 # of "harrier" read as a number, so it is recognisable in pg_locks.
 MIGRATION_LOCK_KEY = 0x68_61_72_72_69_65_72
 
+# What every command but `harrier store`, and the API, answer while the
+# domain still speaks only SQLite. One text, so the CLI and the API cannot
+# drift apart (spec 103).
+POSTGRES_NOT_YET = (
+    "HARRIER_DATABASE_URL names a Postgres store; only harrier store runs on it until spec 112"
+)
+
 
 class StoreError(Exception):
     """A store could not be chosen, reached or used. Safe to print."""
@@ -161,7 +168,7 @@ def apply_postgres_migrations(conn: psycopg.Connection[tuple[object, ...]]) -> t
     Postgres DDL is transactional, so a statement that fails rolls back the
     whole migration and leaves no version row.
     """
-    from harrier.tracker.schema import POSTGRES_MIGRATIONS
+    from harrier.tracker.schema import POSTGRES_MIGRATIONS, POSTGRES_VERSION_TABLE
 
     before = postgres_version(conn)
     known = target_version()
@@ -169,7 +176,7 @@ def apply_postgres_migrations(conn: psycopg.Connection[tuple[object, ...]]) -> t
         raise StoreVersionError(_ahead_message(before, known))
     with conn.transaction():
         conn.execute("SELECT pg_advisory_xact_lock(%s)", (MIGRATION_LOCK_KEY,))
-        conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version integer PRIMARY KEY)")
+        conn.execute(POSTGRES_VERSION_TABLE.encode())
     for version, statements in POSTGRES_MIGRATIONS:
         with conn.transaction():
             conn.execute("SELECT pg_advisory_xact_lock(%s)", (MIGRATION_LOCK_KEY,))

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import os
 import uuid
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from urllib.parse import urlsplit, urlunsplit
 
@@ -55,7 +55,7 @@ def _with_database(url: str, name: str) -> str:
 
 
 @contextmanager
-def fresh_database() -> Iterator[str]:
+def fresh_database() -> Generator[str]:
     """Create an empty database, yield its URL, then drop it."""
     import psycopg
 

@@ -30,6 +30,7 @@ from harrier.db import (
 from harrier.delegate import delegate
 from harrier.hostlease import remove_dead
 from harrier.logsetup import configure_logging
+from harrier.pgstore import POSTGRES_NOT_YET, StoreUrlError, store_target
 from harrier.profile import export_to, import_from, list_documents
 from harrier.tracker.export import export_csv
 from harrier.tracker.migrate_legacy import MigrationError, migrate
@@ -1368,6 +1369,93 @@ def _cmd_tracks(args: argparse.Namespace) -> int:
         return 0
 
 
+def _cmd_store(args: argparse.Namespace) -> int:
+    """Migrate the store, or print its dialect and version (spec 103)."""
+    from harrier.pgstore import StoreError
+
+    try:
+        target = store_target()
+        if target.is_postgres:
+            return _store_postgres(args.store_command, target.url)
+        return _store_sqlite(args.store_command)
+    except StoreError as error:
+        # Built from host, port and database only, never the URL (spec 035).
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+
+
+def _store_postgres(command: str, url: str) -> int:
+    from harrier.pgstore import (
+        check_postgres_version,
+        migrate_postgres,
+        postgres_connect,
+        postgres_version,
+        target_version,
+    )
+
+    if command == "migrate":
+        before, after = migrate_postgres(url)
+        print(f"postgres {before} -> {after}")
+        return 0
+    with closing(postgres_connect(url)) as conn:
+        found = postgres_version(conn)
+    known = target_version()
+    if found > known:
+        # Raises the refusal that names both versions.
+        check_postgres_version(found)
+    print(f"postgres {found}")
+    if found < known:
+        print(f"behind: {known} expected")
+    return 0
+
+
+def _sqlite_target_version() -> int:
+    from harrier.tracker.schema import MIGRATIONS
+
+    return max(version for version, _ in MIGRATIONS)
+
+
+def _peek_sqlite_version(path: Path) -> int:
+    """The file's schema version, read without writing. 0 when there is no file.
+
+    Read-only, so `store migrate` can report the version before an open
+    applies pending migrations, and `store status` changes nothing.
+    """
+    if not path.exists():
+        return 0
+    with closing(sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)) as conn:
+        table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_version'"
+        ).fetchone()
+        if table is None:
+            return 0
+        row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
+    return int(row[0]) if row is not None and row[0] is not None else 0
+
+
+def _store_sqlite(command: str) -> int:
+    from harrier.db import schema_version
+    from harrier.pgstore import StoreVersionError
+
+    known = _sqlite_target_version()
+    before = _peek_sqlite_version(default_db_path())
+    if before > known:
+        # An ordinary open accepts such a file and keeps doing so (spec 103);
+        # only `harrier store` refuses it.
+        raise StoreVersionError(
+            f"the tracker database is at version {before}, newer than this code knows "
+            f"({known}). Run a newer harrier."
+        )
+    if command == "status":
+        print(f"sqlite {before}")
+        return 0
+    # An ordinary open applies pending migrations (spec 090).
+    with closing(connect()) as conn:
+        after = schema_version(conn)
+    print(f"sqlite {before} -> {after}")
+    return 0
+
+
 def _cmd_events(args: argparse.Namespace) -> int:
     """A job's decision history, and the backfill that reconstructs it for rows
     decided before it was recorded (spec 079)."""
@@ -2110,6 +2198,10 @@ COMMAND_CLASSES: dict[str, CommandClass] = {
     "tracks list": _DB,
     "tracks add": _DB,
     "tracks archive": _DB,
+    # On SQLite they open the live database like any database command. On
+    # Postgres main() runs them before any of this is asked (spec 103).
+    "store migrate": _DB,
+    "store status": _DB,
     # The export reads the tracker, so it runs where the database lives. The
     # trainer reads only the export and needs scikit-learn, which the image
     # does not install, so it runs here (spec 077).
@@ -2494,6 +2586,14 @@ def build_parser() -> argparse.ArgumentParser:
     tracks_archive.add_argument("slug", type=_slug)
     tracks_cmd.set_defaults(func=_cmd_tracks)
 
+    store_cmd = sub.add_parser("store", help="the tracker store's schema version (spec 103)")
+    store_sub = store_cmd.add_subparsers(dest="store_command", required=True)
+    store_sub.add_parser(
+        "migrate", help="apply pending migrations and print the version before and after"
+    )
+    store_sub.add_parser("status", help="print the store's dialect and schema version")
+    store_cmd.set_defaults(func=_cmd_store)
+
     scoring_cmd = sub.add_parser("scoring", help="the learned fit score (spec 077)")
     scoring_sub = scoring_cmd.add_subparsers(dest="scoring_command", required=True)
     scoring_sub.add_parser("export", help="write the labelled feature export the trainer reads")
@@ -2749,6 +2849,20 @@ def main(argv: list[str] | None = None) -> int:
     vector = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
     args = parser.parse_args(vector)
+    # Which store, decided after .env is loaded so a URL set there counts, and
+    # before the lease and the hand-over, which concern the SQLite file. A bad
+    # URL or a Postgres one opens nothing here (spec 103).
+    try:
+        target = store_target()
+    except StoreUrlError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    if target.is_postgres:
+        if args.command != "store":
+            print(f"error: {POSTGRES_NOT_YET}", file=sys.stderr)
+            return 1
+        ran: int = args.func(args)
+        return ran
     if running_in() == "host":
         # Before anything is decided, so a lease left by a crashed host
         # process stops refusing the container at the next host invocation
@@ -2762,8 +2876,10 @@ def main(argv: list[str] | None = None) -> int:
         # Logging setup opens the database read-write to load the redaction
         # values, and closing that connection checkpoints any WAL left behind.
         # `doctor` logs nothing and reports on that file, so it must not be the
-        # thing that changes it (review finding on PR #110).
-        if args.command != "doctor":
+        # thing that changes it (review finding on PR #110). Nor `store`: that
+        # open would apply pending migrations before `store migrate` read the
+        # version it started from (spec 103).
+        if args.command not in ("doctor", "store"):
             configure_logging()
         try:
             refused = _check_track(args)

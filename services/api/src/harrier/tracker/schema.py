@@ -404,6 +404,11 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
 
 POSTGRES_BASELINE_VERSION = 9
 
+# The runner's own bookkeeping, created before any migration runs. Here
+# rather than in harrier.pgstore so this module holds every line of Postgres
+# DDL (spec 103).
+POSTGRES_VERSION_TABLE = "CREATE TABLE IF NOT EXISTS schema_version (version integer PRIMARY KEY)"
+
 # SQLite's datetime('now') and strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), as
 # text in the same shapes, so no value read through the API changes form.
 _PG_NOW = "to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')"
