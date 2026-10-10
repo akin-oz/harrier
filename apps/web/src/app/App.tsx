@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { Job } from "../entities/job";
 import { ApplyPage } from "../pages/apply/ApplyPage";
 import { InboxPage } from "../pages/inbox/InboxPage";
+import { OperationsPage } from "../pages/operations/OperationsPage";
 import { OutreachPage } from "../pages/outreach/OutreachPage";
 import { SettingsPage } from "../pages/settings/SettingsPage";
 import { TrackerPage } from "../pages/tracker/TrackerPage";
@@ -35,6 +36,9 @@ const SECTIONS = [
   { id: "tracker", label: "Tracker", defaultOnly: false },
   { id: "outreach", label: "Outreach", defaultOnly: true },
   { id: "inbox", label: "Inbox", defaultOnly: true },
+  // Spec 050: the schedule, feeds, reconsideration and the digest, all the
+  // default track's.
+  { id: "operations", label: "Operations", defaultOnly: true },
   // Last, since it is visited least often (spec 096). The install's own
   // settings, the same on every track.
   { id: "settings", label: "Settings", defaultOnly: false },
@@ -193,6 +197,7 @@ function Main({
   if (section === "tracker") {
     return <TrackerPage key={track.slug} track={track} onApply={onApply} />;
   }
+  if (section === "operations") return <OperationsPage />;
   return section === "outreach" ? <OutreachPage /> : <InboxPage />;
 }
 

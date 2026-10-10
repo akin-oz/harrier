@@ -5,12 +5,13 @@ import { afterEach, expect, test, vi } from "vitest";
 
 import { stubApi } from "../../shared/testing/stubApi";
 import { HostPanel } from "./HostPanel";
-import type { CommandPlaces, HostFacts } from "./useCommandPlaces";
+import type { CommandPlaces, HostFacts, Schedule } from "./useCommandPlaces";
 
 /**
  * What only the host can do (spec 096): each fact the container can read,
  * beside the command that would change it, and a fact it cannot read shown
- * as not knowable from here, never as healthy.
+ * as not knowable from here, never as healthy. The schedule is read from
+ * spec 050's `GET /ops/schedule`, the route the Operations page reads.
  */
 
 afterEach(() => {
@@ -32,14 +33,40 @@ const PLACES: CommandPlaces = {
   ],
 };
 
+const SCHEDULE: Schedule = {
+  jobs: [
+    {
+      name: "discovery",
+      cadence: "daily at 09:00",
+      records: [
+        {
+          key: "discovery",
+          last_success_at: "2026-03-03T09:00:00Z",
+          summary: "discovery: last succeeded 2 days ago",
+          overdue: false,
+        },
+      ],
+    },
+    {
+      name: "gmail-watch",
+      cadence: "every 5 minutes",
+      records: [
+        {
+          key: "mail-watch",
+          last_success_at: null,
+          summary: "mail-watch: has never recorded a success",
+          overdue: true,
+        },
+      ],
+    },
+  ],
+  error: null,
+  installed_state: "Whether each job is installed and loaded is the host's to report.",
+  host_command: "harrier schedule status",
+};
+
 function facts(overrides: Partial<HostFacts> = {}): HostFacts {
   return {
-    schedule_definition: "present",
-    schedule: [
-      { name: "discovery", cadence: "daily at 09:00", last_success_at: "2026-03-03T09:00:00Z" },
-      { name: "gmail-watch", cadence: "every 5 minutes", last_success_at: null },
-    ],
-    schedule_installed: "unknown",
     gmail_token: { state: "present", age_days: 12 },
     model: { state: "missing", trained_at: null, version: null },
     newest_feature_export: null,
@@ -49,16 +76,17 @@ function facts(overrides: Partial<HostFacts> = {}): HostFacts {
   };
 }
 
-function renderPanel(host: HostFacts) {
+function renderPanel(host: HostFacts, schedule: Schedule = SCHEDULE) {
   stubApi((call) => {
     if (call.path === "/api/settings/commands") return { status: 200, body: PLACES };
     if (call.path === "/api/settings/host") return { status: 200, body: host };
+    if (call.path === "/api/ops/schedule") return { status: 200, body: schedule };
     return undefined;
   });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <HostPanel profileCount={3} now={new Date("2026-03-05T12:00:00Z")} />
+      <HostPanel profileCount={3} />
     </QueryClientProvider>,
   );
 }
@@ -75,8 +103,10 @@ test("each fact sits beside the commands that would change it", async () => {
   await screen.findByRole("heading", { name: "The schedule" });
 
   const schedule = row("The schedule");
-  expect(within(schedule).getByText("last succeeded 2 days ago")).toBeDefined();
-  expect(within(schedule).getByText("has never recorded a success here")).toBeDefined();
+  expect(within(schedule).getByText("discovery: last succeeded 2 days ago")).toBeDefined();
+  expect(
+    within(schedule).getByText(/Overdue: mail-watch: has never recorded a success/),
+  ).toBeDefined();
   expect(within(schedule).getByText("harrier schedule install")).toBeDefined();
   expect(within(row("The mail token")).getByText(/present, written 12 days ago/)).toBeDefined();
   expect(within(row("The learned score")).getByText(/No trained model is active/)).toBeDefined();
@@ -102,15 +132,13 @@ test("what the container cannot know is said to be unknowable, never shown healt
 });
 
 test("absent facts are shown as absent, each with its command", async () => {
-  renderPanel(
-    facts({
-      schedule_definition: "absent",
-      schedule: [],
-      gmail_token: { state: "absent", age_days: null },
-    }),
-  );
+  renderPanel(facts({ gmail_token: { state: "absent", age_days: null } }), {
+    ...SCHEDULE,
+    jobs: [],
+    error: "cannot read config/schedule.json",
+  });
   await screen.findByRole("heading", { name: "The schedule" });
-  expect(within(row("The schedule")).getByText(/No schedule definition/)).toBeDefined();
+  expect(within(row("The schedule")).getByText(/schedule definition cannot be read/)).toBeDefined();
   expect(within(row("The mail token")).getByText("No token file is present.")).toBeDefined();
   expect(within(row("The mail token")).getByText("harrier gmail-oauth")).toBeDefined();
 });

@@ -1,6 +1,6 @@
 # ADR-009: User configuration is data, and the path to multi-tenancy
 
-- Status: accepted; extended by ADR-012 (isolation)
+- Status: accepted; extended by ADR-012 (isolation); hosting decided by ADR-013
 - Date: 2026-08-09
 - Extends: ADR-008 (personal data in the local database)
 

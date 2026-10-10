@@ -35,7 +35,9 @@ rewrite. Changing any of them requires an explicit spec.
   hyphen with spaces on both sides, as punctuation (spec 071).
 - **Verified content only.** Resume and answer content comes from the verified truth
   sources. AI selects and orders; it never invents claims.
-- **Local-first.** No cloud dependencies beyond Apify, the AI providers, Telegram,
-  Gmail API, and Hunter. All LLM calls go through the provider seam in
+- **Local-first.** The local product has no cloud dependencies beyond Apify, the AI
+  providers, Telegram, Gmail API, and Hunter. The hosted deployment (ADR-013) adds
+  Supabase, Fly.io and Vercel, and offers only the API LLM providers. All LLM calls
+  go through the provider seam in
   `services/api/src/harrier/llm/`, selected by env (`AI_PROVIDER`), pluggable across
   codex-cli, claude-cli, openai-api, anthropic-api.

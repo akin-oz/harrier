@@ -45,10 +45,21 @@ function handler(options: Options) {
     switch (call.path) {
       case "/api/config":
         return { status: 200, body: [] };
-      case "/api/settings/profile":
+      case "/api/ops/profile":
         return { status: 200, body: options.profile ?? [] };
+      case "/api/ops/backup":
+        return { status: 200, body: run("backup") };
+      case "/api/ops/schedule":
+        return {
+          status: 200,
+          body: {
+            jobs: [],
+            error: null,
+            installed_state: "",
+            host_command: "harrier schedule status",
+          },
+        };
       case "/api/settings/backups":
-        if (call.method === "POST") return { status: 200, body: run("backup") };
         return {
           status: 200,
           body: { directory: options.directory ?? "present", archives: options.archives ?? [] },
@@ -66,9 +77,6 @@ function handler(options: Options) {
         return {
           status: 200,
           body: {
-            schedule_definition: "absent",
-            schedule: [],
-            schedule_installed: "unknown",
             gmail_token: { state: "not_configured", age_days: null },
             model: { state: "missing", trained_at: null, version: null },
             newest_feature_export: null,
@@ -139,7 +147,7 @@ test("profile documents are listed by name", async () => {
   );
   renderPage();
   expect(await screen.findByText("example-truth")).toBeDefined();
-  expect(calls.find((call) => call.path === "/api/settings/profile")?.token).toBe("test-token");
+  expect(calls.some((call) => call.path === "/api/ops/profile")).toBe(true);
 });
 
 test("a missing backups directory is said in words, and a backup can still be taken", async () => {
@@ -150,10 +158,12 @@ test("a missing backups directory is said in words, and a backup can still be ta
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Take a backup" }));
   await waitFor(() => {
-    expect(
-      calls.some((call) => call.method === "POST" && call.path === "/api/settings/backups"),
-    ).toBe(true);
+    expect(calls.some((call) => call.method === "POST" && call.path === "/api/ops/backup")).toBe(
+      true,
+    );
   });
+  // An empty body: an archive, and no older one deleted (spec 050).
+  expect(calls.find((call) => call.path === "/api/ops/backup")?.body).toEqual({});
   expect(FakeEventSource.last?.url).toBe("/api/runs/run7/events");
   act(() => {
     FakeEventSource.last?.emit({ type: "log_line", line: `${ARCHIVE} (0.1 MiB, verified)` });
@@ -204,4 +214,24 @@ test("restore has no button", async () => {
   renderPage();
   await screen.findByRole("heading", { name: "Backups" });
   expect(screen.queryByRole("button", { name: /restore/i })).toBeNull();
+});
+
+test("a failed backup says no archive was written", async () => {
+  stubApi(handler({ directory: "absent" }));
+  renderPage();
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Take a backup" }));
+  await waitFor(() => {
+    expect(FakeEventSource.last).not.toBeNull();
+  });
+  act(() => {
+    FakeEventSource.last?.emit({
+      type: "log_line",
+      line: "backup failed: archive verification disagreed",
+    });
+    FakeEventSource.last?.emit({ type: "state_change", state: "failed", exit_code: 1 });
+  });
+  expect((await screen.findByRole("alert")).textContent).toBe(
+    "The backup failed and no archive was written. backup failed: archive verification disagreed",
+  );
 });

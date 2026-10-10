@@ -56,7 +56,8 @@ export function BackupsSection({ createEventSource }: { createEventSource: Event
 
   const take = useMutation({
     mutationFn: async (): Promise<RunOut> => {
-      const { data } = await api.POST("/settings/backups");
+      // Spec 050's route. An empty body takes an archive and deletes none.
+      const { data } = await api.POST("/ops/backup", { body: {} });
       if (data === undefined) throw new Error("refused: the local API token was not accepted");
       return data;
     },
@@ -97,6 +98,7 @@ export function BackupsSection({ createEventSource }: { createEventSource: Event
         >
           Take a backup
         </button>
+        <span className="settings-muted">Writes a verified archive and deletes no older one.</span>
         {run !== null && (
           <span className="settings-backups__run">
             {run.kind === "backup" ? "Backup" : "Verification"}: <strong>{run.state}</strong>
@@ -113,6 +115,10 @@ export function BackupsSection({ createEventSource }: { createEventSource: Event
           role={failed ? "alert" : "status"}
           className={failed ? "settings-refusal" : "settings-result"}
         >
+          {/* A backup that fails verification leaves no archive behind
+              (spec 030), and the page says so rather than leaving the
+              operator to infer it (spec 050). */}
+          {failed && run.kind === "backup" && "The backup failed and no archive was written. "}
           {lastLogLine}
         </p>
       )}

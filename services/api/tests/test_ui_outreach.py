@@ -144,7 +144,12 @@ def test_every_parameterized_kind_is_reachable_from_a_page(env: Path) -> None:
         "outreach-draft": "/outreach/{selector}/draft",
         "backfill-posters": "/outreach/backfill-posters",
         "gmail-watch": "/mail/watch",
-        "backup": "/settings/backups",
+        # Spec 050: prune runs the same kind as the check, with --prune.
+        "check-feeds": "/ops/feeds",
+        "reconsider": "/ops/reconsider",
+        "backup": "/ops/backup",
+        "digest": "/ops/digest",
+        # Spec 096: an archive from the Settings page's listing.
         "verify-backup": "/settings/backups/{name}/verify",
     }
     assert set(routed) == set(PARAMETERIZED_KINDS), "a parameterized kind has no route"

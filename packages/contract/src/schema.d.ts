@@ -315,6 +315,157 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ops/backup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Take Backup
+         * @description `backup` as a run, into the directory the Settings page lists, and
+         *     reported by the archive's name, never its path (spec 096).
+         */
+        post: operations["takeBackup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ops/digest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Digest Route
+         * @description `digest` as a run. The send is single-flight per day: a second request
+         *     while one runs joins it, and a day already delivered is refused with the
+         *     time it went (spec 050).
+         */
+        post: operations["runDigest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ops/feeds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check Feeds
+         * @description `config check-feeds` as a run: one probe per configured board.
+         *
+         *     A run, and a POST, because it starts a process that reaches the network.
+         *     Its results are the run's log, which `GET /runs/{id}/events` serves
+         *     without the token, as spec 050 states for feed results.
+         */
+        post: operations["checkFeeds"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ops/feeds/prune": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Prune Dead Feeds
+         * @description `config check-feeds --prune`: probes again, then removes the boards
+         *     that answered as dead and prints each removed URL. Never part of a check.
+         */
+        post: operations["pruneDeadFeeds"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ops/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Profile Documents
+         * @description `profile list`: names and formats, never contents.
+         */
+        get: operations["listProfileDocuments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ops/reconsider": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reconsider
+         * @description `reconsider`, on the track the request names, as the CLI's `--track`.
+         */
+        post: operations["reconsider"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ops/schedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Schedule
+         * @description The cadence of each scheduled job and when it last succeeded.
+         *
+         *     No token: job names, cadences and times describe the installation, not
+         *     the operator's search, and spec 050 lists this read as tokenless.
+         */
+        get: operations["getSchedule"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/outreach/backfill-posters": {
         parameters: {
             query?: never;
@@ -680,12 +831,7 @@ export interface paths {
          */
         get: operations["listBackups"];
         put?: never;
-        /**
-         * Take Backup
-         * @description `harrier backup` as a run, into the directory the listing reads, with
-         *     the CLI's own retention. The run reports the archive by name.
-         */
-        post: operations["takeBackup"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -766,29 +912,11 @@ export interface paths {
         };
         /**
          * Host Facts
-         * @description The facts the host panel shows beside each command (spec 096's table).
+         * @description The facts the host panel shows beside each command (spec 096's table),
+         *     apart from the schedule, which is `GET /ops/schedule`. Opens no database,
+         *     so it answers while a host process holds it.
          */
         get: operations["getHostFacts"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/settings/profile": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Profile Documents
-         * @description `harrier profile list`: names and dates, never contents.
-         */
-        get: operations["listProfileDocuments"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1072,6 +1200,18 @@ export interface components {
             /** Limit */
             limit?: number | null;
         };
+        /**
+         * BackupIn
+         * @description An empty body takes an archive and deletes nothing. `prune` applies
+         *     the CLI's own retention, which is the CLI's decision, not a copy here.
+         */
+        BackupIn: {
+            /**
+             * Prune
+             * @default false
+             */
+            prune?: boolean;
+        };
         /** BackupsOut */
         BackupsOut: {
             /** Archives */
@@ -1302,6 +1442,25 @@ export interface components {
             /** Subcommand */
             subcommand: string;
         };
+        /**
+         * DigestIn
+         * @description A dry run unless the body says otherwise: a dropped body, or a client
+         *     that forgot the field, must not send a message to a real person.
+         */
+        DigestIn: {
+            /** Date */
+            date?: string | null;
+            /**
+             * Dry Run
+             * @default true
+             */
+            dry_run?: boolean;
+            /**
+             * Resend
+             * @default false
+             */
+            resend?: boolean;
+        };
         /** DraftIn */
         DraftIn: {
             /**
@@ -1422,8 +1581,10 @@ export interface components {
          * HostFactsOut
          * @description What the container can read about each host-only command, and no more.
          *
-         *     The two facts it cannot read are typed as the one value `unknown`, so
-         *     the contract itself cannot carry a healthy answer for them (spec 096).
+         *     The schedule is not repeated here: spec 050's `GET /ops/schedule` reads
+         *     the same records and says the installed state is the host's to report.
+         *     The one fact here the container cannot read is typed as the one value
+         *     `unknown`, so the contract itself cannot carry a healthy answer for it.
          */
         HostFactsOut: {
             /**
@@ -1437,18 +1598,6 @@ export interface components {
             model: components["schemas"]["ActiveModelOut"];
             /** Newest Feature Export */
             newest_feature_export: string | null;
-            /** Schedule */
-            schedule: components["schemas"]["ScheduledJobOut"][];
-            /**
-             * Schedule Definition
-             * @enum {string}
-             */
-            schedule_definition: "present" | "absent" | "invalid";
-            /**
-             * Schedule Installed
-             * @constant
-             */
-            schedule_installed: "unknown";
         };
         /** HostPanelRowOut */
         HostPanelRowOut: {
@@ -1657,6 +1806,29 @@ export interface components {
             updated_at: string;
         };
         /**
+         * PruneIn
+         * @description Pruning edits stored configuration, so an empty body refuses.
+         */
+        PruneIn: {
+            /**
+             * Confirm
+             * @default false
+             */
+            confirm?: boolean;
+        };
+        /**
+         * ReconsiderIn
+         * @description Report by default; `apply` clears, as a second, separate request.
+         */
+        ReconsiderIn: {
+            /**
+             * Apply
+             * @default false
+             */
+            apply?: boolean;
+            source?: components["schemas"]["SourceName"] | null;
+        };
+        /**
          * RejectionCode
          * @enum {string}
          */
@@ -1724,14 +1896,32 @@ export interface components {
              */
             state: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "interrupted";
         };
+        /**
+         * ScheduleOut
+         * @description What the container can read about the schedule, and what it cannot.
+         *
+         *     There is no `installed` or `loaded` field on purpose. Only launchctl on
+         *     the host can answer either, and a field this server filled would be a
+         *     guess shown as a fact.
+         */
+        ScheduleOut: {
+            /** Error */
+            error: string | null;
+            /** Host Command */
+            host_command: string;
+            /** Installed State */
+            installed_state: string;
+            /** Jobs */
+            jobs: components["schemas"]["ScheduledJobOut"][];
+        };
         /** ScheduledJobOut */
         ScheduledJobOut: {
             /** Cadence */
             cadence: string;
-            /** Last Success At */
-            last_success_at: string | null;
             /** Name */
             name: string;
+            /** Records */
+            records: components["schemas"]["SuccessRecordOut"][];
         };
         /** SessionOut */
         SessionOut: {
@@ -1748,6 +1938,11 @@ export interface components {
             /** Until */
             until: string;
         };
+        /**
+         * SourceName
+         * @enum {string}
+         */
+        SourceName: "greenhouse" | "ashby" | "lever" | "remoteok" | "apify_linkedin" | "wellfound" | "wttj";
         /** StartRunIn */
         StartRunIn: {
             /**
@@ -1763,6 +1958,21 @@ export interface components {
             reason_code?: components["schemas"]["RejectionCode"] | null;
             /** Verb */
             verb: string;
+        };
+        /**
+         * SuccessRecordOut
+         * @description One last-success record. `overdue` is the domain's rule: no success,
+         *     an unreadable one, or one older than twice the job's longest gap.
+         */
+        SuccessRecordOut: {
+            /** Key */
+            key: string;
+            /** Last Success At */
+            last_success_at: string | null;
+            /** Overdue */
+            overdue: boolean;
+            /** Summary */
+            summary: string;
         };
         /** TailorIn */
         TailorIn: {
@@ -2892,6 +3102,320 @@ export interface operations {
             };
         };
     };
+    takeBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["BackupIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    runDigest: {
+        parameters: {
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["DigestIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the track parameter named no track */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description the request needs its explicit field */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
+        };
+    };
+    checkFeeds: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    pruneDeadFeeds: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["PruneIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the request needs its explicit field */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    listProfileDocuments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileDocumentOut"][];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
+        };
+    };
+    reconsider: {
+        parameters: {
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ReconsiderIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the track parameter named no track */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description the track may not run this operation, or it is archived */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
+        };
+    };
+    getSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleOut"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
+        };
+    };
     backfillPosters: {
         parameters: {
             query?: never;
@@ -3951,33 +4475,6 @@ export interface operations {
             };
         };
     };
-    takeBackup: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RunOut"];
-                };
-            };
-            /** @description missing or wrong local API token */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
     verifyBackup: {
         parameters: {
             query?: never;
@@ -4116,51 +4613,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
-            };
-            /** @description A host process holds the tracker database (spec 075). */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
-                };
-            };
-        };
-    };
-    listProfileDocuments: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProfileDocumentOut"][];
-                };
-            };
-            /** @description missing or wrong local API token */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description A host process holds the tracker database (spec 075). */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
-                };
             };
         };
     };

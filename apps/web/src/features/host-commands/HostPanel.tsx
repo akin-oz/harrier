@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
 
 import { CopyCommand } from "./CopyCommand";
-import { useCommandPlaces, useHostFacts } from "./useCommandPlaces";
-import type { HostFact, HostFacts } from "./useCommandPlaces";
+import { useCommandPlaces, useHostFacts, useSchedule } from "./useCommandPlaces";
+import type { HostFact, HostFacts, Schedule } from "./useCommandPlaces";
 import "./hostCommands.css";
 
 const TITLES: Record<HostFact, string> = {
@@ -13,12 +13,6 @@ const TITLES: Record<HostFact, string> = {
   database_owner: "Who owns the database",
   profile: "Profile documents on disk",
 };
-
-function daysSince(timestamp: string, now: Date): number | null {
-  const moment = new Date(timestamp);
-  if (Number.isNaN(moment.getTime())) return null;
-  return Math.max(0, Math.floor((now.getTime() - moment.getTime()) / 86_400_000));
-}
 
 function ago(days: number): string {
   if (days === 0) return "today";
@@ -34,43 +28,38 @@ function NotKnowable({ children }: { children: ReactNode }) {
 function Fact({
   fact,
   facts,
+  schedule,
   profileCount,
-  now,
 }: {
   fact: HostFact;
   facts: HostFacts;
+  schedule: Schedule;
   profileCount: number | null;
-  now: Date;
 }) {
   if (fact === "schedule") {
-    if (facts.schedule_definition !== "present") {
+    // Spec 050's schedule read: the same records the Operations page shows.
+    if (schedule.error !== null) {
       return (
         <p className="host-fact host-fact--absent">
-          {facts.schedule_definition === "absent"
-            ? "No schedule definition is in the checkout."
-            : "The schedule definition in the checkout cannot be read."}
+          The schedule definition cannot be read: {schedule.error}
         </p>
       );
     }
     return (
       <>
         <ul className="host-jobs">
-          {facts.schedule.map((job) => {
-            const days = job.last_success_at === null ? null : daysSince(job.last_success_at, now);
-            return (
-              <li key={job.name} className="host-jobs__job">
-                <span className="host-jobs__name">{job.name}</span>
-                <span className="host-jobs__cadence">{job.cadence}</span>
-                <span className="host-jobs__success">
-                  {job.last_success_at === null
-                    ? "has never recorded a success here"
-                    : days === null
-                      ? `last success time is unreadable (${job.last_success_at})`
-                      : `last succeeded ${ago(days)}`}
+          {schedule.jobs.map((job) => (
+            <li key={job.name} className="host-jobs__job">
+              <span className="host-jobs__name">{job.name}</span>
+              <span className="host-jobs__cadence">{job.cadence}</span>
+              {job.records.map((record) => (
+                <span key={record.key} className="host-jobs__success">
+                  {record.overdue ? "Overdue: " : ""}
+                  {record.summary}
                 </span>
-              </li>
-            );
-          })}
+              ))}
+            </li>
+          ))}
         </ul>
         <NotKnowable>
           Whether each job is installed and loaded is the host&apos;s to report.
@@ -148,23 +137,18 @@ function Fact({
  * exact command that would change it (spec 096). Nothing here runs a
  * command; each one is copied and run in a terminal on the host.
  */
-export function HostPanel({
-  profileCount = null,
-  now = new Date(),
-}: {
-  profileCount?: number | null;
-  now?: Date;
-}) {
+export function HostPanel({ profileCount = null }: { profileCount?: number | null }) {
   const places = useCommandPlaces();
   const facts = useHostFacts();
+  const schedule = useSchedule();
 
-  if (places.isPending || facts.isPending) {
+  if (places.isPending || facts.isPending || schedule.isPending) {
     return <p className="host-muted">Reading what the container can see…</p>;
   }
-  if (places.isError || facts.isError) {
+  if (places.isError || facts.isError || schedule.isError) {
     return (
       <p role="alert" className="host-error">
-        {(places.error ?? facts.error)?.message}
+        {(places.error ?? facts.error ?? schedule.error)?.message}
       </p>
     );
   }
@@ -175,7 +159,12 @@ export function HostPanel({
         <li key={row.fact} className="host-panel__row">
           <h4 className="host-panel__title">{TITLES[row.fact]}</h4>
           <div className="host-panel__facts">
-            <Fact fact={row.fact} facts={facts.data} profileCount={profileCount} now={now} />
+            <Fact
+              fact={row.fact}
+              facts={facts.data}
+              schedule={schedule.data}
+              profileCount={profileCount}
+            />
           </div>
           <div className="host-panel__commands">
             {row.commands.map((command) => (

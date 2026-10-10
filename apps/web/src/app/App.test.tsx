@@ -53,14 +53,14 @@ function stubApi(): string[] {
       if (url.pathname === "/api/settings/commands") {
         return reply({ routed: [], host: [], terminal: [], panel: [] });
       }
+      if (url.pathname === "/api/ops/schedule") {
+        return reply({ jobs: [], error: null, installed_state: "", host_command: "" });
+      }
       if (url.pathname === "/api/settings/backups") {
         return reply({ directory: "absent", archives: [] });
       }
       if (url.pathname === "/api/settings/host") {
         return reply({
-          schedule_definition: "absent",
-          schedule: [],
-          schedule_installed: "unknown",
           gmail_token: { state: "not_configured", age_days: null },
           model: { state: "missing", trained_at: null, version: null },
           newest_feature_export: null,

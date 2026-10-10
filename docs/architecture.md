@@ -161,6 +161,22 @@ The Sorrel chain (a private sibling project of the author's, README
 
 Details and the review-agent set land with deliverable 4 (checkpoint B).
 
+## Hosted deployment (decided, not built)
+
+ADR-013 decides how harrier is offered to other people: Supabase Postgres
+with row-level security keyed by the authenticated owner, Supabase Auth and
+Storage, the API and run workers on Fly.io, and the SPA on Vercel. Domain
+SQL still names a track and never a tenant; the database applies the owner
+from the session (ADR-012 point 2). The local product described above does
+not change.
+
+No hosted component exists yet. Specs 103 to 111 sequence the build, each
+with `approved: no` until refined: the Postgres store (103), API
+authentication (104), row-level policy (105), tenant credentials and run
+isolation (106), artifacts in Storage (107), hosted scheduling (108), Gmail
+and Telegram for tenants (109), the deploy pipeline (110), and sign-up,
+export and deletion (111).
+
 ## Honest limitations
 
 - Single user, single machine. There are no user accounts. A local API token and a

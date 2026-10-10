@@ -7,6 +7,7 @@ import { api } from "../../shared/api/client";
 export type CommandPlaces = components["schemas"]["CommandPlacesOut"];
 export type HostFacts = components["schemas"]["HostFactsOut"];
 export type HostFact = components["schemas"]["HostPanelRowOut"]["fact"];
+export type Schedule = components["schemas"]["ScheduleOut"];
 
 // Neither route declares a refusal with a body, so the generated `error` is
 // `never` and only the body can be absent: a 403 for a missing token, or a
@@ -31,4 +32,18 @@ export function useCommandPlaces() {
 /** What the container can read about each host-only command (spec 096). */
 export function useHostFacts() {
   return useQuery({ queryKey: ["settings", "host"], queryFn: fetchHostFacts });
+}
+
+async function fetchSchedule(): Promise<Schedule> {
+  const { data } = await api.GET("/ops/schedule");
+  if (data === undefined) throw new Error("could not read the schedule");
+  return data;
+}
+
+/**
+ * The schedule as spec 050's route reads it: cadences and last successes.
+ * The key the Operations page uses, so both read one answer.
+ */
+export function useSchedule() {
+  return useQuery({ queryKey: ["ops", "schedule"], queryFn: fetchSchedule });
 }

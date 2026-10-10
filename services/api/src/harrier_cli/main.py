@@ -914,8 +914,20 @@ def _cmd_digest(args: argparse.Namespace) -> int:
     with closing(connect()) as conn:
         scope = _scope(conn, args)
         digest, rc = run_digest(conn, scope, target_date, dry_run=args.dry_run)
+        # Two progress steps on the run protocol, so a browser can tell a
+        # digest that was produced and not delivered from one that was never
+        # produced; the exit status alone cannot, since a crash is also 1
+        # (spec 050). Step 2 is printed only when a message actually went.
+        _digest_step(1, "digest produced")
         print(digest)
+        if not args.dry_run and rc == 0:
+            _digest_step(2, "digest delivered")
         return rc
+
+
+def _digest_step(step: int, message: str) -> None:
+    payload = {"event": "progress", "step": step, "total": 2, "message": message}
+    print(f"::harrier::{json.dumps(payload)}", flush=True)
 
 
 def cutover_installer() -> list[str]:
@@ -1501,8 +1513,9 @@ def _cmd_check_feeds(args: argparse.Namespace) -> int:
 def _cmd_backup(args: argparse.Namespace) -> int:
     from harrier.backup import BackupError, create_backup
 
+    keep = None if args.no_prune else int(args.keep)
     try:
-        result = create_backup(Path(args.dest) if args.dest else None, keep=int(args.keep))
+        result = create_backup(Path(args.dest) if args.dest else None, keep=keep)
     except BackupError as error:
         print(f"backup failed: {error}", file=sys.stderr)
         return 1
@@ -2523,6 +2536,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=str(DEFAULT_KEEP),
         type=_positive_int,
         help="archives to retain, on top of the newest of each week",
+    )
+    backup.add_argument(
+        "--no-prune",
+        action="store_true",
+        help="take the archive and delete no older one (the browser's default, spec 050)",
     )
     backup.set_defaults(func=_cmd_backup)
 

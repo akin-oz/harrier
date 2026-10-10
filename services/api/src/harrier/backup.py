@@ -193,7 +193,10 @@ def prune(destination: Path, keep: int) -> tuple[Path, ...]:
 
 
 def create_backup(
-    destination: Path | None = None, *, keep: int = DEFAULT_KEEP, source_dir: Path | None = None
+    destination: Path | None = None,
+    *,
+    keep: int | None = DEFAULT_KEEP,
+    source_dir: Path | None = None,
 ) -> BackupResult:
     """Snapshot, archive, verify, prune. Any failure raises rather than exits 0.
 
@@ -201,6 +204,10 @@ def create_backup(
     `HARRIER_DATA_DIR` included. Backing up a different directory from the one
     in use is a silent total failure and must be impossible rather than
     documented.
+
+    `keep=None` takes the archive and deletes nothing: the browser's backup
+    on an empty body, where a prune would be a deletion nobody asked for
+    (spec 050). Every other caller keeps the retention it had.
     """
     source = source_dir if source_dir is not None else data_dir()
     # Before anything is read. The snapshot makes the same check, but this
@@ -270,7 +277,7 @@ def create_backup(
         archive=archive,
         jobs=expected,
         bytes_written=archive.stat().st_size,
-        pruned=prune(target_dir, keep),
+        pruned=() if keep is None else prune(target_dir, keep),
     )
 
 

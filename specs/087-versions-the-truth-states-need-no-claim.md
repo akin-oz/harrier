@@ -217,63 +217,67 @@ document and a vocabulary holding `Kafka`, `Apache Kafka`, `Django`, `Spring`,
 asserts the exact spec 086 number refusal, not only that the draft is
 refused. Each test fails when the condition it names is removed.
 
-- [ ] An undeclared "Kafka 3" in a short version without end punctuation,
+- [x] An undeclared "Kafka 3" in a short version without end punctuation,
       followed by a full version whose first word is "Every", passes when the
-      truth says "Ran the event pipeline on Kafka 3" (planned
-      test_a_version_the_truth_states_needs_no_claim)
-- [ ] The same in an answer (planned
-      test_a_grounded_version_passes_in_an_answer)
-- [ ] "Kafka 4" against a truth that says "Kafka 3" is refused (planned
-      test_an_invented_version_is_refused)
-- [ ] "Kafka 3" is refused against truth lines "Kafka 30", "Kafka 3.6" and
-      "Kafka 3-based" (planned
-      test_a_version_inside_a_longer_number_is_not_grounded)
-- [ ] "Kafka 3.6" against a truth that says "Kafka 3" is refused (planned
-      test_a_more_precise_version_than_the_truth_is_refused)
-- [ ] "led 3 squads." against "Led 3 teams" is refused, because "led" is not
-      a vocabulary term (planned
-      test_a_number_after_a_word_outside_the_vocabulary_still_needs_a_claim)
-- [ ] "Kafka 3 and led 3 workshops" refuses the second `3` (planned
-      test_a_grounded_version_does_not_exempt_the_same_number_elsewhere)
-- [ ] "I run Kafka 3, every week." is not exempt: the comma ends the
-      phrase, and "every" is a rate (planned
-      test_a_version_with_a_rate_is_not_exempt)
-- [ ] "Kafka 3.6 million events", "Kafka 3 plus years" and "make 3
+      truth says "Ran the event pipeline on Kafka 3"
+      (`services/api/tests/test_apply_claims.py::test_a_version_the_truth_states_needs_no_claim`)
+- [x] The same in an answer
+      (`services/api/tests/test_apply_claims.py::test_a_grounded_version_passes_in_an_answer`)
+- [x] "Kafka 4" against a truth that says "Kafka 3" is refused
+      (`services/api/tests/test_apply_claims.py::test_an_invented_version_is_refused`)
+- [x] "Kafka 3" is refused against truth lines "Kafka 30", "Kafka 3.6" and
+      "Kafka 3-based"
+      (`services/api/tests/test_apply_claims.py::test_a_version_inside_a_longer_number_is_not_grounded`)
+- [x] "Kafka 3.6" against a truth that says "Kafka 3" is refused
+      (`services/api/tests/test_apply_claims.py::test_a_more_precise_version_than_the_truth_is_refused`)
+- [x] "led 3 squads." against "Led 3 teams" is refused. V1.5 refuses that
+      output on its own, because a noun follows the number, so the test also
+      shows "Of the teams, I led 3." refused against "Hired and led 3 teams",
+      where only the vocabulary decides: "led" is not a vocabulary term.
+      The second case was added by the implementing change
+      (`services/api/tests/test_apply_claims.py::test_a_number_after_a_word_outside_the_vocabulary_still_needs_a_claim`)
+- [x] "Kafka 3 and led 3 workshops" refuses the second `3`
+      (`services/api/tests/test_apply_claims.py::test_a_grounded_version_does_not_exempt_the_same_number_elsewhere`)
+- [x] "I run Kafka 3, every week." is not exempt: the comma ends the
+      phrase, and "every" is a rate
+      (`services/api/tests/test_apply_claims.py::test_a_version_with_a_rate_is_not_exempt`)
+- [x] "Kafka 3.6 million events", "Kafka 3 plus years" and "make 3
       dashboards" are refused against truth lines holding "Kafka 3.6",
-      "Kafka 3" and "Helped make 3 senior hires" (planned
-      test_a_number_followed_by_a_noun_is_not_exempt)
-- [ ] "Kafka 3 years" is refused, a truth line "Kafka 3 years" grounds
-      nothing, and "on Kafka 3. Day to day" is a version (planned
-      test_years_after_a_version_are_not_a_version)
-- [ ] "Spring 2024" is refused against "Moved in Spring 2024", "Spring 24"
+      "Kafka 3" and "Helped make 3 senior hires"
+      (`services/api/tests/test_apply_claims.py::test_a_number_followed_by_a_noun_is_not_exempt`)
+- [x] "Kafka 3 years" is refused, a truth line "Kafka 3 years" grounds
+      nothing, and "on Kafka 3. Day to day" is a version
+      (`services/api/tests/test_apply_claims.py::test_years_after_a_version_are_not_a_version`)
+- [x] "Spring 2024" is refused against "Moved in Spring 2024", "Spring 24"
       against "Joined in Spring '24", "Kafka $40k" against "Cut the Kafka
       $40k bill", and "Django 10x" against "Made Django 10x faster"
-      (planned test_years_money_and_multipliers_after_a_term_are_not_versions)
-- [ ] A truth line with "demo" grounds no version, both in a sentence
-      without "demo" and in one that says "demo" (planned
-      test_a_demo_line_does_not_ground_a_version)
-- [ ] A version found only in the posting, only under the disclaimer
+      (`services/api/tests/test_apply_claims.py::test_years_money_and_multipliers_after_a_term_are_not_versions`)
+- [x] A truth line with "demo" grounds no version, both in a sentence
+      without "demo" and in one that says "demo"
+      (`services/api/tests/test_apply_claims.py::test_a_demo_line_does_not_ground_a_version`)
+- [x] A version found only in the posting, only under the disclaimer
       heading, only on a negated truth line ("Did not ship Kafka 3 to
       production"), only in the application profile or only in
       `verified_skills` is refused, and one given only as brief evidence
-      passes (planned test_only_supporting_truth_lines_ground_a_version)
-- [ ] "**Kafka** 3" in the output is grounded by "Kafka 3" (planned
-      test_a_marked_term_still_names_its_version)
-- [ ] "Kafka [[TODO: cluster]] 3" is not a version (planned
-      test_a_placeholder_between_term_and_number_breaks_the_phrase)
-- [ ] "non-Kafka 2" and "my.kafka 3" are not named by "Kafka" (planned
-      test_a_word_ending_in_a_term_does_not_name_a_version)
-- [ ] "In spring 2 engineers joined" does not ground "Spring 2", and "go 1"
-      is not named by `Go` (planned
-      test_the_term_must_be_spelled_the_same_in_the_truth)
-- [ ] "Apache Kafka 3" is not grounded by a truth line naming only "Kafka 3"
-      (planned test_the_longest_term_names_the_version)
-- [ ] Spec 065's C5 and C6 rows state the exemption, and its lessons row
+      passes
+      (`services/api/tests/test_apply_claims.py::test_only_supporting_truth_lines_ground_a_version`)
+- [x] "**Kafka** 3" in the output is grounded by "Kafka 3"
+      (`services/api/tests/test_apply_claims.py::test_a_marked_term_still_names_its_version`)
+- [x] "Kafka [[TODO: cluster]] 3" is not a version
+      (`services/api/tests/test_apply_claims.py::test_a_placeholder_between_term_and_number_breaks_the_phrase`)
+- [x] "non-Kafka 2" and "my.kafka 3" are not named by "Kafka"
+      (`services/api/tests/test_apply_claims.py::test_a_word_ending_in_a_term_does_not_name_a_version`)
+- [x] "In spring 2 engineers joined" does not ground "Spring 2", and "go 1"
+      is not named by `Go`
+      (`services/api/tests/test_apply_claims.py::test_the_term_must_be_spelled_the_same_in_the_truth`)
+- [x] "Apache Kafka 3" is not grounded by a truth line naming only "Kafka 3"
+      (`services/api/tests/test_apply_claims.py::test_the_longest_term_names_the_version`)
+- [x] Spec 065's C5 and C6 rows state the exemption, and its lessons row
       reads "C5 catches a standalone version number unless the truth sources
       state it after the same technology (spec 087)".
-- [ ] `just check` passes
+- [x] `just check` passes
 
-The planned tests go in `services/api/tests/test_apply_claims.py`.
+The tests are in `services/api/tests/test_apply_claims.py`.
 
 ## Honest limitations
 

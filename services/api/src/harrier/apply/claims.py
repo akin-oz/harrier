@@ -253,7 +253,7 @@ def check_claims(texts: Sequence[str], claims: Sequence[Claim], context: ClaimCo
         if any(_MARKER.search(line) for line in lines) and not _MARKER.search(claim.sentence):
             violations.append(f"synthetic evidence not labelled: {claim.sentence}")
 
-    violations.extend(_number_violations(checked, claims, context))
+    violations.extend(_number_violations(checked, claims, context, versions_in=output))
     violations.extend(_skill_violations(checked, context))
     violations.extend(_enforcement_violations(checked, claims))
     return list(dict.fromkeys(violations))
@@ -271,11 +271,157 @@ def _unverified(fragment: str, context: ClaimContext) -> str:
     return f"unverified evidence: {fragment}"
 
 
-def _number_violations(output: str, claims: Sequence[Claim], context: ClaimContext) -> list[str]:
+def _token_sentences(text: str) -> list[str]:
+    """Where each of `number_tokens(text)` sits, in the same order, as the
+    text a refusal adds after the token (spec 086, S2 and S3).
+
+    The text is split at every line break, then at `_SENTENCE_SPLIT`. Every
+    split point is whitespace, so each word of the text lands in exactly one
+    piece, and the words of the pieces in order are the words of the text.
+    """
+    places: list[tuple[list[str], int]] = []
+    for line in text.splitlines():
+        for piece in _SENTENCE_SPLIT.split(line):
+            words = piece.split()
+            places.extend((words, position) for position in range(len(words)))
+    found: list[str] = []
+    for (words, position), word in zip(places, text.split(), strict=True):
+        if not _NUMBER.match(word.strip(_SURROUNDING)):
+            continue
+        sentence = " ".join(words)
+        value = next(t.value for t in number_tokens(word))
+        if sum(t.value == value for t in number_tokens(sentence)) < 2:
+            found.append(f"(in: {sentence})")
+        elif position == 0:
+            found.append(f"(first word of: {sentence})")
+        else:
+            found.append(f'(after "{words[position - 1].strip(_SURROUNDING)}" in: {sentence})')
+    return found
+
+
+# --- spec 087: versions the truth sources state ---------------------------------
+
+_VERSION_SHAPE = re.compile(r"^[(\[\"\u201c]*\d{1,3}(?:\.\d+)*[)\]\"'\u201d\u2019.,;:!?]*$")
+_DURATIONS = frozenset(
+    {"year", "years", "yr", "yrs", "month", "months", "week", "weeks", "day", "days"}
+    | {"hour", "hours", "time", "times"}
+)
+_PHRASE_END = tuple(",.;:!?)]\"'\u201d\u2019")
+_PHRASE_JOINS = frozenset({"and", "or", "with", "in", "on", "to", "for"})
+_PLACEHOLDER_WORD = "[[placeholder]]"
+
+
+def _naming_term(before: str, terms: Sequence[str]) -> str | None:
+    """The text of the longest vocabulary term that ends `before`, the words
+    in front of a number (V1.2). The term starts the line or follows
+    whitespace, an opening bracket or a double quote, so `non-Kafka` and
+    `my.kafka` do not end with `Kafka`. Short terms match case-sensitively,
+    as C8's do."""
+    named: str | None = None
+    for term in terms:
+        wanted = " ".join(term.split())
+        if not wanted:
+            continue
+        flags = 0 if len(wanted) <= 2 else re.IGNORECASE
+        match = re.search(rf"(?:^|(?<=[\s(\[{{\"\u201c])){re.escape(wanted)}$", before, flags)
+        if match and (named is None or len(match.group(0)) > len(named)):
+            named = match.group(0)
+    return named
+
+
+def _version_at(
+    words: Sequence[str], at: int, rate: bool, terms: Sequence[str], *, output: bool
+) -> tuple[str, str] | None:
+    """The naming term and `NumberToken.raw` of the number at `words[at]`,
+    when it is a version occurrence (V1). `rate` is what `number_tokens`
+    read for it over this line alone (V1.4). Only the output has to end the
+    phrase after the number (V1.5)."""
+    word = words[at]
+    if rate or not _VERSION_SHAPE.match(word):
+        return None
+    term = _naming_term(" ".join(words[:at]), terms)
+    if term is None:
+        return None
+    following = words[at + 1].strip(_SURROUNDING).casefold() if at + 1 < len(words) else None
+    if following in _DURATIONS and not _SENTENCE_END.search(word):
+        return None
+    ends_phrase = word.endswith(_PHRASE_END) or following is None or following in _PHRASE_JOINS
+    if output and not ends_phrase:
+        return None
+    return term, word.strip(_SURROUNDING)
+
+
+def _line_versions(
+    line: str, terms: Sequence[str], *, output: bool
+) -> list[tuple[str, str] | None]:
+    """One entry per number token of the line, in order: its version
+    occurrence, or None. The line is read with inline markup removed."""
+    words = strip_inline_markup(line).split()
+    numbered = [at for at, word in enumerate(words) if _NUMBER.match(word.strip(_SURROUNDING))]
+    tokens = number_tokens(" ".join(words))
+    return [
+        _version_at(words, at, token.rate, terms, output=output)
+        for at, token in zip(numbered, tokens, strict=True)
+    ]
+
+
+def _truth_states(version: tuple[str, str], context: ClaimContext) -> bool:
+    """Whether a supporting truth line holds the same version, named by the
+    same term spelled the same way (V2). A line C7's marker matches never
+    does. The posting, the profile and `verified_skills` are not read."""
+    term, _ = version
+    return any(
+        version in _line_versions(line, context.vocabulary.terms, output=False)
+        for line in context.sources.lines_containing(term)
+        if not _MARKER.search(line)
+    )
+
+
+def _grounded_versions(checked: str, output: str, context: ClaimContext) -> set[int]:
+    """Indexes into `number_tokens(checked)` of the version occurrences the
+    truth sources state (spec 087).
+
+    Each token is read on its line of the output with every placeholder
+    replaced by a word rather than a space, so a term before a placeholder
+    never names a number after it (V0). Both texts replace the same spans,
+    so their lines correspond. Within a line the tokens are matched in
+    order, and only when their raw texts agree. A line where they do not,
+    because removing markup made or unmade a number, exempts nothing.
+    """
+    marked = _BRACKETED.sub("\0", _TODO.sub("\0", output)).replace("\0", _PLACEHOLDER_WORD)
+    terms = context.vocabulary.terms
+    grounded: set[int] = set()
+    index = 0
+    for checked_line, marked_line in zip(checked.splitlines(), marked.splitlines(), strict=True):
+        raws = [token.raw for token in number_tokens(checked_line)]
+        marked_raws = [
+            word.strip(_SURROUNDING)
+            for word in strip_inline_markup(marked_line).split()
+            if _NUMBER.match(word.strip(_SURROUNDING))
+        ]
+        if marked_raws == raws:
+            versions = _line_versions(marked_line, terms, output=True)
+            grounded.update(
+                index + ordinal
+                for ordinal, version in enumerate(versions)
+                if version is not None and _truth_states(version, context)
+            )
+        index += len(raws)
+    return grounded
+
+
+def _number_violations(
+    output: str, claims: Sequence[Claim], context: ClaimContext, *, versions_in: str
+) -> list[str]:
+    """C5 and C6 over the text with placeholders removed. `versions_in` is
+    the same text before that removal, which the version exemption reads
+    (spec 087)."""
     exempt = {token.value for token in number_tokens(f"{context.company} {context.role}")}
+    grounded = _grounded_versions(output, versions_in, context)
     violations: list[str] = []
-    for token in number_tokens(output):
-        if token.value in exempt:
+    tokens = number_tokens(output)
+    for index, (token, where) in enumerate(zip(tokens, _token_sentences(output), strict=True)):
+        if token.value in exempt or index in grounded:
             continue
         rates: set[bool] = set()
         cited = False
@@ -293,9 +439,9 @@ def _number_violations(output: str, claims: Sequence[Claim], context: ClaimConte
                 for line in contexts:
                     rates.update(t.rate for t in number_tokens(line) if t.value == token.value)
         if not cited:
-            violations.append(f"number without evidence: {token.raw}")
+            violations.append(f"number without evidence: {token.raw} {where}")
         elif token.rate not in rates:
-            violations.append(f"number changed scope: {token.raw}")
+            violations.append(f"number changed scope: {token.raw} {where}")
     return violations
 
 

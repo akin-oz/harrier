@@ -12,10 +12,9 @@ import "./SettingsPage.css";
 type ProfileDocument = components["schemas"]["ProfileDocumentOut"];
 
 async function fetchProfile(): Promise<readonly ProfileDocument[]> {
-  const { data, error } = await api.GET("/settings/profile");
-  if (error !== undefined || data === undefined) {
-    throw new Error("could not list the profile documents");
-  }
+  // Spec 050's route, which spec 096 reuses rather than repeating.
+  const { data } = await api.GET("/ops/profile");
+  if (data === undefined) throw new Error("could not list the profile documents");
   return data;
 }
 

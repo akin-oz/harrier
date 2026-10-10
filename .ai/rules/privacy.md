@@ -8,8 +8,10 @@ ADR-008). There is no encrypted-in-repo class.
 
 - All personal data (candidate profile, resume truth sources, bullet pool,
   application narrative, interview prep, tracker rows, contacts) lives in the
-  local database or local files, never in git in any form. Never paste its
-  contents into public files, fixtures, tests, code, or commit messages.
+  local database or local files, or, in the hosted deployment, in the owner's
+  rows and storage objects under row-level policy (ADR-013). It is never in
+  git in any form. Never paste its contents into public files, fixtures,
+  tests, code, or commit messages.
 - Live credentials never enter git. `.env` and OAuth material stay local;
   committed `.example` files document shapes with placeholder values only.
 - Generated artifacts, reports, state, logs, and backups are never-in-git.

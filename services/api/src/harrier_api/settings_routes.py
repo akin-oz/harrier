@@ -1,12 +1,13 @@
 """The Settings page's routes, and where every command has its place (spec 096).
 
-Configuration import, the profile document list, backups, what the container
-can see about the commands only the host can run, and the three-way list that
-places every CLI subcommand: routed, run on the host, or terminal only.
+Configuration import, the backups list and its verification, what the
+container can see about the commands only the host can run, and the three-way
+list that places every CLI subcommand: routed, run on the host, or terminal
+only. Spec 050 was built first, so the backup itself, the profile list and
+the schedule are its routes in `ops_routes.py`, used here rather than repeated.
 
 Every route here requires the token, reads included, for spec 047's reason:
-archive names, model metadata and profile document names describe the
-operator's own data.
+archive names and model metadata describe the operator's own data.
 
 Nothing here runs a host-only command, and nothing here names a host path.
 Archives travel by name, a run's output has the backups and data directories
@@ -26,14 +27,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from harrier.backup import backup_dir, list_archives, listed_archive
-from harrier.db import data_dir
-from harrier.runoutcome import DIGEST_JOB, DISCOVERY_JOB, MAIL_WATCH_JOB, age_in_days
-from harrier.schedule import SCHEDULE_CONFIG_PATH, ScheduleConfigError, ScheduleJob, load_schedule
+from harrier.runoutcome import age_in_days
 from harrier.userconfig import ConfigError
 from harrier_api.deps import Conn, DatabaseRoute
 from harrier_api.localauth import TOKEN_RESPONSES, require_token
 from harrier_api.runmodels import Manager, RunOut, run_out
-from harrier_api.runs import TERMINAL_STATES, HiddenDirectory, RunManager, RunParams
+from harrier_api.runs import TERMINAL_STATES, RunManager, RunParams, backup_hidden_directories
 
 settings_router = APIRouter(route_class=DatabaseRoute)
 
@@ -125,15 +124,15 @@ COMMAND_PLACES: dict[str, Place] = {
     "scoring export": Routed("POST /ops/scoring/export"),
     "reconsider": Routed("POST /ops/reconsider"),
     "digest": Routed("POST /ops/digest"),
-    "config check-feeds": Routed("GET /ops/feeds"),
+    "config check-feeds": Routed("POST /ops/feeds", note="With --prune: POST /ops/feeds/prune."),
     "export": Routed("GET /ops/export/jobs.csv", note="Two downloads: jobs.csv and contacts.csv."),
     "config list": Routed("GET /config"),
     "config get": Routed("GET /config/{kind}"),
     "config set": Routed("PUT /config/{kind}"),
     "config unset": Routed("DELETE /config/{kind}"),
     "config import": Routed("POST /config/import"),
-    "profile list": Routed("GET /settings/profile"),
-    "backup": Routed("POST /settings/backups"),
+    "profile list": Routed("GET /ops/profile"),
+    "backup": Routed("POST /ops/backup"),
     "verify-backup": Routed("POST /settings/backups/{name}/verify"),
     # --- run on the host, shown with the command ---
     "schedule install": OnHost(
@@ -340,32 +339,8 @@ def route_feeds(body: FeedLinesIn) -> FeedRoutingOut:
     )
 
 
-# --- profile documents ----------------------------------------------------------
-
-
-class ProfileDocumentOut(BaseModel):
-    kind: str
-    name: str
-    format: str
-    updated_at: str
-
-
-@settings_router.get(
-    "/settings/profile",
-    operation_id="listProfileDocuments",
-    dependencies=TOKEN,
-    responses=TOKEN_RESPONSES,
-)
-def list_profile_documents(conn: Conn) -> list[ProfileDocumentOut]:
-    """`harrier profile list`: names and dates, never contents."""
-    from harrier.profile.store import list_documents
-
-    return [ProfileDocumentOut.model_validate(document) for document in list_documents(conn)]
-
-
 # --- backups --------------------------------------------------------------------
 
-BACKUP_KIND = "backup"
 VERIFY_KIND = "verify-backup"
 
 
@@ -387,13 +362,6 @@ BACKUP_ERRORS: dict[int | str, dict[str, Any]] = {
     404: {"model": SettingsErrorOut, "description": "no archive of that name in the listing"},
     **TOKEN_RESPONSES,
 }
-
-
-def _hidden() -> tuple[HiddenDirectory, ...]:
-    return (
-        HiddenDirectory(backup_dir(), "the backups directory"),
-        HiddenDirectory(data_dir(), "the data directory"),
-    )
 
 
 def _verification(manager: RunManager, name: str) -> Literal["passed", "failed", "running"] | None:
@@ -436,19 +404,6 @@ def list_backups(manager: Manager) -> BackupsOut:
 
 
 @settings_router.post(
-    "/settings/backups",
-    operation_id="takeBackup",
-    dependencies=TOKEN,
-    responses=TOKEN_RESPONSES,
-)
-async def take_backup(manager: Manager) -> RunOut:
-    """`harrier backup` as a run, into the directory the listing reads, with
-    the CLI's own retention. The run reports the archive by name."""
-    params = RunParams(destination=backup_dir(), hidden=_hidden())
-    return run_out(await manager.start(BACKUP_KIND, params))
-
-
-@settings_router.post(
     "/settings/backups/{name}/verify",
     operation_id="verifyBackup",
     dependencies=TOKEN,
@@ -460,24 +415,18 @@ async def verify_backup(name: str, manager: Manager) -> RunOut:
     archive = listed_archive(name)
     if archive is None:
         raise HTTPException(status_code=404, detail=f"no archive named {name} in the backups list")
-    params = RunParams(archive=archive, hidden=_hidden())
+    # Locked per archive, and recorded under its name so the list can mark
+    # the result.
+    params = RunParams(archive=archive, hidden=backup_hidden_directories(), target=name)
     return run_out(await manager.start(VERIFY_KIND, params))
 
 
 # --- what the container can see about host-only commands ------------------------
 
 UNKNOWN = "unknown"
-WEEKDAYS = ("Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays", "Sundays")
 # Read where `harrier.mail.watch.env_config` reads it. Only the presence and
 # age of the file it names are reported, never the name.
 GMAIL_TOKEN_ENV = "GMAIL_OAUTH_TOKEN_FILE"
-
-
-class ScheduledJobOut(BaseModel):
-    name: str
-    cadence: str
-    # Null when the job has never recorded a success here (spec 029).
-    last_success_at: str | None
 
 
 class GmailTokenOut(BaseModel):
@@ -494,84 +443,17 @@ class ActiveModelOut(BaseModel):
 class HostFactsOut(BaseModel):
     """What the container can read about each host-only command, and no more.
 
-    The two facts it cannot read are typed as the one value `unknown`, so
-    the contract itself cannot carry a healthy answer for them (spec 096).
+    The schedule is not repeated here: spec 050's `GET /ops/schedule` reads
+    the same records and says the installed state is the host's to report.
+    The one fact here the container cannot read is typed as the one value
+    `unknown`, so the contract itself cannot carry a healthy answer for it.
     """
 
-    schedule_definition: Literal["present", "absent", "invalid"]
-    schedule: list[ScheduledJobOut]
-    schedule_installed: Literal["unknown"]
     gmail_token: GmailTokenOut
     model: ActiveModelOut
     newest_feature_export: str | None
     image_revision: str
     database_owner: Literal["unknown"]
-
-
-def cadence(job: ScheduleJob) -> str:
-    if job.kind == "interval":
-        seconds = job.seconds
-        if seconds % 3600 == 0:
-            hours = seconds // 3600
-            return "every hour" if hours == 1 else f"every {hours} hours"
-        if seconds % 60 == 0:
-            minutes = seconds // 60
-            return "every minute" if minutes == 1 else f"every {minutes} minutes"
-        return f"every {seconds} seconds"
-    by_day: dict[int | None, list[str]] = {}
-    for time in job.times:
-        by_day.setdefault(time.weekday, []).append(f"{time.hour:02d}:{time.minute:02d}")
-    parts: list[str] = []
-    for weekday in sorted(by_day, key=lambda day: 0 if day is None else day):
-        days = "daily" if weekday is None else WEEKDAYS[weekday - 1]
-        parts.append(f"{days} at {', '.join(by_day[weekday])}")
-    return "; ".join(parts)
-
-
-def _last_success(
-    job: ScheduleJob, recorded: dict[str, str], academic_keys: list[str]
-) -> str | None:
-    """The job's last success, under the key its command records it by.
-
-    The academic job records one success per track it searches (spec 097),
-    so it reads as its least recent one, and as never when any track has
-    none: a fresh time over a track that never succeeded would be the silent
-    failure spec 029 exists to catch.
-    """
-    verb = job.command[0] if job.command else ""
-    if verb == "discover" and "--configured-tracks" in job.command:
-        stamps = [recorded.get(key) for key in academic_keys]
-        if not stamps or any(stamp is None for stamp in stamps):
-            return None
-        return min(stamp for stamp in stamps if stamp is not None)
-    key = {"discover": DISCOVERY_JOB, "digest": DIGEST_JOB, "gmail-watch": MAIL_WATCH_JOB}.get(
-        verb, job.name
-    )
-    return recorded.get(key)
-
-
-def _schedule_facts(
-    conn: Conn,
-) -> tuple[Literal["present", "absent", "invalid"], list[ScheduledJobOut]]:
-    from harrier.digest import academic_discovery_jobs
-    from harrier.runoutcome import all_last_success
-
-    if not SCHEDULE_CONFIG_PATH.is_file():
-        return "absent", []
-    try:
-        _, jobs = load_schedule()
-    except ScheduleConfigError:
-        return "invalid", []
-    recorded = all_last_success(conn)
-    academic = academic_discovery_jobs(conn)
-    return "present", [
-        ScheduledJobOut(
-            name=job.name,
-            cadence=cadence(job),
-            last_success_at=_last_success(job, recorded, academic),
-        )
-        for job in jobs
-    ]
 
 
 def _gmail_token() -> GmailTokenOut:
@@ -605,16 +487,14 @@ def _active_model() -> ActiveModelOut:
     dependencies=TOKEN,
     responses=TOKEN_RESPONSES,
 )
-def host_facts(conn: Conn) -> HostFactsOut:
-    """The facts the host panel shows beside each command (spec 096's table)."""
+def host_facts() -> HostFactsOut:
+    """The facts the host panel shows beside each command (spec 096's table),
+    apart from the schedule, which is `GET /ops/schedule`. Opens no database,
+    so it answers while a host process holds it."""
     from harrier.scoring.export import newest_export_date
     from harrier_api.app import build_revision
 
-    definition, jobs = _schedule_facts(conn)
     return HostFactsOut(
-        schedule_definition=definition,
-        schedule=jobs,
-        schedule_installed=UNKNOWN,
         gmail_token=_gmail_token(),
         model=_active_model(),
         newest_feature_export=newest_export_date(),

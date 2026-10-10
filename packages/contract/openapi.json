@@ -228,6 +228,18 @@
         "title": "BackfillIn",
         "type": "object"
       },
+      "BackupIn": {
+        "description": "An empty body takes an archive and deletes nothing. `prune` applies\nthe CLI's own retention, which is the CLI's decision, not a copy here.",
+        "properties": {
+          "prune": {
+            "default": false,
+            "title": "Prune",
+            "type": "boolean"
+          }
+        },
+        "title": "BackupIn",
+        "type": "object"
+      },
       "BackupsOut": {
         "properties": {
           "archives": {
@@ -678,6 +690,35 @@
         "title": "DatabaseHoldOut",
         "type": "object"
       },
+      "DigestIn": {
+        "description": "A dry run unless the body says otherwise: a dropped body, or a client\nthat forgot the field, must not send a message to a real person.",
+        "properties": {
+          "date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date"
+          },
+          "dry_run": {
+            "default": true,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "resend": {
+            "default": false,
+            "title": "Resend",
+            "type": "boolean"
+          }
+        },
+        "title": "DigestIn",
+        "type": "object"
+      },
       "DraftIn": {
         "properties": {
           "ai": {
@@ -926,7 +967,7 @@
         "type": "object"
       },
       "HostFactsOut": {
-        "description": "What the container can read about each host-only command, and no more.\n\nThe two facts it cannot read are typed as the one value `unknown`, so\nthe contract itself cannot carry a healthy answer for them (spec 096).",
+        "description": "What the container can read about each host-only command, and no more.\n\nThe schedule is not repeated here: spec 050's `GET /ops/schedule` reads\nthe same records and says the installed state is the host's to report.\nThe one fact here the container cannot read is typed as the one value\n`unknown`, so the contract itself cannot carry a healthy answer for it.",
         "properties": {
           "database_owner": {
             "const": "unknown",
@@ -953,33 +994,9 @@
               }
             ],
             "title": "Newest Feature Export"
-          },
-          "schedule": {
-            "items": {
-              "$ref": "#/components/schemas/ScheduledJobOut"
-            },
-            "title": "Schedule",
-            "type": "array"
-          },
-          "schedule_definition": {
-            "enum": [
-              "present",
-              "absent",
-              "invalid"
-            ],
-            "title": "Schedule Definition",
-            "type": "string"
-          },
-          "schedule_installed": {
-            "const": "unknown",
-            "title": "Schedule Installed",
-            "type": "string"
           }
         },
         "required": [
-          "schedule_definition",
-          "schedule",
-          "schedule_installed",
           "gmail_token",
           "model",
           "newest_feature_export",
@@ -1397,6 +1414,40 @@
         "title": "ProfileDocumentOut",
         "type": "object"
       },
+      "PruneIn": {
+        "description": "Pruning edits stored configuration, so an empty body refuses.",
+        "properties": {
+          "confirm": {
+            "default": false,
+            "title": "Confirm",
+            "type": "boolean"
+          }
+        },
+        "title": "PruneIn",
+        "type": "object"
+      },
+      "ReconsiderIn": {
+        "description": "Report by default; `apply` clears, as a second, separate request.",
+        "properties": {
+          "apply": {
+            "default": false,
+            "title": "Apply",
+            "type": "boolean"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceName"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "ReconsiderIn",
+        "type": "object"
+      },
       "RejectionCode": {
         "enum": [
           "not_remote",
@@ -1631,13 +1682,10 @@
         "title": "RunOut",
         "type": "object"
       },
-      "ScheduledJobOut": {
+      "ScheduleOut": {
+        "description": "What the container can read about the schedule, and what it cannot.\n\nThere is no `installed` or `loaded` field on purpose. Only launchctl on\nthe host can answer either, and a field this server filled would be a\nguess shown as a fact.",
         "properties": {
-          "cadence": {
-            "title": "Cadence",
-            "type": "string"
-          },
-          "last_success_at": {
+          "error": {
             "anyOf": [
               {
                 "type": "string"
@@ -1646,17 +1694,55 @@
                 "type": "null"
               }
             ],
-            "title": "Last Success At"
+            "title": "Error"
+          },
+          "host_command": {
+            "title": "Host Command",
+            "type": "string"
+          },
+          "installed_state": {
+            "title": "Installed State",
+            "type": "string"
+          },
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/ScheduledJobOut"
+            },
+            "title": "Jobs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "jobs",
+          "error",
+          "installed_state",
+          "host_command"
+        ],
+        "title": "ScheduleOut",
+        "type": "object"
+      },
+      "ScheduledJobOut": {
+        "properties": {
+          "cadence": {
+            "title": "Cadence",
+            "type": "string"
           },
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/SuccessRecordOut"
+            },
+            "title": "Records",
+            "type": "array"
           }
         },
         "required": [
           "name",
           "cadence",
-          "last_success_at"
+          "records"
         ],
         "title": "ScheduledJobOut",
         "type": "object"
@@ -1699,6 +1785,19 @@
         ],
         "title": "SnoozeIn",
         "type": "object"
+      },
+      "SourceName": {
+        "enum": [
+          "greenhouse",
+          "ashby",
+          "lever",
+          "remoteok",
+          "apify_linkedin",
+          "wellfound",
+          "wttj"
+        ],
+        "title": "SourceName",
+        "type": "string"
       },
       "StartRunIn": {
         "properties": {
@@ -1749,6 +1848,42 @@
           "verb"
         ],
         "title": "StatusChangeIn",
+        "type": "object"
+      },
+      "SuccessRecordOut": {
+        "description": "One last-success record. `overdue` is the domain's rule: no success,\nan unreadable one, or one older than twice the job's longest gap.",
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "last_success_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Success At"
+          },
+          "overdue": {
+            "title": "Overdue",
+            "type": "boolean"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "last_success_at",
+          "summary",
+          "overdue"
+        ],
+        "title": "SuccessRecordOut",
         "type": "object"
       },
       "TailorIn": {
@@ -3315,6 +3450,379 @@
         "summary": "Run Mail Watch"
       }
     },
+    "/ops/backup": {
+      "post": {
+        "description": "`backup` as a run, into the directory the Settings page lists, and\nreported by the archive's name, never its path (spec 096).",
+        "operationId": "takeBackup",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BackupIn",
+                "default": {
+                  "prune": false
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Take Backup"
+      }
+    },
+    "/ops/digest": {
+      "post": {
+        "description": "`digest` as a run. The send is single-flight per day: a second request\nwhile one runs joins it, and a day already delivered is refused with the\ntime it went (spec 050).",
+        "operationId": "runDigest",
+        "parameters": [
+          {
+            "description": "The search track to work in; the default track when omitted.",
+            "in": "query",
+            "name": "track",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9-]{0,31}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The search track to work in; the default track when omitted.",
+              "title": "Track"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DigestIn",
+                "default": {
+                  "dry_run": true,
+                  "resend": false
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track parameter named no track"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the request needs its explicit field"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
+          }
+        },
+        "summary": "Run Digest Route"
+      }
+    },
+    "/ops/feeds": {
+      "post": {
+        "description": "`config check-feeds` as a run: one probe per configured board.\n\nA run, and a POST, because it starts a process that reaches the network.\nIts results are the run's log, which `GET /runs/{id}/events` serves\nwithout the token, as spec 050 states for feed results.",
+        "operationId": "checkFeeds",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          }
+        },
+        "summary": "Check Feeds"
+      }
+    },
+    "/ops/feeds/prune": {
+      "post": {
+        "description": "`config check-feeds --prune`: probes again, then removes the boards\nthat answered as dead and prints each removed URL. Never part of a check.",
+        "operationId": "pruneDeadFeeds",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PruneIn",
+                "default": {
+                  "confirm": false
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the request needs its explicit field"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Prune Dead Feeds"
+      }
+    },
+    "/ops/profile": {
+      "get": {
+        "description": "`profile list`: names and formats, never contents.",
+        "operationId": "listProfileDocuments",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProfileDocumentOut"
+                  },
+                  "title": "Response Listprofiledocuments",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
+          }
+        },
+        "summary": "List Profile Documents"
+      }
+    },
+    "/ops/reconsider": {
+      "post": {
+        "description": "`reconsider`, on the track the request names, as the CLI's `--track`.",
+        "operationId": "reconsider",
+        "parameters": [
+          {
+            "description": "The search track to work in; the default track when omitted.",
+            "in": "query",
+            "name": "track",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9-]{0,31}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The search track to work in; the default track when omitted.",
+              "title": "Track"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconsiderIn",
+                "default": {
+                  "apply": false
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track parameter named no track"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track may not run this operation, or it is archived"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
+          }
+        },
+        "summary": "Reconsider"
+      }
+    },
+    "/ops/schedule": {
+      "get": {
+        "description": "The cadence of each scheduled job and when it last succeeded.\n\nNo token: job names, cadences and times describe the installation, not\nthe operator's search, and spec 050 lists this read as tokenless.",
+        "operationId": "getSchedule",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
+          }
+        },
+        "summary": "Get Schedule"
+      }
+    },
     "/outreach/backfill-posters": {
       "post": {
         "description": "Acts on every LinkedIn row rather than one job, so it takes no\nselector and locks one at a time, as discovery does.",
@@ -4692,26 +5200,6 @@
           }
         },
         "summary": "List Backups"
-      },
-      "post": {
-        "description": "`harrier backup` as a run, into the directory the listing reads, with\nthe CLI's own retention. The run reports the archive by name.",
-        "operationId": "takeBackup",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RunOut"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "403": {
-            "description": "missing or wrong local API token"
-          }
-        },
-        "summary": "Take Backup"
       }
     },
     "/settings/backups/{name}/verify": {
@@ -4833,7 +5321,7 @@
     },
     "/settings/host": {
       "get": {
-        "description": "The facts the host panel shows beside each command (spec 096's table).",
+        "description": "The facts the host panel shows beside each command (spec 096's table),\napart from the schedule, which is `GET /ops/schedule`. Opens no database,\nso it answers while a host process holds it.",
         "operationId": "getHostFacts",
         "responses": {
           "200": {
@@ -4848,55 +5336,9 @@
           },
           "403": {
             "description": "missing or wrong local API token"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
-                }
-              }
-            },
-            "description": "A host process holds the tracker database (spec 075)."
           }
         },
         "summary": "Host Facts"
-      }
-    },
-    "/settings/profile": {
-      "get": {
-        "description": "`harrier profile list`: names and dates, never contents.",
-        "operationId": "listProfileDocuments",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/ProfileDocumentOut"
-                  },
-                  "title": "Response Listprofiledocuments",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "403": {
-            "description": "missing or wrong local API token"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
-                }
-              }
-            },
-            "description": "A host process holds the tracker database (spec 075)."
-          }
-        },
-        "summary": "List Profile Documents"
       }
     },
     "/tracker": {

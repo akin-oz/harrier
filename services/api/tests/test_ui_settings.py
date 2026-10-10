@@ -28,7 +28,6 @@ from fastapi.testclient import TestClient
 from harrier.backup import ARCHIVE_PREFIX, ARCHIVE_SUFFIX, create_backup
 from harrier.db import connect
 from harrier.paths import repo_root
-from harrier.runoutcome import record_success
 from harrier.userconfig import get_config, list_config
 from harrier.userconfig import importer as config_importer
 from harrier_api.app import create_app
@@ -84,16 +83,11 @@ def leaf_commands() -> set[str]:
     return leaves
 
 
-# Routes the specs that build them have not landed on this branch yet: spec
-# 050's operations routes and spec 095's (both stacked below this one), and
-# this spec's export downloads, which live in spec 095's `ops_routes.py`. Each
-# is asserted absent, so the rebase that brings one in fails here until it is
+# Routes spec 095 builds, which has not landed on this branch yet. Each is
+# asserted absent, so the merge that brings one in fails here until it is
 # removed from this set, and the set ends empty.
 PENDING_ROUTES = {
     "GET /ops/export/jobs.csv",
-    "GET /ops/feeds",
-    "POST /ops/reconsider",
-    "POST /ops/digest",
     "GET /tracker/{selector}/events",
     "POST /ops/events/backfill",
     "GET /apply/{selector}/brief",
@@ -297,24 +291,6 @@ def test_unrouted_watchlist_lines_are_named_in_spec_041s_words(client: TestClien
     ]
 
 
-def test_profile_documents_are_listed_by_name_never_by_contents(
-    client: TestClient, env: Path
-) -> None:
-    from harrier.profile.store import put_document
-
-    conn = connect()
-    try:
-        put_document(conn, "truth", "example-truth", "markdown", "zzqqx document body")
-    finally:
-        conn.close()
-    response = client.get("/settings/profile", headers=auth())
-    assert response.status_code == 200
-    assert [(item["kind"], item["name"]) for item in response.json()] == [
-        ("truth", "example-truth")
-    ]
-    assert "zzqqx" not in response.text
-
-
 # --- backups --------------------------------------------------------------------
 
 
@@ -383,7 +359,8 @@ def test_a_backup_reports_the_archive_by_name_never_its_path(env: Path) -> None:
         empty = client.get("/settings/backups", headers=auth()).json()
         assert empty == {"directory": "absent", "archives": []}
 
-        run_id = client.post("/settings/backups", headers=auth()).json()["id"]
+        # Spec 050's route, which spec 096 reuses.
+        run_id = client.post("/ops/backup", headers=auth()).json()["id"]
         assert wait_for(client, run_id) == "succeeded"
         names = [
             item["name"]
@@ -399,35 +376,13 @@ def test_a_backup_reports_the_archive_by_name_never_its_path(env: Path) -> None:
 
 SECRET_CONTENT = "zzqqx-token-contents"
 SECRET_NAME = "zzqqx-token-name.json"
-SCHEDULE = {
-    "label_prefix": "dev.example",
-    "jobs": [
-        {
-            "name": "discovery",
-            "command": ["discover", "--scheduled"],
-            "trigger": {"kind": "calendar", "times": [{"hour": 9, "minute": 0}]},
-        },
-        {
-            "name": "gmail-watch",
-            "command": ["gmail-watch"],
-            "trigger": {"kind": "interval", "seconds": 300},
-        },
-    ],
-}
 
 
 def write_host_state(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    (env / "config").mkdir(exist_ok=True)
-    (env / "config" / "schedule.json").write_text(json.dumps(SCHEDULE), encoding="utf-8")
     secrets = env / "secrets"
     secrets.mkdir()
     (secrets / SECRET_NAME).write_text(SECRET_CONTENT, encoding="utf-8")
     monkeypatch.setenv("GMAIL_OAUTH_TOKEN_FILE", str(secrets / SECRET_NAME))
-    conn = connect()
-    try:
-        record_success(conn, "discovery", at="2026-01-02T03:04:05Z")
-    finally:
-        conn.close()
 
 
 def write_model(env: Path) -> None:
@@ -469,19 +424,10 @@ def test_host_facts_never_carry_a_secret_or_claim_health(
         assert leaked not in text, leaked
     assert body["gmail_token"] == {"state": "present", "age_days": 0}
 
-    # What only the host can know is unknown, never healthy.
-    assert body["schedule_installed"] == "unknown"
+    # What only the host can know is unknown, never healthy. The schedule's
+    # installed state is said by spec 050's `GET /ops/schedule`, pinned in
+    # test_ui_operations.py.
     assert body["database_owner"] == "unknown"
-
-    assert body["schedule_definition"] == "present"
-    assert body["schedule"] == [
-        {
-            "name": "discovery",
-            "cadence": "daily at 09:00",
-            "last_success_at": "2026-01-02T03:04:05Z",
-        },
-        {"name": "gmail-watch", "cadence": "every 5 minutes", "last_success_at": None},
-    ]
     assert body["model"]["state"] == "active"
     assert body["model"]["trained_at"] == "2026-01-05"
     assert body["newest_feature_export"] == "2026-01-04"
@@ -492,8 +438,6 @@ def test_absent_host_facts_are_shown_as_absent(
 ) -> None:
     monkeypatch.setenv("GMAIL_OAUTH_TOKEN_FILE", str(env / "secrets" / "missing.json"))
     body = client.get("/settings/host", headers=auth()).json()
-    assert body["schedule_definition"] == "absent"
-    assert body["schedule"] == []
     assert body["gmail_token"] == {"state": "absent", "age_days": None}
     assert body["model"] == {"state": "missing", "trained_at": None, "version": None}
     assert body["newest_feature_export"] is None
@@ -510,19 +454,11 @@ def test_host_facts_hold_only_the_listed_fields(
     write_model(env)
     body: dict[str, Any] = client.get("/settings/host", headers=auth()).json()
     assert set(body) == {
-        "schedule_definition",
-        "schedule",
-        "schedule_installed",
         "gmail_token",
         "model",
         "newest_feature_export",
         "image_revision",
         "database_owner",
-    }
-    assert {key for job in body["schedule"] for key in job} == {
-        "name",
-        "cadence",
-        "last_success_at",
     }
     assert set(body["gmail_token"]) == {"state", "age_days"}
     assert set(body["model"]) == {"state", "trained_at", "version"}

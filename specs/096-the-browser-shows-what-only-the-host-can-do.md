@@ -91,9 +91,9 @@ kinds, and any route outside this table.
 | Route | CLI verb | Domain function | Shape | Token |
 |---|---|---|---|---|
 | `POST /config/import` | `config import` | the importer | request | yes |
-| `GET /settings/profile` | `profile list` | the profile store reader | request | yes |
+| `GET /ops/profile` (spec 050's, reused) | `profile list` | the profile store reader | request | no, as spec 050 built it |
 | `GET /settings/backups` | none: lists what `backup` wrote | the archive lister | request | yes |
-| `POST /settings/backups` | `backup` | `create_backup` | run | yes |
+| `POST /ops/backup` (spec 050's, reused) | `backup` | `create_backup` | run | yes |
 | `POST /settings/backups/{name}/verify` | `verify-backup` | `verify_archive` | run | yes |
 | `GET /settings/host` | none: the facts below | read-only helpers | request | yes |
 | `GET /settings/commands` | none: the three-way list below | the placement table | request | yes |
@@ -102,7 +102,9 @@ kinds, and any route outside this table.
 | `GET /ops/export/contacts.csv` | `export` | `export_csv`'s writer | request, a download | yes |
 
 Reads here require the token, for spec 047's reason: archive names, model
-metadata and profile document names describe the operator's own data.
+metadata and profile document names describe the operator's own data. The
+profile list is spec 050's tokenless `GET /ops/profile` (amendment 5 under
+Implementation amendments; open decision 4).
 
 ### Configuration
 
@@ -126,8 +128,9 @@ Operations page, where spec 050 put it.
 ### Backups
 
 The page lists archives in the backups directory the container mounts (spec
-064): name, size and time, newest first. "Take a backup" starts a run; the
-retention is the CLI's default (spec 050). "Verify" runs `verify-backup` on an
+064): name, size and time, newest first. "Take a backup" starts a run of
+spec 050's `POST /ops/backup` with an empty body, which writes an archive and
+deletes none (amended 2026-10-10; spec 050's default). "Verify" runs `verify-backup` on an
 archive chosen from that list. The route takes a name from the listing, never
 a path, and a name the listing does not contain is 404.
 
@@ -160,13 +163,14 @@ Raised in review of PR #182, which moved the export code without changing it.
 
 ### What only the host can do
 
-`GET /settings/host` returns these fields and no others: whether the
-schedule definition could be read; for each scheduled job its name, cadence
-and last-success time; whether the Gmail token file is present, and its age;
-the active model's state, training date and version; the newest feature
-export's date; the image revision; and, for the schedule's installed state
-and the database's owner, the one value `unknown`, typed so the contract
-cannot carry anything else. It never returns a file
+`GET /settings/host` returns these fields and no others: whether the Gmail
+token file is present, and its age; the active model's state, training date
+and version; the newest feature export's date; the image revision; and, for
+the database's owner, the one value `unknown`, typed so the contract cannot
+carry anything else. The schedule's facts, each job's cadence and
+last-success records with the sentence that the installed state is the
+host's to report, are spec 050's `GET /ops/schedule`, which the panel reads
+(amended 2026-10-10, see Implementation amendments). It never returns a file
 name or path under `secrets/`, and never the model file's training or
 evaluation blocks, which hold counts from the operator's data.
 
@@ -296,8 +300,10 @@ otherwise. Synthetic data only, built under `tmp_path`.
 - [x] A watchlist line no importer handles is named in spec 041's words by
       the server's own router
       (`services/api/tests/test_ui_settings.py::test_unrouted_watchlist_lines_are_named_in_spec_041s_words`)
-- [ ] Spec 050 carries the six amendments and its acceptance criteria name
-      the routes as amended
+- [x] Spec 050 carries the six amendments and its acceptance criteria name
+      the routes as amended (applied before it was built, in its route
+      table, failure modes, criteria and its dated note "amended by spec 096
+      before it was built")
 - [x] Web: each configuration editor saves, refuses in the store's words
       keeping input, shows its source, and resets with a confirmation; the
       host panel copies each command; the CLI-only list renders from the API
@@ -322,7 +328,7 @@ otherwise. Synthetic data only, built under `tmp_path`.
 
 ## Implementation amendments (2026-10-10)
 
-Building it showed four places where the text above was short. Each is
+Building it showed five places where the text above was short. Each is
 amended here and in the section it touches, in the same change.
 
 1. **Two more routes.** The CLI-only list must render "from the API rather
@@ -334,24 +340,37 @@ amended here and in the section it touches, in the same change.
    only the server's router knows which those are, so `POST
    /settings/feeds/routing` runs `route_ats_feeds` over the editor's lines.
    It stores and fetches nothing.
-2. **The host facts' field list.** It gains the schedule definition's state
-   (so a missing definition is shown as absent rather than as no jobs), the
-   model's state (missing and refused are different facts), and two fields
-   typed as the single value `unknown`: the schedule's installed state and
-   the database's owner. That is how "reports an unknowable fact as
-   unknown" is a property of the contract rather than of the page.
-3. **The run manager.** Backup and verification are runs, so `runs.py`
-   gains the kinds `backup` (with `--dest` set by the server to the
-   directory the list reads) and `verify-backup` (an archive found in the
-   listing, passed after `--`). Their events have the backups and data
-   directories' paths removed, which is how a run "reports the name of the
-   archive it wrote, never its path" without changing what the CLI prints.
-   The journal records each run's target, so a failed verification still
-   marks its archive after a restart. Existing kinds are unchanged apart
-   from that journal field.
+2. **The host facts' field list.** It gains the model's state (missing and
+   refused are different facts) and a field typed as the single value
+   `unknown`: the database's owner. That is how "reports an unknowable fact
+   as unknown" is a property of the contract rather than of the page. It
+   loses the schedule, by amendment 5.
+3. **The run manager.** Verification is a run, so `runs.py` gains the kind
+   `verify-backup` (an archive found in the listing, passed after `--`,
+   locked and journalled under the archive's name). Spec 050's `backup`
+   kind gains `--dest`, set by the server to the directory the list reads.
+   Both runs have the backups and data directories' paths removed from
+   their events, which is how a run "reports the name of the archive it
+   wrote, never its path" without changing what the CLI prints. The journal
+   records each run's target, so a failed verification still marks its
+   archive after a restart. Other kinds are unchanged apart from that
+   journal field.
 4. **The importer moves.** `config import` was inline in the CLI's
    dispatch. It now lives in `harrier.userconfig.importer`, line for line,
    and the CLI prints its report; the route returns the same report.
+5. **Spec 050 was built first, so this spec reuses its routes** rather than
+   adding a second route for the same command. Taking a backup is
+   `POST /ops/backup`, whose empty body writes an archive and deletes none
+   (spec 050's amendment), so "the retention is the CLI's default" under
+   Backups now reads: the browser deletes no archive, and retention runs
+   from the terminal or with `prune` in the body. The profile list is
+   `GET /ops/profile`. The schedule's facts are `GET /ops/schedule`, which
+   reads the same records through `harrier.schedule.job_health`, so
+   `GET /settings/host` no longer carries them and opens no database.
+   `GET /ops/profile` answers without the token, as spec 050 states and
+   tests; this spec's sentence that profile document names are a tokened
+   read is left as an open decision below rather than changed in spec 050's
+   route here.
 
 ## Honest limitations
 
@@ -404,6 +423,13 @@ None for data. `just container-up` after it ships.
    downloads only, as written above, or also in `harrier export`.
    Recommendation: downloads only, because the command's files are read back
    by the legacy import and an apostrophe would change the imported text.
+4. **The profile list's token, found at implementation (2026-10-10).** This
+   spec says profile document names are a tokened read; spec 050, built
+   first, serves them from `GET /ops/profile` without the token and tests
+   that (`services/api/tests/test_ui_operations.py::test_the_schedule_and_the_profile_list_are_tokenless_reads`).
+   This branch reuses the route as built. Recommendation: require the token
+   on `GET /ops/profile` in a change that amends spec 050's criterion, for
+   the reason this spec gives: the names describe the operator's own data.
 
 ## Proof / origin
 

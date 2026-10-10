@@ -12,11 +12,13 @@ from __future__ import annotations
 import json
 import os
 import plistlib
+import sqlite3
 import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
+from itertools import pairwise
 from pathlib import Path
 from typing import Any, cast
 
@@ -438,6 +440,133 @@ def schedule_status(
         status.next_run = next_run_after(job, reference).isoformat(timespec="minutes")
         statuses.append(status)
     return statuses
+
+
+# ---------------------------------------------------------------------------
+# What a process without launchctl can say (spec 050 as amended by spec 096)
+# ---------------------------------------------------------------------------
+
+# A job is overdue when its last success is older than this many of its
+# longest gaps between scheduled runs. One missed run is a laptop asleep at
+# the scheduled minute; two in a row is the job that stopped (spec 050).
+OVERDUE_GAPS = 2
+
+_WEEKDAYS = ("Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays", "Sundays")
+
+
+@dataclass(frozen=True)
+class SuccessRecord:
+    """One last-success record a scheduled job writes (spec 029)."""
+
+    key: str
+    last_success_at: str | None
+    summary: str
+    overdue: bool
+
+
+@dataclass(frozen=True)
+class JobHealth:
+    """A scheduled job as the records describe it. Installed and loaded are
+    not here: only launchctl on the host knows them."""
+
+    name: str
+    cadence: str
+    records: tuple[SuccessRecord, ...]
+
+
+def describe_cadence(job: ScheduleJob) -> str:
+    """The cadence in words, from the definition rather than from launchd."""
+    if job.kind == "interval":
+        for unit, seconds in (("hour", 3600), ("minute", 60), ("second", 1)):
+            if job.seconds % seconds == 0:
+                count = job.seconds // seconds
+                return f"every {count} {unit}{'s' if count != 1 else ''}"
+    groups: dict[int | None, list[str]] = {}
+    for time in job.times:
+        groups.setdefault(time.weekday, []).append(f"{time.hour:02d}:{time.minute:02d}")
+    parts: list[str] = []
+    for weekday, clock in sorted(groups.items(), key=lambda item: item[0] or 0):
+        when = "daily" if weekday is None else _WEEKDAYS[weekday - 1]
+        parts.append(f"{when} at {', '.join(sorted(clock))}")
+    return "; ".join(parts)
+
+
+def longest_gap(job: ScheduleJob) -> timedelta:
+    """The longest time between two of this job's scheduled runs.
+
+    Walked with `next_run_after` over two weeks, so a weekly job and a job
+    with uneven times of day are measured by the same rule launchd follows.
+    """
+    if job.kind == "interval":
+        return timedelta(seconds=job.seconds)
+    start = datetime(2024, 1, 1)  # a Monday, so every weekday is crossed
+    runs: list[datetime] = []
+    moment = start
+    while moment < start + timedelta(days=15):
+        moment = next_run_after(job, moment)
+        runs.append(moment)
+    return max(later - earlier for earlier, later in pairwise(runs))
+
+
+def success_keys(conn: sqlite3.Connection, job: ScheduleJob) -> list[str]:
+    """The last-success records this job writes, read from its command.
+
+    `discover --configured-tracks` writes one per configured academic track.
+    A command that records no success gets no keys, and is reported as such
+    rather than as healthy.
+    """
+    from harrier.runoutcome import DIGEST_JOB, DISCOVERY_JOB, MAIL_WATCH_JOB
+
+    verb = job.command[0] if job.command else ""
+    if verb == "discover" and "--configured-tracks" in job.command:
+        from harrier.digest import academic_discovery_jobs
+
+        return academic_discovery_jobs(conn)
+    return {
+        "discover": [DISCOVERY_JOB],
+        "digest": [DIGEST_JOB],
+        "gmail-watch": [MAIL_WATCH_JOB],
+    }.get(verb, [])
+
+
+def _moment(timestamp: str) -> datetime | None:
+    try:
+        moment = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+
+
+def job_health(
+    conn: sqlite3.Connection, *, config_path: Path | None = None, now: datetime | None = None
+) -> list[JobHealth]:
+    """Each scheduled job's cadence and last successes, and which are overdue.
+
+    Raises `ScheduleConfigError` when the definition cannot be read, so the
+    caller reports the loader's words rather than an empty, healthy list.
+    """
+    from harrier.runoutcome import all_last_success, describe_age
+
+    _prefix, jobs = load_schedule(config_path)
+    recorded = all_last_success(conn)
+    reference = now if now is not None else datetime.now(UTC)
+    health: list[JobHealth] = []
+    for job in jobs:
+        limit = longest_gap(job) * OVERDUE_GAPS
+        records: list[SuccessRecord] = []
+        for key in success_keys(conn, job):
+            stamp = recorded.get(key)
+            moment = None if stamp is None else _moment(stamp)
+            records.append(
+                SuccessRecord(
+                    key=key,
+                    last_success_at=stamp,
+                    summary=describe_age(key, stamp, now=reference),
+                    overdue=moment is None or reference - moment > limit,
+                )
+            )
+        health.append(JobHealth(job.name, describe_cadence(job), tuple(records)))
+    return health
 
 
 def uninstall_schedule(

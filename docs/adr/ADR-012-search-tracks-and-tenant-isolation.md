@@ -1,6 +1,6 @@
 # ADR-012: Search tracks are rows; tenants are data directories
 
-- Status: accepted
+- Status: accepted; hosted half decided by ADR-013
 - Date: 2026-10-08
 - Extends: ADR-009 (isolation, which its point 3 handed to a future ADR)
 - Preserves: ADR-003 (one write path, now per store), ADR-008, ADR-011
