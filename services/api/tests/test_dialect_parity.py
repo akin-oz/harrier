@@ -2,12 +2,35 @@
 
 The schema has one definition with two dialects: SQLite's migrations and
 the Postgres baseline and later migrations in `harrier.tracker.schema`. Nothing but this file
-holds them together. It opens a fresh store of each and proves that they
-have the same tables, the same columns in the same order, the same
-nullability, the same unique constraints and primary keys, and that a row
-inserted with only its required columns gets defaults of the same shape.
-Then it runs every probe in the spec's table against both, and each must be
-refused, or accepted, in both.
+holds them together. It opens a fresh store of each and checks that they
+have the same tables, and for each table:
+
+- the same columns in the same order;
+- the same type affinity for each column: SQLite's affinity for the
+  declared type against Postgres's data type, where text is TEXT and
+  integer or bigint is INTEGER;
+- the same nullability, but for the one difference named in
+  `KNOWN_NULLABILITY_DIFFERENCES`;
+- the same primary key, and the same unique constraints with the same
+  partial predicates;
+- the same foreign keys, with the same actions, but for the one named in
+  `KNOWN_FOREIGN_KEY_DIFFERENCES`, which SQLite holds as two triggers;
+- for a row inserted with only its required columns, equal defaults, and
+  each default timestamp in SQLite's shape and within two minutes of the
+  current UTC time. The Postgres session is set to a zone that is not UTC
+  first, so a default that follows the session's zone is caught.
+
+Then it runs every probe against both, and each must be refused, or
+accepted, in both. The probes are the spec's table, one accepted insert
+per status, per track kind and per event kind and actor that the outcome
+rule allows (and a refused one for each it does not), and a refusal or
+acceptance for each column a CHECK, foreign key or trigger guards.
+
+What it cannot see: a CHECK or trigger that changes no column, default,
+key or probe outcome above. TRUNCATE is one such gap. SQLite has no
+TRUNCATE statement, so no probe that runs on both stores can reach it,
+and Postgres row triggers do not fire on it; spec 105 adds the
+statement-level refusal.
 
 The spec asks for this test to fail when one Postgres column is renamed, one
 default is changed, or one probe's constraint is removed. The pull request
@@ -33,6 +56,7 @@ import sqlite3
 from collections.abc import Generator
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -41,7 +65,9 @@ from pg_support import fresh_database, new_owner, set_session_owner
 
 from harrier.db import connect
 from harrier.pgstore import migrate_postgres, postgres_connect
-from harrier.tracker.schema import HOSTED_ONLY_COLUMNS, OWNER_SCOPED_KEYS
+from harrier.tracker.reasons import ACTORS, KINDS
+from harrier.tracker.schema import HOSTED_ONLY_COLUMNS, OWNER_SCOPED_KEYS, STATUSES
+from harrier.tracks import TRACK_KINDS
 
 if TYPE_CHECKING:
     import psycopg
@@ -51,17 +77,24 @@ if TYPE_CHECKING:
 Dialect = Literal["sqlite", "postgres"]
 DIALECTS: tuple[Dialect, ...] = ("sqlite", "postgres")
 
+# A foreign key as its columns, the table and columns it references, and its
+# ON UPDATE and ON DELETE actions.
+ForeignKey = tuple[tuple[str, ...], str, tuple[str, ...], str, str]
+
 
 @dataclass(frozen=True)
 class Shape:
     """What one table looks like, in terms both dialects can state."""
 
     columns: tuple[str, ...]
+    # Each column's type affinity: TEXT, INTEGER, REAL, BLOB or NUMERIC.
+    types: dict[str, str]
     nullable: dict[str, bool]
     primary_key: tuple[str, ...]
     # Each unique constraint or unique index other than the primary key, as
     # its columns and its partial predicate ('' when it covers every row).
     unique: frozenset[tuple[tuple[str, ...], str]]
+    foreign_keys: frozenset[ForeignKey]
 
 
 # --- stores ---
@@ -98,6 +131,38 @@ def _predicate(text: str) -> str:
     """
     text = text.lower().replace("::text", "").replace("!=", "<>")
     return re.sub(r"[\s()]", "", text)
+
+
+def sqlite_affinity(declared: str) -> str:
+    """The affinity SQLite gives a declared column type, by its own rules
+    applied in its order (https://sqlite.org/datatype3.html, section 3.1)."""
+    upper = declared.upper()
+    if "INT" in upper:
+        return "INTEGER"
+    if any(part in upper for part in ("CHAR", "CLOB", "TEXT")):
+        return "TEXT"
+    if "BLOB" in upper or not upper:
+        return "BLOB"
+    if any(part in upper for part in ("REAL", "FLOA", "DOUB")):
+        return "REAL"
+    return "NUMERIC"
+
+
+# Postgres data types by the SQLite affinity that stores the same values. A
+# type missing here keeps its own name, which no SQLite affinity equals, so
+# a timestamptz or a boolean column is a difference rather than a match.
+POSTGRES_AFFINITY: dict[str, str] = {
+    "text": "TEXT",
+    "character varying": "TEXT",
+    "character": "TEXT",
+    "smallint": "INTEGER",
+    "integer": "INTEGER",
+    "bigint": "INTEGER",
+    "real": "REAL",
+    "double precision": "REAL",
+    "bytea": "BLOB",
+    "numeric": "NUMERIC",
+}
 
 
 def sqlite_tables(conn: sqlite3.Connection) -> set[str]:
@@ -139,7 +204,39 @@ def sqlite_shape(conn: sqlite3.Connection, table: str) -> Shape:
             assert match is not None, f"{table}: partial index {name} has no WHERE clause"
             predicate = _predicate(match.group(1))
         unique.add((index_columns, predicate))
-    return Shape(columns, nullable, primary_key, frozenset(unique))
+    types = {str(row["name"]): sqlite_affinity(str(row["type"])) for row in info}
+    return Shape(
+        columns,
+        types,
+        nullable,
+        primary_key,
+        frozenset(unique),
+        sqlite_foreign_keys(conn, table),
+    )
+
+
+def sqlite_foreign_keys(conn: sqlite3.Connection, table: str) -> frozenset[ForeignKey]:
+    grouped: dict[int, list[sqlite3.Row]] = {}
+    for row in conn.execute(f"PRAGMA foreign_key_list({table})").fetchall():
+        grouped.setdefault(int(row["id"]), []).append(row)
+    keys: set[ForeignKey] = set()
+    for parts in grouped.values():
+        parts.sort(key=lambda row: int(row["seq"]))
+        # A REFERENCES clause without columns reports none here. The schema
+        # always names them, and comparing a guess would hide a difference.
+        assert all(row["to"] is not None for row in parts), (
+            f"{table}: a foreign key to {parts[0]['table']} names no parent columns"
+        )
+        keys.add(
+            (
+                tuple(str(row["from"]) for row in parts),
+                str(parts[0]["table"]),
+                tuple(str(row["to"]) for row in parts),
+                str(parts[0]["on_update"]),
+                str(parts[0]["on_delete"]),
+            )
+        )
+    return frozenset(keys)
 
 
 def postgres_tables(conn: PgConnection) -> set[str]:
@@ -163,14 +260,64 @@ GROUP BY i.indexrelid, i.indisprimary, i.indpred, i.indrelid
 """
 
 
+_PG_FOREIGN_KEYS = """
+SELECT array(
+           SELECT a.attname::text
+           FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+           JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+           ORDER BY k.ord
+       ),
+       p.relname::text,
+       array(
+           SELECT a.attname::text
+           FROM unnest(c.confkey) WITH ORDINALITY AS k(attnum, ord)
+           JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = k.attnum
+           ORDER BY k.ord
+       ),
+       c.confupdtype::text,
+       c.confdeltype::text
+FROM pg_constraint c
+JOIN pg_class t ON t.oid = c.conrelid
+JOIN pg_class p ON p.oid = c.confrelid
+WHERE c.contype = 'f' AND t.relname = %s AND t.relnamespace = 'public'::regnamespace
+"""
+
+# pg_constraint's action codes, spelled as SQLite's foreign_key_list spells them.
+_PG_ACTIONS = {
+    "a": "NO ACTION",
+    "r": "RESTRICT",
+    "c": "CASCADE",
+    "n": "SET NULL",
+    "d": "SET DEFAULT",
+}
+
+
+def postgres_foreign_keys(conn: PgConnection, table: str) -> frozenset[ForeignKey]:
+    keys: set[ForeignKey] = set()
+    for columns, parent, parent_columns, on_update, on_delete in conn.execute(
+        _PG_FOREIGN_KEYS, (table,)
+    ).fetchall():
+        keys.add(
+            (
+                tuple(str(name) for name in cast("list[object]", columns)),
+                str(parent),
+                tuple(str(name) for name in cast("list[object]", parent_columns)),
+                _PG_ACTIONS[str(on_update)],
+                _PG_ACTIONS[str(on_delete)],
+            )
+        )
+    return frozenset(keys)
+
+
 def postgres_shape(conn: PgConnection, table: str) -> Shape:
     info = conn.execute(
-        "SELECT column_name, is_nullable FROM information_schema.columns "
+        "SELECT column_name, is_nullable, data_type FROM information_schema.columns "
         "WHERE table_schema = 'public' AND table_name = %s ORDER BY ordinal_position",
         (table,),
     ).fetchall()
     columns = tuple(str(row[0]) for row in info)
     nullable = {str(row[0]): row[1] == "YES" for row in info}
+    types = {str(row[0]): POSTGRES_AFFINITY.get(str(row[2]), str(row[2])) for row in info}
     primary_key: tuple[str, ...] = ()
     unique: set[tuple[tuple[str, ...], str]] = set()
     for is_primary, names, predicate in conn.execute(_PG_INDEXES, (table,)).fetchall():
@@ -179,7 +326,14 @@ def postgres_shape(conn: PgConnection, table: str) -> Shape:
             primary_key = index_columns
         else:
             unique.add((index_columns, _predicate(str(predicate))))
-    return Shape(columns, nullable, primary_key, frozenset(unique))
+    return Shape(
+        columns,
+        types,
+        nullable,
+        primary_key,
+        frozenset(unique),
+        postgres_foreign_keys(conn, table),
+    )
 
 
 # A difference the parity test found and that the Postgres baseline cannot
@@ -192,6 +346,36 @@ KNOWN_NULLABILITY_DIFFERENCES: dict[tuple[str, str], tuple[bool, bool]] = {
     # (table, column): (nullable in SQLite, nullable in Postgres)
     ("job_runs", "job"): (True, False),
 }
+
+# A foreign key one dialect has and the other holds some other way. SQLite
+# refuses a REFERENCES clause on an added column whose default is not NULL,
+# so migration 8 holds `jobs.track_id` to `tracks` with two triggers
+# (`jobs_track_must_exist_on_insert` and `..._on_update`); the Postgres
+# baseline declares the foreign key. The probes `job-unknown-track` and
+# `job-track-update-unknown` hold the two to the same refusals.
+KNOWN_FOREIGN_KEY_DIFFERENCES: dict[tuple[str, ForeignKey], Dialect] = {
+    # (table, foreign key): the one dialect that declares it
+    ("jobs", (("track_id",), "tracks", ("id",), "NO ACTION", "NO ACTION")): "postgres",
+}
+
+
+def compare_foreign_keys(table: str, lite: Shape, pg: Shape) -> list[str]:
+    problems: list[str] = []
+    only: dict[Dialect, frozenset[ForeignKey]] = {
+        "sqlite": lite.foreign_keys - pg.foreign_keys,
+        "postgres": pg.foreign_keys - lite.foreign_keys,
+    }
+    for dialect, keys in only.items():
+        for key in sorted(keys):
+            if KNOWN_FOREIGN_KEY_DIFFERENCES.get((table, key)) != dialect:
+                problems.append(f"{table}: foreign key {key} is declared in {dialect} only")
+    for (known_table, key), dialect in KNOWN_FOREIGN_KEY_DIFFERENCES.items():
+        if known_table == table and key not in only[dialect]:
+            problems.append(
+                f"{table}: the known foreign key difference {key} ({dialect} only) is gone; "
+                "update KNOWN_FOREIGN_KEY_DIFFERENCES"
+            )
+    return problems
 
 
 def compare_shapes(table: str, lite: Shape, pg: Shape) -> list[str]:
@@ -207,6 +391,11 @@ def compare_shapes(table: str, lite: Shape, pg: Shape) -> list[str]:
     for column in lite.columns:
         if column not in pg.nullable:
             continue
+        if lite.types[column] != pg.types[column]:
+            problems.append(
+                f"{table}.{column}: type affinity is {lite.types[column]} in SQLite, "
+                f"{pg.types[column]} in Postgres"
+            )
         found = (lite.nullable[column], pg.nullable[column])
         expected = KNOWN_NULLABILITY_DIFFERENCES.get((table, column))
         if expected is not None:
@@ -228,6 +417,7 @@ def compare_shapes(table: str, lite: Shape, pg: Shape) -> list[str]:
         problems.append(f"{table}: unique {list(columns)} where '{predicate}' is in SQLite only")
     for columns, predicate in sorted(pg.unique - lite.unique):
         problems.append(f"{table}: unique {list(columns)} where '{predicate}' is in Postgres only")
+    problems += compare_foreign_keys(table, lite, pg)
     return problems
 
 
@@ -247,20 +437,44 @@ def declared_view(
     owner_keys: OwnerKeys = OWNER_SCOPED_KEYS,
 ) -> Shape:
     """`pg` as SQLite should see it: hosted-only columns removed, and each
-    per-owner key in its SQLite form, or gone if only Postgres has it."""
+    per-owner key in its SQLite form, or gone if only Postgres has it.
+
+    A foreign key loses its hosted-only columns the same way, with the
+    parent columns they pair with: `jobs (owner_id, track_id)` to `tracks
+    (owner_id, id)` is `jobs (track_id)` to `tracks (id)` on SQLite. One whose
+    columns are all hosted only (`owner_id` to `auth.users`) has no SQLite
+    form and is dropped. Nothing else about a key is excused.
+    """
     hidden = {column for owner_table, column in hosted_columns if owner_table == table}
 
     def mapped(key: tuple[str, ...]) -> tuple[str, ...] | None:
         return owner_keys.get((table, key), key)
 
+    def local_form(key: ForeignKey) -> ForeignKey | None:
+        columns, parent, parent_columns, on_update, on_delete = key
+        kept = [(c, p) for c, p in zip(columns, parent_columns, strict=True) if c not in hidden]
+        if not kept:
+            return None
+        return (
+            tuple(c for c, _ in kept),
+            parent,
+            tuple(p for _, p in kept),
+            on_update,
+            on_delete,
+        )
+
     return Shape(
         columns=tuple(column for column in pg.columns if column not in hidden),
+        types={column: v for column, v in pg.types.items() if column not in hidden},
         nullable={column: v for column, v in pg.nullable.items() if column not in hidden},
         primary_key=mapped(pg.primary_key) or (),
         unique=frozenset(
             (key, predicate)
             for columns, predicate in pg.unique
             if (key := mapped(columns)) is not None
+        ),
+        foreign_keys=frozenset(
+            local for key in pg.foreign_keys if (local := local_form(key)) is not None
         ),
     )
 
@@ -339,11 +553,28 @@ MINIMAL_ROWS: tuple[tuple[str, str, str], ...] = (
     ("contacts", "INSERT INTO contacts DEFAULT VALUES", "SELECT * FROM contacts"),
 )
 
-SQLITE_NOW = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
-ISO_NOW = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+
+@dataclass(frozen=True)
+class TimestampShape:
+    pattern: re.Pattern[str]
+    # The strptime format for the same text, read as UTC.
+    format: str
 
 
-def timestamp_pattern(table: str, column: str) -> re.Pattern[str] | None:
+SQLITE_NOW = TimestampShape(
+    re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$"), "%Y-%m-%d %H:%M:%S"
+)
+ISO_NOW = TimestampShape(
+    re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$"), "%Y-%m-%dT%H:%M:%SZ"
+)
+# How far a default timestamp may sit from the test's own clock reading.
+CLOCK_TOLERANCE = timedelta(minutes=2)
+# Any zone but UTC. A default that follows the session's zone rather than
+# UTC is then hours off, not a match by accident.
+NOT_UTC = "Asia/Tokyo"
+
+
+def timestamp_shape(table: str, column: str) -> TimestampShape | None:
     """The shape a column's default timestamp must have, or None if not one."""
     if table == "job_events" and column == "at":
         return ISO_NOW
@@ -374,12 +605,14 @@ def postgres_rows(conn: PgConnection) -> dict[str, dict[str, object]]:
     return rows
 
 
-def compare_rows(table: str, lite: dict[str, object], pg: dict[str, object]) -> list[str]:
+def compare_rows(
+    table: str, lite: dict[str, object], pg: dict[str, object], now: datetime
+) -> list[str]:
     problems: list[str] = []
     for column, lite_value in lite.items():
         pg_value = pg.get(column)
-        pattern = timestamp_pattern(table, column)
-        if pattern is None:
+        shape = timestamp_shape(table, column)
+        if shape is None:
             if lite_value != pg_value:
                 problems.append(
                     f"{table}.{column}: default is {lite_value!r} in SQLite, "
@@ -387,10 +620,17 @@ def compare_rows(table: str, lite: dict[str, object], pg: dict[str, object]) -> 
                 )
             continue
         for dialect, value in (("SQLite", lite_value), ("Postgres", pg_value)):
-            if not isinstance(value, str) or not pattern.match(value):
+            if not isinstance(value, str) or not shape.pattern.match(value):
                 problems.append(
                     f"{table}.{column}: {dialect} default {value!r} does not match "
-                    f"{pattern.pattern}"
+                    f"{shape.pattern.pattern}"
+                )
+                continue
+            at = datetime.strptime(value, shape.format).replace(tzinfo=UTC)
+            if abs(at - now) > CLOCK_TOLERANCE:
+                problems.append(
+                    f"{table}.{column}: {dialect} default {value!r} is not the current UTC "
+                    f"time ({now:%Y-%m-%d %H:%M:%S})"
                 )
     return problems
 
@@ -412,10 +652,15 @@ def test_both_dialects_build_the_same_tracker(tmp_path: Path) -> None:
             )
         assert not problems, "\n".join(problems)
 
+        # SQLite's datetime('now') is UTC by definition and has no session
+        # zone to set. A Postgres default reads the session's zone unless it
+        # converts to UTC itself, which is what this checks.
+        pg.execute(f"SET TIME ZONE '{NOT_UTC}'".encode())
+        now = datetime.now(UTC)
         lite_rows = sqlite_rows(lite)
         pg_rows = postgres_rows(pg)
         for table, _, _ in MINIMAL_ROWS:
-            problems += compare_rows(table, lite_rows[table], pg_rows[table])
+            problems += compare_rows(table, lite_rows[table], pg_rows[table], now)
         assert not problems, "\n".join(problems)
 
         # The hosted-only owner_id took the session's owner as its default.
@@ -434,13 +679,24 @@ def test_both_dialects_build_the_same_tracker(tmp_path: Path) -> None:
 def test_a_declaration_naming_nothing_fails() -> None:
     """A stale OWNER_SCOPED_KEYS or HOSTED_ONLY_COLUMNS entry is a failure,
     not a silent excuse. Shapes built by hand, so no server is needed."""
-    lite = {"t": Shape(("id", "slug"), {"id": False, "slug": False}, ("id",), frozenset())}
+    lite = {
+        "t": Shape(
+            ("id", "slug"),
+            {"id": "INTEGER", "slug": "TEXT"},
+            {"id": False, "slug": False},
+            ("id",),
+            frozenset(),
+            frozenset(),
+        )
+    }
     pg = {
         "t": Shape(
             ("id", "slug", "owner_id"),
+            {"id": "INTEGER", "slug": "TEXT", "owner_id": "uuid"},
             {"id": False, "slug": False, "owner_id": False},
             ("owner_id", "id"),
             frozenset({(("owner_id", "slug"), "")}),
+            frozenset({(("owner_id",), "users", ("id",), "NO ACTION", "NO ACTION")}),
         )
     }
     keys: OwnerKeys = {("t", ("owner_id", "id")): ("id",)}
@@ -468,6 +724,22 @@ def test_the_known_difference_is_real(tmp_path: Path) -> None:
     with sqlite_store(tmp_path) as lite:
         lite.execute("INSERT INTO job_runs (job, last_success_at) VALUES (NULL, 'x')")
         assert lite.execute("SELECT count(*) FROM job_runs WHERE job IS NULL").fetchone()[0] == 1
+
+
+def test_the_known_foreign_key_difference_is_real(tmp_path: Path) -> None:
+    """SQLite has no foreign key on `jobs.track_id`, and still refuses an
+    unknown track, with the triggers' message rather than a foreign key's."""
+    with sqlite_store(tmp_path) as lite:
+        declared = sqlite_foreign_keys(lite, "jobs")
+        assert all("track_id" not in columns for columns, *_ in declared)
+        lite.execute(ONE_JOB)
+        for statement in (
+            "INSERT INTO jobs (track_id) VALUES (99)",
+            "UPDATE jobs SET track_id = 99",
+        ):
+            with pytest.raises(sqlite3.IntegrityError) as refused:
+                lite.execute(statement)
+            assert str(refused.value) == "unknown track", statement
 
 
 # --- probes ---
@@ -505,6 +777,64 @@ def _track(slug: str) -> str:
 
 def _deadline(value: str) -> str:
     return f"INSERT INTO jobs (deadline) VALUES ('{value}')"
+
+
+def _event(kind: str, actor: str, *, job_id: int = 1, backfilled: int = 0) -> str:
+    return (
+        "INSERT INTO job_events (job_id, kind, actor, to_status, backfilled) "
+        f"VALUES ({job_id}, '{kind}', '{actor}', 'prospect', {backfilled})"
+    )
+
+
+def _every_status() -> tuple[Probe, ...]:
+    """Each status the lifecycle names is one a job can hold, in both."""
+    return tuple(
+        Probe(
+            f"status-{status}",
+            f"INSERT INTO jobs (status) VALUES ('{status}')",
+            refused=False,
+            check=(f"SELECT count(*) FROM jobs WHERE status = '{status}'", 1),
+        )
+        for status in STATUSES
+    )
+
+
+def _every_track_kind() -> tuple[Probe, ...]:
+    return tuple(
+        Probe(
+            f"track-kind-{kind}",
+            f"INSERT INTO tracks (slug, kind, label) VALUES ('kind-probe', '{kind}', 'Probe')",
+            refused=False,
+            check=(f"SELECT count(*) FROM tracks WHERE slug = 'kind-probe' AND kind = '{kind}'", 1),
+        )
+        for kind in TRACK_KINDS
+    )
+
+
+def _every_event_kind_and_actor() -> tuple[Probe, ...]:
+    """Every kind with every actor: accepted exactly when the outcome rule
+    holds, that an outcome is the company's and only an outcome is. The
+    spec's own probe, an outcome by the candidate, is one of these."""
+    probes: list[Probe] = []
+    for kind in KINDS:
+        for actor in ACTORS:
+            allowed = (kind == "outcome") == (actor == "company")
+            probes.append(
+                Probe(
+                    f"event-{kind}-by-{actor}",
+                    _event(kind, actor),
+                    refused=not allowed,
+                    setup=(ONE_JOB,),
+                    check=(
+                        "SELECT count(*) FROM job_events "
+                        f"WHERE kind = '{kind}' AND actor = '{actor}'",
+                        1,
+                    )
+                    if allowed
+                    else None,
+                )
+            )
+    return tuple(probes)
 
 
 PROBES: tuple[Probe, ...] = (
@@ -559,13 +889,6 @@ PROBES: tuple[Probe, ...] = (
         message="a track id never changes",
     ),
     Probe(
-        "outcome-by-candidate",
-        "INSERT INTO job_events (job_id, kind, actor, to_status) "
-        "VALUES (1, 'outcome', 'candidate', 'rejected')",
-        refused=True,
-        setup=(ONE_JOB,),
-    ),
-    Probe(
         "duplicate-url",
         "INSERT INTO jobs (url) VALUES ('https://example.com/jobs/1')",
         refused=True,
@@ -596,6 +919,58 @@ PROBES: tuple[Probe, ...] = (
         refused=True,
         setup=("INSERT INTO profile_documents (kind, name) VALUES ('truth', 'probe')",),
     ),
+    # Beyond the spec's table: a refusal, or an acceptance, for each column a
+    # CHECK, foreign key or trigger guards, so removing or narrowing one in
+    # a single dialect changes an outcome (post-merge review of PR #207).
+    Probe(
+        "track-kind-bogus",
+        "INSERT INTO tracks (slug, kind, label) VALUES ('kind-probe', 'bogus', 'Probe')",
+        refused=True,
+    ),
+    Probe("event-kind-bogus", _event("bogus", "system"), refused=True, setup=(ONE_JOB,)),
+    Probe("event-actor-bogus", _event("created", "bogus"), refused=True, setup=(ONE_JOB,)),
+    Probe(
+        "event-backfilled-1",
+        _event("created", "system", backfilled=1),
+        refused=False,
+        setup=(ONE_JOB,),
+        check=("SELECT count(*) FROM job_events WHERE backfilled = 1", 1),
+    ),
+    Probe(
+        "event-backfilled-2",
+        _event("created", "system", backfilled=2),
+        refused=True,
+        setup=(ONE_JOB,),
+    ),
+    Probe("event-for-a-missing-job", _event("created", "system", job_id=99), refused=True),
+    Probe(
+        "job-track-update-unknown",
+        "UPDATE jobs SET track_id = 99",
+        refused=True,
+        setup=(ONE_JOB,),
+    ),
+    Probe(
+        "job-events-update-to-status",
+        "UPDATE job_events SET to_status = 'x'",
+        refused=True,
+        message="job_events is append-only",
+        setup=(ONE_JOB, ONE_EVENT),
+    ),
+    Probe(
+        "track-archive",
+        "UPDATE tracks SET archived_at = 'x' WHERE id = 1",
+        refused=False,
+        check=("SELECT count(*) FROM tracks WHERE id = 1 AND archived_at = 'x'", 1),
+    ),
+    Probe(
+        "track-relabel",
+        "UPDATE tracks SET label = 'y' WHERE id = 1",
+        refused=False,
+        check=("SELECT count(*) FROM tracks WHERE id = 1 AND label = 'y'", 1),
+    ),
+    *_every_status(),
+    *_every_track_kind(),
+    *_every_event_kind_and_actor(),
 )
 
 

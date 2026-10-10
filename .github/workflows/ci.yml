@@ -16,7 +16,8 @@ jobs:
     # service is missing or unreachable (spec 039).
     services:
       postgres:
-        # Supabase creates new projects on Postgres 17 (spec 103).
+        # Supabase creates new projects on Postgres 17 (spec 103):
+        # https://supabase.com/changelog/46080-self-hosted-supabase-upgrading-from-pg-15-to-17-breaking-change
         image: postgres:17
         env:
           POSTGRES_PASSWORD: postgres

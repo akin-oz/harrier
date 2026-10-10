@@ -2,8 +2,8 @@
 
 Tests that need a server take a throwaway database from `fresh_database`
 (tests/pg_support.py). Without `HARRIER_TEST_POSTGRES_URL` they skip
-locally and fail in CI. The URL, driver and connection-failure tests need
-no server and always run.
+locally and fail in CI, and two tests here hold that rule. The URL,
+driver and connection-failure tests need no server and always run.
 """
 
 from __future__ import annotations
@@ -15,9 +15,10 @@ import time
 import traceback
 import uuid
 from typing import Any, LiteralString
+from urllib.parse import unquote
 
 import pytest
-from pg_support import fresh_database
+from pg_support import TEST_URL_VARIABLE, admin_url, fresh_database
 
 from harrier.pgstore import (
     MIGRATION_LOCK_KEY,
@@ -131,6 +132,32 @@ def test_a_connection_failure_never_prints_the_password(
     assert password not in message
     assert password not in printed
     assert password not in caplog.text
+
+
+# --- the test server ---
+
+
+def test_without_a_test_server_the_postgres_tests_fail_in_ci(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A gate that skips in CI has not run (spec 039). Both outcomes are
+    caught and the kind asserted: a skip let through would turn this test
+    into a skip as well, and it would pass for the wrong reason."""
+    monkeypatch.delenv(TEST_URL_VARIABLE, raising=False)
+    monkeypatch.setenv("CI", "true")
+    with pytest.raises((pytest.fail.Exception, pytest.skip.Exception)) as outcome:
+        admin_url()
+    assert outcome.type is pytest.fail.Exception
+
+
+def test_without_a_test_server_the_postgres_tests_skip_locally(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(TEST_URL_VARIABLE, raising=False)
+    monkeypatch.delenv("CI", raising=False)
+    with pytest.raises((pytest.fail.Exception, pytest.skip.Exception)) as outcome:
+        admin_url()
+    assert outcome.type is pytest.skip.Exception
 
 
 # --- dialect declarations ---
@@ -331,3 +358,72 @@ def test_a_store_ahead_of_the_code_is_refused() -> None:
         assert str(ahead) in str(refused.value)
         assert str(LATEST) in str(refused.value)
         assert recorded_versions(url) == [*ALL_VERSIONS, ahead]
+
+
+@pytest.mark.parametrize(
+    "escapes",
+    ["%zz", "%40at%zz"],
+    ids=["an-invalid-escape", "a-valid-escape-then-an-invalid-one"],
+)
+def test_a_driver_error_that_quotes_the_password_never_carries_it(
+    escapes: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """libpq quotes the URL's text as written, still percent-encoded, when it
+    refuses it. Scrubbing only the decoded password let the encoded one
+    through, and raising inside the except block kept the driver's error as
+    `__context__`, where a debugger or error reporter still finds it
+    (post-merge privacy review of PR #207). No server is needed: the driver
+    refuses the URL before it connects."""
+    import psycopg
+
+    secret = f"synthetic{uuid.uuid4().hex}"
+    written = f"{secret}{escapes}"
+    url = f"postgresql://harrier:{written}@127.0.0.1:1/harrier"
+    # The driver's own error quotes the password, so the scrub has work to do.
+    with pytest.raises(psycopg.Error) as raw:
+        psycopg.connect(url, connect_timeout=2)
+    assert written in str(raw.value)
+    caplog.set_level(logging.DEBUG)
+
+    with pytest.raises(StoreConnectionError) as refused:
+        postgres_connect(url)
+
+    error = refused.value
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    places = {
+        "message": str(error),
+        "traceback": "".join(traceback.format_exception(error)),
+        "context": repr(error.__context__),
+        "cause": repr(error.__cause__),
+        "log": caplog.text,
+    }
+    for form in (written, unquote(written), secret):
+        for place, text in places.items():
+            assert form not in text, f"the password reached the {place}"
+
+
+def test_a_store_target_never_shows_its_password() -> None:
+    secret = f"synthetic{uuid.uuid4().hex}"
+    target = store_target(
+        {"HARRIER_DATABASE_URL": f"postgresql://harrier:{secret}@db.example.test/h"}
+    )
+    assert target.is_postgres
+    assert secret not in repr(target)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql://harrier@127.0.0.1:notaport/harrier",
+        "postgresql://harrier@[::1/harrier",
+        "PostgreSQL://harrier@127.0.0.1/harrier",
+    ],
+)
+def test_a_malformed_url_is_refused_like_any_other(url: str) -> None:
+    """A bad port or host raised a bare ValueError traceback, and a scheme in
+    another case passed here and failed in libpq with an unrelated message
+    (post-merge data integrity review of PR #207)."""
+    with pytest.raises(StoreUrlError) as refused:
+        store_target({"HARRIER_DATABASE_URL": url})
+    assert str(refused.value) == "HARRIER_DATABASE_URL must be empty or a postgresql:// URL"

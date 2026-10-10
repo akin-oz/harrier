@@ -51,17 +51,10 @@ if TYPE_CHECKING:
 def load_project_env(path: Path | None = None) -> None:
     """Load .env from the working directory (spec 011; launchd wrappers rely
     on it). Existing environment variables are never overridden."""
-    env_path = path if path is not None else Path(".env")
-    if not env_path.is_file():
-        return
-    for raw_line in env_path.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        if key and key not in os.environ:
+    from harrier.envfile import read_env_file
+
+    for key, value in read_env_file(path if path is not None else Path(".env")).items():
+        if key not in os.environ:
             os.environ[key] = value
 
 
@@ -1413,11 +1406,27 @@ def _store_postgres(command: str, url: str) -> int:
         migrate_postgres,
         postgres_connect,
         postgres_version,
+        require_driver,
         target_version,
     )
 
     if command == "migrate":
-        before, after = migrate_postgres(url)
+        # Before the import below, so a missing driver is the refusal that
+        # names the install command rather than an ImportError.
+        require_driver()
+        import psycopg
+
+        try:
+            before, after = migrate_postgres(url)
+        except psycopg.Error as error:
+            # A connection failure is a StoreConnectionError by now, so this
+            # failed after connecting, most often a statement the server
+            # refused. The server's primary message quotes SQL, never the
+            # URL; an error without one, such as a lost connection, prints
+            # its class (post-merge review of PR #207).
+            reason = error.diag.message_primary or type(error).__name__
+            print(f"error: a migration failed: {reason}", file=sys.stderr)
+            return 1
         print(f"postgres {before} -> {after}")
         return 0
     with closing(postgres_connect(url)) as conn:
