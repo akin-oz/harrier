@@ -202,7 +202,9 @@ in `TruthSources.contains` and `TruthSources.lines_containing`
   and escaped characters.
 - **C5 and C6 number token rules.** They tokenize the raw text and use
   neither comparison. Unchanged. (C6 reads `lines_containing`, which now
-  finds more lines, but the rate rule itself does not change.)
+  finds more lines, but the rate rule itself does not change.) On
+  2026-10-10 spec 113 made the backtick and the underscore surrounding
+  punctuation for a number token; C5 and C6 still use neither comparison.
 - **Negation hidden by inline markers.** A separate weakness of the spec 034
   polarity filter. Its own spec if wanted.
 - **Changing the truth document.** No migration or rewrite of stored profile

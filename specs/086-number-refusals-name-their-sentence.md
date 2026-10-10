@@ -177,31 +177,31 @@ Every test stubs `generate_text` with synthetic responses and goes through
 `generate_cover_letter`, `generate_answer_set` or the CLI, never a helper
 alone.
 
-- [ ] A letter whose short version holds two sentences, the second with an
+- [x] A letter whose short version holds two sentences, the second with an
       unclaimed number, is refused with exactly
-      `number without evidence: <n> (in: <the second sentence>)` (planned
-      test_a_number_refusal_names_its_sentence)
-- [ ] A claimed total restated as a rate is refused with exactly
-      `number changed scope: <n> (in: <that sentence>)` (planned
-      test_a_scope_refusal_names_its_sentence)
-- [ ] One unclaimed value in two different sentences gives two refusals, one
-      per sentence (planned
-      test_the_same_number_in_two_sentences_is_refused_in_each)
-- [ ] One sentence in both the short and the full version gives one refusal
-      (planned test_a_sentence_in_both_letter_versions_is_refused_once)
-- [ ] A sentence holding the value twice names the word before the refused
-      occurrence, and `40%` with `40` counts as the same value (planned
-      test_a_repeated_number_in_one_sentence_names_the_word_before_it)
-- [ ] A sentence holding the value twice, whose refused occurrence is its
+      `number without evidence: <n> (in: <the second sentence>)`
+      (`services/api/tests/test_apply_claims.py::test_a_number_refusal_names_its_sentence`)
+- [x] A claimed total restated as a rate is refused with exactly
+      `number changed scope: <n> (in: <that sentence>)`
+      (`services/api/tests/test_apply_claims.py::test_a_scope_refusal_names_its_sentence`)
+- [x] One unclaimed value in two different sentences gives two refusals, one
+      per sentence
+      (`services/api/tests/test_apply_claims.py::test_the_same_number_in_two_sentences_is_refused_in_each`)
+- [x] One sentence in both the short and the full version gives one refusal
+      (`services/api/tests/test_apply_claims.py::test_a_sentence_in_both_letter_versions_is_refused_once`)
+- [x] A sentence holding the value twice names the word before the refused
+      occurrence, and `40%` with `40` counts as the same value
+      (`services/api/tests/test_apply_claims.py::test_a_repeated_number_in_one_sentence_names_the_word_before_it`)
+- [x] A sentence holding the value twice, whose refused occurrence is its
       first word, uses `(first word of: <that sentence>)`, and a value that
-      occurs once as the first word uses `(in: <that sentence>)` (planned
-      test_a_repeated_number_that_opens_its_sentence_says_first_word)
-- [ ] A short version without end punctuation is quoted alone, not joined
-      to the full version (planned
-      test_a_field_without_end_punctuation_is_its_own_sentence)
-- [ ] The retry's `refusals` list carries the `(in: ...)` form (planned
-      test_the_retry_receives_the_sentence_of_a_number_refusal)
-- [ ] The existing tests that assert a C5 or C6 refusal pass unchanged:
+      occurs once as the first word uses `(in: <that sentence>)`
+      (`services/api/tests/test_apply_claims.py::test_a_repeated_number_that_opens_its_sentence_says_first_word`)
+- [x] A short version without end punctuation is quoted alone, not joined
+      to the full version
+      (`services/api/tests/test_apply_claims.py::test_a_field_without_end_punctuation_is_its_own_sentence`)
+- [x] The retry's `refusals` list carries the `(in: ...)` form
+      (`services/api/tests/test_apply_claims.py::test_the_retry_receives_the_sentence_of_a_number_refusal`)
+- [x] The existing tests that assert a C5 or C6 refusal pass unchanged:
       `test_a_number_absent_from_its_evidence_is_refused`,
       `test_a_total_rewritten_as_a_rate_is_refused`,
       `test_a_total_rewritten_with_a_slash_suffix_is_refused`,
@@ -209,10 +209,10 @@ alone.
       `test_every_violation_is_listed_in_one_refusal` and
       `test_a_second_refusal_fails_with_its_own_violations`. Each matches the
       rule name with `in`, and the rule name is unchanged.
-- [ ] Spec 065's C5 and C6 rows show the new form in the refusal column.
-- [ ] `just check` passes
+- [x] Spec 065's C5 and C6 rows show the new form in the refusal column.
+- [x] `just check` passes
 
-The planned tests go in `services/api/tests/test_apply_claims.py`.
+The tests are in `services/api/tests/test_apply_claims.py`.
 
 ## Honest limitations
 
