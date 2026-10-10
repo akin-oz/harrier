@@ -44,7 +44,7 @@ says the installed and loaded state is the host's to report.
 | `GET /ops/schedule` | none: what the container can read in place of `schedule status` | the last-success records (spec 029) and the schedule definition | request |
 | `POST /ops/backup` | `backup` | `create_backup` | run |
 | `POST /ops/digest` | `digest` | `run_digest` | run |
-| `GET /ops/profile` | `profile list` | the profile store reader | request |
+| `GET /ops/profile` | `profile list` | the profile store reader | request, with the token (spec 096, 2026-10-10) |
 
 Feed health is a run because it makes a network request per configured board.
 Pruning is a run for the same reason: `config check-feeds --prune` probes every
@@ -323,10 +323,13 @@ are in `OperationsPage.test.tsx`.
       `services/api/tests/test_ui_operations.py::test_an_empty_body_applies_sends_or_prunes_nothing`,
       and each removed URL printed by the verb the run executes,
       `services/api/tests/test_feed_health.py::test_prune_names_every_board_it_removed`)
-- [x] every operations write requires the token; schedule status, feed results
-      and the profile list are reads and do not
+- [x] every operations write requires the token; schedule status and feed
+      results are reads and do not. The profile list was a tokenless read here
+      too; amended 2026-10-10 by spec 096 (Akin's decision): it requires the
+      token, because document names describe the operator's own data
+      (`services/api/tests/test_ui_settings.py::test_the_profile_list_requires_the_token`)
       (`services/api/tests/test_ui_operations.py::test_every_operations_write_requires_the_token`,
-      `::test_the_schedule_and_the_profile_list_are_tokenless_reads`,
+      `::test_the_schedule_is_a_tokenless_read`,
       `OperationsPage.test.tsx::every operations write carries the token and no read does`)
 - [x] the generated client carries every new route and no hand-written request
       or response shape appears in `apps/web`

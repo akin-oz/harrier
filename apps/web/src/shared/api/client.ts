@@ -23,12 +23,17 @@ const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 // Configuration is the watchlist, the searches and the hold list, which
 // describe the operator's own search (spec 097 closed spec 023's open item).
 // The Settings reads name archives, model metadata and profile documents,
-// which describe the operator's own data (spec 096).
+// which describe the operator's own data (spec 096). The export downloads
+// carry the operator's rows and contact identities, and take the token in
+// this header so it never sits in a URL (spec 096).
 const TOKENED_READS = [
   /\/apply\/[^/]+\/artifacts(\/|$)/,
   /\/outreach\//,
   /\/config(\/|$)/,
   /\/settings\//,
+  /\/ops\/export\//,
+  // Profile document names, by Akin's decision of 2026-10-10 (spec 096).
+  /\/ops\/profile$/,
 ];
 
 function needsToken(request: Request): boolean {

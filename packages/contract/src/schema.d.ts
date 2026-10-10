@@ -358,6 +358,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ops/export/contacts.csv": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download Contacts
+         * @description `contacts.csv`, on the default track only, as on the command line.
+         */
+        get: operations["downloadContactsCsv"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ops/export/jobs.csv": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download Jobs
+         * @description The selected track's `jobs.csv`, in the columns `harrier export`
+         *     writes, with formula cells neutralized. Nothing is written on the server.
+         */
+        get: operations["downloadJobsCsv"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ops/feeds": {
         parameters: {
             query?: never;
@@ -413,6 +454,10 @@ export interface paths {
         /**
          * List Profile Documents
          * @description `profile list`: names and formats, never contents.
+         *
+         *     Requires the token although it is a read (spec 096, Akin's decision of
+         *     2026-10-10): the document names describe the operator's own data, the
+         *     reason spec 047 gave for the artifact index.
          */
         get: operations["listProfileDocuments"];
         put?: never;
@@ -3212,6 +3257,138 @@ export interface operations {
             };
         };
     };
+    downloadContactsCsv: {
+        parameters: {
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the CSV, as `harrier export` writes it */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": unknown;
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the track parameter named no track */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description the track may not run this operation, or it is archived */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
+        };
+    };
+    downloadJobsCsv: {
+        parameters: {
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the CSV, as `harrier export` writes it */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": unknown;
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the track parameter named no track */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description the track may not run this operation, or it is archived */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
+        };
+    };
     checkFeeds: {
         parameters: {
             query?: never;
@@ -3305,6 +3482,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ProfileDocumentOut"][];
                 };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description A host process holds the tracker database (spec 075). */
             503: {

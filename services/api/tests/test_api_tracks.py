@@ -244,7 +244,8 @@ def test_the_cli_and_the_api_share_one_allowlist() -> None:
     allowed = {op for _, _, op, _ in scoped_routes() if op in NON_DEFAULT_OPERATIONS}
     # `reconsider` works on an academic track's own seen state (spec 097),
     # and its route passes the track to the CLI as `--track` (spec 050).
-    assert allowed == {"list", "next", "counts", "add", "reconsider"}
+    # `export` downloads the selected track's jobs.csv (spec 096).
+    assert allowed == {"list", "next", "counts", "add", "reconsider", "export"}
 
 
 def test_an_archived_track_refuses_writes_over_http(two_tracks: Path, client: TestClient) -> None:

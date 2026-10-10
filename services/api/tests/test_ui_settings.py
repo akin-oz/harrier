@@ -87,7 +87,6 @@ def leaf_commands() -> set[str]:
 # asserted absent, so the merge that brings one in fails here until it is
 # removed from this set, and the set ends empty.
 PENDING_ROUTES = {
-    "GET /ops/export/jobs.csv",
     "GET /tracker/{selector}/events",
     "POST /ops/events/backfill",
     "GET /apply/{selector}/brief",
@@ -192,7 +191,12 @@ def test_every_host_command_is_on_the_panel_or_listed_with_its_line() -> None:
 # --- the token ------------------------------------------------------------------
 
 
+EXPORT_ROUTES = ("/ops/export/jobs.csv", "/ops/export/contacts.csv")
+
+
 def test_settings_routes_require_the_token(client: TestClient) -> None:
+    """Every route this spec adds, the downloads included, which live beside
+    spec 050's routes in `ops_routes.py`."""
     routes = [route for route in settings_router.routes if isinstance(route, APIRoute)]
     assert routes
     for route in routes:
@@ -200,6 +204,150 @@ def test_settings_routes_require_the_token(client: TestClient) -> None:
         for method in route.methods or ():
             response = client.request(method, path, json={"urls": []})
             assert response.status_code == 403, f"{method} {route.path}"
+    for path in EXPORT_ROUTES:
+        assert client.get(path).status_code == 403, path
+
+
+def test_the_profile_list_requires_the_token(client: TestClient) -> None:
+    """Spec 050's `GET /ops/profile`, which this spec reuses, answers only a
+    request that carries the token (Akin's decision of 2026-10-10)."""
+    assert client.get("/ops/profile").status_code == 403
+    assert client.get("/ops/profile", headers=auth()).status_code == 200
+
+
+# --- the export, as two downloads -----------------------------------------------
+
+
+def add_rows(fields: dict[str, str] | None = None, *, track: str | None = None) -> None:
+    from harrier.tracker.store import add_contact, add_job
+    from harrier.tracks import add_track, default_scope, resolve_scope
+
+    conn = connect()
+    try:
+        scope = default_scope(conn)
+        if track is not None:
+            add_track(conn, track, "academic", "Second search")
+            scope = resolve_scope(conn, track)
+        add_job(
+            conn,
+            {
+                "company": "Example Co",
+                "title": "Staff Engineer",
+                "url": f"https://boards.example.com/{track or 'job'}/1",
+                "source": "greenhouse",
+                "location": "Remote, Europe",
+                **(fields or {}),
+            },
+            scope=scope,
+        )
+        if track is None:
+            add_contact(
+                conn,
+                {
+                    "company": "Example Co",
+                    "person_name": "Synthetic Person",
+                    "linkedin_url": "https://www.linkedin.com/in/synthetic-person",
+                },
+            )
+    finally:
+        conn.close()
+
+
+def cli_export(env: Path, *argv: str) -> Path:
+    dest = env / "cli-export"
+    assert main([*argv, "export", "--dest", str(dest)]) == 0
+    return dest
+
+
+def test_the_export_downloads_match_the_cli_export(client: TestClient, env: Path) -> None:
+    add_rows()
+    add_rows({"company": "Acme", "title": "Research Engineer"}, track="second-search")
+    dest = cli_export(env)
+
+    jobs = client.get("/ops/export/jobs.csv", headers=auth())
+    assert jobs.status_code == 200
+    assert jobs.headers["content-type"].startswith("text/csv")
+    assert jobs.content == (dest / "jobs.csv").read_bytes()
+    contacts = client.get("/ops/export/contacts.csv", headers=auth())
+    assert contacts.content == (dest / "contacts.csv").read_bytes()
+    assert "Synthetic Person" in contacts.text
+
+    # The selected track's jobs, as `harrier --track <slug> export` writes them.
+    tracked = cli_export(env, "--track", "second-search")
+    on_track = client.get("/ops/export/jobs.csv?track=second-search", headers=auth())
+    assert on_track.status_code == 200
+    assert on_track.content == (tracked / "second-search" / "jobs.csv").read_bytes()
+    assert "boards.example.com/second-search/1" in on_track.text
+    assert "boards.example.com/job/1" not in on_track.text
+
+    # Contacts are the person's, offered on the default track only.
+    refused = client.get("/ops/export/contacts.csv?track=second-search", headers=auth())
+    assert refused.status_code == 409
+    assert "default track" in refused.json()["detail"]
+
+
+def test_an_export_with_no_rows_is_a_header_only_csv(client: TestClient) -> None:
+    from harrier.tracker.schema import CONTACT_FIELDS, TRACKER_FIELDS
+
+    jobs = client.get("/ops/export/jobs.csv", headers=auth())
+    assert jobs.text.splitlines() == [",".join(TRACKER_FIELDS)]
+    contacts = client.get("/ops/export/contacts.csv", headers=auth())
+    assert contacts.text.splitlines() == [",".join(CONTACT_FIELDS)]
+
+
+def test_a_download_neutralizes_formula_cells(client: TestClient, env: Path) -> None:
+    from harrier.tracker.export import neutralize_cell
+
+    add_rows(
+        {
+            "company": '=HYPERLINK("https://example.org","x")',
+            "title": "-Lead",
+            "location": "@remote",
+            "notes": "+1 for later",
+            "fit_score": "-5",
+            "contacts_found": "3",
+        }
+    )
+    import csv
+    import io
+
+    downloaded = next(
+        csv.DictReader(io.StringIO(client.get("/ops/export/jobs.csv", headers=auth()).text))
+    )
+    assert downloaded["company"] == '\'=HYPERLINK("https://example.org","x")'
+    assert downloaded["title"] == "'-Lead"
+    assert downloaded["location"] == "'@remote"
+    assert downloaded["notes"] == "'+1 for later"
+    # Numbers are data, never formulas, and keep their sign.
+    assert downloaded["fit_score"] == "-5"
+    assert downloaded["contacts_found"] == "3"
+    for lead in ("\t", "\r", "\n"):
+        assert neutralize_cell(f"{lead}x") == f"'{lead}x"
+
+    # `harrier export` writes the cells unchanged: the legacy import reads its
+    # files back (ADR-003).
+    dest = cli_export(env)
+    with (dest / "jobs.csv").open(encoding="utf-8", newline="") as handle:
+        written = next(csv.DictReader(handle))
+    assert written["company"] == '=HYPERLINK("https://example.org","x")'
+    assert written["title"] == "-Lead"
+
+
+def test_downloads_take_the_token_in_the_header_and_are_not_cached(
+    client: TestClient,
+) -> None:
+    from conftest import TEST_TOKEN
+
+    for path in EXPORT_ROUTES:
+        assert client.get(path).status_code == 403
+        # A token in the URL would reach browser history and access logs, so
+        # it is not one the route accepts.
+        assert client.get(f"{path}?token={TEST_TOKEN}").status_code == 403
+        assert client.get(f"{path}?X-Harrier-Token={TEST_TOKEN}").status_code == 403
+        answered = client.get(path, headers=auth())
+        assert answered.status_code == 200
+        assert answered.headers["cache-control"] == "no-store"
+        assert answered.headers["content-disposition"].startswith("attachment;")
 
 
 # --- configuration import -------------------------------------------------------

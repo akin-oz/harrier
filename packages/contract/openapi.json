@@ -3590,6 +3590,164 @@
         "summary": "Run Digest Route"
       }
     },
+    "/ops/export/contacts.csv": {
+      "get": {
+        "description": "`contacts.csv`, on the default track only, as on the command line.",
+        "operationId": "downloadContactsCsv",
+        "parameters": [
+          {
+            "description": "The search track to work in; the default track when omitted.",
+            "in": "query",
+            "name": "track",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9-]{0,31}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The search track to work in; the default track when omitted.",
+              "title": "Track"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/csv": {}
+            },
+            "description": "the CSV, as `harrier export` writes it"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track parameter named no track"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track may not run this operation, or it is archived"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
+          }
+        },
+        "summary": "Download Contacts"
+      }
+    },
+    "/ops/export/jobs.csv": {
+      "get": {
+        "description": "The selected track's `jobs.csv`, in the columns `harrier export`\nwrites, with formula cells neutralized. Nothing is written on the server.",
+        "operationId": "downloadJobsCsv",
+        "parameters": [
+          {
+            "description": "The search track to work in; the default track when omitted.",
+            "in": "query",
+            "name": "track",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9-]{0,31}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The search track to work in; the default track when omitted.",
+              "title": "Track"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/csv": {}
+            },
+            "description": "the CSV, as `harrier export` writes it"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track parameter named no track"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track may not run this operation, or it is archived"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
+          }
+        },
+        "summary": "Download Jobs"
+      }
+    },
     "/ops/feeds": {
       "post": {
         "description": "`config check-feeds` as a run: one probe per configured board.\n\nA run, and a POST, because it starts a process that reaches the network.\nIts results are the run's log, which `GET /runs/{id}/events` serves\nwithout the token, as spec 050 states for feed results.",
@@ -3668,7 +3826,7 @@
     },
     "/ops/profile": {
       "get": {
-        "description": "`profile list`: names and formats, never contents.",
+        "description": "`profile list`: names and formats, never contents.\n\nRequires the token although it is a read (spec 096, Akin's decision of\n2026-10-10): the document names describe the operator's own data, the\nreason spec 047 gave for the artifact index.",
         "operationId": "listProfileDocuments",
         "responses": {
           "200": {
@@ -3684,6 +3842,9 @@
               }
             },
             "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
           },
           "503": {
             "content": {

@@ -7,6 +7,7 @@ import { CommandList, HostPanel } from "../../features/host-commands";
 import type { EventSourceFactory } from "../../features/runs/useRunStream";
 import { api } from "../../shared/api/client";
 import { BackupsSection } from "./BackupsSection";
+import { ExportSection } from "./ExportSection";
 import "./SettingsPage.css";
 
 type ProfileDocument = components["schemas"]["ProfileDocumentOut"];
@@ -98,6 +99,13 @@ export function SettingsPage({
         <p className="settings-muted">
           Restoring an archive stays in the terminal: it replaces the live database.
         </p>
+      </section>
+
+      <section className="settings-section" aria-labelledby="settings-export">
+        <h3 id="settings-export" className="settings-section__heading">
+          Export
+        </h3>
+        <ExportSection />
       </section>
 
       <section className="settings-section" aria-labelledby="settings-host">

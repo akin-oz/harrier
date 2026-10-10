@@ -35,6 +35,13 @@ export function stubApi(handler: (call: ApiCall) => ApiReply): ApiCall[] {
       calls.push(call);
       const reply =
         path === "/api/session" ? { status: 200, body: { token: TEST_TOKEN } } : handler(call);
+      // A string body is a file, such as a CSV download; anything else is JSON.
+      if (typeof reply?.body === "string") {
+        return new Response(reply.body, {
+          status: reply.status,
+          headers: { "Content-Type": "text/csv" },
+        });
+      }
       return new Response(JSON.stringify(reply?.body ?? { detail: `unstubbed ${path}` }), {
         status: reply?.status ?? 404,
         headers: { "Content-Type": "application/json" },

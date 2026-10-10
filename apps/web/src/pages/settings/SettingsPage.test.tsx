@@ -117,7 +117,7 @@ function renderPage(): void {
   );
 }
 
-test("the page has its five sections, in the order an operator needs them", async () => {
+test("the page has its six sections, in the order an operator needs them", async () => {
   stubApi(handler({}));
   renderPage();
   const headings = (await screen.findAllByRole("heading", { level: 3 })).map(
@@ -127,12 +127,13 @@ test("the page has its five sections, in the order an operator needs them", asyn
     "Configuration",
     "Profile documents",
     "Backups",
+    "Export",
     "What only the host can do",
     "Commands without a button",
   ]);
 });
 
-test("profile documents are listed by name", async () => {
+test("profile documents are listed by name, read with the token", async () => {
   const calls = stubApi(
     handler({
       profile: [
@@ -147,7 +148,7 @@ test("profile documents are listed by name", async () => {
   );
   renderPage();
   expect(await screen.findByText("example-truth")).toBeDefined();
-  expect(calls.some((call) => call.path === "/api/ops/profile")).toBe(true);
+  expect(calls.find((call) => call.path === "/api/ops/profile")?.token).toBe("test-token");
 });
 
 test("a missing backups directory is said in words, and a backup can still be taken", async () => {

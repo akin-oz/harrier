@@ -65,7 +65,9 @@ guarded path, approved under this spec.
 **Web** (`apps/web/src/`)
 
 - `pages/settings/` (new): configuration, profile documents, backups, the
-  host-only panel and the CLI-only list.
+  export downloads, the host-only panel and the CLI-only list. The downloads
+  sit here because this page is open on every track and the jobs file is
+  the selected track's (amended 2026-10-10).
 - `pages/operations/` (spec 050): the schedule section reads as amended.
 - `features/config/` (new): one editor per configuration kind.
 - `features/host-commands/` (new): the host-only panel and its copy control.
@@ -91,7 +93,7 @@ kinds, and any route outside this table.
 | Route | CLI verb | Domain function | Shape | Token |
 |---|---|---|---|---|
 | `POST /config/import` | `config import` | the importer | request | yes |
-| `GET /ops/profile` (spec 050's, reused) | `profile list` | the profile store reader | request | no, as spec 050 built it |
+| `GET /ops/profile` (spec 050's, reused) | `profile list` | the profile store reader | request | yes |
 | `GET /settings/backups` | none: lists what `backup` wrote | the archive lister | request | yes |
 | `POST /ops/backup` (spec 050's, reused) | `backup` | `create_backup` | run | yes |
 | `POST /settings/backups/{name}/verify` | `verify-backup` | `verify_archive` | run | yes |
@@ -103,8 +105,8 @@ kinds, and any route outside this table.
 
 Reads here require the token, for spec 047's reason: archive names, model
 metadata and profile document names describe the operator's own data. The
-profile list is spec 050's tokenless `GET /ops/profile` (amendment 5 under
-Implementation amendments; open decision 4).
+profile list is spec 050's `GET /ops/profile`, which requires the token by
+Akin's decision of 2026-10-10 (amendment 5 under Implementation amendments).
 
 ### Configuration
 
@@ -276,9 +278,11 @@ otherwise. Synthetic data only, built under `tmp_path`.
       failed verification marks the archive in the list
       (`services/api/tests/test_ui_settings.py::test_a_backup_reports_the_archive_by_name_never_its_path`,
       `services/api/tests/test_ui_settings.py::test_a_failed_verification_marks_the_archive`)
-- [ ] The exports download the same columns `harrier export` writes, for the
+- [x] The exports download the same columns `harrier export` writes, for the
       selected track, with contacts on the default track only
-      (planned test_the_export_downloads_match_the_cli_export)
+      (`services/api/tests/test_ui_settings.py::test_the_export_downloads_match_the_cli_export`,
+      `services/api/tests/test_ui_settings.py::test_an_export_with_no_rows_is_a_header_only_csv`,
+      `ExportSection.test.tsx::on another track, jobs are that track's and contacts are not offered`)
 - [x] `GET /settings/host` reports each fact in the table, never a secret's
       contents, and reports an unknowable fact as unknown
       (`services/api/tests/test_ui_settings.py::test_host_facts_never_carry_a_secret_or_claim_health`,
@@ -288,15 +292,16 @@ otherwise. Synthetic data only, built under `tmp_path`.
 - [ ] In both downloads, a text cell beginning with `=`, `+`, `-`, `@`, a
       tab or a line break gets a leading apostrophe, numeric fields are
       unchanged, and `harrier export` still writes cells unchanged
-      (planned test_a_download_neutralizes_formula_cells)
-- [ ] The downloads are fetched with the token in the header, never in the
+      (`services/api/tests/test_ui_settings.py::test_a_download_neutralizes_formula_cells`)
+- [x] The downloads are fetched with the token in the header, never in the
       URL, and answer with `Cache-Control: no-store`
-      (planned test_downloads_take_the_token_in_the_header_and_are_not_cached)
+      (`services/api/tests/test_ui_settings.py::test_downloads_take_the_token_in_the_header_and_are_not_cached`,
+      `ExportSection.test.tsx::each file is fetched with the token in the header, never the URL, and saved`)
 - [x] No command shown carries a personal value or a real path
       (`services/api/tests/test_ui_settings.py::test_shown_commands_carry_placeholders_only`)
-- [ ] Every route here requires the token
-      (`services/api/tests/test_ui_settings.py::test_settings_routes_require_the_token`;
-      the export downloads are still to land)
+- [x] Every route here requires the token, the reused `GET /ops/profile`
+      included (`services/api/tests/test_ui_settings.py::test_settings_routes_require_the_token`,
+      `services/api/tests/test_ui_settings.py::test_the_profile_list_requires_the_token`)
 - [x] A watchlist line no importer handles is named in spec 041's words by
       the server's own router
       (`services/api/tests/test_ui_settings.py::test_unrouted_watchlist_lines_are_named_in_spec_041s_words`)
@@ -367,10 +372,10 @@ amended here and in the section it touches, in the same change.
    `GET /ops/profile`. The schedule's facts are `GET /ops/schedule`, which
    reads the same records through `harrier.schedule.job_health`, so
    `GET /settings/host` no longer carries them and opens no database.
-   `GET /ops/profile` answers without the token, as spec 050 states and
-   tests; this spec's sentence that profile document names are a tokened
-   read is left as an open decision below rather than changed in spec 050's
-   route here.
+   `GET /ops/profile` was built without the token; by Akin's decision of
+   2026-10-10 it now requires it, as this spec's routes do, because profile
+   document names describe the operator's own data. Spec 050's criterion
+   that called it a tokenless read is amended to match, with a dated note.
 
 ## Honest limitations
 
@@ -423,13 +428,9 @@ None for data. `just container-up` after it ships.
    downloads only, as written above, or also in `harrier export`.
    Recommendation: downloads only, because the command's files are read back
    by the legacy import and an apostrophe would change the imported text.
-4. **The profile list's token, found at implementation (2026-10-10).** This
-   spec says profile document names are a tokened read; spec 050, built
-   first, serves them from `GET /ops/profile` without the token and tests
-   that (`services/api/tests/test_ui_operations.py::test_the_schedule_and_the_profile_list_are_tokenless_reads`).
-   This branch reuses the route as built. Recommendation: require the token
-   on `GET /ops/profile` in a change that amends spec 050's criterion, for
-   the reason this spec gives: the names describe the operator's own data.
+4. **The profile list's token, found at implementation (2026-10-10).**
+   Decided by Akin on 2026-10-10: `GET /ops/profile` requires the token, as
+   this spec's routes do. Implemented on this branch (amendment 5).
 
 ## Proof / origin
 
