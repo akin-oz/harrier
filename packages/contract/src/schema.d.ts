@@ -2523,7 +2523,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description the track may not run this operation, or it is archived */
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -2737,7 +2737,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description the track may not run this operation, or it is archived */
+            /** @description the stored brief no longer parses, in the store's words; saving a brief replaces it */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -2820,7 +2820,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description the track may not run this operation, or it is archived */
+            /** @description the stored brief no longer parses, in the store's words; saving a brief replaces it */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -2892,7 +2892,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description the track may not run this operation, or it is archived */
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -2964,7 +2964,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description the track may not run this operation, or it is archived */
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3036,7 +3036,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description the track may not run this operation, or it is archived */
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3656,6 +3656,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -3695,6 +3704,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -3884,7 +3902,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description the request needs its explicit field */
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3954,7 +3972,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description discovery from the browser is the default track's */
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -4033,7 +4051,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description the track may not run this operation, or it is archived */
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -4103,7 +4121,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description the track may not run this operation, or it is archived */
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -4289,6 +4307,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
         };
     };
     pruneDeadFeeds: {
@@ -4320,7 +4347,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description the request needs its explicit field */
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -4417,7 +4444,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description the track may not run this operation, or it is archived */
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -4512,7 +4539,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description the track may not run this operation, or it is archived */
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -4569,6 +4596,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -5076,7 +5112,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description the domain refused the change */
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -5148,7 +5184,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description the domain refused the change */
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -5442,6 +5478,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -5634,6 +5679,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SettingsErrorOut"];
+                };
+            };
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
                 };
             };
             /** @description Validation Error */

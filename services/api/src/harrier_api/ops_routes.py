@@ -28,7 +28,7 @@ from harrier.tracks import DEFAULT_TRACK_ID
 from harrier.tracks import Scope as TrackScope
 from harrier_api.deps import Conn, DatabaseRoute, ErrorOut, scope_for
 from harrier_api.localauth import TOKEN_RESPONSES, require_token
-from harrier_api.runmodels import Manager, RunOut, run_out
+from harrier_api.runmodels import RUN_CONFLICT_RESPONSES, Manager, RunOut, run_out
 from harrier_api.runs import RunParams, backup_hidden_directories, write_run_input
 
 ops_router = APIRouter(route_class=DatabaseRoute)
@@ -71,7 +71,7 @@ class PruneIn(BaseModel):
     "/ops/feeds",
     operation_id="checkFeeds",
     dependencies=[Depends(require_token)],
-    responses=TOKEN_RESPONSES,
+    responses={**TOKEN_RESPONSES, **RUN_CONFLICT_RESPONSES},
 )
 async def check_feeds(manager: Manager) -> RunOut:
     """`config check-feeds` as a run: one probe per configured board.
@@ -80,7 +80,7 @@ async def check_feeds(manager: Manager) -> RunOut:
     Its results are the run's log, which `GET /runs/{id}/events` serves
     without the token, as spec 050 states for feed results.
     """
-    params = RunParams(target="check")
+    params = RunParams()
     return run_out(await manager.start("check-feeds", params))
 
 
@@ -88,7 +88,7 @@ async def check_feeds(manager: Manager) -> RunOut:
     "/ops/feeds/prune",
     operation_id="pruneDeadFeeds",
     dependencies=[Depends(require_token)],
-    responses=REFUSAL_RESPONSES,
+    responses={**REFUSAL_RESPONSES, **RUN_CONFLICT_RESPONSES},
 )
 async def prune_dead_feeds(manager: Manager, body: PruneIn = PruneIn()) -> RunOut:  # noqa: B008
     """`config check-feeds --prune`: probes again, then removes the boards
@@ -101,7 +101,7 @@ async def prune_dead_feeds(manager: Manager, body: PruneIn = PruneIn()) -> RunOu
                 "send confirm: true to prune the boards a fresh check finds dead"
             ),
         )
-    params = RunParams(switches=frozenset({"--prune"}), target="prune")
+    params = RunParams(switches=frozenset({"--prune"}))
     return run_out(await manager.start("check-feeds", params))
 
 
@@ -119,7 +119,7 @@ class ReconsiderIn(BaseModel):
     "/ops/reconsider",
     operation_id="reconsider",
     dependencies=[Depends(require_token)],
-    responses=TOKEN_RESPONSES,
+    responses={**TOKEN_RESPONSES, **RUN_CONFLICT_RESPONSES},
 )
 async def reconsider(
     manager: Manager,
@@ -132,7 +132,9 @@ async def reconsider(
         switches=frozenset({"--apply"}) if body.apply else frozenset(),
         choices={} if body.source is None else {"--source": body.source.value},
         track=track,
-        target=f"{scope.track.slug}:{'apply' if body.apply else 'report'}",
+        # One per track: a report and a clear of the same seen state never
+        # run at once (review of PR #208).
+        target=scope.track.slug,
     )
     return run_out(await manager.start("reconsider", params))
 
@@ -151,7 +153,7 @@ class BackupIn(BaseModel):
     "/ops/backup",
     operation_id="takeBackup",
     dependencies=[Depends(require_token)],
-    responses=TOKEN_RESPONSES,
+    responses={**TOKEN_RESPONSES, **RUN_CONFLICT_RESPONSES},
 )
 async def take_backup(manager: Manager, body: BackupIn = BackupIn()) -> RunOut:  # noqa: B008
     """`backup` as a run, into the directory the Settings page lists, and
@@ -184,7 +186,7 @@ class DigestIn(BaseModel):
     "/ops/digest",
     operation_id="runDigest",
     dependencies=[Depends(require_token)],
-    responses=REFUSAL_RESPONSES,
+    responses={**REFUSAL_RESPONSES, **RUN_CONFLICT_RESPONSES},
 )
 async def run_digest_route(
     conn: Conn,
@@ -421,7 +423,7 @@ class EventsBackfillIn(BaseModel):
     "/ops/events/backfill",
     operation_id="backfillEvents",
     dependencies=[Depends(require_token)],
-    responses=TOKEN_RESPONSES,
+    responses={**TOKEN_RESPONSES, **RUN_CONFLICT_RESPONSES},
 )
 async def backfill_events_route(
     manager: Manager,
@@ -432,7 +434,6 @@ async def backfill_events_route(
     del scope  # the default track's; any other is refused by the dependency
     params = RunParams(
         switches=frozenset({"--dry-run"}) if body.dry_run else frozenset(),
-        target="count" if body.dry_run else "write",
     )
     return run_out(await manager.start("events-backfill", params))
 
@@ -452,7 +453,7 @@ class EvaluateProspectsIn(BaseModel):
     "/ops/evaluate-prospects",
     operation_id="evaluateProspects",
     dependencies=[Depends(require_token)],
-    responses=TOKEN_RESPONSES,
+    responses={**TOKEN_RESPONSES, **RUN_CONFLICT_RESPONSES},
 )
 async def evaluate_prospects_route(
     manager: Manager,
@@ -474,7 +475,6 @@ async def evaluate_prospects_route(
         switches=frozenset(switches),
         numbers={} if body.limit is None else {"--limit": body.limit},
         fractions={} if body.threshold is None else {"--threshold": body.threshold},
-        target="apply" if body.apply else "report",
     )
     return run_out(await manager.start("evaluate-prospects", params))
 
@@ -483,7 +483,7 @@ async def evaluate_prospects_route(
     "/ops/scoring/export",
     operation_id="exportScoringFeatures",
     dependencies=[Depends(require_token)],
-    responses=TOKEN_RESPONSES,
+    responses={**TOKEN_RESPONSES, **RUN_CONFLICT_RESPONSES},
 )
 async def export_scoring_features(
     manager: Manager, scope: Annotated[TrackScope, Depends(scope_for("scoring export"))]
@@ -512,7 +512,7 @@ def _suffix(upload: UploadFile) -> str:
     "/ops/discover",
     operation_id="runDiscover",
     dependencies=[Depends(require_token)],
-    responses=DISCOVER_RESPONSES,
+    responses={**DISCOVER_RESPONSES, **RUN_CONFLICT_RESPONSES},
 )
 async def run_discover(
     manager: Manager,

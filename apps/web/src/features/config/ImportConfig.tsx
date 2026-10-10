@@ -3,7 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 
 import { api } from "../../shared/api/client";
-import { CONFIG_KEY, detailOf } from "./useKindEditor";
+import { refusalMessage } from "../../shared/api/refusal";
+import { CONFIG_KEY } from "./useKindEditor";
 
 /**
  * `harrier config import` as one button (spec 096). It overwrites every
@@ -23,7 +24,7 @@ export function ImportConfig({ onImported }: { onImported: () => void }) {
   const run = useMutation({
     mutationFn: async () => {
       const { data, error } = await api.POST("/config/import");
-      if (error !== undefined) throw new Error(detailOf(error, "nothing was imported"));
+      if (error !== undefined) throw new Error(refusalMessage(error, "nothing was imported"));
       return data;
     },
     onSuccess: async () => {

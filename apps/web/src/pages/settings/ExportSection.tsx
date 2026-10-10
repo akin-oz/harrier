@@ -1,17 +1,10 @@
 import { useMutation } from "@tanstack/react-query";
 
 import { api } from "../../shared/api/client";
+import { refusalMessage } from "../../shared/api/refusal";
 import { trackQuery, useSelectedSlug } from "../../shared/track";
 
 type Download = "jobs.csv" | "contacts.csv";
-
-function refused(error: unknown, fallback: string): string {
-  if (typeof error === "object" && error !== null && "detail" in error) {
-    const detail = (error as { detail?: unknown }).detail;
-    if (typeof detail === "string") return detail;
-  }
-  return fallback;
-}
 
 async function fetchCsv(name: Download, slug: string | null): Promise<Blob> {
   // The token travels in the header the client adds, never in the URL, so it
@@ -23,7 +16,8 @@ async function fetchCsv(name: Download, slug: string | null): Promise<Blob> {
           parseAs: "blob",
         })
       : await api.GET("/ops/export/contacts.csv", { parseAs: "blob" });
-  if (result.error !== undefined) throw new Error(refused(result.error, `${name} was refused`));
+  if (result.error !== undefined)
+    throw new Error(refusalMessage(result.error, `${name} was refused`));
   if (!(result.data instanceof Blob))
     throw new Error("refused: the local API token was not accepted");
   return result.data;

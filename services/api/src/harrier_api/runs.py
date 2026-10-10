@@ -9,6 +9,7 @@ ids per run so SSE reconnects can replay from Last-Event-ID.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import math
 import os
@@ -230,10 +231,13 @@ class RunParams:
     choices: Mapping[str, str] = field(default_factory=dict[str, str])
     dates: Mapping[str, date] = field(default_factory=dict[str, date])
     # What the run locks against, for a kind that takes no job (spec 050).
-    # It never reaches argv. Two attempts with the same target join one run.
+    # It never reaches argv. Two attempts with the same target and the same
+    # options join one run; other options are refused while it is active.
     # A dry digest and a sending one for the same day take different
-    # targets, because joining the dry run would tell the operator that a
-    # send had started.
+    # targets because a preview writes nothing and may run beside a send.
+    # A kind whose modes both act on shared state (discovery, evaluation,
+    # backfill, reconsideration, feeds) takes one target per kind or track,
+    # so its report and its write never run at once (review of PR #208).
     target: str | None = None
     fractions: Mapping[str, float] = field(default_factory=dict[str, float])
     # Files this process wrote, by the flag that passes each (spec 095).
@@ -307,22 +311,54 @@ def write_run_input(text: str | bytes, suffix: str = ".txt") -> Path:
     return path
 
 
-def sweep_run_inputs() -> list[Path]:
-    """Remove every run input left in the inputs directory.
+class RunConflictError(Exception):
+    """A run of this kind is active for this target, with other options.
 
-    A file there belongs to a run, and is removed when that run ends. One
-    still there when a run manager starts belongs to a server that stopped
-    mid-run, and no run will ever consume it (spec 095).
+    Joining it would drop what this request asked for, and its uploads with
+    it: a dry run would join a real one, a report would show another
+    report's numbers (review of PR #208). The API answers 409 in these
+    words; the attempt's files are already removed when this is raised.
     """
-    directory = run_inputs_dir()
-    if not directory.is_dir():
-        return []
-    removed: list[Path] = []
-    for path in directory.iterdir():
-        if path.is_file():
-            path.unlink(missing_ok=True)
-            removed.append(path)
-    return removed
+
+    def __init__(self, active: Run) -> None:
+        self.active = active
+        super().__init__(
+            f"a {active.kind} run is already active (run {active.id}) with other options; "
+            "wait for it to end or cancel it, then start this one"
+        )
+
+
+def _in_inputs(path: Path) -> bool:
+    """Whether a path is a run input this module wrote, so nothing read back
+    from the journal can name a file elsewhere for removal."""
+    return path.parent == run_inputs_dir() and path.name != ""
+
+
+def _signature(command: list[str], files: tuple[Path, ...]) -> tuple[str, ...]:
+    """The argv with each input file's path replaced by a hash of its bytes.
+
+    Two attempts are the same request when their options are the same and
+    their files hold the same bytes: a double click joins, a changed option
+    or a different upload does not. Paths alone cannot say so, because each
+    attempt writes its own uniquely named copy.
+    """
+    digests = {str(path): _digest(path) for path in files}
+    signature: list[str] = []
+    for argument in command:
+        flag, separator, value = argument.partition("=")
+        if separator and value in digests:
+            signature.append(f"{flag}=sha256:{digests[value]}")
+        else:
+            signature.append(argument)
+    return tuple(signature)
+
+
+def _digest(path: Path) -> str:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        # Unreadable is never equal to anything, so it never joins.
+        return f"unreadable:{uuid.uuid4().hex}"
 
 
 def build_command(kind: str, params: RunParams) -> list[str]:
@@ -482,6 +518,9 @@ class Run:
     target: str = ""
     # Every file this process wrote for the run, removed when it ends.
     input_paths: tuple[Path, ...] = ()
+    # What the run was asked to do, with its files by content, so a second
+    # attempt joins only when it asks for the same thing (review of PR #208).
+    signature: tuple[str, ...] = ()
     hidden: tuple[HiddenDirectory, ...] = ()
 
 
@@ -505,14 +544,13 @@ class RunManager:
         journal_path: Path | None = None,
         kind_commands: dict[str, list[str]] | None = None,
         grace_seconds: float = 5.0,
-        *,
-        sweep_inputs: bool = False,
     ) -> None:
-        # The server's own manager sweeps run inputs a stopped server left
-        # behind (spec 095). Off by default, so a test that builds a manager
-        # beside files it wrote itself keeps them.
-        if sweep_inputs:
-            sweep_run_inputs()
+        # Inputs of runs the journal shows were cut off. Read here, removed
+        # only when the served app starts (`release_interrupted_inputs`):
+        # constructing a manager happens on every import of the app,
+        # `just contract` included, and must delete nothing (review of
+        # PR #208).
+        self._interrupted_inputs: list[Path] = []
         self._journal_path = (
             journal_path if journal_path is not None else data_dir() / "runs" / "journal.jsonl"
         )
@@ -544,25 +582,23 @@ class RunManager:
     # -- lifecycle ----------------------------------------------------------
 
     async def start(self, kind: str, params: RunParams | None = None) -> Run:
-        """Start a run, or return the already-active run for this target.
+        """Start a run, return the active run it repeats, or refuse.
 
         The lock is per (kind, target) rather than per kind, so two jobs
         tailor at once while one job tailored twice joins the run already in
         flight. ADR-004 called for this under "artifact renders are per-slug
         locked"; spec 047 is where it was built.
+
+        Joining is for the same request only: same options, files with the
+        same bytes. A request with other options while one runs raises
+        `RunConflictError` rather than being folded into a run that ignores
+        them (review of PR #208).
         """
         # A kind that acts on everything locks on the empty target, which is
         # the one-at-a-time behaviour discovery always had. Kinds never
         # collide with each other because the lock is on the pair.
         target = _target(params)
-        active = self.active_run(kind, target)
-        if active is not None:
-            # This attempt never becomes a run, so the input file written for
-            # it has no terminal state to be cleaned up by. Removing it here
-            # is the difference between joining a run and leaking a file of
-            # the operator's own words on every double click.
-            self._discard_input(params)
-            return active
+        files = () if params is None else params.files
         try:
             command = (
                 list(self._kind_commands[kind]) if params is None else build_command(kind, params)
@@ -571,12 +607,24 @@ class RunManager:
             # Refused before it became a run: its files go with the refusal.
             self._discard_input(params)
             raise
+        signature = _signature(command, files)
+        active = self.active_run(kind, target)
+        if active is not None:
+            # This attempt never becomes a run, so the files written for it
+            # have no terminal state to be cleaned up by. Removing them here
+            # is the difference between joining a run and leaking a file of
+            # the operator's own words on every double click.
+            self._discard_input(params)
+            if active.signature != signature:
+                raise RunConflictError(active)
+            return active
         run = Run(
             id=uuid.uuid4().hex[:12],
             kind=kind,
             command=command,
             target=target,
-            input_paths=() if params is None else params.files,
+            input_paths=files,
+            signature=signature,
             hidden=() if params is None else params.hidden,
         )
         self._runs[run.id] = run
@@ -735,14 +783,35 @@ class RunManager:
             # restart and the backups list can still mark it (spec 096). A
             # job id otherwise, or empty.
             "target": run.target,
+            # The files the run holds, so a server that starts after this
+            # one stopped mid-run knows which inputs were this run's. File
+            # names this process chose, never their content (spec 095).
+            "inputs": [str(path) for path in run.input_paths],
         }
         with self._journal_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record) + "\n")
+
+    def release_interrupted_inputs(self) -> list[Path]:
+        """Remove the inputs of runs the journal shows were cut off.
+
+        Called once by the served app as it starts, never at construction.
+        Only files the journal names as an interrupted run's, and only inside
+        the run inputs directory: a file no journaled run names may belong to
+        a run another process has in flight, so it stays (review of PR #208).
+        """
+        removed: list[Path] = []
+        for path in self._interrupted_inputs:
+            if _in_inputs(path) and path.is_file():
+                path.unlink(missing_ok=True)
+                removed.append(path)
+        self._interrupted_inputs = []
+        return removed
 
     def _load_journal(self) -> None:
         """Rebuild terminal runs from the journal so restarts can list history."""
         if not self._journal_path.is_file():
             return
+        held: dict[str, list[Path]] = {}
         for line in self._journal_path.read_text(encoding="utf-8").splitlines():
             try:
                 parsed: object = json.loads(line)
@@ -765,6 +834,11 @@ class RunManager:
             if state in TERMINAL_STATES:
                 assert state in ("succeeded", "failed", "cancelled", "interrupted")
                 resolved = state
+                held.pop(run_id, None)
+            else:
+                raw_inputs = record.get("inputs")
+                names = cast("list[object]", raw_inputs) if isinstance(raw_inputs, list) else []
+                held[run_id] = [Path(str(name)) for name in names if isinstance(name, str)]
             exit_code_raw = record.get("exit_code")
             self._runs[run_id] = Run(
                 id=run_id,
@@ -777,6 +851,7 @@ class RunManager:
                 exit_code=(int(str(exit_code_raw)) if exit_code_raw is not None else None),
                 target=str(record.get("target") or ""),
             )
+        self._interrupted_inputs = [path for paths in held.values() for path in paths]
 
 
 def format_sse(event: RunEvent) -> str:

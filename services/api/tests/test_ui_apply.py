@@ -322,7 +322,9 @@ def test_the_input_file_is_removed_when_the_run_fails_to_spawn(env: Path) -> Non
 def test_an_attempt_that_joins_an_active_run_leaves_no_file_behind(env: Path) -> None:
     """The leak this catches happens on a double click, not on an error."""
     first_path = write_run_input("first")
-    second_path = write_run_input("second")
+    # A double click sends the same words again (review of PR #208: other
+    # words are other options, and are refused rather than joined).
+    second_path = write_run_input("first")
 
     async def scenario() -> None:
         manager = _manager(env)

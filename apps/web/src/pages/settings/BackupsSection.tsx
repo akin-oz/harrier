@@ -6,6 +6,7 @@ import type { components } from "@harrier/contract";
 import { TERMINAL_STATES, useRunStream } from "../../features/runs/useRunStream";
 import type { EventSourceFactory, RunOut } from "../../features/runs/useRunStream";
 import { api } from "../../shared/api/client";
+import { refusalMessage } from "../../shared/api/refusal";
 
 type Backups = components["schemas"]["BackupsOut"];
 type Archive = components["schemas"]["ArchiveOut"];
@@ -17,14 +18,6 @@ const VERIFICATION: Record<NonNullable<Archive["verification"]>, string> = {
   failed: "Failed verification",
   running: "Verifying",
 };
-
-function refused(error: unknown, fallback: string): string {
-  if (typeof error === "object" && error !== null && "detail" in error) {
-    const detail = (error as { detail?: unknown }).detail;
-    if (typeof detail === "string") return detail;
-  }
-  return fallback;
-}
 
 async function fetchBackups(): Promise<Backups> {
   const { data } = await api.GET("/settings/backups");
@@ -72,7 +65,8 @@ export function BackupsSection({ createEventSource }: { createEventSource: Event
       const { data, error } = await api.POST("/settings/backups/{name}/verify", {
         params: { path: { name } },
       });
-      if (error !== undefined) throw new Error(refused(error, "the archive was not verified"));
+      if (error !== undefined)
+        throw new Error(refusalMessage(error, "the archive was not verified"));
       if (data === undefined) throw new Error("refused: the local API token was not accepted");
       return data;
     },

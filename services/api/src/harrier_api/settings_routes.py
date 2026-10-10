@@ -31,7 +31,7 @@ from harrier.runoutcome import age_in_days
 from harrier.userconfig import ConfigError
 from harrier_api.deps import Conn, DatabaseRoute
 from harrier_api.localauth import TOKEN_RESPONSES, require_token
-from harrier_api.runmodels import Manager, RunOut, run_out
+from harrier_api.runmodels import RUN_CONFLICT_RESPONSES, Manager, RunOut, run_out
 from harrier_api.runs import TERMINAL_STATES, RunManager, RunParams, backup_hidden_directories
 
 settings_router = APIRouter(route_class=DatabaseRoute)
@@ -364,6 +364,9 @@ class BackupsOut(BaseModel):
 BACKUP_ERRORS: dict[int | str, dict[str, Any]] = {
     404: {"model": SettingsErrorOut, "description": "no archive of that name in the listing"},
     **TOKEN_RESPONSES,
+    # A verification of the same archive already running is joined; spec
+    # 095's run manager refuses one that asks for something else.
+    **RUN_CONFLICT_RESPONSES,
 }
 
 

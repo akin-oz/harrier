@@ -500,6 +500,15 @@ def test_a_backup_reports_the_archive_by_name_never_its_path(env: Path) -> None:
         assert any(line.startswith(f"{names[0]} (") for line in lines), lines
         assert not any(str(env) in line for line in lines), lines
 
+        # Nothing the browser reads about the run carries either directory:
+        # not the run, not the list, not the event stream. The backup takes
+        # no input file, so spec 095's journalled input list for it is empty.
+        for path in (f"/runs/{run_id}", "/runs", f"/runs/{run_id}/events"):
+            assert str(env) not in client.get(path).text, path
+        journal = (env / "data" / "runs" / "journal.jsonl").read_text(encoding="utf-8")
+        records = [json.loads(line) for line in journal.splitlines()]
+        assert all(record.get("inputs", []) == [] for record in records if record["id"] == run_id)
+
 
 # --- what the container can see about the host ----------------------------------
 

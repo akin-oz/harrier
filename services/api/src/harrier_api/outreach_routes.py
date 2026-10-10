@@ -28,7 +28,7 @@ from harrier.tracks import Scope
 from harrier.tracks import Scope as TrackScope
 from harrier_api.deps import Conn, DatabaseRoute, scope_for
 from harrier_api.localauth import TOKEN_RESPONSES, require_token
-from harrier_api.runmodels import Manager, RunOut, run_out
+from harrier_api.runmodels import RUN_CONFLICT_RESPONSES, Manager, RunOut, run_out
 from harrier_api.runs import RunParams, write_run_input
 
 outreach_router = APIRouter(route_class=DatabaseRoute)
@@ -138,7 +138,7 @@ def _row_out(row: dict[str, str]) -> OutreachRowOut:
     "/outreach/{selector}/find-contacts",
     operation_id="findContacts",
     dependencies=[Depends(require_token)],
-    responses=OUTREACH_ERRORS,
+    responses={**OUTREACH_ERRORS, **RUN_CONFLICT_RESPONSES},
 )
 async def find_contacts(
     selector: str,
@@ -424,7 +424,7 @@ def snooze(
     "/outreach/{selector}/draft",
     operation_id="draftOutreach",
     dependencies=[Depends(require_token)],
-    responses=OUTREACH_ERRORS,
+    responses={**OUTREACH_ERRORS, **RUN_CONFLICT_RESPONSES},
 )
 async def draft_outreach(
     selector: str,
@@ -460,7 +460,7 @@ async def draft_outreach(
     "/outreach/backfill-posters",
     operation_id="backfillPosters",
     dependencies=[Depends(require_token)],
-    responses=TOKEN_RESPONSES,
+    responses={**TOKEN_RESPONSES, **RUN_CONFLICT_RESPONSES},
 )
 async def backfill(body: BackfillIn, manager: Manager) -> RunOut:
     """Acts on every LinkedIn row rather than one job, so it takes no

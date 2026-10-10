@@ -2595,7 +2595,7 @@
                 }
               }
             },
-            "description": "the track may not run this operation, or it is archived"
+            "description": "refused: a run of this kind is active with other options, or the request lacks its explicit field"
           },
           "422": {
             "content": {
@@ -2891,7 +2891,7 @@
                 }
               }
             },
-            "description": "the track may not run this operation, or it is archived"
+            "description": "the stored brief no longer parses, in the store's words; saving a brief replaces it"
           },
           "422": {
             "content": {
@@ -3003,7 +3003,7 @@
                 }
               }
             },
-            "description": "the track may not run this operation, or it is archived"
+            "description": "the stored brief no longer parses, in the store's words; saving a brief replaces it"
           },
           "422": {
             "content": {
@@ -3104,7 +3104,7 @@
                 }
               }
             },
-            "description": "the track may not run this operation, or it is archived"
+            "description": "refused: a run of this kind is active with other options, or the request lacks its explicit field"
           },
           "422": {
             "content": {
@@ -3205,7 +3205,7 @@
                 }
               }
             },
-            "description": "the track may not run this operation, or it is archived"
+            "description": "refused: a run of this kind is active with other options, or the request lacks its explicit field"
           },
           "422": {
             "content": {
@@ -3307,7 +3307,7 @@
                 }
               }
             },
-            "description": "the track may not run this operation, or it is archived"
+            "description": "refused: a run of this kind is active with other options, or the request lacks its explicit field"
           },
           "422": {
             "content": {
@@ -4071,6 +4071,16 @@
           "403": {
             "description": "missing or wrong local API token"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "refused: a run of this kind is active with other options, or the request lacks its explicit field"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -4114,6 +4124,16 @@
           },
           "403": {
             "description": "missing or wrong local API token"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "refused: a run of this kind is active with other options, or the request lacks its explicit field"
           },
           "422": {
             "content": {
@@ -4377,7 +4397,7 @@
                 }
               }
             },
-            "description": "the request needs its explicit field"
+            "description": "refused: a run of this kind is active with other options, or the request lacks its explicit field"
           },
           "422": {
             "content": {
@@ -4469,7 +4489,7 @@
                 }
               }
             },
-            "description": "discovery from the browser is the default track's"
+            "description": "refused: a run of this kind is active with other options, or the request lacks its explicit field"
           },
           "413": {
             "content": {
@@ -4576,7 +4596,7 @@
                 }
               }
             },
-            "description": "the track may not run this operation, or it is archived"
+            "description": "refused: a run of this kind is active with other options, or the request lacks its explicit field"
           },
           "422": {
             "content": {
@@ -4671,7 +4691,7 @@
                 }
               }
             },
-            "description": "the track may not run this operation, or it is archived"
+            "description": "refused: a run of this kind is active with other options, or the request lacks its explicit field"
           },
           "422": {
             "content": {
@@ -4872,6 +4892,16 @@
           },
           "403": {
             "description": "missing or wrong local API token"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "refused: a run of this kind is active with other options, or the request lacks its explicit field"
           }
         },
         "summary": "Check Feeds"
@@ -4915,7 +4945,7 @@
                 }
               }
             },
-            "description": "the request needs its explicit field"
+            "description": "refused: a run of this kind is active with other options, or the request lacks its explicit field"
           },
           "422": {
             "content": {
@@ -5036,7 +5066,7 @@
                 }
               }
             },
-            "description": "the track may not run this operation, or it is archived"
+            "description": "refused: a run of this kind is active with other options, or the request lacks its explicit field"
           },
           "422": {
             "content": {
@@ -5148,7 +5178,7 @@
                 }
               }
             },
-            "description": "the track may not run this operation, or it is archived"
+            "description": "refused: a run of this kind is active with other options, or the request lacks its explicit field"
           },
           "422": {
             "content": {
@@ -5201,6 +5231,16 @@
           },
           "403": {
             "description": "missing or wrong local API token"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "refused: a run of this kind is active with other options, or the request lacks its explicit field"
           },
           "422": {
             "content": {
@@ -5899,7 +5939,7 @@
                 }
               }
             },
-            "description": "the domain refused the change"
+            "description": "refused: a run of this kind is active with other options, or the request lacks its explicit field"
           },
           "422": {
             "content": {
@@ -6001,7 +6041,7 @@
                 }
               }
             },
-            "description": "the domain refused the change"
+            "description": "refused: a run of this kind is active with other options, or the request lacks its explicit field"
           },
           "422": {
             "content": {
@@ -6378,6 +6418,16 @@
           "403": {
             "description": "missing or wrong local API token"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "refused: a run of this kind is active with other options, or the request lacks its explicit field"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -6591,6 +6641,16 @@
               }
             },
             "description": "no archive of that name in the listing"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "refused: a run of this kind is active with other options, or the request lacks its explicit field"
           },
           "422": {
             "content": {

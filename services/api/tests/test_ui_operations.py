@@ -24,6 +24,7 @@ field at all.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections.abc import Iterator
@@ -92,6 +93,14 @@ def manager(env: Path) -> Iterator[RunManager]:
 @pytest.fixture
 def client(manager: RunManager) -> TestClient:
     return TestClient(create_app(run_manager=manager))
+
+
+def ended(manager: RunManager) -> None:
+    """Every idle run ends, as a report has ended before its write is asked
+    for. One run of a kind at a time, so the write would otherwise be
+    refused as a request with other options (review of PR #208)."""
+    for run in manager.list_runs():
+        run.state = "succeeded"
 
 
 def started(manager: RunManager, response: Any) -> Run:
@@ -228,6 +237,7 @@ def test_reconsideration_reports_by_default_and_applies_on_request(
     assert "1 would be cleared; re-run with --apply" in capsys.readouterr().out
     assert "stale-key" in load_seen("greenhouse"), "the default cleared a rejection"
 
+    ended(manager)
     apply = as_cli(
         started(manager, client.post("/ops/reconsider", json={"apply": True}, headers=auth()))
     )
@@ -743,7 +753,8 @@ def test_an_empty_body_changes_nothing(client: TestClient, manager: RunManager, 
     assert "confirm" in refused.json()["detail"]
     assert link.call_args is None, "an empty body linked contacts"
 
-    # Each write is its explicit field.
+    # Each write is its explicit field, asked for once the report has ended.
+    ended(manager)
     write = client.post("/ops/events/backfill", json={"dry_run": False}, headers=auth())
     assert "--dry-run" not in as_cli(started(manager, write))
     reject = client.post("/ops/evaluate-prospects", json={"apply": True}, headers=auth())
@@ -872,7 +883,7 @@ def test_an_upload_becomes_a_run_input_and_is_removed(env: Path) -> None:
 def test_inputs_of_a_refused_attempt_are_all_removed(
     env: Path, client: TestClient, manager: RunManager
 ) -> None:
-    """An attempt that joins the discovery already active never becomes a
+    """An attempt made while the discovery is already active never becomes a
     run, so every file it wrote goes, not only the first."""
     from harrier_api.runs import run_inputs_dir
 
@@ -882,20 +893,72 @@ def test_inputs_of_a_refused_attempt_are_all_removed(
         "wellfound_file": ("b.json", b"[]", "application/json"),
         "wttj_file": ("c.json", b"[]", "application/json"),
     }
-    joined = client.post("/ops/discover", files=files, headers=auth())
-    assert joined.json()["id"] == first.id
-    assert list(run_inputs_dir().glob("*")) == [], "a joined attempt left files behind"
+    refused = client.post("/ops/discover", files=files, headers=auth())
+    assert refused.status_code == 409
+    assert first.id in refused.json()["detail"]
+    assert list(run_inputs_dir().glob("*")) == [], "a refused attempt left files behind"
 
 
 def test_inputs_left_by_a_restart_are_swept_at_startup(env: Path) -> None:
-    from harrier_api.runs import run_inputs_dir, write_run_input
+    """The served app removes the inputs of runs its journal shows were cut
+    off, and nothing else: not a file no journaled run names, which may be
+    another process's, and not a journaled name outside the inputs."""
+    from harrier_api.runs import RunParams, run_inputs_dir, write_run_input
 
-    left = [write_run_input("left by a server that stopped"), write_run_input(b"[]", ".json")]
-    RunManager(journal_path=env / "kept.jsonl")
-    assert all(path.exists() for path in left), "a manager a test builds swept its files"
-    create_app()
-    assert not any(path.exists() for path in left)
+    journal = env / "restart.jsonl"
+    cut_off = write_run_input(b"[]", ".json")
+    stopped = RunManager(journal_path=journal)
+
+    async def begin() -> None:
+        # Journaled as queued with its input, and never ended: the server
+        # stopped mid-run.
+        with patch.object(stopped, "_execute", side_effect=_idle):
+            await stopped.start("discovery", RunParams(input_files={"--dataset-file": cut_off}))
+
+    asyncio.run(begin())
+    stranger = write_run_input("a file no journaled run names")
+    outside = env / "outside.json"
+    outside.write_text("[]", encoding="utf-8")
+    _journal_a_cut_off_run(journal, outside)
+
+    restarted = RunManager(journal_path=journal)
+    app = create_app(run_manager=restarted)
+    assert cut_off.exists(), "building the app removed an input"
+    with TestClient(app):
+        pass
+    assert not cut_off.exists(), "a cut-off run's input outlived the restart"
+    assert stranger.exists(), "a file no journaled run names was removed"
+    assert outside.exists(), "a journaled name outside the inputs was removed"
     assert run_inputs_dir().is_dir()
+
+
+def _journal_a_cut_off_run(journal: Path, path: Path) -> None:
+    """A run journaled as running, holding `path`, by a server that stopped."""
+    record = {"id": path.stem[:12], "kind": "discovery", "state": "running"}
+    with journal.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({**record, "inputs": [str(path)]}) + "\n")
+
+
+def test_importing_the_app_deletes_no_run_input(env: Path) -> None:
+    """`just contract` imports the app on the host, whose data directory is
+    the container's. A live run's upload must survive it (review of PR #208)."""
+    import os
+    import subprocess
+    import sys
+
+    from harrier_api.runs import write_run_input
+
+    live = write_run_input(b"[]", ".json")
+    _journal_a_cut_off_run(env / "data" / "runs" / "journal.jsonl", live)
+    environment = {**os.environ, "HARRIER_DATA_DIR": str(env / "data")}
+    for command in (
+        [sys.executable, "-c", "import harrier_api.app"],
+        [sys.executable, "-m", "harrier_api.export_openapi", str(env / "openapi.json")],
+    ):
+        subprocess.run(command, env=environment, check=True, capture_output=True)
+        assert live.exists(), f"{command[-1]} deleted a run's input"
+    create_app()
+    assert live.exists(), "create_app() deleted a run's input"
 
 
 def test_the_data_check_requires_the_token(env: Path, client: TestClient) -> None:
@@ -961,6 +1024,193 @@ def test_a_second_run_of_a_kind_returns_the_active_one(
         assert again == first, path
     discover = client.post("/ops/discover", headers=auth()).json()["id"]
     assert client.post("/ops/discover", headers=auth()).json()["id"] == discover
-    # The no-option start the Runs panel uses is the same discovery.
-    plain = client.post("/runs", json={"kind": "discovery"}, headers=auth()).json()["id"]
-    assert plain == discover
+    # The no-option start the Runs panel uses is the same discovery lock, and
+    # asks for other options (no configured count), so it is refused rather
+    # than started beside it or folded into it.
+    plain = client.post("/runs", json={"kind": "discovery"}, headers=auth())
+    assert plain.status_code == 409
+    assert discover in plain.json()["detail"]
+    assert len([run for run in manager.list_runs() if run.kind == "discovery"]) == 1
+
+
+def test_a_request_with_other_options_is_refused_not_joined(
+    client: TestClient, manager: RunManager
+) -> None:
+    """A dry run, a shadow run or one with uploads made while a real
+    discovery runs is refused in plain words naming that run; its uploads
+    are removed. The same request again joins (review of PR #208)."""
+    from harrier_api.runs import run_inputs_dir
+
+    real = started(manager, client.post("/ops/discover", headers=auth()))
+    for form, files in (
+        ({"dry_run": "true"}, None),
+        ({"shadow": "true"}, None),
+        ({}, {"dataset_file": ("a.json", b"[]", "application/json")}),
+    ):
+        refused = client.post("/ops/discover", data=form, files=files, headers=auth())
+        assert refused.status_code == 409, (form, refused.text)
+        detail = refused.json()["detail"]
+        assert real.id in detail and "other options" in detail
+    assert list(run_inputs_dir().glob("*")) == []
+    assert client.post("/ops/discover", headers=auth()).json()["id"] == real.id
+    assert len(manager.list_runs()) == 1
+
+
+def test_an_upload_joins_only_a_run_given_the_same_bytes(
+    client: TestClient, manager: RunManager
+) -> None:
+    same = {"dataset_file": ("a.json", b'[{"title": "Invented"}]', "application/json")}
+    other = {"dataset_file": ("a.json", b"[]", "application/json")}
+    first = started(manager, client.post("/ops/discover", files=same, headers=auth()))
+    assert client.post("/ops/discover", files=same, headers=auth()).json()["id"] == first.id
+    assert client.post("/ops/discover", files=other, headers=auth()).status_code == 409
+    assert len(first.input_paths) == 1 and first.input_paths[0].exists()
+
+
+@pytest.mark.parametrize(
+    ("path", "first", "second"),
+    [
+        ("/ops/evaluate-prospects", {}, {"apply": True}),
+        ("/ops/evaluate-prospects", {}, {"threshold": 0.5}),
+        ("/ops/evaluate-prospects", {"apply": True}, {}),
+        ("/ops/events/backfill", {}, {"dry_run": False}),
+        ("/ops/reconsider", {}, {"apply": True}),
+        ("/ops/feeds", None, None),
+        ("/mail/watch", {}, {"dry_run": True}),
+    ],
+    ids=[
+        "evaluation report then apply",
+        "evaluation with another threshold",
+        "evaluation apply then report",
+        "backfill count then write",
+        "reconsider report then apply",
+        "feed check then prune",
+        "mail watch then a dry one",
+    ],
+)
+def test_one_run_of_a_kind_at_a_time_and_other_options_are_refused(
+    client: TestClient,
+    manager: RunManager,
+    path: str,
+    first: dict[str, object] | None,
+    second: dict[str, object] | None,
+) -> None:
+    """A report and its write never run at once, and a second request with
+    other options never shows the first one's numbers (review of PR #208)."""
+    started_run = started(manager, client.post(path, json=first, headers=auth()))
+    if path == "/ops/feeds":
+        response = client.post("/ops/feeds/prune", json={"confirm": True}, headers=auth())
+    else:
+        response = client.post(path, json=second, headers=auth())
+    assert response.status_code == 409, response.text
+    assert started_run.id in response.json()["detail"]
+    assert client.post(path, json=first, headers=auth()).json()["id"] == started_run.id
+    assert len(manager.list_runs()) == 1
+
+
+def test_every_route_that_starts_a_run_declares_the_refusal(env: Path) -> None:
+    spec = create_app().openapi()
+    error_out = {"$ref": "#/components/schemas/ErrorOut"}
+    starters = {
+        ("/runs", "post"),
+        ("/apply/{selector}/resume", "post"),
+        ("/apply/{selector}/cover-letter", "post"),
+        ("/apply/{selector}/answers", "post"),
+        ("/apply/{selector}/evaluate", "post"),
+        ("/outreach/{selector}/find-contacts", "post"),
+        ("/outreach/{selector}/draft", "post"),
+        ("/outreach/backfill-posters", "post"),
+        ("/mail/watch", "post"),
+        ("/ops/feeds", "post"),
+        ("/ops/feeds/prune", "post"),
+        ("/ops/reconsider", "post"),
+        ("/ops/backup", "post"),
+        ("/ops/digest", "post"),
+        ("/ops/events/backfill", "post"),
+        ("/ops/evaluate-prospects", "post"),
+        ("/ops/scoring/export", "post"),
+        ("/ops/discover", "post"),
+        # Spec 096: verifying an archive from the Settings page's list.
+        ("/settings/backups/{name}/verify", "post"),
+    }
+    returns_a_run = {
+        (path, method)
+        for path, methods in spec["paths"].items()
+        for method, operation in methods.items()
+        if operation["responses"]
+        .get("200", {})
+        .get("content", {})
+        .get("application/json", {})
+        .get("schema")
+        == {"$ref": "#/components/schemas/RunOut"}
+        and method == "post"
+    }
+    # The list above is every route that starts a run, so a new one fails here.
+    assert returns_a_run - {("/runs/{run_id}/cancel", "post")} == starters
+    for path, method in starters:
+        declared = spec["paths"][path][method]["responses"]["409"]
+        assert declared["content"]["application/json"]["schema"] == error_out, path
+
+
+def test_a_double_click_with_the_same_words_joins_and_other_words_are_refused(
+    env: Path,
+) -> None:
+    """Spec 047's per-job lock, held to the same rule: tailoring one job
+    twice with the same description joins; with another, it is refused,
+    and the refused attempt's file is removed."""
+    from harrier_api.runs import RunConflictError, RunParams, write_run_input
+
+    manager = RunManager(journal_path=env / "tailor.jsonl")
+
+    async def scenario() -> tuple[str, str, Path, Path]:
+        with patch.object(manager, "_execute", side_effect=_idle):
+            first = await manager.start(
+                "tailor", RunParams(job_id=1, input_path=write_run_input("a description"))
+            )
+            again_path = write_run_input("a description")
+            again = await manager.start("tailor", RunParams(job_id=1, input_path=again_path))
+            other_path = write_run_input("another description")
+            with pytest.raises(RunConflictError):
+                await manager.start("tailor", RunParams(job_id=1, input_path=other_path))
+        return first.id, again.id, again_path, other_path
+
+    first_id, again_id, again_path, other_path = asyncio.run(scenario())
+    assert again_id == first_id
+    assert not again_path.exists() and not other_path.exists()
+
+
+def test_a_damaged_stored_brief_is_refused_in_the_store_s_words(
+    env: Path, client: TestClient
+) -> None:
+    """Written through the store's own document path, as a brief from before
+    a rule changed would be (review of PR #208)."""
+    from harrier.apply.brief import APPLICATION_BRIEF_KIND
+    from harrier.profile.store import put_document
+
+    job = _job_id()
+    conn = connect()
+    put_document(conn, APPLICATION_BRIEF_KIND, str(job), "json", "{not json")
+    conn.close()
+    broken = client.get(f"/apply/{job}/brief", headers=auth())
+    assert broken.status_code == 409, broken.text
+    assert broken.json()["detail"].startswith(f"stored brief for job {job} is not valid JSON")
+
+    conn = connect()
+    put_document(conn, APPLICATION_BRIEF_KIND, str(job), "json", '{"retired_key": 1}')
+    conn.close()
+    unknown = client.get(f"/apply/{job}/brief", headers=auth())
+    assert unknown.status_code == 409
+    assert unknown.json()["detail"] == "unknown brief keys: retired_key"
+
+
+def test_the_brief_saved_is_the_one_the_store_parsed(env: Path, client: TestClient) -> None:
+    """The response is the store's parse of what it stored, not a second
+    parse of the body, so the two cannot disagree."""
+    from harrier.apply.brief import Brief
+
+    job = _job_id()
+    parsed = Brief(evidence=("as the store parsed it",))
+    with patch("harrier.apply.brief.store_brief", return_value=parsed) as store:
+        response = client.put(f"/apply/{job}/brief", json={"evidence": ["typed"]}, headers=auth())
+    assert store.call_count == 1
+    assert response.json()["evidence"] == ["as the store parsed it"]

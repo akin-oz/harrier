@@ -45,12 +45,21 @@ export function EvaluationSection({
     },
   });
 
-  function options(): Options {
-    // An empty field is left out, so the CLI's own default applies.
+  const [formError, setFormError] = useState<string | null>(null);
+
+  function options(): Options | string {
+    // An empty field is left out, so the CLI's own default applies. Text that
+    // is not a number is refused here: as JSON it would become null, and the
+    // default would apply silently (review of PR #208). The bounds are the
+    // server's, and a 422 names the field.
+    const threshold_ = optionalNumber(threshold);
+    const limit_ = optionalNumber(limit);
+    if (threshold_ === undefined) return "Confidence to reject must be a number from 0 to 1.";
+    if (limit_ === undefined) return "Only the first must be a whole number.";
     return {
       apply: false,
-      threshold: threshold.trim() === "" ? null : Number(threshold),
-      limit: limit.trim() === "" ? null : Number(limit),
+      threshold: threshold_,
+      limit: limit_,
       refresh,
       include_borderline: borderline,
     };
@@ -118,7 +127,9 @@ export function EvaluationSection({
           type="button"
           disabled={busy}
           onClick={() => {
-            start.mutate(options());
+            const chosen = options();
+            setFormError(typeof chosen === "string" ? chosen : null);
+            if (typeof chosen !== "string") start.mutate(chosen);
           }}
         >
           Evaluate, reject nothing
@@ -136,12 +147,19 @@ export function EvaluationSection({
           </button>
         )}
       </div>
-      {start.error !== null && (
+      {(formError ?? start.error) !== null && (
         <p role="alert" className="ops-error">
-          {start.error.message}
+          {formError ?? start.error?.message}
         </p>
       )}
       <RunOutput stream={stream} label={applied ? "Rejection" : "Evaluation"} />
     </section>
   );
+}
+
+/** Empty is null (the CLI's default); text that is not a number is undefined. */
+function optionalNumber(raw: string): number | null | undefined {
+  if (raw.trim() === "") return null;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : undefined;
 }

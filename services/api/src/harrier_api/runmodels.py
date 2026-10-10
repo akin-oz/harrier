@@ -8,11 +8,12 @@ imports are unchanged.
 
 from __future__ import annotations
 
-from typing import Annotated, cast
+from typing import Annotated, Any, cast
 
 from fastapi import Depends, Request
 from pydantic import BaseModel
 
+from harrier_api.deps import ErrorOut
 from harrier_api.runs import Run, RunManager, RunState
 
 
@@ -36,6 +37,18 @@ def run_out(run: Run) -> RunOut:
         ended_at=run.ended_at,
         exit_code=run.exit_code,
     )
+
+
+# What every route that starts a run can answer when a run of the same kind
+# and target is active with other options (`RunConflictError`, review of
+# PR #208). Declared so the generated client reads the words by type.
+RUN_CONFLICT_RESPONSES: dict[int | str, dict[str, Any]] = {
+    409: {
+        "model": ErrorOut,
+        "description": "refused: a run of this kind is active with other options, "
+        "or the request lacks its explicit field",
+    }
+}
 
 
 def get_manager(request: Request) -> RunManager:
