@@ -11,6 +11,8 @@ import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
 
+from harrier.tracks import DEFAULT_TRACK_ID
+
 # Old-repo-relative path -> (kind, format). Read-only sources.
 PROFILE_SOURCES: dict[str, tuple[str, str]] = {
     "config/candidate.json": ("candidate", "json"),
@@ -25,10 +27,10 @@ PROFILE_SOURCES: dict[str, tuple[str, str]] = {
 INTERVIEW_PREP_DIR = "interview-prep"
 
 
-# The kinds a track owns (spec 099). Every other kind is shared by every
+# The kinds a track owns (specs 099, 101). Every other kind is shared by every
 # track. The write path holds this rule rather than a CHECK, so a later spec
 # can widen it without rebuilding the table.
-TRACK_OWNED_KINDS: frozenset[str] = frozenset({"resume_framing"})
+TRACK_OWNED_KINDS: frozenset[str] = frozenset({"resume_framing", "application_profile"})
 
 
 class ProfileDocumentError(ValueError):
@@ -171,7 +173,10 @@ def import_from(conn: sqlite3.Connection, old_root: Path) -> tuple[list[str], li
         if not source.is_file():
             missing.append(rel_path)
             continue
-        put_document(conn, kind, source.name, fmt, _read_exact(source))
+        # The old system had one search, so an owned kind is the default
+        # track's (specs 099, 101).
+        track_id = DEFAULT_TRACK_ID if kind in TRACK_OWNED_KINDS else None
+        put_document(conn, kind, source.name, fmt, _read_exact(source), track_id=track_id)
         imported.append(f"{kind}/{source.name} <- {rel_path}")
 
     prep_dir = old_root / INTERVIEW_PREP_DIR

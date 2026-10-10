@@ -332,6 +332,7 @@ def test_ai_outreach_propagates_ai_error(
         "application-profile.json",
         "json",
         (REPO_ROOT / "config" / "application-profile.example.json").read_text(encoding="utf-8"),
+        track_id=1,
     )
     put_document(
         db,
@@ -339,6 +340,7 @@ def test_ai_outreach_propagates_ai_error(
         "application-profile.md",
         "markdown",
         (REPO_ROOT / "config" / "application-profile.example.md").read_text(encoding="utf-8"),
+        track_id=1,
     )
 
     def boom(system_prompt: str, user_input: str) -> str:

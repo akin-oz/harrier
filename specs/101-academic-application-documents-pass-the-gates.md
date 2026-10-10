@@ -194,47 +194,58 @@ continues. It does not refuse: some calls are reviewed on a rolling basis.
 
 ## Acceptance criteria
 
-- [ ] On a synthetic academic track with its own framing, `tailor` writes
+- [x] On a synthetic academic track with its own framing, `tailor` writes
       a CV whose education section comes before achievements, verifies
       every bullet against the shared truth, accepts a 2-page PDF and
       moves the row to `tailored_cv_requested`
-      (planned test_academic_tailor_uses_the_track_framing_and_shape).
-- [ ] The same run never reads the default track's framing or application
-      profile, proven with a trace callback
-      (planned test_academic_documents_read_only_their_track).
-- [ ] An academic CV selecting an unsupported bullet is refused naming the
+      (`services/api/tests/test_academic_applications.py::test_academic_tailor_uses_the_track_framing_and_shape`).
+- [x] The letter and the answers on an academic track never read the
+      default track's application profile: every prompt payload holds the
+      track's own and not the default track's
+      (`services/api/tests/test_academic_applications.py::test_academic_documents_read_only_their_track`). The
+      framing is read by track (spec 099,
+      `services/api/tests/test_track_framing.py::test_a_track_reads_only_its_own_framing`).
+- [x] An academic CV selecting an unsupported bullet is refused naming the
       id, and the row's status is unchanged
-      (planned test_academic_cv_refuses_an_unsupported_bullet).
-- [ ] `cover-letter` and `answers` on the academic track run `check_claims`
+      (`services/api/tests/test_academic_applications.py::test_academic_cv_refuses_an_unsupported_bullet`).
+- [x] `cover-letter` and `answers` on the academic track run `check_claims`
       with the track's profile; a letter quoting a fragment outside the
       truth documents is refused, as on the default track
-      (planned test_academic_letters_pass_the_same_claims_checks).
-- [ ] The industry prompts are byte-identical to today's, and every
+      (`services/api/tests/test_academic_applications.py::test_academic_letters_pass_the_same_claims_checks`); a
+      track with no application profile is refused
+      (`services/api/tests/test_academic_applications.py::test_a_track_with_no_application_profile_is_refused`).
+- [x] The industry prompts are byte-identical to today's, and every
       prompt of both kinds contains its shared truth-rule block
-      (planned test_both_kinds_share_every_truth_rule).
-- [ ] Migration 11 owns every `application_profile` row by the default
-      track with content unchanged; a default-track cover letter's prompt
-      payload is identical before and after
-      (planned test_migration_11_owns_the_application_profile).
-- [ ] `profile put application_profile --file` stores `.md` and `.json`
+      (`services/api/tests/test_academic_documents.py::test_both_kinds_share_every_truth_rule`).
+- [x] Migration 12 owns every `application_profile` row by the default
+      track with content and `updated_at` unchanged, and the default track
+      reads them as before
+      (`services/api/tests/test_academic_applications.py::test_migration_12_owns_the_application_profile`;
+      on Postgres, per owner, `test_migration_12_owns_the_application_profile_on_postgres`).
+- [x] `profile put application_profile --file` stores `.md` and `.json`
       under their names on the scope's track, and refuses an empty
       markdown file, JSON that is not an object, and any other extension
-      (planned test_profile_put_stores_an_application_profile).
-- [ ] A 3-page academic PDF and a 2-page industry PDF each fail the gate
-      (planned test_page_gate_reads_the_kind).
-- [ ] A passed deadline prints the warning and the command still runs
-      (planned test_a_passed_deadline_warns_and_continues).
-- [ ] `tailor` on the default track's demo job produces the same markdown
+      (`services/api/tests/test_academic_applications.py::test_profile_put_stores_an_application_profile`).
+- [x] A 3-page academic PDF and a 2-page industry PDF each fail the gate
+      (`services/api/tests/test_academic_documents.py::test_page_gate_reads_the_kind`).
+- [x] A passed deadline prints the warning and the command still runs
+      (`services/api/tests/test_academic_documents.py::test_a_passed_deadline_warns_and_continues`).
+- [x] `tailor` on the default track's demo job produces the same markdown
       as before this change
-      (planned test_industry_tailor_is_unchanged_by_kind_prompts).
-- [ ] `test_academic_commands_read_no_profile_document` passes with
-      `tailor`, `cover-letter` and `answers` added to its exceptions.
-- [ ] `config/resume-framing.academic.example.json` and
+      (`services/api/tests/test_academic_documents.py::test_industry_tailor_is_unchanged_by_kind_prompts`).
+- [x] `test_academic_commands_read_no_profile_document` passes with
+      `tailor`, `cover-letter` and `answers` added to its exceptions
+      (`services/api/tests/test_tracks_cli.py::test_academic_commands_read_no_profile_document`).
+- [x] `config/resume-framing.academic.example.json` and
       `config/application-profile.academic.example.md` are synthetic,
       classified public; their real names are never-in-git in
       `config/data-classification.json`, `.gitignore` and `.dockerignore`.
-- [ ] `uv run ruff check`, `uv run pyright`, `just contract` (no diff) and
-      `just check` pass.
+      The two examples and `config/application-profile.academic.example.json`
+      store and check as a valid track
+      (`services/api/tests/test_academic_applications.py::test_the_academic_examples_store_and_check`).
+- [x] `uv run ruff check`, `uv run pyright`, `just contract` and
+      `just check` pass. The contract diff is the 409 response on the apply
+      routes (Amendment).
 
 ## Honest limitations
 
@@ -320,3 +331,69 @@ states:
 - Running these commands from the browser on an academic track.
 - Owning any kind other than `resume_framing` and `application_profile`.
 - Changes to the truth gate (spec 100) or to the claims rules themselves.
+
+## Amendment (2026-10-10, during implementation)
+
+Three gaps, found while building the prompts, the CV shape and the page
+gate. Each is a consequence of behavior the spec already states.
+
+- **The PDF's section order is the template's.** `render_html`
+  (`services/api/src/harrier/resume/htmlrender.py`) fills fixed slots in
+  `templates/resume-template.html`, where education sits in the footer.
+  Reordering only the markdown would leave the PDF a committee reads in
+  the industry order. `KindRules.cv_template` names the template:
+  industry keeps `resume-template.html` unchanged, academic uses
+  `templates/resume-template-academic.html`, with the sections in the
+  academic order and the same stylesheet. Proved by
+  `services/api/tests/test_academic_documents.py::test_the_academic_cv_puts_education_before_achievements`.
+- **The letter check held three paragraphs and 240 words on every
+  letter.** `cover_letter_violations`
+  (`services/api/src/harrier/apply/letters.py`) refused any letter outside
+  that shape, so an academic letter of one to two pages with no word count
+  (decision 2) could never pass. The paragraph count and word cap now come
+  from the kind (`KindRules.letter_paragraphs`, `letter_max_words`):
+  three and 240 on the industry kind as before, none on the academic,
+  where the 1 or 2 page gate holds the length. A brief's stated limits
+  still replace either. The eight-word floor on a paragraph, the banned
+  phrasing and the bullet-list rule hold for both. Proved by
+  `services/api/tests/test_academic_documents.py::test_the_academic_letter_has_no_word_count_or_paragraph_count`.
+- **A shared block is more than one segment.** The industry prompts carry
+  truth rules between voice rules (the letter's "Every fact about the
+  candidate" line sits among its length rules), so a byte-identical
+  industry prompt cannot be one voice block followed by one shared block.
+  Each prompt's shared part is one constant, a tuple of segments
+  (`TAILOR_SHARED`, `LETTER_SHARED`, `ANSWERS_SHARED`), and each kind's
+  voice (`services/api/src/harrier/voices.py`) is the segments between
+  them. A truth rule still exists in one place, used by both kinds.
+  `KindRules` holds the voices, and `tailor_prompt`, `letter_prompt` and
+  `answers_prompt` assemble a kind's prompt from its voice and the shared
+  constant, each taking the kind explicitly. Proved by
+  `services/api/tests/test_academic_documents.py::test_both_kinds_share_every_truth_rule`.
+
+## Amendment (2026-10-10, wiring after spec 099)
+
+- **Migration 11 is migration 12.** Spec 099 took 11. Every "migration 11"
+  above means migration 12. On Postgres each owner already has a track 1
+  (spec 105), so the same `UPDATE` gives each owner's application profile
+  to that owner's own default track.
+- **The browser apply routes refuse an academic track.** The CLI and the
+  API share one allowlist (spec 094), so adding the three commands to it
+  opened the browser's `/apply/{selector}/resume`, `cover-letter` and
+  `answers` too, which this spec keeps out of scope. Each now refuses a
+  non-default track with 409 before anything is staged, as discovery's
+  route does (spec 095). The contract gains that 409 response
+  (`services/api/tests/test_api_tracks.py::test_the_apply_routes_refuse_another_track`).
+- **The generators take the scope, not the kind.** `generate_cover_letter`,
+  `generate_answer_set` and their payload builders read the kind from the
+  scope, so the prompt and the application profile always come from the
+  same track. The outreach drafts pass the default track's scope.
+- **`profile import` gives owned kinds to the default track.** The old
+  repository had one search, and the write path refuses a shared
+  application profile now.
+- **An academic application profile JSON example.** Letters and answers
+  read both halves of the profile, so `config/application-profile.academic.example.json`
+  joins the markdown example, with its real name never-in-git.
+- **The trace callback became a payload check.** The letter and answers
+  tests prove the default track's profile is never read by putting a
+  different sentence in each track's profile and finding only the track's
+  own in every prompt payload.

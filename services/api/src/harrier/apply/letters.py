@@ -14,6 +14,7 @@ import re
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import cast
 
@@ -56,6 +57,8 @@ from harrier.resume.content import (
 )
 from harrier.resume.markdown import normalize_visible_role_title, normalize_visible_url_text
 from harrier.resume.pdf import render_pdf, render_validated_pdf, validate_rendered_pdf
+from harrier.tracks import Scope, rules_for
+from harrier.voices import assemble
 
 logger = logging.getLogger(__name__)
 
@@ -92,30 +95,13 @@ BANNED_PHRASES = [
     "i come with",
 ]
 
-SYSTEM_PROMPT_BASE = (
-    """You generate recruiter-facing cover letters for the candidate.
-
-Write like a thoughtful senior engineer writing quickly but carefully.
-
-Core voice:
-- direct
-- practical
-- low-fluff
-- understated
-- evidence-first
-- slightly compressed
-- recruiter-facing, not theatrical
-- human, not polished marketing copy
-
-You are writing a real cover letter, not an internal qualification summary.
-The reader is usually a recruiter or hiring manager skimming quickly.
-
-Required structure for full_version:
-1. Short opening paragraph: why this company and this role specifically.
-2. Short middle paragraph: strongest relevant fit with 2 to 3 concrete points.
-3. Short closing paragraph: practical interest and next step.
-
-Hard constraints:
+# The rules every kind's letter prompt carries, whatever its voice (spec 101):
+# the hard constraints the checks below enforce on every letter, the
+# no-invention rules, the banned phrasing, the claims rules and the return
+# format. The kind supplies the voice, the structure and the length
+# (`harrier.voices`), around these three segments.
+LETTER_SHARED: tuple[str, ...] = (
+    """Hard constraints:
 - No "Fit:"
 - No bullet-list voice
 - No internal or debug wording
@@ -127,32 +113,8 @@ Hard constraints:
 - Use the application profile for positioning and safe framing only. Every
   fact about the candidate must come from resume_truth_source_md or
   latest_project_achievements_md.
-- Usually 170 to 240 words max unless the user explicitly asks for longer
-- Prefer 3 short paragraphs of 2 to 3 sentences each
-- Pick 1 or 2 proof points, not a full career summary
-- Do not stack long lists of tools, processes, or metrics in one sentence
-- Do not sound like a generated qualification brief
-- Do not restate the entire resume
-- Do not include relocation, visa, or geography logistics unless the user or supplied notes explicitly make that relevant
-- Do not say "Most relevant to this role", "Practically", "That aligns with", or similar scaffolding
-- If role context is strong, be specific; if not, stay simple
-
-Short version:
-- suitable for an application textbox or intro email
-- 2 to 4 sentences
-- direct, not salesy
-
-Full version:
-- 3 short paragraphs
-- plain text paragraphs separated by blank lines
-- mention the company and role in the opening
-- make the company-specific tailoring concrete if the product or role context supports it
-- if context is weak, stay honest and simple rather than generic
-- do not force a company compliment
-- do not mention more than 2 named tools or systems in the whole letter unless the role clearly requires it
-- at most 1 sentence with numbers/metrics
-
-Banned phrasing:
+""",
+    """Banned phrasing:
 """
     + "\n".join(f"- {phrase}" for phrase in BANNED_PHRASES)
     + """
@@ -178,8 +140,8 @@ Claims and evidence:
   shows something enforcing it.
 - Do not state model names, versions or other time-sensitive tool details
   unless the material supplies them.
-- Write exactly 3 paragraphs of at least 8 words each and at most 240 words.
-
+""",
+    """
 Return strict JSON only with this shape:
 {
   "short_version": "string",
@@ -190,8 +152,13 @@ Return strict JSON only with this shape:
 }
 
 FORMATTING: Never use em dashes anywhere in the output. Use commas, semicolons, colons, or hyphens instead.
-"""
+""",
 )
+
+
+def letter_prompt(kind: str) -> str:
+    """The cover letter prompt for a track of this kind (spec 101)."""
+    return assemble(rules_for(kind).letter_voice, LETTER_SHARED)
 
 
 def cover_letters_dir() -> Path:
@@ -244,6 +211,8 @@ def build_cover_letter_payload(
     jd_text: str | None = None,
     extra_notes: str | None = None,
     brief: Brief = EMPTY_BRIEF,
+    *,
+    scope: Scope,
 ) -> dict[str, object]:
     tracker_metadata = None
     if tracker_row:
@@ -279,8 +248,8 @@ def build_cover_letter_payload(
             "resume_truth_source_md": sources.truth_text,
             "latest_project_achievements_md": sources.achievements_text,
             "candidate_json": candidate,
-            "application_profile_md": load_profile_markdown(conn),
-            "application_profile_json": load_profile_json(conn),
+            "application_profile_md": load_profile_markdown(conn, scope),
+            "application_profile_json": load_profile_json(conn, scope),
         },
     }
 
@@ -309,8 +278,8 @@ def strip_banned_phrases(text: str) -> str:
     return value
 
 
-MAX_WORDS = 240
-PARAGRAPHS = 3
+# The paragraph count and word cap are the kind's (`KindRules`); the floor on
+# a paragraph holds for every kind.
 MIN_PARAGRAPH_WORDS = 8
 
 
@@ -338,12 +307,17 @@ def normalize_cover_letter_text(text: str, *, is_full: bool) -> str:
     return value.strip()
 
 
-def cover_letter_violations(letter: dict[str, str], limits: Limits | None = None) -> list[str]:
+def cover_letter_violations(
+    letter: dict[str, str], limits: Limits | None = None, *, kind: str
+) -> list[str]:
     """Every shape and phrasing rule the letter breaks (spec 065, rule N1).
 
-    A brief's stated limits replace the defaults and apply to the full
-    letter, the version that is sent (spec 066, B2).
+    A brief's stated limits replace the kind's defaults and apply to the
+    full letter, the version that is sent (spec 066, B2). The industry kind
+    holds three paragraphs and 240 words; the academic kind has neither, and
+    its length is the page gate's (spec 101).
     """
+    rules = rules_for(kind)
     stated = limits or Limits()
     violations = [
         f"banned phrase: {phrase}"
@@ -356,10 +330,11 @@ def cover_letter_violations(letter: dict[str, str], limits: Limits | None = None
         violations.append("cover letter should not use bullet-list voice")
     paragraphs = [block for block in re.split(r"\n\s*\n", full) if block.strip()]
     if stated.paragraphs is None:
-        if len(paragraphs) < PARAGRAPHS:
+        expected = rules.letter_paragraphs
+        if expected is not None and len(paragraphs) < expected:
             violations.append("cover letter should contain three short paragraphs")
-        if len(paragraphs) > PARAGRAPHS:
-            violations.append(f"too many paragraphs: {len(paragraphs)}, at most {PARAGRAPHS}")
+        if expected is not None and len(paragraphs) > expected:
+            violations.append(f"too many paragraphs: {len(paragraphs)}, at most {expected}")
     else:
         if len(paragraphs) < stated.paragraphs:
             violations.append(
@@ -374,8 +349,9 @@ def cover_letter_violations(letter: dict[str, str], limits: Limits | None = None
         if len(paragraph.split()) < MIN_PARAGRAPH_WORDS:
             violations.append(f"stub paragraph: {paragraph}")
     words = len(full.split())
-    if stated.max_words is None and words > MAX_WORDS:
-        violations.append(f"over the word limit: {words} words, at most {MAX_WORDS}")
+    cap = rules.letter_max_words
+    if stated.max_words is None and cap is not None and words > cap:
+        violations.append(f"over the word limit: {words} words, at most {cap}")
     violations.extend(limit_violations(full, stated, "letter", "full_version"))
     return violations
 
@@ -390,8 +366,8 @@ class LetterDraft:
     claims: tuple[Claim, ...] = ()
 
 
-def validate_cover_letter(letter: dict[str, str]) -> None:
-    violations = cover_letter_violations(letter)
+def validate_cover_letter(letter: dict[str, str], *, kind: str) -> None:
+    violations = cover_letter_violations(letter, kind=kind)
     if violations:
         raise ClaimCheckError(violations)
 
@@ -405,7 +381,12 @@ def generate_cover_letter(
     jd_text: str | None = None,
     extra_notes: str | None = None,
     brief: Brief = EMPTY_BRIEF,
+    *,
+    scope: Scope,
 ) -> LetterDraft:
+    """The letter for a job on the scope's track: its kind's prompt, its own
+    application profile, and every check (specs 065, 101)."""
+    kind = scope.track.kind
     payload = build_cover_letter_payload(
         conn,
         company,
@@ -415,11 +396,12 @@ def generate_cover_letter(
         jd_text=jd_text,
         extra_notes=extra_notes,
         brief=brief,
+        scope=scope,
     )
-    system_prompt = SYSTEM_PROMPT_BASE + brief_instructions(brief, "letter")
+    system_prompt = letter_prompt(kind) + brief_instructions(brief, "letter")
     output_text = _request_letter(system_prompt, payload)
     try:
-        return _checked_letter(conn, output_text, company, role, jd_text, brief)
+        return _checked_letter(conn, output_text, company, role, jd_text, brief, scope)
     except ClaimCheckError as refusal:
         # One retry that says what failed (spec 085). Parse and transport
         # failures are not refusals and are not caught here.
@@ -427,7 +409,7 @@ def generate_cover_letter(
             "cover letter refused on attempt 1, retrying once: %s", "; ".join(refusal.violations)
         )
         output_text = _request_letter(system_prompt, retry_payload(payload, refusal, output_text))
-    return _checked_letter(conn, output_text, company, role, jd_text, brief)
+    return _checked_letter(conn, output_text, company, role, jd_text, brief, scope)
 
 
 def _request_letter(system_prompt: str, payload: dict[str, object]) -> str:
@@ -449,6 +431,7 @@ def _checked_letter(
     role: str,
     jd_text: str | None,
     brief: Brief,
+    scope: Scope,
 ) -> LetterDraft:
     """One response parsed and put through every check. Raises
     `ClaimCheckError` with every violation when it is refused."""
@@ -462,7 +445,7 @@ def _checked_letter(
         "full_version": normalize_cover_letter_text(parsed["full_version"], is_full=True),
     }
     texts = [letter["short_version"], letter["full_version"]]
-    violations = cover_letter_violations(letter, brief.letter)
+    violations = cover_letter_violations(letter, brief.letter, kind=scope.track.kind)
     violations.extend(
         f"named a redacted name: {name}"
         for name in never_name_hits(brief.never_name, "\n".join(texts))
@@ -479,7 +462,7 @@ def _checked_letter(
         company=company,
         role=role,
         vocabulary=load_skill_vocabulary(conn),
-        profile=profile_text(conn),
+        profile=profile_text(conn, scope),
     )
     violations.extend(check_claims(texts, claims, context))
     if violations:
@@ -568,6 +551,8 @@ def write_cover_letter_artifacts(
     render: Callable[[str, Path], None] | None = None,
     validate: Callable[[Path, str], list[str]] | None = None,
     review: Review | None = None,
+    *,
+    kind: str,
 ) -> dict[str, Path]:
     directory = output_dir if output_dir is not None else cover_letters_dir()
     directory.mkdir(parents=True, exist_ok=True)
@@ -604,7 +589,11 @@ def write_cover_letter_artifacts(
             html_text,
             pdf_path,
             render if render is not None else _default_render,
-            validate if validate is not None else validate_rendered_pdf,
+            validate
+            if validate is not None
+            # One page on the industry kind, one or two on the academic
+            # (spec 101).
+            else partial(validate_rendered_pdf, allowed_pages=rules_for(kind).pages),
         )
         if pdf_errors:
             raise RuntimeError("invalid cover letter PDF: " + "; ".join(pdf_errors))

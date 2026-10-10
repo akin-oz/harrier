@@ -1,4 +1,5 @@
-"""A track's own framing over the shared facts (spec 099).
+"""A track's own framing over the shared facts (spec 099), and its own
+application profile (spec 101).
 
 `profile put resume_framing --file PATH` stores the scope track's framing
 after checking it against the shared facts. `profile check` reports, for the
@@ -13,6 +14,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import cast
 
+from harrier.apply.profile import APPLICATION_PROFILE_KIND
 from harrier.profile.store import put_document
 from harrier.resume.content import (
     ResumeBundleError,
@@ -55,6 +57,36 @@ def put_framing(conn: sqlite3.Connection, scope: Scope, text: str) -> CommandOut
             f"run harrier --track {slug} profile check to see which bullets the truth supports",
         ),
     )
+
+
+# A track's application profile, by the file's extension (spec 101).
+PROFILE_FILES = {
+    ".md": ("application-profile.md", "markdown"),
+    ".json": ("application-profile.json", "json"),
+}
+
+
+def put_application_profile(
+    conn: sqlite3.Connection, scope: Scope, suffix: str, text: str
+) -> CommandOutcome:
+    """Store `text` as the scope track's application profile, as read. The
+    extension picks the document; JSON must be an object and markdown must
+    not be empty. Any refusal writes nothing."""
+    if suffix.lower() not in PROFILE_FILES:
+        return CommandOutcome(1, ("application_profile file must end in .md or .json",))
+    name, fmt = PROFILE_FILES[suffix.lower()]
+    if fmt == "json":
+        try:
+            raw: object = json.loads(text)
+        except json.JSONDecodeError as exc:
+            return CommandOutcome(1, (f"application_profile file is not valid JSON: {exc}",))
+        if not isinstance(raw, dict):
+            return CommandOutcome(1, ("application_profile file is not a JSON object",))
+    elif not text.strip():
+        return CommandOutcome(1, ("application_profile file is empty",))
+    slug = scope.track.slug
+    put_document(conn, APPLICATION_PROFILE_KIND, name, fmt, text, track_id=scope.track.id)
+    return CommandOutcome(0, (f"stored {APPLICATION_PROFILE_KIND}/{name} for track {slug}",))
 
 
 def check_resume(conn: sqlite3.Connection, scope: Scope) -> CommandOutcome:

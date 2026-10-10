@@ -246,6 +246,9 @@ def test_the_cli_and_the_api_share_one_allowlist() -> None:
     # and its route passes the track to the CLI as `--track` (spec 050).
     # History reads any track; discovery declares its operation and refuses
     # a non-default track from the browser itself (spec 095).
+    # `tailor`, `cover-letter` and `answers` run on an academic track from
+    # the command line (spec 101); their routes refuse one, as discovery's
+    # does (test_the_apply_routes_refuse_another_track).
     assert allowed == {
         "list",
         "next",
@@ -254,9 +257,35 @@ def test_the_cli_and_the_api_share_one_allowlist() -> None:
         "reconsider",
         "events show",
         "discover",
+        "tailor",
+        "cover-letter",
+        "answers",
         # The selected track's jobs.csv download (spec 096).
         "export",
     }
+
+
+def test_the_apply_routes_refuse_another_track(two_tracks: Path, client: TestClient) -> None:
+    """The CLI writes an academic track's documents (spec 101); the browser
+    routes refuse a non-default track before anything is staged, as
+    discovery's does (spec 095)."""
+    conn = connect()
+    try:
+        job_id = conn.execute(
+            "SELECT id FROM jobs WHERE track_id = (SELECT id FROM tracks WHERE slug = ?)", (SLUG,)
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    for path, body, operation in (
+        ("resume", {"jd_text": "A posting."}, "tailor"),
+        ("cover-letter", {"notes": "Some notes."}, "cover-letter"),
+        ("answers", {"questions": "Why us?"}, "answers"),
+    ):
+        response = client.post(
+            f"/apply/{job_id}/{path}", params={"track": SLUG}, json=body, headers=auth()
+        )
+        assert response.status_code == 409, (path, response.text)
+        assert f"{operation} is not available on track {SLUG}" in response.text
 
 
 def test_an_archived_track_refuses_writes_over_http(two_tracks: Path, client: TestClient) -> None:

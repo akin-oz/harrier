@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from resume_support import store_documents
+from resume_support import DEFAULT_SCOPE, store_documents
 
 import harrier.apply.answers as answers_module
 import harrier.apply.letters as letters_module
@@ -62,6 +62,7 @@ def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
         "application-profile.json",
         "json",
         PROFILE_JSON_PATH.read_text(encoding="utf-8"),
+        track_id=1,
     )
     put_document(
         conn,
@@ -69,6 +70,7 @@ def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
         "application-profile.md",
         "markdown",
         PROFILE_MD_PATH.read_text(encoding="utf-8"),
+        track_id=1,
     )
     put_document(
         conn,
@@ -107,7 +109,7 @@ def profile_json() -> dict[str, object]:
 
 
 def test_profile_validation_passes_on_committed_example(db: sqlite3.Connection) -> None:
-    assert validate_profile(db) == []
+    assert validate_profile(db, DEFAULT_SCOPE) == []
 
 
 def test_ai_tooling_question_guidance_resolves_story_ids() -> None:
@@ -141,6 +143,7 @@ def test_build_answers_payload_includes_context(db: sqlite3.Connection) -> None:
         job_url="https://jobs.ashbyhq.com/exampleco/123",
         tracker_row={"fit_score": "92", "status": "shortlisted", "notes": "strong fit"},
         jd_text="We need Vue, TypeScript, and product-minded engineering.",
+        scope=DEFAULT_SCOPE,
     )
     assert payload["company"] == "exampleco"
     assert payload["job_url"] == "https://jobs.ashbyhq.com/exampleco/123"
@@ -204,7 +207,9 @@ def test_generate_answers_propagates_ai_error(
 
     monkeypatch.setattr(answers_module, "generate_text", boom)
     with pytest.raises(RuntimeError, match="AI request failed"):
-        generate_answer_set(db, "exampleco", "Senior Software Engineer", ["Why?"])
+        generate_answer_set(
+            db, "exampleco", "Senior Software Engineer", ["Why?"], scope=DEFAULT_SCOPE
+        )
 
 
 def test_generated_answers_with_banned_phrases_are_refused(
@@ -238,7 +243,9 @@ def test_generated_answers_with_banned_phrases_are_refused(
 
     monkeypatch.setattr(answers_module, "generate_text", fake_generate)
     with pytest.raises(ValueError) as caught:
-        generate_answer_set(db, "exampleco", "Senior Software Engineer", DEFAULT_QUESTIONS)
+        generate_answer_set(
+            db, "exampleco", "Senior Software Engineer", DEFAULT_QUESTIONS, scope=DEFAULT_SCOPE
+        )
     for phrase in ("i am thrilled", "i am passionate about", "amazing opportunity", "cutting-edge"):
         assert f"banned phrase: {phrase}" in str(caught.value)
 
@@ -283,7 +290,7 @@ def test_deterministic_salary_answer_uses_candidate_compensation(
     draft = build_deterministic_draft(
         "What are your salary expectations?",
         "exampleco",
-        load_profile_json(db),
+        load_profile_json(db, DEFAULT_SCOPE),
         load_candidate_document(db),
     )
     assert "60,000" in draft.short_answer
@@ -298,7 +305,7 @@ def test_deterministic_interest_answer_fills_company_and_product_signal(
     draft = build_deterministic_draft(
         "Why are you interested in this company and this role?",
         "exampleco",
-        load_profile_json(db),
+        load_profile_json(db, DEFAULT_SCOPE),
         load_candidate_document(db),
         jd_text="A synthetic product used only to exercise the JD signal path.",
     )
@@ -320,6 +327,7 @@ def test_build_cover_letter_payload_includes_context(db: sqlite3.Connection) -> 
         tracker_row={"fit_score": "80", "status": "shortlisted", "notes": "strong fit"},
         jd_text="Product-facing engineering with TypeScript.",
         extra_notes="Keep it compact and recruiter-facing.",
+        scope=DEFAULT_SCOPE,
     )
     assert payload["company"] == "examplesoft"
     assert payload["extra_notes"] == "Keep it compact and recruiter-facing."
@@ -362,7 +370,7 @@ def test_internal_dump_language_refuses_the_letter(
 
     monkeypatch.setattr(letters_module, "generate_text", dump_response)
     with pytest.raises(ValueError) as caught:
-        generate_cover_letter(db, "examplesoft", "Senior Product Engineer")
+        generate_cover_letter(db, "examplesoft", "Senior Product Engineer", scope=DEFAULT_SCOPE)
     for phrase in (
         "fit:",
         "tailored for",
@@ -402,6 +410,7 @@ def test_write_cover_letter_artifacts_creates_md_html_pdf(
         template_dir=REPO_ROOT / "templates",
         render=fake_render,
         validate=passing_validate,
+        kind="industry",
     )
     assert artifacts["markdown"].exists()
     assert artifacts["html"].exists()
@@ -431,6 +440,7 @@ def test_write_cover_letter_artifacts_fails_when_pdf_not_created(
             output_dir=tmp_path / "letters",
             template_dir=REPO_ROOT / "templates",
             render=no_render,
+            kind="industry",
         )
 
 
@@ -471,6 +481,7 @@ def test_a_letter_that_fails_the_gate_removes_the_earlier_pdf_and_keeps_the_draf
             template_dir=REPO_ROOT / "templates",
             render=fake_render,
             validate=failing_validate,
+            kind="industry",
         )
 
     assert not paths["pdf"].exists()
@@ -499,6 +510,7 @@ def test_a_letter_render_that_raises_removes_the_earlier_pdf(
             output_dir=directory,
             template_dir=REPO_ROOT / "templates",
             render=crashing_render,
+            kind="industry",
         )
 
     assert not paths["pdf"].exists()
@@ -528,7 +540,7 @@ def test_generate_cover_letter_propagates_ai_error(
 
     monkeypatch.setattr(letters_module, "generate_text", boom)
     with pytest.raises(RuntimeError, match="AI request failed"):
-        generate_cover_letter(db, "exampleco", "Senior Software Engineer")
+        generate_cover_letter(db, "exampleco", "Senior Software Engineer", scope=DEFAULT_SCOPE)
 
 
 def test_generate_cover_letter_validates_three_paragraphs(
@@ -548,7 +560,7 @@ def test_generate_cover_letter_validates_three_paragraphs(
 
     monkeypatch.setattr(letters_module, "generate_text", two_paragraph_response)
     with pytest.raises(ValueError, match="three short paragraphs"):
-        generate_cover_letter(db, "examplesoft", "Senior Product Engineer")
+        generate_cover_letter(db, "examplesoft", "Senior Product Engineer", scope=DEFAULT_SCOPE)
 
 
 # ---------------------------------------------------------------------------
@@ -598,7 +610,7 @@ def test_a_forbidden_phrase_refuses_the_cover_letter(
     _store_forbidden(db, "Product Engineering")
     monkeypatch.setattr(letters_module, "generate_text", _letter_response)
     with pytest.raises(ValueError, match="forbidden phrase: Product Engineering"):
-        generate_cover_letter(db, "examplesoft", "Senior Product Engineer")
+        generate_cover_letter(db, "examplesoft", "Senior Product Engineer", scope=DEFAULT_SCOPE)
 
 
 def test_a_clean_cover_letter_passes_the_forbidden_list(
@@ -606,7 +618,9 @@ def test_a_clean_cover_letter_passes_the_forbidden_list(
 ) -> None:
     _store_forbidden(db, "world-class expert")
     monkeypatch.setattr(letters_module, "generate_text", _letter_response)
-    letter = generate_cover_letter(db, "examplesoft", "Senior Product Engineer")
+    letter = generate_cover_letter(
+        db, "examplesoft", "Senior Product Engineer", scope=DEFAULT_SCOPE
+    )
     assert letter.full_version
 
 
@@ -616,7 +630,9 @@ def test_a_forbidden_phrase_refuses_the_answers(
     _store_forbidden(db, "typescript product features")
     monkeypatch.setattr(answers_module, "generate_text", _answers_stub())
     with pytest.raises(ValueError, match="forbidden phrase: typescript product features"):
-        generate_answer_set(db, "examplesoft", "Senior Product Engineer", ["Why this role?"])
+        generate_answer_set(
+            db, "examplesoft", "Senior Product Engineer", ["Why this role?"], scope=DEFAULT_SCOPE
+        )
 
 
 def test_a_forbidden_phrase_in_an_answer_note_refuses_the_answers(
@@ -627,7 +643,9 @@ def test_a_forbidden_phrase_in_an_answer_note_refuses_the_answers(
         answers_module, "generate_text", _answers_stub("Mention being an open source maintainer.")
     )
     with pytest.raises(ValueError, match="forbidden phrase: open source maintainer"):
-        generate_answer_set(db, "examplesoft", "Senior Product Engineer", ["Why this role?"])
+        generate_answer_set(
+            db, "examplesoft", "Senior Product Engineer", ["Why this role?"], scope=DEFAULT_SCOPE
+        )
 
 
 def test_an_unreadable_resume_facts_document_refuses_the_letter(
@@ -639,4 +657,4 @@ def test_an_unreadable_resume_facts_document_refuses_the_letter(
     put_document(db, "resume_framing", "industry.json", "json", "{}", track_id=1)
     monkeypatch.setattr(letters_module, "generate_text", _letter_response)
     with pytest.raises(ValueError, match="resume_facts document is not valid JSON"):
-        generate_cover_letter(db, "examplesoft", "Senior Product Engineer")
+        generate_cover_letter(db, "examplesoft", "Senior Product Engineer", scope=DEFAULT_SCOPE)

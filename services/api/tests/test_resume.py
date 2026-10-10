@@ -122,7 +122,7 @@ def test_markdown_header_uses_grounded_title_not_requested_identity(
     bundle: ResumeBundle, sources: TruthSources
 ) -> None:
     plan = build_content_plan(bundle, "", REQUESTED_ROLE, AS_OF)
-    markdown = build_markdown(bundle, sources, plan)
+    markdown = build_markdown(bundle, sources, plan, kind="industry")
     lines = [line for line in markdown.splitlines() if line.strip()]
     assert lines[0] == "# Deniz Örnek"
     assert lines[1] == "Senior Frontend Engineer, TypeScript & Vue 3"
@@ -145,7 +145,7 @@ def test_a_forbidden_phrase_refuses_the_rendered_resume(
     decision, which is the same mistake this project keeps making.
     """
     plan = build_content_plan(bundle, "", REQUESTED_ROLE, AS_OF)
-    markdown = build_markdown(bundle, sources, plan)
+    markdown = build_markdown(bundle, sources, plan, kind="industry")
     # A phrase the rendered document definitely contains, declared forbidden.
     banned = replace(bundle, forbidden_phrases=("Senior Frontend Engineer",))
     errors = validate_rendered_markdown(markdown, plan, banned)
@@ -156,7 +156,7 @@ def test_a_clean_resume_reports_no_forbidden_phrases(
     bundle: ResumeBundle, sources: TruthSources
 ) -> None:
     plan = build_content_plan(bundle, "", REQUESTED_ROLE, AS_OF)
-    markdown = build_markdown(bundle, sources, plan)
+    markdown = build_markdown(bundle, sources, plan, kind="industry")
     clean = replace(bundle, forbidden_phrases=("world-class expert",))
     assert not [
         error for error in validate_rendered_markdown(markdown, plan, clean) if "forbidden" in error
@@ -170,7 +170,7 @@ def test_an_empty_required_section_refuses_the_rendered_resume(
     required sections blank, a passing one-page check, and a tracker status
     advance."""
     plan = build_content_plan(bundle, "", REQUESTED_ROLE, AS_OF)
-    markdown = build_markdown(bundle, sources, plan)
+    markdown = build_markdown(bundle, sources, plan, kind="industry")
     emptied = markdown.replace("## EXPERIENCE", "## EXPERIENCE\n").split("## EXPERIENCE")[0]
     emptied += "## EXPERIENCE\n\n## SKILLS\n\nTypeScript\n"
     errors = validate_rendered_markdown(emptied, plan, bundle)
@@ -181,8 +181,8 @@ def test_html_header_uses_grounded_markdown_title(
     bundle: ResumeBundle, sources: TruthSources
 ) -> None:
     plan = build_content_plan(bundle, "", REQUESTED_ROLE, AS_OF)
-    markdown = build_markdown(bundle, sources, plan)
-    html = render_html(markdown, bundle, template_dir=REPO_ROOT / "templates")
+    markdown = build_markdown(bundle, sources, plan, kind="industry")
+    html = render_html(markdown, bundle, template_dir=REPO_ROOT / "templates", kind="industry")
     assert "Tailored for" not in html
     assert ">Senior Frontend Engineer, TypeScript &amp; Vue 3<" in html
     assert ">LinkedIn<" not in html
@@ -264,8 +264,8 @@ def test_degree_starting_with_heading_marker_stays_one_entry(sources: TruthSourc
     free: only the line prefix is parsed."""
     parsed = _bundle_with_education([{"degree": "### odd", "school": "U1"}])
     plan = build_content_plan(parsed, "", REQUESTED_ROLE, AS_OF)
-    markdown = build_markdown(parsed, sources, plan)
-    html = render_html(markdown, parsed, template_dir=REPO_ROOT / "templates")
+    markdown = build_markdown(parsed, sources, plan, kind="industry")
+    html = render_html(markdown, parsed, template_dir=REPO_ROOT / "templates", kind="industry")
     assert html.count('class="education-item"') == 1
     assert ">### odd<" in html
     assert ">U1<" in html
@@ -274,9 +274,9 @@ def test_degree_starting_with_heading_marker_stays_one_entry(sources: TruthSourc
 def test_empty_education_is_valid_and_renders_an_empty_block(sources: TruthSources) -> None:
     parsed = _bundle_with_education([])
     plan = build_content_plan(parsed, "", REQUESTED_ROLE, AS_OF)
-    markdown = build_markdown(parsed, sources, plan)
+    markdown = build_markdown(parsed, sources, plan, kind="industry")
     assert "## EDUCATION\n\n## CERTIFICATIONS" in markdown
-    html = render_html(markdown, parsed, template_dir=REPO_ROOT / "templates")
+    html = render_html(markdown, parsed, template_dir=REPO_ROOT / "templates", kind="industry")
     assert ">Education<" in html
     assert 'class="education-item"' not in html
     assert "{{" not in html
@@ -287,7 +287,7 @@ def test_markdown_writes_each_degree_as_a_heading_then_its_school(
 ) -> None:
     parsed = _bundle_with_education(copy.deepcopy(TWO_DEGREES))
     plan = build_content_plan(parsed, "", REQUESTED_ROLE, AS_OF)
-    markdown = build_markdown(parsed, sources, plan)
+    markdown = build_markdown(parsed, sources, plan, kind="industry")
     section = markdown.split("## EDUCATION\n", 1)[1].split("\n## ", 1)[0]
     assert section.splitlines()[:4] == ["### MSc, X", "U1", "### BSc, Y", "U2"]
 
@@ -297,8 +297,8 @@ def test_html_renders_every_degree_newest_first(sources: TruthSources) -> None:
     degree was silently dropped."""
     parsed = _bundle_with_education(copy.deepcopy(TWO_DEGREES))
     plan = build_content_plan(parsed, "", REQUESTED_ROLE, AS_OF)
-    markdown = build_markdown(parsed, sources, plan)
-    html = render_html(markdown, parsed, template_dir=REPO_ROOT / "templates")
+    markdown = build_markdown(parsed, sources, plan, kind="industry")
+    html = render_html(markdown, parsed, template_dir=REPO_ROOT / "templates", kind="industry")
     assert html.count('class="education-item"') == 2
     assert html.index("MSc, X") < html.index("BSc, Y")
     assert ">U1<" in html
@@ -309,8 +309,8 @@ def test_html_renders_every_degree_newest_first(sources: TruthSources) -> None:
 def test_html_escapes_degree_text(sources: TruthSources) -> None:
     parsed = _bundle_with_education([{"degree": "<b>x</b>", "school": "U1"}])
     plan = build_content_plan(parsed, "", REQUESTED_ROLE, AS_OF)
-    markdown = build_markdown(parsed, sources, plan)
-    html = render_html(markdown, parsed, template_dir=REPO_ROOT / "templates")
+    markdown = build_markdown(parsed, sources, plan, kind="industry")
+    html = render_html(markdown, parsed, template_dir=REPO_ROOT / "templates", kind="industry")
     assert "<b>x</b>" not in html
     assert "&lt;b&gt;x&lt;/b&gt;" in html
 
@@ -326,9 +326,9 @@ def test_stale_template_with_old_education_placeholders_fails_the_render(
         (templates / "resume-template.css").read_text(encoding="utf-8"), encoding="utf-8"
     )
     plan = build_content_plan(bundle, "", REQUESTED_ROLE, AS_OF)
-    markdown = build_markdown(bundle, sources, plan)
+    markdown = build_markdown(bundle, sources, plan, kind="industry")
     with pytest.raises(ValueError, match="education_degree"):
-        render_html(markdown, bundle, template_dir=tmp_path)
+        render_html(markdown, bundle, template_dir=tmp_path, kind="industry")
 
 
 # ---------------------------------------------------------------------------
@@ -408,13 +408,13 @@ def _markdown(
     truth = TruthSources(truth_text="\n".join(parsed.bullet_pool.values()), achievements_text="")
     planned = parse_bundle(plan_from) if plan_from is not None else parsed
     plan = build_content_plan(planned, "", REQUESTED_ROLE, AS_OF)
-    return parsed, build_markdown(parsed, truth, plan)
+    return parsed, build_markdown(parsed, truth, plan, kind="industry")
 
 
 def _render(raw: dict[str, object], plan_from: dict[str, object] | None = None) -> str:
     """The HTML resume for a raw bundle."""
     parsed, markdown = _markdown(raw, plan_from)
-    return render_html(markdown, parsed, template_dir=REPO_ROOT / "templates")
+    return render_html(markdown, parsed, template_dir=REPO_ROOT / "templates", kind="industry")
 
 
 @pytest.mark.parametrize("path", EMITTED_PATHS)
@@ -670,7 +670,7 @@ def test_role_heading_with_no_separator_has_a_named_error(
     with pytest.raises(
         ValueError, match=rf"role heading {position} has no title separator"
     ) as raised:
-        render_html(markdown, bundle, template_dir=REPO_ROOT / "templates")
+        render_html(markdown, bundle, template_dir=REPO_ROOT / "templates", kind="industry")
     assert "Acme" not in str(raised.value)
     assert "Exampleworks" not in str(raised.value)
 
@@ -941,13 +941,19 @@ def test_ai_tailored_content_is_none_on_llm_failure_or_garbage(
         raise LLMClientError("all auto AI providers failed")
 
     monkeypatch.setattr(ai_module, "generate_text", raising_generate)
-    assert ai_module.build_ai_tailored_content(bundle, sources, "jd", "Co", "Role") is None
+    assert (
+        ai_module.build_ai_tailored_content(bundle, sources, "jd", "Co", "Role", kind="industry")
+        is None
+    )
 
     def garbage_generate(system_prompt: str, user_input: str) -> str:
         return "not json at all"
 
     monkeypatch.setattr(ai_module, "generate_text", garbage_generate)
-    assert ai_module.build_ai_tailored_content(bundle, sources, "jd", "Co", "Role") is None
+    assert (
+        ai_module.build_ai_tailored_content(bundle, sources, "jd", "Co", "Role", kind="industry")
+        is None
+    )
 
 
 def test_ai_tailoring_tolerates_trailing_comma(
@@ -979,11 +985,15 @@ def test_ai_tailoring_tolerates_trailing_comma(
         return with_trailing
 
     monkeypatch.setattr(ai_module, "generate_text", clean_generate)
-    expected = ai_module.build_ai_tailored_content(bundle, sources, "jd", "Co", "Role")
+    expected = ai_module.build_ai_tailored_content(
+        bundle, sources, "jd", "Co", "Role", kind="industry"
+    )
     assert expected is not None
 
     monkeypatch.setattr(ai_module, "generate_text", trailing_generate)
-    tolerated = ai_module.build_ai_tailored_content(bundle, sources, "jd", "Co", "Role")
+    tolerated = ai_module.build_ai_tailored_content(
+        bundle, sources, "jd", "Co", "Role", kind="industry"
+    )
     assert tolerated == expected
 
 
@@ -1222,7 +1232,7 @@ def test_tailored_markdown_is_unchanged_by_the_split(tailor_env: int) -> None:
     jd = "React and TypeScript product role."
     bundle = parse_bundle(example_bundle_raw())
     plan = build_content_plan(bundle, jd, "Senior Frontend Engineer")
-    expected = build_markdown(bundle, load_truth_sources(conn), plan) + "\n"
+    expected = build_markdown(bundle, load_truth_sources(conn), plan, kind="industry") + "\n"
 
     result = run_tailor(
         conn,
@@ -1287,8 +1297,8 @@ def test_generated_resume_text_has_no_dash_punctuation(
 ) -> None:
     jd = WEFLOW_POSTING.read_text(encoding="utf-8") if posting == "weflow" else REACT_POSTING
     plan = build_content_plan(bundle, jd, "Senior/Principal Software Engineer", AS_OF)
-    markdown = build_markdown(bundle, sources, plan)
-    html = render_html(markdown, bundle, template_dir=REPO_ROOT / "templates")
+    markdown = build_markdown(bundle, sources, plan, kind="industry")
+    html = render_html(markdown, bundle, template_dir=REPO_ROOT / "templates", kind="industry")
     assert dash_marks(markdown) == []
     assert dash_marks(_visible_text(html)) == []
 
@@ -1300,7 +1310,7 @@ def test_dash_check_catches_each_mark(
     bundle: ResumeBundle, sources: TruthSources, line: str
 ) -> None:
     plan = build_content_plan(bundle, REACT_POSTING, "Senior Frontend Engineer", AS_OF)
-    markdown = build_markdown(bundle, sources, plan) + f"\n{line}\n"
+    markdown = build_markdown(bundle, sources, plan, kind="industry") + f"\n{line}\n"
     errors = validate_rendered_markdown(markdown, plan, bundle)
     assert any("dash as punctuation" in error for error in errors)
 
@@ -1429,7 +1439,9 @@ def test_rendered_resume_refuses_inflated_years(
     bundle: ResumeBundle, sources: TruthSources, claim: str
 ) -> None:
     plan = build_content_plan(bundle, REACT_POSTING, "Senior Frontend Engineer", AS_OF)
-    markdown = build_markdown(bundle, sources, plan) + f"\nBuilt products for {claim}.\n"
+    markdown = (
+        build_markdown(bundle, sources, plan, kind="industry") + f"\nBuilt products for {claim}.\n"
+    )
     errors = validate_rendered_markdown(markdown, plan, bundle)
     assert any("years; the record holds 12" in error or "decades" in error for error in errors)
 

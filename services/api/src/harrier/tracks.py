@@ -24,6 +24,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Literal
 
+from harrier import voices
+
 TrackKind = Literal["industry", "academic"]
 
 # The kinds that have a policy. The `tracks.kind` CHECK in migration 8 derives
@@ -88,6 +90,18 @@ def refuse_if_archived(scope: Scope) -> None:
 QueueOrder = Literal["stage_then_score", "nearest_deadline"]
 ScreeningGates = Literal["industry", "academic"]
 
+# The CV's section headings, in the order the industry CV has always had
+# them. A kind's `cv_sections` is a permutation of these (spec 101);
+# `harrier.resume.markdown` refuses any other.
+INDUSTRY_CV_SECTIONS: tuple[str, ...] = (
+    "## PROFILE",
+    "## SELECTED ACHIEVEMENTS",
+    "## EXPERIENCE",
+    "## EDUCATION",
+    "## CERTIFICATIONS",
+    "## TECHNICAL SKILLS",
+)
+
 
 @dataclass(frozen=True)
 class KindRules:
@@ -97,6 +111,11 @@ class KindRules:
     the operator reads, the next action each status suggests, whether marking
     a row applied seeds a follow-up and the outreach block, and the order the
     queue shows rows in.
+
+    Spec 101 adds the application documents: the voice of each prompt (the
+    truth rules and return formats are shared, beside their generators), the
+    CV's section order and template, the page counts the PDF gate allows,
+    and the letter shape the letter check holds.
     """
 
     labels: Mapping[str, str] = field(default_factory=dict[str, str])
@@ -107,6 +126,19 @@ class KindRules:
     # Industry: today's gates, unchanged. Academic: the search entry's gates,
     # with no industry title hint, remote gate, hold list or score.
     screening: ScreeningGates = "industry"
+    # The voice and structure segments each prompt wraps around its shared
+    # block (`harrier.voices.assemble`).
+    tailor_voice: tuple[str, ...] = voices.INDUSTRY_TAILOR_VOICE
+    letter_voice: tuple[str, ...] = voices.INDUSTRY_LETTER_VOICE
+    answers_voice: tuple[str, ...] = voices.INDUSTRY_ANSWERS_VOICE
+    cv_sections: tuple[str, ...] = INDUSTRY_CV_SECTIONS
+    cv_template: str = "resume-template.html"
+    # The page counts the PDF gate accepts, for the CV and the letter alike.
+    pages: tuple[int, ...] = (1,)
+    # The letter's paragraph count and word cap when no brief states them.
+    # None means the kind has none, and its length is the page gate's.
+    letter_paragraphs: int | None = 3
+    letter_max_words: int | None = 240
 
 
 KIND_RULES: dict[str, KindRules] = {
@@ -157,6 +189,23 @@ KIND_RULES: dict[str, KindRules] = {
         seeds_follow_up=False,
         queue="nearest_deadline",
         screening="academic",
+        # A committee reads closely: its own voice, education before
+        # achievements, and one or two pages with no word count (spec 101).
+        tailor_voice=voices.ACADEMIC_TAILOR_VOICE,
+        letter_voice=voices.ACADEMIC_LETTER_VOICE,
+        answers_voice=voices.ACADEMIC_ANSWERS_VOICE,
+        cv_sections=(
+            "## PROFILE",
+            "## EDUCATION",
+            "## SELECTED ACHIEVEMENTS",
+            "## EXPERIENCE",
+            "## CERTIFICATIONS",
+            "## TECHNICAL SKILLS",
+        ),
+        cv_template="resume-template-academic.html",
+        pages=(1, 2),
+        letter_paragraphs=None,
+        letter_max_words=None,
     ),
 }
 
@@ -189,12 +238,28 @@ NON_DEFAULT_OPERATIONS: frozenset[str] = frozenset(
         # Spec 099: the track's own resume framing over the shared facts.
         "profile put",
         "profile check",
+        # Spec 101: application documents from the track's own framing and
+        # application profile, through the same truth and claims gates.
+        "tailor",
+        "cover-letter",
+        "answers",
     }
 )
 
 # The allowed operations that write a tracker row; an archived track refuses them.
 WRITE_OPERATIONS: frozenset[str] = frozenset(
-    {"add", "shortlist", "track", "applied", "interviewing", "reject", "discover", "profile put"}
+    {
+        "add",
+        "shortlist",
+        "track",
+        "applied",
+        "interviewing",
+        "reject",
+        "discover",
+        "profile put",
+        # Spec 079: a CV that passes its gate moves the row.
+        "tailor",
+    }
 )
 
 

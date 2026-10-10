@@ -2696,7 +2696,7 @@
                 }
               }
             },
-            "description": "the track may not run this operation, or it is archived"
+            "description": "application documents from the browser are the default track's"
           },
           "422": {
             "content": {

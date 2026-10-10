@@ -43,12 +43,12 @@ def _stub_pdfinfo(
 
 
 def test_a_missing_pdf_fails_the_gate(tmp_path: Path) -> None:
-    errors = validate_rendered_pdf(tmp_path / "absent.pdf", CLEAN_HTML)
+    errors = validate_rendered_pdf(tmp_path / "absent.pdf", CLEAN_HTML, allowed_pages=(1,))
     assert errors == ["PDF was not created or is empty"]
 
 
 def test_an_empty_pdf_fails_the_gate(tmp_path: Path) -> None:
-    errors = validate_rendered_pdf(_pdf(tmp_path, empty=True), CLEAN_HTML)
+    errors = validate_rendered_pdf(_pdf(tmp_path, empty=True), CLEAN_HTML, allowed_pages=(1,))
     assert errors == ["PDF was not created or is empty"]
 
 
@@ -58,7 +58,7 @@ def test_a_replacement_character_fails_the_gate(
     """A mojibake name reaches the recruiter looking like a broken document,
     and the candidate's name is exactly where it shows up."""
     _stub_pdfinfo(monkeypatch)
-    errors = validate_rendered_pdf(_pdf(tmp_path), "<p>Deniz �rnek</p>")
+    errors = validate_rendered_pdf(_pdf(tmp_path), "<p>Deniz �rnek</p>", allowed_pages=(1,))
     assert "HTML contains replacement characters" in errors
 
 
@@ -68,7 +68,7 @@ def test_an_unresolved_placeholder_fails_the_gate(
     """A literal {{company}} in a recruiter-facing artifact is the single most
     embarrassing way this tool could fail."""
     _stub_pdfinfo(monkeypatch)
-    errors = validate_rendered_pdf(_pdf(tmp_path), "<p>Dear {{company}},</p>")
+    errors = validate_rendered_pdf(_pdf(tmp_path), "<p>Dear {{company}},</p>", allowed_pages=(1,))
     assert "HTML contains unresolved template placeholders" in errors
 
 
@@ -76,7 +76,7 @@ def test_a_page_count_that_differs_from_the_intent_fails_the_gate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _stub_pdfinfo(monkeypatch, pages=3)
-    errors = validate_rendered_pdf(_pdf(tmp_path), CLEAN_HTML, intended_pages=1)
+    errors = validate_rendered_pdf(_pdf(tmp_path), CLEAN_HTML, allowed_pages=(1,))
     assert errors == ["rendered PDF has 3 pages; expected 1"]
 
 
@@ -84,7 +84,7 @@ def test_an_unreadable_page_count_fails_the_gate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _stub_pdfinfo(monkeypatch, pages=None)
-    errors = validate_rendered_pdf(_pdf(tmp_path), CLEAN_HTML)
+    errors = validate_rendered_pdf(_pdf(tmp_path), CLEAN_HTML, allowed_pages=(1,))
     assert errors == ["rendered PDF has no readable page count"]
 
 
@@ -92,7 +92,7 @@ def test_a_pdfinfo_that_cannot_read_the_file_fails_the_gate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _stub_pdfinfo(monkeypatch, returncode=1)
-    errors = validate_rendered_pdf(_pdf(tmp_path), CLEAN_HTML)
+    errors = validate_rendered_pdf(_pdf(tmp_path), CLEAN_HTML, allowed_pages=(1,))
     assert errors == ["pdfinfo could not read rendered PDF"]
 
 
@@ -106,7 +106,7 @@ def test_a_missing_pdfinfo_is_reported_rather_than_ignored(
         raise FileNotFoundError("pdfinfo")
 
     monkeypatch.setattr(pdf_module.subprocess, "run", explode)
-    errors = validate_rendered_pdf(_pdf(tmp_path), CLEAN_HTML)
+    errors = validate_rendered_pdf(_pdf(tmp_path), CLEAN_HTML, allowed_pages=(1,))
     assert errors == ["could not inspect PDF page count with pdfinfo"]
 
 
@@ -114,7 +114,7 @@ def test_a_clean_render_passes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     """The counterpart that keeps every case above from passing for the wrong
     reason: a gate that always fails proves nothing."""
     _stub_pdfinfo(monkeypatch)
-    assert validate_rendered_pdf(_pdf(tmp_path), CLEAN_HTML) == []
+    assert validate_rendered_pdf(_pdf(tmp_path), CLEAN_HTML, allowed_pages=(1,)) == []
 
 
 # --- what the gate leaves at the final path (spec 067) -----------------------

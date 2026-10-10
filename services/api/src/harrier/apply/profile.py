@@ -12,6 +12,8 @@ import json
 import sqlite3
 from typing import cast
 
+from harrier.tracks import Scope
+
 APPLICATION_PROFILE_KIND = "application_profile"
 CANDIDATE_KIND = "candidate"
 
@@ -41,6 +43,7 @@ class ApplicationProfileError(ValueError):
 
 
 def _document(conn: sqlite3.Connection, kind: str, fmt: str) -> str | None:
+    """A shared document. The candidate document is shared by every track."""
     row = conn.execute(
         "SELECT content FROM profile_documents "
         "WHERE kind = ? AND format = ? AND track_id IS NULL ORDER BY name LIMIT 1",
@@ -49,30 +52,50 @@ def _document(conn: sqlite3.Connection, kind: str, fmt: str) -> str | None:
     return str(row[0]) if row is not None else None
 
 
-def profile_text(conn: sqlite3.Connection) -> str:
-    """Every application profile document as raw text, or "" when none is
-    stored. Read only to name where misattributed evidence came from
-    (spec 069), so it neither parses nor raises."""
+def _profile_documents(conn: sqlite3.Connection, scope: Scope) -> list[tuple[str, str]]:
+    """The scope track's own application profile documents, as (format,
+    content) by name. Never another track's: there is no fallback (spec 101)."""
     rows = conn.execute(
-        "SELECT content FROM profile_documents WHERE kind = ? AND track_id IS NULL ORDER BY name",
-        (APPLICATION_PROFILE_KIND,),
+        "SELECT format, content FROM profile_documents "
+        "WHERE kind = ? AND track_id = ? ORDER BY name",
+        (APPLICATION_PROFILE_KIND, scope.track.id),
     ).fetchall()
-    return "\n".join(str(row[0]) for row in rows)
+    return [(str(row[0]), str(row[1])) for row in rows]
 
 
-def load_profile_markdown(conn: sqlite3.Connection) -> str:
-    content = _document(conn, APPLICATION_PROFILE_KIND, "markdown")
-    if content is None:
-        raise ApplicationProfileError(
-            "no application_profile markdown document in the profile store"
-        )
-    return content
+def no_profile_message(scope: Scope) -> str:
+    slug = scope.track.slug
+    return (
+        f"track {slug} has no application profile; store one with "
+        f"harrier --track {slug} profile put application_profile --file PATH"
+    )
 
 
-def load_profile_json(conn: sqlite3.Connection) -> dict[str, object]:
-    content = _document(conn, APPLICATION_PROFILE_KIND, "json")
-    if content is None:
-        raise ApplicationProfileError("no application_profile json document in the profile store")
+def _profile_document(conn: sqlite3.Connection, scope: Scope, fmt: str) -> str:
+    documents = _profile_documents(conn, scope)
+    if not documents:
+        raise ApplicationProfileError(no_profile_message(scope))
+    for document_format, content in documents:
+        if document_format == fmt:
+            return content
+    raise ApplicationProfileError(
+        f"track {scope.track.slug} has no application_profile {fmt} document"
+    )
+
+
+def profile_text(conn: sqlite3.Connection, scope: Scope) -> str:
+    """The scope track's application profile documents as raw text, or ""
+    when it has none. Read only to name where misattributed evidence came
+    from (spec 069), so it neither parses nor raises."""
+    return "\n".join(content for _, content in _profile_documents(conn, scope))
+
+
+def load_profile_markdown(conn: sqlite3.Connection, scope: Scope) -> str:
+    return _profile_document(conn, scope, "markdown")
+
+
+def load_profile_json(conn: sqlite3.Connection, scope: Scope) -> dict[str, object]:
+    content = _profile_document(conn, scope, "json")
     try:
         parsed: object = json.loads(content)
     except json.JSONDecodeError as exc:
@@ -120,14 +143,14 @@ def validate_profile_json(data: dict[str, object]) -> list[str]:
     return errors
 
 
-def validate_profile(conn: sqlite3.Connection) -> list[str]:
+def validate_profile(conn: sqlite3.Connection, scope: Scope) -> list[str]:
     errors: list[str] = []
     try:
-        errors.extend(validate_profile_markdown(load_profile_markdown(conn)))
+        errors.extend(validate_profile_markdown(load_profile_markdown(conn, scope)))
     except ApplicationProfileError as exc:
         errors.append(str(exc))
     try:
-        errors.extend(validate_profile_json(load_profile_json(conn)))
+        errors.extend(validate_profile_json(load_profile_json(conn, scope)))
     except ApplicationProfileError as exc:
         errors.append(str(exc))
     return errors

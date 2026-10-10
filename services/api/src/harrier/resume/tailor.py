@@ -11,6 +11,7 @@ import logging
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 
 from harrier.apply.brief import load_brief
@@ -30,7 +31,7 @@ from harrier.resume.plan import (
 )
 from harrier.screening.descriptions import load_cached_description
 from harrier.tracker import get_job, set_status
-from harrier.tracks import Scope
+from harrier.tracks import Scope, rules_for
 
 logger = logging.getLogger(__name__)
 
@@ -85,10 +86,21 @@ def run_tailor(
     no_ai: bool = False,
     output_dir: Path | None = None,
     render: RenderPdfFn = render_pdf,
-    validate: ValidatePdfFn = validate_rendered_pdf,
+    validate: ValidatePdfFn | None = None,
 ) -> TailorResult:
     """Tailor for one tracker job; the row updates only after the PDF gate
-    passes."""
+    passes.
+
+    The scope's track kind picks the ranking prompt, the CV's section order
+    and template, and the page counts the gate allows (spec 101). `validate`
+    replaces the gate in tests; left out, it is the kind's.
+    """
+    kind = scope.track.kind
+    gate = (
+        validate
+        if validate is not None
+        else partial(validate_rendered_pdf, allowed_pages=rules_for(kind).pages)
+    )
     row = get_job(conn, scope, job_id)
     company = row.get("company", "")
     requested_role = row.get("title", "")
@@ -114,7 +126,9 @@ def run_tailor(
         raise ValueError("invalid resume content plan: " + "; ".join(plan_errors))
 
     if jd_text and jd_text.strip() and not no_ai:
-        ai_content = build_ai_tailored_content(bundle, sources, jd_text, company, requested_role)
+        ai_content = build_ai_tailored_content(
+            bundle, sources, jd_text, company, requested_role, kind=kind
+        )
         if ai_content:
             plan = apply_ai_bullet_order(plan, bundle, ai_content)
             # Core-requirement evidence leads whatever the model preferred;
@@ -127,8 +141,8 @@ def run_tailor(
         else:
             logger.info("using validated deterministic evidence plan for %s", company)
 
-    markdown = build_markdown(bundle, sources, plan)
-    html_text = render_html(markdown, bundle)
+    markdown = build_markdown(bundle, sources, plan, kind=kind)
+    html_text = render_html(markdown, bundle, kind=kind)
     fit_evaluation = evaluate_resume_fit(bundle, jd_text, requested_role) if jd_text else None
 
     directory = output_dir if output_dir is not None else resumes_dir()
@@ -157,7 +171,7 @@ def run_tailor(
         )
         metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
 
-        pdf_errors = render_validated_pdf(html_text, pdf_path, render, validate)
+        pdf_errors = render_validated_pdf(html_text, pdf_path, render, gate)
         if pdf_errors:
             raise RuntimeError("resume render validation failed: " + "; ".join(pdf_errors))
     except BaseException:
