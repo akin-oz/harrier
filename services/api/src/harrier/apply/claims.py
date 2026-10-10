@@ -271,10 +271,39 @@ def _unverified(fragment: str, context: ClaimContext) -> str:
     return f"unverified evidence: {fragment}"
 
 
+def _token_sentences(text: str) -> list[str]:
+    """Where each of `number_tokens(text)` sits, in the same order, as the
+    text a refusal adds after the token (spec 086, S2 and S3).
+
+    The text is split at every line break, then at `_SENTENCE_SPLIT`. Every
+    split point is whitespace, so each word of the text lands in exactly one
+    piece, and the words of the pieces in order are the words of the text.
+    """
+    places: list[tuple[list[str], int]] = []
+    for line in text.splitlines():
+        for piece in _SENTENCE_SPLIT.split(line):
+            words = piece.split()
+            places.extend((words, position) for position in range(len(words)))
+    found: list[str] = []
+    for (words, position), word in zip(places, text.split(), strict=True):
+        if not _NUMBER.match(word.strip(_SURROUNDING)):
+            continue
+        sentence = " ".join(words)
+        value = next(t.value for t in number_tokens(word))
+        if sum(t.value == value for t in number_tokens(sentence)) < 2:
+            found.append(f"(in: {sentence})")
+        elif position == 0:
+            found.append(f"(first word of: {sentence})")
+        else:
+            found.append(f'(after "{words[position - 1].strip(_SURROUNDING)}" in: {sentence})')
+    return found
+
+
 def _number_violations(output: str, claims: Sequence[Claim], context: ClaimContext) -> list[str]:
     exempt = {token.value for token in number_tokens(f"{context.company} {context.role}")}
     violations: list[str] = []
-    for token in number_tokens(output):
+    tokens = number_tokens(output)
+    for token, where in zip(tokens, _token_sentences(output), strict=True):
         if token.value in exempt:
             continue
         rates: set[bool] = set()
@@ -293,9 +322,9 @@ def _number_violations(output: str, claims: Sequence[Claim], context: ClaimConte
                 for line in contexts:
                     rates.update(t.rate for t in number_tokens(line) if t.value == token.value)
         if not cited:
-            violations.append(f"number without evidence: {token.raw}")
+            violations.append(f"number without evidence: {token.raw} {where}")
         elif token.rate not in rates:
-            violations.append(f"number changed scope: {token.raw}")
+            violations.append(f"number changed scope: {token.raw} {where}")
     return violations
 
 
