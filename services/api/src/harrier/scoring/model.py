@@ -317,6 +317,43 @@ def load_active_model() -> tuple[Model | None, str | None]:
     return result, None
 
 
+MODEL_ACTIVE = "active"
+
+
+@dataclass(frozen=True)
+class ActiveModelInfo:
+    """What may be said about the active model outside the host (spec 096).
+
+    The training date and the identity, and nothing else. The file's
+    `training` and `evaluation` blocks hold counts taken from the operator's
+    own decisions, so they are never read into this.
+    """
+
+    state: str
+    trained_at: str | None
+    version: str | None
+
+
+def active_model_info() -> ActiveModelInfo:
+    """`active`, `model-missing` or `model-invalid`, with the date and identity
+    when there is a model the scorer would use."""
+    model, reason = load_active_model()
+    if model is None:
+        return ActiveModelInfo(state=reason or MODEL_MISSING, trained_at=None, version=None)
+    try:
+        parsed: object = json.loads(active_model_path().read_bytes())
+    except (OSError, ValueError):
+        # Loaded a moment ago and unreadable now: the file changed under us.
+        return ActiveModelInfo(state=MODEL_INVALID, trained_at=None, version=None)
+    document = cast("dict[str, object]", parsed) if isinstance(parsed, dict) else {}
+    created = document.get("created_at")
+    return ActiveModelInfo(
+        state=MODEL_ACTIVE,
+        trained_at=created if isinstance(created, str) and created else None,
+        version=model.identity,
+    )
+
+
 def active_model_identity() -> str:
     """What the policy version records: the model that would score, or none."""
     model, _ = load_active_model()

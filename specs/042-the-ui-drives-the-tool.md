@@ -159,8 +159,11 @@ named so an unticked box is a schedule rather than an omission.
       `::a duplicate is reported in the domain's words and the form keeps its input`,
       and the rescore refusal at
       `services/api/tests/test_ui_tracker.py::test_a_job_with_no_stored_description_is_refused_on_both_sides`)
-- [ ] the Operations page lists the CLI-only commands with their reasons,
-      asserted by a test so the list cannot drift from reality (phase 5)
+- [x] the Operations page lists the CLI-only commands with their reasons,
+      asserted by a test so the list cannot drift from reality (phase 5).
+      Specs 050 and 096 moved the list to the Settings page as a three-way
+      list: routed, run on the host, or terminal only
+      (`services/api/tests/test_ui_settings.py::test_every_cli_subcommand_has_exactly_one_place`)
 - [x] no new route is reachable before spec 035's protections are in place,
       asserted by a test that the tracker routes require them
       (`::test_a_tracker_write_without_the_token_is_refused`,

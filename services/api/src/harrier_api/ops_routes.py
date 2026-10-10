@@ -14,11 +14,13 @@ records, and says the installed and loaded state is the host's to report.
 from __future__ import annotations
 
 import datetime as dt
+import io
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from harrier.discovery import APIFY_MAX_COUNT, SOURCE_ORDER
@@ -27,7 +29,7 @@ from harrier.tracks import Scope as TrackScope
 from harrier_api.deps import Conn, DatabaseRoute, ErrorOut, scope_for
 from harrier_api.localauth import TOKEN_RESPONSES, require_token
 from harrier_api.runmodels import RUN_CONFLICT_RESPONSES, Manager, RunOut, run_out
-from harrier_api.runs import RunParams, write_run_input
+from harrier_api.runs import RunParams, backup_hidden_directories, write_run_input
 
 ops_router = APIRouter(route_class=DatabaseRoute)
 
@@ -154,7 +156,15 @@ class BackupIn(BaseModel):
     responses={**TOKEN_RESPONSES, **RUN_CONFLICT_RESPONSES},
 )
 async def take_backup(manager: Manager, body: BackupIn = BackupIn()) -> RunOut:  # noqa: B008
-    params = RunParams(switches=frozenset() if body.prune else frozenset({"--no-prune"}))
+    """`backup` as a run, into the directory the Settings page lists, and
+    reported by the archive's name, never its path (spec 096)."""
+    from harrier.backup import backup_dir
+
+    params = RunParams(
+        switches=frozenset() if body.prune else frozenset({"--no-prune"}),
+        destination=backup_dir(),
+        hidden=backup_hidden_directories(),
+    )
     return run_out(await manager.start("backup", params))
 
 
@@ -298,9 +308,19 @@ class ProfileDocumentOut(BaseModel):
     owner: str
 
 
-@ops_router.get("/ops/profile", operation_id="listProfileDocuments")
+@ops_router.get(
+    "/ops/profile",
+    operation_id="listProfileDocuments",
+    dependencies=[Depends(require_token)],
+    responses=TOKEN_RESPONSES,
+)
 def list_profile_documents(conn: Conn) -> list[ProfileDocumentOut]:
-    """`profile list`: names and formats, never contents."""
+    """`profile list`: names and formats, never contents.
+
+    Requires the token although it is a read (spec 096, Akin's decision of
+    2026-10-10): the document names describe the operator's own data, the
+    reason spec 047 gave for the artifact index.
+    """
     from harrier.profile import list_documents
 
     return [ProfileDocumentOut.model_validate(doc) for doc in list_documents(conn)]
@@ -570,3 +590,68 @@ async def run_discover(
         input_files=written,
     )
     return run_out(await manager.start("discovery", params))
+
+
+# --- the export, as two downloads (spec 096's amendment 4) ---
+
+CSV_MEDIA_TYPE = "text/csv; charset=utf-8"
+CONTACTS_DEFAULT_ONLY = (
+    "contacts are the person's, not a track's: download them on the default track"
+)
+
+EXPORT_RESPONSES: dict[int | str, dict[str, Any]] = {
+    200: {"content": {"text/csv": {}}, "description": "the CSV, as `harrier export` writes it"},
+    **TOKEN_RESPONSES,
+}
+
+
+def _download(text: str, filename: str) -> Response:
+    # Nothing between here and the browser may keep a copy: contacts.csv
+    # holds contact identities, and jobs.csv the operator's own decisions.
+    return Response(
+        content=text,
+        media_type=CSV_MEDIA_TYPE,
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
+@ops_router.get(
+    "/ops/export/jobs.csv",
+    operation_id="downloadJobsCsv",
+    dependencies=[Depends(require_token)],
+    response_class=Response,
+    responses=EXPORT_RESPONSES,
+)
+def download_jobs(
+    conn: Conn, scope: Annotated[TrackScope, Depends(scope_for("export"))]
+) -> Response:
+    """The selected track's `jobs.csv`, in the columns `harrier export`
+    writes, with formula cells neutralized. Nothing is written on the server."""
+    from harrier.tracker.export import write_jobs
+
+    buffer = io.StringIO(newline="")
+    write_jobs(buffer, conn, scope, neutralize=True)
+    return _download(buffer.getvalue(), "jobs.csv")
+
+
+@ops_router.get(
+    "/ops/export/contacts.csv",
+    operation_id="downloadContactsCsv",
+    dependencies=[Depends(require_token)],
+    response_class=Response,
+    responses=EXPORT_RESPONSES,
+)
+def download_contacts(
+    conn: Conn, scope: Annotated[TrackScope, Depends(scope_for("export"))]
+) -> Response:
+    """`contacts.csv`, on the default track only, as on the command line."""
+    from harrier.tracker.export import write_contacts
+
+    if scope.track.id != DEFAULT_TRACK_ID:
+        raise HTTPException(status_code=409, detail=CONTACTS_DEFAULT_ONLY)
+    buffer = io.StringIO(newline="")
+    write_contacts(buffer, conn, neutralize=True)
+    return _download(buffer.getvalue(), "contacts.csv")

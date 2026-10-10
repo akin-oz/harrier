@@ -254,6 +254,8 @@ def test_the_cli_and_the_api_share_one_allowlist() -> None:
         "reconsider",
         "events show",
         "discover",
+        # The selected track's jobs.csv download (spec 096).
+        "export",
     }
 
 

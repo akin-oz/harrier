@@ -17,6 +17,7 @@ that travels. It is still derived from personal rows, so it lives under
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections import Counter
 from dataclasses import dataclass
@@ -40,6 +41,25 @@ EXPORT_FORMAT_VERSION = 1
 
 def exports_dir() -> Path:
     return scoring_dir() / "exports"
+
+
+_EXPORT_NAME = re.compile(r"features-(\d{4})(\d{2})(\d{2})\.jsonl")
+
+
+def newest_export_date() -> str | None:
+    """The date of the newest default-track export the trainer would read, or
+    None when there is none (spec 096). Read from the file names this module
+    writes; the files themselves are not opened."""
+    try:
+        names = [path.name for path in exports_dir().iterdir() if path.is_file()]
+    except OSError:
+        return None
+    dates = [
+        f"{match[1]}-{match[2]}-{match[3]}"
+        for match in (_EXPORT_NAME.fullmatch(name) for name in names)
+        if match is not None
+    ]
+    return max(dates, default=None)
 
 
 @dataclass(frozen=True)

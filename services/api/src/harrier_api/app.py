@@ -64,6 +64,7 @@ from harrier_api.runs import (
     format_sse,
     write_run_input,
 )
+from harrier_api.settings_routes import settings_router
 from harrier_api.tracks_routes import tracks_router
 
 API_VERSION = "0.1.0"
@@ -1164,6 +1165,7 @@ def create_app(run_manager: RunManager | None = None, spa_dir: Path | None = Non
     app.include_router(mail_router)
     app.include_router(ops_router)
     app.include_router(tracks_router)
+    app.include_router(settings_router)
     app.add_middleware(ApiPrefixMiddleware)
     # Closes DNS rebinding, which is what made every other protection here
     # bypassable: a page the operator visits resolves its own hostname to

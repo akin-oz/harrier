@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
@@ -52,6 +52,24 @@ function stubApi(): string[] {
       if (url.pathname === "/api/apply/1/artifacts") return reply([]);
       // No brief stored for the row, as the API answers it (spec 095).
       if (url.pathname === "/api/apply/1/brief") return reply({ detail: "no brief" }, 404);
+      if (url.pathname === "/api/settings/commands") {
+        return reply({ routed: [], host: [], terminal: [], panel: [] });
+      }
+      if (url.pathname === "/api/ops/schedule") {
+        return reply({ jobs: [], error: null, installed_state: "", host_command: "" });
+      }
+      if (url.pathname === "/api/settings/backups") {
+        return reply({ directory: "absent", archives: [] });
+      }
+      if (url.pathname === "/api/settings/host") {
+        return reply({
+          gmail_token: { state: "not_configured", age_days: null },
+          model: { state: "missing", trained_at: null, version: null },
+          newest_feature_export: null,
+          image_revision: "unknown",
+          database_owner: "unknown",
+        });
+      }
       return reply([]);
     }),
   );
@@ -180,4 +198,28 @@ test("every cache entry of track data is keyed by the selected track", async () 
   await waitFor(() => {
     keyed("second-search");
   });
+});
+
+test("Settings is the last section, and the same on every track", async () => {
+  const asked = stubApi();
+  window.history.replaceState(null, "", "/?track=second-search");
+  const user = userEvent.setup();
+  render(<App />);
+
+  const nav = screen.getByRole("navigation", { name: "Sections" });
+  const sections = within(nav)
+    .getAllByRole("button")
+    .map((button) => button.textContent);
+  expect(sections.at(-1)).toBe("Settings");
+
+  const settings = within(nav).getByRole("button", { name: "Settings" });
+  expect(settings.getAttribute("aria-disabled")).toBeNull();
+  await user.click(settings);
+  await screen.findByRole("heading", { name: "Settings", level: 2 });
+  await waitFor(() => {
+    expect(asked.some((path) => path.startsWith("/api/settings/host"))).toBe(true);
+  });
+  // Install-wide reads name no track.
+  const reads = asked.filter((path) => path.startsWith("/api/settings"));
+  expect(reads.every((path) => !path.includes("track="))).toBe(true);
 });

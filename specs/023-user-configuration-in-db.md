@@ -165,9 +165,10 @@ Host header is not on its trusted list
 install, not per user
 (`::test_a_second_call_returns_the_token_already_in_circulation`), so it
 is a same-machine boundary rather than authentication. The
-GUI half of ADR-009's promise is not here: the React app has no
-configuration surface yet (spec 096 adds one), so "customizable easily" currently means the
-CLI and the API, not a settings page.
+GUI half of ADR-009's promise was not here when this shipped: the React app
+had no configuration surface, so "customizable easily" meant the CLI and the
+API. Spec 096 adds it: the Settings page edits each kind over these routes,
+unchanged (`apps/web/src/features/config/`).
 
 ## Open item (2026-10-08, privacy review of spec 096)
 
