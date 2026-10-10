@@ -1,8 +1,8 @@
 ---
 spec: 102
 title: Decide the hosted multi-tenant deployment (ADR-013) and split its build
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [035, 090, 091, 092]
 ---
