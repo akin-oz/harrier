@@ -82,6 +82,27 @@ def test_identity_values_reads_candidate_and_contacts(db: sqlite3.Connection) ->
     assert "jordan@example.com" in values
 
 
+def test_redaction_reads_identity_from_either_shape(db: sqlite3.Connection) -> None:
+    """Before the split the values are in `resume_data`, after it in
+    `resume_facts`; both are read, so no point in between leaves one
+    unredacted (spec 098)."""
+    import json
+
+    db.execute(
+        "INSERT INTO profile_documents (kind, name, format, content) VALUES (?, ?, ?, ?)",
+        (
+            "resume_facts",
+            "resume-facts.json",
+            "json",
+            json.dumps({"candidate": {"name": "Ada Ex"}}),
+        ),
+    )
+    db.commit()
+    values = identity_values(db)
+    assert "Ada Ex" in values
+    assert CANDIDATE["name"] in values
+
+
 def test_identity_values_survives_a_database_without_the_tables(tmp_path: Path) -> None:
     """A fresh clone has no profile store. Redaction must degrade, not raise."""
     bare = sqlite3.connect(tmp_path / "bare.db")

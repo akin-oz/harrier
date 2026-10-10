@@ -1,0 +1,179 @@
+{
+  "_comment": "Synthetic resume facts (spec 098): what is true about the candidate on every track. Store YOUR facts in the profile store as kind resume_facts, name resume-facts.json; this example documents the shape and, with config/resume-framing.example.json, doubles as the public test fixture (services/api/tests/test_resume.py).",
+  "candidate": {
+    "name": "Deniz Örnek",
+    "location": "Exampleland",
+    "email": "deniz@example.com",
+    "phone": "+00 000 000 0000",
+    "linkedin": "https://linkedin.com/in/deniz-ornek",
+    "professional_career_start": "2014-01-01"
+  },
+  "roles": [
+    {
+      "id": "r1",
+      "organization": "Acme Talent",
+      "title": "Senior Frontend Engineer",
+      "employment_type": "Freelance",
+      "period": {
+        "start": "2023-10-01",
+        "end": "2025-03-31"
+      },
+      "counts_towards_professional_experience": true,
+      "technologies": [
+        "Vue 3",
+        "Nuxt",
+        "TypeScript",
+        "Storybook",
+        "Vitest",
+        "Playwright",
+        "Sentry",
+        "Mixpanel"
+      ]
+    },
+    {
+      "id": "r2",
+      "organization": "Acme Platform",
+      "title": "Senior Software Engineer",
+      "employment_type": "",
+      "period": {
+        "start": "2019-07-01",
+        "end": "2023-09-30"
+      },
+      "counts_towards_professional_experience": true,
+      "technologies": [
+        "React",
+        "TypeScript",
+        "Storybook",
+        "Node.js"
+      ]
+    },
+    {
+      "id": "r3",
+      "organization": "Exampleworks",
+      "title": "Frontend Engineer",
+      "employment_type": "",
+      "period": {
+        "start": "2014-01-01",
+        "end": "2019-06-30"
+      },
+      "counts_towards_professional_experience": true,
+      "technologies": [
+        "React",
+        "TypeScript",
+        "Node.js",
+        "AWS Lambda"
+      ]
+    }
+  ],
+  "all_skills": [
+    "TypeScript",
+    "React",
+    "Next.js",
+    "Vue 3",
+    "Nuxt",
+    "Node.js",
+    "Storybook",
+    "Vitest",
+    "Playwright",
+    "Sentry",
+    "Mixpanel",
+    "CI/CD",
+    "REST",
+    "GraphQL",
+    "AWS Lambda"
+  ],
+  "verified_skills": [
+    "TypeScript",
+    "React",
+    "Next.js",
+    "Vue 3",
+    "Nuxt",
+    "Node.js",
+    "Storybook",
+    "Vitest",
+    "Playwright",
+    "Sentry",
+    "Mixpanel",
+    "CI/CD",
+    "REST",
+    "GraphQL",
+    "AWS Lambda"
+  ],
+  "technology_aliases": {
+    "TypeScript": [
+      "typescript"
+    ],
+    "React": [
+      "react",
+      "react.js"
+    ],
+    "Next.js": [
+      "next.js",
+      "nextjs"
+    ],
+    "Vue 3": [
+      "vue",
+      "vue.js",
+      "vue 3"
+    ],
+    "Nuxt": [
+      "nuxt",
+      "nuxt.js"
+    ],
+    "Node.js": [
+      "node.js",
+      "node js",
+      "nodejs"
+    ],
+    "Storybook": [
+      "storybook"
+    ],
+    "Vitest": [
+      "vitest"
+    ],
+    "Playwright": [
+      "playwright"
+    ],
+    "Sentry": [
+      "sentry"
+    ],
+    "Mixpanel": [
+      "mixpanel"
+    ],
+    "CI/CD": [
+      "ci/cd",
+      "continuous integration",
+      "continuous delivery"
+    ],
+    "REST": [
+      "rest api",
+      "restful",
+      "rest"
+    ],
+    "GraphQL": [
+      "graphql"
+    ],
+    "AWS Lambda": [
+      "aws lambda",
+      "lambda"
+    ]
+  },
+  "forbidden_phrases": [
+    "placeholder",
+    "open source",
+    "public talk"
+  ],
+  "education": [
+    {
+      "degree": "MSc, Example Computing (part-time, expected 2030)",
+      "school": "Example University"
+    },
+    {
+      "degree": "Bachelor's Degree, Example Engineering",
+      "school": "Example Technical University"
+    }
+  ],
+  "certifications": [
+    "Example Framework Certification Level II"
+  ]
+}

@@ -213,43 +213,54 @@ documents by the table.
 
 ## Acceptance criteria
 
-- [ ] For the committed example, `load_bundle` over the two example
+- [x] For the committed example, `load_bundle` over the two example
       documents returns a `ResumeBundle` equal to `parse_bundle` over the
       single document the split was computed from
-      (planned test_split_bundle_equals_the_one_document_bundle).
-- [ ] `tailor` on the demo job produces byte-identical markdown from the
+      (`services/api/tests/test_resume_documents.py::test_split_bundle_equals_the_one_document_bundle`,
+      `test_every_field_lands_in_exactly_one_document`).
+- [x] `tailor` on the demo job produces byte-identical markdown from the
       pair and from the single document it was split from
-      (planned test_tailored_markdown_is_unchanged_by_the_split).
-- [ ] The cover letter and answers claim checks read the vocabulary and the
+      (`services/api/tests/test_resume.py::test_tailored_markdown_is_unchanged_by_the_split`).
+- [x] The cover letter and answers claim checks read the vocabulary and the
       never-claim list from `resume_facts`; an entry added only there is
-      enforced (planned test_letters_read_the_never_claim_list_from_facts).
-- [ ] Log redaction redacts a name stored only in `resume_facts`, and one
+      enforced (`services/api/tests/test_resume_documents.py::test_letters_read_the_never_claim_list_from_facts`, and
+      `services/api/tests/test_apply.py::test_a_forbidden_phrase_refuses_the_cover_letter`
+      now storing the list in `resume_facts`).
+- [x] Log redaction redacts a name stored only in `resume_facts`, and one
       stored only in `resume_data`
-      (planned test_redaction_reads_identity_from_either_shape).
-- [ ] `split-resume` with no flag prints field paths, no values, and leaves
+      (`services/api/tests/test_logging.py::test_redaction_reads_identity_from_either_shape`).
+- [x] `split-resume` with no flag prints field paths, no values, and leaves
       `profile_documents` unchanged
-      (planned test_split_resume_dry_run_writes_nothing).
-- [ ] `split-resume --write` leaves exactly `resume_facts`,
+      (`services/api/tests/test_resume_documents.py::test_split_resume_dry_run_writes_nothing`).
+- [x] `split-resume --write` leaves exactly `resume_facts`,
       `resume_framing` and `resume_data_presplit` (byte-identical to the
       old content), and a second run exits 0 with `already split`
-      (planned test_split_resume_writes_the_pair_and_keeps_the_original).
-- [ ] A `resume_data` with an unplaced key exits 1 naming it and writes
-      nothing (planned test_split_resume_refuses_an_unplaced_key).
-- [ ] `load_bundle` refuses: `resume_data` alone (names the command), both
+      (`services/api/tests/test_resume_documents.py::test_split_resume_writes_the_pair_and_keeps_the_original`).
+- [x] A `resume_data` with an unplaced key exits 1 naming it and writes
+      nothing (`services/api/tests/test_resume_documents.py::test_split_resume_refuses_an_unplaced_key`); so do no
+      document, both shapes, invalid JSON and an invalid bundle
+      (`services/api/tests/test_resume_documents.py::test_split_resume_failure_modes`).
+- [x] `load_bundle` refuses: `resume_data` alone (names the command), both
       shapes, one half of the pair, and a key in the wrong document
-      (planned test_load_bundle_refuses_each_mixed_shape).
-- [ ] A framing role naming an unknown facts role is refused with the
-      document prefix (planned test_framing_role_must_name_a_facts_role).
-- [ ] `--track <academic slug> profile split-resume` exits 2.
-- [ ] `config/resume-facts.example.json` and
+      (`services/api/tests/test_resume_documents.py::test_load_bundle_refuses_each_mixed_shape`,
+      `test_a_key_in_the_wrong_document_is_refused`).
+- [x] A framing role naming an unknown facts role is refused with the
+      document prefix (`services/api/tests/test_resume_documents.py::test_framing_role_must_name_a_facts_role`); every
+      bundle error names its document
+      (`services/api/tests/test_resume_documents.py::test_each_bundle_error_names_its_document`); a facts role with no
+      framing keeps the defaults
+      (`services/api/tests/test_resume_documents.py::test_a_facts_role_without_a_framing_keeps_the_defaults`).
+- [x] `--track <academic slug> profile split-resume` exits 2
+      (`services/api/tests/test_resume_documents.py::test_split_resume_is_refused_on_another_track`).
+- [x] `config/resume-facts.example.json` and
       `config/resume-framing.example.json` replace
       `config/resume-content.example.json`; the demo seeds both; the real
       names `config/resume-facts.json` and `config/resume-framing.json` are
       never-in-git in `config/data-classification.json`, `.gitignore` and
       `.dockerignore`.
-- [ ] `split-resume` is placed in `COMMAND_CLASSES`; the parser walk test
+- [x] `split-resume` is placed in `COMMAND_CLASSES`; the parser walk test
       passes.
-- [ ] `uv run ruff check`, `uv run pyright` and `just check` pass.
+- [x] `uv run ruff check`, `uv run pyright` and `just check` pass.
 
 ## Honest limitations
 
@@ -334,3 +345,29 @@ and the tracker keep working.
   beside `profile import`.
 - Splitting the `candidate` or `application_profile` documents.
 - A command to delete a profile document.
+
+## Amendment (2026-10-10, during implementation)
+
+- **Where it lives.** The table, the split and the merge are
+  `services/api/src/harrier/resume/documents.py`; the command is
+  `services/api/src/harrier/resume/split.py`; the one transaction is
+  `put_documents_and_rekind` in `services/api/src/harrier/profile/store.py`.
+  `parse_bundle` is unchanged for callers; `bundle_from_documents` parses
+  the pair and names each error's document.
+- **Three refusals the spec did not name**, each exit 1 with nothing
+  written: more than one `resume_data` document (the loader used to take
+  the first by name, and the split will not choose); a
+  `resume_data_presplit` of the same name already stored (the rename would
+  collide, and the earlier original is not overwritten); and a framing
+  role that frames a role twice
+  (`services/api/tests/test_resume_documents.py::test_split_resume_failure_modes`,
+  `test_a_role_framed_twice_is_refused`).
+- **A `_` comment key inside a role** goes to the facts role, as a
+  top-level comment goes to the facts document.
+- **No resume content at all.** `load_bundle` refuses naming both example
+  files; the vocabulary and the never-claim list read as empty, as they did
+  with no `resume_data`.
+- **Spec 034 cites a renamed test.** The letter test for an unreadable
+  document now breaks `resume_facts`, so it is
+  `services/api/tests/test_apply.py::test_an_unreadable_resume_facts_document_refuses_the_letter`,
+  and spec 034's table names it.

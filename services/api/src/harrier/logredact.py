@@ -45,29 +45,38 @@ _IDENTITY_KEYS = ("name", "email", "phone", "linkedin")
 _CONTACT_IDENTITY_COLUMNS = ("person_name", "person_email", "linkedin_url")
 
 
+# The documents that carry the candidate's identity: the facts (spec 098), and
+# the single document they were split from while it is still stored, so no
+# point in the split leaves a value unredacted.
+_IDENTITY_KINDS = ("resume_facts", "resume_data")
+
+
 def _candidate_identity_values(conn: sqlite3.Connection) -> set[str]:
     import json
 
-    row = conn.execute(
-        "SELECT content FROM profile_documents WHERE kind = 'resume_data' AND format = 'json'"
-    ).fetchone()
-    if row is None:
-        return set()
-    try:
-        parsed: object = json.loads(row[0])
-    except (json.JSONDecodeError, TypeError):
-        return set()
-    if not isinstance(parsed, dict):
-        return set()
-    candidate = cast("dict[str, object]", parsed).get("candidate")
-    if not isinstance(candidate, dict):
-        return set()
-    fields = cast("dict[str, object]", candidate)
-    return {
-        value.strip()
-        for key in _IDENTITY_KEYS
-        if isinstance(value := fields.get(key), str) and value.strip()
-    }
+    placeholders = ", ".join("?" for _ in _IDENTITY_KINDS)
+    rows = conn.execute(
+        f"SELECT content FROM profile_documents WHERE kind IN ({placeholders}) AND format = 'json'",
+        _IDENTITY_KINDS,
+    ).fetchall()
+    values: set[str] = set()
+    for row in rows:
+        try:
+            parsed: object = json.loads(row[0])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        candidate = cast("dict[str, object]", parsed).get("candidate")
+        if not isinstance(candidate, dict):
+            continue
+        fields = cast("dict[str, object]", candidate)
+        values.update(
+            value.strip()
+            for key in _IDENTITY_KEYS
+            if isinstance(value := fields.get(key), str) and value.strip()
+        )
+    return values
 
 
 def _contact_identity_values(conn: sqlite3.Connection) -> set[str]:

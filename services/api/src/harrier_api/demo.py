@@ -45,7 +45,8 @@ PROFILE_SEEDS: tuple[tuple[str, str, str, str], ...] = (
         "application-profile.md",
         "markdown",
     ),
-    ("config/resume-content.example.json", "resume_data", "resume-candidate-data.json", "json"),
+    ("config/resume-facts.example.json", "resume_facts", "resume-facts.json", "json"),
+    ("config/resume-framing.example.json", "resume_framing", "industry.json", "json"),
     ("config/story-seeds.example.json", "story_seeds", "story-seeds.json", "json"),
     ("config/outreach-defaults.example.json", "outreach_defaults", "defaults.json", "json"),
 )
