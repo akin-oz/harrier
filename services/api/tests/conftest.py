@@ -37,6 +37,7 @@ import os
 import shutil
 import sys
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import unquote, urlsplit
@@ -215,6 +216,56 @@ def _data_dir(  # pyright: ignore[reportUnusedFunction]
     """
     monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("HARRIER_DATABASE_URL", "")
+
+
+# --- the store URL pin (spec 103) ---
+
+DOTENV_FALLBACK = "dotenv_fallback"
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers",
+        f"{DOTENV_FALLBACK}: the test removes HARRIER_DATABASE_URL to read the .env "
+        "fallback, from a working directory under its tmp_path",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _database_url_stays_pinned(  # pyright: ignore[reportUnusedFunction]
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> Iterator[None]:
+    """Fail a test that left HARRIER_DATABASE_URL unset.
+
+    Unset, the store is chosen from `.env` in the working directory, which is
+    wherever pytest was started. A fixture that deleted the pin above ran
+    SQLite tests against the database an operator's `.env` named (review of
+    PR #218). A test marked `dotenv_fallback` may unset it, if it has moved
+    to a directory under its own tmp_path first.
+
+    Checked after the test and before the monkeypatch fixture restores the
+    environment: this fixture asks for `monkeypatch`, so it is set up after
+    it and torn down before it.
+    """
+    yield
+    if "HARRIER_DATABASE_URL" in os.environ:
+        return
+    # pytest leaves `node` untyped on FixtureRequest; inside a function
+    # fixture it is the test item.
+    test = cast("pytest.Item", request.node)  # pyright: ignore[reportUnknownMemberType]
+    if test.get_closest_marker(DOTENV_FALLBACK) is not None:
+        here = Path.cwd().resolve()
+        if here == tmp_path.resolve() or tmp_path.resolve() in here.parents:
+            return
+        pytest.fail(
+            f"{test.nodeid} unset HARRIER_DATABASE_URL outside its tmp_path, "
+            f"so .env in {here} chose the store"
+        )
+    pytest.fail(
+        f"{test.nodeid} left HARRIER_DATABASE_URL unset, so .env in the working "
+        "directory chose the store. Set it to an empty string for SQLite, or mark the "
+        f"test {DOTENV_FALLBACK} and move to tmp_path first (spec 103)"
+    )
 
 
 @pytest.fixture(autouse=True)

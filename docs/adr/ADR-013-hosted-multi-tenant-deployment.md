@@ -193,9 +193,10 @@ Postgres hosted), and a JWT boundary the local product never had. Chosen.
   `harrier_tenant`. A code path that uses the service role bypasses it. The
   guard is decision 3's rule plus a test in spec 104, not the database.
 - Google's restricted Gmail scopes need app verification and, when the
-  data is stored on servers, a security assessment before external users
-  can grant them (https://developers.google.com/workspace/gmail/api/auth/scopes,
-  read 2026-10-10). Hosted Gmail watch may
-  not be available at first; spec 109 decides.
+  data is stored on servers or transmitted, a security assessment before
+  external users can grant them
+  (https://developers.google.com/workspace/gmail/api/auth/scopes, read
+  2026-10-10). Hosted Gmail watch may not be available at first; spec 109
+  decides.
 - Running LinkedIn and academic searches through Apify on tenants' behalf
   depends on each tenant's own Apify account and the terms they accept.
