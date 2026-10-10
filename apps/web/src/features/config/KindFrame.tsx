@@ -41,13 +41,18 @@ export function KindFrame({
   const openerRef = useRef<HTMLButtonElement | null>(null);
   const busy = save.isPending || reset.isPending;
 
+  // Focus goes to Cancel, the safe answer, when the question opens, and back
+  // to the button that opened it when it closes. The opener is not rendered
+  // while the question shows, so it is focused after it mounts again.
+  const wasAsking = useRef(false);
   useEffect(() => {
     if (asking) cancelRef.current?.focus();
+    else if (wasAsking.current) openerRef.current?.focus();
+    wasAsking.current = asking;
   }, [asking]);
 
   function cancel(): void {
     setAsking(false);
-    openerRef.current?.focus();
   }
 
   function onKey(event: KeyboardEvent<HTMLDivElement>): void {
@@ -67,9 +72,9 @@ export function KindFrame({
   return (
     <section className="config-kind" aria-labelledby={headingId}>
       <div className="config-kind__head">
-        <h3 id={headingId} className="config-kind__title">
+        <h4 id={headingId} className="config-kind__title">
           {title}
-        </h3>
+        </h4>
         <Source entry={entry} />
       </div>
       <p className="config-kind__description">{description}</p>

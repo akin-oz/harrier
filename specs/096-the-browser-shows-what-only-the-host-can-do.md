@@ -234,6 +234,7 @@ without placing it fails the test.
 | `migrate-legacy`, `gmail-migrate-state`, `profile import` | One-time migrations from the old system. |
 | `review-followup` | Repository upkeep: it reads pull request reviews. |
 | `parity checklist`, `parity status`, `parity diff` | Repository upkeep: they compare against the old system. |
+| `store migrate`, `store status` | Store upkeep (spec 103): they apply or report the store's schema migrations, which an operator runs deliberately. Added 2026-10-10, when spec 103's commands reached this branch and the three-way test named them as placed nowhere. |
 
 `demo-run` is routed: `POST /runs` with kind `demo` starts it (spec 006), and
 the list says it is a harness for the run panel.
@@ -289,7 +290,7 @@ otherwise. Synthetic data only, built under `tmp_path`.
       `services/api/tests/test_ui_settings.py::test_absent_host_facts_are_shown_as_absent`), and
       its response holds exactly the fields listed under Behavior
       (`services/api/tests/test_ui_settings.py::test_host_facts_hold_only_the_listed_fields`)
-- [ ] In both downloads, a text cell beginning with `=`, `+`, `-`, `@`, a
+- [x] In both downloads, a text cell beginning with `=`, `+`, `-`, `@`, a
       tab or a line break gets a leading apostrophe, numeric fields are
       unchanged, and `harrier export` still writes cells unchanged
       (`services/api/tests/test_ui_settings.py::test_a_download_neutralizes_formula_cells`)
@@ -321,14 +322,33 @@ otherwise. Synthetic data only, built under `tmp_path`.
       `apps/web/src/features/host-commands/CopyCommand.test.tsx`,
       `apps/web/src/features/host-commands/CommandList.test.tsx`,
       `apps/web/src/pages/settings/SettingsPage.test.tsx`)
-- [ ] `just contract` regenerates the contract and the web app type-checks
-      against it with no hand-written request or response shape
-- [ ] Each test above fails with its behavior removed, checked by removing
+- [x] `just contract` regenerates the contract and the web app type-checks
+      against it with no hand-written request or response shape: every
+      request and response type in `apps/web/src/features/config/`,
+      `features/host-commands/` and `pages/settings/` is named from
+      `components["schemas"]`, and refusals are read through
+      `shared/api/refusal.ts`, which is typed from the contract too
+- [x] Each test above fails with its behavior removed, checked by removing
       each behavior in turn, recorded in the pull request
-- [ ] The web changes pass the Impeccable detector and an accessibility pass;
-      the copy control announces that it copied
-- [ ] No real watchlist entry, search, hold, archive name, path or person
-      appears in a fixture, a test name or a screenshot (ADR-008)
+- [x] The web changes pass the Impeccable detector and an accessibility pass;
+      the copy control announces that it copied. The detector hook reported
+      no issue on any changed web file. The accessibility pass found one
+      fault, fixed here: closing a confirmation sent focus to a button that
+      was not rendered yet, so focus fell to the page. Each confirmation now
+      opens on Cancel, answers Escape, and returns focus to its opener
+      (`LineListEditor.test.tsx::the reset question is answered from the keyboard, and focus comes back`,
+      `ConfigSection.test.tsx::the import question is answered from the keyboard, and focus comes back`,
+      `CopyCommand.test.tsx::copies the exact command and announces it`).
+      Every field has a label, results are live regions, states read by
+      word and shape rather than colour, and the editors' headings nest
+      under the section's
+- [x] No real watchlist entry, search, hold, archive name, path or person
+      appears in a fixture, a test name or a screenshot (ADR-008). Every
+      fixture is invented or built under `tmp_path`, and board slugs are the
+      declared synthetic ones
+      (`services/api/tests/test_demo.py::test_the_test_suite_names_only_synthetic_employers`).
+      Limitation: beyond that test, a property of the diff rather than
+      something a test asserts
 - [ ] All gates green on the pull request
 
 ## Implementation amendments (2026-10-10)

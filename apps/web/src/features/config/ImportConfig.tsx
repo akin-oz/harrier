@@ -17,8 +17,14 @@ export function ImportConfig({ onImported }: { onImported: () => void }) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const openerRef = useRef<HTMLButtonElement | null>(null);
 
+  // Focus goes to Cancel, the safe answer, when the question opens, and back
+  // to the button that opened it when it closes. The opener is not rendered
+  // while the question shows, so it is focused after it mounts again.
+  const wasAsking = useRef(false);
   useEffect(() => {
     if (asking) cancelRef.current?.focus();
+    else if (wasAsking.current) openerRef.current?.focus();
+    wasAsking.current = asking;
   }, [asking]);
 
   const run = useMutation({
@@ -35,7 +41,6 @@ export function ImportConfig({ onImported }: { onImported: () => void }) {
 
   function cancel(): void {
     setAsking(false);
-    openerRef.current?.focus();
   }
 
   function onKey(event: KeyboardEvent<HTMLDivElement>): void {

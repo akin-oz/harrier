@@ -74,6 +74,10 @@ Place = Routed | OnHost | TerminalOnly
 _MIGRATION = "One-time migrations from the old system."
 _CUTOVER = "One irreversible sitting with an attestation (spec 042)."
 _PARITY = "Repository upkeep: they compare against the old system."
+_STORE = (
+    "Store upkeep (spec 103): they apply or report the store's schema migrations, "
+    "which an operator runs deliberately."
+)
 
 # Every CLI subcommand, by the name `harrier_cli.main.subcommand_name` gives
 # it, in exactly one place. A dictionary, so a command cannot be in two; and
@@ -179,6 +183,9 @@ COMMAND_PLACES: dict[str, Place] = {
     "parity checklist": TerminalOnly(_PARITY),
     "parity status": TerminalOnly(_PARITY),
     "parity diff": TerminalOnly(_PARITY),
+    # Spec 103 added these after spec 096 was approved; placed on merging it.
+    "store migrate": TerminalOnly(_STORE),
+    "store status": TerminalOnly(_STORE),
 }
 
 HostFact = Literal["schedule", "gmail_token", "model", "image", "database_owner", "profile"]

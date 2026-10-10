@@ -132,3 +132,20 @@ test("an import with nothing to import says so in the server's words", async () 
     "nothing to import; no configuration files found",
   );
 });
+
+test("the import question is answered from the keyboard, and focus comes back", async () => {
+  const calls = stubApi(handler({ imported: false }));
+  renderSection();
+  const user = userEvent.setup();
+  const opener = await screen.findByRole("button", { name: "Import from the files" });
+
+  opener.focus();
+  await user.keyboard("{Enter}");
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: "Cancel" }));
+  await user.keyboard("{Escape}");
+
+  expect(document.activeElement).toBe(
+    screen.getByRole("button", { name: "Import from the files" }),
+  );
+  expect(calls.some((call) => call.path === "/api/config/import")).toBe(false);
+});

@@ -175,3 +175,20 @@ test("the searches editor asks nothing about importers", async () => {
   await new Promise((resolve) => setTimeout(resolve, 10));
   expect(calls.some((call) => call.path === "/api/settings/feeds/routing")).toBe(false);
 });
+
+test("the reset question is answered from the keyboard, and focus comes back", async () => {
+  const calls = stub(() => undefined);
+  renderEditor(entry());
+  const user = userEvent.setup();
+  const opener = screen.getByRole("button", { name: "Reset to the file" });
+
+  opener.focus();
+  await user.keyboard("{Enter}");
+  // Focus lands on Cancel, the answer that changes nothing.
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: "Cancel" }));
+  await user.keyboard("{Escape}");
+
+  expect(screen.queryByRole("group", { name: "Reset board watchlist to the file" })).toBeNull();
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: "Reset to the file" }));
+  expect(calls.some((call) => call.method === "DELETE")).toBe(false);
+});

@@ -76,7 +76,7 @@ function ReadOnlyKind({ entry }: { entry: ConfigEntry }) {
   return (
     <section className="config-kind" aria-label={entry.kind}>
       <div className="config-kind__head">
-        <h3 className="config-kind__title">{entry.kind.replace(/_/g, " ")}</h3>
+        <h4 className="config-kind__title">{entry.kind.replace(/_/g, " ")}</h4>
         <span className="config-source">
           {entry.source === "store" ? "From the store" : "From the file in the checkout"}
         </span>
