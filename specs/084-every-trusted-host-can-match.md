@@ -1,8 +1,8 @@
 ---
 spec: 084
 title: Every name in the trusted-host list can match a request
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M8
 depends: [035, 051, 083]
 ---
