@@ -283,22 +283,22 @@ This spec ships documents, so its failures are documents that disagree.
 
 ## Acceptance criteria
 
-- [ ] `docs/adr/ADR-013-hosted-multi-tenant-deployment.md` exists and its
+- [x] `docs/adr/ADR-013-hosted-multi-tenant-deployment.md` exists and its
       Context, Options weighed, Decision, Consequences and Honest
       limitations match this spec's ADR-013 section.
-- [ ] `.ai/rules/product-invariants.md` and `.ai/rules/privacy.md` contain
+- [x] `.ai/rules/product-invariants.md` and `.ai/rules/privacy.md` contain
       the two bullets under Behavior verbatim.
-- [ ] `aie sync` was run and `CLAUDE.md`, `AGENTS.md` and generated rule
+- [x] `aie sync` was run and `CLAUDE.md`, `AGENTS.md` and generated rule
       files differ from `main` only by those two bullets.
-- [ ] ADR-012's and ADR-009's status lines name ADR-013; no other line of
+- [x] ADR-012's and ADR-009's status lines name ADR-013; no other line of
       either changes.
-- [ ] `docs/architecture.md` has a "Hosted deployment (decided, not built)"
+- [x] `docs/architecture.md` has a "Hosted deployment (decided, not built)"
       section naming ADR-013 and specs 103 to 111.
-- [ ] `specs/103-*.md` to `specs/111-*.md` exist, each with `approved: no`
+- [x] `specs/103-*.md` to `specs/111-*.md` exist, each with `approved: no`
       and `status: proposed`.
-- [ ] `git diff --stat main` lists only paths under `docs/`, `specs/`,
+- [x] `git diff --stat main` lists only paths under `docs/`, `specs/`,
       `.ai/`, `.claude/` generated files, `CLAUDE.md` and `AGENTS.md`.
-- [ ] `just check` passes.
+- [x] `just check` passes.
 
 ## Honest limitations
 
