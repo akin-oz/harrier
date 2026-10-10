@@ -294,17 +294,14 @@ and the tracker keep working.
   The academic framing would then need its research wording in the shared
   pool. Declined (Akin, 2026-10-10).
 
-## Open decisions for Akin
+## Decisions recorded (Akin, 2026-10-10)
 
-1. **Framing document name.** `industry.json` names the kind. Spec 099
-   will add one per academic track; naming it after the track slug instead
-   is the alternative.
-2. **`experience_statement` in framing.** It states a fact (years), checked
-   against facts, but an academic CV words it differently. Placed in
-   framing here.
-3. **Role `competencies` in framing.** They drive evaluation and planning,
-   so they are a presentation choice here. If you see them as facts about
-   the role, they move.
+1. **Framing document name.** `industry.json`, named after the track kind.
+   Spec 099 names an academic track's framing the same way.
+2. **`experience_statement` is framing.** It states years, checked against
+   the facts' career start, but an academic CV words it differently.
+3. **Role `competencies` are framing.** They drive evaluation and
+   planning, so they are a presentation choice.
 
 ## Proof / origin
 
