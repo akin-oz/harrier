@@ -1406,11 +1406,27 @@ def _store_postgres(command: str, url: str) -> int:
         migrate_postgres,
         postgres_connect,
         postgres_version,
+        require_driver,
         target_version,
     )
 
     if command == "migrate":
-        before, after = migrate_postgres(url)
+        # Before the import below, so a missing driver is the refusal that
+        # names the install command rather than an ImportError.
+        require_driver()
+        import psycopg
+
+        try:
+            before, after = migrate_postgres(url)
+        except psycopg.Error as error:
+            # A connection failure is a StoreConnectionError by now, so this
+            # failed after connecting, most often a statement the server
+            # refused. The server's primary message quotes SQL, never the
+            # URL; an error without one, such as a lost connection, prints
+            # its class (post-merge review of PR #207).
+            reason = error.diag.message_primary or type(error).__name__
+            print(f"error: a migration failed: {reason}", file=sys.stderr)
+            return 1
         print(f"postgres {before} -> {after}")
         return 0
     with closing(postgres_connect(url)) as conn:

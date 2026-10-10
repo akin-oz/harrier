@@ -238,7 +238,7 @@ Matching error classes and messages for callers is spec 112's.
 - [x] A connection failure's message and logs do not contain the password
       (`services/api/tests/test_postgres_store.py::test_a_connection_failure_never_prints_the_password`;
       the scrub itself, which a refused port never exercises:
-      `services/api/tests/test_postgres_store.py::test_a_percent_encoded_password_never_reaches_the_message`).
+      `services/api/tests/test_postgres_store.py::test_a_driver_error_that_quotes_the_password_never_carries_it`).
 - [x] An unsupported scheme, a missing driver, and a data command with a
       Postgres URL each exit 1 with the text under Failure modes
       (`services/api/tests/test_store_cli.py::test_an_unsupported_url_is_refused_before_anything_opens`,
@@ -263,9 +263,16 @@ Matching error classes and messages for callers is spec 112's.
 - Nothing reads or writes tracker rows on Postgres after this spec. It
   proves the store exists and refuses what SQLite refuses; spec 112 makes
   the domain use it.
-- The parity test compares shapes and a fixed list of refusals. A
-  constraint added to one dialect and not named in the probes is caught
-  only if it changes a column, a default or a unique constraint.
+- The parity test compares shapes (columns, type affinity, nullability,
+  defaults, unique constraints, foreign keys) and a fixed list of refusals
+  and acceptances. A CHECK or trigger added to one dialect and not reached
+  by a probe is not caught. TRUNCATE has no SQLite counterpart, so no
+  probe that runs on both stores can test it; spec 105 refuses it on
+  Postgres.
+- A connection error's traceback still holds the frame of
+  `postgres_connect`, whose locals include the URL. An error reporter that
+  records local variables would see the password. None is configured;
+  spec 110 decides the hosted one.
 - Timestamps stay text in Postgres to keep every API value the same shape.
   Native timestamp types would sort and compare better; changing them
   changes the contract and is its own spec.
@@ -414,13 +421,23 @@ same change's code:
   as written, still percent-encoded; the scrub replaced only the decoded
   form, so a password with an invalid escape was printed whole. The two
   earlier password tests connect to a closed port, whose message never
-  quotes the password, so they passed with the scrub removed.
+  quotes the password, so they passed with the scrub removed. The driver's
+  error also stayed chained as `__context__` despite `from None`, holding
+  the password; the refusal is now raised after the `except` block, so
+  nothing is chained
+  (`services/api/tests/test_postgres_store.py::test_a_driver_error_that_quotes_the_password_never_carries_it`).
 - **`StoreTarget` no longer shows its URL in its repr**
   (`services/api/tests/test_postgres_store.py::test_a_store_target_never_shows_its_password`).
 - **A malformed URL is refused like any other.** A bad port or host raised
   a bare `ValueError`, and a scheme in another case passed here and failed
   in libpq with an unrelated message
   (`services/api/tests/test_postgres_store.py::test_a_malformed_url_is_refused_like_any_other`).
+- **A migration the server refuses exits 1 with one line.** A
+  `psycopg.Error` from a migration's statement escaped `harrier store
+  migrate` as a driver traceback. It now prints `error: a migration
+  failed: <the server's primary message>` and exits 1. That message
+  quotes SQL, never the URL
+  (`services/api/tests/test_store_cli.py::test_a_failed_migration_exits_1_with_the_drivers_message`).
 - **Tests never read an operator's URL.** `services/api/tests/conftest.py`
   sets `HARRIER_DATABASE_URL` empty for the session and for every test, so
   a hosted URL in the operator's shell or `.env` cannot reach the suite

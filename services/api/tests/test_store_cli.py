@@ -21,6 +21,7 @@ from pg_support import fresh_database
 import harrier.logsetup as logsetup
 from harrier.db import default_db_path
 from harrier.pgstore import URL_VARIABLE, StoreUrlError
+from harrier.tracker import schema
 from harrier.tracker.schema import MIGRATIONS, POSTGRES_MIGRATIONS
 from harrier_api.app import create_app
 from harrier_cli.main import main
@@ -73,6 +74,31 @@ def test_store_migrate_prints_before_and_after_on_postgres(
     assert run(["store", "status"], capsys) == (0, "postgres 10\n", "")
     # The Postgres path never touches the local file.
     assert not default_db_path().exists()
+
+
+def test_a_failed_migration_exits_1_with_the_drivers_message(
+    pg_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A statement the server refuses escaped `harrier store` as a driver
+    traceback (post-merge review of PR #207). It is one error line now,
+    quoting the server's message and never the URL."""
+    real = list(schema.POSTGRES_MIGRATIONS)
+    broken = real[-1][0] + 1
+    monkeypatch.setattr(schema, "POSTGRES_MIGRATIONS", [*real, (broken, ["THIS IS NOT SQL"])])
+    monkeypatch.setenv(URL_VARIABLE, pg_url)
+
+    code, out, err = run(["store", "migrate"], capsys)
+
+    assert (code, out) == (1, "")
+    assert err == 'error: a migration failed: syntax error at or near "THIS"\n'
+    # The baseline before it committed; the broken migration left no row.
+    assert run(["store", "status"], capsys) == (
+        0,
+        f"postgres {real[-1][0]}\nbehind: {broken} expected\n",
+        "",
+    )
 
 
 def test_store_status_reports_behind_on_an_unmigrated_store(

@@ -14,9 +14,11 @@ path that applies migrations.
 A URL carries a password. A connection error is built from the host, port
 and database name, never from the URL, and the driver's own message is
 scrubbed of the password, in both its encoded and decoded forms, before it
-is quoted. Errors from a migration's statements are the driver's own; they
-quote SQL, not the URL. Spec 035 is the record of a
-credential leaking through an exception string.
+is quoted. The driver's error is not chained to the one raised, so it
+cannot be found as `__context__` either. Errors from a migration's
+statements are the driver's own; `harrier store migrate` prints only the
+server's primary message, which quotes SQL, not the URL. Spec 035 is the
+record of a credential leaking through an exception string.
 """
 
 from __future__ import annotations
@@ -177,10 +179,15 @@ def postgres_connect(url: str) -> psycopg.Connection[tuple[object, ...]]:
     try:
         return psycopg.connect(url, autocommit=True, connect_timeout=10)
     except psycopg.Error as error:
-        raise StoreConnectionError(
+        message = (
             f"cannot connect to the Postgres store at {where.describe()}: "
             f"{_scrub(str(error), where)}"
-        ) from None
+        )
+    # Raised after the except block, not inside it. `from None` only hides
+    # the driver's error from a printed traceback; it stays attached as
+    # `__context__`, and its text may quote the password (post-merge review
+    # of PR #207).
+    raise StoreConnectionError(message)
 
 
 def target_version() -> int:
