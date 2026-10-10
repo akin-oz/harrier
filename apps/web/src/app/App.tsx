@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { Job } from "../entities/job";
 import { ApplyPage } from "../pages/apply/ApplyPage";
 import { InboxPage } from "../pages/inbox/InboxPage";
+import { OperationsPage } from "../pages/operations/OperationsPage";
 import { OutreachPage } from "../pages/outreach/OutreachPage";
 import { TrackerPage } from "../pages/tracker/TrackerPage";
 import { TracksPage } from "../pages/tracks/TracksPage";
@@ -34,6 +35,9 @@ const SECTIONS = [
   { id: "tracker", label: "Tracker", defaultOnly: false },
   { id: "outreach", label: "Outreach", defaultOnly: true },
   { id: "inbox", label: "Inbox", defaultOnly: true },
+  // Spec 050: the schedule, feeds, reconsideration and the digest, all the
+  // default track's.
+  { id: "operations", label: "Operations", defaultOnly: true },
 ] as const;
 
 type Section = (typeof SECTIONS)[number]["id"] | "tracks";
@@ -188,6 +192,7 @@ function Main({
   if (section === "tracker") {
     return <TrackerPage key={track.slug} track={track} onApply={onApply} />;
   }
+  if (section === "operations") return <OperationsPage />;
   return section === "outreach" ? <OutreachPage /> : <InboxPage />;
 }
 

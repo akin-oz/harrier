@@ -2,7 +2,9 @@
 
 Five sections over the database and the mail watch event log. One
 message per non-dry-run invocation (scheduling is spec 020's job; this
-module enforces no per-date limit), and dry runs never send.
+module enforces no per-date limit, and records each delivery by the day it
+was for, which the browser reads to refuse a second send, spec 050), and
+dry runs never send.
 """
 
 from __future__ import annotations
@@ -347,4 +349,20 @@ def run_digest(
         # Only on the success path. A digest that failed to send must not
         # report itself as healthy tomorrow (spec 029).
         record_success(conn, DIGEST_JOB)
+        # And which day it was for, so the browser can refuse a second send
+        # of the same day and say when the first went (spec 050). This
+        # module still enforces no limit; the record is only read.
+        record_success(conn, delivery_key(target_date))
     return digest, rc
+
+
+def delivery_key(target_date: date) -> str:
+    """The run-outcome key for one day's delivered digest (spec 050)."""
+    return f"{DIGEST_JOB}:{target_date.isoformat()}"
+
+
+def delivered_at(conn: sqlite3.Connection, target_date: date) -> str | None:
+    """When the digest for this day was delivered, or None if it never was."""
+    from harrier.runoutcome import last_success
+
+    return last_success(conn, delivery_key(target_date))
