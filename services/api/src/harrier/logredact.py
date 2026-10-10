@@ -45,10 +45,11 @@ _IDENTITY_KEYS = ("name", "email", "phone", "linkedin")
 _CONTACT_IDENTITY_COLUMNS = ("person_name", "person_email", "linkedin_url")
 
 
-# The documents that carry the candidate's identity: the facts (spec 098), and
-# the single document they were split from while it is still stored, so no
-# point in the split leaves a value unredacted.
-_IDENTITY_KINDS = ("resume_facts", "resume_data")
+# The documents that carry the candidate's identity: the facts (spec 098), the
+# single document they were split from while it is still stored, so no point
+# in the split leaves a value unredacted, and the copy the split keeps, which
+# can hold a value the facts have since replaced.
+_IDENTITY_KINDS = ("resume_facts", "resume_data", "resume_data_presplit")
 
 
 def _candidate_identity_values(conn: sqlite3.Connection) -> set[str]:

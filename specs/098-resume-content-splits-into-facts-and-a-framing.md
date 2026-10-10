@@ -362,6 +362,13 @@ and the tracker keep working.
   role that frames a role twice
   (`services/api/tests/test_resume_documents.py::test_split_resume_failure_modes`,
   `test_a_role_framed_twice_is_refused`).
+- **Redaction also reads `resume_data_presplit`.** The kept original can
+  hold an identity value the facts have since replaced, so it is read with
+  `resume_facts` and `resume_data`
+  (`services/api/tests/test_logging.py::test_redaction_reads_identity_from_either_shape`).
+- **The write is one transaction,** proven by a rename that collides after
+  the first document is written
+  (`services/api/tests/test_resume_documents.py::test_the_split_write_is_all_or_nothing`).
 - **A `_` comment key inside a role** goes to the facts role, as a
   top-level comment goes to the facts document.
 - **No resume content at all.** `load_bundle` refuses naming both example

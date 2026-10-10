@@ -88,19 +88,14 @@ def test_redaction_reads_identity_from_either_shape(db: sqlite3.Connection) -> N
     unredacted (spec 098)."""
     import json
 
-    db.execute(
-        "INSERT INTO profile_documents (kind, name, format, content) VALUES (?, ?, ?, ?)",
-        (
-            "resume_facts",
-            "resume-facts.json",
-            "json",
-            json.dumps({"candidate": {"name": "Ada Ex"}}),
-        ),
-    )
+    # The copy the split keeps can hold a value the facts have since replaced.
+    for kind, name in (("resume_facts", "Ada Ex"), ("resume_data_presplit", "Old Ex")):
+        db.execute(
+            "INSERT INTO profile_documents (kind, name, format, content) VALUES (?, ?, ?, ?)",
+            (kind, f"{kind}.json", "json", json.dumps({"candidate": {"name": name}})),
+        )
     db.commit()
-    values = identity_values(db)
-    assert "Ada Ex" in values
-    assert CANDIDATE["name"] in values
+    assert {"Ada Ex", "Old Ex", CANDIDATE["name"]} <= identity_values(db)
 
 
 def test_identity_values_survives_a_database_without_the_tables(tmp_path: Path) -> None:

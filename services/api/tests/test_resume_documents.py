@@ -23,7 +23,7 @@ from resume_support import (
 )
 
 from harrier.db import connect
-from harrier.profile.store import put_document
+from harrier.profile.store import put_document, put_documents_and_rekind
 from harrier.resume.content import (
     ResumeBundleError,
     bundle_from_documents,
@@ -161,6 +161,31 @@ def test_each_bundle_error_names_its_document() -> None:
     assert "resume_facts: candidate: missing or empty email" in message
     last = len(framing_roles) - 1
     assert f"resume_framing: roles[{last}]: bullet_count must be a positive integer" in message
+
+
+def test_a_missing_facts_candidate_is_blamed_on_the_facts_only() -> None:
+    facts, framing = example_documents()
+    del facts["candidate"]
+    with pytest.raises(ResumeBundleError) as refused:
+        bundle_from_documents(facts, framing)
+    message = str(refused.value)
+    assert "resume_facts: candidate: missing or empty name" in message
+    assert "resume_framing:" not in message
+
+
+def test_the_split_write_is_all_or_nothing(db: sqlite3.Connection) -> None:
+    """A failure after the first document is written leaves the store as it
+    was: here the rename collides with a row already holding its target."""
+    put_document(db, "resume_data", "resume-content.json", "json", "{}")
+    put_document(db, PRESPLIT_KIND, "resume-content.json", "json", "{}")
+    before = documents(db)
+    with pytest.raises(sqlite3.IntegrityError):
+        put_documents_and_rekind(
+            db,
+            [(FACTS_KIND, "resume-facts.json", "json", "{}")],
+            ("resume_data", "resume-content.json", PRESPLIT_KIND),
+        )
+    assert documents(db) == before
 
 
 def test_a_facts_role_without_a_framing_keeps_the_defaults() -> None:

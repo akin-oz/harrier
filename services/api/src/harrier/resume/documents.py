@@ -235,12 +235,14 @@ def merge_documents(facts: dict[str, object], framing: dict[str, object]) -> Mer
     if not isinstance(frame_candidate, dict):
         errors.append(f"{FRAMING_KIND}: candidate is not an object")
         frame_candidate = {}
-    if isinstance(fact_candidate, dict):
+    if isinstance(fact_candidate, dict) or fact_candidate is None:
+        # With no facts candidate the framing's fields still count, so a
+        # missing name is blamed on the facts and nothing on the framing.
         merged["candidate"] = {
-            **cast("dict[str, object]", fact_candidate),
+            **cast("dict[str, object]", fact_candidate or {}),
             **cast("dict[str, object]", frame_candidate),
         }
-    elif fact_candidate is not None:
+    else:
         merged["candidate"] = fact_candidate
 
     framed: dict[str, tuple[int, dict[str, object]]] = {}
