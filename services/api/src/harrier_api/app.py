@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import date
 from enum import StrEnum
 from pathlib import Path
@@ -21,6 +22,7 @@ from pydantic import BaseModel
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from harrier.apply.brief import Brief
 from harrier.db import DatabaseOwnedByHost, connect, default_db_path, lease_directory
 from harrier.demo import repo_root
 from harrier.hostlease import oldest_hold
@@ -52,8 +54,15 @@ from harrier_api.localauth import (
 from harrier_api.mail_routes import mail_router
 from harrier_api.ops_routes import ops_router
 from harrier_api.outreach_routes import outreach_router
-from harrier_api.runmodels import Manager, RunOut, run_out
-from harrier_api.runs import RunManager, RunParams, RunState, format_sse, write_run_input
+from harrier_api.runmodels import RUN_CONFLICT_RESPONSES, Manager, RunOut, run_out
+from harrier_api.runs import (
+    RunConflictError,
+    RunManager,
+    RunParams,
+    RunState,
+    format_sse,
+    write_run_input,
+)
 from harrier_api.tracks_routes import tracks_router
 
 API_VERSION = "0.1.0"
@@ -586,7 +595,7 @@ def _apply_params(
     "/apply/{selector}/resume",
     operation_id="tailorResume",
     dependencies=[Depends(require_token)],
-    responses=APPLY_ERRORS,
+    responses={**APPLY_ERRORS, **RUN_CONFLICT_RESPONSES},
 )
 async def tailor_resume(
     selector: str,
@@ -604,7 +613,7 @@ async def tailor_resume(
     "/apply/{selector}/cover-letter",
     operation_id="draftCoverLetter",
     dependencies=[Depends(require_token)],
-    responses=APPLY_ERRORS,
+    responses={**APPLY_ERRORS, **RUN_CONFLICT_RESPONSES},
 )
 async def draft_cover_letter(
     selector: str,
@@ -621,7 +630,7 @@ async def draft_cover_letter(
     "/apply/{selector}/answers",
     operation_id="draftAnswers",
     dependencies=[Depends(require_token)],
-    responses=APPLY_ERRORS,
+    responses={**APPLY_ERRORS, **RUN_CONFLICT_RESPONSES},
 )
 async def draft_answers(
     selector: str,
@@ -638,7 +647,7 @@ async def draft_answers(
     "/apply/{selector}/evaluate",
     operation_id="evaluateOffer",
     dependencies=[Depends(require_token)],
-    responses=APPLY_ERRORS,
+    responses={**APPLY_ERRORS, **RUN_CONFLICT_RESPONSES},
 )
 async def evaluate_offer_route(
     selector: str,
@@ -746,14 +755,17 @@ class BriefOut(BaseModel):
 BRIEF_ERRORS: dict[int | str, dict[str, Any]] = {
     400: {"model": ErrorOut, "description": "the store refused the brief, in its words"},
     404: {"model": ErrorOut, "description": "no such job, or no brief stored for it"},
+    409: {
+        "model": ErrorOut,
+        "description": "the stored brief no longer parses, in the store's words; "
+        "saving a brief replaces it",
+    },
     **TOKEN_RESPONSES,
 }
 
 
-def _brief_out(raw: object) -> BriefOut:
-    from harrier.apply.brief import parse_brief
-
-    brief = parse_brief(raw)
+def _brief_out(brief: Brief) -> BriefOut:
+    """The response from the brief the store parsed, never a second parse."""
     return BriefOut(
         never_name=list(brief.never_name),
         guidance_url=brief.guidance_url,
@@ -784,15 +796,18 @@ def get_brief(
 ) -> BriefOut:
     """`brief show`. A read that requires the token: a brief holds the
     operator's own notes about an application (specs 047, 095)."""
-    import json
-
-    from harrier.apply.brief import brief_text
+    from harrier.apply.brief import BriefError, brief_text, load_brief
 
     job_id = _job_id_for(conn, scope, selector)
-    content = brief_text(conn, job_id)
-    if content is None:
+    if brief_text(conn, job_id) is None:
         raise HTTPException(status_code=404, detail=f"no brief for job {job_id}")
-    return _brief_out(json.loads(content))
+    try:
+        # The loader letters and answers use, so a damaged brief is refused
+        # here in the words it is refused there (review of PR #208).
+        brief = load_brief(conn, job_id)
+    except BriefError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return _brief_out(brief)
 
 
 @apply_router.put(
@@ -819,10 +834,10 @@ def put_brief(
 
     job_id = _job_id_for(conn, scope, selector)
     try:
-        store_brief(conn, job_id, json.dumps(body))
+        stored = store_brief(conn, job_id, json.dumps(body))
     except BriefError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
-    return _brief_out(body)
+    return _brief_out(stored)
 
 
 runs_router = APIRouter(route_class=DatabaseRoute)
@@ -832,7 +847,7 @@ runs_router = APIRouter(route_class=DatabaseRoute)
     "/runs",
     operation_id="startRun",
     dependencies=[Depends(require_token)],
-    responses=TOKEN_RESPONSES,
+    responses={**TOKEN_RESPONSES, **RUN_CONFLICT_RESPONSES},
 )
 async def start_run(body: StartRunIn, manager: Manager) -> RunOut:
     return run_out(await manager.start(body.kind))
@@ -1097,14 +1112,31 @@ def create_app(run_manager: RunManager | None = None, spa_dir: Path | None = Non
     configure_logging()
     if is_demo_mode():
         seed_demo_db()
+    manager = run_manager if run_manager is not None else RunManager()
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
+        # When the app is served, never when it is imported or built: an
+        # import is `just contract` on the host, whose data directory is the
+        # container's, and removing inputs there deleted a running
+        # discovery's upload (review of PR #208). Only the inputs of runs
+        # this server's journal shows were cut off go.
+        manager.release_interrupted_inputs()
+        yield
+
     app = FastAPI(
         title="harrier",
         version=API_VERSION,
         description="Local-first job search automation API.",
+        lifespan=lifespan,
     )
-    app.state.run_manager = (
-        run_manager if run_manager is not None else RunManager(sweep_inputs=True)
-    )
+    app.state.run_manager = manager
+
+    @app.exception_handler(RunConflictError)
+    async def run_conflict(request: Request, error: RunConflictError) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
+        # A run of this kind is active with other options. Every route that
+        # starts a run declares the 409 (`RUN_CONFLICT_RESPONSES`).
+        return JSONResponse(status_code=409, content=ErrorOut(detail=str(error)).model_dump())
 
     @app.exception_handler(DatabaseOwnedByHost)
     async def database_held(request: Request, error: DatabaseOwnedByHost) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]

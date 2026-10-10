@@ -204,7 +204,10 @@ inputs. The run streams on the existing run panel.
 - **The scoring export has nothing to label.** The run ends with the counts
   and the excluded reasons, not an error the operator cannot read.
 - **A second run of the same kind while one is active.** The active run is
-  returned, as ADR-004's policy says.
+  returned, as ADR-004's policy says, when the request is the same one.
+  Amended 2026-10-10 (review of PR #208): a request with other options is
+  refused with 409 naming the active run, rather than joined and its
+  options and uploads dropped. See the amendment below.
 - **An upload larger than the cap, or not valid for its importer.** 413
   before anything is written; an unreadable file fails the run with the
   importer's message.
@@ -244,11 +247,33 @@ otherwise. Synthetic rows only.
 - [x] An upload is written owner-only to the run inputs, passed by path, and
       removed when the run ends; one over the cap is 413; when an attempt
       never becomes a run, every file it wrote is removed, not only the
-      first; and run inputs left by a server that stopped mid-run are swept
-      when the run manager starts
+      first; and the inputs of runs a stopped server left are removed when
+      the served app starts, while importing the app, building it, or
+      exporting the contract removes nothing (amended 2026-10-10)
       (`services/api/tests/test_ui_operations.py::test_an_upload_becomes_a_run_input_and_is_removed`,
       `::test_inputs_of_a_refused_attempt_are_all_removed`,
-      `::test_inputs_left_by_a_restart_are_swept_at_startup`)
+      `::test_inputs_left_by_a_restart_are_swept_at_startup`,
+      `::test_importing_the_app_deletes_no_run_input`)
+- [x] A request with other options than the active run of its kind is
+      refused with 409 naming that run, never joined; the same request joins;
+      a kind's report and its write never run at once; every route that
+      starts a run declares the 409 (amended 2026-10-10)
+      (`services/api/tests/test_ui_operations.py::test_a_request_with_other_options_is_refused_not_joined`,
+      `::test_an_upload_joins_only_a_run_given_the_same_bytes`,
+      `::test_one_run_of_a_kind_at_a_time_and_other_options_are_refused`,
+      `::test_every_route_that_starts_a_run_declares_the_refusal`,
+      `::test_a_double_click_with_the_same_words_joins_and_other_words_are_refused`,
+      `OperationsPage.test.tsx::a run refused for another run's options is shown in the server's words`)
+- [x] A stored brief that no longer parses is refused with 409 in the
+      store's words, and a saved brief answers with the store's own parse
+      (amended 2026-10-10)
+      (`services/api/tests/test_ui_operations.py::test_a_damaged_stored_brief_is_refused_in_the_store_s_words`,
+      `::test_the_brief_saved_is_the_one_the_store_parsed`)
+- [x] A refused field reaches the operator by name, and text that is not a
+      number is refused in the form before it can become a silent default
+      (amended 2026-10-10)
+      (`OperationsPage.test.tsx::a refused Apify count names the field and the reason`,
+      `OperationsPage.test.tsx::text that is not a number is refused before an evaluation is asked for`)
 - [x] `GET /ops/check` requires the token
       (`services/api/tests/test_ui_operations.py::test_the_data_check_requires_the_token`)
 - [x] No brief text and no browser-supplied path appears in any run's argv
@@ -284,11 +309,49 @@ otherwise. Synthetic rows only.
       a test name or a screenshot (ADR-008). Every fixture is invented.
       Limitation: a property of the diff, not something a test asserts.
 - [x] All gates green on the pull request (`just check` passes after merging
-      main: 2404 Python tests, 130 web tests, the contract regenerated with no
+      main and the review fixes: 2418 Python tests, 133 web tests, the contract regenerated with no
       diff, `aie check` and the spec structure check)
+
+## Amendment (2026-10-10, review of PR #208)
+
+The review found three behaviors this spec never wrote down, and one it
+wrote down wrong.
+
+1. **Run inputs are removed at the served start, not at construction.**
+   The spec said inputs left by a stopped server are swept "when the run
+   manager starts". The app builds its run manager on import, and
+   `just contract` imports it on the host, whose data directory is the
+   container's, so a running discovery lost its upload. Now each journal
+   record names the run's input files; the served app's startup
+   (`release_interrupted_inputs`, from the lifespan in `create_app`)
+   removes the files of runs its journal shows were cut off, and only files
+   inside the run inputs directory. A file no journaled run names is left.
+   Importing the app, building it, and exporting the contract remove
+   nothing.
+2. **A request with other options is refused, not joined.** Two attempts on
+   one (kind, target) join only when their argv is the same and their input
+   files hold the same bytes. Otherwise the second is refused with 409,
+   naming the active run, and its files are removed (`RunConflictError` in
+   `harrier_api.runs`). This holds for every run kind, including those of
+   specs 047, 048, 049 and 050, and every route that starts a run declares
+   the 409. Evaluation, the events backfill and the feed check take one
+   target per kind, and reconsideration one per track, so a report and its
+   write never run at once. The digest keeps one target per day and mode:
+   a preview writes nothing. A discovery started from `POST /runs` while
+   one started with options runs is refused, because it asks for other
+   options.
+3. **A stored brief that no longer parses answers 409** in the store's words
+   (`load_brief`), and a saved brief answers with the store's own parse.
+4. **A refused field reaches the operator by name.** A 422 shows each field
+   and the reason; the evaluation form refuses text that is not a number,
+   which JSON would otherwise turn into a silent default.
 
 ## Honest limitations
 
+- **Two servers on one data directory.** A server that starts while another
+  serves the same data directory reads the other's in-flight runs as cut off
+  and removes their inputs. The supported setup runs one server, in the
+  container (ADR-010).
 - **Spec 050's page landed first.** This spec extends it. The coverage test
   in spec 096 holds both to the same list. Spec 050 already gave
   `ParameterizedKind` its closed-choice flags (`choices`); this spec adds

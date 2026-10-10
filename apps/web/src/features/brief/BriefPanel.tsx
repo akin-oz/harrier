@@ -4,18 +4,11 @@ import { useEffect, useState } from "react";
 import type { components } from "@harrier/contract";
 
 import { api } from "../../shared/api/client";
+import { refusalMessage } from "../../shared/api/refusal";
 import { trackKey, useSelectedSlug } from "../../shared/track";
 import "./BriefPanel.css";
 
 type Brief = components["schemas"]["BriefOut"];
-type Refusal =
-  | components["schemas"]["ErrorOut"]
-  | components["schemas"]["DatabaseHeldOut"]
-  | components["schemas"]["HTTPValidationError"];
-
-function refusalMessage(error: Refusal, fallback: string): string {
-  return typeof error.detail === "string" ? error.detail : fallback;
-}
 
 const EMPTY: Brief = {
   never_name: [],

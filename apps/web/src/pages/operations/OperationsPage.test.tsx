@@ -80,7 +80,7 @@ function parsed(raw: string): unknown {
 function stubApi(
   options: {
     schedule?: unknown;
-    refuse?: Record<string, { status: number; detail: string }>;
+    refuse?: Record<string, { status: number; detail: unknown }>;
     check?: unknown;
     linked?: unknown;
   } = {},
@@ -591,4 +591,70 @@ test("discovery options and an upload are sent as multipart and stream on the ru
   // The run is the Runs panel's: it shows there, and its buttons wait.
   expect(await screen.findByText(/run disc1/)).toBeTruthy();
   expect(screen.getByRole("button", { name: "Run discovery" })).toHaveProperty("disabled", true);
+});
+
+// --- review of PR #208 --------------------------------------------------------
+
+test("a refused Apify count names the field and the reason", async () => {
+  stubApi({
+    refuse: {
+      "/api/ops/discover": {
+        status: 422,
+        detail: [
+          {
+            loc: ["body", "apify_count"],
+            msg: "Input should be a valid integer, unable to parse string as an integer",
+            type: "int_parsing",
+          },
+        ],
+      },
+    },
+  });
+  const appended: [string, unknown][] = [];
+  const append = vi.spyOn(FormData.prototype, "append").mockImplementation((name, value) => {
+    appended.push([name, value]);
+  });
+  const user = userEvent.setup();
+  renderPage();
+
+  await user.type(await screen.findByLabelText(/^Apify count/), "many");
+  await user.click(screen.getByRole("button", { name: "Run discovery with these options" }));
+  const alert = await screen.findByText(/^apify_count: /);
+  append.mockRestore();
+  expect(alert.textContent).toBe(
+    "apify_count: Input should be a valid integer, unable to parse string as an integer",
+  );
+  // What was typed went to the server, which owns the bound and the words.
+  expect(new Map(appended).get("apify_count")).toBe("NaN");
+});
+
+test("text that is not a number is refused before an evaluation is asked for", async () => {
+  const calls = stubApi();
+  const user = userEvent.setup();
+  renderPage();
+
+  await user.type(await screen.findByLabelText("Confidence to reject, 0 to 1"), "high");
+  await user.click(screen.getByRole("button", { name: "Evaluate, reject nothing" }));
+  expect(
+    await screen.findByText("Confidence to reject must be a number from 0 to 1."),
+  ).toBeTruthy();
+  // Sent as JSON it would have been null, and the default would have applied.
+  expect(posted(calls, "/ops/evaluate-prospects")).toHaveLength(0);
+});
+
+test("a run refused for another run's options is shown in the server's words", async () => {
+  stubApi({
+    refuse: {
+      "/api/ops/evaluate-prospects": {
+        status: 409,
+        detail:
+          "a evaluate-prospects run is already active (run ev1) with other options; wait for it to end or cancel it, then start this one",
+      },
+    },
+  });
+  const user = userEvent.setup();
+  renderPage();
+
+  await user.click(await screen.findByRole("button", { name: "Evaluate, reject nothing" }));
+  expect(await screen.findByText(/already active \(run ev1\) with other options/)).toBeTruthy();
 });

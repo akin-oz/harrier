@@ -5,6 +5,7 @@ import type { components } from "@harrier/contract";
 
 import type { Job } from "../../entities/job";
 import { api } from "../../shared/api/client";
+import { refusalMessage } from "../../shared/api/refusal";
 import { statusLabel, trackKey, trackQuery, useSelectedSlug } from "../../shared/track";
 import type { Track } from "../../shared/track";
 import "./JobHistory.css";
@@ -17,7 +18,7 @@ async function fetchEvents(jobId: number, slug: string | null): Promise<readonly
   });
   if (error !== undefined) {
     // The domain's words: a 404 names the selector, a 503 the host hold.
-    throw new Error(typeof error.detail === "string" ? error.detail : "could not read the history");
+    throw new Error(refusalMessage(error, "could not read the history"));
   }
   return data;
 }

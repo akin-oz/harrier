@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { components } from "@harrier/contract";
 
 import { api } from "../../shared/api/client";
+import { refusalMessage } from "../../shared/api/refusal";
 import "../../shared/ui/run.css";
 import "./RunPanel.css";
 import { TERMINAL_STATES, useRunStream } from "./useRunStream";
@@ -49,7 +50,9 @@ export function RunPanel({
     mutationFn: async (kind: RunKind) => {
       const { data, error } = await api.POST("/runs", { body: { kind } });
       if (error !== undefined) {
-        throw new Error(`start failed: ${JSON.stringify(error)}`);
+        // A run of this kind already active with other options is refused
+        // in words (review of PR #208); show them, not the JSON.
+        throw new Error(refusalMessage(error, `start failed: ${JSON.stringify(error)}`));
       }
       // The contract now declares 403, so a refusal is a shape the caller has
       // to handle rather than one it can assume away (spec 035). A missing
