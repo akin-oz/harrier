@@ -508,7 +508,8 @@ schema `public` from `pg_class` and fails, naming the table, when:
 - [x] ADR-013 decision 1 carries the "Amended (spec 105)" note.
 - [x] Specs 104, 106, 107, 110, 111 and 112 carry the lines named in Scope
       item 9, and nothing else in them changes.
-- [ ] CI's `check-python` job runs every new test against Postgres.
+- [x] CI's `check-python` job runs every new test against Postgres (run
+      38066518468 on PR #216: 2608 passed, none skipped).
 - [x] `just check` passes.
 
 ## Honest limitations
