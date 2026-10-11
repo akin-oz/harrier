@@ -227,33 +227,33 @@ A11 names (decision D8).
       printing `postgres 0 -> <target_version()>`, run as `postgres`, with
       no project reference or password in the output.
 - [ ] `services/api/tests/test_supabase_project.py` has one test per
-      assumption A1 to A11 (planned test_the_migrator_can_trigger_on_auth_users,
-      planned test_the_tenant_role_reaches_auth_uid,
-      planned test_auth_uid_reads_the_claims_sub,
-      planned test_postgres_bypasses_but_is_not_superuser,
-      planned test_the_pooler_keeps_a_custom_role_and_set_local,
-      planned test_unqualified_names_resolve_to_public_for_both_roles,
-      planned test_the_migrator_can_create_an_auth_user,
-      planned test_the_migrator_can_grant_the_tenant_role,
-      planned test_the_store_migrates_to_the_target_as_a_non_superuser_migrator; A6 and A9 are the
+      assumption A1 to A11 (`test_the_migrator_can_trigger_on_auth_users`,
+      `test_the_tenant_role_reaches_auth_uid`,
+      `test_auth_uid_reads_the_claims_sub`,
+      `test_postgres_bypasses_but_is_not_superuser`,
+      `test_the_pooler_keeps_a_custom_role_and_set_local`,
+      `test_unqualified_names_resolve_to_public_for_both_roles`,
+      `test_the_migrator_can_create_an_auth_user`,
+      `test_the_migrator_can_grant_the_tenant_role`,
+      `test_the_store_migrates_to_the_target_as_a_non_superuser_migrator`; A6 and A9 are the
       two existing tests named in the assumption table).
 - [ ] The module skips, naming the variable, when either URL is unset
-      (planned test_supabase_checks_skip_without_a_project).
+      (`test_supabase_checks_skip_without_a_project`).
 - [ ] Staging mode refuses a project whose `auth.users` holds a user with
-      an email, before any write (planned
-      test_staging_mode_refuses_a_project_with_real_users).
+      an email, before any write
+      (`test_staging_mode_refuses_a_project_with_real_users`).
 - [ ] The eleven `test_owner_policy.py` tests listed under Behavior pass in
       staging mode against the project, and the pull request shows the
       run.
 - [ ] Every Postgres test migrates as `harrier_migrator`, which is not a
       superuser, and CI's `check-python` run shows them passing, none
-      skipped (planned test_ci_migrates_as_a_non_superuser).
+      skipped (`test_ci_migrates_as_a_non_superuser`).
 - [ ] In CI, the store migrates to `target_version()` as
       `harrier_migrator`, and afterwards the migrating role holds no
       default privilege, in `public` or global, granting to `anon`,
       `authenticated` or `service_role`, and a function it creates is
-      executable by none of them nor by `PUBLIC` (decision D8; planned
-      test_the_store_migrates_to_the_target_as_a_non_superuser_migrator, in CI form).
+      executable by none of them nor by `PUBLIC` (decision D8;
+      `services/api/tests/test_owner_policy.py::test_the_store_migrates_to_the_target_as_a_non_superuser_migrator`, in CI form).
 - [ ] This spec gains "Amendment (staging findings)" with A1 to A11 each
       marked confirmed or refuted, the date and the Postgres version, and
       `docs/architecture.md` says the isolation tests ran on a real
@@ -486,3 +486,224 @@ step 4 as the only path. A refuted F3 reopens spec 108's Open decision
   https://docs.fly.io/machines/flyctl/fly-machine-run
 - Fly, Pricing: no free tier for new organizations; machine and root file
   system rates. Read 2026-10-11. https://docs.fly.io/about/pricing
+
+## Amendment (staging findings)
+
+Run on 2026-10-11 against the staging project Akin created, empty before
+the run, on Postgres 17.6 (`SELECT current_setting('server_version')`:
+`17.6`). Every connection went through the session pooler or the
+transaction pooler: the direct database host is IPv6 only and was not
+reachable from the machine that ran it. The project's URLs, its
+reference and every password stayed in the operator's shell and appear
+nowhere below.
+
+### Who ran what
+
+This differs from Behavior's "Who runs what", on Akin's instruction for
+this run: the agent ran the migration and the module, through a wrapper
+that exports `HARRIER_SUPABASE_TEST_URL` (the `postgres` role through the
+session pooler) without printing it. Nobody used the SQL editor.
+
+- The migration, from `services/api`:
+  `HARRIER_DATABASE_URL=<postgres through the session pooler> uv run --group postgres harrier store migrate`
+  printed `postgres 0 -> 14` and exited 0. 14 is `target_version()`.
+- The probe role was made by the run's setup step, not by hand:
+  `CREATE ROLE harrier_api_probe LOGIN NOINHERIT PASSWORD '<verifier>'`,
+  as `postgres`, with a password generated in memory and sent only as a
+  SCRAM verifier computed on the client, so no statement or log holds it.
+  Its pooler URL (user `harrier_api_probe.<project reference>`, the
+  pooler's form for a custom role) was built in memory from the migrator's
+  and exported to pytest as `HARRIER_SUPABASE_API_TEST_URL`. After the run
+  its pooled sessions were ended and the role dropped (`probe role
+  dropped: True`). Whether a later run makes the probe the same way or by
+  hand, as Behavior says, is Akin's choice.
+- The module, from `services/api`:
+  `uv run --group postgres pytest -v -rfE --tb=short services/api/tests/test_supabase_project.py`
+  with both URLs exported. Final run: 13 failed, 16 passed, 1 skipped
+  (`services/api/tests/test_supabase_project.py::test_staging_mode_refuses_a_project_with_real_users`
+  needs the local test server, which that shell did not name).
+
+### The assumptions
+
+| | Result | Evidence |
+|---|---|---|
+| A1 | confirmed | `services/api/tests/test_supabase_project.py::test_the_migrator_can_trigger_on_auth_users` passed: `pg_trigger` holds `harrier_new_owner` on `auth.users`, enabled (`O`). `auth.users` is owned by `supabase_auth_admin`; its ACL gives `postgres` `ar*wdDxtm` (INSERT, SELECT with grant option, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN). |
+| A2 | **refuted** | `services/api/tests/test_supabase_project.py::test_the_tenant_role_reaches_auth_uid` failed: `(USAGE on auth, EXECUTE on auth.uid()) = (False, True)`. Schema `auth`'s ACL gives `postgres` `U/supabase_admin`, usage without the grant option, so migration 10's `GRANT USAGE ON SCHEMA auth TO harrier_tenant` grants nothing; Postgres warns and the migration completes. `EXECUTE` holds only because `auth.uid()`'s ACL gives it to `PUBLIC` (`=X/supabase_auth_admin`); migration 10's grant of it is a no-op too. See "What A2 breaks". |
+| A3 | confirmed, its test fails on A2 | The deployed body (`prosrc`) equals the shim's (`services/api/tests/pg_support.py:136-141`) once whitespace and case are ignored: the old single claim, then `request.jwt.claims ->> 'sub'`, as uuid. As `authenticated`, with only `request.jwt.claims` set, `auth.uid()` returned its `sub`. The same call as `harrier_tenant` answered `42501 permission denied for schema auth`, so `services/api/tests/test_supabase_project.py::test_auth_uid_reads_the_claims_sub` fails until A2 is fixed. |
+| A4 | confirmed | `services/api/tests/test_supabase_project.py::test_postgres_bypasses_but_is_not_superuser` passed: `rolsuper` false, `rolbypassrls` true, `rolcreaterole` true. Also found: `rolcreatedb`, `rolreplication` and `rolinherit` true; a member of `anon`, `authenticated`, `service_role` and `authenticator` with the admin option, INHERIT and SET. |
+| A5 | confirmed | `services/api/tests/test_supabase_project.py::test_the_pooler_keeps_a_custom_role_and_set_local` passed. As `harrier_api_probe` through the session pooler (5432) and the transaction pooler (6543), with `prepare_threshold=None`: `current_user` is `harrier_api_probe`; inside a transaction, after `SET LOCAL ROLE harrier_tenant` and the local claims, the read-back is `('harrier_tenant', <sub>)`; after commit `current_user` is `harrier_api_probe` again. An earlier run failed here for a reason outside A5 (finding N3). |
+| A6 | confirmed | `services/api/tests/test_owner_policy.py::test_an_owner_files_a_job_with_the_defaults` passed in staging mode: as `harrier_tenant`, `INSERT INTO jobs DEFAULT VALUES` returned the owner and track 1. The policy, the `owner_id` default and the foreign key reach `auth.uid()` and `auth.users` without schema usage. |
+| A7 | confirmed | `services/api/tests/test_supabase_project.py::test_unqualified_names_resolve_to_public_for_both_roles` passed. `postgres`: `current_schemas(true)` = `{pg_catalog,public,extensions}`. `harrier_api_probe` as `harrier_tenant`, on both pooler ports: `{pg_catalog,public}`. `to_regclass('jobs')` is `public.jobs` in both. `rolconfig`: `postgres` has `search_path="$user", public, extensions`; `harrier_api_probe` and `harrier_tenant` have none. |
+| A8 | confirmed | `services/api/tests/test_supabase_project.py::test_the_migrator_can_create_an_auth_user` passed: `postgres` inserted a random id into `auth.users`, and the trigger gave it track 1. |
+| A9 | confirmed, its test fails on N2 | No harrier table, column, sequence or function holds a grant to `anon`, `authenticated`, `service_role` or `PUBLIC`, and `postgres` holds no default privilege to them in `public` or global. `supabase_admin`'s defaults in `public` grant those roles everything, but only on objects `supabase_admin` creates. `services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared` fails in staging mode, and every problem it names is about `rls_auto_enable()`, a Supabase function (N2). |
+| A10 | confirmed | `services/api/tests/test_supabase_project.py::test_the_migrator_can_grant_the_tenant_role` passed: after a revoke, `GRANT harrier_tenant TO harrier_api_probe` as `postgres` succeeded, and `pg_auth_members` shows the membership with SET. |
+| A11 | confirmed | `services/api/tests/test_supabase_project.py::test_the_store_migrates_to_the_target_as_a_non_superuser_migrator` passed: the store is at `target_version()` (14), migrated by `postgres`, not a superuser. `postgres`'s `pg_default_acl` after the run: global functions `{postgres=X/postgres}`; in `public`, tables, sequences and functions granted to `postgres` alone. A function made in `public` in a transaction that is rolled back is executable by none of `PUBLIC`, `anon`, `authenticated` and `service_role`. `postgres`'s defaults in schema `storage` still grant those roles; A11 does not cover that schema. |
+
+### What A2 breaks
+
+Every statement that names `auth.uid()` while the session is
+`harrier_tenant` is refused with `42501 permission denied for schema
+auth`. Schema usage is checked when a name is looked up, so the policy
+and the column default, which hold the function by its id, still work
+(A6). These do not:
+
+- **Numbering a track.** `harrier_number_track()` (migration 14) is not a
+  definer function and names `auth.uid()` in its body, which PL/pgSQL
+  looks up as the session's role on first use. An owner cannot insert a
+  track without an id, which is every track but track 1.
+- A direct `SELECT auth.uid()` as the tenant role, as A3's test and
+  `services/api/tests/test_owner_policy.py::test_an_insert_without_an_owner_is_refused`
+  run.
+
+Spec 104's read-back reads `request.jwt.claims` directly and is not
+affected (A5).
+
+**Owner of the fix: spec 105**, by a further amendment with a new
+migration, before spec 112 is built, as Scope item 6 says. `postgres`
+holds no grant option on `auth`, so that amendment cannot grant the usage;
+it must reach the owner without naming `auth.uid()` as the tenant role.
+This spec's acceptance waits on it. The fix has a CI proof ready: with the
+shim made faithful on this one grant (below), the suite fails as the
+project does.
+
+### The isolation tests in staging mode
+
+Run as `postgres` against the migrated project, after `open_staging`:
+
+- Passed: `services/api/tests/test_owner_policy.py::test_an_owner_files_a_job_with_the_defaults`,
+  and `services/api/tests/test_owner_policy.py::test_uniqueness_is_per_owner`
+  for every key but `tracks_owner_id_slug_key`.
+- Failed on A2 at their first tenant insert into `tracks` without an id
+  (most of them inside `fill`), or at `SELECT auth.uid()` as the tenant:
+  `test_owner_a_reads_nothing_of_owner_b`,
+  `test_owner_a_cannot_write_as_owner_b`,
+  `test_an_insert_without_an_owner_is_refused`,
+  `test_the_data_api_role_reaches_no_harrier_table`,
+  `test_uniqueness_is_per_owner[tracks_owner_id_slug_key]`,
+  `test_references_stay_inside_one_owner`,
+  `test_every_owner_starts_with_track_one`,
+  `test_a_bypassrls_role_sees_every_owner`, and both cases of
+  `test_truncate_cannot_empty_events_or_tracks`, whose TRUNCATE refusal was
+  never reached.
+- Failed on N2: `test_every_table_is_owned_or_declared`.
+
+So the acceptance criterion "The eleven `test_owner_policy.py` tests ...
+pass in staging mode" is not met. It is re-run after spec 105's fix for A2
+and its declaration for N2.
+
+### Other findings
+
+- **N1. `postgres` cannot SET ROLE to the tenant role it created.** It
+  holds `harrier_tenant` with the admin option only (INHERIT false, SET
+  false, grantor `supabase_admin`), because Supabase leaves
+  `createrole_self_grant` empty. `SET LOCAL ROLE harrier_tenant` as
+  `postgres` answered `42501 permission denied to set role
+  "harrier_tenant"`. Staging mode grants `harrier_tenant TO postgres WITH
+  INHERIT FALSE, SET TRUE` before any test (`open_staging` in
+  `services/api/tests/pg_support.py`), and that grant stays on the
+  project. A request does not depend on it: the API's own login role gets
+  SET from A10's grant, which defaults to SET. Spec 110's runbook grants
+  the API role that way.
+- **N2. Supabase puts a definer function in `public`.**
+  `rls_auto_enable()` is owned by `postgres`, `SECURITY DEFINER` with
+  `search_path=pg_catalog`, executable by `PUBLIC`, `anon`,
+  `authenticated` and `service_role`, returns `event_trigger`, and is
+  fired by the event trigger `ensure_rls` on `CREATE TABLE`. It cannot be
+  called directly (as `anon`: `0A000 cannot display a value of type
+  event_trigger`). Spec 105's catalog rules name it as a definer function
+  in `public`, without an empty `search_path`, executable by every role.
+  **Owner of the fix: spec 105**, in the same amendment as A2: the catalog
+  declares Supabase's own objects in `public`, or skips event trigger
+  functions, with its own acceptance criterion. It is not harrier's object
+  and is left alone.
+- **N3. The pooler keeps a dropped role's connections.** The first run
+  dropped `harrier_api_probe` at its end; the next made it again under the
+  same name. The pooler then handed the new role an idle server
+  connection still logged in as the dropped one:
+  `psycopg.errors.UndefinedObject: invalid role OID` and `permission
+  denied to set role "harrier_tenant"`. `pg_stat_activity` showed two idle
+  `Supavisor` backends whose `usesysid` no longer existed;
+  `pg_terminate_backend` on those two, as `postgres`, cleared it, and the
+  clean run passed A5. The run now ends the probe's sessions before it
+  drops the role. **Owner: spec 110**, whose runbook creates and rotates
+  the API's login role: dropping and remaking a login role needs its
+  pooled sessions ended first.
+
+### CI migrates as a non-superuser
+
+`services/api/tests/pg_support.py` now makes `harrier_migrator` (`LOGIN
+NOSUPERUSER INHERIT CREATEROLE CREATEDB REPLICATION BYPASSRLS`, A4's
+attributes), owner of every test database, and `fresh_database` hands
+every test its URL, so every Postgres test migrates and connects as it
+(`services/api/tests/test_owner_policy.py::test_ci_migrates_as_a_non_superuser`,
+and the CI form of A11,
+`services/api/tests/test_owner_policy.py::test_the_store_migrates_to_the_target_as_a_non_superuser_migrator`).
+The superuser creates and drops the databases, installs the shim, and
+runs the three tests that give the tenant role `SUPERUSER`, which only a
+superuser may. The shim gives the migrator what A1, A2, A4 and A8 found
+`postgres` holds: the auth.users privileges above, nothing on
+`auth.uid()` beyond `PUBLIC`'s, and membership of `anon`, `authenticated`
+and `service_role`. Choices this change made that the text above left
+open:
+
+- **One recorded difference from the project.** The migrator holds USAGE
+  on `auth` with the grant option, which `postgres` lacks (A2). Without
+  it CI fails as the project does: with the grant option removed, 15
+  tests in `services/api/tests/test_owner_policy.py` fail with
+  `permission denied for schema auth`. The shim keeps it so the suite
+  stays green until spec 105's fix for A2, whose change removes it.
+- **SET on the tenant role.** The migrator has `createrole_self_grant =
+  'set'`, or is granted the tenant role with the admin option and SET when
+  another role made it first, so tests can act as an owner. This is N1's
+  grant, made in the shim instead of by staging mode.
+- **Tests adjusted to run without a superuser, or on a shared project.**
+  `services/api/tests/test_owner_policy.py::test_a_bypassrls_role_sees_every_owner`
+  asserts both owners are among those a bypassing role sees, since a
+  shared project holds earlier runs' owners;
+  `services/api/tests/test_owner_policy.py::test_an_insert_without_an_owner_is_refused`
+  names the refused role in its assertion; the catalog breach that changes
+  a table's owner first grants the new owner `CREATE` on `public`, which a
+  non-superuser needs.
+- **Staging mode is a module, not a flag.** `services/api/tests/test_supabase_project.py`
+  collects the listed `test_owner_policy.py` test functions under its own
+  `store` and `store_url` fixtures, which yield the project after
+  `open_staging`. `open_staging` refuses a project whose `auth.users`
+  holds a user with an email, then one not at `target_version()`, before
+  it writes
+  (`services/api/tests/test_supabase_project.py::test_staging_mode_refuses_a_project_with_real_users`).
+  Missing either URL skips the module naming the variable, in CI too
+  (`services/api/tests/test_supabase_project.py::test_supabase_checks_skip_without_a_project`).
+
+### What the run left on the project
+
+Schema version 14 and harrier's objects; the synthetic owners the tests
+made, with no email, and their tracks and rows (Behavior: "What the run
+leaves behind"); `harrier_tenant`, with N1's grant to `postgres`. The
+probe role and its sessions are gone. Nothing Supabase owns was changed.
+
+### Hosting budget
+
+F1 to F4 were not run: they need a paid Fly app, which Akin has not
+approved. They stay unchecked, and so do their criteria.
+
+### Acceptance status
+
+Met: the migration output above; the module with one test per assumption
+and the two planned tests; every Postgres test migrating as
+`harrier_migrator` (locally, `just check`; CI shows it on the pull
+request); the CI form of A11; `docs/architecture.md`'s paragraph; ruff
+and pyright. Not met: the eleven isolation tests in staging mode (A2,
+N2), and therefore this spec's acceptance as a whole, which waits on
+spec 105's amendment; the Fly checks. The criteria above now cite the
+tests this change wrote instead of marking them planned, as the spec
+citation check requires once they exist. The A11 test's name in the
+criteria is left to the pull request that renames it there.
+
+### Line numbers, refreshed (D9)
+
+On `main` at `d6b551f` with this change: the shim is
+`services/api/tests/pg_support.py:122-186` and is installed by `:268-284`;
+the shim's `auth.uid()` body is `:136-141`; `new_owner` is `:287-292`;
+the per-test database is `fresh_database`, `:398-427`. In
+`services/api/src/harrier/tracker/schema.py` the trigger on `auth.users`
+is `:908-911` and the grants on `auth` are `:959-960`.

@@ -28,7 +28,7 @@ Four approved specs hand this spec work:
   limitations). Its Honest limitations also name an open hole: a
   connection error's traceback holds the frame of `postgres_connect`,
   whose `url` argument carries the password
-  (`services/api/src/harrier/pgstore.py:173-190`). "An error reporter that
+  (`services/api/src/harrier/pgstore.py:64-81`). "An error reporter that
   records local variables would see the password. None is configured;
   spec 110 decides the hosted one."
 - Spec 104 refuses to start the hosted API when the store is not at
@@ -795,8 +795,9 @@ Amendment (2026-10-11) at the end of this spec takes that step here.
   - This spec's stub cited `schema.py:853` for the latest migration, said
     the store was at version 10, and placed `postgres_connect` at
     `pgstore.py:137-149`. All three were stale. `postgres_connect` is at
-    `pgstore.py:173-190`, and the latest version is whatever
-    `target_version()` (`pgstore.py:193-197`) returns. This text and its
+    `pgstore.py:64-81`, and the latest version is whatever
+    `target_version()` (`pgstore.py:84-88`) returns. (These two were
+    stale as well, at `:173-190` and `:193-197`; corrected 2026-10-11.) This text and its
     acceptance criteria cite `target_version()` rather than a number, so
     they do not go stale again.
 
