@@ -936,11 +936,12 @@ before; the pull request carries the runs.
    (`services/api/tests/test_owner_policy.py::test_a_failed_migration_leaves_no_trace_of_itself`).
 7. **The concurrency test counted any lock wait on the server.** On a
    shared server, another session's wait ended the test's wait early, and
-   with the numbering lock removed the test still passed. It now waits for
-   the second connection's own backend to wait on the numbering lock: an
-   advisory lock until migration 14, and since then the row lock on the
-   owner's track 1, which shows in `pg_locks` as a wait on the first
-   insert's `transactionid`
+   with the numbering lock removed the test still passed. It now waits
+   until the second connection's own backend holds an ungranted lock in
+   `pg_locks`, of any type. The lock it is expected to wait on is the
+   numbering lock: an advisory lock until migration 14, and since then the
+   row lock on the owner's track 1. The test does not check which lock it
+   waits on, only that the waiter is its own second connection
    (`services/api/tests/test_owner_policy.py::test_every_owner_starts_with_track_one`). With the lock removed and
    an unrelated waiter on the server, the old form passed and the new one
    fails.

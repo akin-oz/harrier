@@ -24,6 +24,7 @@ because they belong to no one driver (spec 112, post-merge review of PRs
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 from collections.abc import Generator, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -45,6 +46,26 @@ POSTGRES_NOT_YET = (
 # Characters urlsplit and libpq read differently: urlsplit starts a
 # fragment at `#` and drops a tab, CR or LF; libpq keeps each as text.
 _READ_DIFFERENTLY = ("#", "\t", "\r", "\n")
+
+# The refusal of a URL whose delimiters can be read more than one way. Fixed
+# text, so it quotes nothing of the URL, and it names the fix: each such URL
+# is one with a reserved character written raw inside a part (spec 103,
+# post-merge review of PR #243).
+DELIMITER_REFUSAL = (
+    f"{URL_VARIABLE} must be empty or a postgresql:// URL; percent-encode any / ? # @ "
+    "or control character in its user, password, database name and query values"
+)
+
+# A user, database name or query value harrier prints, or leaves unmasked in
+# the driver's text: letters, digits, `_`, `.` and `-`, the shape of a role
+# or database name created without quotes, at most Postgres's 63 bytes for
+# an identifier. Anything else may be part of a password that a raw
+# delimiter pushed out of the authority, so it is withheld (spec 103).
+_PRINTABLE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,62}")
+
+# The parameters an error names on purpose: `describe()` prints the host and
+# port, and the driver's text quotes them.
+_PRINTED = frozenset({"host", "hostaddr", "port"})
 
 
 class StoreError(Exception):
@@ -177,9 +198,22 @@ class UrlParts:
     # Every form: libpq quotes the URL as written, still percent-encoded,
     # when it refuses it, and the decoded form when it quotes a parameter.
     passwords: tuple[str, ...]
+    # The user, database name and query values that are not printable, in
+    # every form. The server quotes a database or user it does not know, so
+    # these are masked in the driver's text as the passwords are.
+    withheld: tuple[str, ...] = ()
 
     def describe(self) -> str:
-        return f"{self.host}:{self.port}/{self.database}"
+        # A database name outside the printable shape is not printed: with a
+        # raw `/` in the password, the rest of it and the real host were read
+        # as the database name (post-merge review of PR #243).
+        database = self.database if printable(self.database) else "(database name withheld)"
+        return f"{self.host}:{self.port}/{database}"
+
+
+def printable(value: str) -> bool:
+    """Whether a user, database name or query value may be printed as is."""
+    return _PRINTABLE.fullmatch(value) is not None
 
 
 def store_target(environ: Mapping[str, str] | None = None) -> StoreTarget:
@@ -211,13 +245,10 @@ def store_target(environ: Mapping[str, str] | None = None) -> StoreTarget:
     refused = StoreUrlError(f"{URL_VARIABLE} must be empty or a postgresql:// URL")
     if not raw.startswith(f"{POSTGRES_SCHEME}://"):
         raise refused
-    # urlsplit, which tells the scrub what the password is, reads a raw `#`
-    # as the start of a fragment and drops a raw tab, CR or LF. libpq does
-    # neither, so it took a password the scrub never saw whole, and quoted
-    # it (post-merge review of PR #231). A written URL carries these
-    # percent-encoded.
-    if any(character in raw for character in _READ_DIFFERENTLY):
-        raise refused
+    # Before the parse below, so a raw delimiter is refused with the text
+    # that names the fix even where the parse would fail too.
+    if not _delimiters_read_one_way(raw):
+        raise StoreUrlError(DELIMITER_REFUSAL)
     try:
         url_parts(raw)
         parses = True
@@ -227,9 +258,44 @@ def store_target(environ: Mapping[str, str] | None = None) -> StoreTarget:
     # chained as `__context__`. Its text can quote the password: a raw `/` in
     # the password ends the authority, so the password before it is read as
     # the port (review of PR #218).
-    if not parses or not _one_reading_of_the_authority(raw) or not _libpq_parses(raw):
+    if not parses or not _libpq_parses(raw):
         raise refused
     return StoreTarget("postgres", raw)
+
+
+def _delimiters_read_one_way(url: str) -> bool:
+    """Whether no raw delimiter in the URL can be read two ways.
+
+    Three shapes are refused. urlsplit, which tells the scrub what the
+    password is, reads a raw `#` as the start of a fragment and drops a raw
+    tab, CR or LF; libpq does neither, so it took a password the scrub never
+    saw whole, and quoted it (post-merge review of PR #231). libpq and
+    urlsplit split the user from the host at different `@`s (review of PR
+    #225). And a raw `@` after the authority: a raw `/` or `?` in the
+    password ends the authority early, so the host's own `@` lands in the
+    path or the query. Both parsers then read the start of the URL as the
+    host, the rest of the password as the database name, and the scrub
+    learns no password at all (post-merge review of PR #243).
+
+    An `@` in the path is always refused. An `@` in the query is refused
+    only when the authority holds none: after a user's `@`,
+    `?application_name=a@b` is a valid URL both parsers read alike (post-merge
+    review of PR #231), and a password holding an `@` and then a `?` reads
+    exactly as that URL does (spec 103, Honest limitations).
+
+    A written URL carries all of these percent-encoded. True when urlsplit
+    cannot read the URL at all: the parse in `store_target` then refuses it
+    with the plain malformed-URL text.
+    """
+    if any(character in url for character in _READ_DIFFERENTLY):
+        return False
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return True
+    if "@" in parts.path or ("@" in parts.query and "@" not in parts.netloc):
+        return False
+    return _one_reading_of_the_authority(url)
 
 
 def _libpq_parse(url: str) -> dict[str, object] | None:
@@ -314,6 +380,17 @@ def url_parts(url: str) -> UrlParts:
     # And the values as libpq itself reads them, when it can.
     parsed = _libpq_parse(url) or {}
     read = [str(value) for name, value in parsed.items() if _is_secret(name) and value]
+    # The user, the database name and every query value, as written, decoded
+    # and read by libpq, except the host and port, which are printed. One
+    # that is not printable is withheld: the server quotes a database or
+    # user it does not know, and either can hold a password's tail
+    # (post-merge review of PR #243). A printable one is left alone, so a
+    # value like `1` does not mask every digit of the driver's text.
+    others = [parts.username or "", parts.path.lstrip("/")]
+    others += [pair.partition("=")[2] for pair in parts.query.split("&")]
+    others += [value for _, value in parse_qsl(parts.query, keep_blank_values=True)]
+    others += [str(value) for name, value in parsed.items() if name not in _PRINTED]
+    withheld = (*others, *map(unquote, others))
     return UrlParts(
         host=parts.hostname or "localhost",
         port=str(parts.port or 5432),
@@ -321,4 +398,5 @@ def url_parts(url: str) -> UrlParts:
         passwords=tuple(
             form for form in (*written, *map(unquote, written), *decoded, *read) if form
         ),
+        withheld=tuple(dict.fromkeys(form for form in withheld if form and not printable(form))),
     )

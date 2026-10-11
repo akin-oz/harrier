@@ -38,7 +38,7 @@ import os
 import shutil
 import sys
 import tempfile
-from collections.abc import Generator, Iterator
+from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -236,6 +236,58 @@ def pytest_configure(config: pytest.Config) -> None:
         f"{DOTENV_FALLBACK}: the test removes HARRIER_DATABASE_URL to read the .env "
         "fallback, from a working directory under its tmp_path",
     )
+    _read_no_dotenv_outside_the_tests_tmp_paths()
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    import harrier.envfile as envfile
+
+    if _real_read_env_file:
+        envfile.read_env_file = _real_read_env_file.pop()
+
+
+# --- the .env files the suite may read (spec 103) ---
+
+# Every `.env` read in this process goes through `harrier.envfile.read_env_file`:
+# the CLI's loader and `store_target` both import it when they run, not at
+# import time. Replaced for the session, it reads only a file under pytest's
+# base temporary directory, where every test's tmp_path is. An operator's
+# `.env` beside the working directory is then never read, whatever a test
+# does to the pin, including a loss no audit event shows and a test restores
+# before it ends (post-merge review of PR #243). A child process does not
+# run this file, so this does not reach a child; the net below records those.
+_dotenv_root: Path | None = None
+_real_read_env_file: list[Callable[[Path], dict[str, str]]] = []
+
+
+def _read_no_dotenv_outside_the_tests_tmp_paths() -> None:
+    import harrier.envfile as envfile
+
+    real = envfile.read_env_file
+
+    def read_env_file(path: Path) -> dict[str, str]:
+        # None until the session fixture below runs, so nothing is read
+        # during collection.
+        root = _dotenv_root
+        where = Path(os.path.realpath(path))
+        if root is None or (where != root and root not in where.parents):
+            return {}
+        return real(path)
+
+    _real_read_env_file.append(real)
+    envfile.read_env_file = read_env_file
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _dotenv_root_is_the_base_temp(  # pyright: ignore[reportUnusedFunction]
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[None]:
+    global _dotenv_root
+    _dotenv_root = Path(os.path.realpath(tmp_path_factory.getbasetemp()))
+    try:
+        yield
+    finally:
+        _dotenv_root = None
 
 
 # What each kind of event did to the pin, said of a test and said alone.
@@ -378,8 +430,11 @@ def _database_url_stays_pinned(  # pyright: ignore[reportUnusedFunction]
     or replacing `os.environ` with a mapping that lacks the pin, is caught
     at the end of the test: the pin must still be present. If `.env` wrote
     it back meanwhile, the loader's write is the event (a claims audit of
-    PR #243). The value is not required to be empty: a Postgres test sets
-    its own URL through monkeypatch.
+    PR #243). A loss the test restores before it ends is not seen here, but
+    while it lasts no `.env` outside the base temporary directory is read
+    in this process (above; post-merge review of PR #243). The value is not
+    required to be empty: a Postgres test sets its own URL through
+    monkeypatch.
 
     Checked after the test and before the monkeypatch fixture restores the
     environment: this fixture asks for `monkeypatch`, so it is set up after

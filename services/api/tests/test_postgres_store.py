@@ -15,7 +15,7 @@ import time
 import traceback
 import uuid
 from typing import Any, LiteralString
-from urllib.parse import quote, unquote, unquote_plus
+from urllib.parse import quote, unquote, unquote_plus, urlsplit, urlunsplit
 
 import pytest
 from pg_support import TEST_URL_VARIABLE, admin_url, fresh_database
@@ -50,6 +50,10 @@ NEXT = LATEST + 1
 
 Declared = dict[int, tuple[Dialect, str]]
 URL_REFUSAL = "HARRIER_DATABASE_URL must be empty or a postgresql:// URL"
+DELIMITER_REFUSAL = (
+    f"{URL_REFUSAL}; percent-encode any / ? # @ or control character in its user, password, "
+    "database name and query values"
+)
 
 
 def rows(url: str, query: LiteralString, params: tuple[Any, ...] = ()) -> list[tuple[Any, ...]]:
@@ -417,14 +421,23 @@ def test_a_store_target_never_shows_its_password() -> None:
     assert secret not in repr(target)
 
 
+# Malformed without a raw delimiter, so refused with the plain text. Every
+# other template below holds a delimiter the two parsers can read two ways,
+# and its refusal names the fix (post-merge review of PR #243).
+PLAIN_MALFORMED = (
+    "postgresql://harrier@127.0.0.1:notaport/harrier",
+    "postgresql://harrier@[::1/harrier",
+    "PostgreSQL://harrier@127.0.0.1/harrier",
+)
+
+
 @pytest.mark.parametrize(
     "template",
     [
-        "postgresql://harrier@127.0.0.1:notaport/harrier",
-        "postgresql://harrier@[::1/harrier",
-        "PostgreSQL://harrier@127.0.0.1/harrier",
+        *PLAIN_MALFORMED,
         # A raw `/` in the password ends the authority there, so the rest of
         # the password is read as the port, and the parse error quotes it.
+        # The host's own `@` is then in the path.
         "postgresql://harrier:{secret}/x@127.0.0.1/harrier",
         # A raw `@` in the password: libpq splits at the first `@`, so the
         # rest of the password becomes part of the host it fails to resolve
@@ -458,14 +471,15 @@ def test_a_malformed_url_is_refused_like_any_other(template: str) -> None:
     another case passed here and failed in libpq with an unrelated message
     (post-merge data integrity review of PR #207). The refusal was raised
     inside the `except ValueError` block, so that error stayed attached as
-    `__context__`, quoting the password (review of PR #218)."""
+    `__context__`, quoting the password (review of PR #218). A raw
+    delimiter's refusal names the fix (post-merge review of PR #243)."""
     secret = f"synthetic{uuid.uuid4().hex}"
     url = template.format(secret=secret)
     with pytest.raises(StoreUrlError) as refused:
         store_target({"HARRIER_DATABASE_URL": url})
 
     error = refused.value
-    assert str(error) == "HARRIER_DATABASE_URL must be empty or a postgresql:// URL"
+    assert str(error) == (URL_REFUSAL if template in PLAIN_MALFORMED else DELIMITER_REFUSAL)
     assert error.__context__ is None
     assert error.__cause__ is None
     for text in (str(error), "".join(traceback.format_exception(error))):
@@ -501,7 +515,7 @@ def test_an_at_sign_libpq_reads_as_the_host_never_reaches_the_cli(
     for command in ("status", "migrate"):
         assert main(["store", command]) == 1
         captured = capsys.readouterr()
-        assert captured.err == f"error: {URL_REFUSAL}\n", command
+        assert captured.err == f"error: {DELIMITER_REFUSAL}\n", command
         assert secret not in captured.out + captured.err
 
 
@@ -548,7 +562,7 @@ def test_a_url_urlsplit_reads_differently_from_libpq_never_reaches_the_cli(
     for command in ("status", "migrate"):
         assert main(["store", command]) == 1
         captured = capsys.readouterr()
-        assert captured.err == f"error: {URL_REFUSAL}\n", command
+        assert captured.err == f"error: {DELIMITER_REFUSAL}\n", command
         assert secret not in captured.out + captured.err
 
 
@@ -764,3 +778,128 @@ def test_any_failure_to_connect_is_a_store_error(template: str) -> None:
     printed = "".join(traceback.format_exception(error))
     assert leaked(secret, printed) == []
     assert "position" not in printed
+
+
+# --- the post-merge review of PR #243 ---
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "postgresql://harrier:/{secret}@127.0.0.1:1/harrier",
+        "postgresql://harrier:4821/{secret}@127.0.0.1:1/harrier",
+        "postgresql://:/{secret}@127.0.0.1/harrier",
+        "postgresql://harrier:/{secret}?x@127.0.0.1:1/harrier",
+        "postgresql://harrier:a/{secret}@127.0.0.1:1/harrier",
+        "postgresql://harrier:x@q/{secret}@127.0.0.1:1/harrier",
+        "postgresql://harrier:/{secret}?application_name=x@127.0.0.1:1/harrier",
+    ],
+    ids=[
+        "a-slash-first-in-the-password",
+        "digits-then-a-slash-in-the-password",
+        "no-user-and-a-slash-first-in-the-password",
+        "a-slash-and-a-question-mark-in-the-password",
+        "a-letter-then-a-slash-in-the-password",
+        "an-at-sign-then-a-slash-in-the-password",
+        "a-slash-then-a-parameter-in-the-password",
+    ],
+)
+def test_a_raw_delimiter_after_the_authority_never_reaches_the_cli(
+    template: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A raw `/` or `?` in the password ends the authority early, so the
+    host's own `@` lands in the path or the query. urlsplit and libpq both
+    read the start of the URL as the host and the rest of the password as
+    the database name, the scrub learns no password, and `harrier store`
+    printed the database name (post-merge review of PR #243). The CLI now
+    refuses the URL, with fixed text that names the fix, before it
+    connects. No server is needed."""
+    from harrier_cli.main import main
+
+    secret = f"synthetic{uuid.uuid4().hex}"
+    url = template.format(secret=secret)
+    # The secret is read outside the authority, where the scrub never looks
+    # for a password, so each case is live.
+    parts = urlsplit(url)
+    assert secret in parts.path + parts.query
+    assert secret not in parts.netloc
+
+    monkeypatch.setenv("HARRIER_DATABASE_URL", url)
+    for command in ("status", "migrate"):
+        assert main(["store", command]) == 1
+        captured = capsys.readouterr()
+        assert captured.err == f"error: {DELIMITER_REFUSAL}\n", command
+        assert leaked(secret, captured.out + captured.err) == [], command
+
+
+def test_a_database_name_that_is_not_printable_is_withheld(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The connection error names the host, port and database, and the
+    database name was printed whatever it held. With a raw `/` in the
+    password it held the password's tail (post-merge review of PR #243).
+    `store_target` refuses that URL; called directly, past it, the error
+    still prints no database name outside the printable shape."""
+    secret = f"synthetic{uuid.uuid4().hex}"
+    url = f"postgresql://harrier@127.0.0.1:1/{secret}@x"
+    caplog.set_level(logging.DEBUG)
+
+    with pytest.raises(StoreConnectionError) as refused:
+        postgres_connect(url)
+
+    message = str(refused.value)
+    assert message.startswith(
+        "cannot connect to the Postgres store at 127.0.0.1:1/(database name withheld): "
+    )
+    for text in (message, caplog.text):
+        assert leaked(secret, text) == []
+
+
+def test_a_printable_database_name_is_still_printed() -> None:
+    """Withholding stops at the printable shape: an ordinary name is named."""
+    with pytest.raises(StoreConnectionError) as refused:
+        postgres_connect("postgresql://harrier@127.0.0.1:1/harrier_db-1.x")
+    assert "127.0.0.1:1/harrier_db-1.x: " in str(refused.value)
+
+
+def _on_test_server(netloc: str, path: str, query: str = "") -> str:
+    """A URL on the test server's host and port; `{host}` in `netloc`
+    becomes them."""
+    parts = urlsplit(admin_url())
+    host = parts.hostname or "localhost"
+    if ":" in host:
+        host = f"[{host}]"
+    port = f":{parts.port}" if parts.port else ""
+    return urlunsplit(("postgresql", netloc.format(host=f"{host}{port}"), path, query, ""))
+
+
+@pytest.mark.parametrize("place", ["database", "user", "user-in-the-query"])
+def test_the_servers_text_never_quotes_a_withheld_value(place: str) -> None:
+    """The server quotes a database or role it does not know. Either can
+    hold a password's tail when a raw delimiter moved it out of the
+    authority, so a user, database name or query value outside the
+    printable shape is masked in the driver's text as a password is
+    (post-merge review of PR #243)."""
+    import psycopg
+
+    admin = urlsplit(admin_url())
+    credentials = f"{admin.username}:{admin.password}"
+    secret = f"synthetic{uuid.uuid4().hex}"
+    url = {
+        "database": _on_test_server(f"{credentials}@{{host}}", f"/{secret}%21"),
+        "user": _on_test_server(f"{secret}%21:wrong@{{host}}", "/postgres"),
+        "user-in-the-query": _on_test_server(
+            "{host}", "/postgres", f"user={secret}%21&password=wrong"
+        ),
+    }[place]
+    # The server's own text quotes the secret, so each case is live.
+    with pytest.raises(psycopg.Error) as raw:
+        psycopg.connect(url, connect_timeout=10)
+    assert secret in str(raw.value)
+
+    with pytest.raises(StoreConnectionError) as refused:
+        postgres_connect(url)
+
+    message = str(refused.value)
+    assert '"***"' in message
+    assert leaked(secret, message) == []

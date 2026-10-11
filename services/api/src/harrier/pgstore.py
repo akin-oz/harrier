@@ -17,10 +17,11 @@ scrub learns the password from urlsplit, so `harrier.connection`'s
 `store_target` refuses a URL that urlsplit and libpq would read
 differently, or that libpq cannot parse. The driver's error is not
 chained to the one raised, so it cannot be found as `__context__` either.
-Errors from a migration's statements are the driver's own; `harrier store
-migrate` prints only the server's primary message, which quotes SQL, not
-the URL. Spec 035 is the record of a credential leaking through an
-exception string.
+Errors from a statement after connecting are the driver's own; `harrier
+store migrate` and `harrier store status` print only the server's primary
+message, which quotes SQL, not the URL, through the same scrub
+(`server_reason`). Spec 035 is the record of a credential leaking through
+an exception string.
 """
 
 from __future__ import annotations
@@ -52,8 +53,11 @@ def _scrub(message: str, where: UrlParts) -> str:
     # the union of those spans is replaced. Replacing the longest form first
     # broke a shorter one that overlapped it, and left its other part behind
     # (privacy review of PR #243).
+    # The withheld user, database name and query values too: the server
+    # quotes a database or user it does not know (post-merge review of PR
+    # #243).
     spans: list[tuple[int, int]] = []
-    for form in set(where.passwords):
+    for form in {*where.passwords, *where.withheld}:
         start = message.find(form)
         while start >= 0:
             spans.append((start, start + len(form)))
@@ -72,6 +76,24 @@ def _scrub(message: str, where: UrlParts) -> str:
         at = end
     kept.append(message[at:])
     return " ".join("".join(kept).split())
+
+
+def server_reason(error: psycopg.Error, url: str) -> str:
+    """One line for a driver error raised after connecting, scrubbed.
+
+    The server's primary message, which quotes SQL and can quote a database
+    or role name, with every form `_scrub` knows masked. An error without
+    one, such as a lost connection, is named by its class. Used by `harrier
+    store status` and `harrier store migrate` (spec 103).
+    """
+    reason = error.diag.message_primary or type(error).__name__
+    try:
+        where = url_parts(url)
+    except ValueError:
+        # store_target refuses such a URL; a caller that came another way
+        # gets the class alone, since the message cannot be scrubbed.
+        return type(error).__name__
+    return _scrub(reason, where)
 
 
 def require_driver() -> None:

@@ -719,3 +719,122 @@ it merged, found these, corrected in the same pull request:
       `.env` leaves `os.environ` as it found it, and the suite reads no
       `.env` outside a test's `tmp_path`, whatever directory pytest
       starts in (planned test_main_in_a_test_never_reads_the_operators_dotenv).
+
+### Post-merge review of PR #243 (2026-10-11)
+
+A local review after PR #243 merged found these, corrected in the change
+that adds this section:
+
+- **A raw `/` in the password leaked it.** With
+  `postgresql://u:/<S>@127.0.0.1:55433/postgres`, or a digit before the
+  `/` (`u:4821/<S>@...`), or no user (`postgresql://:/<S>@...`), urlsplit
+  and libpq both read host `u`, an empty port (or the digits as the
+  port), and the database `<S>@127.0.0.1:55433/postgres`. Both accept it,
+  so neither refusal above fired, and the scrub learned no password. The
+  connection error named the database, so `harrier store status` and
+  `migrate` printed the secret. A raw `/` or `?` in a password ends the
+  authority early, and the host's own `@` lands in the path or the query.
+  `harrier.connection.store_target` now refuses a URL with a raw `@` in
+  its path, or in its query while the authority holds no `@`. It refuses
+  it with fixed text that names the fix:
+  `HARRIER_DATABASE_URL must be empty or a postgresql:// URL;
+  percent-encode any / ? # @ or control character in its user, password,
+  database name and query values`. The `#`, tab, CR and LF refusal (fourth
+  review) and the two-readings-of-`@` refusal (third review) now give the
+  same text, since each is a raw delimiter inside a part; a URL that is
+  malformed in another way keeps the plain text. These checks run before
+  the parse, so `u:a/<S>@host/db`, which urlsplit refused for its port,
+  names the fix too
+  (`services/api/tests/test_postgres_store.py::test_a_raw_delimiter_after_the_authority_never_reaches_the_cli`,
+  `services/api/tests/test_postgres_store.py::test_a_malformed_url_is_refused_like_any_other`).
+  The CLI test runs seven shapes, among them `u:/<S>?x@host/db` and
+  `u:a/<S>@host/db`, and checks that no run of eight characters of the
+  secret reaches the output.
+- **The database name and the server's text are a second line.** Two
+  things now hold for a URL that reaches the driver past `store_target`.
+  The connection error prints the database name only when it is
+  printable: letters, digits, `_`, `.` and `-`, at most 63 characters,
+  Postgres's limit for a name; otherwise it says `(database name
+  withheld)`
+  (`services/api/tests/test_postgres_store.py::test_a_database_name_that_is_not_printable_is_withheld`,
+  `services/api/tests/test_postgres_store.py::test_a_printable_database_name_is_still_printed`).
+  And the user, the database name and every query value that are not
+  printable, in their written, decoded and libpq-read forms, are masked
+  in the driver's text as a password is, because the server quotes a
+  database or role it does not know
+  (`services/api/tests/test_postgres_store.py::test_the_servers_text_never_quotes_a_withheld_value`).
+  A printable value is not masked: a query value such as `1` would
+  otherwise erase every `1` in the driver's text, the host included.
+- **The trade-off kept from the fourth review.** Refusing every raw `@`
+  after the authority would refuse `postgresql://u:p@host?application_name=a@b`,
+  which the fourth review accepted: RFC 3986 allows `@` in a query, and
+  libpq and urlsplit read it alike. Run with that rule, the accepted test
+  fails
+  (`services/api/tests/test_postgres_store.py::test_an_at_sign_in_the_query_after_the_host_is_accepted`).
+  The valid URL wins. The cost is the limitation below.
+- **`harrier store status` printed a traceback after connecting.** It
+  caught only `StoreError`, so a driver error once the connection was
+  open, such as a role that may not read `schema_version`, escaped as a
+  traceback; `migrate` printed one line for the same thing. `status` now
+  prints `error: reading the store's version failed: <reason>` and exits
+  1 (`services/api/tests/test_store_cli.py::test_store_status_fails_with_one_line_after_connecting`).
+  For both commands the reason is the server's primary message, or the
+  error's class when it has none, passed through the same scrub as a
+  connection error
+  (`services/api/tests/test_store_cli.py::test_the_servers_message_after_connecting_is_scrubbed`).
+- **The suite reads no `.env` outside pytest's base temporary
+  directory.** Two losses of the pin went unseen: deleting it from
+  `os.environ._data` and restoring it before the test ends, which raises
+  no event and leaves it present at the end; and a child started with
+  `env=None` that drops the pin itself (`/usr/bin/env -u
+  HARRIER_DATABASE_URL ...`, or `shell=True` with `unset`).
+  `services/api/tests/conftest.py` now replaces
+  `harrier.envfile.read_env_file`, the one parser both the CLI's loader
+  and `store_target` call, for the whole session. It reads only a file
+  under pytest's base temporary directory, which holds every test's
+  `tmp_path`, and nothing during collection. In this process an
+  operator's `.env` is never read, whatever happens to the pin. The
+  `pytester` run gains a test that deletes the pin without an event,
+  restores it, and finds SQLite beside a `.env` naming Postgres; the
+  tests that mean `.env` to choose the store now put one in their
+  `tmp_path`
+  (`services/api/tests/test_store_cli.py::test_the_pin_net_fails_a_test_that_dropped_the_pin_whatever_it_holds_after`).
+  This closes the reading half of the open criterion above for the test
+  process only, and at the base temporary directory rather than each
+  test's own `tmp_path`. The box stays open: a child is not covered, and
+  a test's own `.env` still loads its keys into `os.environ`. The
+  limitation "A test that calls `main()` loads `.env` from the working
+  directory" above no longer holds in the test process for a `.env`
+  outside the base temporary directory.
+
+#### Honest limitations (post-merge review of PR #243)
+
+- **A password with a raw `@`, then a raw `?` and a libpq parameter,
+  still reads as a valid URL.** `postgresql://u:p@q?application_name=<S>@host/db`
+  is, byte for byte, the shape the trade-off above accepts. Both parsers
+  read user `u`, password `p`, host `q`. The connection error names `q`,
+  part of that password; `<S>@host/db` is not printable, so it is masked
+  if the server quotes it. Writing the password percent-encoded avoids
+  it, as the refusal text says for every other shape.
+- **A child process reads `.env` from its own working directory.** The
+  read guard lives in the test process. A child started with `env=None`
+  that drops the pin itself, with `env -u`, `env -i` or a shell's
+  `unset`, loads the `.env` beside it and the net does not see it. The
+  code has no setting that points the `.env` lookup elsewhere, so the
+  test process cannot pass the guard on.
+- **Withholding is by shape, not by content.** A printable database
+  name, user or query value is printed and left in the driver's text
+  even if it was meant as a password. The refusal is what keeps password
+  material out of those parts.
+
+#### Acceptance criteria (post-merge review of PR #243)
+
+- [x] Every test named in this section fails with its fix removed, and
+      passes with it; the pull request records each run.
+- [x] `services/api/tests/test_store_cli.py::test_store_status_fails_with_one_line_after_connecting`:
+      a driver error after connecting makes `harrier store status` print
+      one line and exit 1.
+- [x] For every URL shape the CLI tests above run, `harrier store status`
+      and `migrate` print no run of eight characters of the secret
+      (`services/api/tests/test_postgres_store.py::test_a_raw_delimiter_after_the_authority_never_reaches_the_cli`,
+      `services/api/tests/test_store_cli.py::test_the_servers_message_after_connecting_is_scrubbed`).
