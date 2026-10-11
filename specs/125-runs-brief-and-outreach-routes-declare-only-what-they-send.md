@@ -135,7 +135,7 @@ changed here.
 
 "The selector named no job, or more than one" is spec 082's wording for
 the same `SelectorError`. The outreach 404 said "no job matched the
-selector", which is wrong for an ambiguous selector (open decision 2).
+selector", which is wrong for an ambiguous selector (decision 2).
 
 The three run 404s come from one in-memory map in the run manager
 (`RunManager.get` in `services/api/src/harrier_api/runs.py`), so an id from
@@ -273,24 +273,20 @@ Each is recorded here for its own change.
   Their 404 is raised through `_job_id_for` and `_apply_params`, which the
   route body scan does not follow, so the scan says nothing about them.
 
-## Open decisions for Akin
+## Decided in review (2026-10-11)
 
-1. **Causes, not only statuses.** The task named statuses: the run 404s,
-   the brief 400 and 409, and the outreach 409. This spec also narrows what
-   each 404 describes, because `putBrief` and seven outreach routes describe
-   a 404 cause they cannot send. Proposed: include it, since a cause is
-   what the description declares and spec 094's review treated a phantom
-   cause as the defect. The alternative is statuses only, with the 404
-   wording recorded as out of scope.
-2. **"The selector named no job, or more than one" for the outreach and
-   brief 404s.** Proposed: yes, spec 082's text for the same
-   `SelectorError`. The alternative keeps "no job matched the selector",
-   which is wrong for an ambiguous selector.
-3. **Where the tests live.** Proposed: beside each router's existing
-   tests (`test_runs.py` for spec 006, `test_ui_operations.py` for spec
-   095's brief routes, `test_ui_outreach.py` for spec 048). The
-   alternative is one file for this spec, which separates each test from
-   the routes it pairs.
+Akin answered all three in chat, each as proposed.
+
+1. **Causes, not only statuses.** The spec narrows what each 404
+   describes as well as which statuses each route declares, because
+   `putBrief` and seven outreach routes describe a 404 cause they cannot
+   send, and spec 094's review treated a phantom cause as the defect.
+2. **"The selector named no job, or more than one"** is the outreach and
+   brief 404 wording, spec 082's text for the same `SelectorError`. "No
+   job matched the selector" was wrong for an ambiguous selector.
+3. **The tests live beside each router's existing tests:** `test_runs.py`
+   for spec 006, `test_ui_operations.py` for spec 095's brief routes, and
+   `test_ui_outreach.py` for spec 048.
 
 ## Data and privacy
 
