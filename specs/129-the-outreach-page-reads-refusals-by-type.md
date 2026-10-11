@@ -180,7 +180,7 @@ Each is recorded here for its own change.
 - **One shared reader.** `JobActions.tsx`'s `refusalMessage` and this
   `refused` differ only in their fallback. Moving one reader into
   `apps/web/src/shared/api` touches the tracker page, which this spec does
-  not (open decision 1).
+  not (decision 1).
 - **An empty-bodied refusal of a write reads as success.** The mutations
   check `error` and not `data`. No route sends an empty refusal today.
 - **The 403's body**, as spec 082 left it.
