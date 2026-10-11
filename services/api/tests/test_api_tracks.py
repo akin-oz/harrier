@@ -377,7 +377,13 @@ def test_every_scoped_route_declares_the_track_refusal(two_tracks: Path) -> None
         assert claims[-1][2] == expected, (method, path, operation)
     assert any(causes == set() for _, _, causes in claims)
     # The reads every track runs claim no track 409 at all.
-    for path in ("/jobs", "/tracker/queue", "/tracker/counts", "/ops/export/jobs.csv"):
+    for path in (
+        "/jobs",
+        "/tracker/queue",
+        "/tracker/counts",
+        "/tracker/{selector}/events",
+        "/ops/export/jobs.csv",
+    ):
         assert "409" not in paths[path]["get"]["responses"], path
     # A route's own causes stay beside the track's.
     draft = paths["/outreach/{selector}/draft"]["post"]["responses"]["409"]["description"]
@@ -387,29 +393,111 @@ def test_every_scoped_route_declares_the_track_refusal(two_tracks: Path) -> None
     assert events.startswith("the selector named no job, or more than one")
 
 
+def _second_track_job_id() -> int:
+    conn = connect()
+    try:
+        row = conn.execute(
+            "SELECT id FROM jobs WHERE track_id = (SELECT id FROM tracks WHERE slug = ?)"
+            " ORDER BY id",
+            (SLUG,),
+        ).fetchone()
+    finally:
+        conn.close()
+    return int(row[0])
+
+
+def _jobs_snapshot() -> list[tuple[Any, ...]]:
+    conn = connect()
+    try:
+        return [tuple(r) for r in conn.execute("SELECT * FROM jobs ORDER BY id").fetchall()]
+    finally:
+        conn.close()
+
+
 def test_a_read_on_an_archived_track_answers_what_its_contract_says(
     two_tracks: Path, client: TestClient
 ) -> None:
     """Every scoped read, provoked on an archived track that is not the
-    default: it is refused by the track exactly when its contract names a
-    track 409, and an unknown track is a 404 its contract names (review of
-    PR #239). Reads only, so nothing starts a run."""
+    default, with a job on that track so no route's own 404 hides the
+    answer. Its status is one its contract declares; it is refused by the
+    track exactly when its contract names a track 409; and a read that
+    declares no 409 at all answers 200 (reviews of PRs #239 and #255).
+    Reads only, so nothing starts a run."""
+    job_id = _second_track_job_id()
     assert client.post(f"/tracks/{SLUG}/archive", headers=auth()).status_code == 200
     paths = create_app().openapi()["paths"]
     track_details = (f"is not available on track {SLUG}", f"track {SLUG} is archived")
-    reads = [(path, route) for method, path, _, route in scoped_routes() if method == "GET"]
+    reads = [path for method, path, _, _ in scoped_routes() if method == "GET"]
     assert len(reads) >= 5
-    for path, _ in reads:
+    answered_200: list[str] = []
+    for path in reads:
         responses = paths[path]["get"]["responses"]
-        response = _request(client, "GET", path)
+        url = path.replace("{selector}", str(job_id)).replace("{kind}", "resume")
+        response = client.get(url, params={"track": SLUG}, headers=auth())
+        assert str(response.status_code) in responses, (path, response.status_code)
         detail = str(response.json().get("detail", "")) if response.status_code == 409 else ""
         refused = any(text in detail for text in track_details)
         assert refused == bool(_track_causes(responses, "409")), (path, response.status_code)
+        if "409" not in responses:
+            assert response.status_code == 200, (path, response.text)
+            answered_200.append(path)
+    assert "/tracker/{selector}/events" in answered_200
+
+
+def test_an_unknown_track_is_a_404_on_every_scoped_route(
+    two_tracks: Path, client: TestClient
+) -> None:
+    """Writes included: the track is resolved before the body is read, so
+    every scoped route answers 404 naming the slug, as its contract says,
+    and changes no row (review of PR #255)."""
+    paths = create_app().openapi()["paths"]
+    before = _jobs_snapshot()
+    scoped = scoped_routes()
+    assert any(method != "GET" for method, _, _, _ in scoped)
+    for method, path, _, _ in scoped:
         url = path.replace("{selector}", "1").replace("{kind}", "resume")
-        unknown = client.get(url, params={"track": "no-such-track"}, headers=auth())
-        assert unknown.status_code == 404, path
-        assert "no-such-track" in unknown.json()["detail"]
-        assert UNKNOWN_TRACK_CAUSE in _track_causes(responses, "404")
+        params = {"track": "no-such-track"}
+        response = client.request(method, url, params=params, headers=auth(), json={})
+        assert response.status_code == 404, (method, path, response.text)
+        assert "no-such-track" in response.json()["detail"], (method, path)
+        responses = paths[path][method.lower()]["responses"]
+        assert UNKNOWN_TRACK_CAUSE in _track_causes(responses, "404"), (method, path)
+    # A verb the status route would accept still moves nothing.
+    moved = client.post(
+        "/tracker/1/status",
+        params={"track": "no-such-track"},
+        json={"verb": "shortlist"},
+        headers=auth(),
+    )
+    assert moved.status_code == 404
+    assert _jobs_snapshot() == before
+
+
+def test_the_status_route_checks_its_verb_against_the_track(
+    two_tracks: Path, client: TestClient
+) -> None:
+    """The status route's verb is in its body, so the route checks it with
+    the same rule `scope_for` applies: an unknown verb is not available on a
+    non-default track, and a known one is a write an archived track refuses
+    (review of PR #255)."""
+    job_id = _second_track_job_id()
+    unknown = client.post(
+        f"/tracker/{job_id}/status",
+        params={"track": SLUG},
+        json={"verb": "no-such-verb"},
+        headers=auth(),
+    )
+    assert unknown.status_code == 409
+    assert unknown.json()["detail"] == f"no-such-verb is not available on track {SLUG}"
+    assert client.post(f"/tracks/{SLUG}/archive", headers=auth()).status_code == 200
+    archived = client.post(
+        f"/tracker/{job_id}/status",
+        params={"track": SLUG},
+        json={"verb": "shortlist"},
+        headers=auth(),
+    )
+    assert archived.status_code == 409
+    assert archived.json()["detail"] == f"track {SLUG} is archived"
 
 
 def test_merge_responses_keeps_every_whole_cause() -> None:

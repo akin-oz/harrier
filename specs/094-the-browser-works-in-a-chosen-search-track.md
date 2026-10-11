@@ -144,8 +144,9 @@ the `ErrorOut` body, so the browser reads them through generated types: the
 404 for an unknown track on every such route, and a 409 for each cause its
 operation can meet, "the track may not run this operation" when the
 operation is outside `NON_DEFAULT_OPERATIONS` and "the track is archived"
-when it is in `WRITE_OPERATIONS`. A read every track runs claims no track
-409. The route class adds them, as it adds the 503 (spec 075), and joins
+when it is in `WRITE_OPERATIONS`. The status route's operation is the verb
+in its body, which can be any string, so it claims both. A read every track
+runs claims no track 409. The route class adds them, as it adds the 503 (spec 075), and joins
 them with a route's own causes for the same status, so neither replaces the
 other.
 
@@ -459,7 +460,11 @@ routes and the bundle.
   "unknown track", though `POST /tracker/1/status?track=no-such-track`
   answers 404 naming the slug. The 404 is now joined as the 409 is
   (`services/api/tests/test_api_tracks.py::test_every_scoped_route_declares_the_track_refusal`).
-  Spec 082's 404 wording gains the track cause with it.
+  Spec 082's 404 wording gains the track cause with it. Every scoped route,
+  writes included, is provoked with an unknown track and answers that 404
+  without changing a row
+  (`services/api/tests/test_api_tracks.py::test_an_unknown_track_is_a_404_on_every_scoped_route`,
+  added after the review of PR #255).
 - **A route claims only the track 409 it can send.** `GET /jobs`, the queue,
   the counts, a job's history and `jobs.csv` run operations every track may
   run and that write nothing, and returned 200 on an archived track while
@@ -468,7 +473,19 @@ routes and the bundle.
   archived track to hold the contract to what it answers
   (`services/api/tests/test_api_tracks.py::test_a_read_on_an_archived_track_answers_what_its_contract_says`).
   The joined description "the track may not run this operation, or it is
-  archived" is split into its two causes.
+  archived" is split into its two causes, and each route keeps only the one
+  its operation can meet. Those five reads lose the 409 altogether. The
+  status route keeps both. The writes every track may run (`add`, `tailor`,
+  `discover`) keep only "the track is archived", and the operations a
+  non-default track may not run keep only "the track may not run this
+  operation". Cover-letter, answers, reconsider and `contacts.csv` run on
+  any track and write no row, so they lose both track causes and keep their
+  own 409. As first written, the archived-read test used a job on the
+  default track, so a job's history answered its own 404 and the 200 was
+  never seen; it now uses a job on the archived track and holds a read that
+  declares no 409 to 200 (review of PR #255). The status route's own verb
+  check is pinned by its exact refusals
+  (`services/api/tests/test_api_tracks.py::test_the_status_route_checks_its_verb_against_the_track`).
 - **A cause list merged twice keeps each cause once.** `merge_responses`
   split only the side it already held, so merging a joined list with itself
   doubled it. No route did this; the new side is now split too
