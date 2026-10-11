@@ -88,6 +88,15 @@ class StoreVersionError(StoreError):
     """The store's schema version is not the one this code needs."""
 
 
+class StoreServerError(StoreError):
+    """The Postgres server refused a statement after `harrier store` connected.
+
+    The message is `pgstore.server_reason`'s one line: the server's primary
+    message, scrubbed, or the driver error's class. The driver's error is
+    not chained to it (spec 128).
+    """
+
+
 class StoreMigrationRefused(StoreError):
     """A migration's own precheck refused this store (spec 105).
 

@@ -17,7 +17,10 @@ These tests are the two closures and the smaller leaks alongside them.
 
 from __future__ import annotations
 
+import secrets
+import string
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 from conftest import TEST_TOKEN, auth
@@ -286,6 +289,74 @@ def test_scrubbing_keeps_the_useful_part() -> None:
     scrubbed = scrub_secrets("failed for https://api.apify.com/v2/acts/actor/runs?token=SECRET")
     assert "api.apify.com" in scrubbed
     assert "/v2/acts/actor/runs" in scrubbed
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "postgresql://harrier:s3cret@db.example.test:5432/tracker",
+            "postgresql://harrier:REDACTED@db.example.test:5432/tracker",
+        ),
+        (
+            "postgres://harrier:s3cret@db.example.test/tracker",
+            "postgres://harrier:REDACTED@db.example.test/tracker",
+        ),
+        (
+            "postgresql://harrier@db.example.test/tracker",
+            "postgresql://harrier@db.example.test/tracker",
+        ),
+        (
+            "postgresql://db.example.test/tracker?password=s3cret",
+            "postgresql://db.example.test/tracker?password=REDACTED",
+        ),
+    ],
+)
+def test_scrub_secrets_hides_a_postgres_url_password(text: str, expected: str) -> None:
+    """The table in spec 128. A driver message that quotes the store's URL
+    reached a run summary, an event or the exception boundary with the
+    password in its userinfo, which only the `password=` rule missed
+    (post-merge review of PRs #194 and #207, privacy 3)."""
+    assert scrub_secrets(text) == expected
+
+
+def _synthetic(alphabet: str, length: int = 32) -> str:
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+def _windows(secret: str) -> set[str]:
+    return {secret[i : i + 8] for i in range(len(secret) - 7)}
+
+
+@pytest.mark.parametrize("scheme", ["postgresql", "postgres", "PostgreSQL", "POSTGRES"])
+def test_a_generated_postgres_password_leaves_no_part_behind(scheme: str) -> None:
+    """Passwords made at run time, in the URL as written: once decoded,
+    holding a raw `@` and `:`, and once percent-encoded from characters a
+    URL cannot carry raw. No 8-character window of either form survives,
+    and the parts that say which store failed stay."""
+    # Every character a password may hold raw: no / ? # or whitespace, which
+    # end the authority. A raw @ and : in the middle, so the scrub has to
+    # find the last @, not the first.
+    raw_alphabet = string.ascii_letters + string.digits + "!$&'()*+,;=%-._~"
+    decoded = f"{_synthetic(raw_alphabet)}@{_synthetic(raw_alphabet)}:{_synthetic(raw_alphabet)}"
+    # Characters that must be percent-encoded, between runs of plain ones.
+    plain = _synthetic(string.ascii_letters + string.digits, 16)
+    reserved = f"{plain}/?#@: {_synthetic(string.ascii_letters + string.digits, 16)}"
+    encoded = quote(reserved, safe="")
+    assert "%2F" in encoded and "%40" in encoded and "%3A" in encoded
+
+    for password, forms in ((decoded, [decoded]), (encoded, [encoded, reserved])):
+        url = f"{scheme}://harrier:{password}@db.example.test:5432/tracker?sslmode=require"
+        message = f'connection to "{url}" failed: FATAL: password authentication failed'
+
+        scrubbed = scrub_secrets(message)
+
+        assert scrubbed == (
+            f'connection to "{scheme}://harrier:REDACTED@db.example.test:5432/tracker'
+            '?sslmode=require" failed: FATAL: password authentication failed'
+        )
+        for form in forms:
+            assert sorted(window for window in _windows(form) if window in scrubbed) == []
 
 
 def test_scrubbing_leaves_ordinary_text_alone() -> None:

@@ -1539,47 +1539,36 @@ def _cmd_store(args: argparse.Namespace) -> int:
 
 
 def _store_postgres(command: str, url: str) -> int:
+    from harrier.connection import StoreServerError
     from harrier.pgstore import (
         check_postgres_version,
         migrate_postgres,
-        postgres_connect,
-        postgres_version,
-        require_driver,
-        server_reason,
+        read_postgres_version,
         target_version,
     )
-
-    # Before the import below, so a missing driver is the refusal that
-    # names the install command rather than an ImportError.
-    require_driver()
-    import psycopg
 
     if command == "migrate":
         try:
             before, after = migrate_postgres(url)
-        except psycopg.Error as error:
-            # A connection failure is a StoreConnectionError by now, so this
-            # failed after connecting, most often a statement the server
-            # refused. The server's primary message quotes SQL, never the
-            # URL whole, and is scrubbed of the parts of it that it can
-            # quote; an error without one, such as a lost connection, prints
-            # its class (post-merge reviews of PRs #207 and #243).
-            print(f"error: a migration failed: {server_reason(error, url)}", file=sys.stderr)
+        except StoreServerError as error:
+            # A connection failure is a StoreConnectionError, so this failed
+            # after connecting, most often a statement the server refused.
+            # The message is the server's primary message, which quotes SQL,
+            # never the URL whole, scrubbed of the parts of it that it can
+            # quote; an error without one, such as a lost connection, is its
+            # class (post-merge reviews of PRs #207 and #243, spec 128).
+            print(f"error: a migration failed: {error}", file=sys.stderr)
             return 1
         print(f"postgres {before} -> {after}")
         return 0
     try:
-        with closing(postgres_connect(url)) as conn:
-            found = postgres_version(conn)
-    except psycopg.Error as error:
+        found = read_postgres_version(url)
+    except StoreServerError as error:
         # The same one line as a failed migration: reading the version can
         # fail after connecting too, for a role that may not read
         # schema_version or a connection the server ends (post-merge review
         # of PR #243).
-        print(
-            f"error: reading the store's version failed: {server_reason(error, url)}",
-            file=sys.stderr,
-        )
+        print(f"error: reading the store's version failed: {error}", file=sys.stderr)
         return 1
     known = target_version()
     if found > known:

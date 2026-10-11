@@ -531,12 +531,14 @@ PR 2 (behavior):
 - [ ] `scrub_secrets` replaces the password in a `postgresql://` and a
       `postgres://` URL's userinfo with `REDACTED` and keeps user, host,
       port and database; a URL with no password is unchanged
-      (planned test_scrub_secrets_hides_a_postgres_url_password).
+      (`services/api/tests/test_api_exposure.py::test_scrub_secrets_hides_a_postgres_url_password`,
+      built under spec 128).
       (post-merge review of PRs #194 and #207, 2026-10-10)
 - [ ] Two `harrier store migrate` runs started together on an empty
       Postgres store apply each migration once, one reports
       `postgres 0 -> <target>` and the other `postgres <target> -> <target>`
-      (planned test_concurrent_migrate_runs_report_what_each_found).
+      (`services/api/tests/test_store_cli.py::test_concurrent_migrate_runs_report_what_each_found`,
+      built under spec 128).
       (post-merge review of PRs #194 and #207, 2026-10-10)
 - [ ] `services/api/src/harrier/tracker/schema.py` and
       `packages/contract` do not change.
