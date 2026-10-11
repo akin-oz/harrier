@@ -105,6 +105,84 @@ def test_a_failed_migration_exits_1_with_the_drivers_message(
     )
 
 
+class _Connected:
+    """A connection that opened, for a test whose failure comes after."""
+
+    def close(self) -> None:
+        pass
+
+
+def test_store_status_fails_with_one_line_after_connecting(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`store status` caught only StoreError, so a driver error after the
+    connection opened, here a role that may not read schema_version, was a
+    traceback; `migrate` printed one line for the same thing (post-merge
+    review of PR #243). No server is needed: the failure is injected."""
+    import psycopg
+
+    import harrier.pgstore as pgstore
+
+    def connected(url: str) -> _Connected:
+        return _Connected()
+
+    def refused(conn: object) -> int:
+        raise psycopg.errors.InsufficientPrivilege()
+
+    monkeypatch.setattr(pgstore, "postgres_connect", connected)
+    monkeypatch.setattr(pgstore, "postgres_version", refused)
+    monkeypatch.setenv(URL_VARIABLE, UNREACHABLE_URL)
+
+    assert run(["store", "status"], capsys) == (
+        1,
+        "",
+        "error: reading the store's version failed: InsufficientPrivilege\n",
+    )
+
+
+@pytest.mark.parametrize("command", ["status", "migrate"])
+def test_the_servers_message_after_connecting_is_scrubbed(
+    command: str,
+    pg_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Both commands print the server's primary message when a statement
+    fails after connecting. That message can quote what the URL holds, so
+    it goes through the same scrub as a connection error (post-merge review
+    of PR #243). Here the statement names a value the URL carries in its
+    query, outside the printable shape."""
+    import psycopg
+
+    import harrier.pgstore as pgstore
+
+    secret = f"synthetic{uuid.uuid4().hex}"
+    statement = f'SELECT * FROM "{secret}!"'.encode()
+    seen: list[str] = []
+
+    def quotes_the_secret(conn: psycopg.Connection[tuple[object, ...]]) -> tuple[int, int]:
+        try:
+            conn.execute(statement)
+        except psycopg.Error as error:
+            seen.append(error.diag.message_primary or "")
+            raise
+        return 0, 0
+
+    monkeypatch.setattr(pgstore, "postgres_version", quotes_the_secret)
+    monkeypatch.setattr(pgstore, "apply_postgres_migrations", quotes_the_secret)
+    monkeypatch.setenv(URL_VARIABLE, f"{pg_url}?application_name={secret}%21")
+
+    code, out, err = run(["store", command], capsys)
+
+    # The server's own message quotes the secret, so the case is live.
+    assert seen and secret in seen[0]
+    assert (code, out) == (1, "")
+    assert err.count("\n") == 1
+    assert err.endswith('failed: relation "***" does not exist\n')
+    windows = {secret[i : i + 8] for i in range(len(secret) - 7)}
+    assert sorted(window for window in windows if window in err) == []
+
+
 def test_store_status_reports_behind_on_an_unmigrated_store(
     pg_url: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -339,10 +417,19 @@ import sys
 
 import pytest
 
+from harrier.connection import store_target
 from harrier_cli.main import main
 
 
-def test_drops_the_pin_and_lets_dotenv_choose(monkeypatch):
+def dotenv_here(tmp_path, monkeypatch):
+    # The suite reads no `.env` outside its base temporary directory, so a
+    # test that means `.env` to choose the store puts one in its tmp_path.
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("{URL_VARIABLE}={UNREACHABLE_URL}\\n", encoding="utf-8")
+
+
+def test_drops_the_pin_and_lets_dotenv_choose(tmp_path, monkeypatch):
+    dotenv_here(tmp_path, monkeypatch)
     monkeypatch.delenv("{URL_VARIABLE}")
     assert main(["tracks", "list"]) == 1
     assert os.environ["{URL_VARIABLE}"] == "{UNREACHABLE_URL}"
@@ -374,9 +461,24 @@ def test_deletes_the_pin_without_an_event():
     del os.environ._data[os.environ.encodekey("{URL_VARIABLE}")]
 
 
-def test_deletes_the_pin_without_an_event_then_lets_dotenv_choose():
+def test_deletes_the_pin_without_an_event_then_lets_dotenv_choose(tmp_path, monkeypatch):
+    dotenv_here(tmp_path, monkeypatch)
     del os.environ._data[os.environ.encodekey("{URL_VARIABLE}")]
     assert main(["tracks", "list"]) == 1
+
+
+def test_deletes_the_pin_and_restores_it_beside_an_operators_dotenv():
+    # The working directory's `.env` names a Postgres URL, as an operator's
+    # would. No event shows the loss and the pin is back by the end, so the
+    # net cannot see it; the `.env` outside the base temporary directory is
+    # not read meanwhile.
+    key = os.environ.encodekey("{URL_VARIABLE}")
+    saved = os.environ._data.pop(key)
+    try:
+        assert store_target().dialect == "sqlite"
+        assert main(["tracks", "list"]) == 0
+    finally:
+        os.environ._data[key] = saved
 
 
 def test_replaces_the_environment_without_the_pin(monkeypatch):
@@ -414,19 +516,26 @@ def test_the_pin_net_fails_a_test_that_dropped_the_pin_whatever_it_holds_after(
     `os.environ` replaced), and a child started without it, went unseen
     too (privacy review and claims audit of PR #243). The end of each test
     checks the pin is present and unchanged, the `.env` loader writing it
-    counts as losing it, and so does a child's environment without it."""
+    counts as losing it, and so does a child's environment without it.
+
+    A loss with no event that the test restores before it ends went unseen
+    and let `.env` choose the store meanwhile (post-merge review of PR
+    #243). The suite now reads no `.env` outside pytest's base temporary
+    directory at all, so the `.env` in the working directory here, which
+    names a Postgres URL, never chooses the store; the tests that mean a
+    `.env` to choose it put one in their tmp_path."""
     pytester.makeconftest(Path(__file__).with_name("conftest.py").read_text(encoding="utf-8"))
     pytester.makepyfile(test_pin=PIN_DROPPING_TESTS)
     (pytester.path / ".env").write_text(f"{URL_VARIABLE}={UNREACHABLE_URL}\n", encoding="utf-8")
 
     result = pytester.runpytest_subprocess("-p", "no:cacheprovider")
 
-    # Every test passes. Seven errors: the unmarked test that drops the pin,
-    # the marked one that drops it outside its tmp_path, and the four that
-    # lose it by a path with no unset event, each fail at their own
-    # teardown; the module fixture's unset fails the session, at the
-    # teardown of the last test.
-    result.assert_outcomes(passed=9, errors=7)
+    # Every test passes, the one that restores the pin among them. Seven
+    # errors: the unmarked test that drops the pin, the marked one that
+    # drops it outside its tmp_path, and the four that lose it by a path
+    # with no unset event, each fail at their own teardown; the module
+    # fixture's unset fails the session, at the teardown of the last test.
+    result.assert_outcomes(passed=10, errors=7)
     result.stdout.fnmatch_lines(
         [
             "*ERROR at teardown of test_drops_the_pin_and_lets_dotenv_choose*",

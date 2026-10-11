@@ -1545,30 +1545,42 @@ def _store_postgres(command: str, url: str) -> int:
         postgres_connect,
         postgres_version,
         require_driver,
+        server_reason,
         target_version,
     )
 
-    if command == "migrate":
-        # Before the import below, so a missing driver is the refusal that
-        # names the install command rather than an ImportError.
-        require_driver()
-        import psycopg
+    # Before the import below, so a missing driver is the refusal that
+    # names the install command rather than an ImportError.
+    require_driver()
+    import psycopg
 
+    if command == "migrate":
         try:
             before, after = migrate_postgres(url)
         except psycopg.Error as error:
             # A connection failure is a StoreConnectionError by now, so this
             # failed after connecting, most often a statement the server
             # refused. The server's primary message quotes SQL, never the
-            # URL; an error without one, such as a lost connection, prints
-            # its class (post-merge review of PR #207).
-            reason = error.diag.message_primary or type(error).__name__
-            print(f"error: a migration failed: {reason}", file=sys.stderr)
+            # URL whole, and is scrubbed of the parts of it that it can
+            # quote; an error without one, such as a lost connection, prints
+            # its class (post-merge reviews of PRs #207 and #243).
+            print(f"error: a migration failed: {server_reason(error, url)}", file=sys.stderr)
             return 1
         print(f"postgres {before} -> {after}")
         return 0
-    with closing(postgres_connect(url)) as conn:
-        found = postgres_version(conn)
+    try:
+        with closing(postgres_connect(url)) as conn:
+            found = postgres_version(conn)
+    except psycopg.Error as error:
+        # The same one line as a failed migration: reading the version can
+        # fail after connecting too, for a role that may not read
+        # schema_version or a connection the server ends (post-merge review
+        # of PR #243).
+        print(
+            f"error: reading the store's version failed: {server_reason(error, url)}",
+            file=sys.stderr,
+        )
+        return 1
     known = target_version()
     if found > known:
         # Raises the refusal that names both versions.
