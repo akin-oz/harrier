@@ -242,6 +242,8 @@ For a request that passed the middleware, `get_conn` hosted:
    a generic detail, and the mismatch is logged. No domain statement runs.
    This is what catches a connection in autocommit mode or a pooler that
    splits a transaction, where `SET LOCAL` silently does nothing.
+   Step 3 is replaced by "Amendment (2026-10-11): migration 16's
+   follow-ups", which also reads `public.harrier_owner_id()`.
 4. Yields the connection to the route. Domain code that opens its own
    transaction (spec 112's seam) gets a savepoint inside this one, so the
    role and claims hold for every statement the request runs.
@@ -254,7 +256,8 @@ For a request that passed the middleware, `get_conn` hosted:
 `get_conn` hosted refuses with 500 if the request carries no verified
 claims, so a route that reached it some other way still runs nothing.
 The claims set are the whole verified payload, so `auth.uid()` and
-`auth.jwt()` read what Supabase's own Data API would give them.
+`auth.jwt()` read what Supabase's own Data API would give them. (Replaced
+by "Amendment (2026-10-11): migration 16's follow-ups".)
 
 Hosted mode creates no table, grants no privilege and adds no migration.
 Granting `harrier_tenant` access to the personal tables is spec 105's, in
@@ -291,7 +294,8 @@ to start when its login role:
 
 - is a superuser or has `BYPASSRLS`;
 - is a member, directly or through another role, of `service_role` or
-  `postgres`;
+  `postgres` (widened by "Amendment (2026-10-11): migration 16's
+  follow-ups" to any role past the policy);
 - cannot `SET ROLE harrier_tenant`;
 - owns any table in the `public` schema (an owner bypasses row-level
   security unless it is forced; spec 105 forces it, and this check does not
@@ -548,6 +552,8 @@ The request transaction (Postgres tests, run in CI as spec 103 requires):
 - [ ] Inside a request, `current_user` is `harrier_tenant`, `auth.uid()` is
       the token's `sub`, and `auth.jwt()` is its payload
       (planned test_the_request_transaction_runs_as_its_user).
+      Superseded: it cannot hold as `harrier_tenant` after migration 16;
+      "Amendment (2026-10-11): migration 16's follow-ups" restates it.
 - [ ] Added 2026-10-10 from spec 105: inside a request, `current_user` is
       `harrier_tenant` and its `rolbypassrls` in `pg_roles` is false
       (planned test_a_request_never_runs_as_a_bypassrls_role).
@@ -924,3 +930,142 @@ table; the risk is SQL injected into a request, or a bug.
       through the request transaction get two ids
       (planned test_the_request_transaction_reads_committed).
 - [ ] The change that sets the values says, for each, why that value.
+
+## Amendment (2026-10-11): migration 16's follow-ups
+
+Spec 105's amendment "owner identity without schema auth" added migration
+16 (PR #260). Its "Specs this touches, and follow-ups" names two changes
+for this spec. The local isolation review on PR #260 named a third, for
+this spec and spec 110. This section states all three. Text above that
+they replace carries a pointer here.
+
+### Why
+
+- **The policy reads `harrier_owner_id()`, not the claims setting.** After
+  migration 16, every `owner_only` policy and every `owner_id` default call
+  `public.harrier_owner_id()`, which reads `sub` from `request.jwt.claims`
+  (`POSTGRES_OWNER_IDENTITY` in
+  `services/api/src/harrier/tracker/schema.py`). Step 3's read-back checks
+  the setting only. A store whose function returns something else, after a
+  later migration or a hand edit, would pass the read-back and police the
+  request as another owner or as none. Reading the function checks the
+  value the policy uses.
+- **`auth.uid()` and `auth.jwt()` are out of reach.** Migration 16 revokes
+  the tenant's USAGE on schema `auth`, and on Supabase the migrating role
+  never could grant it (spec 115, A2). As `harrier_tenant`, `SELECT
+  auth.uid()` is refused with `42501 permission denied for schema auth`
+  (`services/api/tests/test_owner_policy.py::test_the_tenant_role_holds_nothing_in_auth`).
+  The planned criterion that `auth.uid()` is the token's `sub` and
+  `auth.jwt()` its payload inside a request cannot pass.
+- **`SET ROLE` is checked against the login role, not the current role.**
+  After `SET LOCAL ROLE harrier_tenant`, a later statement in the same
+  transaction can run `SET LOCAL ROLE <r>` for any role the login role is
+  a member of, directly or through other roles. `NOINHERIT` does not stop
+  it: it governs the privileges a role uses without `SET ROLE`. Checked on
+  Postgres 17.11 for this amendment, in a throwaway database dropped
+  after. A `NOINHERIT` login role, a member of a tenant role and, through
+  a `NOINHERIT` intermediate role, of a `BYPASSRLS` role, set the tenant
+  role and saw only its own owner's row in a forced, policed table that
+  held two owners; `SET LOCAL ROLE` to the bypassing role in the same
+  transaction saw both. A login role that was a member of the table's
+  owner set that role and saw none, since row security is forced and no
+  policy names the owner; it then ran `ALTER TABLE ... NO FORCE ROW LEVEL
+  SECURITY` and saw both. The
+  risk is SQL injected into a request, as in spec 105's limitations and
+  the request-role timeouts above. The start check refuses membership of
+  `service_role` and `postgres` only.
+
+### The request transaction, step 3
+
+This replaces step 3 above. In the same transaction, one statement reads
+back `current_user`, `current_setting('request.jwt.claims', true)::jsonb
+->> 'sub'` and `public.harrier_owner_id()::text`. The request goes on only
+when `current_user` is `harrier_tenant` and both the claims' `sub` and
+`harrier_owner_id()` equal the verified token's `sub`. Otherwise, as
+before: the transaction rolls back, the request is answered 500 with a
+generic detail, the mismatch is logged, and no domain statement runs. The
+log record names which of the three values differed and carries none of
+them, as the token tests require of every log record. If the read-back
+statement raises, for instance `42501 permission denied for function
+harrier_owner_id` on a store where the tenant lost `EXECUTE`, the request
+is answered the same 500 and no domain statement runs.
+
+The function exists whenever a request runs: start refuses a store that
+is not at `target_version()` (The store version), which is 16 or later.
+
+The sentence "The claims set are the whole verified payload, so
+`auth.uid()` and `auth.jwt()` read what Supabase's own Data API would give
+them" is replaced by: the claims set are the whole verified payload, and
+spec 105's policy and defaults read the owner from them through
+`public.harrier_owner_id()`. No harrier statement calls `auth.uid()` or
+`auth.jwt()`, and as `harrier_tenant` neither can be called on Supabase.
+
+### The login role
+
+This replaces the second check under "The login role" ("is a member,
+directly or through another role, of `service_role` or `postgres`"). Start
+refuses a login role that:
+
+- is a member, directly or through other roles, of any role that is a
+  superuser, has `BYPASSRLS`, owns a table in `public`, owns a table with
+  row security enabled in any other schema, or is `service_role` or
+  `postgres`.
+
+Membership is read with `pg_has_role(<login role>, <role>, 'MEMBER')`,
+which counts a grant whatever its `INHERIT` and `SET` options, so a grant
+without `SET` today is still refused. `harrier_tenant` passes: migration 13
+makes it `NOBYPASSRLS` and refuses it membership of any role (spec 105,
+Options weighed, (d)), and it owns no table. The other checks under "The
+login role" stand.
+
+Spec 110's `harrier store grant-tenant` and `check-deploy` call the same
+function as these start checks (spec 110, Behavior), so the deploy refuses
+the same login roles. Spec 110's amendment of the same date adds a check
+of each login role's memberships on the deployed project.
+
+### Failure modes (migration 16's follow-ups)
+
+- **The policy's owner differs from the claims.** `harrier_owner_id()`
+  returns null or another UUID, or raises: 500, no domain statement runs.
+- **The login role can set a role past the policy.** Start refused, naming
+  the check and the role reached, never the URL or password; exit 1, as
+  "Login role too strong" says.
+
+### Honest limitations (migration 16's follow-ups)
+
+- **`RESET ROLE` still works.** SQL injected into a request can return to
+  the login role, which holds no grant of its own and reads nothing. It
+  can also set `harrier_tenant` again with claims of its choosing; that is
+  spec 105's limitation ("The boundary holds against a forgotten
+  predicate") and is unchanged here.
+- **The check reads memberships and role attributes, not every path past
+  a policy.** A `SECURITY DEFINER` function owned by a bypassing role and
+  executable by the login role or by `PUBLIC` is another way past. Spec
+  105's catalog check covers such functions in `public`; this check reads
+  no other schema's functions.
+- **Read at start.** A membership granted while the API runs is not seen
+  until the next start, as for the other login role checks. Spec 110's
+  deploy reads it again at each deploy.
+
+### Acceptance criteria (migration 16's follow-ups)
+
+- [ ] Inside a request, `current_user` is `harrier_tenant`,
+      `public.harrier_owner_id()` is the token's `sub`, and
+      `current_setting('request.jwt.claims', true)::jsonb` equals its
+      verified payload (planned test_the_request_transaction_runs_as_its_user).
+      This replaces the criterion above that names `auth.uid()` and
+      `auth.jwt()`.
+- [ ] On a throwaway store whose `harrier_owner_id()` is replaced to
+      return a fixed other UUID, a request is answered 500 and a probe
+      statement placed after the read-back never runs; the same holds with
+      the function returning null, and with `EXECUTE` on it revoked from
+      `harrier_tenant`; and the log record names the value that differed
+      and holds no claim value
+      (planned test_the_read_back_checks_the_owner_the_policy_reads).
+- [ ] A login role is refused at start, one case each, when it is a
+      member, through a `NOINHERIT` intermediate role, of a `BYPASSRLS`
+      role, of a superuser role, of a role without `BYPASSRLS` that owns a
+      table in `public`, and of `service_role`; a direct membership granted
+      `WITH SET FALSE` is refused too; and a login role that is a member of
+      `harrier_tenant` alone starts
+      (planned test_hosted_start_refuses_a_login_role_that_can_set_role_past_the_policy).

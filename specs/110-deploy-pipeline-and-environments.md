@@ -259,7 +259,8 @@ passed. Exit 1 names the first check that failed:
   grants spec 105's catalog test asserts, read from the live catalog);
 - every table in `OWNED_TABLES` has row security enabled and forced;
 - the login role passes the checks above and is a member of
-  `harrier_tenant`.
+  `harrier_tenant` (and of no role the deploy did not grant: "Amendment
+  (2026-10-11): login roles reach no role past the policy").
 
 It writes nothing. The REST probe in step 6 is a separate HTTP check
 because the Data API setting lives outside the database.
@@ -1267,3 +1268,98 @@ Every Frankfurt price and every estimate built on it is replaced in
 - The prices used are the region selector's rounded figures, which
   differ from the multiplied ones by one cent (6.95 against 6.96, 3.84
   against 3.83). Which of the two Fly bills is not checked here.
+
+## Amendment (2026-10-11): login roles reach no role past the policy
+
+The local isolation review on PR #260 (spec 105's migration 16) found
+that a request session that can run SQL can leave `harrier_tenant` with
+`SET LOCAL ROLE <r>`, for any role the login role is a member of. Postgres
+checks `SET ROLE` against the login role's memberships, not the current
+role's, and `NOINHERIT` does not stop it. Spec 104's amendment of the same
+date ("migration 16's follow-ups") states the mechanism, the check on
+Postgres 17.11 that showed it, and the wider start check: a login role
+must be a member, directly or through other roles, of no role that is a
+superuser, has `BYPASSRLS`, owns a table in `public` or a table with row
+security enabled in any other schema, or is `service_role` or `postgres`.
+
+`harrier store grant-tenant` and `check-deploy` call the same function as
+spec 104's start checks (Behavior), so the deploy refuses those login
+roles with no further change. This section adds what only the deployed
+project can show: which roles each login role actually reaches there.
+
+### Behavior (login role memberships)
+
+- **`check-deploy` compares each login role's memberships with the ones
+  the deploy grants.** For the API's login role (`harrier_api` in the
+  documents), and for `harrier_run` and `harrier_scheduler` once their
+  specs' deploy steps create them (amendment of 2026-10-11 above), it
+  reads from the deployed project's catalog every role the login role is
+  a member of, directly or through other roles
+  (`pg_has_role(<login role>, <role>, 'MEMBER')`, any grant options). It
+  fails, naming the login role and each role that should not be there,
+  unless that set is exactly: `harrier_tenant` for `harrier_api` and
+  `harrier_run`; `harrier_tenant` and `harrier_schedule_reader` for
+  `harrier_scheduler`. This is stricter than spec 104's rule: a membership
+  the deploy did not grant fails whether or not it bypasses row security.
+  On a pass it prints one line per login role, `<login role>: member of
+  <roles, sorted>`. Role names are not secret; no URL or password is
+  printed.
+- **A read-only check of the deployed project.** A new module,
+  `services/api/tests/test_deployed_login_roles.py`, holds one test
+  (planned test_the_deployed_login_roles_reach_only_their_grants). It
+  connects with the environment's migrator URL, exported as
+  `HARRIER_DEPLOYED_MIGRATE_URL` in the operator's shell and never in
+  `.env`, writes nothing, and asserts for each login role above that
+  exists: the set of roles it reaches equals the one above, and no role in
+  that set, nor the login role itself, is a superuser, has `BYPASSRLS`,
+  owns a table in `public` or a table with row security enabled in any
+  schema, or is `service_role` or `postgres`. It shares with `check-deploy`
+  the function that reads the reached roles, so the CI test below shows
+  that function failing. Without the variable it skips naming it, locally
+  and in CI. It is a recorded check, not a gate (spec 039); `check-deploy`
+  is the gate. Unlike spec 115's staging mode it does not refuse a project
+  with users, because it writes nothing, so it runs against production.
+- **The runbook** creates each login role with `CREATE ROLE ... LOGIN
+  NOINHERIT` and grants it roles only through the deploy's grant steps.
+  The operator login that can `SET ROLE service_role` (Auth settings,
+  above) is a separate role and is never one of the three login roles.
+  A membership `check-deploy` names is removed by the operator with
+  `REVOKE`, as the runbook says; the expected sets change only by a spec.
+
+### Failure modes (login role memberships)
+
+- **A login role reaches a role the deploy did not grant.** `check-deploy`
+  exits 1 at step 4, naming the login role and the role reached, so no
+  image is deployed. The running API keeps serving, and spec 104's start
+  check refuses any new machine whose login role reaches a role past the
+  policy.
+- **The deployed check's URL is unset.** The module skips, naming
+  `HARRIER_DEPLOYED_MIGRATE_URL`.
+
+### Honest limitations (login role memberships)
+
+- **Read at deploy, and when the operator runs the module.** A grant made
+  between deploys is seen at the next deploy, or at the API's next start
+  for a role past the policy (spec 104).
+- **Memberships, not every path past a policy.** A `SECURITY DEFINER`
+  function owned by a bypassing role is another way past, as spec 104's
+  amendment says; neither check reads one outside `public`.
+- **Production does not exist yet** (Region, Honest limitations). The
+  production half of the criteria below waits for it.
+
+### Acceptance criteria (login role memberships)
+
+- [ ] `check-deploy` fails, naming the login role and the role reached,
+      for a login role that is also a member, through a `NOINHERIT`
+      intermediate role, of a `BYPASSRLS` role, of a role without
+      `BYPASSRLS` that owns a table in `public`, and of a role that
+      bypasses nothing; it passes on a migrated, granted store and prints
+      each login role's memberships
+      (planned test_check_deploy_names_a_login_role_that_reaches_another_role).
+- [ ] The deployed-project check exists as above and skips, naming
+      `HARRIER_DEPLOYED_MIGRATE_URL`, when it is unset
+      (planned test_the_deployed_login_roles_reach_only_their_grants).
+- [ ] The pull request that first deploys staging records that check's
+      output against the staging project, passing, with role names and no
+      URL, host, project reference or password; the first production
+      deploy records the same against production.
