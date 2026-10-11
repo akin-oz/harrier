@@ -2,6 +2,7 @@
   "_comment": "Synthetic academic framing (spec 101): how an academic track's CV presents the facts in config/resume-facts.example.json. Store YOURS with harrier --track <slug> profile put resume_framing --file PATH; it is named academic.json. Every bullet must appear verbatim in your resume_truth or achievements document.",
   "candidate": {
     "primary_identity": "Research Software Engineer",
+    "profile_lead": "Research software engineer preparing for doctoral research in simulation software",
     "experience_statement": "professional career since 2014",
     "positioning_technologies": [
       "TypeScript",

@@ -103,6 +103,16 @@ def build_profile(bundle: ResumeBundle, skills: list[str], as_of: date | None = 
 def profile_lead(bundle: ResumeBundle, skill_phrase: str, as_of: date | None = None) -> str:
     """The sentences of the profile the code writes. The rest is the
     bundle's `profile_summary`, candidate prose (persona-free engine)."""
+    if bundle.profile_lead:
+        # The track's own sentence, verbatim, in place of the derived one
+        # (spec 130); the experience sentence still follows it.
+        lead = bundle.profile_lead
+        if not lead.endswith((".", "!", "?")):
+            lead = f"{lead}."
+        if bundle.experience_statement:
+            statement = bundle.experience_statement.rstrip(".")
+            return f"{lead} {statement[:1].upper()}{statement[1:]}."
+        return f"{lead} {professional_experience_label(bundle, as_of)} of professional experience."
     if bundle.experience_statement:
         # The operator's own wording replaces the derived phrase (spec 071 O7).
         statement = bundle.experience_statement.rstrip(".")
