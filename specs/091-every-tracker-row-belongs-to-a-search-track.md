@@ -517,7 +517,7 @@ The tenancy options are in the ADR section. Implementation choices:
 - Events derive their track from their job: spec 079 (the `job_events`
   schema, `job_id` references `jobs`).
 - Command classes: spec 074, `COMMAND_CLASSES` at
-  `services/api/src/harrier_cli/main.py:2263-2354`.
+  `services/api/src/harrier_cli/main.py:2287-2378`.
 - The import contract: `services/api/pyproject.toml:96-110`.
 
 ## Out of scope

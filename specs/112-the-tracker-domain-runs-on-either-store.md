@@ -14,8 +14,9 @@ depends: [076, 079, 090, 092, 103, 105, 115]
 Spec 103 creates a Postgres store with the tracker's schema, and nothing
 uses it. Every domain read and write is written for `sqlite3`. Line numbers
 below are from the spec 103 branch on 2026-10-10, except the
-`harrier_cli/main.py` and `harrier_api/app.py` ones, refreshed to `main` at
-`524dd8a` on 2026-10-11, the `schema.py` ones, refreshed to `main` at
+`harrier_api/app.py` ones, refreshed to `main` at `524dd8a` on 2026-10-11,
+the `harrier_cli/main.py` ones, refreshed to `main` at `a7b9998`, the
+`schema.py` ones, refreshed to `main` at
 `5c3d083` after migration 16, and the `pgstore.py` and `connection.py`
 ones, refreshed by PR #245; counts say how they were taken.
 
@@ -35,7 +36,7 @@ stub named a ninth, `mail/watch.py`; it has no SQL of its own, and its
 modules execute SQL and are local by nature: `backup.py:106-133`,
 `doctor.py:199-204`, `cutover.py:113` and `:298-300`, and
 `tracker/migrate_legacy.py:98-171`. Two more sit at the edges:
-`harrier_api/app.py:270` (the health count) and `harrier_cli/main.py:1588-1603`
+`harrier_api/app.py:270` (the health count) and `harrier_cli/main.py:1600-1615`
 (`harrier store status` reading a SQLite file read-only).
 
 **What does not run on Postgres as written:**
@@ -90,7 +91,7 @@ modules execute SQL and are local by nature: `backup.py:106-133`,
   `lock_timeout = 0` means no limit, not no wait.
 
 **The gate.** Until this spec, every CLI command except `harrier store`
-refuses a Postgres URL (`harrier_cli/main.py:3079-3082`) and so does the
+refuses a Postgres URL (`harrier_cli/main.py:3091-3094`) and so does the
 API (`harrier_api/app.py:1370-1371`), both with `POSTGRES_NOT_YET`
 (`connection.py:42-44`; in `pgstore.py` until PR #241 moved it on
 2026-10-11), which says "until spec 112".
@@ -387,7 +388,7 @@ summary, an event or the exception boundary through `scrub_secrets`.
 **`harrier store migrate` reports what it found under the lock.**
 `apply_postgres_migrations` reads `before` at `pgstore.py:114`, before it
 takes the advisory lock at `:119`, so two runs started together on an
-empty store each print `postgres 0 -> 10` (`harrier_cli/main.py:1568`)
+empty store each print `postgres 0 -> 10` (`harrier_cli/main.py:1569`)
 though each migration was applied once. After this spec the runner reads
 `before` under the migration lock and holds a session-level advisory lock
 on the same key from that read until its last migration commits. Each
@@ -1132,7 +1133,7 @@ library older than 3.35 with Failure modes' text. Spec 126's `RETURNING
 id` needs it.
 
 **What does not change.** The CLI and the API gates
-(`harrier_cli/main.py:3079-3082`, `harrier_api/app.py:1370-1371`) and
+(`harrier_cli/main.py:3091-3094`, `harrier_api/app.py:1370-1371`) and
 their text, `POSTGRES_NOT_YET` (`connection.py:41-43`), are unchanged.
 Domain SQL is unchanged apart from the two users of `commit()` above.
 

@@ -21,9 +21,9 @@ each run only its owner's. Akin chose bring-your-own LLM keys (spec 102,
 open decision 3).
 
 Line numbers below are from `main` at `44ac0d7` (2026-10-10), except the
-`harrier_cli/main.py` and `harrier_api/app.py` ones, refreshed to `main` at
-`524dd8a` on 2026-10-11, and the `schema.py` ones, refreshed to `main` at
-`5c3d083` after migration 16. Counts say how they were taken.
+`harrier_api/app.py` ones, refreshed to `main` at `524dd8a` on 2026-10-11,
+the `schema.py` ones, refreshed to `main` at `5c3d083` after migration 16,
+and the `harrier_cli/main.py` ones, refreshed to `main` at `a7b9998`. Counts say how they were taken.
 
 The post-merge review of PRs #194 and #207 (2026-10-10) added five
 problems this spec owns:
@@ -92,7 +92,7 @@ spec 104's 501 is lifted:
   A's track 1 and owner B's track 1 would share seen-state and saved
   datasets.
 - **A run reads `.env`.** `main` calls `load_project_env()` first
-  (`services/api/src/harrier_cli/main.py:3054-3055`), which copies every
+  (`services/api/src/harrier_cli/main.py:3078-3079`), which copies every
   key of `.env` in the working directory that the environment lacks
   (`main.py:53-59`). An allowlist that leaves a name out would then be
   filled from a file. The image excludes `.env` (`.dockerignore:5-6`), so
@@ -237,9 +237,9 @@ them.
 | Kind | Hosted | Needs | Why |
 |---|---|---|---|
 | `discovery` | runs | none up front | results are tracker rows; each source reports its own missing token (`sources/apify_linkedin.py:315`) |
-| `demo` | runs | none | `demo-run` exercises the run machinery and touches no data (`harrier_cli/main.py:2202-2203`); spec 110's staging check uses it |
+| `demo` | runs | none | `demo-run` exercises the run machinery and touches no data (`harrier_cli/main.py:2226-2227`); spec 110's staging check uses it |
 | `digest` | runs | `telegram`, unless `--dry-run` | it sends through `send_telegram_message` (`harrier/digest.py:22`, `:341`) |
-| `check-feeds` | runs | none | reads the owner's boards from the store (`harrier_cli/main.py:1718-1734`) |
+| `check-feeds` | runs | none | reads the owner's boards from the store (`harrier_cli/main.py:1742-1758`) |
 | `reconsider` | runs | none | results are tracker rows |
 | `events-backfill` | runs | none | results are event rows |
 | `evaluate-prospects` | runs | `ai` | calls `evaluate_offer` (`harrier/offers/batch.py:91`); results are tracker rows |
