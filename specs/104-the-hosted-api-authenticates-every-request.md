@@ -271,11 +271,12 @@ transaction that runs the login-role checks below, as `harrier_tenant`
 (the login role holds no grant of its own; spec 105 grants `SELECT` on
 `schema_version` to `harrier_tenant`). It refuses to start when the
 version is behind or ahead of `target_version()`
-(`services/api/src/harrier/pgstore.py:152-156`), with the texts of
-`check_postgres_version` (`pgstore.py:227-237`). Requests do not check the
+(`services/api/src/harrier/pgstore.py:84-88`), with the texts of
+`check_postgres_version` (`pgstore.py:159-168`; the newer-store text is
+`_ahead_message`, `:152-156`). Requests do not check the
 version again: `get_conn` takes a pooled connection and never calls
-`open_postgres_store` (`pgstore.py:239-247`), whose `postgres_version`
-runs two catalog queries per open (`pgstore.py:159-165`). A refusal at
+`open_postgres_store` (`pgstore.py:171-179`), whose `postgres_version`
+runs two catalog queries per open (`pgstore.py:91-97`). A refusal at
 start is what enforces spec 110's "migrations apply before a new API
 version serves": an image newer than the store does not serve.
 (post-merge review of PRs #194 and #207, 2026-10-10)

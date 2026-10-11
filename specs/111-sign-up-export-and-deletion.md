@@ -842,7 +842,7 @@ Repository:
   trigger at `:746-748`; the `owner_id` foreign key at `:749-755`;
   `harrier_new_owner()` at `:829-841`; the grants at `:870-890`;
   `POSTGRES_MIGRATIONS` at `:919-923`, whose latest version
-  `target_version()` returns (`services/api/src/harrier/pgstore.py:193-197`).
+  `target_version()` returns (`services/api/src/harrier/pgstore.py:84-88`).
 - `services/api/tests/test_owner_policy.py`: `catalog_problems`, its
   definer allowlist and `NO_PRIVILEGE_ROLES`.
 - `services/api/src/harrier_cli/main.py`: `load_project_env` at `:51-58`,
