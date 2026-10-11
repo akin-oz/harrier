@@ -1,8 +1,8 @@
 ---
 spec: 127
 title: The CLI and API gates name their classes
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [103, 104, 106, 108, 109, 111, 112]
 ---
