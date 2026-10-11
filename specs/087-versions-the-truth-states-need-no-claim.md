@@ -174,7 +174,7 @@ These are decisions. Each is a consequence of V0 to V3.
   "To verify" only as a number, without its sentence.
 - **The vocabulary decides.** Only a term without the version names a
   version. A vocabulary that lists `Python 3` but not `Python` gives no
-  exemption to `Python 3.12`. `config/resume-content.example.json` lists one
+  exemption to `Python 3.12`. `config/resume-facts.example.json` lists one
   technology with its version in both the alias key and `all_skills`, and
   that one passes only through its bare alias.
   A technology missing from `all_skills` and `technology_aliases` gets no
@@ -330,6 +330,6 @@ tests are, and each one fails when the condition it names is removed.
   not fixed here. It is not recorded in any spec yet and needs its own, with
   the acceptance criterion that a claim clears a number only in the sentence
   it declares.
-- Changing `NEGATIONS`, or how C6 reads a rate in the joined text for
+- Changing the negation markers (spec 100 later did), or how C6 reads a rate in the joined text for
   numbers that are not versions.
 - Listing an exempt version's grounding line under "To verify".

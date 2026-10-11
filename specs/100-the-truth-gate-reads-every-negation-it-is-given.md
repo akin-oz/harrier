@@ -275,8 +275,10 @@ was denying. Reword the truth line, or accept that the claim goes.
 
 ## Proof / origin
 
-- The gate: `services/api/src/harrier/resume/content.py` (`NEGATIONS`,
-  `_is_negated`, `asserting_lines`, `TruthSources`, `strip_inline_markup`).
+- The gate: `services/api/src/harrier/resume/content.py`
+  (`SENTENCE_NEGATORS`, `EXCLUSION_MARKERS`, `denial_start`,
+  `asserting_lines`, `TruthSources`, `strip_inline_markup`), which replaced
+  `NEGATIONS` and `_is_negated`.
 - The polarity rule: spec 034. Markup ignored on both sides: spec 068.
   The Kafka examples: spec 087.
 - Callers: `services/api/src/harrier/resume/markdown.py`,
