@@ -570,15 +570,24 @@ schema `public` from `pg_class` and fails, naming the table, when:
   confines instead (second post-merge review, item 2).
 - **A whole-table lock is not policed.** `LOCK TABLE` checks the table's
   privileges, not the policy. `UPDATE`, `DELETE`, `TRUNCATE` or `MAINTAIN`
-  on the table allows any lock mode. The tenant role holds `UPDATE` or
-  `DELETE` on six of the seven owned tables. `job_events` refuses it
-  (`42501`, `permission denied for table job_events`), because the tenant
-  role holds no `UPDATE` or `DELETE` there. On the other six, a tenant
-  session can take `ACCESS EXCLUSIVE`, which holds every owner's reads as
-  well as writes until its transaction ends. It names no owner and learns
-  nothing of one, but it stalls all of them. Not closed. Spec 104's
-  Amendment (2026-10-11), request-role timeouts, is what bounds it: every
-  other request waits at most its own `lock_timeout`. The holder's own
+  on the table allows any lock mode; `SELECT` allows `ACCESS SHARE`. The
+  tenant role holds `UPDATE` or `DELETE` on six of the seven owned
+  tables. On `job_events` it holds only `SELECT` and column `INSERT`, so
+  every mode above `ACCESS SHARE` is refused there (`42501`, `permission
+  denied for table job_events`). On the other six, a tenant session can
+  take `ACCESS EXCLUSIVE`, which holds every owner's reads as well as
+  writes until its transaction ends. It names no owner and learns
+  nothing of one, but it stalls all of them. On all seven, `job_events`
+  included, it can take `ACCESS SHARE`. That mode stalls no owner by
+  itself, but it blocks a migration's `ACCESS EXCLUSIVE`, and every
+  owner's statements on that table then queue behind the waiting
+  migration. On Postgres 17, with a tenant holding `ACCESS SHARE` on
+  `job_events` and a migration's `ALTER TABLE job_events` waiting, another
+  owner's `SELECT` on it timed out on its `lock_timeout`. `harrier store
+  migrate` sets no `lock_timeout`, so its wait holds that queue until the
+  tenant's transaction ends. Not closed. Spec 104's Amendment
+  (2026-10-11), request-role timeouts, is what bounds it: every other
+  request waits at most its own `lock_timeout`. The holder's own
   `statement_timeout` and `idle_in_transaction_session_timeout` bound a
   hold by harrier's statements; SQL injected into the holder can raise
   them for its session.
@@ -924,7 +933,10 @@ before; the pull request carries the runs.
 7. **The concurrency test counted any lock wait on the server.** On a
    shared server, another session's wait ended the test's wait early, and
    with the numbering lock removed the test still passed. It now waits for
-   the second connection's own backend to wait on an advisory lock
+   the second connection's own backend to wait on the numbering lock: an
+   advisory lock until migration 14, and since then the row lock on the
+   owner's track 1, which shows in `pg_locks` as a wait on the first
+   insert's `transactionid`
    (`services/api/tests/test_owner_policy.py::test_every_owner_starts_with_track_one`). With the lock removed and
    an unrelated waiter on the server, the old form passed and the new one
    fails.
@@ -1171,6 +1183,13 @@ changes: migrations 9 to 14 are unchanged, and no migration 15 is added.
 3. **A recorded finding for spec 104.** That limitation named a timeout
    on the request role that spec 104 did not have. Spec 104's Amendment
    (2026-10-11) now requires it, with its own criteria.
+4. **A claims audit of PR #243** found two more sentences that did not
+   hold. The whole-table lock limitation said `job_events` refuses
+   `LOCK TABLE`; it refuses only modes above `ACCESS SHARE`, and that
+   mode, on any owned table, queues every owner behind a waiting
+   migration. First post-merge review item 7 said the concurrency test
+   waits on an advisory lock; since migration 14 it waits on the row
+   lock. Both are corrected in place.
 
 ### Acceptance criteria (third post-merge review)
 
