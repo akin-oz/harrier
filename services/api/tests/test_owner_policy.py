@@ -39,8 +39,9 @@ from pg_support import (
     new_owner,
 )
 
+from harrier.connection import URL_VARIABLE, StoreMigrationRefused
 from harrier.db import connect, schema_version
-from harrier.pgstore import URL_VARIABLE, StoreMigrationRefused, migrate_postgres
+from harrier.pgstore import migrate_postgres
 from harrier.tracker import schema
 from harrier.tracker.schema import (
     GLOBAL_ID_TABLES,

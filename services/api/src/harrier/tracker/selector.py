@@ -16,8 +16,7 @@ matched, so the operator narrows the selector themselves.
 
 from __future__ import annotations
 
-import sqlite3
-
+from harrier.connection import Connection
 from harrier.screening.normalized import normalize
 from harrier.tracker.store import TrackerError, list_jobs
 from harrier.tracks import Scope
@@ -35,7 +34,7 @@ def describe(job: dict[str, str]) -> str:
     return f"{job['id']}. {job['company']} - {job['title']} [{job['status']}]"
 
 
-def resolve_selector(conn: sqlite3.Connection, scope: Scope, selector: str) -> dict[str, str]:
+def resolve_selector(conn: Connection, scope: Scope, selector: str) -> dict[str, str]:
     """The one row this selector names.
 
     A numeric selector is the job id, not a position. The old CLI indexed

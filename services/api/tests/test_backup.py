@@ -32,6 +32,7 @@ from harrier.backup import (
     verify_archive,
     verify_database,
 )
+from harrier.connection import Connection
 from harrier.db import DB_FILENAME, connect
 from harrier.tracker.store import add_job, list_jobs
 from harrier.tracks import default_scope
@@ -214,8 +215,9 @@ def test_a_verified_archive_restores_to_a_readable_tracker(data: Path, tmp_path:
     target = tmp_path / "restored"
     assert restore_backup(result.archive, target) == 3
 
-    conn = sqlite3.connect(target / DB_FILENAME)
-    conn.row_factory = sqlite3.Row
+    raw = sqlite3.connect(target / DB_FILENAME)
+    raw.row_factory = sqlite3.Row
+    conn = Connection(raw)
     rows = list_jobs(conn, default_scope(conn))
     conn.close()
     assert len(rows) == 3

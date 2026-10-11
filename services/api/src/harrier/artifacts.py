@@ -11,12 +11,12 @@ before anything touches the filesystem.
 
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
 from harrier.apply.answers import answers_path_for
 from harrier.apply.letters import cover_letter_paths_for
+from harrier.connection import Connection
 from harrier.offers.evaluate import report_path_for
 from harrier.resume.content import ResumeBundleError, load_bundle
 from harrier.resume.tailor import resume_paths_for
@@ -67,7 +67,7 @@ _MEDIA_TYPES: dict[str, str] = {
 
 
 def _resume_paths(
-    conn: sqlite3.Connection, scope: Scope, company: str, role: str
+    conn: Connection, scope: Scope, company: str, role: str
 ) -> dict[str, Path] | None:
     """None when the resume bundle is not configured.
 
@@ -83,7 +83,7 @@ def _resume_paths(
     return resume_paths_for(bundle.name, company, role)
 
 
-def _paths_by_kind(conn: sqlite3.Connection, scope: Scope, job_id: int) -> dict[str, Path]:
+def _paths_by_kind(conn: Connection, scope: Scope, job_id: int) -> dict[str, Path]:
     row = get_job(conn, scope, job_id)
     company = row.get("company", "")
     role = row.get("title", "")
@@ -103,7 +103,7 @@ def _paths_by_kind(conn: sqlite3.Connection, scope: Scope, job_id: int) -> dict[
     return paths
 
 
-def artifacts_for_job(conn: sqlite3.Connection, scope: Scope, job_id: int) -> list[Artifact]:
+def artifacts_for_job(conn: Connection, scope: Scope, job_id: int) -> list[Artifact]:
     """Every artifact kind for this job, present or not.
 
     Absent kinds are listed rather than omitted: the page's job is to say
@@ -126,7 +126,7 @@ def artifacts_for_job(conn: sqlite3.Connection, scope: Scope, job_id: int) -> li
     return found
 
 
-def artifact_for_job(conn: sqlite3.Connection, scope: Scope, job_id: int, kind: str) -> Artifact:
+def artifact_for_job(conn: Connection, scope: Scope, job_id: int, kind: str) -> Artifact:
     """One artifact by kind.
 
     Raises `UnknownArtifactKind` for anything outside the closed set, which is

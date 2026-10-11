@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
 from dataclasses import dataclass, field
 from typing import cast
 
+from harrier.connection import Connection
 from harrier.profile.store import get_document, put_document
 from harrier.resume.content import (
     ResumeBundleError,
@@ -156,7 +156,7 @@ def parse_brief(raw: object) -> Brief:
     )
 
 
-def store_brief(conn: sqlite3.Connection, job_id: int, text: str) -> Brief:
+def store_brief(conn: Connection, job_id: int, text: str) -> Brief:
     """Validate, then store. Nothing is written when validation fails."""
     try:
         raw: object = json.loads(text)
@@ -180,7 +180,7 @@ def _named_in(sources: TruthSources, skill: str) -> bool:
     return any(pattern.search(line) for line in sources.lines_containing(skill))
 
 
-def _check_confirmed_skills(conn: sqlite3.Connection, skills: tuple[str, ...]) -> None:
+def _check_confirmed_skills(conn: Connection, skills: tuple[str, ...]) -> None:
     """A confirmed skill must already exist somewhere the candidate wrote it:
     the bundle's `all_skills` or a line of the truth documents (spec 071 O9).
     Confirming is permission to show it, not a new claim."""
@@ -203,11 +203,11 @@ def _check_confirmed_skills(conn: sqlite3.Connection, skills: tuple[str, ...]) -
         )
 
 
-def brief_text(conn: sqlite3.Connection, job_id: int) -> str | None:
+def brief_text(conn: Connection, job_id: int) -> str | None:
     return get_document(conn, APPLICATION_BRIEF_KIND, str(job_id))
 
 
-def load_brief(conn: sqlite3.Connection, job_id: int) -> Brief:
+def load_brief(conn: Connection, job_id: int) -> Brief:
     """No brief is the empty brief. A stored brief that no longer parses is
     refused, so a damaged never-name list cannot switch itself off."""
     content = brief_text(conn, job_id)

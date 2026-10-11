@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import sqlite3
 from pathlib import Path
 from typing import Any, cast
 
@@ -20,6 +19,7 @@ from harrier.apply.profile import (
     load_profile_json,
     load_profile_markdown,
 )
+from harrier.connection import Connection
 from harrier.db import data_dir
 from harrier.llm import LLMClientError, generate_text
 from harrier.llm.jsonparse import loads_tolerant
@@ -223,7 +223,7 @@ def parse_ai_outreach_response(text: str) -> dict[str, list[dict[str, Any]]]:
 
 
 def generate_ai_outreach(
-    conn: sqlite3.Connection,
+    conn: Connection,
     *,
     company: str,
     role: str,
@@ -352,7 +352,7 @@ def build_request(payload: dict[str, object]) -> OutreachRequest:
 
 
 def generate_outreach(
-    conn: sqlite3.Connection,
+    conn: Connection,
     *,
     company: str,
     role: str,

@@ -9,11 +9,11 @@ anything is written.
 from __future__ import annotations
 
 import csv
-import sqlite3
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from harrier.connection import Connection
 from harrier.tracker.schema import CONTACT_FIELDS, NOTE_KEYS, STATUSES, TRACKER_FIELDS
 from harrier.tracker.store import TrackerError, expand_notes, extract_note_value
 
@@ -89,7 +89,7 @@ def scan_job_duplicates(rows: list[dict[str, str]]) -> list[str]:
 
 
 def migrate(
-    conn: sqlite3.Connection,
+    conn: Connection,
     jobs_csv: Path,
     contacts_csv: Path | None,
     *,
@@ -138,7 +138,7 @@ def migrate(
     contact_placeholders = ", ".join("?" for _ in CONTACT_FIELDS)
 
     # One transaction for replacement plus both imports: all or nothing.
-    with conn:
+    with conn.transaction():
         if existing_count > 0:
             conn.execute("DELETE FROM jobs")
             conn.execute("DELETE FROM contacts")

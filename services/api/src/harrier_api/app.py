@@ -7,7 +7,6 @@ Routes speak Pydantic models only; the web app speaks generated types only.
 from __future__ import annotations
 
 import os
-import sqlite3
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date
@@ -23,11 +22,11 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from harrier.apply.brief import Brief
+from harrier.connection import POSTGRES_NOT_YET, Connection, store_target
 from harrier.db import DatabaseOwnedByHost, connect, default_db_path, lease_directory
 from harrier.demo import repo_root
 from harrier.hostlease import oldest_hold
 from harrier.logsetup import configure_logging
-from harrier.pgstore import POSTGRES_NOT_YET, store_target
 from harrier.tracker import list_jobs
 from harrier.tracker.reasons import CANDIDATE, COMPANY, SYSTEM, codes_for
 from harrier.tracker.selector import SelectorError
@@ -38,7 +37,6 @@ from harrier_api.capture_routes import capture_router
 from harrier_api.demo import demo_db_path, is_demo_mode, seed_demo_db
 from harrier_api.deps import (
     DATABASE_HELD_DETAIL,
-    TRACK_REFUSAL_RESPONSES,
     VERB_IN_BODY,
     Conn,
     DatabaseHeldOut,
@@ -569,14 +567,11 @@ APPLY_ERRORS: dict[int | str, dict[str, str]] = {
 # the kind already active. Joined, so the contract names every cause.
 APPLY_RUN_RESPONSES = merge_responses(
     APPLY_ERRORS,
-    {409: TRACK_REFUSAL_RESPONSES[409]},
     {409: {"description": "application documents from the browser are the default track's"}},
     RUN_CONFLICT_RESPONSES,
 )
 # `evaluate` never runs on another track: the track refusal answers first.
-EVALUATE_RESPONSES = merge_responses(
-    APPLY_ERRORS, {409: TRACK_REFUSAL_RESPONSES[409]}, RUN_CONFLICT_RESPONSES
-)
+EVALUATE_RESPONSES = merge_responses(APPLY_ERRORS, RUN_CONFLICT_RESPONSES)
 
 ARTIFACT_ERRORS: dict[int | str, dict[str, str]] = {
     404: {"description": "no such job, artifact kind, or the artifact is not produced yet"},
@@ -584,7 +579,7 @@ ARTIFACT_ERRORS: dict[int | str, dict[str, str]] = {
 }
 
 
-def _job_id_for(conn: sqlite3.Connection, scope: TrackScope, selector: str) -> int:
+def _job_id_for(conn: Connection, scope: TrackScope, selector: str) -> int:
     from harrier.tracker.selector import resolve_selector
 
     try:
@@ -594,7 +589,7 @@ def _job_id_for(conn: sqlite3.Connection, scope: TrackScope, selector: str) -> i
 
 
 def _apply_params(
-    conn: sqlite3.Connection,
+    conn: Connection,
     scope: TrackScope,
     operation: str,
     selector: str,
@@ -880,7 +875,7 @@ runs_router = APIRouter(route_class=DatabaseRoute)
     "/runs",
     operation_id="startRun",
     dependencies=[Depends(require_token)],
-    responses={**TOKEN_RESPONSES, **RUN_CONFLICT_RESPONSES},
+    responses=merge_responses(TOKEN_RESPONSES, RUN_CONFLICT_RESPONSES),
 )
 async def start_run(body: StartRunIn, manager: Manager) -> RunOut:
     return run_out(await manager.start(body.kind))
@@ -990,7 +985,7 @@ CONFIG_ERRORS: dict[int | str, dict[str, object]] = {
 config_router = APIRouter(route_class=DatabaseRoute)
 
 
-def _config_out(conn: sqlite3.Connection, kind: str) -> ConfigOut:
+def _config_out(conn: Connection, kind: str) -> ConfigOut:
     """What is in effect for one kind, including when it cannot be read.
 
     A kind whose value the store refuses is described rather than raised
@@ -1079,7 +1074,7 @@ def get_configuration(kind: str, conn: Conn) -> ConfigOut:
 @config_router.put(
     "/config/{kind}",
     operation_id="putConfig",
-    responses={**CONFIG_ERRORS, **TOKEN_RESPONSES},
+    responses=merge_responses(CONFIG_ERRORS, TOKEN_RESPONSES),
     dependencies=[Depends(require_token)],
 )
 def put_configuration(kind: str, body: ConfigIn, conn: Conn) -> ConfigOut:

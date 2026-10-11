@@ -8,12 +8,12 @@ send nothing; actionable events notify through harrier.notify.
 from __future__ import annotations
 
 import shutil
-import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
+from harrier.connection import Connection
 from harrier.mail.watch import (
     ACTIONABLE_KINDS,
     GmailMessage,
@@ -60,7 +60,7 @@ def _debug_line(
 
 
 def run_watch(
-    conn: sqlite3.Connection,
+    conn: Connection,
     scope: Scope,
     *,
     dry_run: bool = False,

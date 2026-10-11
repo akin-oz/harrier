@@ -16,9 +16,9 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import sqlite3
 from pathlib import Path
 
+from harrier.connection import Connection
 from harrier.db import DB_FILENAME, connect, data_dir
 from harrier.demo import is_demo_mode, repo_root
 from harrier.profile.store import TRACK_OWNED_KINDS, put_document
@@ -82,7 +82,7 @@ def default_fixture_path() -> Path:
     return repo_root() / "fixtures" / "demo-jobs.json"
 
 
-def seed_profile_documents(conn: sqlite3.Connection) -> list[str]:
+def seed_profile_documents(conn: Connection) -> list[str]:
     """Load every committed example into the profile store. Returns the
     relative paths that were missing, which test_demo.py asserts is empty."""
     root = repo_root()
