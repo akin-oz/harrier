@@ -450,6 +450,31 @@ def test_a_rejected_row_is_protected_under_the_key_discovery_records(
     assert set(load_seen("greenhouse")) == {job["job_key"]}
 
 
+def test_a_board_cut_short_in_notes_is_still_matched(
+    db: sqlite3.Connection, cfg: dict[str, Any]
+) -> None:
+    """LinkedIn takes the board from the company name, and notes end a value
+    at `;`, so the stored label reads `apify_linkedin:smith`. The company
+    column is whole, so the key is still rebuilt."""
+    job = make_normalized_job(
+        source="apify_linkedin",
+        company="Smith; Jones LLP",
+        title="Senior Frontend Engineer",
+        location="Remote, Europe",
+        url="https://www.linkedin.com/jobs/view/4001",
+        external_id="4001",
+        board_key="Smith; Jones LLP",
+    )
+    job_id = add_job(db, build_tracker_row(job, 80, []), scope=default_scope(db))
+    set_status(db, default_scope(db), job_id, "rejected")
+    save_seen("apify_linkedin", {job["job_key"]: decision(policy="old-policy")})
+
+    report = reconsider_source(db, default_scope(db), "apify_linkedin", cfg, dry_run=False)
+
+    assert report.protected == 1
+    assert report.changed == 0
+
+
 def test_a_row_the_operator_has_not_rejected_leaves_its_key_eligible(
     db: sqlite3.Connection, cfg: dict[str, Any]
 ) -> None:

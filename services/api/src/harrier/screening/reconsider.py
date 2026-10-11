@@ -95,6 +95,12 @@ def human_rejected_seen_keys(conn: sqlite3.Connection, scope: Scope, source: str
     so a seen key never equals a url or a company and title. The row keeps
     what the hash was built from: its source, its `source_label`
     (`source:board`), and its external id or url.
+
+    The label is read back from notes, which end a value at `;`, so a board
+    taken from a company name such as "Smith; Jones LLP" comes back cut
+    short. The company column is stored whole, so the board it gives is
+    tried as well. An external id containing `;` is cut the same way and
+    cannot be recovered from the row.
     """
     prefix = f"{source}:"
     keys: set[str] = set()
@@ -103,8 +109,10 @@ def human_rejected_seen_keys(conn: sqlite3.Connection, scope: Scope, source: str
             continue
         notes = job.get("notes", "")
         label = job.get("source_label", "") or extract_note_value(notes, "source_label")
-        board = label[len(prefix) :] if label.startswith(prefix) else ""
-        board = normalize(board or job.get("company", "") or source)
+        company_board = normalize(job.get("company", "") or source)
+        boards = {company_board}
+        if label.startswith(prefix) and label[len(prefix) :]:
+            boards.add(normalize(label[len(prefix) :]))
         external = job.get("external_key", "") or extract_note_value(notes, "external_key")
         external_id = external[len(prefix) :] if external.startswith(prefix) else ""
         identity = (
@@ -112,7 +120,7 @@ def human_rejected_seen_keys(conn: sqlite3.Connection, scope: Scope, source: str
             or (job.get("url", "") or "").strip()
             or stable_key(job.get("company", ""), job.get("title", ""), job.get("location", ""))
         )
-        keys.add(stable_key(source, board, identity))
+        keys.update(stable_key(source, board, identity) for board in boards)
     return keys
 
 
