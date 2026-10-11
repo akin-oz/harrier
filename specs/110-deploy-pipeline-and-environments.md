@@ -87,11 +87,13 @@ after specs 104, 112, 114 and 115.
    3).
 2. **Fly configuration.** `deploy/fly.staging.toml` and
    `deploy/fly.production.toml`: app name, `primary_region = "fra"`, the
-   HTTP service, the health check, and the non-secret hosted variables in
-   `[env]`.
+   HTTP service, the health check, the non-secret hosted variables in
+   `[env]`, and the machine size and auto-stop settings under "Hosting
+   budget (2026-10-11)".
 3. **Vercel configuration.** `apps/web/vercel.json` turns off Vercel's own
    Git deployments, so only the workflow deploys, and serves the SPA's
-   routes.
+   routes. Both Vercel projects are on the free Hobby plan (Hosting
+   budget).
 4. **`harrier store grant-tenant <role>`.** A new subcommand under
    `harrier store` that checks a login role and grants it `harrier_tenant`
    (Behavior).
@@ -457,7 +459,9 @@ holds the URL and its password.
 - Backups of the hosted store are Supabase's, per its plan. This spec adds
   none; a dump of tenants' data is personal data on another machine and
   needs its own spec.
-- No cost figures. Plans and prices are out of scope (spec 102).
+- Cost figures appear only under "Hosting budget (2026-10-11)", each quoted
+  from a cited page with its read date or marked as an estimate with its
+  arithmetic. Billing tenants stays out of scope (spec 102).
 - The line numbers cited here are refreshed by the change that implements
   this spec, not before (decision D9, 2026-10-11).
 
@@ -528,12 +532,15 @@ Akin took these in chat on 2026-10-11 ("go with your recommendations").
   gathered into one section, "Amendment (2026-10-11): what specs 106 to
   111 ask of the deploy", with its own acceptance criteria. Gathering them
   found one question none of them settles: where the scheduler runs on
-  Fly, now Open decision 9.
+  Fly, now Open decision 9 (superseded the same day by the hosting
+  budget, which asks Open decision 10 instead).
 - **D9, line numbers.** Refreshed by this spec's implementing change
   (Honest limitations).
 
 Open decisions 1, 2 and 4 to 8 below were not the subject of these
 decisions and stand as written; item 3 is answered for `gmail` only.
+Item 9 is superseded by the hosting budget of the same day, and item 10
+is added by it (Hosting budget (2026-10-11)).
 
 ## Open decisions for Akin
 
@@ -584,6 +591,24 @@ decisions and stand as written; item 3 is answered for `gmail` only.
    Alternative: a process group of the API app, as spec 108 wrote it, one
    app fewer, with every secret of each reaching the other's machines
    (Fly secrets are app wide).
+   Superseded 2026-10-11 by the hosting budget: an always-on scheduler
+   machine costs more than the budget allows (Hosting budget, "The
+   scheduler"). The question of which app holds the scheduler's secrets
+   survives as Open decision 10.
+10. **Which app holds the scheduled scheduler machine.** Added 2026-10-11
+   Taken 2026-10-11 (Akin, "go with your recommendations"): the recommended answer.
+    by the hosting budget. Recommended: an app of its own per environment,
+    `harrier-scheduler-staging` and `harrier-scheduler-production`, with
+    no service and no IP address, holding one scheduled machine from the
+    API's image. Its secrets stay its own, for the reason Open decision 9
+    gave, and it needs its own deploy token, since a Fly deploy token
+    manages one app. Alternative: the scheduled machine inside the API
+    app, one app and one token fewer, with the API's secrets reaching the
+    scheduler and the scheduler's reaching the API machine. Fly's pricing
+    page bills machines, stopped machines' root file systems, volumes,
+    IPv4 addresses and data transfer; whether an app with none of those
+    costs anything is not stated there and is an assumption (spec 115,
+    F4).
 
 ## Proof / origin
 
@@ -657,6 +682,37 @@ decisions and stand as written; item 3 is answered for `gmail` only.
 - Fly community, IPv6 outbound from one region to Supabase failing (one
   user's report, unconfirmed by Fly). Read 2026-10-10.
   https://community.fly.io/t/ipv6-outbound-from-gru-to-supabase-100-packet-loss/27739
+- Fly, Pricing: new organizations are Pay As You Go with no free tier or
+  monthly free allowance; shared-cpu-1x always on per month in the base
+  region, 256MB $2.19, 512MB $3.69, 1GB $6.70; in Frankfurt, 1GB $7.73
+  (the page's table); "Monthly Machine prices assume 30 days of
+  continuous runtime"; a stopped Machine is billed only for its root file
+  system, at $0.15/GB/month; volumes $0.15/GB/month; outbound data to
+  Europe $0.02/GB; shared IPv4 and IPv6 free, dedicated IPv4 $2/month; no
+  small-invoice waiver is stated. Read 2026-10-11.
+  https://docs.fly.io/about/pricing
+- Fly, Autostop/autostart: the proxy "stops Machines when the app has
+  excess capacity", judged by each Machine's concurrency `soft_limit`;
+  its stop loop "runs every few minutes and stops at most one Machine per
+  region per pass"; `min_machines_running` applies only in the primary
+  region and only when stopping is on; an app may instead "exit when
+  idle" with `auto_stop_machines = "off"` and `auto_start_machines =
+  true`. The page does not say whether an open connection keeps a Machine
+  running, and does not mention background work. Read 2026-10-11.
+  https://docs.fly.io/launch/autostop-autostart
+- Fly, `fly machine run`: `--schedule` starts a Machine on a fuzzy
+  `hourly`, `daily`, `weekly` or `monthly` cycle, "once per (approximate)"
+  interval; scheduled Machines "cannot be started via flyctl or Machines
+  API commands"; they suit Machines "that do a finite job, then exit";
+  the default restart policy is `always` unless `--rm`, which destroys the
+  Machine when it stops. Read 2026-10-11.
+  https://docs.fly.io/machines/flyctl/fly-machine-run
+- Fly, Task scheduling: scheduled Machines are "Not for precise timing".
+  Read 2026-10-11. https://docs.fly.io/blueprints/task-scheduling
+- Vercel, Hobby plan: free; restricted to non-commercial, personal use
+  under the fair use guidelines; function maximum duration 300 s; when a
+  usage limit is exceeded the feature pauses until 30 days pass. Read
+  2026-10-11. https://vercel.com/docs/plans/hobby
 - Vercel, Environments: custom environments on Pro (one per project) and
   Enterprise; staging alternatives. Read 2026-10-10.
   https://vercel.com/docs/deployments/environments
@@ -687,13 +743,16 @@ Assumptions this spec could not confirm, each checked where named:
   114's sign-in first runs against staging.
 - The REST endpoint answers non-2xx with the Data API off; the first
   staging deploy's smoke step.
+- The hosting budget's Fly assumptions (Hosting budget (2026-10-11),
+  "Assumptions"): spec 115's F1 to F5.
 
 ## Out of scope
 
 Where an item below gives a deploy step to specs 106 to 111, the
 Amendment (2026-10-11) at the end of this spec takes that step here.
 
-- Pricing, billing and plans.
+- Billing tenants, and any paid plan. The operator's hosting budget and
+  the plans it chooses are under "Hosting budget (2026-10-11)".
 - Running spec 105's isolation tests on a real Supabase project, and CI
   migrating as a non-superuser: spec 115.
 - Creating any account or project. Akin does that; the runbook lists it.
@@ -736,10 +795,12 @@ section that asked it.
 
 ### The API app
 
-- **One machine, never stopped** (spec 106, "Where a run lives on Fly").
-  Both Fly files set `auto_stop_machines = "off"` for the API's HTTP
-  service. A step after `fly deploy` counts the API process group's
-  machines and fails the deploy unless there is exactly one.
+- **One machine, stopped when idle** (spec 106, "Where a run lives on
+  Fly"; amended 2026-10-11 by the hosting budget, which replaced "never
+  stopped"). Both Fly files set the API service's auto-stop settings as
+  "Hosting budget (2026-10-11)" states. A step after `fly deploy` counts
+  the API process group's machines, started or stopped, and fails the
+  deploy unless there is exactly one.
 - **The run login role** (spec 106, "One login role for requests, another
   for runs"). The operator creates `harrier_run` once per environment, as
   `harrier_api` is created (`CREATE ROLE ... LOGIN NOINHERIT`, the
@@ -761,12 +822,17 @@ section that asked it.
 
 ### The scheduler
 
-From spec 108, "What spec 110 provisions":
+From spec 108, "What spec 110 provisions", as amended 2026-10-11 by the
+hosting budget:
 
-- **A process group `scheduler`** with one machine and no service, a
-  restart policy that restarts it on exit, running `harrier operator
-  scheduler`. Where it lives, in the API app or an app of its own, is
-  Open decision 9.
+- **One scheduled machine**, created once per environment with `fly
+  machine run --schedule hourly --restart no` from the API's image,
+  running `harrier operator scheduler`, which runs one tick and exits
+  (spec 108). It has no service. The process group with an always-on
+  machine that this item first named is superseded by the hosting budget.
+  Which app holds it is Open decision 10. Each deploy, after the API's
+  `fly deploy`, moves it to the same image digest with `fly machine
+  update`, which must keep its schedule (spec 115, F3).
 - **The scheduler's login role.** The operator creates `harrier_scheduler`
   once per environment, as above. Two named deploy steps grant it
   `harrier_tenant` (`harrier store grant-tenant`) and
@@ -776,8 +842,10 @@ From spec 108, "What spec 110 provisions":
   `check-deploy` fails when `harrier_scheduler` is not a member of both
   roles.
 - **Its limits.** `HARRIER_SCHEDULER_CONCURRENCY` and
-  `HARRIER_SCHEDULED_RUN_TIMEOUT_SECONDS` are set in the scheduler's Fly
-  configuration for each environment. Their values are the operator's
+  `HARRIER_SCHEDULED_RUN_TIMEOUT_SECONDS` are set on the scheduler machine
+  for each environment, as its environment variables (`fly machine run
+  --env`). The run timeout also bounds what one tick can cost (Hosting
+  budget). Their values are the operator's
   choice per environment; this amendment sets none.
 
 ### Storage
@@ -816,7 +884,7 @@ From spec 111, "Changes to approved specs":
 |---|---|---|
 | `HARRIER_RUN_DATABASE_URL`, the `harrier_run` login | Fly secret on the API app | GitHub, Vercel, `.env`, git |
 | `HARRIER_CREDENTIALS_KEY` | Fly secret on the API app | GitHub, Vercel, `.env`, git |
-| The `harrier_scheduler` login's URL | a Fly secret where the scheduler runs (Open decision 9) | GitHub, Vercel, `.env`, git |
+| The `harrier_scheduler` login's URL | a Fly secret of the app that holds the scheduler machine (Open decision 10) | GitHub, Vercel, `.env`, git |
 | The operator login's URL and `HARRIER_SUPABASE_SECRET_KEY` | the operator's shell | Fly, GitHub, Vercel, `.env`, git |
 | `HARRIER_SUPABASE_PUBLISHABLE_KEY` | `[env]` in the Fly files | not secret |
 
@@ -829,17 +897,19 @@ check stops the dependent spec until a spec owns the fix.
 - **Spec 106** (Honest limitations): whether a process of the same user
   can read `/proc/<pid>/environ` of the API and of sibling runs in Fly's
   machine image; that Supabase's pooler, if the run URL goes through it,
-  keeps `SET LOCAL` within one transaction; that `auto_stop_machines =
-  "off"` leaves the machine running while a run has no open request; and
-  that a rolling deploy replaces the one API machine, ending runs in
-  flight.
+  keeps `SET LOCAL` within one transaction; and that a rolling deploy
+  replaces the one API machine, ending runs in flight. Its assumption that
+  `auto_stop_machines = "off"` leaves the machine running is superseded by
+  the hosting budget; what replaces it is spec 115's F1 and F2.
 - **Spec 107** (Honest limitations): its assumptions 1 to 9 about the
   Storage server, and the Storage REST paths the seam calls.
 - **Spec 108** (Honest limitations): that the migrating role owns
   `harrier_schedule_inputs()` and has `BYPASSRLS`; that it may create
-  `harrier_schedule_reader` and grant it; that a Fly machine in a process
-  group with no service is never stopped by Fly's proxy; and that the
-  image's C library honors `TZ` for every zone `zoneinfo` accepts.
+  `harrier_schedule_reader` and grant it; and that the image's C library
+  honors `TZ` for every zone `zoneinfo` accepts. Its assumption that a
+  machine in a process group with no service is never stopped by Fly's
+  proxy is superseded by the hosting budget, since no such group exists;
+  what replaces it is spec 115's F3.
 - **Spec 109** (Proof / origin, assumptions): that a bot cannot send to a
   private chat whose user has not written to it, and `sendMessage` then
   answers `ok: false`; that a Fly machine reaches `api.telegram.org` with
@@ -851,10 +921,11 @@ check stops the dependent spec until a spec owns the fix.
 ### Honest limitations (amendment)
 
 - **Fly secrets are app wide** (Where each secret lives). If the scheduler
-  is a process group of the API app, the API's `HARRIER_DATABASE_URL`
-  reaches the scheduler machine and the scheduler's login reaches the API
-  machines, against spec 108's rule that the scheduler never runs as the
-  API's login. Open decision 9.
+  machine sits in the API app, the API's `HARRIER_DATABASE_URL` reaches
+  the scheduler machine and the scheduler's login reaches the API
+  machine, against spec 108's rule that the scheduler never runs as the
+  API's login. Open decision 10 (which replaced Open decision 9 on
+  2026-10-11).
 - **The scheduler starts runs** through spec 106's run start (spec 108,
   "What this spec needs from spec 106's run binding"), which decrypts the
   owner's credentials. Wherever the scheduler runs, it then holds what a
@@ -866,19 +937,24 @@ check stops the dependent spec until a spec owns the fix.
 
 ### Acceptance criteria (amendment of 2026-10-11)
 
-- [ ] Both Fly files set `auto_stop_machines = "off"` for the API's
-      service and `HARRIER_SUPABASE_PUBLISHABLE_KEY` in `[env]`, and name
-      no `TELEGRAM_` or `GMAIL_` variable (planned
-      test_the_fly_files_run_one_api_machine_that_never_stops).
-- [ ] The scheduler's Fly configuration runs `harrier operator scheduler`
-      in a group with one machine, no service and a restart on exit, and
-      sets `HARRIER_SCHEDULER_CONCURRENCY` and
-      `HARRIER_SCHEDULED_RUN_TIMEOUT_SECONDS` (planned
-      test_the_scheduler_runs_without_a_service).
+- [ ] Both Fly files set `HARRIER_SUPABASE_PUBLISHABLE_KEY` in `[env]`
+      and name no `TELEGRAM_` or `GMAIL_` variable; their auto-stop
+      settings are the hosting budget's criterion below, which replaced
+      `auto_stop_machines = "off"` on 2026-10-11 (planned
+      test_the_fly_files_run_one_api_machine_that_stops_when_idle).
+- [ ] The runbook's scheduler machine runs `harrier operator scheduler`
+      on `--schedule hourly` with restart policy `no`, no service, and
+      `HARRIER_SCHEDULER_CONCURRENCY` and
+      `HARRIER_SCHEDULED_RUN_TIMEOUT_SECONDS` set; the always-on process
+      group this criterion first named is superseded by the hosting
+      budget. The deploy moves the machine to the API's image digest with
+      `fly machine update` (planned
+      test_the_deploy_workflow_migrates_before_it_deploys, extended).
 - [ ] `deploy.yml` grants `harrier_tenant` to `harrier_api`, `harrier_run`
       and `harrier_scheduler`, and `harrier_schedule_reader` to
-      `harrier_scheduler`, before `check-deploy`; counts the API machines
-      after `fly deploy`; and reads the Auth settings in the smoke step
+      `harrier_scheduler`, before `check-deploy`; counts the API machines,
+      started or stopped, after `fly deploy`; and reads the Auth settings
+      in the smoke step
       (planned test_the_deploy_workflow_migrates_before_it_deploys,
       extended).
 - [ ] `check-deploy` fails, naming the check, when `harrier_run` or
@@ -899,3 +975,204 @@ check stops the dependent spec until a spec owns the fix.
 - [ ] The first staging deploy that needs each staging check records it as
       confirmed or refuted in its pull request, and no refuted check is
       left without a spec that owns its fix.
+
+## Hosting budget (2026-10-11)
+
+Akin decided in chat on 2026-10-11: ADR-013's topology stays as written
+(decision 7: Vercel serves only the SPA; the API and its runs stay on
+Fly). Spec 121, which moved the API to Vercel, was withdrawn and its pull
+request #228 closed. The hosted deployment targets under 5 USD per month.
+Vercel stays on the free Hobby plan.
+
+This section states what that changes in this spec. Where the text above
+disagrees, this section holds, and each place it replaced says so. Specs
+106 and 108 carry their own "Hosting budget (2026-10-11)" sections, and
+spec 115 checks the assumptions below.
+
+Every price below is quoted from Fly's pricing page or Vercel's Hobby
+page, both read 2026-10-11 (Proof / origin). Every other figure is marked
+as an estimate and shows its arithmetic.
+
+### What the published prices allow
+
+- Fly has no free tier and no monthly free allowance for a new
+  organization. Every machine second counts.
+- One shared-cpu-1x 1GB machine always on in Frankfurt costs $7.73 a
+  month, for 30 days of continuous runtime. That alone is over the budget
+  by 2.73 USD (7.73 minus 5).
+- **Estimate:** at that rate one machine hour costs about 0.0107 USD
+  (7.73 / 720 hours). 5 USD buys 5 / 7.73 = 0.647 of a month, about 465
+  machine hours of 720 (0.647 × 720 = 465.7). That is the ceiling for
+  every running 1GB machine in Frankfurt together: the production API,
+  the scheduler's ticks and the runs they start, and staging's machines
+  while they run. The fixed costs below come off it first.
+- A stopped machine is billed only for its root file system, at $0.15/GB
+  a month. The hosted image's size is not measured. **Estimate:** with
+  four machines (the API and the scheduler, in staging and production),
+  each GB of root file system costs 0.60 USD a month while all four are
+  stopped (4 × 0.15).
+- Outbound data to Europe is $0.02/GB. The volume is not measured.
+- A shared IPv4 address is free. A dedicated one is $2 a month, 40% of
+  the budget (2 / 5). Neither app gets one.
+- A volume is $0.15/GB a month and ties state to one machine. Hosted
+  state lives in Supabase, so neither app has a volume.
+- Vercel's Hobby plan is free.
+- Supabase's Free plan is $0 a month and allows 2 active projects, which
+  are staging and production. It includes a 500 MB database, 1 GB of file
+  storage, 5 GB of egress and 50,000 monthly active Auth users. Free
+  projects pause after 1 week of inactivity, and the plan has no automatic
+  backups (https://supabase.com/pricing, read 2026-10-11). Supabase Pro is
+  from 25 USD a month, which alone exceeds the budget, so both projects
+  stay on Free.
+
+### Production on Fly
+
+- One app, `harrier-api-production`, `primary_region = "fra"`, with one
+  API machine: shared-cpu-1x, 1GB. The API image carries Chromium and
+  poppler for PDFs (ADR-013 decision 7), which is why 1GB is chosen.
+  512MB is an untested alternative. **Estimate** of its price in
+  Frankfurt, scaling the base-region 512MB price by the Frankfurt to base
+  ratio for 1GB: 3.69 × (7.73 / 6.70) = 4.26 USD a month always on. That
+  would fit an always-on machine under 5 USD with about 0.74 USD left for
+  everything else. Nothing shows 512MB holds Chromium during a run.
+- The API's HTTP service sets `auto_stop_machines = "stop"`,
+  `auto_start_machines = true` and `min_machines_running = 0`. Fly's
+  proxy stops the machine when the app has excess capacity, judged by
+  the concurrency `soft_limit`, in a loop that "runs every few minutes",
+  and starts it on the next request. This replaces every
+  `auto_stop_machines = "off"` requirement in this spec, its Amendment
+  and its criteria.
+- While any run is active, the API keeps its machine awake, and a run
+  cut off by a stop is recorded as interrupted, never lost. Both are spec
+  106's (its "Hosting budget (2026-10-11)").
+- A shared IPv4 address and no dedicated one. No `[mounts]` and no
+  volume.
+- Still exactly one API machine, started or stopped (the Amendment's
+  machine count check). No fly-replay (spec 106).
+
+### Staging
+
+- `harrier-api-staging` has the same settings as production. Its machine
+  runs only while a request reaches it: the deploy's smoke step, a check
+  of spec 115, or the operator. It then stops when idle, so between
+  checks it costs its root file system only.
+- Its scheduler machine is created without `--schedule` and started by
+  hand (`fly machine start`) only for a check, so it too costs its root
+  file system only between checks. Staging therefore does not exercise
+  the hourly schedule; spec 115's F3 probes it.
+
+### Vercel
+
+- Both projects, `harrier-web-staging` and `harrier-web-production`, are
+  on the Hobby plan and serve the SPA only. They run no function. Hobby's
+  function limit of 300 s is one reason the API does not move to Vercel.
+- **Constraint.** Hobby is restricted to non-commercial, personal use
+  under Vercel's fair use guidelines. Invite-only personal use (spec 102,
+  open decision 5) fits that. Charging tenants would require Vercel Pro
+  and is out of scope.
+- When a Hobby usage limit is exceeded, the feature pauses until 30 days
+  pass. For the SPA that means the site can be down for up to 30 days.
+  The limits themselves are not quoted here.
+
+### The scheduler
+
+An always-on scheduler machine of the same size would cost $7.73 a month
+alone, over the budget before the API runs at all. Open decision 9 (an
+always-on app of its own) and the Amendment's process group are
+superseded. Spec 108's "Hosting budget (2026-10-11)" replaces them with a
+Fly scheduled machine that runs one tick per start and exits, started on
+Fly's `hourly` cycle. It is billed while it runs and costs its root file
+system while stopped.
+
+**Estimate:** an hourly cycle starts it at most 720 times in a 30-day
+month (24 × 30). Its cost is the sum of those ticks' running time, each
+the listing plus the runs it started, at the machine rate. A tick with
+nothing due has not been timed. Spec 115's F4 projects it.
+
+### The monthly cost check
+
+Once a month the operator reads the Fly organization's billed usage for
+the month so far, and Vercel's usage for both projects, and projects the
+month as: spent so far / days elapsed × days in the month. The check
+reports when the projection exceeds 5 USD, naming which line (machine
+time, root file systems, data transfer, anything else billed) carries the
+most. Where the usage comes from, Fly's billing page read by hand or an
+interface Fly documents, is settled when the check is built, and the
+runbook names it. Spec 115's F4 makes the first projection before
+production exists.
+
+### Failure modes (hosting budget)
+
+- **The projected month exceeds 5 USD.** The cost check reports it, with
+  the line that carries most. Nothing stops a machine automatically; the
+  operator decides.
+- **The first request after a stop waits for the machine to boot.** The
+  wait is not measured. A health check or smoke step that times out on a
+  cold start fails the deploy; spec 115's F1 measures the start.
+- **A Hobby limit is exceeded.** The SPA pauses until 30 days pass. The
+  API keeps serving, with no browser client.
+- **Fly stops the API machine during a run anyway.** Spec 106: the run
+  is recorded interrupted, never silently lost.
+
+### Assumptions (hosting budget)
+
+Each is checked by spec 115 (its "Hosting budget (2026-10-11)", F1 to F5)
+and recorded confirmed or refuted there:
+
+- F1, the mechanism spec 106 chooses keeps an auto-stopping machine awake
+  while a run is active, and the machine stops once runs end.
+- F2, an auto-stop delivers the app's kill signal and waits before the
+  machine stops; a machine started again comes up with its root file
+  system reset from the image.
+- F3, a scheduled machine with restart policy `no` fires about hourly,
+  stays stopped between ticks, is not started again while a tick still
+  runs, and keeps its schedule through `fly machine update`.
+- F4, the projected monthly cost of production under the expected usage
+  is under 5 USD, and an app with no machine running, no volume and no
+  dedicated IPv4 costs nothing beyond its machines' root file systems.
+- F5, 512MB holds the API with Chromium rendering a PDF (only if the
+  512MB alternative is taken).
+
+### Honest limitations (hosting budget)
+
+- Supabase Free pauses a project after 1 week of inactivity. Production's
+  hourly scheduler tick connects to the database; whether that counts as
+  activity is an assumption for spec 115. Staging, stopped between checks,
+  may pause and is resumed by hand before a check.
+- Supabase Free has no automatic backups, so "Backups of the hosted store
+  are Supabase's, per its plan" gives none. The hosted store needs its own
+  backup (a scheduled dump to storage outside Supabase, held to spec 030's
+  rule that a backup is proven by a restore). That is an open item for this
+  spec's implementation, recorded here so it is not assumed.
+- The free plans carry limits that end the budget at a growth point, not
+  gradually: 500 MB of database, 1 GB of storage, 2 projects.
+- The image size, the cold-start time, a tick's running time and the
+  data transfer are not measured. Every estimate above that depends on
+  them gives its formula, not a total.
+- The budget is a target, not a cap. Fly bills what runs; the cost check
+  reports, it does not stop anything.
+- Hobby's non-commercial restriction binds the whole hosted service while
+  the SPA is on Hobby.
+
+### Acceptance criteria (hosting budget)
+
+- [ ] Both Fly files set, for the API's HTTP service,
+      `auto_stop_machines = "stop"`, `auto_start_machines = true` and
+      `min_machines_running = 0`, a shared-cpu-1x 1GB machine, no
+      `[mounts]`, and nothing that allocates a dedicated IPv4 (planned
+      test_the_fly_files_run_one_api_machine_that_stops_when_idle).
+- [ ] `docs/deploy.md` allocates a shared IPv4 and no dedicated one,
+      creates no volume, creates the production scheduler machine with
+      `--schedule hourly --restart no` and the staging one without a
+      schedule, and puts both Vercel projects on Hobby with the
+      non-commercial constraint stated.
+- [ ] A monthly cost check projects the month as spent so far / days
+      elapsed × days in the month and reports when the projection exceeds
+      5 USD, naming the largest line (planned
+      test_the_cost_projection_reports_a_month_over_budget), and
+      `docs/deploy.md` says where its usage figures come from.
+- [ ] Spec 115's F1 to F4 are recorded confirmed or refuted before the
+      first production deploy, and a refuted one stops that deploy until
+      a spec owns the fix.
+- [ ] No text in this spec still requires `auto_stop_machines = "off"` or
+      an always-on scheduler machine.

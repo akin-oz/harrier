@@ -80,6 +80,10 @@ Line numbers are from `main` at `44ac0d7` (2026-10-10).
    hosted section. A refuted assumption stops this spec's acceptance and
    becomes its own spec (or an amendment of spec 105 with a new migration)
    before spec 112 is built.
+7. **Fly checks for the hosting budget** (added 2026-10-11). Five
+   assumptions about Fly, F1 to F5, that specs 106, 108 and 110 rest on
+   since the hosting budget, probed on a throwaway Fly app Akin creates
+   and recorded in the same Amendment (Hosting budget (2026-10-11)).
 
 Classification: the new test module sits under `services/api/tests/`,
 which `config/data-classification.json` already classifies as public. No
@@ -240,6 +244,9 @@ result A11 names (decision D8).
       marked confirmed or refuted, the date and the Postgres version, and
       `docs/architecture.md` says the isolation tests ran on a real
       project and names the module.
+- [ ] The Fly checks F1 to F4 are recorded as "Hosting budget
+      (2026-10-11)" states, each confirmed or refuted with its date
+      (criteria under that section).
 - [ ] No refuted assumption is left without a spec that owns its fix.
 - [ ] `uv run ruff check` and `uv run pyright` pass on the service.
 - [ ] `just check` passes.
@@ -302,7 +309,8 @@ The text above says where each changed it.
   (Honest limitations).
 
 Open decision 1 below was not the subject of these decisions; it stands
-as written.
+as written. Open decision 2 is added by the hosting budget of the same
+day (Hosting budget (2026-10-11)).
 
 ## Open decisions for Akin
 
@@ -315,6 +323,13 @@ as written.
    this split was made: `git ls-tree` over `main` and every remote branch
    after `git fetch origin`, 2026-10-10, found no `specs/115-*` to
    `specs/120-*` file.
+2. **Where the Fly checks live.** Added 2026-10-11 by the hosting budget.
+   Taken 2026-10-11 (Akin, "go with your recommendations"): the recommended answer.
+   Recommended: here, as F1 to F5, because they gate the same specs this
+   one gates and need no harrier code, only a probe app. Alternative: a
+   spec of their own, which keeps this spec's title true ("Spec 105 holds
+   on a real Supabase project") at the cost of one more spec in the
+   chain.
 
 ## Proof / origin
 
@@ -375,3 +390,81 @@ Assumptions this spec exists to check, each named in the table:
 - Supabase settings outside the database (the Data API toggle, sign-up,
   signing keys): spec 110's runbook.
 - Creating any account or project. Akin does that.
+
+## Hosting budget (2026-10-11)
+
+Akin decided in chat on 2026-10-11 that the hosted deployment targets
+under 5 USD per month, with ADR-013's topology kept and Vercel on its
+free Hobby plan. Spec 110's "Hosting budget (2026-10-11)" holds the
+prices and the arithmetic. To meet it, the API's one Fly machine stops
+when idle, spec 106 keeps it awake while a run is active and records a
+run cut off by a stop, and spec 108's scheduler is a Fly scheduled
+machine that runs one tick per hourly start. Each of those rests on Fly
+behavior that Fly's pages, read 2026-10-11, do not state. This section
+checks it before those specs are built.
+
+### Who runs what
+
+Akin creates a throwaway Fly app in `fra`, called `harrier-probe` in the
+documents, in the organization that will hold staging and production,
+and deletes it after the run. The agent creates no account and no app.
+The probes run no harrier code: none of specs 106, 108 or 110 is built
+when this spec runs. The probe image is the operator's choice, holding a
+shell, a small HTTP server and an HTTP client. Its commands and their
+output go in the pull request, with every token, organization id and
+hostname that is not the probe's removed. No file is added to the
+repository for them.
+
+The harrier half of each check (spec 106's keepalive and its
+`run_records`, spec 108's one tick per start) is proven by those specs'
+own tests, and on staging by spec 110's first deploy that runs them.
+
+### The Fly assumptions
+
+| | Assumption | Checked by |
+|---|---|---|
+| F1 | A machine with `auto_stop_machines = "stop"`, `auto_start_machines = true` and `min_machines_running = 0` stays started while a process on it sends `GET` to the app's public hostname at a fixed interval with no other traffic, and stops after the requests end | the probe app with those settings and one machine; the probe process beats for a period, then stops; `fly machine status` and the logs give the times of the last beat, the stop and the next cold start. Repeated with one request held open instead of beats. The interval used, and which variant kept the machine up, are recorded |
+| F2 | An auto-stop sends the app's kill signal and waits before the machine stops, and a machine started again has its root file system reset from the image | the probe logs the signal it receives and the time to its stop; a file written to the root file system before the stop is absent after the next start |
+| F3 | A machine created with `fly machine run --schedule hourly --restart no` fires about hourly, stays stopped between ticks, is not started a second time while a tick runs, and keeps its schedule through `fly machine update` | a scheduled probe that logs its start time and exits, observed for at least one day; one tick made to run past the next hourly start; one `fly machine update` to another image tag mid-way. The observed starts and their spread are recorded |
+| F4 | Production's projected monthly cost under the expected usage is under 5 USD, and an app with no running machine, no volume and no dedicated IPv4 bills nothing beyond its machines' root file systems | the organization's billed usage after F1 to F3, read from Fly's billing; the projection uses the published rates (spec 110) and the expected usage Akin states in the pull request (hours a day the API is in use, runs a day and their length, ticks a month and their length), with the arithmetic shown |
+| F5 | 512MB holds the API with Chromium rendering a PDF | only if spec 110's 512MB alternative is taken; it needs the hosted image, so it is checked by spec 110's first staging deploy, not here |
+
+A refuted F1 sends spec 106 to its Open decision 9's alternatives. A
+refuted F2 changes spec 106's "A run cut off by a stop" step 3 and leaves
+step 4 as the only path. A refuted F3 reopens spec 108's Open decision
+8. A refuted F4 goes back to Akin with the line that carries the cost.
+
+### Acceptance criteria (hosting budget)
+
+- [ ] The pull request records F1 to F4, each confirmed or refuted with
+      the date, the commands and the observed values, and no token,
+      organization id or private hostname.
+- [ ] F1's record gives the beat interval used, the time from the last
+      beat to the stop, and the cold start time on the next request.
+- [ ] F4 shows its projection's arithmetic from the published rates and
+      the billed usage, and states whether production fits under 5 USD.
+- [ ] The probe app is deleted after the run, and the pull request shows
+      it.
+- [ ] "Amendment (staging findings)" marks F1 to F4 as it marks A1 to
+      A11.
+
+### Honest limitations (hosting budget)
+
+- A probe shows Fly's behavior on one date in one region. Fly may change
+  its proxy or scheduling; nothing notices until a re-run.
+- The expected usage behind F4 is Akin's statement, not a measurement.
+  Spec 110's monthly cost check is what measures it once production runs.
+- Supabase's cost is not part of F4: spec 110's budget section records
+  it as a gap.
+
+### Proof / origin (hosting budget)
+
+- Fly, Autostop/autostart: stops on excess capacity by `soft_limit`, the
+  stop loop "runs every few minutes", nothing on open connections or
+  background work. Read 2026-10-11.
+  https://docs.fly.io/launch/autostop-autostart
+- Fly, `fly machine run`: `--schedule` fuzzy cycles, scheduled Machines
+  not startable by command, restart policies. Read 2026-10-11.
+  https://docs.fly.io/machines/flyctl/fly-machine-run
+- Fly, Pricing: no free tier for new organizations; machine and root file
+  system rates. Read 2026-10-11. https://docs.fly.io/about/pricing
