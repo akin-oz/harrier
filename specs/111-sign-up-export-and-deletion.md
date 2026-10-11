@@ -20,7 +20,10 @@ sign-up until export and deletion ship (spec 102, open decision 5).
 ADR-013's Consequences say "a tenant's data can be exported and deleted on
 request; spec 111 owns it".
 
-Line numbers below are from `main` at `44ac0d7` on 2026-10-10. The stub cited
+Line numbers below are from `main` at `44ac0d7` on 2026-10-10, except the
+`schema.py` and `harrier_cli/main.py` ones, refreshed to `main` at
+`524dd8a` on 2026-10-11, and the `pgstore.py` one, refreshed by PR #245.
+The stub cited
 older ones (`schema.py:441-445`, `:463`, `:545`, `:549`, `:776`, `:780`); the
 same statements now sit at the lines given here, found with `grep -n` for
 `harrier_refuse`, `CREATE TRIGGER` and `TRUNCATE` in
@@ -29,11 +32,11 @@ same statements now sit at the lines given here, found with `grep -n` for
 **Deletion collides with the store's own refusals.** The post-merge review
 of PRs #194 and #207 (architecture 5, 2026-10-10) found it. On Postgres,
 `job_events` is append-only and `tracks` are never deleted, enforced by one
-function, `harrier_refuse()` (`schema.py:482-486`), which raises its trigger
+function, `harrier_refuse()` (`schema.py:560-564`), which raises its trigger
 argument unconditionally. It sits behind row triggers
-`tracks_are_never_deleted` (`:503-504`), `job_events_append_only_update`
-(`:585-586`) and `job_events_append_only_delete` (`:589-590`) and, since
-spec 105, statement triggers on TRUNCATE (`:817-818`, `:821-822`), which
+`tracks_are_never_deleted` (`:581-582`), `job_events_append_only_update`
+(`:663-664`) and `job_events_append_only_delete` (`:667-668`) and, since
+spec 105, statement triggers on TRUNCATE (`:957-958`, `:961-962`), which
 fire even for a superuser
 (`services/api/tests/test_owner_policy.py::test_truncate_cannot_empty_events_or_tracks`).
 An owner's events and tracks cannot be deleted at all. Spec 079 made
@@ -42,7 +45,7 @@ append-only a database rule, not a convention
 written since says when, if ever, it yields.
 
 The one way through today is the one migration 10 used for the seeded
-track: `ALTER TABLE tracks DISABLE TRIGGER` (`schema.py:746-748`). That
+track: `ALTER TABLE tracks DISABLE TRIGGER` (`schema.py:886-888`). That
 statement takes a `SHARE ROW EXCLUSIVE` lock (PostgreSQL, ALTER TABLE),
 which conflicts with the `ROW EXCLUSIVE` lock every insert, update and
 delete takes. In a migration that is fine. To delete one owner while others
@@ -51,9 +54,10 @@ and while the trigger is off it is off for every session.
 
 **No auth user can be deleted.** Every owned table carries `owner_id uuid
 NOT NULL DEFAULT auth.uid() REFERENCES auth.users (id)` with no `ON DELETE`
-action (`schema.py:749-755`, spec 105). Deleting a user who owns rows is
+action (`schema.py:889-895`, and `:1269` for spec 122's `job_eligibility`;
+spec 105). Deleting a user who owns rows is
 refused. The post-merge review of PR #216 (2026-10-10) added that the
-sign-up trigger, `harrier_new_owner()` (`schema.py:829-841`), gives every
+sign-up trigger, `harrier_new_owner()` (`schema.py:969-981`), gives every
 user a track 1 the moment the user row is inserted. So every auth user owns
 a row, including one who was invited and never signed in, and the Supabase
 dashboard's delete fails the same way: Supabase's own troubleshooting guide
@@ -122,7 +126,7 @@ Open decision 1).
    the database role it runs as (decision D2, 2026-10-11): `erase` runs
    as `service_role`; `invite` declares that it opens no database
    connection. The CLI gate
-   (`harrier_cli/main.py:2913-2916` today, restructured by spec 112) gains
+   (`harrier_cli/main.py:3067-3070` today, restructured by spec 112) gains
    the class "operator: each subcommand runs as its declared role",
    written into spec 112 as its Amendment (2026-10-11) with its planned
    test_the_postgres_gate_has_operator_and_run_classes.
@@ -226,7 +230,7 @@ accident. The command needs, from the process environment:
 
 It refuses to run when `HARRIER_SUPABASE_SECRET_KEY` is defined in the
 working directory's `.env`. `load_project_env` copies `.env` into the
-environment (`harrier_cli/main.py:51-58`), and `docker-compose.yml` hands
+environment (`harrier_cli/main.py:53-60`), and `docker-compose.yml` hands
 `.env` to the local container (spec 110), so a secret key written
 there would sit in the local container's environment. The text names the
 variable, never its value.
@@ -304,7 +308,7 @@ It lets a row through only when all four hold:
   DEFINER` function owned by the migrating role runs as;
 - implicitly, the session holds `DELETE` on the table, which no grantee
   does: `harrier_tenant` holds `SELECT, INSERT` on `job_events` and
-  `SELECT, INSERT, UPDATE` on `tracks` (`schema.py:883-884`), and
+  `SELECT, INSERT, UPDATE` on `tracks` (`schema.py:1026-1027`), and
   `service_role` holds nothing. The privilege check refuses before any
   trigger fires (spec 105, Amendment).
 
@@ -334,13 +338,16 @@ In order:
 2. If the role it runs as is neither superuser nor `BYPASSRLS`, it raises
    `harrier_erase_owner runs as a role that does not bypass row security;
    it would erase nothing`. Every owned table forces row security
-   (`schema.py:850-858`) with a policy only for `harrier_tenant`, so a
+   (`schema.py:990-998`, `:1287-1290`) with a policy only for `harrier_tenant`, so a
    definer subject to it would see no rows, delete none, and report
    success.
 3. `pg_catalog.set_config('harrier.erase_owner', target::text, true)`.
 4. Deletes `WHERE owner_id = target` from each owned table in
-   `OWNED_TABLES` order (`schema.py:606-614`): `job_events`, `jobs`,
+   `OWNED_TABLES` order: `job_events`, `jobs`,
    `contacts`, `profile_documents`, `user_config`, `job_runs`, `tracks`.
+   (This cited `schema.py:606-614`. Since spec 122, 2026-10-11, those
+   seven are `MIGRATION_10_OWNED_TABLES`, `:688-696`, and `OWNED_TABLES`,
+   `:700`, puts `job_eligibility` before them.)
    That order deletes a referencing row before the row it references
    (`job_events` to `jobs`, `jobs` and `profile_documents` to `tracks`).
    One result row per table, with the count `GET DIAGNOSTICS ... ROW_COUNT`
@@ -627,7 +634,7 @@ Gates:
   print; it cannot narrow what the platform shows its project owner.
 - **The table owner can still bypass the refusals.** The role that owns the
   tables can set `harrier.erase_owner` by hand, or disable or drop the
-  triggers, as migration 10 did (`schema.py:746-748`). The refusals guard
+  triggers, as migration 10 did (`schema.py:886-888`). The refusals guard
   against application code and every other role, not against the schema
   owner.
 - **Erasure is not instant everywhere.** Backups keep erased rows until
@@ -837,16 +844,18 @@ Repository:
 - `specs/079-decisions-are-recorded-as-events.md:149-150`: append-only is a
   database rule.
 - `services/api/src/harrier/tracker/schema.py`: `harrier_refuse()` at
-  `:482-486`; the refusal triggers at `:503-504`, `:585-586`, `:589-590`,
-  `:817-818`, `:821-822`; `OWNED_TABLES` at `:606-614`; the disabled
-  trigger at `:746-748`; the `owner_id` foreign key at `:749-755`;
-  `harrier_new_owner()` at `:829-841`; the grants at `:870-890`;
-  `POSTGRES_MIGRATIONS` at `:919-923`, whose latest version
+  `:560-564`; the refusal triggers at `:581-582`, `:663-664`, `:667-668`,
+  `:957-958`, `:961-962`; `MIGRATION_10_OWNED_TABLES` at `:688-696` and
+  `OWNED_TABLES` at `:700` (one list, `OWNED_TABLES` at `:606-614`, until
+  spec 122 split it; noted 2026-10-11); the disabled trigger at
+  `:886-888`; the `owner_id` foreign key at `:889-895`;
+  `harrier_new_owner()` at `:969-981`; the grants at `:1010-1033`;
+  `POSTGRES_MIGRATIONS` at `:1299-1314`, whose latest version
   `target_version()` returns (`services/api/src/harrier/pgstore.py:84-88`).
 - `services/api/tests/test_owner_policy.py`: `catalog_problems`, its
   definer allowlist and `NO_PRIVILEGE_ROLES`.
-- `services/api/src/harrier_cli/main.py`: `load_project_env` at `:51-58`,
-  the Postgres gate at `:2913-2916`.
+- `services/api/src/harrier_cli/main.py`: `load_project_env` at `:53-60`,
+  the Postgres gate at `:3067-3070`.
 - The post-merge reviews of PRs #194 and #207 (architecture 5) and of PR
   #216, 2026-10-10, as routed into the stub.
 
