@@ -78,8 +78,13 @@ def _profile_document(conn: sqlite3.Connection, scope: Scope, fmt: str) -> str:
     for document_format, content in documents:
         if document_format == fmt:
             return content
+    slug = scope.track.slug
+    suffix = "md" if fmt == "markdown" else fmt
+    # Letters and answers read both halves, so the missing one is named with
+    # the command that stores it (review of PR #224).
     raise ApplicationProfileError(
-        f"track {scope.track.slug} has no application_profile {fmt} document"
+        f"track {slug} has no application_profile {fmt} document; store one with "
+        f"harrier --track {slug} profile put application_profile --file PATH.{suffix}"
     )
 
 

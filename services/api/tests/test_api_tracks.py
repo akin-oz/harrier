@@ -288,6 +288,43 @@ def test_the_apply_routes_refuse_another_track(two_tracks: Path, client: TestCli
         assert f"{operation} is not available on track {SLUG}" in response.text
 
 
+def test_every_409_a_route_can_answer_is_in_the_contract() -> None:
+    """Two causes of one status are both described. Unpacking one response
+    dict over another kept only the last: the apply routes lost their
+    default-track refusal and discovery lost its own (review of PR #224)."""
+    paths = create_app().openapi()["paths"]
+
+    def conflict(path: str, method: str) -> str:
+        return str(paths[path][method]["responses"]["409"]["description"])
+
+    track = "the track may not run this operation"
+    active = "a run of this kind is active"
+    for route in ("resume", "cover-letter", "answers"):
+        text = conflict(f"/apply/{{selector}}/{route}", "post")
+        assert track in text and active in text, (route, text)
+        assert "application documents from the browser are the default track's" in text
+    evaluate = conflict("/apply/{selector}/evaluate", "post")
+    assert track in evaluate and active in evaluate
+    assert "default track's" not in evaluate
+    artifacts = conflict("/apply/{selector}/artifacts", "get")
+    assert artifacts == "the track may not run this operation, or it is archived"
+    discover = conflict("/ops/discover", "post")
+    assert "discovery from the browser is the default track's" in discover
+    assert track in discover and active in discover
+
+
+def test_merge_responses_joins_one_status_and_keeps_the_rest() -> None:
+    from harrier_api.deps import merge_responses
+
+    merged = merge_responses(
+        {404: {"description": "no job"}, 409: {"description": "first", "model": "A"}},
+        {409: {"description": "second"}},
+        {409: {"description": "first"}},
+    )
+    assert merged[404] == {"description": "no job"}
+    assert merged[409] == {"description": "first; or second", "model": "A"}
+
+
 def test_an_archived_track_refuses_writes_over_http(two_tracks: Path, client: TestClient) -> None:
     archived = client.post(f"/tracks/{SLUG}/archive", headers=auth())
     assert archived.status_code == 200 and archived.json()["archived"] is True

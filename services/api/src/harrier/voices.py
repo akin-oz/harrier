@@ -10,7 +10,7 @@ kind, and `KindRules` (`harrier.tracks`) names which voice a kind uses.
 Both parts are tuples of segments, interleaved by `assemble`: voice, shared,
 voice, and so on, ending with voice. The industry prompts were written as one
 text with truth rules in the middle of voice rules, and they stay byte for
-byte what they were (`tests/test_kind_prompts.py`), so the seams fall where
+byte what they were (`tests/test_academic_documents.py`), so the seams fall where
 that text already changed subject. This module imports nothing from harrier,
 so `harrier.tracks` can import it without a cycle through the generators.
 """
