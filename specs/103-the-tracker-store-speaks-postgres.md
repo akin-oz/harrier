@@ -541,10 +541,15 @@ that adds this list:
   checked only at the end of a test, and only that the variable was set.
   A test that deleted the pin and then called `main()`, whose `.env`
   loader sets every key that is absent, ended with the variable set to
-  the URL `.env` named, and passed. The net now records the variable's
-  state at setup and every unset during the test as it happens, through
-  the `os.unsetenv` audit event, with the working directory at that
-  moment. It fails a test during which the pin was ever unset, unless the
+  the URL `.env` named, and passed. The net now records every unset
+  during the test as it happens, through the `os.unsetenv` audit event,
+  with the working directory at that moment. (This list said it also
+  recorded the variable's state at setup. It did, but that record only
+  appeared in the failure message. The branch beside it did decide: it
+  failed a test that ended with the pin absent and no unset recorded,
+  which is a pin removed with no audit event. The fourth review below
+  removed both, and the review of PR #243 restored the check.) It fails
+  a test during which the pin was ever unset, unless the
   test is marked `dotenv_fallback` and was under its own `tmp_path` each
   time. A test that sets another value, as the Postgres tests do through
   `monkeypatch`, is not failed: that value is the test's own choice, and
@@ -568,3 +573,149 @@ that adds this list:
   per-owner one: it reports the pair, and without the `merged_keys` call
   it reports nothing
   (`services/api/tests/test_dialect_parity.py::test_a_global_key_beside_its_per_owner_form_fails_the_whole_comparison`).
+
+### Fourth review, of PR #231 (2026-10-11)
+
+Two reviews of the corrections above, after PR #231 merged, found these,
+corrected in the change that adds this list:
+
+- **A `#`, tab, CR or LF in the URL leaked the password.** The scrub
+  learns the password from urlsplit, which reads a raw `#` as the start
+  of a fragment and drops a raw tab, CR or LF. libpq does neither: it
+  takes the whole text as the password and quotes it when an escape in it
+  is invalid. With `?password=x#<secret>%zz` the scrub replaced only the
+  `x`; with a tab in the password it replaced nothing.
+  `harrier.connection.store_target` (in `harrier.pgstore` until spec
+  112's PR 1 moved it) now refuses a URL holding any of the four, with the same message as any malformed URL and nothing chained. A
+  written URL carries them percent-encoded
+  (`services/api/tests/test_postgres_store.py::test_a_malformed_url_is_refused_like_any_other`,
+  `services/api/tests/test_postgres_store.py::test_a_url_urlsplit_reads_differently_from_libpq_never_reaches_the_cli`).
+  The review also offered deriving scrub forms from libpq's own parse
+  (`psycopg.conninfo.conninfo_to_dict`). Not done in this change: in
+  every case that leaked, the escape that made libpq quote the password
+  also made that parse fail. The privacy review of PR #243 (below) used
+  that same failure as the refusal, and added the forms as a second
+  line.
+- **A valid URL with an `@` in its query was refused.** The `@` rule
+  counted every `@` before the first `/`, so
+  `postgresql://u:p@host?application_name=a@b`, which libpq and urlsplit
+  read alike, was refused. libpq looks for the user's `@` up to the first
+  `/` and stops at the first one; urlsplit takes the last one before the
+  first `/`, `?` or `#`. `store_target` now refuses only when they split
+  at different `@`s, or one finds an `@` and the other none
+  (`services/api/tests/test_postgres_store.py::test_an_at_sign_in_the_query_after_the_host_is_accepted`).
+  The two-`@` refusals still hold
+  (`services/api/tests/test_postgres_store.py::test_a_malformed_url_is_refused_like_any_other`,
+  `services/api/tests/test_postgres_store.py::test_an_at_sign_libpq_reads_as_the_host_never_reaches_the_cli`).
+- **The pin net had gaps.** A marked `dotenv_fallback` test that unset
+  the pin outside its `tmp_path` had no case. The record of the pin at
+  setup decided nothing, and both it and the branch beside it were
+  removed. That branch was wrongly called unreachable here: it caught a
+  pin removed with no audit event, and the review of PR #243 restored
+  it (below). And an unset before the
+  net's per-test watch opened, as in a module-scoped fixture or an import
+  during collection, was never seen. Every unset of the pin is now
+  recorded whenever it happens, with its phase (collection, a test's
+  setup, call or teardown, or between tests) and the test whose watch was
+  open, if any. A test's own unsets fail that test, as before. An unset
+  outside every test's watch fails the session at the teardown of its
+  last test, naming the phase. The `pytester` run gains both cases
+  (`services/api/tests/test_store_cli.py::test_the_pin_net_fails_a_test_that_dropped_the_pin_whatever_it_holds_after`).
+  It still detects after the fact rather than prevents.
+
+### Privacy review and claims audit of PR #243 (2026-10-11)
+
+A privacy review and a claims audit of the fourth review's change, before
+it merged, found these, corrected in the same pull request:
+
+- **libpq's own text reached the CLI.** libpq quotes the text of a URL it
+  cannot parse: a query parameter without its `=` (`?password:<S>`,
+  `?password%3D<S>`, `?password <S>`) whole, an invalid escape in any
+  parameter, and for an unclosed `[` host the whole URL, which this spec
+  forbids. A value that is not UTF-8 once decoded (`%FF`, a truncated
+  `%C3`, a raw byte) crashed with a traceback giving the password's
+  length. `harrier.connection.store_target` now also parses the URL with
+  libpq's own parser (`psycopg.conninfo.conninfo_to_dict`, imported only
+  when a Postgres URL is read) and refuses it, with harrier's
+  malformed-URL message alone and nothing chained, when that parse fails
+  in any way, a decode or encode error included
+  (`services/api/tests/test_postgres_store.py::test_a_url_libpq_cannot_parse_never_reaches_the_cli`).
+  Without psycopg the parse is skipped; every command that would connect
+  refuses for the missing driver first. Each URL the fourth review's `#`,
+  tab, CR and LF refusal was tested with is refused by this parse as
+  well: with that refusal removed, every test passes. It stays as a
+  second line, because it also refuses a URL urlsplit misreads that libpq
+  parses; no such URL was found that leaks without it.
+- **Other secret parameters were never scrubbed.** libpq takes
+  `sslpassword` and `oauth_client_secret` from the query too. The scrub
+  (`harrier.pgstore._scrub`, fed by `harrier.connection.url_parts`) now
+  learns every query parameter whose decoded name holds `pass` or
+  `secret`
+  (`services/api/tests/test_postgres_store.py::test_every_secret_parameter_is_scrubbed`).
+  It also learns those values from libpq's parse when it succeeds. That
+  is a second line: removing it passes every test, because each URL that
+  makes libpq quote a secret is one its parser refuses.
+- **Overlapping forms left part of a secret.** The scrub replaced the
+  longest form first; a shorter form overlapping it lost its match, and
+  its other part, ten characters of the password, was printed. The scrub
+  now finds every occurrence of every form in the text as written and
+  replaces the union of their spans
+  (`services/api/tests/test_postgres_store.py::test_two_overlapping_secrets_are_both_scrubbed`).
+- **A failure outside psycopg's classes escaped
+  `harrier.pgstore.postgres_connect`.** A
+  decode or encode error, and urlsplit's error on a port it cannot read,
+  which quotes the text it read as the port, were tracebacks the CLI does
+  not catch. Every failure to connect is now a `StoreConnectionError`
+  naming only the error's class, or saying the URL is malformed, with
+  nothing chained
+  (`services/api/tests/test_postgres_store.py::test_any_failure_to_connect_is_a_store_error`).
+- **The pin net missed losses with no unset event.** The fourth review
+  removed the end-of-test branch that caught them. Deleting from
+  `os.environ._data`, or replacing `os.environ` with a mapping that lacks
+  the pin, raises no `os.unsetenv` event; and a child started with an
+  `env` that leaves the pin out loads `.env` from its own working
+  directory. The net now fails a test that ends with the pin absent and
+  no unset recorded, records the CLI's `.env` loader writing the pin as
+  losing it (the loader writes only an absent key), and records a child
+  started through `subprocess` with an `env` lacking the pin, at the
+  child's working directory
+  (`services/api/tests/test_store_cli.py::test_the_pin_net_fails_a_test_that_dropped_the_pin_whatever_it_holds_after`).
+  The audit asked that the pin also be the empty string at the end of a
+  test. Not done: the Postgres tests set their own URL through
+  `monkeypatch`, and the case it would catch, `.env` writing the pin
+  back, is the loader's write, which the net now sees.
+
+#### Honest limitations (privacy review of PR #243)
+
+- **Single-host URLs only.** This spec names one store, one host. A
+  multi-host URL whose first host carries a port
+  (`postgresql://u:p@h1:5432,h2:5433/db`,
+  `postgresql://u:p@[::1]:5432,[::2]:5433/db`) is refused: urlsplit
+  cannot read `5432,h2` as a port. `postgresql://u:p@h1,h2:5433/db` is
+  accepted, and the error text names the host as `h1,h2`. A password
+  holding a fullwidth `＠` or `：` is refused, because urlsplit refuses
+  characters that normalize to a separator; so is a port above 65535,
+  which libpq would read. Widening what is accepted is not done here.
+- **The pin net sees the paths named above.** A test that replaces
+  `os.environ` and restores it before the test ends, as a `mock.patch`
+  context inside the test body does, is not seen; nor is a child started
+  through `os.posix_spawn` or an `os.exec*` call with its own
+  environment.
+- **A test that calls `main()` loads `.env` from the working
+  directory.** `load_project_env` copies every key in that `.env` into
+  `os.environ`, other keys than the pin included, and nothing restores
+  them. Run from the repository root of a checkout with a real `.env`,
+  the suite loads the operator's keys into the test process. `just
+  check` runs pytest from `services/api`, where the repository keeps no
+  `.env`, so the gate does not. Not fixed here: the loader always reads
+  `.env` in the working directory (spec 011), and no setting points it
+  elsewhere, so a fix changes the CLI's loader, not only the tests.
+
+#### Acceptance criteria (privacy review of PR #243)
+
+- [x] Every test named in this section fails with its fix removed, and
+      passes with it.
+- [ ] A test that calls `main()` from a working directory holding a
+      `.env` leaves `os.environ` as it found it, and the suite reads no
+      `.env` outside a test's `tmp_path`, whatever directory pytest
+      starts in (planned test_main_in_a_test_never_reads_the_operators_dotenv).

@@ -720,6 +720,29 @@ def test_the_store_migrates_to_the_target_as_a_non_superuser_migrator(
     assert non_superuser_migrator_problems(store) == []
 
 
+def test_migration_14_revokes_public_execute_by_default_in_public(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A default in public is its own entry, beside the global one: the
+    global revoke leaves it. A store at version 13 whose migrating role set
+    `EXECUTE` for `PUBLIC` on new functions in public is clean after
+    migration 14. Without the migration's in-public revoke this fails;
+    nothing else tested that statement (post-merge review of PR #231)."""
+    import psycopg
+
+    named = "default privileges: PUBLIC gets EXECUTE on new functions (in public)"
+    with fresh_database() as url:
+        migrate_to(url, 13, monkeypatch)
+        with psycopg.connect(url, autocommit=True) as conn:
+            conn.execute(
+                "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO PUBLIC"
+            )
+            assert named in catalog_problems(conn)
+        migrate_postgres(url)
+        with psycopg.connect(url, autocommit=True) as conn:
+            assert catalog_problems(conn) == []
+
+
 # --- the catalog ---
 
 
@@ -1527,9 +1550,15 @@ def test_every_owner_starts_with_track_one(store_url: str, store: PgConnection) 
 def test_an_owner_never_waits_on_another_owners_track(store_url: str, store: PgConnection) -> None:
     """Numbering a track locks on the row's owner, and the trigger runs
     before the policy's check. Were it to lock for a row naming another
-    owner, A would wait on B's open insert, and so learn of it. A row for
-    an owner other than the session's is left unnumbered and unlocked, and
-    the policy refuses it at once (spec 105, post-merge review)."""
+    owner, A would wait on B's open insert, and so learn of it (spec 105,
+    post-merge review). Since migration 14 two things keep A from waiting.
+    The early return leaves a row for an owner other than the session's
+    unnumbered and unlocked, and the policy refuses it at once. And
+    row-level security hides B's track 1 from A, so the row lock the
+    trigger takes finds nothing of B's to wait on. The second alone passes
+    this test: with the early return removed it still passes. The early
+    return is kept so the trigger does not lean on the policy to stay out
+    of another owner's rows."""
     import psycopg
 
     a, b = new_owner(store), new_owner(store)
@@ -1558,7 +1587,10 @@ def test_a_tenant_without_claims_never_waits_on_an_owners_track(
     a tenant session without any, naming another owner, still took that
     owner's numbering lock and waited on their open insert (spec 105,
     second post-merge review). For the tenant role, no claims is never the
-    row's owner."""
+    row's owner, and the early return leaves the row unnumbered. Without
+    claims, row-level security also hides every owner's track 1, so the
+    row lock finds nothing to wait on: this test passes with the early
+    return removed, as the one above does."""
     import psycopg
 
     b = new_owner(store)
@@ -1611,8 +1643,10 @@ def test_an_owner_cannot_hold_up_another_owners_track(store_url: str, store: PgC
                 "RETURNING id"
             ).fetchone()
             assert row == (2,)
-            # B's open insert holds no lock that pg_locks shows and that
-            # another session could take: a row lock lives in the row.
+            # B's open insert holds no advisory lock, the kind any session
+            # can name and take. Its row lock is kept in the row itself:
+            # pg_locks shows the holder's transaction, and a waiter's tuple
+            # and transactionid locks, none of which names an owner.
             shown = store.execute(
                 "SELECT count(*) FROM pg_locks WHERE pid = %s AND locktype = 'advisory'",
                 (other.info.backend_pid,),

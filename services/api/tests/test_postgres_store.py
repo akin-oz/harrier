@@ -15,7 +15,7 @@ import time
 import traceback
 import uuid
 from typing import Any, LiteralString
-from urllib.parse import unquote, unquote_plus
+from urllib.parse import quote, unquote, unquote_plus
 
 import pytest
 from pg_support import TEST_URL_VARIABLE, admin_url, fresh_database
@@ -432,6 +432,13 @@ def test_a_store_target_never_shows_its_password() -> None:
         "postgresql://harrier:x@{secret}@127.0.0.1:1/harrier",
         # The same split from an `@` in the query when no path comes first.
         "postgresql://127.0.0.1:1?password=x@{secret}",
+        # urlsplit reads a raw `#` as the start of a fragment and drops a raw
+        # tab, CR or LF. libpq does neither, so the scrub missed what libpq
+        # quotes (post-merge review of PR #231).
+        "postgresql://harrier@127.0.0.1:1/harrier?password=x#{secret}%zz",
+        "postgresql://harrier:x\t{secret}%zz@127.0.0.1:1/harrier",
+        "postgresql://harrier:x\r{secret}%zz@127.0.0.1:1/harrier",
+        "postgresql://harrier:x\n{secret}%zz@127.0.0.1:1/harrier",
     ],
     ids=[
         "a-bad-port",
@@ -440,6 +447,10 @@ def test_a_store_target_never_shows_its_password() -> None:
         "a-slash-in-the-password",
         "an-at-sign-in-the-password",
         "an-at-sign-in-a-query-without-a-path",
+        "a-hash-in-the-query-password",
+        "a-tab-in-the-password",
+        "a-carriage-return-in-the-password",
+        "a-line-feed-in-the-password",
     ],
 )
 def test_a_malformed_url_is_refused_like_any_other(template: str) -> None:
@@ -495,6 +506,86 @@ def test_an_at_sign_libpq_reads_as_the_host_never_reaches_the_cli(
 
 
 @pytest.mark.parametrize(
+    "template",
+    [
+        "postgresql://harrier@127.0.0.1:1/harrier?sslmode=disable&password=x#{secret}%zz",
+        "postgresql://harrier:x#{secret}%zz@127.0.0.1:1/harrier",
+        "postgresql://harrier:x\t{secret}%zz@127.0.0.1:1/harrier",
+        "postgresql://harrier:x\r{secret}%zz@127.0.0.1:1/harrier",
+        "postgresql://harrier:x\n{secret}%zz@127.0.0.1:1/harrier",
+        "postgresql://harrier@127.0.0.1:1/harrier?password=x\t{secret}%zz",
+    ],
+    ids=[
+        "a-hash-in-the-query-password",
+        "a-hash-in-the-password",
+        "a-tab-in-the-password",
+        "a-carriage-return-in-the-password",
+        "a-line-feed-in-the-password",
+        "a-tab-in-the-query-password",
+    ],
+)
+def test_a_url_urlsplit_reads_differently_from_libpq_never_reaches_the_cli(
+    template: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The scrub learns the password from urlsplit, which reads a raw `#` as
+    the start of a fragment and drops a raw tab, CR or LF. libpq does
+    neither, takes the whole text as the password, and quotes it when an
+    escape in it is invalid. The scrub then missed it, or matched only a
+    part (post-merge review of PR #231). The CLI now refuses the URL before
+    it connects. No server is needed: libpq refuses the escape first."""
+    import psycopg
+
+    from harrier_cli.main import main
+
+    secret = f"synthetic{uuid.uuid4().hex}"
+    url = template.format(secret=secret)
+    # The driver's own error quotes the secret, so each case is live.
+    with pytest.raises(psycopg.Error) as raw:
+        psycopg.connect(url, connect_timeout=2)
+    assert secret in str(raw.value)
+
+    monkeypatch.setenv("HARRIER_DATABASE_URL", url)
+    for command in ("status", "migrate"):
+        assert main(["store", command]) == 1
+        captured = capsys.readouterr()
+        assert captured.err == f"error: {URL_REFUSAL}\n", command
+        assert secret not in captured.out + captured.err
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql://harrier:{secret}@db.example.test?application_name=a@b",
+        "postgresql://harrier@db.example.test?application_name=a@b",
+        "postgresql://harrier:{secret}@db.example.test:5432?application_name=a@b&sslmode=disable",
+    ],
+    ids=["with-a-password", "without-a-password", "with-a-port-and-two-parameters"],
+)
+def test_an_at_sign_in_the_query_after_the_host_is_accepted(url: str) -> None:
+    """libpq looks for the user's `@` up to the first `/`, so with no path it
+    reads into the query. When the authority already holds its one `@`,
+    libpq stops there, and it and urlsplit read the same user, password and
+    host. Counting every `@` before the first `/` refused this valid URL
+    (post-merge review of PR #231). The two-`@` refusals still hold
+    (test_a_malformed_url_is_refused_like_any_other)."""
+    from psycopg.conninfo import conninfo_to_dict
+
+    secret = f"synthetic{uuid.uuid4().hex}"
+    written = url.format(secret=secret)
+    read = conninfo_to_dict(written)
+    assert (read["user"], read["host"], read["application_name"]) == (
+        "harrier",
+        "db.example.test",
+        "a@b",
+    )
+
+    target = store_target({"HARRIER_DATABASE_URL": written})
+
+    assert target.is_postgres
+    assert target.url == written
+
+
+@pytest.mark.parametrize(
     ("name", "value"),
     [
         ("password", "{secret}+tail%zz"),
@@ -536,3 +627,140 @@ def test_a_password_in_the_query_string_never_reaches_the_error(
     for form in (written, unquote(written), unquote_plus(written), secret):
         for place, text in places.items():
             assert form not in text, f"the password reached the {place}"
+
+
+# --- the privacy review of PR #243 ---
+
+
+def pieces(secret: str, width: int = 8) -> set[str]:
+    """The secret and every run of `width` characters in it: a scrub that
+    leaves part of a secret behind has leaked that part."""
+    return {secret} | {secret[i : i + width] for i in range(len(secret) - width + 1)}
+
+
+def leaked(secret: str, text: str) -> list[str]:
+    return sorted(piece for piece in pieces(secret) if piece in text)
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        # libpq quotes a query parameter without its `=` whole.
+        "postgresql://harrier@127.0.0.1:1/harrier?password:{secret}",
+        "postgresql://harrier@127.0.0.1:1/harrier?password%3D{secret}",
+        "postgresql://harrier@127.0.0.1:1/harrier?sslmode=disable&password {secret}",
+        # Secret parameters other than password, with an invalid escape.
+        "postgresql://harrier@127.0.0.1:1/harrier?sslpassword={secret}%zz",
+        "postgresql://harrier@127.0.0.1:1/harrier?oauth_client_secret={secret}%zz",
+        # urlsplit accepts these; libpq quotes the whole URL.
+        "postgresql://harrier:{secret}]@[v1.x/harrier",
+        "postgresql://harrier]@[v1.x/harrier?sslpassword={secret}",
+        # Bytes that are not UTF-8 once decoded, and one raw in the value.
+        "postgresql://harrier:{secret}%FF@127.0.0.1:1/harrier",
+        "postgresql://harrier@127.0.0.1:1/harrier?password={secret}%C3",
+        "postgresql://harrier:{secret}\udcff@127.0.0.1:1/harrier",
+    ],
+    ids=[
+        "a-colon-for-the-equals-sign",
+        "an-encoded-equals-sign",
+        "a-space-for-the-equals-sign",
+        "sslpassword-with-an-invalid-escape",
+        "oauth-client-secret-with-an-invalid-escape",
+        "a-bracket-in-the-password",
+        "a-bracket-in-the-user-and-sslpassword",
+        "an-encoded-byte-that-is-not-utf-8",
+        "an-encoded-truncated-utf-8-sequence",
+        "a-raw-byte-that-is-not-utf-8",
+    ],
+)
+def test_a_url_libpq_cannot_parse_never_reaches_the_cli(
+    template: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """libpq quotes the text of a URL it cannot parse, sometimes the whole
+    URL, and other secret parameters were never scrubbed. A value that is
+    not UTF-8 crashed with a traceback giving the password's length
+    (privacy review of PR #243). `store_target` now parses the URL with
+    libpq's own parser and refuses it, with harrier's message alone, when
+    that parse fails in any way."""
+    from harrier_cli.main import main
+
+    secret = f"synthetic{uuid.uuid4().hex}"
+    url = template.format(secret=secret)
+
+    monkeypatch.setenv("HARRIER_DATABASE_URL", url)
+    for command in ("status", "migrate"):
+        assert main(["store", command]) == 1
+        captured = capsys.readouterr()
+        assert captured.err == f"error: {URL_REFUSAL}\n", command
+        assert leaked(secret, captured.out + captured.err) == [], command
+
+
+@pytest.mark.parametrize("name", ["sslpassword", "oauth_client_secret", "ssl%70assword"])
+def test_every_secret_parameter_is_scrubbed(name: str, caplog: pytest.LogCaptureFixture) -> None:
+    """Only `password` was scrubbed; libpq takes other secrets from the
+    query and quotes them as written when it refuses them (privacy review
+    of PR #243). Called directly, past `store_target`, so the scrub is what
+    is tested."""
+    secret = f"synthetic{uuid.uuid4().hex}"
+    url = f"postgresql://harrier@127.0.0.1:1/harrier?sslmode=disable&{name}={secret}%zz"
+    caplog.set_level(logging.DEBUG)
+
+    with pytest.raises(StoreConnectionError) as refused:
+        postgres_connect(url)
+
+    error = refused.value
+    assert error.__context__ is None
+    for text in (str(error), "".join(traceback.format_exception(error)), caplog.text):
+        assert leaked(secret, text) == []
+
+
+def test_two_overlapping_secrets_are_both_scrubbed() -> None:
+    """The scrub replaced the longest form first. When a shorter form
+    overlapped it, the replacement broke the shorter one's text and left
+    its other part behind: here the first ten characters of the password
+    (privacy review of PR #243). Every occurrence of every form is now
+    found in the original text, and the union of them is replaced."""
+    secret = f"synthetic{uuid.uuid4().hex}"
+    tail = f"{secret[10:]}]@[v1.x/harrier?"
+    url = f"postgresql://harrier:{secret}]@[v1.x/harrier?password={quote(tail, safe='')}"
+
+    with pytest.raises(StoreConnectionError) as refused:
+        postgres_connect(url)
+
+    assert leaked(secret, str(refused.value)) == []
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "postgresql://harrier:{secret}%FF@127.0.0.1:1/harrier",
+        "postgresql://harrier@127.0.0.1:1/harrier?password={secret}%C3",
+        "postgresql://harrier:{secret}\udcff@127.0.0.1:1/harrier",
+        # urlsplit reads the password before a raw `/` as the port.
+        "postgresql://harrier:{secret}/x@127.0.0.1:1/harrier",
+    ],
+    ids=[
+        "an-encoded-byte-that-is-not-utf-8",
+        "an-encoded-truncated-utf-8-sequence",
+        "a-raw-byte-that-is-not-utf-8",
+        "a-port-urlsplit-cannot-read",
+    ],
+)
+def test_any_failure_to_connect_is_a_store_error(template: str) -> None:
+    """A decode or encode error, or urlsplit's error on the port, escaped
+    `postgres_connect` as a traceback, which the CLI does not catch. The
+    traceback gave the password's length, or quoted it (privacy review of
+    PR #243). Now every failure is a StoreConnectionError naming only the
+    error's class, with nothing chained."""
+    secret = f"synthetic{uuid.uuid4().hex}"
+    url = template.format(secret=secret)
+
+    with pytest.raises(StoreConnectionError) as refused:
+        postgres_connect(url)
+
+    error = refused.value
+    assert error.__context__ is None
+    assert error.__cause__ is None
+    printed = "".join(traceback.format_exception(error))
+    assert leaked(secret, printed) == []
+    assert "position" not in printed

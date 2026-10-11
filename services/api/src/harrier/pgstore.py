@@ -13,11 +13,14 @@ A URL carries a password, in its authority or as a `password` query
 parameter. A connection error is built from the host, port and database
 name, never from the URL, and the driver's own message is scrubbed of the
 password, in its written and decoded forms, before it is quoted. The
-driver's error is not chained to the one raised, so it cannot be found as
-`__context__` either. Errors from a migration's statements are the
-driver's own; `harrier store migrate` prints only the server's primary
-message, which quotes SQL, not the URL. Spec 035 is the record of a
-credential leaking through an exception string.
+scrub learns the password from urlsplit, so `harrier.connection`'s
+`store_target` refuses a URL that urlsplit and libpq would read
+differently, or that libpq cannot parse. The driver's error is not
+chained to the one raised, so it cannot be found as `__context__` either.
+Errors from a migration's statements are the driver's own; `harrier store
+migrate` prints only the server's primary message, which quotes SQL, not
+the URL. Spec 035 is the record of a credential leaking through an
+exception string.
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from harrier.connection import (
+    URL_VARIABLE,
     StoreConnectionError,
     StoreDriverMissing,
     StoreMigrationRefused,
@@ -44,11 +48,30 @@ MIGRATION_LOCK_KEY = 0x68_61_72_72_69_65_72
 
 
 def _scrub(message: str, where: UrlParts) -> str:
-    # Longest first, so a decoded form inside an encoded one cannot leave a
-    # fragment of the other behind.
-    for password in sorted(set(where.passwords), key=len, reverse=True):
-        message = message.replace(password, "***")
-    return " ".join(message.split())
+    # Every occurrence of every form is found in the text as written, and
+    # the union of those spans is replaced. Replacing the longest form first
+    # broke a shorter one that overlapped it, and left its other part behind
+    # (privacy review of PR #243).
+    spans: list[tuple[int, int]] = []
+    for form in set(where.passwords):
+        start = message.find(form)
+        while start >= 0:
+            spans.append((start, start + len(form)))
+            start = message.find(form, start + 1)
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    kept: list[str] = []
+    at = 0
+    for start, end in merged:
+        kept.append(message[at:start])
+        kept.append("***")
+        at = end
+    kept.append(message[at:])
+    return " ".join("".join(kept).split())
 
 
 def require_driver() -> None:
@@ -66,14 +89,33 @@ def postgres_connect(url: str) -> psycopg.Connection[tuple[object, ...]]:
     require_driver()
     import psycopg
 
-    where = url_parts(url)
     try:
-        return psycopg.connect(url, autocommit=True, connect_timeout=10)
-    except psycopg.Error as error:
-        message = (
-            f"cannot connect to the Postgres store at {where.describe()}: "
-            f"{_scrub(str(error), where)}"
-        )
+        where = url_parts(url)
+    except ValueError:
+        where = None
+    if where is None:
+        # urlsplit could not read the port, and its error quotes the text it
+        # read as one, which can be the password. store_target refuses such
+        # a URL; this is for a caller that came another way.
+        message = f"cannot connect to the Postgres store: {URL_VARIABLE} is malformed"
+    else:
+        try:
+            return psycopg.connect(url, autocommit=True, connect_timeout=10)
+        except psycopg.Error as error:
+            message = (
+                f"cannot connect to the Postgres store at {where.describe()}: "
+                f"{_scrub(str(error), where)}"
+            )
+        except Exception as error:
+            # A decode or encode error for a value that is not UTF-8, or
+            # anything else the driver raises outside its own classes. Its
+            # text gives positions in the URL, so only its class is named,
+            # and the CLI, which catches StoreError, prints one line
+            # (privacy review of PR #243).
+            message = (
+                f"cannot connect to the Postgres store at {where.describe()}: "
+                f"{type(error).__name__}"
+            )
     # Raised after the except block, not inside it. `from None` only hides
     # the driver's error from a printed traceback; it stays attached as
     # `__context__`, and its text may quote the password (post-merge review

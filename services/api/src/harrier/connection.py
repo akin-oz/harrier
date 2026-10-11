@@ -42,6 +42,10 @@ POSTGRES_NOT_YET = (
     "HARRIER_DATABASE_URL names a Postgres store; only harrier store runs on it until spec 112"
 )
 
+# Characters urlsplit and libpq read differently: urlsplit starts a
+# fragment at `#` and drops a tab, CR or LF; libpq keeps each as text.
+_READ_DIFFERENTLY = ("#", "\t", "\r", "\n")
+
 
 class StoreError(Exception):
     """A store could not be chosen, reached or used. Safe to print."""
@@ -207,6 +211,13 @@ def store_target(environ: Mapping[str, str] | None = None) -> StoreTarget:
     refused = StoreUrlError(f"{URL_VARIABLE} must be empty or a postgresql:// URL")
     if not raw.startswith(f"{POSTGRES_SCHEME}://"):
         raise refused
+    # urlsplit, which tells the scrub what the password is, reads a raw `#`
+    # as the start of a fragment and drops a raw tab, CR or LF. libpq does
+    # neither, so it took a password the scrub never saw whole, and quoted
+    # it (post-merge review of PR #231). A written URL carries these
+    # percent-encoded.
+    if any(character in raw for character in _READ_DIFFERENTLY):
+        raise refused
     try:
         url_parts(raw)
         parses = True
@@ -216,9 +227,47 @@ def store_target(environ: Mapping[str, str] | None = None) -> StoreTarget:
     # chained as `__context__`. Its text can quote the password: a raw `/` in
     # the password ends the authority, so the password before it is read as
     # the port (review of PR #218).
-    if not parses or not _one_reading_of_the_authority(raw):
+    if not parses or not _one_reading_of_the_authority(raw) or not _libpq_parses(raw):
         raise refused
     return StoreTarget("postgres", raw)
+
+
+def _libpq_parse(url: str) -> dict[str, object] | None:
+    """The URL as libpq reads it, or None when libpq cannot read it.
+
+    None also when psycopg is missing: the command that needs it refuses
+    on its own (`harrier.pgstore.require_driver`). Every failure is
+    swallowed here, so no text of libpq's, which can quote the URL whole,
+    leaves this function. psycopg is imported here, not at module import,
+    because the local store never needs it.
+    """
+    try:
+        from psycopg.conninfo import conninfo_to_dict
+    except ImportError:
+        return None
+    try:
+        return dict(conninfo_to_dict(url))
+    except Exception:
+        # A psycopg error quoting the URL, or a decode or encode error for
+        # a value that is not UTF-8.
+        return None
+
+
+def _libpq_parses(url: str) -> bool:
+    """Whether libpq's own parser reads the URL, or psycopg is missing.
+
+    libpq quotes the text of a URL it cannot parse: a query parameter
+    without its `=` whole, an invalid escape in any parameter, and for an
+    unclosed `[` host the whole URL. A value that is not UTF-8 once decoded
+    raised a decode error with a traceback. Each reached the CLI (privacy
+    review of PR #243). Refusing what libpq cannot parse closes all of
+    them where they start.
+    """
+    try:
+        import psycopg  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    except ImportError:
+        return True
+    return _libpq_parse(url) is not None
 
 
 def _one_reading_of_the_authority(url: str) -> bool:
@@ -229,30 +278,47 @@ def _one_reading_of_the_authority(url: str) -> bool:
     them disagree: urlsplit reads the whole of `p@rest` as the password and
     scrubs that, while libpq takes `rest@host` as the host and quotes it
     when it cannot resolve it, carrying the tail of the password. An `@` in
-    a query with no path before it does the same (review of PR #225).
+    a query with no path before it, and no `@` before the host, does the
+    same (review of PR #225).
+
+    The two agree when they split at the same `@`, or when neither finds
+    one. Counting every `@` before the first `/` refused a valid URL whose
+    query, with no path before it, holds an `@` after the host's own
+    (post-merge review of PR #231). Called after the `#`, tab, CR and LF
+    refusal, so urlsplit's authority is the URL's own text.
     """
-    libpq_authority = url.split("://", 1)[1].split("/", 1)[0]
-    ats = libpq_authority.count("@")
-    return ats <= 1 and ats == urlsplit(url).netloc.count("@")
+    rest = url.split("://", 1)[1]
+    libpq_at = rest.split("/", 1)[0].find("@")
+    return libpq_at == urlsplit(url).netloc.rfind("@")
+
+
+def _is_secret(name: str) -> bool:
+    """Whether a connection parameter carries a secret: `password`,
+    `sslpassword`, `oauth_client_secret` and any later one named alike."""
+    return "pass" in name or "secret" in name
 
 
 def url_parts(url: str) -> UrlParts:
     parts = urlsplit(url)
     written = [parts.password or ""]
-    # libpq also takes the password from `?password=`, and quotes that
-    # parameter as written when it refuses it (review of PR #218).
+    # libpq also takes secrets from the query (`?password=`, `?sslpassword=`
+    # and others), and quotes a parameter as written when it refuses it
+    # (review of PR #218; privacy review of PR #243).
     for pair in parts.query.split("&"):
         name, _, value = pair.partition("=")
-        if unquote(name) == "password":
+        if _is_secret(unquote(name)):
             written.append(value)
     decoded = [
-        value
-        for name, value in parse_qsl(parts.query, keep_blank_values=True)
-        if name == "password"
+        value for name, value in parse_qsl(parts.query, keep_blank_values=True) if _is_secret(name)
     ]
+    # And the values as libpq itself reads them, when it can.
+    parsed = _libpq_parse(url) or {}
+    read = [str(value) for name, value in parsed.items() if _is_secret(name) and value]
     return UrlParts(
         host=parts.hostname or "localhost",
         port=str(parts.port or 5432),
         database=parts.path.lstrip("/") or "postgres",
-        passwords=tuple(form for form in (*written, *map(unquote, written), *decoded) if form),
+        passwords=tuple(
+            form for form in (*written, *map(unquote, written), *decoded, *read) if form
+        ),
     )
