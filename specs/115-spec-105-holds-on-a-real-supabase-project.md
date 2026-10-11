@@ -28,9 +28,9 @@ non-superuser migrator lacks.
 Unchecked on a real project:
 
 - the migrating role can create a trigger on `auth.users`
-  (`services/api/src/harrier/tracker/schema.py:979-981`);
+  (`services/api/src/harrier/tracker/schema.py:997-999`);
 - it can grant `harrier_tenant` usage on schema `auth` and execute on
-  `auth.uid()` (`schema.py:1032-1033`);
+  `auth.uid()` (`schema.py:1050-1051`);
 - the deployed `auth.uid()` reads `sub` from `request.jwt.claims`;
 - Supabase's `postgres` has `BYPASSRLS`, which the forced policy on
   `schema_version` needs (spec 105, Amendment);
@@ -50,7 +50,7 @@ spec 112. (Post-merge review of PRs #194, #207 and #216, 2026-10-10:
 architecture 3, data integrity 5.)
 
 Line numbers are from `main` at `44ac0d7` (2026-10-10), except the two
-`schema.py` ones above, refreshed to `main` at `524dd8a` on 2026-10-11.
+`schema.py` ones above, refreshed to `main` at `5c3d083` after migration 16.
 
 ## Scope
 

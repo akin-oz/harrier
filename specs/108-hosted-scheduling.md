@@ -20,9 +20,11 @@ owners with the service role and start each run as its owner. It never
 executes domain code as the service role.
 
 Today the schedule is a committed file and a renderer. Line numbers are
-from `main` at `44ac0d7` (2026-10-10), except the `schema.py`,
+from `main` at `44ac0d7` (2026-10-10), except the
 `harrier_cli/main.py` and `harrier_api/app.py` ones, refreshed to `main` at
-`524dd8a` on 2026-10-11, and the `pgstore.py` one, refreshed by PR #245.
+`524dd8a` on 2026-10-11, the `schema.py` ones, refreshed to `main` at
+`5c3d083` after migration 16, and the `pgstore.py` one, refreshed by PR
+#245.
 
 - **The cadence.** `config/schedule.json` defines four jobs, counted by
   reading the file: `discovery` four times a day (`:6-16`),
@@ -77,8 +79,8 @@ Hosted, several things change at once:
   at `44ac0d7`, used at `:733`, `:754`, `:852` and `:871`). A later owned
   table added to it would change what migration 10 applies to a fresh
   store. (Spec 122 froze migration 10's list, noted 2026-10-11:
-  migration 10 now reads `MIGRATION_10_OWNED_TABLES` (`schema.py:688-696`)
-  at `:873`, `:894`, `:992` and `:1012`, and `OWNED_TABLES` (`:700`) adds
+  migration 10 now reads `MIGRATION_10_OWNED_TABLES` (`schema.py:691-699`)
+  at `:891`, `:912`, `:1010` and `:1030`, and `OWNED_TABLES` (`:703`) adds
   `job_eligibility` to it.)
 
 ## Scope

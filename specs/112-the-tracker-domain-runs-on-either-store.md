@@ -13,10 +13,11 @@ depends: [076, 079, 090, 092, 103, 105, 115]
 
 Spec 103 creates a Postgres store with the tracker's schema, and nothing
 uses it. Every domain read and write is written for `sqlite3`. Line numbers
-below are from the spec 103 branch on 2026-10-10, except the `schema.py`,
+below are from the spec 103 branch on 2026-10-10, except the
 `harrier_cli/main.py` and `harrier_api/app.py` ones, refreshed to `main` at
-`524dd8a` on 2026-10-11, and the `pgstore.py` and `connection.py` ones,
-refreshed by PR #245; counts say how they were taken.
+`524dd8a` on 2026-10-11, the `schema.py` ones, refreshed to `main` at
+`5c3d083` after migration 16, and the `pgstore.py` and `connection.py`
+ones, refreshed by PR #245; counts say how they were taken.
 
 **The connection type.** `harrier.db.connect` returns a
 `sqlite3.Connection` with `sqlite3.Row` rows (`services/api/src/harrier/db.py:222`,
@@ -71,10 +72,10 @@ modules execute SQL and are local by nature: `backup.py:106-133`,
   `DuplicateTrackError`); `sqlite3.Error` caught at `logredact.py:93`,
   `:194` and `logsetup.py:140`. psycopg raises its own classes. A trigger
   refusal on Postgres comes from `harrier_refuse()`
-  (`tracker/schema.py:560-564`) as `psycopg.errors.RaiseException`, which
+  (`tracker/schema.py:563-567`) as `psycopg.errors.RaiseException`, which
   is not an integrity error there. An unknown track is a trigger message in
   SQLite (`tracker/schema.py:378-389`) and a foreign key violation in
-  Postgres (`tracker/schema.py:597`).
+  Postgres (`tracker/schema.py:600`).
 - The write lock. `_write_lock` takes `BEGIN IMMEDIATE`
   (`tracker/store.py:285-306`) for `set_status` (`:355`), `update_fields`
   (`:471`) and `backfill_events` (`:661`), so the row a write depends on is

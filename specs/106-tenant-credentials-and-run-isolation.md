@@ -21,8 +21,9 @@ each run only its owner's. Akin chose bring-your-own LLM keys (spec 102,
 open decision 3).
 
 Line numbers below are from `main` at `44ac0d7` (2026-10-10), except the
-`schema.py`, `harrier_cli/main.py` and `harrier_api/app.py` ones, refreshed
-to `main` at `524dd8a` on 2026-10-11. Counts say how they were taken.
+`harrier_cli/main.py` and `harrier_api/app.py` ones, refreshed to `main` at
+`524dd8a` on 2026-10-11, and the `schema.py` ones, refreshed to `main` at
+`5c3d083` after migration 16. Counts say how they were taken.
 
 The post-merge review of PRs #194 and #207 (2026-10-10) added five
 problems this spec owns:
@@ -348,7 +349,7 @@ it is taken, the binding is specified by what it guarantees, not by how.
 
 The run-outcome key `discovery:<track id>` (`academic/discovery.py:71`)
 does not change. It is stored in `job_runs`, whose Postgres primary key is
-`(owner_id, job)` since spec 105 (`schema.py:917`), and read under the
+`(owner_id, job)` since spec 105 (`schema.py:935`), and read under the
 owner's policy (`runoutcome.py:138-161`). Owner A's `discovery:1` and owner
 B's `discovery:1` are two rows. Writing the owner into the key would make
 domain SQL name a tenant, which ADR-013 decision 2 forbids. The keys that
