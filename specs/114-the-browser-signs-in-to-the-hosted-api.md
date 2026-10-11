@@ -622,7 +622,11 @@ Gates:
   the one spec 110 already records for env files.
 - Sign-in by code needs the project's email template and sender
   configured. Supabase's built-in sender is not assumed to reach invited
-  users; spec 110 configures it and spec 111 sends the invitations.
+  users; spec 110 configures it. Spec 111 creates invited users, who sign
+  in here with the same code; there is no invitation page (decision D6,
+  2026-10-11).
+- The line numbers cited here are refreshed by the change that implements
+  this spec, not before (decision D9, 2026-10-11).
 
 ## Migration
 
@@ -669,6 +673,25 @@ spec.
   the request would then cost a sign-in that a refresh avoids. Not
   chosen (Open decision 8).
 - **One spec with the capture page.** See Open decision 1.
+
+## Decisions taken (2026-10-11)
+
+Akin took these in chat on 2026-10-11 ("go with your recommendations").
+
+- **D5, two settings forms.** This spec gains a credentials page, asked
+  by specs 106 and 116, and a Telegram settings form, asked by spec 109.
+  Written as the Amendment (2026-10-11) below.
+- **D6, invitations sign in here.** An invited user signs in with the same
+  emailed one-time code as every other user (Behavior, "Signing in").
+  There is no separate invitation page; spec 111 creates the user and
+  prints no link.
+- **D7, the Telegram chat id is secret everywhere.** The Telegram form
+  treats it as it treats the bot token (Amendment below).
+- **D9, line numbers.** Refreshed by this spec's implementing change
+  (Honest limitations).
+
+None of Open decisions 1 to 9 below was the subject of these decisions;
+they stand as written.
 
 ## Open decisions for Akin
 
@@ -834,3 +857,86 @@ implementation:
   and an account page.
 - Any change to the local token, `GET /session` or the local capture
   routes (spec 035).
+
+## Amendment (2026-10-11): the credentials page and the Telegram settings form
+
+Akin took decision D5 on 2026-10-11. Specs 106 and 116 asked for a
+credentials page for spec 116's routes; spec 109 asked for a settings form
+for its Telegram routes. Both are hosted only, both are sections of the
+existing settings page (`apps/web/src/pages/settings/SettingsPage.tsx`),
+and both call only the generated client. They are built after the routes
+they call exist: spec 116's `/credentials` routes and spec 109's
+`/notifications/telegram` routes. This amendment changes no contract; its
+types come from the contract those specs regenerate.
+
+### Where they live
+
+| Path | Layer | Holds |
+|---|---|---|
+| `features/credentials/CredentialForm.tsx` | features | the form for one kind: its fields, save and remove |
+| `features/notifications/TelegramForm.tsx` | features | the Telegram form: save and clear |
+| `pages/settings/CredentialsSection.tsx` | pages | the kinds and their state, one form per kind |
+| `pages/settings/TelegramSection.tsx` | pages | the Telegram state and its form |
+
+### The credentials page
+
+- **State.** From `GET /credentials`: one row per kind, set or not set,
+  and `updated_at`. The `telegram` row shows its state and points to the
+  Telegram form; it has no fields here, because spec 116 answers 404 to
+  `PUT /credentials/telegram`.
+- **Fields.** `ai`: the provider (`openai-api` or `anthropic-api`), the
+  key and an optional model. `apify`: the token. `hunter`: the key. Every
+  secret field is a password input with autocomplete off.
+- **Save.** `PUT /credentials/{kind}`. On 200 the form clears every field
+  and shows the new state. A 422 shows the field and the problem the body
+  names. Nothing is shown back: spec 116 returns no value, and the page
+  offers no reveal.
+- **Remove.** `DELETE /credentials/{kind}`, after a confirmation in the
+  page.
+
+### The Telegram form
+
+- **State.** From `GET /notifications/telegram`: configured or not, and
+  `updated_at`.
+- **Fields.** The bot token and the chat id. Both are secrets (decision
+  D7): password inputs with autocomplete off, cleared after any answer.
+- **Save.** `PUT /notifications/telegram`. A refusal shows the `detail`
+  of spec 109's `TelegramRefusalOut` for its `reason`. The form says,
+  before the fields, to send the bot one message first, which is what spec
+  109's `chat_unreachable` needs.
+- **Clear.** `DELETE /notifications/telegram`.
+
+On both forms, a submitted value never appears in rendered text, a URL,
+`localStorage` written by harrier's code, or a console call.
+
+### Local mode
+
+Neither section renders, and no request to either route family is made.
+Locally credentials and Telegram settings live in `.env`, and both route
+families answer 404 (specs 116 and 109).
+
+### Acceptance criteria (amendment of 2026-10-11)
+
+- [ ] Hosted, the settings page shows each kind's state from `GET
+      /credentials` and no value (planned web test "the credentials page
+      shows each kind's state and never a value",
+      `src/pages/settings/SettingsPage.test.tsx`).
+- [ ] Saving a credential sends `PUT /credentials/{kind}` with the form's
+      fields, clears every field on 200, shows the field and problem of a
+      422, and leaves no submitted value in rendered text, a request URL,
+      `localStorage` or a console call (planned web test "a saved
+      credential leaves no value in the page",
+      `src/features/credentials/CredentialForm.test.tsx`).
+- [ ] The Telegram form sends `PUT /notifications/telegram`, shows the
+      `detail` for each refusal reason, clears both fields after any
+      answer, and neither the bot token nor the chat id appears in
+      rendered text, a request URL, `localStorage` or a console call
+      (planned web test "the Telegram form treats the chat id as a
+      secret", `src/features/notifications/TelegramForm.test.tsx`).
+- [ ] Locally neither section renders and no request goes to
+      `/credentials` or `/notifications/telegram` (planned web test "local
+      settings show no credentials or Telegram section",
+      `src/pages/settings/SettingsPage.test.tsx`).
+- [ ] The forms read their types from `components["schemas"]` in the
+      generated contract, not from hand-written types, and `pnpm lint`
+      passes with the boundaries rule unchanged.

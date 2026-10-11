@@ -131,8 +131,11 @@ starts nothing; PR 2 adds no migration.
    (Behavior).
 8. **An operator class in the CLI's Postgres gate.** Spec 112's gate
    runs only `harrier store` on a Postgres URL. `harrier operator` runs
-   only on a Postgres URL and refuses a SQLite store. Spec 112 takes an
-   Amendment note naming the class (Changes to approved specs).
+   only on a Postgres URL and refuses a SQLite store. It is one command
+   group: this spec's `scheduler` and `schedule-report` and spec 111's
+   `invite` and `erase` are its subcommands, and each declares the
+   database role it runs as (decision D2, 2026-10-11). Spec 112 carries
+   the class as its Amendment (2026-10-11).
 9. **The API refuses a login that can list due work.** Spec 104's start
    check of the API's login role takes one more refusal: a member of
    `harrier_schedule_reader`. Spec 104 takes an Amendment note (Changes
@@ -508,7 +511,15 @@ scheduler machine, for example with `fly ssh console`.
 - On a Postgres URL, `harrier operator scheduler` and `harrier operator
   schedule-report` run. Spec 112's gate takes a class beside "local
   only" and "everything else": operator commands, which run only on
-  Postgres (Changes to approved specs).
+  Postgres. Spec 112's Amendment (2026-10-11) carries it, with spec 106's
+  run class; these are the only two classes beyond `harrier store`
+  (decision D2).
+- Each operator subcommand declares the database role it runs as. Both
+  of this spec's run as the login `harrier_scheduler`, which takes
+  `harrier_schedule_reader` for the listing transaction and
+  `harrier_tenant` with one owner's claims for every other transaction
+  (The scheduler's login, A tick). Spec 111 declares `invite` and
+  `erase`.
 - On a SQLite store, both refuse before opening anything, exit 1:
   `error: harrier operator <command> runs only against a hosted store;
   locally the schedule is launchd (harrier schedule)`.
@@ -707,6 +718,10 @@ The process and the report (PR 2)
       `operator` included; `harrier operator` on SQLite refuses with the
       text under Behavior (spec 112's planned
       test_every_command_has_a_postgres_refusal_class, extended).
+- [ ] `scheduler` and `schedule-report` each declare `harrier_scheduler`
+      as the role they run as, and the parser walk reads the declaration
+      (decision D2; spec 112's planned
+      test_the_postgres_gate_has_operator_and_run_classes).
 - [ ] `services/api/tests/test_schedule.py::test_rendered_plists_invoke_the_cli_without_a_shell`
       and the rest of `services/api/tests/test_schedule.py` pass
       unchanged, and `config/schedule.json` is unchanged.
@@ -769,6 +784,8 @@ Documents
   the browser prints "On the host, `{host_command}` reports it"
   (`apps/web/src/pages/operations/ScheduleSection.tsx:71`). Spec 120
   owns that.
+- The line numbers cited here are refreshed by the change that implements
+  this spec, not before (decision D9, 2026-10-11).
 
 ## Migration
 
@@ -805,11 +822,13 @@ spec.
 - **Spec 110:** the lines under Behavior, "What spec 110 provisions", and
   the four staging checks under Honest limitations. Spec 110's refined
   text of 2026-10-10 does not carry them; its Out of scope gives "the
-  hosted scheduler and its machines" to this spec.
+  hosted scheduler and its machines" to this spec. Written into spec
+  110's Amendment (2026-10-11) (decision D4).
 - **Spec 112:** the CLI's Postgres gate takes a class for `harrier
   operator`, which runs only on Postgres (Scope item 8), with an Amendment
   note, and its planned test_every_command_has_a_postgres_refusal_class
-  covers it.
+  covers it. Written into spec 112 as its Amendment (2026-10-11), with
+  each subcommand declaring its role (decision D2).
 
 ## Options weighed
 
@@ -871,6 +890,29 @@ How a run gets the owner's time:
 - **A new `--scheduled-at` flag.** Discovery would take the slot instant
   and its zone, and the gate would read it. A change to the local CLI for
   a hosted need. Not chosen.
+
+## Decisions taken (2026-10-11)
+
+Akin took these in chat on 2026-10-11 ("go with your recommendations").
+The text above says where each changed it.
+
+- **D2, one operator group.** `harrier operator` is one command group, and
+  each subcommand declares the database role it runs as. This spec's
+  `scheduler` and `schedule-report` and spec 111's `invite` and `erase`
+  are its subcommands. Spec 112's gate gains exactly two classes beyond
+  `harrier store`: operator, and spec 106's run class (Scope item 8,
+  Behavior, "The CLI on each store").
+- **D4, spec 110 takes this spec's asks.** "What spec 110 provisions" and
+  the four staging checks under Honest limitations are written into spec
+  110's Amendment (2026-10-11). Writing them found that Fly secrets are
+  app wide, so a process group in the API app would receive the API's
+  login; spec 110's Open decision 9 asks where the scheduler runs, and
+  its answer may amend "Where the scheduler runs" here.
+- **D9, line numbers.** Refreshed by this spec's implementing change
+  (Honest limitations).
+
+None of Open decisions 1 to 7 below was the subject of these decisions;
+they stand as written.
 
 ## Open decisions for Akin
 

@@ -98,7 +98,12 @@ credentials; the database holds ciphertext only.
 | `ai` | `provider` (`openai-api` or `anthropic-api`), `key`, `model` (optional) | `key` | `PUT /credentials/ai` | `AI_PROVIDER`, `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, `AI_MODEL` when set |
 | `apify` | `token` | `token` | `PUT /credentials/apify` | `APIFY_TOKEN` |
 | `hunter` | `key` | `key` | `PUT /credentials/hunter` | `HUNTER_API_KEY` |
-| `telegram` | `bot_token`, `chat_id` | `bot_token` | spec 109's route only | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` |
+| `telegram` | `bot_token`, `chat_id` | `bot_token`, `chat_id` | spec 109's route only | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` |
+
+The Telegram chat id is secret everywhere (decision D7, 2026-10-11): it
+is stored encrypted alongside `bot_token`, in the same ciphertext, and
+spec 106 scrubs it from run events and summaries as it scrubs every
+secret field.
 
 One AI credential per owner: its provider decides which key variable is
 set, so a run never holds two AI keys. `gmail` is not a kind until the
@@ -249,6 +254,10 @@ Only the API process decrypts, at run start (spec 106)."
 - [ ] After a write, no column of `credentials` contains the submitted
       value or its base64 (planned
       test_the_database_never_holds_a_credential_in_plain_text).
+- [ ] The `telegram` kind declares both `bot_token` and `chat_id` as
+      secret fields, and after a write no column of `credentials` holds
+      either value (decision D7; planned
+      test_the_telegram_chat_id_is_a_secret_field).
 - [ ] `GET`, `PUT` and `DELETE /credentials` answer as the routes table,
       no body carries a value, and `GET` never selects `ciphertext`
       (planned test_credential_routes_never_return_a_value).
@@ -290,6 +299,8 @@ Only the API process decrypts, at run start (spec 106)."
   chooses one.
 - **The migration's version is not fixed here.** It is the next free
   version when implemented.
+- The line numbers cited here are refreshed by the change that implements
+  this spec, not before (decision D9, 2026-10-11).
 
 ## Migration
 
@@ -331,6 +342,22 @@ spec.
   cloud vendor, which the Local-first invariant's closed list (amended by
   spec 102) does not name, and a network call per run start. Not chosen
   now; a later spec could move the key there without changing the table.
+
+## Decisions taken (2026-10-11)
+
+Akin took these in chat on 2026-10-11 ("go with your recommendations").
+The text above says where each changed it.
+
+- **D5, the credentials page.** Spec 114 gains it by amendment, for this
+  spec's routes (Out of scope).
+- **D7, the Telegram chat id is secret everywhere.** It is a secret field
+  of the `telegram` kind, stored encrypted alongside `bot_token`
+  (Behavior, "Credential kinds").
+- **D9, line numbers.** Refreshed by this spec's implementing change
+  (Honest limitations).
+
+None of Open decisions 1 to 3 below was the subject of these decisions;
+they stand as written.
 
 ## Open decisions for Akin
 
@@ -392,7 +419,7 @@ spec.
   about runs: spec 106.
 - Telegram's route and its check, and Gmail as a credential kind: spec 109
   and spec 118.
-- The SPA's credentials page.
+- The SPA's credentials page: spec 114's Amendment (2026-10-11).
 - Key rotation and re-encryption.
 - Checking a credential against its vendor when it is set.
 - The Fly secret's provisioning: spec 110.

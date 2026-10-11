@@ -209,7 +209,9 @@ validation error.
 `TelegramSettingsOut`: `configured` (`bool`), `updated_at` (`str | None`).
 It never carries the token or the chat id. A Telegram chat id identifies a
 person, so it is treated like the token: stored encrypted, never returned,
-never logged.
+never logged. Decision D7 (2026-10-11) makes this hold everywhere: spec
+116 stores the chat id encrypted beside `bot_token` as a secret field, and
+spec 106 scrubs it from run events and summaries.
 
 ### Saving
 
@@ -532,6 +534,8 @@ Gates:
   changes.
 - **Harrier never reads the chat.** It does not receive updates, so it
   cannot find the chat id for the owner. The owner finds it.
+- The line numbers cited here are refreshed by the change that implements
+  this spec, not before (decision D9, 2026-10-11).
 
 ## Migration
 
@@ -562,7 +566,8 @@ spec.
   planned test_every_command_has_a_postgres_refusal_class places them
   there.
 - **Spec 114:** a settings form for the Telegram routes. Spec 114's
-  refined text of 2026-10-10 does not carry it.
+  refined text of 2026-10-10 does not carry it. Written into spec 114's
+  Amendment (2026-10-11) (decision D5).
 
 ## Options weighed
 
@@ -619,6 +624,25 @@ spec.
 - **(b) The API routes only.** A scheduled or hand-started run on Postgres
   would still read a machine-wide file. Not chosen.
 
+## Decisions taken (2026-10-11)
+
+Akin took these in chat on 2026-10-11 ("go with your recommendations").
+The text above says where each changed it.
+
+- **D4, spec 110 takes this spec's asks.** The assumptions listed under
+  Proof / origin for spec 110's staging check, the rule that no Telegram
+  or Gmail variable is set on the Fly app (Migration), and a hosted image
+  with no `gmail` group are written into spec 110's Amendment
+  (2026-10-11).
+- **D5, the Telegram settings form.** Spec 114 gains it by amendment
+  (Changes to approved specs). This takes Open decision 5 as recommended.
+- **D7, the Telegram chat id is secret everywhere.** This spec keeps
+  treating it as secret (Behavior, "The routes"); spec 116 stores it
+  encrypted beside `bot_token`, and spec 106 scrubs it from run events and
+  summaries.
+- **D9, line numbers.** Refreshed by this spec's implementing change
+  (Honest limitations).
+
 ## Open decisions for Akin
 
 1. **Gmail in the first hosted release.** Recommended: not offered, with
@@ -640,6 +664,8 @@ spec.
 5. **The browser's half.** Recommended: a line in spec 114 for the
    settings form (Changes to approved specs). Alternative: its own stub, or the form in this spec, which
    adds `apps/web` to the diff.
+   Taken 2026-10-11: the form is spec 114's, by its Amendment of
+   2026-10-11 (D5).
 6. **Operator variables on the hosted API.** Recommended: refuse to start.
    Alternative: ignore them and rely on spec 106's allowlist alone.
 
@@ -729,7 +755,7 @@ unverified tenant client published to production keeps refresh tokens past
   does "Telegram notifications are the only outbound messages".
 - A hosted Gmail connection, per-owner mail state and a hosted mail
   schedule: spec 118.
-- The browser's settings form: spec 114.
+- The browser's settings form: spec 114, its Amendment of 2026-10-11.
 - How credentials are encrypted and where the key lives: spec 116.
 - The hosted schedule: spec 108.
 - Telegram inbound updates, commands or replies.
