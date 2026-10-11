@@ -38,7 +38,8 @@ and `ANTHROPIC_API_KEY` (`services/api/src/harrier/llm/config.py:131-153`),
 `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (`notify.py:32-33`). Spec 106
 gives a run its owner's values under those names; this spec stores them.
 
-Line numbers are from `main` at `44ac0d7` (2026-10-10).
+Line numbers are from `main` at `44ac0d7` (2026-10-10), except the
+`schema.py` ones, refreshed to `main` at `524dd8a` on 2026-10-11.
 
 ## Scope
 
@@ -47,8 +48,8 @@ Line numbers are from `main` at `44ac0d7` (2026-10-10).
    `services/api/src/harrier/tracker/schema.py` gains it, with the
    `credentials` table, its policy and its grants (Behavior). `MIGRATIONS`
    gains the same version with no statements, declared Postgres only in
-   `SINGLE_DIALECT_MIGRATIONS` (`schema.py:651`) with its reason.
-   `OWNED_TABLES` (`schema.py:606`) gains `credentials`. `OWNED_TABLES`
+   `SINGLE_DIALECT_MIGRATIONS` (`schema.py:737`) with its reason.
+   `OWNED_TABLES` (`schema.py:700`) gains `credentials`. `OWNED_TABLES`
    also builds migration 10's statements (spec 108, Problem), so migration
    10 keeps a frozen list of its own, `MIGRATION_10_OWNED_TABLES`, and its
    statements do not change. Spec 108 needs the same freeze; whichever of

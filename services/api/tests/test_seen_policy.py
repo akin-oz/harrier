@@ -31,6 +31,7 @@ from harrier.screening.seen import (
     SeenDecision,
     load_seen,
     load_seen_keys,
+    posting_identities,
     save_seen,
 )
 from harrier.tracker.store import add_job, set_status
@@ -582,6 +583,182 @@ def test_a_row_the_operator_has_not_rejected_leaves_its_key_eligible(
 
     assert report.protected == 0
     assert report.cleared == [job["job_key"]]
+
+
+# --- cross-source protection (amendment of 2026-10-11) ----------------------
+
+
+def _listed_elsewhere(url: str, company: str, title: str) -> NormalizedJob:
+    """The same role as `_screened_posting`, seen on LinkedIn: a different
+    source, board and key, so the rejected row cannot rebuild it."""
+    return make_normalized_job(
+        source="apify_linkedin",
+        company=company,
+        title=title,
+        location="Remote, Europe",
+        url=url,
+        external_id="9001",
+        board_key=company,
+    )
+
+
+def _stale_with_identities(job: NormalizedJob) -> SeenDecision:
+    return SeenDecision(
+        REJECTED,
+        "tracker_duplicate",
+        "old-policy",
+        "2026-08-01T00:00:00Z",
+        identities=posting_identities(job["url"], job["company"], job["title"]),
+    )
+
+
+def _reject_on_greenhouse(db: Connection, status: str = "rejected") -> NormalizedJob:
+    job = _screened_posting("4001")
+    job_id = add_job(db, build_tracker_row(job, 80, []), scope=default_scope(db))
+    set_status(db, default_scope(db), job_id, status)
+    return job
+
+
+@pytest.mark.parametrize("url", ["https://boards.example.com/Northwind/Job-1", ""])
+def test_a_rejection_records_the_posting_identities(
+    env: Path, cfg: dict[str, Any], url: str
+) -> None:
+    """Recorded at decision time, from the posting, as hashes: the url and
+    the company with the title. A posting without a url has only the second."""
+    from test_screening import build_job
+
+    from harrier.screening.pipeline import TrackerIndexes, screen_jobs
+
+    seen: dict[str, SeenDecision] = {}
+    job = build_job(title="Engineering Manager", url=url)  # rejected by the title gate
+    screen_jobs(
+        [job],
+        candidate_cfg=cfg,
+        hold_companies=set(),
+        indexes=TrackerIndexes(),
+        source_seen=seen,
+        cache_descriptions=False,
+    )
+    recorded = seen[job["job_key"]]
+    assert recorded.verdict == REJECTED
+    assert recorded.identities == posting_identities(url, job["company"], job["title"])
+    assert len(recorded.identities) == (2 if url else 1)
+
+
+def test_a_posting_rejected_on_another_source_is_protected(
+    db: Connection, cfg: dict[str, Any]
+) -> None:
+    """Rejected on Greenhouse, seen on LinkedIn under its own key. The url
+    is the same; the company and title are written differently, so only the
+    url can match."""
+    rejected = _reject_on_greenhouse(db)
+    elsewhere = _listed_elsewhere(rejected["url"], "Northwind Labs Ltd", "Senior FE Engineer")
+    save_seen("apify_linkedin", {elsewhere["job_key"]: _stale_with_identities(elsewhere)})
+
+    report = reconsider_source(db, default_scope(db), "apify_linkedin", cfg, dry_run=False)
+
+    assert report.protected == 1
+    assert report.changed == 0
+    assert set(load_seen("apify_linkedin")) == {elsewhere["job_key"]}
+
+
+def test_a_cross_source_match_on_company_and_title_is_protected(
+    db: Connection, cfg: dict[str, Any]
+) -> None:
+    """The common cross-source case: the same role under another url."""
+    rejected = _reject_on_greenhouse(db)
+    elsewhere = _listed_elsewhere(
+        "https://www.linkedin.com/jobs/view/9001", rejected["company"], rejected["title"]
+    )
+    save_seen("apify_linkedin", {elsewhere["job_key"]: _stale_with_identities(elsewhere)})
+
+    report = reconsider_source(db, default_scope(db), "apify_linkedin", cfg, dry_run=False)
+
+    assert report.protected == 1
+    assert report.changed == 0
+
+
+def test_identities_of_a_row_not_rejected_protect_nothing(
+    db: Connection, cfg: dict[str, Any]
+) -> None:
+    rejected = _reject_on_greenhouse(db, status="shortlisted")
+    elsewhere = _listed_elsewhere(rejected["url"], rejected["company"], rejected["title"])
+    save_seen("apify_linkedin", {elsewhere["job_key"]: _stale_with_identities(elsewhere)})
+
+    report = reconsider_source(db, default_scope(db), "apify_linkedin", cfg, dry_run=False)
+
+    assert report.protected == 0
+    assert report.cleared == [elsewhere["job_key"]]
+
+
+def test_an_entry_without_identities_keeps_key_protection_only(
+    db: Connection, cfg: dict[str, Any]
+) -> None:
+    """An entry recorded before identities existed. Its own source's row
+    still protects it by key; another source's row cannot reach it."""
+    rejected = _reject_on_greenhouse(db)
+    elsewhere = _listed_elsewhere(rejected["url"], rejected["company"], rejected["title"])
+    save_seen("greenhouse", {rejected["job_key"]: decision(policy="old-policy")})
+    save_seen("apify_linkedin", {elsewhere["job_key"]: decision(policy="old-policy")})
+
+    same_source = reconsider_source(db, default_scope(db), "greenhouse", cfg, dry_run=False)
+    other_source = reconsider_source(db, default_scope(db), "apify_linkedin", cfg, dry_run=False)
+
+    assert same_source.protected == 1
+    assert other_source.protected == 0
+    assert other_source.cleared == [elsewhere["job_key"]]
+
+
+def test_identities_round_trip(env: Path) -> None:
+    stored = SeenDecision(REJECTED, "title", "abc123", "2026-08-01T00:00:00Z", ("a" * 20, "b" * 20))
+    save_seen("greenhouse", {"k1": stored})
+    assert load_seen("greenhouse") == {"k1": stored}
+
+
+def test_a_file_from_before_identities_loads_without_them(env: Path) -> None:
+    path = env / "data" / "discovery" / "greenhouse_seen.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps(
+            {
+                "decisions": {
+                    "k1": {
+                        "verdict": "rejected",
+                        "reason": "title",
+                        "policy": "abc123",
+                        "at": "2026-08-01T00:00:00Z",
+                    }
+                },
+                "updated_at": "2026-08-01T00:00:00Z",
+            }
+        )
+    )
+    assert load_seen("greenhouse")["k1"].identities == ()
+
+
+def test_the_seen_file_holds_no_posting_text(env: Path, cfg: dict[str, Any]) -> None:
+    """Hashes only: the url, company and title never reach the file, which
+    spec 107 copies into hosted storage."""
+    from test_screening import build_job
+
+    from harrier.screening.pipeline import TrackerIndexes, screen_jobs
+
+    seen: dict[str, SeenDecision] = {}
+    job = build_job(title="Engineering Manager", company="Northwind Labs")
+    screen_jobs(
+        [job],
+        candidate_cfg=cfg,
+        hold_companies=set(),
+        indexes=TrackerIndexes(),
+        source_seen=seen,
+        cache_descriptions=False,
+    )
+    save_seen("greenhouse", seen)
+    text = (env / "data" / "discovery" / "greenhouse_seen.json").read_text().lower()
+
+    assert seen[job["job_key"]].identities
+    for value in (job["url"], job["company"], job["title"]):
+        assert value.lower() not in text
 
 
 def test_a_job_the_operator_has_not_rejected_is_not_protected(

@@ -31,6 +31,7 @@ from typing import Any, cast
 
 from harrier.atomicio import DamagedStateError, read_json_mapping, write_json_atomic
 from harrier.db import data_dir
+from harrier.screening.normalized import normalize, stable_key
 from harrier.screening.policy import UNKNOWN_POLICY
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,25 @@ REJECTED = "rejected"
 UNKNOWN = "unknown"
 
 
+def posting_identities(url: str, company: str, title: str) -> tuple[str, ...]:
+    """A posting's identities as hashes, the same two tracker dedupe matches
+    on: its normalized url, and its normalized company and title.
+
+    Stored with a decision so a row rejected on one source can protect the
+    posting's entry on another, whose key no row can rebuild (spec 031,
+    amendment of 2026-10-11). Hashed, so the seen file still holds keys
+    only and never posting text.
+    """
+    identities: list[str] = []
+    url_norm = normalize(url)
+    if url_norm:
+        identities.append(stable_key("url", url_norm))
+    company_norm, title_norm = normalize(company), normalize(title)
+    if company_norm and title_norm:
+        identities.append(stable_key("company_title", f"{company_norm}|{title_norm}"))
+    return tuple(identities)
+
+
 @dataclass(frozen=True)
 class SeenDecision:
     """One posting, and what screening concluded about it."""
@@ -53,14 +73,20 @@ class SeenDecision:
     reason: str
     policy: str
     at: str
+    # Hashes from `posting_identities`; empty for an entry recorded before
+    # they existed, or for a posting with no url, company or title.
+    identities: tuple[str, ...] = ()
 
-    def as_json(self) -> dict[str, str]:
-        return {
+    def as_json(self) -> dict[str, object]:
+        record: dict[str, object] = {
             "verdict": self.verdict,
             "reason": self.reason,
             "policy": self.policy,
             "at": self.at,
         }
+        if self.identities:
+            record["identities"] = list(self.identities)
+        return record
 
     @property
     def reconsiderable(self) -> bool:
@@ -89,11 +115,18 @@ def _decision_from(raw: object, fallback_at: str) -> SeenDecision | None:
     if not isinstance(raw, dict):
         return None
     entry = cast("dict[str, Any]", raw)
+    raw_identities = entry.get("identities", [])
+    identities = (
+        tuple(str(item) for item in cast("list[object]", raw_identities))
+        if isinstance(raw_identities, list)
+        else ()
+    )
     return SeenDecision(
         verdict=str(entry.get("verdict", UNKNOWN)) or UNKNOWN,
         reason=str(entry.get("reason", "")),
         policy=str(entry.get("policy", UNKNOWN_POLICY)) or UNKNOWN_POLICY,
         at=str(entry.get("at", fallback_at)) or fallback_at,
+        identities=identities,
     )
 
 
