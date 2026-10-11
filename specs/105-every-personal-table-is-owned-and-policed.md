@@ -158,9 +158,11 @@ each gains a plain btree index on `owner_id`.
 Track ids become per owner. `tracks.id` stops being an identity column on
 Postgres. A `BEFORE INSERT` trigger, `tracks_number_per_owner`, sets `id`
 when the insert gives none: one more than the owner's highest id, under a
-transaction-scoped advisory lock keyed by the owner, so two tracks created
-at once by one owner get two ids. An explicit id is kept, and the primary
-key `(owner_id, id)` refuses a duplicate.
+row lock on the owner's track 1 (`SELECT ... FOR NO KEY UPDATE`), so two
+tracks created at once by one owner get two ids. Migrations 10 and 13 took
+a transaction-scoped advisory lock keyed by the owner instead; migration 14
+replaced it (Second post-merge review, item 2). An explicit id is kept, and
+the primary key `(owner_id, id)` refuses a duplicate.
 
 So every owner's default track is id 1, as it is locally. `jobs.track_id
 DEFAULT 1` keeps its meaning: the inserting owner's track 1. The domain's
@@ -409,8 +411,14 @@ schema `public` from `pg_class` and fails, naming the table, when:
   with the message under Behavior. `harrier store migrate` exits 1 and the
   store stays at version 9. Locally, the Postgres tests install the shim
   first.
-- **Two tracks created at once by one owner.** The advisory lock in
-  `tracks_number_per_owner` serializes them; they get two ids.
+- **Two tracks created at once by one owner.** The row lock on the
+  owner's track 1 that `tracks_number_per_owner` takes serializes them;
+  they get two ids. The second numbers after the first only at `READ
+  COMMITTED`, where its next statement sees the first's track. Under
+  `REPEATABLE READ` its snapshot misses that track, and it fails with a
+  unique violation on `tracks_pkey`: it fails closed. Spec 104's
+  Amendment (2026-10-11) keeps the request transaction at `READ
+  COMMITTED`.
 - **`harrier_new_owner()` fails.** The `auth.users` insert fails with it,
   so sign-up fails. An owner without track 1 cannot use the product, so
   failing sign-up is the honest result. Supabase documents this effect.
@@ -560,13 +568,20 @@ schema `public` from `pg_class` and fails, naming the table, when:
   track-numbering key, and so wait on, or delay, the other's track
   inserts. Since migration 14 numbering takes a row lock the policy
   confines instead (second post-merge review, item 2).
-- **A whole-table lock is not policed.** `LOCK TABLE` needs only `UPDATE`,
-  `DELETE` or `TRUNCATE` on the table, and the tenant role holds `UPDATE`
-  or `DELETE` on every owned table. A tenant session can lock a table and
-  hold every owner's writes to it until its transaction ends. It names no
-  owner and learns nothing of one, but it stalls all of them. Not closed;
-  a statement and transaction timeout on the request role (spec 104) is
-  what bounds it.
+- **A whole-table lock is not policed.** `LOCK TABLE` checks the table's
+  privileges, not the policy. `UPDATE`, `DELETE`, `TRUNCATE` or `MAINTAIN`
+  on the table allows any lock mode. The tenant role holds `UPDATE` or
+  `DELETE` on six of the seven owned tables. `job_events` refuses it
+  (`42501`, `permission denied for table job_events`), because the tenant
+  role holds no `UPDATE` or `DELETE` there. On the other six, a tenant
+  session can take `ACCESS EXCLUSIVE`, which holds every owner's reads as
+  well as writes until its transaction ends. It names no owner and learns
+  nothing of one, but it stalls all of them. Not closed. Spec 104's
+  Amendment (2026-10-11), request-role timeouts, is what bounds it: every
+  other request waits at most its own `lock_timeout`. The holder's own
+  `statement_timeout` and `idle_in_transaction_session_timeout` bound a
+  hold by harrier's statements; SQL injected into the holder can raise
+  them for its session.
 - **The catalog compares policy text as Postgres prints it.** A Postgres
   major version that prints the expression differently fails the test
   without a real change. The isolation tests are the behavioral proof;
@@ -790,9 +805,12 @@ Akin approved all three on 2026-10-10. Implementation found the rest.
   `harrier_new_owner()`. A trigger fires without EXECUTE on its function.
 - **An identity insert needs no sequence privilege,** as Behavior assumed.
 - **Names the spec left open:** `harrier_number_track()` behind trigger
-  `tracks_number_per_owner`, and `harrier_new_owner` on `auth.users`. The
-  numbering lock is `pg_advisory_xact_lock(hashtext('harrier.tracks'),
+  `tracks_number_per_owner`, and `harrier_new_owner` on `auth.users`.
+  Migration 10's numbering lock was
+  `pg_advisory_xact_lock(hashtext('harrier.tracks'),
   hashtext(owner_id::text))`, which never meets the runner's one-key lock.
+  Migration 14 replaced it with a row lock on the owner's track 1 (Second
+  post-merge review, item 2).
   `OWNED_TABLES` lists `job_events` before `jobs`, so the ownerless
   precheck names the table that holds the row.
 - **Forced row security on `schema_version` needs a bypassing migrator.**
@@ -952,9 +970,10 @@ the pull request carries the runs.
    Postgres lets only a superuser name `SUPERUSER`, so a migrating role
    shaped like Supabase's `postgres` (`LOGIN CREATEROLE CREATEDB
    REPLICATION BYPASSRLS`, not a superuser, with the admin option on
-   `harrier_tenant`) was refused with `42501`, `Only roles with the
-   SUPERUSER attribute may change the SUPERUSER attribute`, whenever any
-   attribute was wrong. Migration 14 resets the role with one `ALTER ROLE`
+   `harrier_tenant`) was refused with `42501`, primary message `permission
+   denied to alter role` and detail `Only roles with the SUPERUSER
+   attribute may change the SUPERUSER attribute.`, whenever any attribute
+   was wrong. Migration 14 resets the role with one `ALTER ROLE`
    per wrong attribute (`TENANT_ROLE_RESET` in
    `services/api/src/harrier/tracker/schema.py`). A role with `SUPERUSER`
    can be altered only by a superuser, so for a migrating role that is not
@@ -971,9 +990,19 @@ the pull request carries the runs.
    Limitation: a store below version 13 runs migration 13's single `ALTER`
    first. With a wrong attribute and a migrating role that is not a
    superuser, that statement is refused, the store stays at version 12,
-   and `harrier store migrate` exits 1 with Postgres's message. It fails
-   closed. Migration 14's reset serves a store already at 13 whose role
-   changed since, and a superuser migrator.
+   and `harrier store migrate` exits 1 with `error: a migration failed:
+   permission denied to alter role`. It fails closed. Migration 14's reset
+   serves a store already at 13 whose role changed since, and a superuser
+   migrator. A second limitation: since Postgres 16, `CREATEROLE` reaches
+   only roles it holds the admin option on. A migrating role without it on
+   `harrier_tenant` cannot run any of migration 14's `ALTER ROLE`
+   statements. With a wrong attribute, the reset fails with a raw `42501`,
+   primary message `permission denied to alter role` and detail `Only
+   roles with the CREATEROLE attribute and the ADMIN option on role
+   "harrier_tenant" may alter this role.`, and the store stays at version
+   13. It fails closed. The role that created `harrier_tenant` holds the
+   admin option (spec 115, A10). Both messages were printed from Postgres
+   17 for the third post-merge review.
 2. **The numbering lock could be taken by another owner** (medium).
    Migration 13 numbered a track under `pg_advisory_xact_lock` keyed by the
    owner's id. Any role may take an advisory lock, and `pg_locks` shows
@@ -982,9 +1011,10 @@ the pull request carries the runs.
    session with no claims, naming another owner, still took that owner's
    lock, since migration 13 skipped it only when `auth.uid()` was not
    null. Migration 14 replaces `harrier_number_track()`:
-   - When `current_user` is `harrier_tenant` and the row's `owner_id` is
-     distinct from `auth.uid()`, a null `auth.uid()` included, it returns
-     the row unnumbered and takes no lock. The policy refuses it at once.
+   - When `current_user` is `harrier_tenant` (the role gate) and the
+     row's `owner_id` is distinct from `auth.uid()`, a null `auth.uid()`
+     included, it returns the row unnumbered and takes no lock (the early
+     return). The policy refuses it at once.
    - Otherwise it locks the owner's track 1 row with `SELECT ... FOR NO
      KEY UPDATE`, then numbers. Every owner has track 1 from the moment it
      exists (`harrier_new_owner()`, or migration 10's seed), and tracks are
@@ -994,8 +1024,11 @@ the pull request carries the runs.
      with the key share lock a job's reference to track 1 takes, so filing
      a job never waits on it
      (`services/api/tests/test_owner_policy.py::test_filing_a_job_never_waits_on_a_track_being_numbered`;
-     with `FOR UPDATE` it times out). A row lock lives in the row, not in
-     `pg_locks`.
+     with `FOR UPDATE` it times out). A row lock is kept in the row, not
+     as an entry in `pg_locks`. There, the holder shows its relation and
+     transaction locks, and a session waiting on it shows a `tuple` lock
+     and a wait on the holder's `transactionid`. None of them names an
+     owner, and none is a key another session can take ahead of it.
    - A session that is not the tenant role numbers any owner's track, with
      claims or without. This amends item 3 of the first post-merge review:
      a bypassing role with one owner's claims, inserting another owner's
@@ -1016,16 +1049,22 @@ the pull request carries the runs.
    another owner's
    (`services/api/tests/test_owner_policy.py::test_an_operator_without_claims_numbers_the_next_track`);
    dropping `auth.uid() IS NOT NULL AND` from migration 13's function, or
-   the role test from migration 14's, fails it. Two inserts for one owner
+   the role gate (`current_user = 'harrier_tenant' AND`) from migration
+   14's, fails it. Two inserts for one owner
    still get two ids, and with the row lock removed the second fails with
    a unique violation
    (`services/api/tests/test_owner_policy.py::test_every_owner_starts_with_track_one`).
-   Removing the role gate alone changes nothing a test can see, because
-   the policy already hides the other owner's track 1 from the lock; the
-   gate is kept so the trigger reads no other owner's rows at all. This
-   amends Behavior ("Each owner has their own track 1") and Failure modes
-   ("Two tracks created at once by one owner"): the per-owner lock is this
-   row lock, not an advisory lock.
+   Removing the early return whole changes nothing a test can see,
+   because row-level security already hides the other owner's track 1
+   from the lock, and hides every owner's from a session without claims.
+   The docstrings of
+   `services/api/tests/test_owner_policy.py::test_an_owner_never_waits_on_another_owners_track`
+   and
+   `services/api/tests/test_owner_policy.py::test_a_tenant_without_claims_never_waits_on_an_owners_track`
+   say so. The early return is kept so the trigger does not lean on the
+   policy to stay out of another owner's rows. Behavior ("Each owner has
+   their own track 1") and Failure modes ("Two tracks created at once by
+   one owner") now name this row lock in place.
 3. **Global default privileges survived** (medium). Migration 13 revoked
    the migrating role's default privileges `IN SCHEMA public` only. A
    default set with no schema applies in every schema, and functions get
@@ -1042,7 +1081,14 @@ the pull request carries the runs.
    Default privileges belong to the role that set them. These statements
    reach the migrating role's own defaults; another role's, such as
    Supabase's `supabase_admin`, remain, and only a real project shows
-   them. Spec 115 checks that on staging (its assumption A9).
+   them. Spec 115 checks that on staging (its assumption A9). The global
+   revoke reaches every function the migrating role creates later, in
+   any schema, and so the functions of an extension it creates later:
+   they arrive without `PUBLIC`'s `EXECUTE`. On Postgres 17, `CREATE
+   EXTENSION pgcrypto` after migration 14 gave `ext.digest` the ACL
+   `{postgres=X/postgres}`, and `harrier_tenant` could not execute it. A
+   later migration that adds an extension grants `EXECUTE` on the
+   functions its callers need, explicitly.
 4. **A later column gets no tenant grant** (low). Migration 13's column
    grants cover the columns each table in `GLOBAL_ID_TABLES` had at
    version 12. The column grant helper is now public,
@@ -1093,4 +1139,42 @@ the pull request carries the runs.
 - [x] Each test named in items 1 to 6 passes against Postgres 17 with the
       shim, and each fails without its fix or under the mutation the pull
       request records.
-- [ ] CI's `check-python` job runs these tests against Postgres.
+- [x] CI's `check-python` job runs these tests against Postgres (run
+      38140364349 on PR #231, head 01f971c: 2846 passed, none skipped).
+
+## Third post-merge review (2026-10-11)
+
+Two reviews of PR #231, after it merged, found the gaps below. No schema
+changes: migrations 9 to 14 are unchanged, and no migration 15 is added.
+
+1. **One statement of migration 14 had no test.** Its in-public `ALTER
+   DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM
+   PUBLIC` could be deleted and every test passed: a default in `public`
+   is its own entry, and nothing set one for `PUBLIC`. A store at version
+   13 whose migrating role set that default is now clean after migration
+   14, and deleting the statement fails the test
+   (`services/api/tests/test_owner_policy.py::test_migration_14_revokes_public_execute_by_default_in_public`).
+2. **Text that no longer held.** Behavior and Failure modes named the
+   advisory lock migration 14 removed; they name the row lock in place
+   now, and Failure modes says the numbering needs `READ COMMITTED`.
+   Second post-merge review item 2 used "role test" and "role gate" for
+   one condition; it now says "role gate" for the condition and "early
+   return" for the branch it guards, and its sentence on `pg_locks` says
+   what a waiter shows there. Item 1 quotes migration 13's error as
+   Postgres prints it, primary message and detail, and gains the
+   limitation of a migrating role without the admin option. Item 3 says
+   the global revoke also reaches the functions of a later extension.
+   The two early-return tests' docstrings credit row-level security for
+   hiding the other owner's track 1. Honest limitations' whole-table lock
+   counts the tables the tenant role can lock and points at spec 104's
+   Amendment (2026-10-11).
+3. **A recorded finding for spec 104.** That limitation named a timeout
+   on the request role that spec 104 did not have. Spec 104's Amendment
+   (2026-10-11) now requires it, with its own criteria.
+
+### Acceptance criteria (third post-merge review)
+
+- [x] `services/api/tests/test_owner_policy.py::test_migration_14_revokes_public_execute_by_default_in_public`
+      passes against Postgres 17 with the shim, and fails with the
+      in-public revoke removed from migration 14.
+- [ ] CI's `check-python` job runs it against Postgres.
