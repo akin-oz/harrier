@@ -13,8 +13,10 @@ depends: [076, 079, 090, 092, 103, 105]
 
 Spec 103 creates a Postgres store with the tracker's schema, and nothing
 uses it. Every domain read and write is written for `sqlite3`. Line numbers
-below are from the spec 103 branch on 2026-10-10; counts say how they were
-taken.
+below are from the spec 103 branch on 2026-10-10, except the `schema.py`,
+`harrier_cli/main.py` and `harrier_api/app.py` ones, refreshed to `main` at
+`524dd8a` on 2026-10-11, and the `pgstore.py` and `connection.py` ones,
+refreshed by PR #245; counts say how they were taken.
 
 **The connection type.** `harrier.db.connect` returns a
 `sqlite3.Connection` with `sqlite3.Row` rows (`services/api/src/harrier/db.py:222`,
@@ -32,7 +34,7 @@ stub named a ninth, `mail/watch.py`; it has no SQL of its own, and its
 modules execute SQL and are local by nature: `backup.py:106-133`,
 `doctor.py:199-204`, `cutover.py:113` and `:298-300`, and
 `tracker/migrate_legacy.py:98-171`. Two more sit at the edges:
-`harrier_api/app.py:161` (the health count) and `harrier_cli/main.py:1426-1433`
+`harrier_api/app.py:270` (the health count) and `harrier_cli/main.py:1588-1603`
 (`harrier store status` reading a SQLite file read-only).
 
 **What does not run on Postgres as written:**
@@ -69,10 +71,10 @@ modules execute SQL and are local by nature: `backup.py:106-133`,
   `DuplicateTrackError`); `sqlite3.Error` caught at `logredact.py:93`,
   `:194` and `logsetup.py:140`. psycopg raises its own classes. A trigger
   refusal on Postgres comes from `harrier_refuse()`
-  (`tracker/schema.py:427-432`) as `psycopg.errors.RaiseException`, which
+  (`tracker/schema.py:560-564`) as `psycopg.errors.RaiseException`, which
   is not an integrity error there. An unknown track is a trigger message in
-  SQLite (`tracker/schema.py:343-354`) and a foreign key violation in
-  Postgres (`tracker/schema.py:464`).
+  SQLite (`tracker/schema.py:378-389`) and a foreign key violation in
+  Postgres (`tracker/schema.py:597`).
 - The write lock. `_write_lock` takes `BEGIN IMMEDIATE`
   (`tracker/store.py:285-306`) for `set_status` (`:355`), `update_fields`
   (`:471`) and `backfill_events` (`:661`), so the row a write depends on is
@@ -87,8 +89,8 @@ modules execute SQL and are local by nature: `backup.py:106-133`,
   `lock_timeout = 0` means no limit, not no wait.
 
 **The gate.** Until this spec, every CLI command except `harrier store`
-refuses a Postgres URL (`harrier_cli/main.py:2865-2868`) and so does the
-API (`harrier_api/app.py:931-932`), both with `POSTGRES_NOT_YET`
+refuses a Postgres URL (`harrier_cli/main.py:3067-3070`) and so does the
+API (`harrier_api/app.py:1370-1371`), both with `POSTGRES_NOT_YET`
 (`connection.py:41-43`; in `pgstore.py` until PR #241 moved it on
 2026-10-11), which says "until spec 112".
 
@@ -158,7 +160,7 @@ API (`harrier_api/app.py:931-932`), both with `POSTGRES_NOT_YET`
     and `:41-43`.) `harrier.pgstore` keeps only
     driver code: connecting, the version reads and the migration runner.
     The CLI and the API import them from `harrier.connection`
-    (`harrier_cli/main.py:33`, `harrier_api/app.py:30` today). They are the
+    (`harrier_cli/main.py:17`, `harrier_api/app.py:25` today). They are the
     same classes, moved, not new ones. (post-merge review of PRs #194 and
     #207, architecture 6, 2026-10-10)
 14. **`scrub_secrets` recognises a Postgres URL's password.**
@@ -371,7 +373,7 @@ summary, an event or the exception boundary through `scrub_secrets`.
 **`harrier store migrate` reports what it found under the lock.**
 `apply_postgres_migrations` reads `before` at `pgstore.py:114`, before it
 takes the advisory lock at `:119`, so two runs started together on an
-empty store each print `postgres 0 -> 10` (`harrier_cli/main.py:1421`)
+empty store each print `postgres 0 -> 10` (`harrier_cli/main.py:1568`)
 though each migration was applied once. After this spec the runner reads
 `before` under the migration lock and holds a session-level advisory lock
 on the same key from that read until its last migration commits. Each

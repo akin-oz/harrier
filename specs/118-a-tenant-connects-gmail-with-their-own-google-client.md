@@ -37,9 +37,10 @@ Spec 109 found it workable but unconfirmed:
   does not run.
 - The watch today is one person's: one token file refreshed in place
   (`watch.py:595-602`, `:643-645`), a loopback grant flow on the
-  operator's machine (`services/api/src/harrier_cli/main.py:889-928`), and
+  operator's machine (`services/api/src/harrier_cli/main.py:914-953`), and
   state files in the data directory (`watch.py:163-172`). Line numbers are
-  from `main` at `44ac0d7`.
+  from `main` at `44ac0d7`, except the `harrier_cli/main.py` one,
+  refreshed to `main` at `524dd8a` on 2026-10-11.
 
 ## Scope
 

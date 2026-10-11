@@ -33,7 +33,7 @@ is no working way to take a backup while it runs.
   (`services/api/src/harrier/backup.py:79`), which becomes `/Backups/harrier`.
   `create_backup` calls `mkdir` on it (`backup.py:202`) and the process dies
   with an uncaught `PermissionError` traceback. `_cmd_backup` only catches
-  `BackupError` (`services/api/src/harrier_cli/main.py:1032`). Even a writable
+  `BackupError` (`services/api/src/harrier_cli/main.py:1765`). Even a writable
   path there would land inside the container's own filesystem and disappear
   with it.
 - **On the host, a backup is unsafe or refused.** Reading the live database
@@ -222,7 +222,7 @@ applied to spec 051 in the same change.
   (`services/api/src/harrier/backup.py:79`) with `HOME` resolving to `/` for a
   uid with no passwd entry (`Dockerfile:87`).
 - The uncaught error: `_cmd_backup` catches only `BackupError`
-  (`services/api/src/harrier_cli/main.py:1032`).
+  (`services/api/src/harrier_cli/main.py:1765`).
 - The deferral this spec answers: spec 061, "Out of scope", path translation
   for `host-path` commands, "That spec is also where backing up a running
   system belongs."

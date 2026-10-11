@@ -49,7 +49,7 @@ deliberately keeps independent of the API.
 Pros: supervision, restart policy, and a reproducible environment in one
 mechanism. The image is a fixed artifact, so "what is running" becomes a
 question with an answer. The API already serves the built SPA
-(`services/api/src/harrier_api/app.py:721`), so this is one container, not a
+(`services/api/src/harrier_api/app.py:1432`), so this is one container, not a
 stack. Cons: introduces Docker as a daily dependency on the one machine that
 matters, and creates a second process writing the tracker database across a
 bind mount, which spec 051 has to resolve rather than assume.

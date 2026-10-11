@@ -139,10 +139,15 @@ with `"track <slug> is archived"`.
 A route that depends on `ScopeDep` and declares no operation fails a test
 that walks the application's routes, so a new route cannot skip the list.
 
-Every route that takes `track` declares both refusals in the contract, a 404
-and a 409 with the `ErrorOut` body, so the browser reads them through
-generated types. The route class adds them, as it adds the 503 (spec 075),
-and a route's own wording for a status it already declares is kept.
+Every route that takes `track` declares its refusals in the contract with
+the `ErrorOut` body, so the browser reads them through generated types: the
+404 for an unknown track on every such route, and a 409 for each cause its
+operation can meet, "the track may not run this operation" when the
+operation is outside `NON_DEFAULT_OPERATIONS` and "the track is archived"
+when it is in `WRITE_OPERATIONS`. A read every track runs claims no track
+409. The route class adds them, as it adds the 503 (spec 075), and joins
+them with a route's own causes for the same status, so neither replaces the
+other.
 
 ### The tracks routes
 
@@ -255,9 +260,12 @@ otherwise. Every database is built under `tmp_path` with synthetic rows.
       the function `harrier tracks` calls
       (`services/api/tests/test_api_tracks.py::test_the_tracks_routes_list_add_and_archive`,
       `services/api/tests/test_api_tracks.py::test_the_cli_and_the_api_manage_tracks_through_the_same_functions`)
-- [x] Every route that takes `track` declares the 404 and the 409 with the
-      `ErrorOut` body, and `POST /tracks` declares no 404
-      (`services/api/tests/test_api_tracks.py::test_every_track_refusal_is_in_the_contract`)
+- [x] Every route that takes `track` declares the 404, and the 409 for
+      each cause its operation can meet, with the `ErrorOut` body, and
+      `POST /tracks` declares no 404
+      (`services/api/tests/test_api_tracks.py::test_every_track_refusal_is_in_the_contract`,
+      `services/api/tests/test_api_tracks.py::test_every_scoped_route_declares_the_track_refusal`,
+      `services/api/tests/test_api_tracks.py::test_a_read_on_an_archived_track_answers_what_its_contract_says`)
 - [x] `NON_DEFAULT_OPERATIONS` is the one list both surfaces read
       (`services/api/tests/test_api_tracks.py::test_the_cli_and_the_api_share_one_allowlist`)
 - [x] `JobOut` carries `track`, `deadline` and `deadline_passed`, and
@@ -442,3 +450,26 @@ routes and the bundle.
   on every route whose scope comes from `scope_for`, and each tracks route
   declares only what it answers
   (`services/api/tests/test_api_tracks.py::test_every_track_refusal_is_in_the_contract`).
+
+## Amendment (2026-10-11, review of PR #239)
+
+- **The unknown track's 404 is in the contract on every scoped route.** The
+  route class kept a route's own 404 wording in place of the track's, so
+  the 23 operations that name a job declared "no job" and never
+  "unknown track", though `POST /tracker/1/status?track=no-such-track`
+  answers 404 naming the slug. The 404 is now joined as the 409 is
+  (`services/api/tests/test_api_tracks.py::test_every_scoped_route_declares_the_track_refusal`).
+  Spec 082's 404 wording gains the track cause with it.
+- **A route claims only the track 409 it can send.** `GET /jobs`, the queue,
+  the counts, a job's history and `jobs.csv` run operations every track may
+  run and that write nothing, and returned 200 on an archived track while
+  the contract claimed a 409. The 409 causes now come from the same two
+  lists `operation_refusal` reads, and every scoped read is provoked on an
+  archived track to hold the contract to what it answers
+  (`services/api/tests/test_api_tracks.py::test_a_read_on_an_archived_track_answers_what_its_contract_says`).
+  The joined description "the track may not run this operation, or it is
+  archived" is split into its two causes.
+- **A cause list merged twice keeps each cause once.** `merge_responses`
+  split only the side it already held, so merging a joined list with itself
+  doubled it. No route did this; the new side is now split too
+  (`services/api/tests/test_api_tracks.py::test_merge_responses_keeps_every_whole_cause`).

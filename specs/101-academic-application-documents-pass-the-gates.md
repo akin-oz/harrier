@@ -434,9 +434,13 @@ afterwards.
   As first written this held for those five routes only: spec 094's route
   class still let a route's own 409 replace the track refusal on about
   twenty other scoped routes. The route class now joins them too, and
-  every response declaration goes through `merge_responses`
+  every declaration that combines two sets sharing a status goes through
+  `merge_responses`
   (`services/api/tests/test_api_tracks.py::test_every_scoped_route_declares_the_track_refusal`,
-  review of PR #234).
+  review of PR #234). The rest unpack one dict into another, adding the
+  token's 403 or one 409 to a set without one, so none can lose a cause
+  (corrected after the review of PR #239, which found the first wording
+  claimed every declaration).
 - **A missing half of the profile names the command that stores it**
   (`services/api/tests/test_academic_applications.py::test_a_missing_half_of_the_profile_names_the_command`).
 - **Tests that could not fail now can,** each checked by mutating the

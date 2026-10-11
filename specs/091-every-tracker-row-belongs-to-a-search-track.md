@@ -502,7 +502,7 @@ The tenancy options are in the ADR section. Implementation choices:
 - The schema with no track column: `services/api/src/harrier/tracker/schema.py`
   (migrations one to seven at cd5665d); the next free version is eight,
   checked on every local and remote branch before this spec was written.
-- The unique indexes dedupe relies on: `schema.py:133-137`;
+- The unique indexes dedupe relies on: `schema.py:166-170`;
   `find_duplicate` in `services/api/src/harrier/tracker/store.py:77-96`; the
   index build at `services/api/src/harrier/discovery.py:176`.
 - The readers that would mix profiles: `apply/profile.py:43-48`,
@@ -517,7 +517,7 @@ The tenancy options are in the ADR section. Implementation choices:
 - Events derive their track from their job: spec 079 (the `job_events`
   schema, `job_id` references `jobs`).
 - Command classes: spec 074, `COMMAND_CLASSES` at
-  `services/api/src/harrier_cli/main.py:1696-1772`.
+  `services/api/src/harrier_cli/main.py:2263-2354`.
 - The import contract: `services/api/pyproject.toml:96-110`.
 
 ## Out of scope

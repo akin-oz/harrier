@@ -366,7 +366,7 @@ synthetic.
   profile read").
 - **The export destination is resolved as today**, relative to the working
   directory (`Path(args.dest)`, default `tracker`, at
-  `services/api/src/harrier_cli/main.py:198` and `:1815`). Run from
+  `services/api/src/harrier_cli/main.py:306` and `:2405`). Run from
   `services/api`, that is an unignored path, and this spec adds a
   slug-named folder under it. Found in review of this spec; anchoring the
   destination to the repository root is a pre-existing defect with its own
@@ -441,7 +441,9 @@ else changes; the schedule does not need reinstalling.
 - Manual entry's scoring path: `services/api/src/harrier/capture.py:58`
   (`load_candidate_config`) and `:80` (`fit_score_for`); spec 010.
 - The follow-up seeding: `services/api/src/harrier/tracker/store.py:276-285`;
-  `NEXT_ACTION_DEFAULTS` at `tracker/schema.py:64`.
+  `NEXT_ACTION_DEFAULTS` at `tracker/schema.py:80` (`:64` when this was
+  written; since this spec it is derived from `harrier.tracks.KIND_RULES`,
+  noted 2026-10-11).
 - The queue: `services/api/src/harrier/tracker/queue.py` (`rank_active`).
 - Delegation of the whole vector: spec 074,
   `services/api/src/harrier/delegate.py:108-134`,

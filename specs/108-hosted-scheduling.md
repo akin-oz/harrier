@@ -20,7 +20,9 @@ owners with the service role and start each run as its owner. It never
 executes domain code as the service role.
 
 Today the schedule is a committed file and a renderer. Line numbers are
-from `main` at `44ac0d7` (2026-10-10).
+from `main` at `44ac0d7` (2026-10-10), except the `schema.py`,
+`harrier_cli/main.py` and `harrier_api/app.py` ones, refreshed to `main` at
+`524dd8a` on 2026-10-11, and the `pgstore.py` one, refreshed by PR #245.
 
 - **The cadence.** `config/schedule.json` defines four jobs, counted by
   reading the file: `discovery` four times a day (`:6-16`),
@@ -35,17 +37,17 @@ from `main` at `44ac0d7` (2026-10-10).
   `datetime.now()` and allows Apify when the hour is before 12 on a
   weekday (`services/api/src/harrier/discovery.py:130-133`). The CLI calls
   it with no argument for a `--scheduled` run
-  (`services/api/src/harrier_cli/main.py:185-186`). On a hosted machine
+  (`services/api/src/harrier_cli/main.py:187-188`). On a hosted machine
   the local time is the machine's, not the owner's.
 - **Outcome.** A scheduled run reports through its exit status: 0, or 3
   when every attempted source failed or none was attempted
   (`services/api/src/harrier/runoutcome.py:36`, `:60-75`;
-  `harrier_cli/main.py:225-236`). Its last success is a row in `job_runs`,
+  `harrier_cli/main.py:227-238`). Its last success is a row in `job_runs`,
   written only on success (`runoutcome.py:138-152`). Spec 029's overdue
   rule compares that time with twice the longest gap in the job's cadence
   (`schedule.py:452`, `:494-508`, `:555`). launchd's own record, the last
   exit status, is read by `harrier schedule status`, which exits 1 when a
-  job has a problem (`schedule.py:103-120`; `harrier_cli/main.py:2069-2082`).
+  job has a problem (`schedule.py:103-120`; `harrier_cli/main.py:2175-2188`).
 - **Every job of the installation runs.** There is one person, so there
   is no per-person choice of jobs and no per-person timezone.
 
@@ -71,9 +73,13 @@ Hosted, several things change at once:
   open decision 3). A scheduler that starts a slot twice spends the
   tenant's money twice.
 - `OWNED_TABLES` is both the catalog's list of owned tables and the input
-  to migration 10's statements (`services/api/src/harrier/tracker/schema.py:606-614`,
-  used at `:733`, `:754`, `:852` and `:871`). A later owned table added to
-  it would change what migration 10 applies to a fresh store.
+  to migration 10's statements (`services/api/src/harrier/tracker/schema.py:606-614`
+  at `44ac0d7`, used at `:733`, `:754`, `:852` and `:871`). A later owned
+  table added to it would change what migration 10 applies to a fresh
+  store. (Spec 122 froze migration 10's list, noted 2026-10-11:
+  migration 10 now reads `MIGRATION_10_OWNED_TABLES` (`schema.py:688-696`)
+  at `:873`, `:894`, `:992` and `:1012`, and `OWNED_TABLES` (`:700`) adds
+  `job_eligibility` to it.)
 
 ## Scope
 
@@ -117,7 +123,7 @@ starts nothing; PR 2 adds no migration.
    so the local product does not change. The `/config` routes serve it
    hosted through the kinds the connection allows. The contract does not
    change: `kind` is a path string and `ConfigOut` already carries any
-   kind (`services/api/src/harrier_api/app.py:1034-1065`).
+   kind (`services/api/src/harrier_api/app.py:1290-1321`).
 5. **A new module, `services/api/src/harrier/hostedschedule.py`,** holds
    the hosted job set, the due computation, the claim and finish writes,
    and the outcome classes. It names no tenant in SQL (ADR-013 decision
@@ -238,7 +244,7 @@ CREATE TABLE schedule_state (
 ```
 
 - Timestamps are ISO 8601 UTC text, the format `job_runs` uses
-  (`schema.py:209-212`) and spec 112 supplies from Python. Two values in
+  (`schema.py:242-245`) and spec 112 supplies from Python. Two values in
   this format order correctly as text.
 - Row security is enabled and forced, with the `owner_only` policy
   `FOR ALL TO harrier_tenant` that every owned table has (spec 105,

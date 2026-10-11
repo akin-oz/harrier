@@ -152,8 +152,14 @@ posting is refetchable.
 
 ## Amendment (2026-10-11): a rejection made on one source protects the posting on every source
 
-This section is proposed. It is not approved until Akin approves it, and
-nothing below is built.
+Akin approved this section by merging PR #252 on 2026-10-11. It is built:
+`posting_identities` in `services/api/src/harrier/screening/seen.py`
+computes the hashes, the industry `record` in `screen_jobs` stores them,
+and `human_rejected_identities` in
+`services/api/src/harrier/screening/reconsider.py` matches them. Each hash
+is taken over a kind tag as well as the value (`stable_key("url", ...)`,
+`stable_key("company_title", ...)`), so a url can never equal a company
+and title by accident.
 
 ### Problem
 
@@ -234,22 +240,22 @@ because an entry stores only the hashed key and its decision.
 
 - An industry rejection is recorded with the url hash and the company and
   title hash of its posting; a posting without a url gets only the latter
-  (planned test_a_rejection_records_the_posting_identities).
+  (`test_a_rejection_records_the_posting_identities`).
 - A rejected `greenhouse` row and a stale `apify_linkedin` entry with the
   same url: the entry is protected and kept, and `protected == 1`
-  (planned test_a_posting_rejected_on_another_source_is_protected).
+  (`test_a_posting_rejected_on_another_source_is_protected`).
 - The same case matched by company and title alone, with different urls
-  (planned test_a_cross_source_match_on_company_and_title_is_protected).
+  (`test_a_cross_source_match_on_company_and_title_is_protected`).
 - The same identities on a shortlisted row protect nothing: the entry is
-  cleared (planned test_identities_of_a_row_not_rejected_protect_nothing).
+  cleared (`test_identities_of_a_row_not_rejected_protect_nothing`).
 - An entry without identities is still protected by its key and cleared
   across sources
-  (planned test_an_entry_without_identities_keeps_key_protection_only).
+  (`test_an_entry_without_identities_keeps_key_protection_only`).
 - Identities survive a save and load, and a file from before this change
-  loads with none (planned test_identities_round_trip,
-  planned test_a_file_from_before_identities_loads_without_them).
+  loads with none (`test_identities_round_trip`,
+  `test_a_file_from_before_identities_loads_without_them`).
 - The written seen file contains neither the posting's url nor its company
-  or title as text (planned test_the_seen_file_holds_no_posting_text).
+  or title as text (`test_the_seen_file_holds_no_posting_text`).
 - The academic track is unchanged:
   `test_reconsider_never_reopens_a_human_rejection_on_an_academic_track`
   and the existing reconsideration tests in

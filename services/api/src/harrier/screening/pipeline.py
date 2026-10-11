@@ -45,7 +45,13 @@ from harrier.screening.rules import (
     remote_region_allowed,
     title_allowed,
 )
-from harrier.screening.seen import ACCEPTED, REJECTED, SeenDecision, now_iso
+from harrier.screening.seen import (
+    ACCEPTED,
+    REJECTED,
+    SeenDecision,
+    now_iso,
+    posting_identities,
+)
 from harrier.sources.apify_academic import COMPONENTS as ACADEMIC_COMPONENTS
 from harrier.tracker.schema import NEXT_ACTION_DEFAULTS
 from harrier.tracker.score import score_fields
@@ -213,14 +219,21 @@ def screen_jobs(
     result = ScreenResult()
     current_policy = policy if policy is not None else policy_version(candidate_cfg)
 
-    def record(key: str, verdict: str, reason: str) -> None:
+    def record(job: NormalizedJob, key: str, verdict: str, reason: str) -> None:
         """Recorded after the decision, never before it (spec 031).
 
         The old code added the key on sight, so a posting suppressed before
         any gate ran could never be judged later and no rule change could
-        ever reach it.
+        ever reach it. The posting's identities go with it, so a row
+        rejected on another source can still protect it.
         """
-        source_seen[key] = SeenDecision(verdict, reason, current_policy, now_iso())
+        source_seen[key] = SeenDecision(
+            verdict,
+            reason,
+            current_policy,
+            now_iso(),
+            posting_identities(job["url"], job["company"], job["title"]),
+        )
 
     for job in jobs:
         job_key = job["job_key"].strip()
@@ -249,7 +262,7 @@ def screen_jobs(
 
         if company_norm in hold_companies:
             reject_reason = HOLD_REASON
-            record(job_key, REJECTED, reject_reason)
+            record(job, job_key, REJECTED, reject_reason)
             result.rejected_counts[reject_reason] = result.rejected_counts.get(reject_reason, 0) + 1
             result.skipped_hold += 1
             if write_rejected_debug:
@@ -258,7 +271,7 @@ def screen_jobs(
 
         if not title_allowed(job["title"], candidate_cfg):
             reject_reason = "title"
-            record(job_key, REJECTED, reject_reason)
+            record(job, job_key, REJECTED, reject_reason)
             result.rejected_counts[reject_reason] = result.rejected_counts.get(reject_reason, 0) + 1
             result.skipped_rejected += 1
             if write_rejected_debug:
@@ -273,7 +286,7 @@ def screen_jobs(
             # into two (review finding on PR #33). The prose stays in
             # rejected_counts, which is pre-existing behaviour that spec 032
             # revisits along with the rules themselves.
-            record(job_key, REJECTED, REMOTE_REGION_REASON)
+            record(job, job_key, REJECTED, REMOTE_REGION_REASON)
             result.rejected_counts[remote_reason] = result.rejected_counts.get(remote_reason, 0) + 1
             result.skipped_rejected += 1
             if write_rejected_debug:
@@ -286,7 +299,7 @@ def screen_jobs(
             or (external_key and external_key in indexes.external_keys)
         ):
             reject_reason = "tracker_duplicate"
-            record(job_key, REJECTED, reject_reason)
+            record(job, job_key, REJECTED, reject_reason)
             result.rejected_counts[reject_reason] = result.rejected_counts.get(reject_reason, 0) + 1
             result.skipped_tracker_duplicate += 1
             if write_rejected_debug:
@@ -311,7 +324,7 @@ def screen_jobs(
             )
             page_verdict = verifier(job["url"])
             if page_verdict == VERDICT_NOT_REMOTE:
-                record(job_key, REJECTED, LINKEDIN_PAGE_REASON)
+                record(job, job_key, REJECTED, LINKEDIN_PAGE_REASON)
                 result.rejected_counts[LINKEDIN_PAGE_REASON] = (
                     result.rejected_counts.get(LINKEDIN_PAGE_REASON, 0) + 1
                 )
@@ -347,7 +360,7 @@ def screen_jobs(
         # ones for being region-filtered at query level; the derivation is in
         # rules.py (spec 033).
 
-        record(job_key, ACCEPTED, "passed every gate")
+        record(job, job_key, ACCEPTED, "passed every gate")
         result.new_tracker_rows.append(
             build_tracker_row(scored_job, fit.score, fit.reasons, fit.version)
         )

@@ -24,9 +24,23 @@ import harrier_cli.main as cli_module
 from harrier.connection import Connection
 from harrier.db import connect
 from harrier.tracker import add_job
-from harrier.tracks import NON_DEFAULT_OPERATIONS, default_scope, resolve_scope
+from harrier.tracks import (
+    NON_DEFAULT_OPERATIONS,
+    archive_track,
+    default_scope,
+    operation_refusal,
+    resolve_scope,
+)
 from harrier_api.app import create_app
-from harrier_api.deps import VERB_IN_BODY, get_conn, get_scope
+from harrier_api.deps import (
+    ARCHIVED_CAUSE,
+    CAUSE_JOIN,
+    NOT_AVAILABLE_CAUSE,
+    UNKNOWN_TRACK_CAUSE,
+    VERB_IN_BODY,
+    get_conn,
+    get_scope,
+)
 from harrier_cli.main import main
 
 SLUG = "second-search"
@@ -196,8 +210,9 @@ def test_routes_outside_the_allowlist_refuse_a_non_default_track(
 def test_every_track_refusal_is_in_the_contract() -> None:
     """What a route can answer is what the contract declares, judged on the
     document `packages/contract` is generated from (spec 094). Every route
-    that takes `track` can answer 404 for an unknown slug and 409 for a
-    refused operation; adding a track never looks one up, so it has no 404."""
+    that takes `track` can answer 404 for an unknown slug, and a 409 is
+    declared with the same body wherever one is; adding a track never looks
+    one up, so it has no 404."""
     spec = create_app().openapi()
     error_out = {"$ref": "#/components/schemas/ErrorOut"}
     scoped = scoped_routes()
@@ -205,6 +220,8 @@ def test_every_track_refusal_is_in_the_contract() -> None:
     for method, path, _, _ in scoped:
         responses = spec["paths"][path][method.lower()]["responses"]
         for status in ("404", "409"):
+            if status == "409" and status not in responses:
+                continue
             schema = responses.get(status, {}).get("content", {}).get("application/json", {})
             assert schema.get("schema") == error_out, (method, path, status)
     tracks = spec["paths"]
@@ -297,38 +314,102 @@ def test_every_409_a_route_can_answer_is_in_the_contract() -> None:
     def conflict(path: str, method: str) -> str:
         return str(paths[path][method]["responses"]["409"]["description"])
 
-    track = "the track may not run this operation"
+    track = NOT_AVAILABLE_CAUSE
     active = "a run of this kind is active"
-    for route in ("resume", "cover-letter", "answers"):
+    # The three document operations run on any track (spec 101), so their
+    # routes refuse another track themselves; only `tailor` writes a row,
+    # so only it can meet an archived track (review of PR #239).
+    for route, archived in (("resume", True), ("cover-letter", False), ("answers", False)):
         text = conflict(f"/apply/{{selector}}/{route}", "post")
-        assert track in text and active in text, (route, text)
+        assert active in text and track not in text, (route, text)
+        assert (ARCHIVED_CAUSE in text) is archived, (route, text)
         assert "application documents from the browser are the default track's" in text
     evaluate = conflict("/apply/{selector}/evaluate", "post")
     assert track in evaluate and active in evaluate
     assert "default track's" not in evaluate
     artifacts = conflict("/apply/{selector}/artifacts", "get")
-    assert artifacts == "the track may not run this operation, or it is archived"
+    assert artifacts == NOT_AVAILABLE_CAUSE
     discover = conflict("/ops/discover", "post")
     assert "discovery from the browser is the default track's" in discover
-    assert track in discover and active in discover
+    assert ARCHIVED_CAUSE in discover and active in discover
 
 
-def test_every_scoped_route_declares_the_track_refusal() -> None:
-    """The route class joins the track refusal with a route's own 409 rather
-    than letting the route's text replace it. About twenty routes hid it
-    that way (review of PR #234)."""
+def _track_causes(responses: dict[str, Any], status: str) -> set[str]:
+    described = str(responses.get(status, {}).get("description", ""))
+    track = {UNKNOWN_TRACK_CAUSE, NOT_AVAILABLE_CAUSE, ARCHIVED_CAUSE}
+    return {cause for cause in described.split(CAUSE_JOIN) if cause in track}
+
+
+def test_every_scoped_route_declares_the_track_refusal(two_tracks: Path) -> None:
+    """The route class joins the track refusals with a route's own causes
+    rather than letting either replace the other, and claims a 409 cause
+    only when `operation_refusal` can give it. The route text hid the 409 on
+    about twenty routes (review of PR #234), and the unknown track's 404 on
+    every route that names a job; five reads claimed a 409 they never send
+    (review of PR #239)."""
+    conn = connect()
+    try:
+        archive_track(conn, SLUG)
+        archived = resolve_scope(conn, SLUG)
+    finally:
+        conn.close()
+    assert archived.track.archived
     paths = create_app().openapi()["paths"]
-    missing = [
-        (method, path)
-        for method, path, _, _ in scoped_routes()
-        if "the track may not run this operation"
-        not in str(paths[path][method.lower()]["responses"]["409"]["description"])
-    ]
-    assert missing == []
-    # And a route's own 409 cause stays beside it.
+    claims: list[tuple[str, str, set[str]]] = []
+    for method, path, operation, _ in scoped_routes():
+        responses = paths[path][method.lower()]["responses"]
+        assert _track_causes(responses, "404") == {UNKNOWN_TRACK_CAUSE}, (method, path)
+        if operation == VERB_IN_BODY:
+            # Any string: an unknown verb is not available, a known one is a write.
+            expected = {NOT_AVAILABLE_CAUSE, ARCHIVED_CAUSE}
+        else:
+            # An archived track that is not the default meets both rules, the
+            # first that applies answering, as `scope_for` does.
+            refusal = operation_refusal(archived, operation)
+            if refusal is None:
+                expected = set()
+            elif refusal == f"track {SLUG} is archived":
+                expected = {ARCHIVED_CAUSE}
+            else:
+                assert refusal == f"{operation} is not available on track {SLUG}"
+                expected = {NOT_AVAILABLE_CAUSE}
+        claims.append((method, path, _track_causes(responses, "409")))
+        assert claims[-1][2] == expected, (method, path, operation)
+    assert any(causes == set() for _, _, causes in claims)
+    # The reads every track runs claim no track 409 at all.
+    for path in ("/jobs", "/tracker/queue", "/tracker/counts", "/ops/export/jobs.csv"):
+        assert "409" not in paths[path]["get"]["responses"], path
+    # A route's own causes stay beside the track's.
     draft = paths["/outreach/{selector}/draft"]["post"]["responses"]["409"]["description"]
     assert "the domain refused the change" in draft
     assert "a run of this kind is active" in draft
+    events = paths["/tracker/{selector}/events"]["get"]["responses"]["404"]["description"]
+    assert events.startswith("the selector named no job, or more than one")
+
+
+def test_a_read_on_an_archived_track_answers_what_its_contract_says(
+    two_tracks: Path, client: TestClient
+) -> None:
+    """Every scoped read, provoked on an archived track that is not the
+    default: it is refused by the track exactly when its contract names a
+    track 409, and an unknown track is a 404 its contract names (review of
+    PR #239). Reads only, so nothing starts a run."""
+    assert client.post(f"/tracks/{SLUG}/archive", headers=auth()).status_code == 200
+    paths = create_app().openapi()["paths"]
+    track_details = (f"is not available on track {SLUG}", f"track {SLUG} is archived")
+    reads = [(path, route) for method, path, _, route in scoped_routes() if method == "GET"]
+    assert len(reads) >= 5
+    for path, _ in reads:
+        responses = paths[path]["get"]["responses"]
+        response = _request(client, "GET", path)
+        detail = str(response.json().get("detail", "")) if response.status_code == 409 else ""
+        refused = any(text in detail for text in track_details)
+        assert refused == bool(_track_causes(responses, "409")), (path, response.status_code)
+        url = path.replace("{selector}", "1").replace("{kind}", "resume")
+        unknown = client.get(url, params={"track": "no-such-track"}, headers=auth())
+        assert unknown.status_code == 404, path
+        assert "no-such-track" in unknown.json()["detail"]
+        assert UNKNOWN_TRACK_CAUSE in _track_causes(responses, "404")
 
 
 def test_merge_responses_keeps_every_whole_cause() -> None:
@@ -342,6 +423,12 @@ def test_merge_responses_keeps_every_whole_cause() -> None:
     assert unnamed[409]["description"] == "x"
     with pytest.raises(ValueError, match="two body models"):
         merge_responses({409: {"model": "A"}}, {409: {"model": "B"}})
+    # A joined list merged again adds nothing it already has (review of PR #239).
+    joined: dict[int | str, dict[str, Any]] = {409: {"description": "a; or b"}}
+    assert merge_responses(joined, joined)[409]["description"] == "a; or b"
+    assert merge_responses(joined, {409: {"description": "b; or c"}})[409]["description"] == (
+        "a; or b; or c"
+    )
 
 
 def test_merge_responses_joins_one_status_and_keeps_the_rest() -> None:

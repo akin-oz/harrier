@@ -47,7 +47,7 @@ Affects one operator, on one machine, every day.
 
 The API already serves the built SPA: `create_app` mounts `apps/web/dist` at
 `/` as `StaticFiles(html=True)` when the directory exists
-(`services/api/src/harrier_api/app.py:721`), which is how `just demo` serves the
+(`services/api/src/harrier_api/app.py:1432`), which is how `just demo` serves the
 whole product on port 8000 alone. So this is one container, not two. No second
 web container, no reverse proxy, no nginx.
 
@@ -402,7 +402,7 @@ carried on to start Vite against it.
 
 The topology being changed is stated in `docs/adr/ADR-007-repo-layout-and-toolchain.md:87`.
 The scheduler decision being preserved is `docs/adr/ADR-006-scheduling.md`. The
-SPA mount is `services/api/src/harrier_api/app.py:721`. The trusted host list is
+SPA mount is `services/api/src/harrier_api/app.py:1432`. The trusted host list is
 `services/api/src/harrier_api/localauth.py:54`. The token file and its mode are
 `localauth.py:61`. Path resolution is `services/api/src/harrier/paths.py` and
 `services/api/src/harrier/db.py:19`. The demo temp-directory rule is spec 021.
