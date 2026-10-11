@@ -30,11 +30,11 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from harrier.screening.normalized import normalize
+from harrier.screening.normalized import normalize, stable_key
 from harrier.screening.policy import policy_version
 from harrier.screening.rules import CandidateConfig
 from harrier.screening.seen import SeenDecision, load_seen, save_seen
-from harrier.tracker.store import list_jobs
+from harrier.tracker.store import extract_note_value, list_jobs
 from harrier.tracks import Scope
 
 # The statuses that represent a decision by the operator rather than by a
@@ -87,6 +87,35 @@ def human_rejected_keys(conn: sqlite3.Connection, scope: Scope) -> set[str]:
     return protected
 
 
+def human_rejected_seen_keys(conn: sqlite3.Connection, scope: Scope, source: str) -> set[str]:
+    """The seen keys discovery recorded for this source's rejected rows.
+
+    Discovery keys a decision by `job_key`, a hash of the source, the board
+    and the posting's identity (`harrier.screening.normalized.make_normalized_job`),
+    so a seen key never equals a url or a company and title. The row keeps
+    what the hash was built from: its source, its `source_label`
+    (`source:board`), and its external id or url.
+    """
+    prefix = f"{source}:"
+    keys: set[str] = set()
+    for job in list_jobs(conn, scope):
+        if job.get("status") not in HUMAN_DECIDED or job.get("source") != source:
+            continue
+        notes = job.get("notes", "")
+        label = job.get("source_label", "") or extract_note_value(notes, "source_label")
+        board = label[len(prefix) :] if label.startswith(prefix) else ""
+        board = normalize(board or job.get("company", "") or source)
+        external = job.get("external_key", "") or extract_note_value(notes, "external_key")
+        external_id = external[len(prefix) :] if external.startswith(prefix) else ""
+        identity = (
+            external_id
+            or (job.get("url", "") or "").strip()
+            or stable_key(job.get("company", ""), job.get("title", ""), job.get("location", ""))
+        )
+        keys.add(stable_key(source, board, identity))
+    return keys
+
+
 def reconsider_source(
     conn: sqlite3.Connection,
     scope: Scope,
@@ -117,6 +146,7 @@ def reconsider_source(
         raise ValueError("reconsider needs a policy or a candidate configuration")
     decisions = load_seen(source, track_id)
     protected = human_rejected_keys(conn, scope)
+    protected_seen = protected_keys | human_rejected_seen_keys(conn, scope, source)
     report = ReconsiderReport(source=source, current_policy=current, examined=len(decisions))
 
     remaining: dict[str, SeenDecision] = {}
@@ -128,9 +158,10 @@ def reconsider_source(
             continue
         report.stale += 1
         identities = key_identity(key) if key_identity else {normalize(key)}
-        # `protected_keys` names seen keys directly, for a source whose keys
-        # are derived from a row's identity rather than equal to it (spec 097).
-        if key in protected_keys or identities & protected:
+        # A seen key is a hash of a row's identity, so a rejected row is
+        # matched by the key it would have been recorded under. A caller's
+        # `protected_keys` adds its own derivation (spec 097).
+        if key in protected_seen or identities & protected:
             # The operator said no. A rule change does not overturn that.
             report.protected += 1
             remaining[key] = decision
