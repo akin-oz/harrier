@@ -72,9 +72,9 @@ the first hosted release. Telegram is offered: each owner brings a bot.
   file (`watch.py:643-645`).
 - The grant is obtained by `harrier gmail-oauth`, which runs Google's
   installed-app flow with a browser and a loopback server on the operator's
-  machine (`services/api/src/harrier_cli/main.py:889-928`). Inside the
+  machine (`services/api/src/harrier_cli/main.py:914-953`). Inside the
   container `secrets/` is read only, so the CLI refreshes the token on the
-  host before it delegates a watch (`main.py:2834-2852`).
+  host before it delegates a watch (`main.py:2988-3006`).
 - Its state is two files in the data directory: `seen_messages.json` and
   `events.jsonl` under `gmail-watch/` (`watch.py:163-172`). Spec 040 made
   the first written atomically and refused when damaged (`watch.py:448-460`)
@@ -698,7 +698,9 @@ The text above says where each changed it.
   `services/api/src/harrier_api/runs.py`,
   `services/api/src/harrier_cli/main.py`,
   `services/api/src/harrier/sources/__init__.py`, `config/schedule.json`,
-  `.env.example`. Line numbers are from `main` at `44ac0d7`.
+  `.env.example`. Line numbers are from `main` at `44ac0d7`, except the
+  `harrier_cli/main.py` ones, refreshed to `main` at `524dd8a` on
+  2026-10-11.
 
 Vendor facts, each read 2026-10-10:
 

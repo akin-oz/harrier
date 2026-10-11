@@ -228,7 +228,8 @@ The pairing table the first test runs:
       not exist.
 - [x] Every operation under `/tracker/{selector}/` declares 404 and 409 with
       `ErrorOut`; the 404 reads "the selector named no job, or more than
-      one"; `ErrorOut` is an object whose one property, `detail`, is a
+      one", joined with spec 094's unknown track cause (Amendment of
+      2026-10-11); `ErrorOut` is an object whose one property, `detail`, is a
       required string; and the pairing table covers every such operation
       (`services/api/tests/test_ui_tracker.py::test_every_tracker_write_that_names_a_job_declares_its_refusals`,
       judged on `create_app().openapi()` the way
@@ -375,3 +376,14 @@ this change, and the pairing test now proves every row of it.
   refusal test still passes.
   With `rescoreJob`'s 409 sending a dict `detail`, only that pairing case
   fails. Both were temporary edits, run and reverted.
+
+## Amendment (2026-10-11, review of PR #239)
+
+- **The 404 also names the unknown track.** Spec 094 later gave these routes
+  a `track` parameter, and an unknown slug answers 404 naming it. The route
+  class kept this spec's wording in place of that cause, so the contract
+  hid it. The 404 now reads "the selector named no job, or more than one;
+  or the track parameter named no track"
+  (`services/api/tests/test_ui_tracker.py::test_every_tracker_write_that_names_a_job_declares_its_refusals`).
+  The 409 keeps "the tracker refused the change", joined with the track's
+  causes as spec 094 says.

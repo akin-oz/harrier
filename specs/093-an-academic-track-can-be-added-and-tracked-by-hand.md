@@ -366,7 +366,7 @@ synthetic.
   profile read").
 - **The export destination is resolved as today**, relative to the working
   directory (`Path(args.dest)`, default `tracker`, at
-  `services/api/src/harrier_cli/main.py:198` and `:1815`). Run from
+  `services/api/src/harrier_cli/main.py:306` and `:2405`). Run from
   `services/api`, that is an unignored path, and this spec adds a
   slug-named folder under it. Found in review of this spec; anchoring the
   destination to the repository root is a pre-existing defect with its own
@@ -441,7 +441,9 @@ else changes; the schedule does not need reinstalling.
 - Manual entry's scoring path: `services/api/src/harrier/capture.py:58`
   (`load_candidate_config`) and `:80` (`fit_score_for`); spec 010.
 - The follow-up seeding: `services/api/src/harrier/tracker/store.py:276-285`;
-  `NEXT_ACTION_DEFAULTS` at `tracker/schema.py:64`.
+  `NEXT_ACTION_DEFAULTS` at `tracker/schema.py:80` (`:64` when this was
+  written; since this spec it is derived from `harrier.tracks.KIND_RULES`,
+  noted 2026-10-11).
 - The queue: `services/api/src/harrier/tracker/queue.py` (`rank_active`).
 - Delegation of the whole vector: spec 074,
   `services/api/src/harrier/delegate.py:108-134`,
@@ -553,3 +555,42 @@ spec stands as written.
   gains `discover` in its command list.
 - **`discover` and `reconsider` join the allowlist,** so they leave this
   spec's list of commands refused on a non-default track.
+
+## Note (2026-10-11, from the review of spec 031's PR #254)
+
+This note is proposed. It is not approved until Akin approves it. It changes
+nothing in this spec's behavior. It adds conditions to the later spec that
+open decision 6 says will lift the second-industry-track refusal.
+
+That refusal also protects seen state, which decision 6 does not mention.
+Two facts would break a second industry track even with its own
+configuration:
+
+- **Industry discovery keeps no seen state per track.** It reads and writes
+  seen decisions with no track id (`load_seen(source_name)` and
+  `save_seen(source_name, ...)` in `services/api/src/harrier/discovery.py`),
+  so every industry track would share `discovery/<source>_seen.json`. A
+  posting judged for one track would be skipped as already seen on the
+  other.
+- **Industry `reconsider` reads that shared file.** `_cmd_reconsider` in
+  `services/api/src/harrier_cli/main.py` passes no `track_id` to
+  `reconsider_source`. Reconsidering track B would judge entries recorded
+  for track A against track B's rejected rows only. An entry for a posting
+  rejected on track A would be cleared because track B has no such row.
+  That is the failure spec 031 exists to prevent.
+
+The spec that lifts the refusal must carry these acceptance criteria:
+
+- Discovery on a second industry track reads and writes only that track's
+  seen files, and the default track's files are unchanged
+  (planned test_industry_discovery_keeps_seen_state_per_track).
+- `reconsider` on a second industry track reads only that track's seen
+  files. A row rejected on one industry track neither protects nor clears
+  an entry on another, by key or by recorded identities (spec 031,
+  amendment of 2026-10-11)
+  (planned test_a_rejection_on_one_industry_track_does_not_reach_another).
+
+No test can exercise either today: `add_track` refuses a second industry
+track (`kind_refusal` in `services/api/src/harrier/tracks.py`). Found by
+the data-integrity review of PR #254, which noted that no test covers
+isolation between tracks.

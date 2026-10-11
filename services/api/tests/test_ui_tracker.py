@@ -520,7 +520,11 @@ def test_every_tracker_write_that_names_a_job_declares_its_refusals(env: Path) -
             f"{operation_id} declares a {status} with no ErrorOut body"
         )
         if status == 404:
-            assert declared["description"] == "the selector named no job, or more than one"
+            # The route's own cause, then the track's: every route here
+            # takes `track` (spec 094, review of PR #239).
+            assert declared["description"] == (
+                "the selector named no job, or more than one; or the track parameter named no track"
+            )
 
     error_out = spec["components"]["schemas"]["ErrorOut"]
     assert error_out["type"] == "object"

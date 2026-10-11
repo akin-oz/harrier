@@ -269,6 +269,10 @@ def test_the_export_downloads_match_the_cli_export(client: TestClient, env: Path
     refused = client.get("/ops/export/contacts.csv?track=second-search", headers=auth())
     assert refused.status_code == 409
     assert "default track" in refused.json()["detail"]
+    # And the contract names that 409, which no track refusal covers: the
+    # export runs on every track (review of PR #239).
+    declared = create_app().openapi()["paths"]["/ops/export/contacts.csv"]["get"]["responses"]
+    assert declared["409"]["description"] == refused.json()["detail"]
 
 
 def test_an_export_with_no_rows_is_a_header_only_csv(client: TestClient) -> None:

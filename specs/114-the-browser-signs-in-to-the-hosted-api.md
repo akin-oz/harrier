@@ -26,8 +26,8 @@ What the SPA does today, read from this checkout:
   origin (`apps/web/src/shared/api/client.ts:10`). Vite proxies `/api` to
   `127.0.0.1:8000` in development (`apps/web/vite.config.ts:6-13`), and the
   API strips the prefix when it serves the built SPA itself
-  (`services/api/src/harrier_api/app.py:1088-1107`, mounted at
-  `:1176-1181`). Nothing in `apps/web/src` reads `import.meta.env`
+  (`services/api/src/harrier_api/app.py:1344-1363`, mounted at
+  `:1432-1437`). Nothing in `apps/web/src` reads `import.meta.env`
   (`grep -rn "import.meta.env" apps/web/src` finds nothing), so there is no
   build-time setting to point the SPA anywhere else.
 - **The local token.** The client fetches `GET /session` once and sends
@@ -838,7 +838,7 @@ implementation:
 - `signOut({ scope: "local" })` clears the stored session even when the
   server call fails, for example with an already invalid token.
 - A streamed response from Fly reaches the browser unbuffered. The route
-  sets `X-Accel-Buffering: no` (`app.py:907-911`); Fly's proxy is
+  sets `X-Accel-Buffering: no` (`app.py:1163-1167`); Fly's proxy is
   checked on staging.
 - Supabase's built-in email sender can deliver codes to invited users, or
   a custom sender is needed. Spec 110 decides.

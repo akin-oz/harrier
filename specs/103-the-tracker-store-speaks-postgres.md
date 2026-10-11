@@ -23,20 +23,20 @@ same refusals as the local one.
 The SQLite DDL does not run on Postgres as written. Six constructs differ:
 
 - `datetime('now')` and `strftime('%Y-%m-%dT%H:%M:%SZ', 'now')` defaults
-  (`schema.py:127`, `:280` and four more tables).
-- `GLOB` in the slug CHECK (`schema.py:321-322`) and the deadline CHECK
-  (`schema.py:386`). ADR-012 point 5 already names a regular-expression
+  (`schema.py:162`, `:315` and four more tables).
+- `GLOB` in the slug CHECK (`schema.py:356-357`) and the deadline CHECK
+  (`schema.py:421`). ADR-012 point 5 already names a regular-expression
   CHECK as the Postgres form.
 - `RAISE(ABORT, ...)` triggers: two make `job_events` append-only
-  (`schema.py:300-306`), two stand in for the foreign key SQLite refuses on
-  an added column (`schema.py:343-354`), two protect `tracks`
-  (`schema.py:359-367`).
+  (`schema.py:335-341`), two stand in for the foreign key SQLite refuses on
+  an added column (`schema.py:378-389`), two protect `tracks`
+  (`schema.py:394-402`).
 - `INTEGER PRIMARY KEY` as a rowid alias. Migration 8 inserts track `id = 1`
-  explicitly (`schema.py:333-334`); a Postgres identity column does not
+  explicitly (`schema.py:368-369`); a Postgres identity column does not
   advance its sequence for an explicit id, so the next default insert would
   collide with it.
 - Migrations 5 and 6 rebuild or drop for SQLite reasons
-  (`schema.py:227`, `:244-259`). Postgres never had the old shapes.
+  (`schema.py:262`, `:279-294`). Postgres never had the old shapes.
 - `BEGIN IMMEDIATE` in the runner (`db.py:322`). Postgres needs its own
   way to make two first opens apply each migration once.
 
