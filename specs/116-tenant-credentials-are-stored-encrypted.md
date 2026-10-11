@@ -49,12 +49,12 @@ Line numbers are from `main` at `44ac0d7` (2026-10-10), except the
    `credentials` table, its policy and its grants (Behavior). `MIGRATIONS`
    gains the same version with no statements, declared Postgres only in
    `SINGLE_DIALECT_MIGRATIONS` (`schema.py:737`) with its reason.
-   `OWNED_TABLES` (`schema.py:700`) gains `credentials`. `OWNED_TABLES`
-   also builds migration 10's statements (spec 108, Problem), so migration
-   10 keeps a frozen list of its own, `MIGRATION_10_OWNED_TABLES`, and its
-   statements do not change. Spec 108 needs the same freeze; whichever of
-   the two lands first adds it, and the other reuses it. A guarded path,
-   approved under this spec.
+   `OWNED_TABLES` (`schema.py:700`) gains `credentials`. Migration 10
+   reads its own frozen list, `MIGRATION_10_OWNED_TABLES`
+   (`schema.py:688-696`), not `OWNED_TABLES`, so its statements do not
+   change. (Spec 122 added that list with migration 15; noted 2026-10-11.
+   This text said spec 116 or spec 108, whichever landed first, would add
+   it.) A guarded path, approved under this spec.
 2. **A declared hosted-only table.** `schema.py` gains
    `HOSTED_ONLY_TABLES: dict[str, str]`, table to reason. The parity test
    (`services/api/tests/test_dialect_parity.py:642` compares the two
@@ -320,9 +320,9 @@ spec.
 
 - **Spec 105:** its catalog and parity machinery gain a declared
   hosted-only table (`HOSTED_ONLY_TABLES`), and `OWNED_TABLES` gains
-  `credentials`. Because `OWNED_TABLES` also builds migration 10's
-  statements (spec 108, Problem), the same change freezes migration 10's
-  list as spec 108 describes.
+  `credentials`. Migration 10 already reads its frozen list (spec 122,
+  noted 2026-10-11), so adding `credentials` changes none of its
+  statements.
 - **Spec 104:** hosted start-up gains one more required variable,
   `HARRIER_CREDENTIALS_KEY`, checked for shape.
 
