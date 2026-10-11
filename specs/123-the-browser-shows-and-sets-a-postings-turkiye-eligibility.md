@@ -59,7 +59,11 @@ change.
 - `apps/web/src/pages/operations/EligibilitySection.tsx` (new) and
   `OperationsPage.tsx`: reassess.
 - CSS beside each component, following the files they sit next to.
-- Tests beside each file, with invented companies only.
+- Tests beside each file, with invented companies only. Two existing test
+  fixtures that build job rows by hand (`app/App.test.tsx`,
+  `pages/tracker/TrackerPage.test.tsx`) gain the "no assessment" value,
+  since the page now reads it; `pages/operations/OperationsPage.test.tsx`
+  gains a stub for the reassess route.
 
 ## Behavior
 
@@ -157,8 +161,9 @@ candidate's verdict through `POST /tracker/{selector}/eligibility`:
 The browser does not restate the server's rules. "Confirmed and excluded
 need evidence" and every other refusal come back as a 409 with the
 domain's sentence, which the form shows in an alert, keeping what the
-candidate typed. A 404 and a 503 show their sentences the same way; a
-refused token shows the existing token message.
+candidate typed. A 404, a 503 and a refused token (403) show their
+sentences the same way: the API's 403 carries its own sentence
+(`harrier_api.localauth.require_token`).
 
 On success the form clears, the panel shows the new current verdict, and
 the page's job queries for the track are invalidated, so the pill and the
@@ -194,7 +199,7 @@ it so), and this section is its first reader.
 - **The candidate submits a firm verdict without evidence.** The server
   refuses with 409; the form shows the sentence and keeps the input.
 - **A refused token** (403). The form and the reassess section show the
-  existing token message and change nothing.
+  API's sentence and change nothing.
 - **The table is stale after a write elsewhere** (the CLI, another tab).
   The pill and counts update on the next fetch of the jobs query, as every
   other column does. No polling is added.
@@ -218,71 +223,89 @@ it so), and this section is its first reader.
 ## Acceptance criteria
 
 Tests beside each file under `apps/web/src/`, run by `pnpm --filter
-@harrier/web test`. Planned test names are given without backticks until
-the tests exist. Every company is invented.
+@harrier/web test`, cited as file and test title. Every company is
+invented.
 
 Words and pill
 
-- [ ] Every verdict, route and origin in the contract has words; the
-      record is typed so a missing one fails `tsc`
-      (planned test words_cover_the_contract in eligibility.test.ts)
-- [ ] A `possible` row with route `contractor` shows "Türkiye possible ·
+- [x] Every verdict, route and origin in the contract has words; the record
+      is typed so a missing one fails `tsc`
+      (`apps/web/src/entities/job/eligibility.test.ts`: "words cover the
+      contract")
+- [x] Only http and https become links
+      (`apps/web/src/entities/job/eligibility.test.ts`: "only http and https
+      are links")
+- [x] A `possible` row with route `contractor` shows "Türkiye possible ·
       contractor or B2B"; an `unknown` row shows no pill
-      (planned test the_pill_names_the_verdict_and_routes in
-      EligibilityPill.test.tsx)
-- [ ] A row with the candidate's verdict and `disagrees` shows both marks,
-      and both are in the accessible name
-      (planned test the_pill_marks_your_verdict_and_a_disagreement)
-- [ ] Rendering the table makes no eligibility request
-      (planned test the_table_fetches_no_eligibility in JobTable.test.tsx)
+      (`apps/web/src/entities/job/ui/EligibilityPill.test.tsx`: "the pill
+      names the verdict and routes", "an unknown verdict shows no pill")
+- [x] A row with the candidate's verdict and `disagrees` shows both marks,
+      in words, so both are in the accessible name
+      (`apps/web/src/entities/job/ui/EligibilityPill.test.tsx`: "the pill
+      marks your verdict and a disagreement")
+- [x] Rendering the table makes no request, shows no excerpt, and shows no
+      pill unless the page asks for it
+      (`apps/web/src/entities/job/JobTable.test.tsx`: "the table fetches no
+      eligibility", "the pill is absent unless the page asks for it")
 
 Filter
 
-- [ ] The Türkiye chips show per-verdict counts over the whole tracker and
+- [x] The Türkiye chips show per-verdict counts over the whole tracker and
       filter the rows, combined with status and search
-      (planned test the_verdict_filter_counts_and_narrows in
-      TrackerPage.test.tsx)
-- [ ] In "Next up" the filter keeps the server's order
-      (planned test the_verdict_filter_keeps_the_queue_order)
-- [ ] An academic track shows no Türkiye chips, no pill and no panel, and
+      (`apps/web/src/pages/tracker/TrackerPage.test.tsx`: "the verdict
+      filter counts and narrows")
+- [x] In "Next up" the filter keeps the server's order
+      (`apps/web/src/pages/tracker/TrackerPage.test.tsx`: "the verdict
+      filter keeps the queue order")
+- [x] An academic track shows no Türkiye chips, no pill and no panel, and
       calls no eligibility route
-      (planned test another_track_shows_no_eligibility)
+      (`apps/web/src/pages/tracker/TrackerPage.test.tsx`: "another track
+      shows no eligibility")
 
 Panel and form
 
-- [ ] Opening the panel fetches the history once; closed, it fetches
-      nothing (planned test the_panel_reads_history_on_open in
-      EligibilityPanel.test.tsx)
-- [ ] The panel shows the excerpt, the field, the checked time and an
-      http evidence link with `rel="noreferrer"`; a non-http value renders
-      as text (planned test the_panel_links_only_http_evidence)
-- [ ] A disagreement shows the sentence and the rules' verdict
-      (planned test the_panel_explains_a_disagreement)
-- [ ] Submitting sends the verdict, routes, URL, excerpt and the date only
-      when set, then invalidates the track's job queries
-      (planned test the_form_sends_what_was_entered_and_refreshes)
-- [ ] A 409 shows the domain's sentence and keeps the input; a refused
-      token shows the token message
-      (planned test the_form_shows_refusals_and_keeps_input)
-- [ ] The form is absent on an archived track
-      (planned test the_form_is_absent_when_the_track_is_read_only)
+- [x] Opening the panel fetches the history once, without the token; closed,
+      it fetches nothing
+      (`apps/web/src/features/eligibility/EligibilityPanel.test.tsx`: "the
+      panel reads history on open")
+- [x] The panel shows the excerpt, the field, the checked time, the rules
+      version and an http evidence link with `rel="noreferrer"`; a non-http
+      value renders as text (`EligibilityPanel.test.tsx`: "the panel links
+      only http evidence")
+- [x] A disagreement shows the sentence and the rules' verdict
+      (`EligibilityPanel.test.tsx`: "the panel explains a disagreement")
+- [x] Submitting sends the verdict, routes in their order, URL and excerpt,
+      the date only when set, with the token, then invalidates the track's
+      job queries and clears the form (`EligibilityPanel.test.tsx`: "the
+      form sends what was entered and refreshes", "the form sends a checked
+      date when one is set")
+- [x] A 409 shows the domain's sentence and keeps the input; a refused token
+      shows the API's sentence (`EligibilityPanel.test.tsx`: "the form shows
+      refusals and keeps input", "a refused token shows the API's sentence")
+- [x] A refused history read shows its error, keeps the row's verdict and
+      can be retried (`EligibilityPanel.test.tsx`: "a refused history read
+      shows the error and can be retried")
+- [x] The form is absent on an archived track (`EligibilityPanel.test.tsx`:
+      "the form is absent when the track is read only")
 
 Operations
 
-- [ ] Reporting sends `apply: false` and shows the counts in the verdict
-      order; the apply button appears only after a report
-      (planned test reassess_reports_before_it_writes in
-      OperationsPage.test.tsx)
-- [ ] Applying sends `apply: true` and labels the result as written
-      (planned test reassess_apply_shows_what_was_written)
-- [ ] A verdict key outside the four is not shown
-      (planned test reassess_ignores_an_unknown_verdict_key)
+- [x] Reporting sends `apply: false` with the token and shows the counts in
+      the verdict order; the apply button appears only after a report
+      (`apps/web/src/pages/operations/OperationsPage.test.tsx`: "reassess
+      reports before it writes")
+- [x] Applying sends `apply: true` and labels the result as written
+      (`OperationsPage.test.tsx`: "reassess apply shows what was written")
+- [x] A verdict key outside the four is not shown
+      (`OperationsPage.test.tsx`: "reassess ignores an unknown verdict key")
+- [x] A refused reassess shows the API's words (`OperationsPage.test.tsx`:
+      "a refused reassess shows the API's words")
 
 Whole
 
-- [ ] `pnpm type-check`, `pnpm lint`, `prettier --check` and the web tests
+- [x] `pnpm type-check`, `pnpm lint`, `prettier --check` and the web tests
       pass under Node 22; `just contract` produces no diff
-- [ ] `fsd-reviewer` finds no layer violation: the entity renders no
+- [x] `fsd-reviewer` finds no layer violation: the entity renders no
       feature, the page wires the panel through `renderDetails`
 
 ## Proof / origin
@@ -316,6 +339,14 @@ Whole
 
 None. The data exists since spec 122; this spec only shows it and adds the
 browser's way to write it.
+
+## Amendments in the implementing change
+
+1. **A refused token shows the API's sentence**, not a separate token
+   message: the API's 403 carries its own `detail`, which the shared
+   `refusalMessage` shows, as it does for every other refusal.
+2. **Test citations name the file and the test title.** The web tests are
+   titled in words, as the rest of the web suite is.
 
 ## Decided in review (2026-10-11)
 

@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
-import { JOB_STATUSES, JobTable } from "../../entities/job";
-import type { Job, JobStatus } from "../../entities/job";
+import { JOB_STATUSES, JobTable, VERDICT_LABEL, VERDICT_ORDER } from "../../entities/job";
+import type { EligibilityVerdict, Job, JobStatus } from "../../entities/job";
+import { EligibilityPanel } from "../../features/eligibility/EligibilityPanel";
 import { RunPanel } from "../../features/runs/RunPanel";
 import { AddJob } from "../../features/tracker/AddJob";
 import { JobActions } from "../../features/tracker/JobActions";
@@ -62,6 +63,10 @@ export function TrackerPage({ track, onApply }: { track: Track; onApply?: (job: 
   const slug = useSelectedSlug();
   const [status, setStatus] = useState<JobStatus | "">("");
   const [search, setSearch] = useState("");
+  const [verdict, setVerdict] = useState<EligibilityVerdict | "">("");
+  // Eligibility is recorded on the default track only (spec 122), so only
+  // that track shows it and calls its routes (spec 123).
+  const eligibility = track.is_default;
   // An academic track opens on its queue: the server orders it by the
   // nearest deadline, which is the question the day starts with.
   const [view, setView] = useState<View>(track.is_default ? "all" : "next");
@@ -89,6 +94,16 @@ export function TrackerPage({ track, onApply }: { track: Track; onApply?: (job: 
     return byStatus;
   }, [all.data]);
 
+  // Over the whole tracker, as the status chips count (spec 123).
+  const verdictCounts = useMemo(() => {
+    const byVerdict = new Map<EligibilityVerdict, number>();
+    for (const job of all.data ?? []) {
+      const value = job.eligibility.verdict;
+      byVerdict.set(value, (byVerdict.get(value) ?? 0) + 1);
+    }
+    return byVerdict;
+  }, [all.data]);
+
   const filtered = useMemo(() => {
     const jobs = query.data ?? [];
     const term = search.trim().toLowerCase();
@@ -96,16 +111,19 @@ export function TrackerPage({ track, onApply }: { track: Track; onApply?: (job: 
       if (status !== "" && job.status !== status) {
         return false;
       }
+      if (verdict !== "" && job.eligibility.verdict !== verdict) {
+        return false;
+      }
       if (term === "") {
         return true;
       }
       return job.company.toLowerCase().includes(term) || job.title.toLowerCase().includes(term);
     });
-  }, [query.data, status, search]);
+  }, [query.data, status, verdict, search]);
 
   // An empty tracker and an over-narrow filter are different problems with
   // different fixes, so they do not share a message (spec 026).
-  const isFiltered = status !== "" || search.trim() !== "";
+  const isFiltered = status !== "" || verdict !== "" || search.trim() !== "";
   const emptyMessage =
     (query.data?.length ?? 0) === 0
       ? view === "all"
@@ -192,6 +210,38 @@ export function TrackerPage({ track, onApply }: { track: Track; onApply?: (job: 
           </button>
         ))}
       </div>
+      {eligibility && (
+        <div
+          className="tracker-page__filters"
+          role="group"
+          aria-label="Filter by Türkiye eligibility"
+        >
+          <button
+            type="button"
+            className={`tracker-chip${verdict === "" ? " tracker-chip--active" : ""}`}
+            aria-pressed={verdict === ""}
+            onClick={() => {
+              setVerdict("");
+            }}
+          >
+            All <span className="tracker-chip__count">{all.data?.length ?? 0}</span>
+          </button>
+          {VERDICT_ORDER.map((value) => (
+            <button
+              key={value}
+              type="button"
+              className={`tracker-chip${verdict === value ? " tracker-chip--active" : ""}`}
+              aria-pressed={verdict === value}
+              onClick={() => {
+                setVerdict(value);
+              }}
+            >
+              {VERDICT_LABEL[value]}{" "}
+              <span className="tracker-chip__count">{verdictCounts.get(value) ?? 0}</span>
+            </button>
+          ))}
+        </div>
+      )}
       {query.isPending && (
         <div className="tracker-page__skeleton" aria-hidden="true">
           {[0, 1, 2, 3, 4, 5].map((row) => (
@@ -220,7 +270,13 @@ export function TrackerPage({ track, onApply }: { track: Track; onApply?: (job: 
           statusLabel={label}
           keepOrder={view !== "all"}
           deadlineLed={!track.is_default}
-          renderDetails={(job) => <JobHistory job={job} track={track} />}
+          showEligibility={eligibility}
+          renderDetails={(job) => (
+            <>
+              <JobHistory job={job} track={track} />
+              {eligibility && <EligibilityPanel job={job} track={track} />}
+            </>
+          )}
           renderActions={
             writable ? (job) => <JobActions job={job} track={track} onApply={onApply} /> : undefined
           }

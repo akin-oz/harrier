@@ -1,0 +1,54 @@
+.eligibility-pill {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  align-self: flex-start;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 1px var(--space-2) 1px 6px;
+  margin-top: 2px;
+  border-radius: var(--radius-sm);
+  line-height: 1.6;
+}
+.eligibility-pill__mark {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  background: currentcolor;
+}
+.eligibility-pill__note {
+  font-weight: 500;
+  padding: 0 4px;
+  border: 1px solid currentcolor;
+  border-radius: var(--radius-sm);
+}
+.eligibility-pill__note--differs {
+  border-style: dashed;
+}
+/* One weight per verdict, with a mark shape as well as a colour, as the
+   status pill does, so the verdict reads on a black-and-white printout. */
+.eligibility-pill--confirmed {
+  color: var(--status-interviewing-fg);
+  background: var(--status-interviewing-bg);
+}
+.eligibility-pill--confirmed .eligibility-pill__mark {
+  border-radius: 50%;
+}
+.eligibility-pill--possible {
+  color: var(--status-prospect-fg);
+  background: var(--status-prospect-bg);
+}
+.eligibility-pill--possible .eligibility-pill__mark {
+  border-radius: 50%;
+  background: transparent;
+  border: 1.5px solid currentcolor;
+}
+.eligibility-pill--excluded {
+  color: var(--color-danger);
+  background: var(--color-danger-bg);
+}
+.eligibility-pill--excluded .eligibility-pill__mark {
+  width: 8px;
+  height: 2px;
+}

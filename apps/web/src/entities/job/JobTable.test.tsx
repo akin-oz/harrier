@@ -1,5 +1,5 @@
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 
 import { statusLabel } from "../../shared/track";
 import { INDUSTRY_TRACK } from "../../shared/track/fixtures";
@@ -153,4 +153,46 @@ test("status carries a text label, not colour alone", () => {
     />,
   );
   expect(screen.getByText("CV requested")).toBeDefined();
+});
+
+test("the table fetches no eligibility", () => {
+  // The pill reads the row the page already fetched (spec 123).
+  const fetch = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  try {
+    const { container } = render(
+      <JobTable
+        statusLabel={label}
+        showEligibility
+        jobs={[
+          makeJob({
+            eligibility: {
+              ...makeJob({}).eligibility,
+              verdict: "excluded",
+              excerpt: "You must be based in the UK.",
+            },
+          }),
+          makeJob({ id: 2, company: "Beta" }),
+        ]}
+        emptyMessage="No jobs match."
+      />,
+    );
+    expect(container.textContent).toContain("Türkiye excluded");
+    // The excerpt stays in the panel; the table shows only the verdict.
+    expect(container.textContent).not.toContain("based in the UK");
+    expect(fetch).not.toHaveBeenCalled();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+test("the pill is absent unless the page asks for it", () => {
+  const { container } = render(
+    <JobTable
+      statusLabel={label}
+      jobs={[makeJob({ eligibility: { ...makeJob({}).eligibility, verdict: "possible" } })]}
+      emptyMessage="No jobs match."
+    />,
+  );
+  expect(container.textContent).not.toContain("Türkiye");
 });
