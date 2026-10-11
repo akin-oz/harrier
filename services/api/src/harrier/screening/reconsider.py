@@ -98,9 +98,11 @@ def human_rejected_seen_keys(conn: Connection, scope: Scope, source: str) -> set
 
     The label is read back from notes, which end a value at `;`, so a board
     taken from a company name such as "Smith; Jones LLP" comes back cut
-    short. The company column is stored whole, so the board it gives is
-    tried as well. An external id containing `;` is cut the same way and
-    cannot be recovered from the row.
+    short. The company column is stored whole, so when the label is exactly
+    the company's board cut at its first `;`, the company's board is tried
+    as well. Only then: an intact label names the board, and a company board
+    beside it would protect a different posting. An external id containing
+    `;` is cut the same way and cannot be recovered from the row.
     """
     prefix = f"{source}:"
     keys: set[str] = set()
@@ -109,10 +111,14 @@ def human_rejected_seen_keys(conn: Connection, scope: Scope, source: str) -> set
             continue
         notes = job.get("notes", "")
         label = job.get("source_label", "") or extract_note_value(notes, "source_label")
+        label_board = normalize(label[len(prefix) :]) if label.startswith(prefix) else ""
         company_board = normalize(job.get("company", "") or source)
-        boards = {company_board}
-        if label.startswith(prefix) and label[len(prefix) :]:
-            boards.add(normalize(label[len(prefix) :]))
+        if not label_board:
+            boards = {company_board}
+        elif ";" in company_board and company_board.split(";")[0].strip() == label_board:
+            boards = {label_board, company_board}
+        else:
+            boards = {label_board}
         external = job.get("external_key", "") or extract_note_value(notes, "external_key")
         external_id = external[len(prefix) :] if external.startswith(prefix) else ""
         identity = (

@@ -480,6 +480,60 @@ def test_a_board_cut_short_in_notes_is_still_matched(db: Connection, cfg: dict[s
     assert report.changed == 0
 
 
+def test_an_intact_board_does_not_protect_a_posting_on_another_board(
+    db: Connection, cfg: dict[str, Any]
+) -> None:
+    """The company stands in for the board only when the label was cut
+    short. A rejection on board `northwind` says nothing about job 4001 on a
+    board named after the company, which is a different posting (review
+    finding on PR #238)."""
+    rejected = _screened_posting("4001")
+    job_id = add_job(db, build_tracker_row(rejected, 80, []), scope=default_scope(db))
+    set_status(db, default_scope(db), job_id, "rejected")
+    other = make_normalized_job(
+        source="greenhouse",
+        company="Northwind Labs",
+        title="Staff Platform Engineer",
+        location="Remote, Europe",
+        url="https://boards.example.com/northwind-labs/4001",
+        external_id="4001",
+        board_key="Northwind Labs",
+    )
+    save_seen("greenhouse", {other["job_key"]: decision(policy="old-policy")})
+
+    report = reconsider_source(db, default_scope(db), "greenhouse", cfg, dry_run=False)
+
+    assert report.protected == 0
+    assert report.cleared == [other["job_key"]]
+
+
+def test_a_row_without_a_label_is_matched_by_its_company(
+    db: Connection, cfg: dict[str, Any]
+) -> None:
+    """A source with no board token keys by the company. A row that carries
+    no label still protects that key."""
+    job = make_normalized_job(
+        source="greenhouse",
+        company="Northwind Labs",
+        title="Senior Frontend Engineer",
+        location="Remote, Europe",
+        url="https://boards.example.com/Northwind/Job-1",
+        external_id="4001",
+    )
+    row = build_tracker_row(job, 80, [])
+    row["notes"] = "; ".join(
+        part for part in row["notes"].split("; ") if not part.startswith("source_label=")
+    )
+    job_id = add_job(db, row, scope=default_scope(db))
+    set_status(db, default_scope(db), job_id, "rejected")
+    save_seen("greenhouse", {job["job_key"]: decision(policy="old-policy")})
+
+    report = reconsider_source(db, default_scope(db), "greenhouse", cfg, dry_run=False)
+
+    assert report.protected == 1
+    assert report.changed == 0
+
+
 def test_a_row_the_operator_has_not_rejected_leaves_its_key_eligible(
     db: Connection, cfg: dict[str, Any]
 ) -> None:
