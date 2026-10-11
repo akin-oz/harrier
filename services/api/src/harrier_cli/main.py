@@ -14,6 +14,7 @@ from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from harrier.connection import POSTGRES_NOT_YET, Connection, StoreUrlError, store_target
 from harrier.container import CONTAINER_NAME, running_in
 from harrier.db import (
     EXIT_DATABASE_OWNED,
@@ -30,18 +31,19 @@ from harrier.db import (
 from harrier.delegate import delegate
 from harrier.hostlease import remove_dead
 from harrier.logsetup import configure_logging
-from harrier.pgstore import POSTGRES_NOT_YET, StoreUrlError, store_target
 from harrier.profile import export_to, import_from, list_documents
 from harrier.tracker.export import export_csv
 from harrier.tracker.migrate_legacy import MigrationError, migrate
 from harrier.tracker.reasons import REASON_CODES
-from harrier.tracker.store import TrackerError
+from harrier.tracker.schema import ELIGIBILITY_ROUTES, ELIGIBILITY_VERDICTS
+from harrier.tracker.store import EligibilityAssessment, TrackerError
 from harrier.tracks import (
     NON_DEFAULT_OPERATIONS,
     WRITE_OPERATIONS,
     Scope,
     Track,
     default_scope,
+    rules_for,
 )
 
 if TYPE_CHECKING:
@@ -78,7 +80,7 @@ def _print_academic_summary(summary: dict[str, object]) -> None:
         print(f"run id: {run_id}")
 
 
-def _cmd_discover_academic(conn: sqlite3.Connection, scope: Scope, args: argparse.Namespace) -> int:
+def _cmd_discover_academic(conn: Connection, scope: Scope, args: argparse.Namespace) -> int:
     """Discovery on an academic track (spec 097): its own search, its own
     source, and none of the industry sources."""
     from harrier.academic.discovery import AcademicDiscoveryError, run_academic_discovery
@@ -1087,7 +1089,7 @@ def _slug(value: str) -> str:
         raise argparse.ArgumentTypeError(str(error)) from error
 
 
-def _scope(conn: sqlite3.Connection, args: argparse.Namespace) -> Scope:
+def _scope(conn: Connection, args: argparse.Namespace) -> Scope:
     """The scope this command works in: the one `--track` resolved before the
     command ran, or the default track (specs 092, 093)."""
     resolved = getattr(args, "track_scope", None)
@@ -1361,6 +1363,87 @@ def _cmd_company_outcome(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_eligibility(entry: EligibilityAssessment) -> None:
+    routes = ", ".join(entry.routes) or "unknown"
+    line = f"{entry.verdict:<9} routes {routes}  {entry.origin}  checked {entry.checked_at}"
+    if entry.version:
+        line += f"  version {entry.version}"
+    print(line)
+    if entry.excerpt:
+        print(f"    {entry.field}: {entry.excerpt}")
+    if entry.evidence_url:
+        print(f"    {entry.evidence_url}")
+
+
+def _cmd_eligibility(args: argparse.Namespace) -> int:
+    """Whether a posting can engage someone based in Türkiye, with the
+    evidence (spec 122): show a row's, set the candidate's, or run the rules
+    again on the open rows."""
+    from harrier.tracker import SelectorError, resolve_selector
+    from harrier.tracker.actions import (
+        TrackerActionError,
+        reassess_eligibility,
+        set_eligibility,
+    )
+    from harrier.tracker.store import eligibility_history, eligibility_of
+
+    with closing(connect()) as conn:
+        scope = _scope(conn, args)
+        try:
+            if args.eligibility_command == "reassess":
+                report = reassess_eligibility(conn, scope, apply=args.apply)
+                verb = "assessed" if report.applied else "would assess"
+                print(
+                    f"{verb} {report.assessed} of {report.examined} rows: "
+                    f"{report.unchanged} unchanged, {report.rejected_skipped} rejected, "
+                    f"{report.no_description} with no stored description"
+                )
+                for verdict, count in sorted(report.by_verdict.items()):
+                    print(f"  {verdict:<9} {count}")
+                if report.under_candidate:
+                    print(
+                        f"  {report.under_candidate} have your verdict, which stays current; "
+                        f"the rules now differ on {report.disagrees}"
+                    )
+                return 0
+            if args.eligibility_command == "set":
+                view = set_eligibility(
+                    conn,
+                    scope,
+                    args.selector,
+                    verdict=args.verdict,
+                    routes=tuple(args.route or ()),
+                    evidence_url=args.url or "",
+                    excerpt=args.excerpt or "",
+                    checked_at=args.checked_at,
+                )
+                if view.current is not None:
+                    _print_eligibility(view.current)
+                return 0
+            job = resolve_selector(conn, scope, args.selector)
+            if rules_for(scope.track.kind).screening == "academic":
+                raise TrackerActionError(f"eligibility show is not available on {scope.track.slug}")
+            view = eligibility_of(conn, scope, int(job["id"]))
+            if view.current is None:
+                print("unknown   routes unknown  none  (no assessment)")
+                return 0
+            _print_eligibility(view.current)
+            if view.disagrees:
+                print("  the rules' latest assessment differs from yours; yours stays current")
+            history = eligibility_history(conn, scope, int(job["id"]))
+            if len(history) > 1:
+                print("history, newest first:")
+                for entry in history:
+                    _print_eligibility(entry)
+        except SelectorError as error:
+            print(str(error), file=sys.stderr)
+            return 1
+        except (TrackerActionError, TrackerError) as error:
+            print(f"refused: {error}", file=sys.stderr)
+            return 2
+    return 0
+
+
 def _cmd_scoring(args: argparse.Namespace) -> int:
     """The learned fit score's offline half (spec 077): export where the
     database lives, train on the host from the export alone."""
@@ -1442,7 +1525,7 @@ def _cmd_tracks(args: argparse.Namespace) -> int:
 
 def _cmd_store(args: argparse.Namespace) -> int:
     """Migrate the store, or print its dialect and version (spec 103)."""
-    from harrier.pgstore import StoreError
+    from harrier.connection import StoreError
 
     try:
         target = store_target()
@@ -1521,8 +1604,8 @@ def _peek_sqlite_version(path: Path) -> int:
 
 
 def _store_sqlite(command: str) -> int:
+    from harrier.connection import StoreVersionError
     from harrier.db import schema_version
-    from harrier.pgstore import StoreVersionError
 
     known = _sqlite_target_version()
     before = _peek_sqlite_version(default_db_path())
@@ -1764,7 +1847,7 @@ def _cmd_reconsider(args: argparse.Namespace) -> int:
     return 0
 
 
-def _reconsider_academic(conn: sqlite3.Connection, scope: Scope, args: argparse.Namespace) -> int:
+def _reconsider_academic(conn: Connection, scope: Scope, args: argparse.Namespace) -> int:
     """`reconsider` on an academic track (spec 097): the version comes from
     the track's own search, and only its own seen state is read and cleared.
     A posting the operator rejected is never reopened."""
@@ -2239,6 +2322,10 @@ COMMAND_CLASSES: dict[str, CommandClass] = {
     "company-outcome": _DB,
     "events backfill": _DB,
     "events show": _DB,
+    # Spec 122: the tracker database and the cached descriptions beside it.
+    "eligibility show": _DB,
+    "eligibility set": _DB,
+    "eligibility reassess": _DB,
     # Read-only: the tracks table and nothing else (spec 091).
     "tracks list": _DB,
     "tracks add": _DB,
@@ -2645,6 +2732,43 @@ def build_parser() -> argparse.ArgumentParser:
     show_cmd = events_sub.add_parser("show", help="print a job's events in order")
     show_cmd.add_argument("selector", help="job id, or a unique substring")
     events_cmd.set_defaults(func=_cmd_events)
+
+    eligibility_cmd = sub.add_parser(
+        "eligibility",
+        help="whether a posting can engage someone based in Türkiye (spec 122)",
+    )
+    eligibility_sub = eligibility_cmd.add_subparsers(dest="eligibility_command", required=True)
+    eligibility_show = eligibility_sub.add_parser(
+        "show", help="a row's current assessment, then its history"
+    )
+    eligibility_show.add_argument("selector", help="job id, or a unique substring")
+    eligibility_set = eligibility_sub.add_parser(
+        "set", help="record your own assessment; it stays current until you change it"
+    )
+    eligibility_set.add_argument("selector", help="job id, or a unique substring")
+    eligibility_set.add_argument(
+        "--verdict", required=True, choices=list(ELIGIBILITY_VERDICTS), help="geography only"
+    )
+    eligibility_set.add_argument(
+        "--route",
+        action="append",
+        choices=list(ELIGIBILITY_ROUTES),
+        help="a hiring route the evidence names; repeat for more",
+    )
+    eligibility_set.add_argument("--url", help="where the evidence was read")
+    eligibility_set.add_argument(
+        "--excerpt", help="the words that decide it, at most 300 characters"
+    )
+    eligibility_set.add_argument(
+        "--checked-at", help="when it was read: a date or a UTC time; now when omitted"
+    )
+    eligibility_reassess = eligibility_sub.add_parser(
+        "reassess", help="run the rules again on open rows with a stored description"
+    )
+    eligibility_reassess.add_argument(
+        "--apply", action="store_true", help="write the assessments; without it, report only"
+    )
+    eligibility_cmd.set_defaults(func=_cmd_eligibility)
 
     tracks_cmd = sub.add_parser("tracks", help="the search tracks (spec 091)")
     tracks_sub = tracks_cmd.add_subparsers(dest="tracks_command", required=True)

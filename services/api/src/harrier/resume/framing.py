@@ -10,11 +10,11 @@ truth documents support. Neither prints a field value or a bullet's text.
 from __future__ import annotations
 
 import json
-import sqlite3
 from dataclasses import dataclass
 from typing import cast
 
 from harrier.apply.profile import APPLICATION_PROFILE_KIND
+from harrier.connection import Connection
 from harrier.profile.store import put_document
 from harrier.resume.content import (
     ResumeBundleError,
@@ -34,7 +34,7 @@ class CommandOutcome:
     lines: tuple[str, ...]
 
 
-def put_framing(conn: sqlite3.Connection, scope: Scope, text: str) -> CommandOutcome:
+def put_framing(conn: Connection, scope: Scope, text: str) -> CommandOutcome:
     """Store `text` as the scope track's framing, as read, once the facts and
     it parse as one bundle. Any refusal writes nothing."""
     # The CLI refuses an archived track first; this holds for every other
@@ -70,7 +70,7 @@ PROFILE_FILES = {
 
 
 def put_application_profile(
-    conn: sqlite3.Connection, scope: Scope, suffix: str, text: str
+    conn: Connection, scope: Scope, suffix: str, text: str
 ) -> CommandOutcome:
     """Store `text` as the scope track's application profile, as read. The
     extension picks the document; JSON must be an object and markdown must
@@ -93,7 +93,7 @@ def put_application_profile(
     return CommandOutcome(0, (f"stored {APPLICATION_PROFILE_KIND}/{name} for track {slug}",))
 
 
-def check_resume(conn: sqlite3.Connection, scope: Scope) -> CommandOutcome:
+def check_resume(conn: Connection, scope: Scope) -> CommandOutcome:
     """Validate the scope's bundle and run the truth gate on every bullet in
     its pool. Bullet ids only, never their text."""
     try:

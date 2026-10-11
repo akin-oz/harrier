@@ -9,7 +9,6 @@ because spec 032 is a set of screening fixes.
 from __future__ import annotations
 
 import json
-import sqlite3
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -17,11 +16,12 @@ from typing import Any
 import pytest
 
 from harrier.atomicio import DamagedStateError
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.screening import rules
 from harrier.screening.config import load_candidate_config
-from harrier.screening.normalized import NormalizedJob, make_normalized_job
-from harrier.screening.pipeline import build_tracker_row
+from harrier.screening.normalized import NormalizedJob, make_normalized_job, normalize
+from harrier.screening.pipeline import build_academic_row, build_tracker_row
 from harrier.screening.policy import DECIDING_PATHS, UNKNOWN_POLICY, policy_version
 from harrier.screening.reconsider import human_rejected_keys, reconsider_source
 from harrier.screening.seen import (
@@ -337,13 +337,11 @@ def test_the_reason_recorded_is_the_gate_that_decided(env: Path, cfg: dict[str, 
 
 
 @pytest.fixture
-def db(env: Path) -> sqlite3.Connection:
+def db(env: Path) -> Connection:
     return connect()
 
 
-def test_a_rejection_under_an_older_policy_is_cleared(
-    db: sqlite3.Connection, cfg: dict[str, Any]
-) -> None:
+def test_a_rejection_under_an_older_policy_is_cleared(db: Connection, cfg: dict[str, Any]) -> None:
     save_seen("greenhouse", {"k1": decision(policy="old-policy")})
     report = reconsider_source(db, default_scope(db), "greenhouse", cfg, dry_run=False)
     assert report.changed == 1
@@ -351,7 +349,7 @@ def test_a_rejection_under_an_older_policy_is_cleared(
 
 
 def test_a_rejection_under_the_current_policy_is_left_alone(
-    db: sqlite3.Connection, cfg: dict[str, Any]
+    db: Connection, cfg: dict[str, Any]
 ) -> None:
     """Otherwise every reconsideration would re-offer everything, and the
     operator would see the same rejected postings on a loop."""
@@ -362,7 +360,7 @@ def test_a_rejection_under_the_current_policy_is_left_alone(
     assert set(load_seen("greenhouse")) == {"k1"}
 
 
-def test_an_acceptance_is_never_reconsidered(db: sqlite3.Connection, cfg: dict[str, Any]) -> None:
+def test_an_acceptance_is_never_reconsidered(db: Connection, cfg: dict[str, Any]) -> None:
     """It already produced a tracker row. Re-running it would at best do
     nothing and at worst duplicate the row."""
     save_seen("greenhouse", {"k1": decision(ACCEPTED, policy="old-policy")})
@@ -372,15 +370,13 @@ def test_an_acceptance_is_never_reconsidered(db: sqlite3.Connection, cfg: dict[s
 
 
 def test_a_migrated_entry_is_eligible_for_the_first_reconsideration(
-    db: sqlite3.Connection, cfg: dict[str, Any]
+    db: Connection, cfg: dict[str, Any]
 ) -> None:
     save_seen("greenhouse", {"k1": SeenDecision(UNKNOWN, "", UNKNOWN_POLICY, "2026-01-01")})
     assert reconsider_source(db, default_scope(db), "greenhouse", cfg, dry_run=False).changed == 1
 
 
-def test_a_dry_run_reports_without_changing_anything(
-    db: sqlite3.Connection, cfg: dict[str, Any]
-) -> None:
+def test_a_dry_run_reports_without_changing_anything(db: Connection, cfg: dict[str, Any]) -> None:
     save_seen("greenhouse", {"k1": decision(policy="old-policy")})
     report = reconsider_source(db, default_scope(db), "greenhouse", cfg, dry_run=True)
     assert report.changed == 1
@@ -388,7 +384,7 @@ def test_a_dry_run_reports_without_changing_anything(
 
 
 def test_a_job_the_operator_rejected_is_never_resurrected(
-    db: sqlite3.Connection, cfg: dict[str, Any]
+    db: Connection, cfg: dict[str, Any]
 ) -> None:
     """The refusal that matters more than the feature. Rules get to change
     their own minds, not somebody else's."""
@@ -415,30 +411,41 @@ def test_a_job_the_operator_rejected_is_never_resurrected(
     assert len(load_seen("greenhouse")) == 1
 
 
-def _screened_posting(external_id: str) -> NormalizedJob:
+def _screened_posting(
+    external_id: str, url: str = "https://boards.example.com/Northwind/Job-1"
+) -> NormalizedJob:
     """A posting as a source delivers it. The board token differs from the
     company name, as it does on Greenhouse, so the key cannot be rebuilt from
-    the company alone."""
+    the company alone. The url keeps its case because the key hashes it as
+    given, so a lowercased url would rebuild a different key."""
     return make_normalized_job(
         source="greenhouse",
         company="Northwind Labs",
         title="Senior Frontend Engineer",
         location="Remote, Europe",
-        url="https://boards.example.com/northwind/1",
+        url=url,
         external_id=external_id,
         board_key="northwind",
     )
 
 
-@pytest.mark.parametrize("external_id", ["4001", ""], ids=["external-id", "url-only"])
+@pytest.mark.parametrize(
+    ("external_id", "url"),
+    [
+        ("4001", "https://boards.example.com/Northwind/Job-1"),
+        ("", "https://boards.example.com/Northwind/Job-1"),
+        ("", ""),
+    ],
+    ids=["external-id", "url-only", "no-id-no-url"],
+)
 def test_a_rejected_row_is_protected_under_the_key_discovery_records(
-    db: sqlite3.Connection, cfg: dict[str, Any], external_id: str
+    db: Connection, cfg: dict[str, Any], external_id: str, url: str
 ) -> None:
     """Discovery records a hashed `job_key`, not a url. A protection that
     compared the key against urls and company plus title never matched, so a
     stale entry for a row the operator rejected was cleared and counted as
     eligible, and the report said nobody's decision had been left alone."""
-    job = _screened_posting(external_id)
+    job = _screened_posting(external_id, url)
     job_id = add_job(db, build_tracker_row(job, 80, []), scope=default_scope(db))
     set_status(db, default_scope(db), job_id, "rejected")
     save_seen("greenhouse", {job["job_key"]: decision(policy="old-policy")})
@@ -450,8 +457,115 @@ def test_a_rejected_row_is_protected_under_the_key_discovery_records(
     assert set(load_seen("greenhouse")) == {job["job_key"]}
 
 
+def test_a_board_cut_short_in_notes_is_still_matched(db: Connection, cfg: dict[str, Any]) -> None:
+    """LinkedIn takes the board from the company name, and notes end a value
+    at `;`, so the stored label reads `apify_linkedin:smith`. The company
+    column is whole, so the key is still rebuilt."""
+    job = make_normalized_job(
+        source="apify_linkedin",
+        company="Smith; Jones LLP",
+        title="Senior Frontend Engineer",
+        location="Remote, Europe",
+        url="https://www.linkedin.com/jobs/view/4001",
+        external_id="4001",
+        board_key="Smith; Jones LLP",
+    )
+    job_id = add_job(db, build_tracker_row(job, 80, []), scope=default_scope(db))
+    set_status(db, default_scope(db), job_id, "rejected")
+    save_seen("apify_linkedin", {job["job_key"]: decision(policy="old-policy")})
+
+    report = reconsider_source(db, default_scope(db), "apify_linkedin", cfg, dry_run=False)
+
+    assert report.protected == 1
+    assert report.changed == 0
+
+
+@pytest.mark.parametrize("organisation", ["Smith; Jones University", "A|B University", "A=B Univ"])
+def test_a_board_rewritten_by_the_academic_row_is_still_matched(
+    db: Connection, cfg: dict[str, Any], organisation: str
+) -> None:
+    """The academic row writes its label with separators turned to spaces
+    rather than cut short, so `Smith; Jones University` is stored as
+    `smith  jones university`. The key was hashed from the whole
+    organisation, which the company column keeps."""
+    job = make_normalized_job(
+        source="apify_academic",
+        company=organisation,
+        title="Postdoctoral Researcher",
+        location="Amsterdam, Netherlands",
+        url="https://positions.example.org/Job-7",
+        external_id="7",
+        board_key=normalize(organisation),
+    )
+    row = build_academic_row(job, area_hit=None, position_hit=None, flags=[])
+    job_id = add_job(db, row, scope=default_scope(db))
+    set_status(db, default_scope(db), job_id, "rejected")
+    save_seen("apify_academic", {job["job_key"]: decision(policy="old-policy")})
+
+    report = reconsider_source(
+        db, default_scope(db), "apify_academic", None, dry_run=False, policy="current"
+    )
+
+    assert report.protected == 1
+    assert report.changed == 0
+
+
+def test_an_intact_board_does_not_protect_a_posting_on_another_board(
+    db: Connection, cfg: dict[str, Any]
+) -> None:
+    """The company stands in for the board only when the label was cut
+    short. A rejection on board `northwind` says nothing about job 4001 on a
+    board named after the company, which is a different posting (review
+    finding on PR #238)."""
+    rejected = _screened_posting("4001")
+    job_id = add_job(db, build_tracker_row(rejected, 80, []), scope=default_scope(db))
+    set_status(db, default_scope(db), job_id, "rejected")
+    other = make_normalized_job(
+        source="greenhouse",
+        company="Northwind Labs",
+        title="Staff Platform Engineer",
+        location="Remote, Europe",
+        url="https://boards.example.com/northwind-labs/4001",
+        external_id="4001",
+        board_key="Northwind Labs",
+    )
+    save_seen("greenhouse", {other["job_key"]: decision(policy="old-policy")})
+
+    report = reconsider_source(db, default_scope(db), "greenhouse", cfg, dry_run=False)
+
+    assert report.protected == 0
+    assert report.cleared == [other["job_key"]]
+
+
+def test_a_row_without_a_label_is_matched_by_its_company(
+    db: Connection, cfg: dict[str, Any]
+) -> None:
+    """A source with no board token keys by the company. A row that carries
+    no label still protects that key."""
+    job = make_normalized_job(
+        source="greenhouse",
+        company="Northwind Labs",
+        title="Senior Frontend Engineer",
+        location="Remote, Europe",
+        url="https://boards.example.com/Northwind/Job-1",
+        external_id="4001",
+    )
+    row = build_tracker_row(job, 80, [])
+    row["notes"] = "; ".join(
+        part for part in row["notes"].split("; ") if not part.startswith("source_label=")
+    )
+    job_id = add_job(db, row, scope=default_scope(db))
+    set_status(db, default_scope(db), job_id, "rejected")
+    save_seen("greenhouse", {job["job_key"]: decision(policy="old-policy")})
+
+    report = reconsider_source(db, default_scope(db), "greenhouse", cfg, dry_run=False)
+
+    assert report.protected == 1
+    assert report.changed == 0
+
+
 def test_a_row_the_operator_has_not_rejected_leaves_its_key_eligible(
-    db: sqlite3.Connection, cfg: dict[str, Any]
+    db: Connection, cfg: dict[str, Any]
 ) -> None:
     """The protection follows the operator's decision, not the row's
     existence: a shortlisted row's stale entry is still cleared."""
@@ -467,7 +581,7 @@ def test_a_row_the_operator_has_not_rejected_leaves_its_key_eligible(
 
 
 def test_a_job_the_operator_has_not_rejected_is_not_protected(
-    db: sqlite3.Connection, cfg: dict[str, Any]
+    db: Connection, cfg: dict[str, Any]
 ) -> None:
     job_id = add_job(
         db,
@@ -485,7 +599,7 @@ def test_a_job_the_operator_has_not_rejected_is_not_protected(
 
 
 def test_the_protection_matches_on_company_and_title_too(
-    db: sqlite3.Connection, cfg: dict[str, Any]
+    db: Connection, cfg: dict[str, Any]
 ) -> None:
     """A reconsidered posting arriving under a slightly different URL would
     defeat a url-only check entirely."""
@@ -551,7 +665,7 @@ def test_a_state_file_that_is_not_an_object_is_refused(env: Path) -> None:
 
 
 def test_nothing_eligible_is_not_reported_as_everything_current(
-    db: sqlite3.Connection, cfg: dict[str, Any], capsys: pytest.CaptureFixture[str]
+    db: Connection, cfg: dict[str, Any], capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Zero cleared is also what a watchlist of protected manual rejections
     produces, and saying the wrong one of those is a claim about the

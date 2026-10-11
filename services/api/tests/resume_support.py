@@ -9,10 +9,10 @@ store it through `store_resume`, which splits it the way
 from __future__ import annotations
 
 import json
-import sqlite3
 from pathlib import Path
 from typing import Any, cast
 
+from harrier.connection import Connection
 from harrier.profile.store import put_document
 from harrier.resume.documents import (
     FACTS_KIND,
@@ -53,22 +53,20 @@ def example_bundle_raw() -> dict[str, Any]:
     return cast("dict[str, Any]", result.merged)
 
 
-def store_documents(
-    conn: sqlite3.Connection, facts: dict[str, object], framing: dict[str, object]
-) -> None:
+def store_documents(conn: Connection, facts: dict[str, object], framing: dict[str, object]) -> None:
     put_document(conn, FACTS_KIND, FACTS_NAME, "json", json.dumps(facts))
     # The industry framing is the default track's (spec 099).
     put_document(conn, FRAMING_KIND, FRAMING_NAME, "json", json.dumps(framing), track_id=1)
 
 
-def store_resume(conn: sqlite3.Connection, raw: dict[str, object]) -> None:
+def store_resume(conn: Connection, raw: dict[str, object]) -> None:
     """Store one old-shape object as the two documents."""
     facts, framing, unplaced = split_document(raw)
     assert not unplaced, unplaced
     store_documents(conn, facts, framing)
 
 
-def store_example(conn: sqlite3.Connection) -> None:
+def store_example(conn: Connection) -> None:
     store_documents(conn, *example_documents())
 
 

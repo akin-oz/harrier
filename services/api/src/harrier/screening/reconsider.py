@@ -26,10 +26,11 @@ Two refusals matter more than the feature:
 
 from __future__ import annotations
 
-import sqlite3
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from harrier.connection import Connection
 from harrier.screening.normalized import normalize, stable_key
 from harrier.screening.policy import policy_version
 from harrier.screening.rules import CandidateConfig
@@ -66,7 +67,7 @@ class ReconsiderReport:
         )
 
 
-def human_rejected_keys(conn: sqlite3.Connection, scope: Scope) -> set[str]:
+def human_rejected_keys(conn: Connection, scope: Scope) -> set[str]:
     """Normalized identities of jobs the operator has rejected.
 
     Matched on url and on company plus title, the same identities screening
@@ -87,7 +88,14 @@ def human_rejected_keys(conn: sqlite3.Connection, scope: Scope) -> set[str]:
     return protected
 
 
-def human_rejected_seen_keys(conn: sqlite3.Connection, scope: Scope, source: str) -> set[str]:
+def _damaged_labels(board: str) -> set[str]:
+    """The forms a board takes when written to notes and read back: cut at
+    the first `;` (industry rows), or with `;`, `|` and `=` turned to spaces
+    (academic rows). A board with no separator comes back as itself."""
+    return {board.split(";")[0].strip(), normalize(re.sub(r"[;|=]", " ", board))}
+
+
+def human_rejected_seen_keys(conn: Connection, scope: Scope, source: str) -> set[str]:
     """The seen keys discovery recorded for this source's rejected rows.
 
     Discovery keys a decision by `job_key`, a hash of the source, the board
@@ -95,6 +103,17 @@ def human_rejected_seen_keys(conn: sqlite3.Connection, scope: Scope, source: str
     so a seen key never equals a url or a company and title. The row keeps
     what the hash was built from: its source, its `source_label`
     (`source:board`), and its external id or url.
+
+    A label can come back damaged when the board was taken from a company
+    name with a note separator in it. Notes end a value at `;`, so the
+    industry row's "Smith; Jones LLP" reads back as "smith"; the academic row
+    turns `;`, `|` and `=` into spaces before writing (`_clean_note` in
+    harrier.screening.pipeline). The company column is stored whole, so when
+    the label is one of those damaged forms of the company's board, the
+    company's board is tried as well. Only then: an intact label names the
+    board, and a company board beside it would protect a different posting.
+    An external id is damaged the same way and cannot be recovered from the
+    row.
     """
     prefix = f"{source}:"
     keys: set[str] = set()
@@ -103,8 +122,14 @@ def human_rejected_seen_keys(conn: sqlite3.Connection, scope: Scope, source: str
             continue
         notes = job.get("notes", "")
         label = job.get("source_label", "") or extract_note_value(notes, "source_label")
-        board = label[len(prefix) :] if label.startswith(prefix) else ""
-        board = normalize(board or job.get("company", "") or source)
+        label_board = normalize(label[len(prefix) :]) if label.startswith(prefix) else ""
+        company_board = normalize(job.get("company", "") or source)
+        if not label_board:
+            boards = {company_board}
+        elif label_board in _damaged_labels(company_board):
+            boards = {label_board, company_board}
+        else:
+            boards = {label_board}
         external = job.get("external_key", "") or extract_note_value(notes, "external_key")
         external_id = external[len(prefix) :] if external.startswith(prefix) else ""
         identity = (
@@ -112,12 +137,12 @@ def human_rejected_seen_keys(conn: sqlite3.Connection, scope: Scope, source: str
             or (job.get("url", "") or "").strip()
             or stable_key(job.get("company", ""), job.get("title", ""), job.get("location", ""))
         )
-        keys.add(stable_key(source, board, identity))
+        keys.update(stable_key(source, board, identity) for board in boards)
     return keys
 
 
 def reconsider_source(
-    conn: sqlite3.Connection,
+    conn: Connection,
     scope: Scope,
     source: str,
     candidate_cfg: CandidateConfig | None,

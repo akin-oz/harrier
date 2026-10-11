@@ -7,13 +7,13 @@ be right the first time.
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 import harrier.cutover as cutover_module
+from harrier.connection import Connection
 from harrier.cutover import (
     OLD_LABELS,
     STEP_INSTALL,
@@ -42,7 +42,7 @@ def not_loaded(_args: list[str]) -> tuple[int, str, str]:
 
 
 @pytest.fixture()
-def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
+def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Connection:
     monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("HARRIER_DEMO", raising=False)
     conn = connect()
@@ -88,7 +88,7 @@ def ready_checklist(tmp_path: Path) -> Path:
 # --- preflight ---------------------------------------------------------------
 
 
-def test_an_undecided_checklist_blocks(db: sqlite3.Connection, old_repo: Path) -> None:
+def test_an_undecided_checklist_blocks(db: Connection, old_repo: Path) -> None:
     checks = preflight(db, old_root=old_repo, launchctl=loaded)
     names = {check.name for check in checks.blocked}
     assert "parity checklist" in names
@@ -96,7 +96,7 @@ def test_an_undecided_checklist_blocks(db: sqlite3.Connection, old_repo: Path) -
 
 
 def test_a_decided_checklist_clears_every_mechanical_check(
-    db: sqlite3.Connection, old_repo: Path, ready_checklist: Path
+    db: Connection, old_repo: Path, ready_checklist: Path
 ) -> None:
     checks = preflight(db, old_root=old_repo, checklist_path=ready_checklist, launchctl=loaded)
     assert checks.ready, [check.line() for check in checks.blocked]
@@ -111,7 +111,7 @@ def test_an_empty_tracker_blocks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert not tracker_check(connect()).passed
 
 
-def test_jobs_already_gone_blocks(db: sqlite3.Connection) -> None:
+def test_jobs_already_gone_blocks(db: Connection) -> None:
     check = old_jobs_check(OLD_LABELS, not_loaded)
     assert not check.passed
     assert "none of the old plists" in check.detail
@@ -141,7 +141,7 @@ def test_a_missing_env_is_not_a_blocker(tmp_path: Path) -> None:
 # --- the sequence ------------------------------------------------------------
 
 
-def test_a_dry_run_touches_nothing(db: sqlite3.Connection, old_repo: Path, tmp_path: Path) -> None:
+def test_a_dry_run_touches_nothing(db: Connection, old_repo: Path, tmp_path: Path) -> None:
     calls: list[list[str]] = []
 
     def recording(args: list[str]) -> tuple[int, str, str]:
@@ -155,9 +155,7 @@ def test_a_dry_run_touches_nothing(db: sqlite3.Connection, old_repo: Path, tmp_p
     assert all(args[0] == "list" for args in calls)
 
 
-def test_executing_without_a_clear_preflight_is_refused(
-    db: sqlite3.Connection, old_repo: Path
-) -> None:
+def test_executing_without_a_clear_preflight_is_refused(db: Connection, old_repo: Path) -> None:
     with pytest.raises(CutoverError, match="preflight is blocked"):
         run_cutover(
             db,
@@ -170,7 +168,7 @@ def test_executing_without_a_clear_preflight_is_refused(
 
 
 def test_executing_without_attestation_is_refused(
-    db: sqlite3.Connection, old_repo: Path, ready_checklist: Path
+    db: Connection, old_repo: Path, ready_checklist: Path
 ) -> None:
     """Everything a machine can check can pass while the week of dual-running
     never happened. The operator has to say so."""
@@ -187,7 +185,7 @@ def test_executing_without_attestation_is_refused(
 
 
 def test_a_full_execution_quiesces_snapshots_verifies_and_installs(
-    db: sqlite3.Connection,
+    db: Connection,
     old_repo: Path,
     ready_checklist: Path,
     tmp_path: Path,
@@ -225,7 +223,7 @@ def test_a_full_execution_quiesces_snapshots_verifies_and_installs(
 
 
 def test_a_blocked_dry_run_reports_the_blockers_and_is_not_ok(
-    db: sqlite3.Connection, old_repo: Path
+    db: Connection, old_repo: Path
 ) -> None:
     """A rehearsal that reports success while the real run would refuse is
     worse than no rehearsal at all (review finding on PR #22)."""
@@ -235,9 +233,7 @@ def test_a_blocked_dry_run_reports_the_blockers_and_is_not_ok(
     assert any("parity checklist" in line for line in result.blocked)
 
 
-def test_a_clear_dry_run_is_ok(
-    db: sqlite3.Connection, old_repo: Path, ready_checklist: Path
-) -> None:
+def test_a_clear_dry_run_is_ok(db: Connection, old_repo: Path, ready_checklist: Path) -> None:
     result = run_cutover(
         db, old_root=old_repo, stamp="s", checklist_path=ready_checklist, launchctl=loaded
     )
@@ -261,7 +257,7 @@ def agents_dir_with_plists(tmp_path: Path) -> Path:
 
 
 def test_a_failed_unload_rolls_back_what_was_already_stopped(
-    db: sqlite3.Connection, old_repo: Path, ready_checklist: Path, tmp_path: Path
+    db: Connection, old_repo: Path, ready_checklist: Path, tmp_path: Path
 ) -> None:
     """Stopping at the first failure still leaves the old system half down.
     The only state worth ending in is the one we started from."""
@@ -313,7 +309,7 @@ def test_a_rollback_that_itself_fails_is_reported(tmp_path: Path) -> None:
 
 
 def test_a_failing_install_still_writes_the_record(
-    db: sqlite3.Connection,
+    db: Connection,
     old_repo: Path,
     ready_checklist: Path,
     tmp_path: Path,
@@ -348,7 +344,7 @@ def test_a_failing_install_still_writes_the_record(
 
 
 def test_a_refused_unload_stops_before_the_data_is_touched(
-    db: sqlite3.Connection, old_repo: Path, ready_checklist: Path, tmp_path: Path
+    db: Connection, old_repo: Path, ready_checklist: Path, tmp_path: Path
 ) -> None:
     """A half-quiesced system snapshotted mid-write is worse than one that
     never started, so the sequence stops rather than pressing on."""
@@ -375,7 +371,7 @@ def test_a_refused_unload_stops_before_the_data_is_touched(
 
 
 def test_an_already_unloaded_job_is_not_a_failure(
-    db: sqlite3.Connection, old_repo: Path, ready_checklist: Path, tmp_path: Path
+    db: Connection, old_repo: Path, ready_checklist: Path, tmp_path: Path
 ) -> None:
     monkeypatch_calls: list[str] = []
 
@@ -416,7 +412,7 @@ def loaded_ok(args: list[str]) -> tuple[int, str, str]:
 
 
 def test_a_filesystem_error_during_snapshot_leaves_a_log_and_a_rollback(
-    db: sqlite3.Connection, old_repo: Path, ready_checklist: Path, tmp_path: Path
+    db: Connection, old_repo: Path, ready_checklist: Path, tmp_path: Path
 ) -> None:
     """The defect this spec fixes. copytree raising OSError escaped
     run_cutover entirely: the log was never written, the rollback never ran,
@@ -448,7 +444,7 @@ def test_a_filesystem_error_during_snapshot_leaves_a_log_and_a_rollback(
 
 
 def test_an_install_failure_rolls_the_old_jobs_back(
-    db: sqlite3.Connection, old_repo: Path, ready_checklist: Path, tmp_path: Path
+    db: Connection, old_repo: Path, ready_checklist: Path, tmp_path: Path
 ) -> None:
     """Old down and new not installed is the one end state that is never
     acceptable, so the old jobs go back up."""
@@ -472,7 +468,7 @@ def test_an_install_failure_rolls_the_old_jobs_back(
 
 
 def test_a_rollback_with_no_plist_names_the_manual_step(
-    db: sqlite3.Connection, old_repo: Path, ready_checklist: Path, tmp_path: Path
+    db: Connection, old_repo: Path, ready_checklist: Path, tmp_path: Path
 ) -> None:
     """The old arrangement is the one the README calls the defect being
     fixed, so assuming the standard directory is exactly the assumption most
@@ -500,7 +496,7 @@ def test_a_rollback_with_no_plist_names_the_manual_step(
 
 
 def test_a_second_invocation_resumes_rather_than_repeating(
-    db: sqlite3.Connection, old_repo: Path, ready_checklist: Path, tmp_path: Path
+    db: Connection, old_repo: Path, ready_checklist: Path, tmp_path: Path
 ) -> None:
     """Cutover is neither idempotent nor repeatable, so a partial failure has
     to be continuable rather than restarted."""
@@ -553,7 +549,7 @@ def test_a_second_invocation_resumes_rather_than_repeating(
 
 
 def test_a_successful_run_clears_the_progress_record(
-    db: sqlite3.Connection, old_repo: Path, ready_checklist: Path, tmp_path: Path
+    db: Connection, old_repo: Path, ready_checklist: Path, tmp_path: Path
 ) -> None:
     """Otherwise the next cutover with the same stamp would skip everything."""
     result = run_cutover(
@@ -572,7 +568,7 @@ def test_a_successful_run_clears_the_progress_record(
 
 
 def test_a_quiesce_failure_still_writes_a_log(
-    db: sqlite3.Connection, old_repo: Path, ready_checklist: Path, tmp_path: Path
+    db: Connection, old_repo: Path, ready_checklist: Path, tmp_path: Path
 ) -> None:
     """Every path out leaves a record, including the earliest one."""
 
@@ -598,7 +594,7 @@ def test_a_quiesce_failure_still_writes_a_log(
 
 
 def test_a_refused_execution_still_writes_a_log(
-    db: sqlite3.Connection, old_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    db: Connection, old_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Spec 037 requires a record for refusals, and these two paths raised
     before reaching the log, so the attempts that never started were the only
@@ -619,7 +615,7 @@ def test_a_refused_execution_still_writes_a_log(
 
 
 def test_a_refused_attestation_still_writes_a_log(
-    db: sqlite3.Connection,
+    db: Connection,
     old_repo: Path,
     ready_checklist: Path,
     tmp_path: Path,
@@ -683,7 +679,7 @@ def test_a_progress_record_of_the_wrong_shape_stops_too(
 
 
 def test_a_cutover_refused_by_a_bad_progress_record_still_writes_a_log(
-    db: sqlite3.Connection,
+    db: Connection,
     old_repo: Path,
     ready_checklist: Path,
     tmp_path: Path,
@@ -728,7 +724,7 @@ def test_progress_is_written_through_a_replacement(
 
 
 def test_a_failed_schedule_install_fails_the_cutover(
-    db: sqlite3.Connection,
+    db: Connection,
     old_repo: Path,
     ready_checklist: Path,
     tmp_path: Path,

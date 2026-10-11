@@ -7,12 +7,12 @@ the thing being compared against.
 from __future__ import annotations
 
 import json
-import sqlite3
 from pathlib import Path
 from typing import cast
 
 import pytest
 
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.demo import repo_root
 from harrier.discovery import DiscoveryOptions, run_discovery
@@ -412,7 +412,7 @@ def test_load_run_summary_reads_a_real_shape(tmp_path: Path) -> None:
 
 
 @pytest.fixture()
-def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
+def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Connection:
     monkeypatch.setenv("HARRIER_DEMO", "1")
     monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
     return connect()
@@ -425,7 +425,7 @@ def test_shadow_implies_dry_run() -> None:
 
 
 def test_a_shadow_run_never_reaches_the_paid_source(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The dual-run period runs discovery on a schedule for a week. --dry-run
     alone still starts a billed Apify run and discards the result, so shadow
@@ -440,6 +440,6 @@ def test_a_shadow_run_never_reaches_the_paid_source(
     assert "apify_linkedin" not in cast("list[str]", summary_out["sources_run"])
 
 
-def test_a_shadow_run_writes_nothing_to_the_tracker(db: sqlite3.Connection) -> None:
+def test_a_shadow_run_writes_nothing_to_the_tracker(db: Connection) -> None:
     run_discovery(db, default_scope(db), DiscoveryOptions(shadow=True, notify=False))
     assert db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0

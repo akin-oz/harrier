@@ -2,12 +2,12 @@
 repo's tests/test_gmail_watch.py onto the database and the library run."""
 
 import json
-import sqlite3
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.mail import (
     GmailMessage,
@@ -23,7 +23,7 @@ from harrier.tracks import default_scope
 
 
 @pytest.fixture()
-def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
+def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Connection:
     monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
     return connect()
 
@@ -223,7 +223,7 @@ def no_send(message: str) -> int:
     raise AssertionError("dry run must never send")
 
 
-def test_dry_run_counts_and_classifies_without_sending(db: sqlite3.Connection) -> None:
+def test_dry_run_counts_and_classifies_without_sending(db: Connection) -> None:
     messages = [
         build_message(
             "Daily jobs for you", "Unsubscribe and manage preferences here.", message_id="m1"
@@ -248,7 +248,7 @@ def test_dry_run_counts_and_classifies_without_sending(db: sqlite3.Connection) -
     assert len(events) == 2
 
 
-def test_missing_message_id_is_reported_clearly(db: sqlite3.Connection) -> None:
+def test_missing_message_id_is_reported_clearly(db: Connection) -> None:
     messages = [
         build_message(
             "Interview invitation",
@@ -264,7 +264,7 @@ def test_missing_message_id_is_reported_clearly(db: sqlite3.Connection) -> None:
     assert summary.unseen_count == 0
 
 
-def test_seen_message_reports_already_seen(db: sqlite3.Connection) -> None:
+def test_seen_message_reports_already_seen(db: Connection) -> None:
     messages = [
         build_message(
             "Thanks for applying to Exampleco!", "We received your application.", message_id="m1"
@@ -280,7 +280,7 @@ def test_seen_message_reports_already_seen(db: sqlite3.Connection) -> None:
 
 
 def test_seen_state_cap_drops_the_oldest_ids(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import harrier.mail.run as run_module
     from harrier.mail.watch import load_state, save_state
@@ -308,7 +308,7 @@ def test_int_env_guard_raises_runtime_error(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_live_run_sends_actionable_and_stops_on_send_failure(
-    db: sqlite3.Connection,
+    db: Connection,
 ) -> None:
     add_job(
         db,

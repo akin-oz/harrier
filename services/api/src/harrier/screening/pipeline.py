@@ -29,6 +29,7 @@ from harrier.screening.descriptions import (
     enrich_job_description_for_scoring,
     save_description_cache,
 )
+from harrier.screening.eligibility import assess_eligibility
 from harrier.screening.linkedin import (
     VERDICT_NOT_REMOTE,
     VERDICT_UNKNOWN,
@@ -48,6 +49,7 @@ from harrier.screening.seen import ACCEPTED, REJECTED, SeenDecision, now_iso
 from harrier.sources.apify_academic import COMPONENTS as ACADEMIC_COMPONENTS
 from harrier.tracker.schema import NEXT_ACTION_DEFAULTS
 from harrier.tracker.score import score_fields
+from harrier.tracker.store import EligibilityAssessment
 
 if TYPE_CHECKING:
     from harrier.academic.search import SearchEntry
@@ -102,6 +104,11 @@ class ScreenResult:
     rejected_counts: dict[str, int] = field(default_factory=dict[str, int])
     rejected_debug_rows: list[dict[str, str]] = field(default_factory=list[dict[str, str]])
     new_tracker_rows: list[dict[str, str]] = field(default_factory=list[dict[str, str]])
+    # The industry kind's rule assessment of each new row, in the same order
+    # (spec 122). Empty on the academic kind, which is not assessed.
+    new_eligibility: list[EligibilityAssessment] = field(
+        default_factory=list[EligibilityAssessment]
+    )
     latest_items: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
     skipped_seen: int = 0
     skipped_tracker_duplicate: int = 0
@@ -344,6 +351,9 @@ def screen_jobs(
         result.new_tracker_rows.append(
             build_tracker_row(scored_job, fit.score, fit.reasons, fit.version)
         )
+        # After the gates and the score, and judged from the same text the
+        # score read. It changes neither (spec 122).
+        result.new_eligibility.append(assess_eligibility(scored_job))
         result.latest_items.append(
             _build_latest_item(scored_job, fit.score, fit.reasons, remote_reason)
         )

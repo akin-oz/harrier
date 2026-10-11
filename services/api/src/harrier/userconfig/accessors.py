@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import csv
 import json
-import sqlite3
 from datetime import date
 from pathlib import Path
 from typing import cast
 
+from harrier.connection import Connection
 from harrier.demo import resolve_config_path
 from harrier.screening.normalized import normalize
 from harrier.sources.feeds import FEEDS_PATH, read_line_config, route_ats_feeds
@@ -35,26 +35,26 @@ DISCOVERY_PATH = Path("config") / "discovery.json"
 HOLDS_PATH = Path("config") / "companies-hold.csv"
 
 
-def load_feed_urls(conn: sqlite3.Connection | None = None) -> list[str]:
+def load_feed_urls(conn: Connection | None = None) -> list[str]:
     stored = stored_list(conn, FEEDS)
     if stored is not None:
         return stored
     return read_line_config(resolve_config_path(FEEDS_PATH))
 
 
-def load_ats_feeds(conn: sqlite3.Connection | None = None) -> dict[str, list[str]]:
+def load_ats_feeds(conn: Connection | None = None) -> dict[str, list[str]]:
     """The board watchlist grouped by importer, from wherever it lives."""
     return route_ats_feeds(load_feed_urls(conn))
 
 
-def load_search_urls(conn: sqlite3.Connection | None = None) -> list[str]:
+def load_search_urls(conn: Connection | None = None) -> list[str]:
     stored = stored_list(conn, LINKEDIN_SEARCHES)
     if stored is not None:
         return stored
     return read_line_config(resolve_config_path(SEARCH_URLS_PATH))
 
 
-def load_discovery_settings(conn: sqlite3.Connection | None = None) -> dict[str, object]:
+def load_discovery_settings(conn: Connection | None = None) -> dict[str, object]:
     if conn is not None:
         value = get_config(conn, DISCOVERY)
         if value is not None:
@@ -69,9 +69,7 @@ def load_discovery_settings(conn: sqlite3.Connection | None = None) -> dict[str,
     return cast("dict[str, object]", parsed) if isinstance(parsed, dict) else {}
 
 
-def load_hold_companies(
-    conn: sqlite3.Connection | None = None, today: date | None = None
-) -> set[str]:
+def load_hold_companies(conn: Connection | None = None, today: date | None = None) -> set[str]:
     """Normalized names of the companies on an active hold.
 
     A hold with no date is active indefinitely; a dated hold is active on and

@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.logredact import REDACTION, IdentityRedactionFilter, identity_values
 from harrier.logsetup import configure_logging
@@ -34,7 +35,7 @@ CANDIDATE = {
 
 
 @pytest.fixture()
-def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
+def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Connection:
     monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("HARRIER_DEMO", raising=False)
     conn = connect()
@@ -74,7 +75,7 @@ def _capture(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return written
 
 
-def test_identity_values_reads_candidate_and_contacts(db: sqlite3.Connection) -> None:
+def test_identity_values_reads_candidate_and_contacts(db: Connection) -> None:
     values = identity_values(db)
     assert CANDIDATE["name"] in values
     assert CANDIDATE["email"] in values
@@ -82,7 +83,7 @@ def test_identity_values_reads_candidate_and_contacts(db: sqlite3.Connection) ->
     assert "jordan@example.com" in values
 
 
-def test_redaction_reads_identity_from_either_shape(db: sqlite3.Connection) -> None:
+def test_redaction_reads_identity_from_either_shape(db: Connection) -> None:
     """Before the split the values are in `resume_data`, after it in
     `resume_facts`; both are read, so no point in between leaves one
     unredacted (spec 098)."""
@@ -100,7 +101,7 @@ def test_redaction_reads_identity_from_either_shape(db: sqlite3.Connection) -> N
 
 def test_identity_values_survives_a_database_without_the_tables(tmp_path: Path) -> None:
     """A fresh clone has no profile store. Redaction must degrade, not raise."""
-    bare = sqlite3.connect(tmp_path / "bare.db")
+    bare = Connection(sqlite3.connect(tmp_path / "bare.db"))
     assert identity_values(bare) == set()
 
 
@@ -128,7 +129,7 @@ def test_a_short_value_inside_another_word_is_left_alone() -> None:
 def test_a_single_character_value_is_still_ignored(tmp_path: Path) -> None:
     """One character is not identifying and matches as its own word constantly:
     an initial, a column left as `a`."""
-    conn = sqlite3.connect(tmp_path / "short.db")
+    conn = Connection(sqlite3.connect(tmp_path / "short.db"))
     conn.execute("CREATE TABLE contacts (person_name TEXT, person_email TEXT, linkedin_url TEXT)")
     conn.execute("INSERT INTO contacts VALUES ('J', '', '')")
     conn.commit()
@@ -136,7 +137,7 @@ def test_a_single_character_value_is_still_ignored(tmp_path: Path) -> None:
 
 
 def test_a_contact_added_after_startup_is_redacted(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The API runs for days, so a contact added after configure_logging is
     the normal case. It used to reach the log unredacted until restart, which
@@ -154,7 +155,7 @@ def test_a_contact_added_after_startup_is_redacted(
 
 
 def test_the_candidate_name_does_not_reach_a_log_line(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     written = _capture(monkeypatch)
     logging.getLogger("harrier.somewhere").warning("draft prepared for %s", CANDIDATE["name"])
@@ -164,7 +165,7 @@ def test_the_candidate_name_does_not_reach_a_log_line(
 
 
 def test_a_contact_address_does_not_reach_a_log_line(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     written = _capture(monkeypatch)
     logging.getLogger("harrier.outreach").info("queued jordan@example.com")
@@ -172,9 +173,7 @@ def test_a_contact_address_does_not_reach_a_log_line(
     assert "jordan@example.com" not in written[0]
 
 
-def test_an_unrelated_line_is_left_alone(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_an_unrelated_line_is_left_alone(db: Connection, monkeypatch: pytest.MonkeyPatch) -> None:
     written = _capture(monkeypatch)
     logging.getLogger("harrier.discovery").info("fetched 15 postings from exampleco")
     assert written[0] == "fetched 15 postings from exampleco"
@@ -210,7 +209,7 @@ def test_the_api_configures_logging_when_the_app_is_created(
 
 
 def test_an_exception_traceback_does_not_carry_an_identity(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`record.getMessage()` excludes the exception, so logger.exception()
     carried identity values straight past the filter. Demonstrated on the
@@ -282,7 +281,7 @@ def test_configure_logging_closes_its_connection_when_identity_values_fails(
 ) -> None:
     import harrier.logredact
 
-    def broken(_conn: sqlite3.Connection) -> set[str]:
+    def broken(_conn: Connection) -> set[str]:
         raise sqlite3.OperationalError("unreadable")
 
     monkeypatch.setattr(harrier.logredact, "identity_values", broken)

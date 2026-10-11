@@ -47,6 +47,19 @@ function makeJob(overrides: Partial<Job>): Job {
     track: "job",
     deadline: "",
     deadline_passed: false,
+    // No assessment, which reads `unknown` (spec 122).
+    eligibility: {
+      verdict: "unknown",
+      routes: [],
+      origin: "none",
+      evidence_url: "",
+      excerpt: "",
+      field: "",
+      checked_at: "",
+      version: "",
+      description_sha256: "",
+      disagrees: false,
+    },
     ...overrides,
   };
 }

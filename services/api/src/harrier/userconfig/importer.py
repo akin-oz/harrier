@@ -9,12 +9,12 @@ reach `import_config_files` and print or return what it reports.
 from __future__ import annotations
 
 import json
-import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
+from harrier.connection import Connection
 from harrier.sources.feeds import FEEDS_PATH, read_line_config
 from harrier.userconfig.accessors import (
     DISCOVERY_PATH,
@@ -96,7 +96,7 @@ def settings_from_file(path: Path) -> dict[str, object]:
     }
 
 
-def import_config_files(conn: sqlite3.Connection) -> ConfigImport:
+def import_config_files(conn: Connection) -> ConfigImport:
     """Read each committed or local file once into the store.
 
     Every line file is read before anything is stored, so a malformed hold

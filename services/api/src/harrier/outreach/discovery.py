@@ -11,10 +11,10 @@ from __future__ import annotations
 import json
 import os
 import re
-import sqlite3
 from pathlib import Path
 from typing import Any, cast
 
+from harrier.connection import Connection
 from harrier.db import data_dir
 from harrier.outreach.contacts import upsert_contact
 from harrier.sources.apify_linkedin import (
@@ -483,7 +483,7 @@ def update_candidate_review_status(
 
 
 def approve_candidate(
-    conn: sqlite3.Connection,
+    conn: Connection,
     scope: Scope,
     company: str,
     role: str,

@@ -396,8 +396,9 @@ Behavior above already describe these answers.
   always have printed `N -> N`. On SQLite `store status` reads the file
   without writing and prints no `behind:` line, since any ordinary open
   migrates it.
-- **The refusal text is one constant,** `harrier.pgstore.POSTGRES_NOT_YET`,
-  used by the CLI and the API.
+- **The refusal text is one constant,** `harrier.connection.POSTGRES_NOT_YET`,
+  used by the CLI and the API. (It was `harrier.pgstore.POSTGRES_NOT_YET`
+  until spec 112's PR 1 moved it, 2026-10-11.)
 - **"A store behind the code" is refused where a store is opened for use,**
   by `harrier.pgstore.open_postgres_store`
   (`services/api/tests/test_postgres_store.py::test_opening_an_unmigrated_store_is_refused`).
@@ -413,10 +414,11 @@ same change's code:
 - **The API now reads the URL from `.env` too.** The CLI loads `.env`; the
   API did not, so a URL set only there made the CLI refuse while the API
   served SQLite, the case Scope item 7 exists to prevent.
-  `harrier.pgstore.store_target` reads the variable from the environment
+  `harrier.connection.store_target` reads the variable from the environment
   and, when it is not set there, from `.env`, through the CLI's own parser
-  (`services/api/src/harrier/envfile.py`). An exported value, even empty,
-  wins
+  (`services/api/src/harrier/envfile.py`). (It was
+  `harrier.pgstore.store_target` until spec 112's PR 1 moved it,
+  2026-10-11.) An exported value, even empty, wins
   (`services/api/tests/test_store_cli.py::test_a_url_in_dotenv_reaches_the_api_as_it_reaches_the_cli`,
   `services/api/tests/test_store_cli.py::test_an_exported_value_wins_over_dotenv_for_the_api_too`).
 - **The scrub covers the encoded password.** libpq quotes a URL it refuses

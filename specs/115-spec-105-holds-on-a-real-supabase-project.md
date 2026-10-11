@@ -53,8 +53,11 @@ Line numbers are from `main` at `44ac0d7` (2026-10-10).
 
 ## Scope
 
-1. Akin creates the Supabase project `harrier-staging` in
-   `eu-central-1` (Frankfurt). The agent creates no account and no project.
+1. The staging project exists (`eu-west-1`, Ireland): the existing
+   Supabase project named `harrier`, which Akin created and which is
+   staging for now. Its reference and URL stay out of every file. The
+   agent creates no account and no project. Spec 110's "Region
+   (2026-10-11)" holds the region decision.
 2. `harrier store migrate` runs once against it as Supabase's own
    `postgres` role, from a shell with the URL exported, and prints
    `postgres 0 -> <target_version()>`.
@@ -94,8 +97,8 @@ operator's shell and never enter a file.
 
 ### Who runs what
 
-Akin creates the project in the dashboard, region `eu-central-1`, and
-records its Postgres version. He exports the `postgres` role's session
+The project exists (`eu-west-1`): the existing Supabase project named
+`harrier`. Akin records its Postgres version. He exports the `postgres` role's session
 pooler URL in a shell (never in `.env`) and runs `harrier store migrate`.
 He creates one login role for A5 in the SQL editor: `CREATE ROLE
 harrier_api_probe LOGIN NOINHERIT PASSWORD ...`, with a password generated
@@ -419,7 +422,8 @@ checks it before those specs are built.
 
 ### Who runs what
 
-Akin creates a throwaway Fly app in `fra`, called `harrier-probe` in the
+Akin creates a throwaway Fly app in `ams` (Amsterdam, the region of spec
+110's "Region (2026-10-11)"), called `harrier-probe` in the
 documents, in the organization that will hold staging and production,
 and deletes it after the run. The agent creates no account and no app.
 The probes run no harrier code: none of specs 106, 108 or 110 is built

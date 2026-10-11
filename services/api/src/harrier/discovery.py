@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -18,6 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
+from harrier.connection import Connection
 from harrier.db import data_dir
 from harrier.demo import is_demo_mode, resolve_config_path
 from harrier.notify import build_telegram_message, send_telegram_message
@@ -82,9 +82,7 @@ def _incoming_dir() -> Path:
 APIFY_MAX_COUNT = 500
 
 
-def scheduled_apify_count(
-    config_path: Path | None = None, conn: sqlite3.Connection | None = None
-) -> int:
+def scheduled_apify_count(config_path: Path | None = None, conn: Connection | None = None) -> int:
     """The scheduled-run Apify count, from the store or config/discovery.json.
 
     Resolves the old repo's three-way discrepancy between 50, 150, and 200
@@ -163,7 +161,7 @@ def _source_enabled(name: str, only_sources: frozenset[str]) -> bool:
 
 
 def _run_source(
-    conn: sqlite3.Connection,
+    conn: Connection,
     scope: Scope,
     source_name: str,
     jobs: list[NormalizedJob],
@@ -193,9 +191,9 @@ def _run_source(
 
     persisted = 0
     if not dry_run:
-        for row in result.new_tracker_rows:
+        for row, eligibility in zip(result.new_tracker_rows, result.new_eligibility, strict=True):
             try:
-                add_job(conn, row, scope=scope)
+                add_job(conn, row, scope=scope, eligibility=eligibility)
                 persisted += 1
             except DuplicateJobError:
                 # The screen already deduped; a race with a concurrent add is
@@ -230,7 +228,7 @@ def _run_source(
 
 
 def run_discovery(
-    conn: sqlite3.Connection,
+    conn: Connection,
     scope: Scope,
     options: DiscoveryOptions,
     progress: ProgressFn | None = None,

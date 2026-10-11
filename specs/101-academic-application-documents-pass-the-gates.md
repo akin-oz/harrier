@@ -431,6 +431,12 @@ afterwards.
   track refusal. `merge_responses` (`services/api/src/harrier_api/deps.py`)
   joins the causes of one status; discovery had the same loss and is fixed
   with it (`services/api/tests/test_api_tracks.py::test_every_409_a_route_can_answer_is_in_the_contract`).
+  As first written this held for those five routes only: spec 094's route
+  class still let a route's own 409 replace the track refusal on about
+  twenty other scoped routes. The route class now joins them too, and
+  every response declaration goes through `merge_responses`
+  (`services/api/tests/test_api_tracks.py::test_every_scoped_route_declares_the_track_refusal`,
+  review of PR #234).
 - **A missing half of the profile names the command that stores it**
   (`services/api/tests/test_academic_applications.py::test_a_missing_half_of_the_profile_names_the_command`).
 - **Tests that could not fail now can,** each checked by mutating the

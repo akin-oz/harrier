@@ -7,7 +7,6 @@ Routes speak Pydantic models only; the web app speaks generated types only.
 from __future__ import annotations
 
 import os
-import sqlite3
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date
@@ -23,22 +22,26 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from harrier.apply.brief import Brief
+from harrier.connection import POSTGRES_NOT_YET, Connection, store_target
 from harrier.db import DatabaseOwnedByHost, connect, default_db_path, lease_directory
 from harrier.demo import repo_root
 from harrier.hostlease import oldest_hold
 from harrier.logsetup import configure_logging
-from harrier.pgstore import POSTGRES_NOT_YET, store_target
 from harrier.tracker import list_jobs
 from harrier.tracker.reasons import CANDIDATE, COMPANY, SYSTEM, codes_for
 from harrier.tracker.selector import SelectorError
-from harrier.tracker.store import TrackerError
+from harrier.tracker.store import (
+    EligibilityAssessment,
+    EligibilityView,
+    TrackerError,
+    eligibility_views,
+)
 from harrier.tracks import DEFAULT_TRACK_ID
 from harrier.tracks import Scope as TrackScope
 from harrier_api.capture_routes import capture_router
 from harrier_api.demo import demo_db_path, is_demo_mode, seed_demo_db
 from harrier_api.deps import (
     DATABASE_HELD_DETAIL,
-    TRACK_REFUSAL_RESPONSES,
     VERB_IN_BODY,
     Conn,
     DatabaseHeldOut,
@@ -98,6 +101,96 @@ JobStatus = Literal[
 ]
 
 
+# Kept in lockstep with harrier.tracker.schema by the eligibility tests (spec 122).
+EligibilityVerdict = Literal["confirmed", "possible", "unknown", "excluded"]
+EligibilityRoute = Literal["employee", "contractor", "eor", "relocation"]
+EligibilityField = Literal["", "title", "location", "description", "external"]
+
+
+class EligibilityOut(BaseModel):
+    """What a row reads about Türkiye (spec 122). `verdict` is geography
+    only and `routes` engagement only. `origin` is `none` for a row with no
+    assessment, which reads `unknown`. `disagrees` is true when the current
+    assessment is the candidate's and the rules' latest differs from it in
+    verdict or routes; nothing else follows from it."""
+
+    verdict: EligibilityVerdict
+    routes: list[EligibilityRoute]
+    origin: Literal["rule", "candidate", "none"]
+    evidence_url: str
+    excerpt: str
+    field: EligibilityField
+    checked_at: str
+    version: str
+    description_sha256: str
+    disagrees: bool
+
+
+class EligibilityEntryOut(BaseModel):
+    """One recorded assessment, as written (spec 122)."""
+
+    verdict: EligibilityVerdict
+    routes: list[EligibilityRoute]
+    origin: Literal["rule", "candidate"]
+    evidence_url: str
+    excerpt: str
+    field: EligibilityField
+    matched: str
+    checked_at: str
+    version: str
+    description_sha256: str
+    at: str
+
+
+def _eligibility_out(view: EligibilityView) -> EligibilityOut:
+    current = view.current
+    if current is None:
+        return EligibilityOut(
+            verdict="unknown",
+            routes=[],
+            origin="none",
+            evidence_url="",
+            excerpt="",
+            field="",
+            checked_at="",
+            version="",
+            description_sha256="",
+            disagrees=False,
+        )
+    return EligibilityOut.model_validate(
+        {
+            "verdict": current.verdict,
+            "routes": list(current.routes),
+            "origin": current.origin,
+            "evidence_url": current.evidence_url,
+            "excerpt": current.excerpt,
+            "field": current.field,
+            "checked_at": current.checked_at,
+            "version": current.version,
+            "description_sha256": current.description_sha256,
+            "disagrees": view.disagrees,
+        }
+    )
+
+
+def _eligibility_entry_out(entry: EligibilityAssessment) -> EligibilityEntryOut:
+    return EligibilityEntryOut.model_validate(
+        {
+            "verdict": entry.verdict,
+            "routes": list(entry.routes),
+            "origin": entry.origin,
+            "evidence_url": entry.evidence_url,
+            "excerpt": entry.excerpt,
+            "field": entry.field,
+            "matched": entry.matched,
+            "checked_at": entry.checked_at,
+            "version": entry.version,
+            "description_sha256": entry.description_sha256,
+            "at": entry.at,
+        }
+    )
+
+
 class JobOut(BaseModel):
     id: int
     company: str
@@ -134,6 +227,8 @@ class JobOut(BaseModel):
     track: str
     deadline: str
     deadline_passed: bool
+    # Spec 122: whether the posting can engage someone based in Türkiye.
+    eligibility: EligibilityOut
 
 
 class HealthOut(BaseModel):
@@ -211,8 +306,7 @@ def jobs(
     status: Annotated[JobStatus | None, Query()] = None,
     source: Annotated[str | None, Query()] = None,
 ) -> list[JobOut]:
-    rows = list_jobs(conn, scope, status=status, source=source)
-    return [_as_job_out(row, scope) for row in rows]
+    return _as_job_outs(conn, list_jobs(conn, scope, status=status, source=source), scope)
 
 
 class StartRunIn(BaseModel):
@@ -311,13 +405,25 @@ TRACKER_ERRORS: dict[int | str, dict[str, Any]] = {
 }
 
 
-def _as_job_out(job: dict[str, str], scope: TrackScope) -> JobOut:
+def _as_job_outs(conn: Connection, rows: list[dict[str, str]], scope: TrackScope) -> list[JobOut]:
+    """Many rows, with every row's eligibility read in one query (spec 122)."""
+    views = eligibility_views(conn, scope)
+    empty = EligibilityView(None, None)
+    return [_as_job_out(row, scope, views.get(int(row["id"]), empty)) for row in rows]
+
+
+def _as_one_job_out(conn: Connection, job: dict[str, str], scope: TrackScope) -> JobOut:
+    return _as_job_outs(conn, [job], scope)[0]
+
+
+def _as_job_out(job: dict[str, str], scope: TrackScope, eligibility: EligibilityView) -> JobOut:
     """The same conversion `/jobs` uses, so one row shape reaches the client."""
     deadline = (job.get("deadline") or "").strip()
     return JobOut.model_validate(
         {
             **job,
             "id": int(job["id"]),
+            "eligibility": _eligibility_out(eligibility),
             # Every row a scoped route returns is the scope's (spec 092).
             "track": scope.track.slug,
             "deadline": deadline,
@@ -347,7 +453,8 @@ def change_job_status(
     code = body.reason_code.value if body.reason_code is not None else None
     require_operation(scope, body.verb)
     try:
-        return _as_job_out(
+        return _as_one_job_out(
+            conn,
             change_status(conn, scope, selector, body.verb, reason=body.reason, reason_code=code),
             scope,
         )
@@ -374,7 +481,8 @@ def record_job_outcome(
     from harrier.tracker.actions import TrackerActionError, record_company_outcome
 
     try:
-        return _as_job_out(
+        return _as_one_job_out(
+            conn,
             record_company_outcome(conn, scope, selector, body.code.value, note=body.note),
             scope,
         )
@@ -412,7 +520,7 @@ def add_job_by_hand(
     return AddJobOut(
         status=result.status,
         message=result.message,
-        job=_as_job_out(job, scope) if job else None,
+        job=_as_one_job_out(conn, job, scope) if job else None,
     )
 
 
@@ -438,7 +546,9 @@ def rescore_job(
         # than a 500.
         raise HTTPException(status_code=409, detail=str(error)) from error
     return RescoreOut(
-        previous=result.previous, current=result.current, job=_as_job_out(result.job, scope)
+        previous=result.previous,
+        current=result.current,
+        job=_as_one_job_out(conn, result.job, scope),
     )
 
 
@@ -455,7 +565,7 @@ def list_queue(
     from harrier.tracker.actions import next_up, review_queue
 
     rows = review_queue(conn, scope, limit) if undecided else next_up(conn, scope, limit)
-    return [_as_job_out(row, scope) for row in rows]
+    return _as_job_outs(conn, rows, scope)
 
 
 @tracker_router.get("/tracker/counts", operation_id="trackerCounts")
@@ -522,6 +632,124 @@ def list_job_events(
     ]
 
 
+# --- eligibility (spec 122) ---
+
+
+class EligibilitySetIn(BaseModel):
+    """The candidate's own assessment. `confirmed` and `excluded` need the
+    URL the evidence was read at and the words that decide it. `checked_at`
+    is a date or a UTC time; now when omitted."""
+
+    verdict: EligibilityVerdict
+    routes: list[EligibilityRoute] = []
+    evidence_url: str = ""
+    excerpt: str = ""
+    checked_at: str | None = None
+
+
+@tracker_router.get(
+    "/tracker/{selector}/eligibility",
+    operation_id="listJobEligibility",
+    responses={
+        404: {"model": ErrorOut, "description": "the selector named no job, or more than one"}
+    },
+)
+def list_job_eligibility(
+    selector: str,
+    conn: Conn,
+    scope: Annotated[TrackScope, Depends(scope_for("eligibility show"))],
+) -> list[EligibilityEntryOut]:
+    """`eligibility show`: a job's assessments, newest first."""
+    from harrier.tracker.store import eligibility_history
+
+    job_id = _job_id_for(conn, scope, selector)
+    return [_eligibility_entry_out(entry) for entry in eligibility_history(conn, scope, job_id)]
+
+
+@tracker_router.post(
+    "/tracker/{selector}/eligibility",
+    operation_id="setJobEligibility",
+    dependencies=[Depends(require_token)],
+    responses=TRACKER_ERRORS,
+)
+def set_job_eligibility(
+    selector: str,
+    body: EligibilitySetIn,
+    conn: Conn,
+    scope: Annotated[TrackScope, Depends(scope_for("eligibility set"))],
+) -> EligibilityOut:
+    """`eligibility set`: the same function the CLI calls. It stays the row's
+    current assessment until the candidate records another."""
+    from harrier.tracker.actions import TrackerActionError, set_eligibility
+
+    try:
+        view = set_eligibility(
+            conn,
+            scope,
+            selector,
+            verdict=body.verdict,
+            routes=tuple(body.routes),
+            evidence_url=body.evidence_url,
+            excerpt=body.excerpt,
+            checked_at=body.checked_at,
+        )
+    except SelectorError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except (TrackerActionError, TrackerError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return _eligibility_out(view)
+
+
+class EligibilityReassessIn(BaseModel):
+    """Report by default; `apply` writes, as a second, separate request."""
+
+    apply: bool = False
+
+
+class EligibilityReassessOut(BaseModel):
+    """Counts only, never an excerpt (spec 122)."""
+
+    applied: bool
+    examined: int
+    assessed: int
+    unchanged: int
+    under_candidate: int
+    disagrees: int
+    rejected_skipped: int
+    no_description: int
+    by_verdict: dict[str, int]
+
+
+@tracker_router.post(
+    "/ops/eligibility-reassess",
+    operation_id="reassessEligibility",
+    dependencies=[Depends(require_token)],
+    responses=TOKEN_RESPONSES,
+)
+def reassess_job_eligibility(
+    conn: Conn,
+    scope: Annotated[TrackScope, Depends(scope_for("eligibility reassess"))],
+    body: EligibilityReassessIn = EligibilityReassessIn(),  # noqa: B008
+) -> EligibilityReassessOut:
+    """`eligibility reassess`: the same function the CLI calls. The rules
+    run again on open rows with a stored description; nothing is written
+    without `apply`."""
+    from harrier.tracker.actions import reassess_eligibility
+
+    report = reassess_eligibility(conn, scope, apply=body.apply)
+    return EligibilityReassessOut(
+        applied=report.applied,
+        examined=report.examined,
+        assessed=report.assessed,
+        unchanged=report.unchanged,
+        under_candidate=report.under_candidate,
+        disagrees=report.disagrees,
+        rejected_skipped=report.rejected_skipped,
+        no_description=report.no_description,
+        by_verdict=dict(report.by_verdict),
+    )
+
+
 # --- apply: artifacts for one job (spec 047) ---
 
 apply_router = APIRouter(route_class=DatabaseRoute)
@@ -569,14 +797,11 @@ APPLY_ERRORS: dict[int | str, dict[str, str]] = {
 # the kind already active. Joined, so the contract names every cause.
 APPLY_RUN_RESPONSES = merge_responses(
     APPLY_ERRORS,
-    {409: TRACK_REFUSAL_RESPONSES[409]},
     {409: {"description": "application documents from the browser are the default track's"}},
     RUN_CONFLICT_RESPONSES,
 )
 # `evaluate` never runs on another track: the track refusal answers first.
-EVALUATE_RESPONSES = merge_responses(
-    APPLY_ERRORS, {409: TRACK_REFUSAL_RESPONSES[409]}, RUN_CONFLICT_RESPONSES
-)
+EVALUATE_RESPONSES = merge_responses(APPLY_ERRORS, RUN_CONFLICT_RESPONSES)
 
 ARTIFACT_ERRORS: dict[int | str, dict[str, str]] = {
     404: {"description": "no such job, artifact kind, or the artifact is not produced yet"},
@@ -584,7 +809,7 @@ ARTIFACT_ERRORS: dict[int | str, dict[str, str]] = {
 }
 
 
-def _job_id_for(conn: sqlite3.Connection, scope: TrackScope, selector: str) -> int:
+def _job_id_for(conn: Connection, scope: TrackScope, selector: str) -> int:
     from harrier.tracker.selector import resolve_selector
 
     try:
@@ -594,7 +819,7 @@ def _job_id_for(conn: sqlite3.Connection, scope: TrackScope, selector: str) -> i
 
 
 def _apply_params(
-    conn: sqlite3.Connection,
+    conn: Connection,
     scope: TrackScope,
     operation: str,
     selector: str,
@@ -880,7 +1105,7 @@ runs_router = APIRouter(route_class=DatabaseRoute)
     "/runs",
     operation_id="startRun",
     dependencies=[Depends(require_token)],
-    responses={**TOKEN_RESPONSES, **RUN_CONFLICT_RESPONSES},
+    responses=merge_responses(TOKEN_RESPONSES, RUN_CONFLICT_RESPONSES),
 )
 async def start_run(body: StartRunIn, manager: Manager) -> RunOut:
     return run_out(await manager.start(body.kind))
@@ -990,7 +1215,7 @@ CONFIG_ERRORS: dict[int | str, dict[str, object]] = {
 config_router = APIRouter(route_class=DatabaseRoute)
 
 
-def _config_out(conn: sqlite3.Connection, kind: str) -> ConfigOut:
+def _config_out(conn: Connection, kind: str) -> ConfigOut:
     """What is in effect for one kind, including when it cannot be read.
 
     A kind whose value the store refuses is described rather than raised
@@ -1079,7 +1304,7 @@ def get_configuration(kind: str, conn: Conn) -> ConfigOut:
 @config_router.put(
     "/config/{kind}",
     operation_id="putConfig",
-    responses={**CONFIG_ERRORS, **TOKEN_RESPONSES},
+    responses=merge_responses(CONFIG_ERRORS, TOKEN_RESPONSES),
     dependencies=[Depends(require_token)],
 )
 def put_configuration(kind: str, body: ConfigIn, conn: Conn) -> ConfigOut:

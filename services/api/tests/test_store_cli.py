@@ -20,8 +20,8 @@ import pytest
 from pg_support import fresh_database
 
 import harrier.logsetup as logsetup
+from harrier.connection import URL_VARIABLE, StoreUrlError, store_target
 from harrier.db import default_db_path
-from harrier.pgstore import URL_VARIABLE, StoreUrlError, store_target
 from harrier.tracker import schema
 from harrier.tracker.schema import MIGRATIONS, POSTGRES_MIGRATIONS
 from harrier_api.app import create_app

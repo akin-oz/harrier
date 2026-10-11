@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 
 from harrier import container, hostlease
+from harrier.connection import Connection
 from harrier.demo import demo_data_dir, is_demo_mode
 from harrier.paths import repo_root
 
@@ -219,8 +220,10 @@ def _engine_verdict(resolved: Path) -> None:
         )
 
 
-def connect(db_path: Path | None = None, *, same_thread: bool = True) -> sqlite3.Connection:
+def connect(db_path: Path | None = None, *, same_thread: bool = True) -> Connection:
     """Open the database, creating the directory and schema if needed.
+
+    Returns harrier's `Connection` over the sqlite3 connection (spec 112).
 
     same_thread=False relaxes sqlite3's own check that a connection is used
     from the thread that made it. Only the API needs it, and only because
@@ -260,7 +263,7 @@ def connect(db_path: Path | None = None, *, same_thread: bool = True) -> sqlite3
         # process (spec 090).
         conn.close()
         raise
-    return conn
+    return Connection(conn)
 
 
 def _set_journal_mode_wal(conn: sqlite3.Connection) -> None:
@@ -285,7 +288,7 @@ def _set_journal_mode_wal(conn: sqlite3.Connection) -> None:
             time.sleep(0.01)
 
 
-def schema_version(conn: sqlite3.Connection) -> int:
+def schema_version(conn: Connection | sqlite3.Connection) -> int:
     row = conn.execute("SELECT MAX(version) AS v FROM schema_version").fetchone()
     version = row["v"] if row is not None else None
     return int(version) if version is not None else 0
@@ -294,8 +297,9 @@ def schema_version(conn: sqlite3.Connection) -> int:
 def _apply_schema(conn: sqlite3.Connection) -> None:
     """Apply every pending migration, each whole or not at all (spec 090).
 
-    This used to run each migration under `with conn:`. The sqlite3 module
-    opens that transaction only before a data statement, so a CREATE or
+    This used to run each migration in a `with` block over the sqlite3
+    connection. The sqlite3 module opens that transaction only before a
+    data statement, so a CREATE or
     ALTER was on disk the moment it returned, and a migration that failed
     on its third statement left its first two behind with no version row
     to say so. SQLite can roll schema changes back; it has to be asked.

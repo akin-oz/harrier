@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 import os
 import plistlib
-import sqlite3
 import subprocess
 import sys
 from collections.abc import Callable
@@ -22,6 +21,7 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Any, cast
 
+from harrier.connection import Connection
 from harrier.db import data_dir
 from harrier.paths import repo_root
 
@@ -508,7 +508,7 @@ def longest_gap(job: ScheduleJob) -> timedelta:
     return max(later - earlier for earlier, later in pairwise(runs))
 
 
-def success_keys(conn: sqlite3.Connection, job: ScheduleJob) -> list[str]:
+def success_keys(conn: Connection, job: ScheduleJob) -> list[str]:
     """The last-success records this job writes, read from its command.
 
     `discover --configured-tracks` writes one per configured academic track.
@@ -538,7 +538,7 @@ def _moment(timestamp: str) -> datetime | None:
 
 
 def job_health(
-    conn: sqlite3.Connection, *, config_path: Path | None = None, now: datetime | None = None
+    conn: Connection, *, config_path: Path | None = None, now: datetime | None = None
 ) -> list[JobHealth]:
     """Each scheduled job's cadence and last successes, and which are overdue.
 

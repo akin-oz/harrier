@@ -10,10 +10,10 @@ nothing at all.
 
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass, field
 from typing import cast
 
+from harrier.connection import Connection
 from harrier.outreach.contacts import infer_relevance, normalize
 from harrier.outreach.discovery import (
     load_candidates_artifact,
@@ -36,7 +36,7 @@ class BackfillSummary:
     lines: list[str] = field(default_factory=list[str])
 
 
-def _existing_contact_keys(conn: sqlite3.Connection) -> set[str]:
+def _existing_contact_keys(conn: Connection) -> set[str]:
     keys: set[str] = set()
     for contact in list_contacts(conn):
         url = (contact.get("linkedin_url") or "").strip()
@@ -45,7 +45,7 @@ def _existing_contact_keys(conn: sqlite3.Connection) -> set[str]:
     return keys
 
 
-def _linkedin_rows(conn: sqlite3.Connection, scope: Scope) -> list[tuple[dict[str, str], str]]:
+def _linkedin_rows(conn: Connection, scope: Scope) -> list[tuple[dict[str, str], str]]:
     rows: list[tuple[dict[str, str], str]] = []
     for row in list_jobs(conn, scope):
         url = (row.get("url") or "").strip()
@@ -109,7 +109,7 @@ def _stage_poster(row: dict[str, str], job_url: str, poster: dict[str, str]) -> 
 
 
 def backfill_posters(
-    conn: sqlite3.Connection, scope: Scope, *, limit: int = 0, dry_run: bool = False
+    conn: Connection, scope: Scope, *, limit: int = 0, dry_run: bool = False
 ) -> BackfillSummary:
     summary = BackfillSummary()
     rows = _linkedin_rows(conn, scope)

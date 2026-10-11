@@ -19,8 +19,7 @@ the same question: what in this tracker no longer says something true.
 
 from __future__ import annotations
 
-import sqlite3
-
+from harrier.connection import Connection
 from harrier.screening.normalized import normalize
 from harrier.tracks import Scope
 
@@ -28,7 +27,7 @@ from harrier.tracks import Scope
 LINK_FIELDS: tuple[str, ...] = ("job_id", "company", "job_title", "job_url")
 
 
-def resolve_job_id(conn: sqlite3.Connection, scope: Scope, link: dict[str, str]) -> str:
+def resolve_job_id(conn: Connection, scope: Scope, link: dict[str, str]) -> str:
     """The tracked job a link refers to, or "" when there is not one.
 
     URL first, then company and title, which is the order `find_duplicate`
@@ -53,9 +52,7 @@ def resolve_job_id(conn: sqlite3.Connection, scope: Scope, link: dict[str, str])
     return ""
 
 
-def job_for_link(
-    conn: sqlite3.Connection, scope: Scope, link: dict[str, str]
-) -> dict[str, str] | None:
+def job_for_link(conn: Connection, scope: Scope, link: dict[str, str]) -> dict[str, str] | None:
     """The job a link points at, followed by its id rather than its text.
 
     This is what makes the link survive an edit: the title in the link may be
@@ -78,7 +75,7 @@ def job_for_link(
         return None
 
 
-def unresolved_links(conn: sqlite3.Connection, scope: Scope) -> list[tuple[str, str]]:
+def unresolved_links(conn: Connection, scope: Scope) -> list[tuple[str, str]]:
     """Every contact link that does not resolve to a job, as (contact, why).
 
     Reporting only. A link may be unresolved because the job was never
@@ -107,7 +104,7 @@ def unresolved_links(conn: sqlite3.Connection, scope: Scope) -> list[tuple[str, 
     return problems
 
 
-def backfill_job_ids(conn: sqlite3.Connection, scope: Scope) -> tuple[int, int]:
+def backfill_job_ids(conn: Connection, scope: Scope) -> tuple[int, int]:
     """Give every existing link an id where one can be found.
 
     Returns (resolved, left alone). Runs over links written before this

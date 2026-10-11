@@ -1,11 +1,11 @@
 """Write-path behavior pins (spec 004)."""
 
-import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.tracker import (
     NEXT_ACTION_DEFAULTS,
@@ -21,7 +21,7 @@ from harrier.tracks import default_scope
 
 
 @pytest.fixture()
-def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
+def conn(tmp_path: Path) -> Iterator[Connection]:
     connection = connect(tmp_path / "t.db")
     yield connection
     connection.close()
@@ -42,7 +42,7 @@ def _job(**overrides: str) -> dict[str, str]:
     return base
 
 
-def test_add_job_expands_notes_and_defaults_next_action(conn: sqlite3.Connection) -> None:
+def test_add_job_expands_notes_and_defaults_next_action(conn: Connection) -> None:
     job_id = add_job(conn, _job(), scope=default_scope(conn))
     job = get_job(conn, default_scope(conn), job_id)
     assert job["score"] == "78"
@@ -52,7 +52,7 @@ def test_add_job_expands_notes_and_defaults_next_action(conn: sqlite3.Connection
     assert job["next_action"] == NEXT_ACTION_DEFAULTS["prospect"]
 
 
-def test_add_job_rejects_duplicates_by_url_key_and_company_title(conn: sqlite3.Connection) -> None:
+def test_add_job_rejects_duplicates_by_url_key_and_company_title(conn: Connection) -> None:
     add_job(conn, _job(), scope=default_scope(conn))
     with pytest.raises(DuplicateJobError):
         add_job(conn, _job(notes=""), scope=default_scope(conn))  # same url
@@ -70,7 +70,7 @@ def test_add_job_rejects_duplicates_by_url_key_and_company_title(conn: sqlite3.C
         )
 
 
-def test_unknown_status_raises(conn: sqlite3.Connection) -> None:
+def test_unknown_status_raises(conn: Connection) -> None:
     with pytest.raises(UnknownStatusError):
         add_job(conn, _job(status="in_progress"), scope=default_scope(conn))
     job_id = add_job(conn, _job(), scope=default_scope(conn))
@@ -78,7 +78,7 @@ def test_unknown_status_raises(conn: sqlite3.Connection) -> None:
         set_status(conn, default_scope(conn), job_id, "ghosted")
 
 
-def test_applied_seeds_outreach_block(conn: sqlite3.Connection) -> None:
+def test_applied_seeds_outreach_block(conn: Connection) -> None:
     job_id = add_job(conn, _job(), scope=default_scope(conn))
     job = set_status(conn, default_scope(conn), job_id, "applied", applied_date="2026-08-08")
     assert job["status"] == "applied"
@@ -91,7 +91,7 @@ def test_applied_seeds_outreach_block(conn: sqlite3.Connection) -> None:
     assert job["outreach_priority"] == "high"
 
 
-def test_applied_fills_only_blank_outreach_fields(conn: sqlite3.Connection) -> None:
+def test_applied_fills_only_blank_outreach_fields(conn: Connection) -> None:
     job_id = add_job(conn, _job(), scope=default_scope(conn))
     update_fields(
         conn, default_scope(conn), job_id, {"outreach_status": "ready", "outreach_priority": "low"}
@@ -102,7 +102,7 @@ def test_applied_fills_only_blank_outreach_fields(conn: sqlite3.Connection) -> N
     assert job["next_outreach_action"] == "find contacts"
 
 
-def test_rejected_records_reason_and_clears_next_action(conn: sqlite3.Connection) -> None:
+def test_rejected_records_reason_and_clears_next_action(conn: Connection) -> None:
     job_id = add_job(conn, _job(), scope=default_scope(conn))
     job = set_status(
         conn, default_scope(conn), job_id, "rejected", rejection_reason="remote policy changed"
@@ -111,13 +111,13 @@ def test_rejected_records_reason_and_clears_next_action(conn: sqlite3.Connection
     assert job["next_action"] == ""
 
 
-def test_update_fields_refuses_status(conn: sqlite3.Connection) -> None:
+def test_update_fields_refuses_status(conn: Connection) -> None:
     job_id = add_job(conn, _job(), scope=default_scope(conn))
     with pytest.raises(Exception, match="set_status"):
         update_fields(conn, default_scope(conn), job_id, {"status": "applied"})
 
 
-def test_list_jobs_filters(conn: sqlite3.Connection) -> None:
+def test_list_jobs_filters(conn: Connection) -> None:
     a = add_job(conn, _job(), scope=default_scope(conn))
     add_job(
         conn,
@@ -133,7 +133,7 @@ def test_list_jobs_filters(conn: sqlite3.Connection) -> None:
 
 
 def test_unique_index_race_maps_to_duplicate_error(
-    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    conn: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from harrier.tracker import store as store_module
 
@@ -142,7 +142,7 @@ def test_unique_index_race_maps_to_duplicate_error(
     # Simulate the concurrent-writer race: the pre-check sees nothing, the
     # unique index still refuses.
     def no_precheck(
-        conn: sqlite3.Connection, url: str, company: str, title: str, external_key: str
+        conn: Connection, url: str, company: str, title: str, external_key: str
     ) -> None:
         return None
 

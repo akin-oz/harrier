@@ -20,19 +20,20 @@ from pathlib import Path
 import pytest
 
 import harrier_cli.main as cli
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.tracker.store import add_job
 from harrier.tracks import default_scope
 
 
 @pytest.fixture
-def opened(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[list[sqlite3.Connection]]:
+def opened(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[list[Connection]]:
     """Every connection a command opens through `connect`, with gc off."""
     monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("HARRIER_DEMO", raising=False)
-    recorded: list[sqlite3.Connection] = []
+    recorded: list[Connection] = []
 
-    def recording_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+    def recording_connect(*args: object, **kwargs: object) -> Connection:
         conn = connect(*args, **kwargs)  # type: ignore[arg-type]
         recorded.append(conn)
         return conn
@@ -47,27 +48,27 @@ def opened(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[list[sql
             gc.enable()
 
 
-def assert_all_closed(recorded: list[sqlite3.Connection]) -> None:
+def assert_all_closed(recorded: list[Connection]) -> None:
     assert recorded, "the command opened no connection, so this proves nothing"
     for conn in recorded:
         with pytest.raises(sqlite3.ProgrammingError, match="closed"):
             conn.execute("SELECT 1")
 
 
-def test_a_read_command_closes_its_connection(opened: list[sqlite3.Connection]) -> None:
+def test_a_read_command_closes_its_connection(opened: list[Connection]) -> None:
     assert cli.main(["profile", "list"]) == 0
     assert_all_closed(opened)
 
 
 def test_a_command_that_returns_early_closes_its_connection(
-    opened: list[sqlite3.Connection],
+    opened: list[Connection],
 ) -> None:
     """`brief show` passed `connect()` inline, so nothing could close it."""
     assert cli.main(["brief", "show", "1"]) == 1
     assert_all_closed(opened)
 
 
-def test_a_command_that_fails_closes_its_connection(opened: list[sqlite3.Connection]) -> None:
+def test_a_command_that_fails_closes_its_connection(opened: list[Connection]) -> None:
     """`migrate-legacy` into a tracker that already has rows aborts with
     MigrationError, which the handler turns into exit 1."""
     seed = connect()
@@ -89,9 +90,9 @@ def test_a_command_that_fails_closes_its_connection(opened: list[sqlite3.Connect
 
 
 def test_a_command_that_raises_closes_its_connection(
-    opened: list[sqlite3.Connection], monkeypatch: pytest.MonkeyPatch
+    opened: list[Connection], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def broken(_conn: sqlite3.Connection) -> list[object]:
+    def broken(_conn: Connection) -> list[object]:
         raise RuntimeError("store failed")
 
     monkeypatch.setattr(cli, "list_documents", broken)

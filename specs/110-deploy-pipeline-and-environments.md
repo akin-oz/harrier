@@ -69,7 +69,8 @@ findings here, each kept below with its own criterion:
   credential in the local container's environment, and every run
   subprocess inherits it. The CLI and the API also read
   `HARRIER_DATABASE_URL` from `.env` when it is not exported
-  (`pgstore.py:118-124`, spec 103 Corrections). (privacy 5)
+  (`store_target`, `connection.py:190-196` since spec 112's PR 1 moved it
+  out of `pgstore.py` on 2026-10-11; spec 103 Corrections). (privacy 5)
 - **Tracebacks hold the URL.** Above. (test-integrity follow-up)
 - **The grant is nobody's step yet.** Migration 10 creates `harrier_tenant`
   with no member (`schema.py:709-724`). Spec 104's API connects as a login
@@ -86,7 +87,7 @@ after specs 104, 112, 114 and 115.
    image staying the default target with unchanged behavior (open decision
    3).
 2. **Fly configuration.** `deploy/fly.staging.toml` and
-   `deploy/fly.production.toml`: app name, `primary_region = "fra"`, the
+   `deploy/fly.production.toml`: app name, `primary_region = "ams"`, the
    HTTP service, the health check, the non-secret hosted variables in
    `[env]`, and the machine size and auto-stop settings under "Hosting
    budget (2026-10-11)".
@@ -128,16 +129,23 @@ after specs 104, 112, 114 and 115.
 
 | | Staging | Production |
 |---|---|---|
-| Supabase project | `harrier-staging`, `eu-central-1` | `harrier-production`, `eu-central-1` |
-| Fly app | `harrier-api-staging`, `fra` | `harrier-api-production`, `fra` |
+| Supabase project | the existing Supabase project named `harrier`, `eu-west-1` | `harrier-production`, `eu-west-1`, not created yet |
+| Fly app | `harrier-api-staging`, `ams` | `harrier-api-production`, `ams` |
 | Vercel | project `harrier-web-staging`, its Production environment | project `harrier-web-production`, its Production environment |
 | GitHub environment | `staging`, deployments from `main` only | `production`, deployments from `main` only, Akin as required reviewer |
 
-Frankfurt for both: Fly's European regions are `ams`, `arn`, `cdg`, `fra`
-and `lhr`, and `lhr` is outside the EU; Supabase warns that its generic
-"Europe" choice may land in London or Zurich, so a named region is chosen.
-Putting the API and the database in one city keeps every request's
-database round trips inside it. No latency figure is claimed.
+Supabase in Ireland (`eu-west-1`) and Fly in Amsterdam (`ams`), as
+"Region (2026-10-11)" at the end of this spec decides. Fly has no Dublin
+region, and London (`lhr`) is outside the EU; Amsterdam is the closest
+Fly region to Ireland inside it. Supabase warns that its generic "Europe"
+choice may land in London or Zurich, so a named region is chosen. The API
+and the database are in two cities, so every request's database round
+trips cross between them. No latency figure is claimed.
+
+Staging is the existing Supabase project named `harrier`. Production's
+project does not exist yet: it is created when a Supabase Free slot is
+free or the plan changes (Region (2026-10-11)). Nothing serves tenants
+until then.
 
 The names are the shape, not a commitment; the operator may pick others,
 and the Fly configuration files carry whichever are chosen.
@@ -383,7 +391,7 @@ holds the URL and its password.
       and the local image's tests in `services/api/tests/test_container.py`
       pass unchanged, including
       `services/api/tests/test_container.py::test_the_image_installs_every_feature_dependency_group`.
-- [ ] Both Fly files set `primary_region = "fra"`, `HARRIER_AUTH =
+- [ ] Both Fly files set `primary_region = "ams"`, `HARRIER_AUTH =
       "supabase"` in `[env]`, an HTTP health check on `/health` with a Host
       header from that file's `HARRIER_ALLOWED_HOSTS`, and no secret
       (planned test_the_fly_files_hold_no_secret_and_name_the_region).
@@ -539,6 +547,8 @@ Akin took these in chat on 2026-10-11 ("go with your recommendations").
 
 Open decisions 1, 2 and 4 to 8 below were not the subject of these
 decisions and stand as written; item 3 is answered for `gmail` only.
+Item 2 is superseded by "Region (2026-10-11)", a later decision of the
+same day.
 Item 9 is superseded by the hosting budget of the same day, and item 10
 is added by it (Hosting budget (2026-10-11)).
 
@@ -555,6 +565,8 @@ is added by it (Hosting budget (2026-10-11)).
 2. **Regions.** Recommended: Frankfurt for both, Fly `fra` and Supabase
    `eu-central-1`. Alternative: Paris (`cdg`, `eu-west-3`) or Stockholm
    (`arn`, `eu-north-1`), equally EU.
+   Superseded 2026-10-11: Supabase `eu-west-1` (Ireland), Fly `ams`
+   (Amsterdam). Region (2026-10-11) gives the reasons.
 3. **The hosted image.** Recommended: a `hosted` target in `Dockerfile`,
    sharing the base, Chromium and poppler layers, with `postgres`, `hosted`
    and `pdf`, without the `claude` CLI (ADR-013 decision 8) and without the
@@ -684,8 +696,11 @@ is added by it (Hosting budget (2026-10-11)).
   https://community.fly.io/t/ipv6-outbound-from-gru-to-supabase-100-packet-loss/27739
 - Fly, Pricing: new organizations are Pay As You Go with no free tier or
   monthly free allowance; shared-cpu-1x always on per month in the base
-  region, 256MB $2.19, 512MB $3.69, 1GB $6.70; in Frankfurt, 1GB $7.73
-  (the page's table); "Monthly Machine prices assume 30 days of
+  region, 256MB $2.19, 512MB $3.69, 1GB $6.70; a region's price is the
+  base-region price times a region multiplier listed on the page,
+  Amsterdam's 1.038461538, so in Amsterdam 1GB is $6.95 and 512MB $3.84
+  as the page's region selector shows them (Region (2026-10-11) gives the
+  arithmetic); "Monthly Machine prices assume 30 days of
   continuous runtime"; a stopped Machine is billed only for its root file
   system, at $0.15/GB/month; volumes $0.15/GB/month; outbound data to
   Europe $0.02/GB; shared IPv4 and IPv6 free, dedicated IPv4 $2/month; no
@@ -772,7 +787,8 @@ Amendment (2026-10-11) at the end of this spec takes that step here.
   - Spec 104's Configuration says "The API reads no `.env` file itself
     (`grep -rn dotenv services/api/src` finds nothing)". Since spec 103's
     Corrections, `store_target` reads `HARRIER_DATABASE_URL` from `.env`
-    when it is not exported (`pgstore.py:118-124`, through
+    when it is not exported (`connection.py:190-196`, in `pgstore.py`
+    until spec 112's PR 1 moved it on 2026-10-11; through
     `harrier.envfile`, which the grep does not match). `HARRIER_AUTH` is
     still read from the environment only, so the conclusion about hosted
     mode holds; the sentence does not.
@@ -990,20 +1006,25 @@ disagrees, this section holds, and each place it replaced says so. Specs
 spec 115 checks the assumptions below.
 
 Every price below is quoted from Fly's pricing page or Vercel's Hobby
-page, both read 2026-10-11 (Proof / origin). Every other figure is marked
-as an estimate and shows its arithmetic.
+page, both read 2026-10-11 (Proof / origin). An Amsterdam machine price
+is the page's base-region price times its Amsterdam multiplier, with the
+arithmetic shown. Every other figure is marked as an estimate and shows
+its arithmetic. The Amsterdam figures replaced Frankfurt ones on
+2026-10-11 (Region (2026-10-11)).
 
 ### What the published prices allow
 
 - Fly has no free tier and no monthly free allowance for a new
   organization. Every machine second counts.
-- One shared-cpu-1x 1GB machine always on in Frankfurt costs $7.73 a
-  month, for 30 days of continuous runtime. That alone is over the budget
-  by 2.73 USD (7.73 minus 5).
-- **Estimate:** at that rate one machine hour costs about 0.0107 USD
-  (7.73 / 720 hours). 5 USD buys 5 / 7.73 = 0.647 of a month, about 465
-  machine hours of 720 (0.647 × 720 = 465.7). That is the ceiling for
-  every running 1GB machine in Frankfurt together: the production API,
+- One shared-cpu-1x 1GB machine always on in Amsterdam costs $6.95 a
+  month, for 30 days of continuous runtime: the base-region $6.70 times
+  Amsterdam's multiplier, 6.70 × 1.038461538 = 6.96, which the page's
+  region selector shows as $6.95. That alone is over the budget by 1.95
+  USD (6.95 minus 5).
+- **Estimate:** at that rate one machine hour costs about 0.0097 USD
+  (6.95 / 720 hours). 5 USD buys 5 / 6.95 = 0.719 of a month, about 518
+  machine hours of 720 (0.719 × 720 = 517.7). That is the ceiling for
+  every running 1GB machine in Amsterdam together: the production API,
   the scheduler's ticks and the runs they start, and staging's machines
   while they run. The fixed costs below come off it first.
 - A stopped machine is billed only for its root file system, at $0.15/GB
@@ -1017,24 +1038,29 @@ as an estimate and shows its arithmetic.
 - A volume is $0.15/GB a month and ties state to one machine. Hosted
   state lives in Supabase, so neither app has a volume.
 - Vercel's Hobby plan is free.
-- Supabase's Free plan is $0 a month and allows 2 active projects, which
-  are staging and production. It includes a 500 MB database, 1 GB of file
+- Supabase's Free plan is $0 a month and allows 2 active projects. The
+  account already holds one other project, so only staging, the existing
+  Supabase project named `harrier`, is on Free today; production is
+  created when a Free slot is free or the plan changes (Region
+  (2026-10-11)). It includes a 500 MB database, 1 GB of file
   storage, 5 GB of egress and 50,000 monthly active Auth users. Free
   projects pause after 1 week of inactivity, and the plan has no automatic
   backups (https://supabase.com/pricing, read 2026-10-11). Supabase Pro is
-  from 25 USD a month, which alone exceeds the budget, so both projects
-  stay on Free.
+  from 25 USD a month, which alone exceeds the budget, so staging stays on
+  Free and production is planned on Free. Creating production through a
+  plan change instead would put the hosted deployment over the 5 USD
+  target (25 is more than 5).
 
 ### Production on Fly
 
-- One app, `harrier-api-production`, `primary_region = "fra"`, with one
+- One app, `harrier-api-production`, `primary_region = "ams"`, with one
   API machine: shared-cpu-1x, 1GB. The API image carries Chromium and
   poppler for PDFs (ADR-013 decision 7), which is why 1GB is chosen.
-  512MB is an untested alternative. **Estimate** of its price in
-  Frankfurt, scaling the base-region 512MB price by the Frankfurt to base
-  ratio for 1GB: 3.69 × (7.73 / 6.70) = 4.26 USD a month always on. That
-  would fit an always-on machine under 5 USD with about 0.74 USD left for
-  everything else. Nothing shows 512MB holds Chromium during a run.
+  512MB is an untested alternative. Its price in Amsterdam, from the
+  page's multiplier: 3.69 × 1.038461538 = 3.83 USD a month always on,
+  which the page's region selector shows as $3.84. That would fit an
+  always-on machine under 5 USD with about 1.16 USD left for everything
+  else (5 minus 3.84). Nothing shows 512MB holds Chromium during a run.
 - The API's HTTP service sets `auto_stop_machines = "stop"`,
   `auto_start_machines = true` and `min_machines_running = 0`. Fly's
   proxy stops the machine when the app has excess capacity, judged by
@@ -1076,7 +1102,7 @@ as an estimate and shows its arithmetic.
 
 ### The scheduler
 
-An always-on scheduler machine of the same size would cost $7.73 a month
+An always-on scheduler machine of the same size would cost $6.95 a month
 alone, over the budget before the API runs at all. Open decision 9 (an
 always-on app of its own) and the Amendment's process group are
 superseded. Spec 108's "Hosting budget (2026-10-11)" replaces them with a
@@ -1176,3 +1202,67 @@ and recorded confirmed or refuted there:
       a spec owns the fix.
 - [ ] No text in this spec still requires `auto_stop_machines = "off"` or
       an always-on scheduler machine.
+
+## Region (2026-10-11)
+
+Akin decided in chat on 2026-10-11. This section supersedes Open
+decision 2 (Frankfurt: Fly `fra`, Supabase `eu-central-1`) and every
+place in this spec that applied it. Specs 106, 108 and 115 point here.
+
+1. **Supabase stays in Ireland, `eu-west-1`.** The existing Supabase
+   project named `harrier` was created there, and a Supabase project
+   cannot change region. Its reference and URL are written into no spec,
+   because this repository is public.
+2. **Fly moves to Amsterdam, `ams`.** Fly has no Dublin region. London
+   (`lhr`) is outside the EU, and spec 102's open decision 2 chose the EU
+   given the target users and GDPR. Amsterdam is the closest Fly region
+   to Ireland inside the EU. Both Fly files set `primary_region = "ams"`.
+3. **The existing project is staging for now.** Production's project is
+   created later, when a Supabase Free slot is free or the plan changes.
+   Free allows 2 active projects, and the account already holds another.
+   Nothing serves tenants yet. Spec 115 runs against this staging
+   project, which already exists in `eu-west-1`. Production keeps its
+   names in the environments table (`harrier-production`,
+   `harrier-api-production`, `harrier-web-production`); none of them
+   exists yet.
+
+### Prices
+
+Fly's pricing page gives a region's price as the base-region price times
+a region multiplier listed on that page. Amsterdam's multiplier is
+1.038461538; Frankfurt's is 1.153846154 (Fly, Pricing,
+https://docs.fly.io/about/pricing, read 2026-10-11). The base-region
+shared-cpu-1x prices are 512MB $3.69 and 1GB $6.70 a month.
+
+- 1GB in Amsterdam: 6.70 × 1.038461538 = 6.96 USD a month, which the
+  page's region selector shows as $6.95. This spec uses $6.95.
+- 512MB in Amsterdam: 3.69 × 1.038461538 = 3.83 USD a month, shown as
+  $3.84. This spec uses $3.84.
+- The Frankfurt figure this spec used before, $7.73 for 1GB, is
+  6.70 × 1.153846154 = 7.73.
+
+Every Frankfurt price and every estimate built on it is replaced in
+"Hosting budget (2026-10-11)" above:
+
+| Figure | Frankfurt (superseded) | Amsterdam | Arithmetic |
+|---|---|---|---|
+| 1GB always on, a month | $7.73 | $6.95 | 6.70 × 1.038461538 = 6.96, shown as 6.95 |
+| Over the 5 USD budget by | 2.73 USD | 1.95 USD | 6.95 minus 5 |
+| One machine hour, estimate | 0.0107 USD | 0.0097 USD | 6.95 / 720 = 0.00965 |
+| Share of a month 5 USD buys, estimate | 0.647 | 0.719 | 5 / 6.95 = 0.719 |
+| Machine hours 5 USD buys, estimate | about 465 of 720 | about 518 of 720 | 0.719 × 720 = 517.7 |
+| 512MB always on, a month | 4.26 USD, estimated | $3.84 | 3.69 × 1.038461538 = 3.83, shown as 3.84 |
+| Left under 5 USD with 512MB | about 0.74 USD | about 1.16 USD | 5 minus 3.84 |
+
+### Honest limitations (region)
+
+- The API in Amsterdam and the database in Ireland are in two cities, so
+  every request's database round trips cross between them. No latency
+  figure is claimed or measured here; the first staging deploy shows it.
+- Production does not exist. Every production step in this spec waits
+  for a Free slot or a plan change. Supabase Pro is from 25 USD a month,
+  so a plan change alone puts the hosted deployment over the 5 USD
+  target (Hosting budget, "What the published prices allow").
+- The prices used are the region selector's rounded figures, which
+  differ from the multiplied ones by one cent (6.95 against 6.96, 3.84
+  against 3.83). Which of the two Fly bills is not checked here.
