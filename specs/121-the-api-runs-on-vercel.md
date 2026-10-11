@@ -139,7 +139,7 @@ which already resumes without loss.
 ## Acceptance criteria
 
 - [ ] ADR-013 decision 7 carries the amended text and its note.
-- [ ] Open decision 1 is answered and its executor spec exists with
+- [ ] The executor spec (Vercel Queues, Open decision 1) exists with
       `approved: no`.
 - [ ] Every approved spec named under "Changes to approved specs" carries
       a dated amendment, approved by Akin, before any of this is built.
@@ -195,7 +195,12 @@ the in-process run manager stay as they are locally.
 
 ## Open decisions for Akin
 
+Akin took the recommended answer to each on 2026-10-11, and confirmed the
+`vercel.json` above: services `web` and `api`, both public (`web` at `/`,
+`api` at `/api/`), no bindings.
+
 1. **Where runs execute.**
+   - Taken 2026-10-11: (a).
    - (a) **Vercel Queues with a push consumer** (recommended to try first):
      the API enqueues; a consumer function runs one run per message within
      the maximum duration. All on Vercel. Requires every run kind to fit
@@ -206,9 +211,9 @@ the in-process run manager stay as they are locally.
    - (c) **A small worker kept on Fly for runs only**: the run manager
      unchanged, but a second vendor stays, which this move set out to
      avoid.
-2. **Plan.** Pro (800 s, 4 GB memory) is needed for runs of any length;
+2. **Plan.** Taken 2026-10-11: Pro. Pro (800 s, 4 GB memory) is needed for runs of any length;
    Hobby stops every invocation at 300 s.
-3. **One project per environment** (recommended, matches spec 102 decision
+3. Taken 2026-10-11: **one project per environment** (recommended, matches spec 102 decision
    4) or one project with a custom staging environment.
 
 ## Proof / origin
