@@ -21,8 +21,9 @@ ADR-013's Consequences say "a tenant's data can be exported and deleted on
 request; spec 111 owns it".
 
 Line numbers below are from `main` at `44ac0d7` on 2026-10-10, except the
-`schema.py` and `harrier_cli/main.py` ones, refreshed to `main` at
-`524dd8a` on 2026-10-11, and the `pgstore.py` one, refreshed by PR #245.
+`harrier_cli/main.py` ones, refreshed to `main` at `524dd8a` on
+2026-10-11, the `schema.py` ones, refreshed to `main` at `5c3d083` after
+migration 16, and the `pgstore.py` one, refreshed by PR #245.
 The stub cited
 older ones (`schema.py:441-445`, `:463`, `:545`, `:549`, `:776`, `:780`); the
 same statements now sit at the lines given here, found with `grep -n` for
@@ -32,11 +33,11 @@ same statements now sit at the lines given here, found with `grep -n` for
 **Deletion collides with the store's own refusals.** The post-merge review
 of PRs #194 and #207 (architecture 5, 2026-10-10) found it. On Postgres,
 `job_events` is append-only and `tracks` are never deleted, enforced by one
-function, `harrier_refuse()` (`schema.py:560-564`), which raises its trigger
+function, `harrier_refuse()` (`schema.py:563-567`), which raises its trigger
 argument unconditionally. It sits behind row triggers
-`tracks_are_never_deleted` (`:581-582`), `job_events_append_only_update`
-(`:663-664`) and `job_events_append_only_delete` (`:667-668`) and, since
-spec 105, statement triggers on TRUNCATE (`:957-958`, `:961-962`), which
+`tracks_are_never_deleted` (`:584-585`), `job_events_append_only_update`
+(`:666-667`) and `job_events_append_only_delete` (`:670-671`) and, since
+spec 105, statement triggers on TRUNCATE (`:975-976`, `:979-980`), which
 fire even for a superuser
 (`services/api/tests/test_owner_policy.py::test_truncate_cannot_empty_events_or_tracks`).
 An owner's events and tracks cannot be deleted at all. Spec 079 made
@@ -45,7 +46,7 @@ append-only a database rule, not a convention
 written since says when, if ever, it yields.
 
 The one way through today is the one migration 10 used for the seeded
-track: `ALTER TABLE tracks DISABLE TRIGGER` (`schema.py:886-888`). That
+track: `ALTER TABLE tracks DISABLE TRIGGER` (`schema.py:904-906`). That
 statement takes a `SHARE ROW EXCLUSIVE` lock (PostgreSQL, ALTER TABLE),
 which conflicts with the `ROW EXCLUSIVE` lock every insert, update and
 delete takes. In a migration that is fine. To delete one owner while others
@@ -54,10 +55,10 @@ and while the trigger is off it is off for every session.
 
 **No auth user can be deleted.** Every owned table carries `owner_id uuid
 NOT NULL DEFAULT auth.uid() REFERENCES auth.users (id)` with no `ON DELETE`
-action (`schema.py:889-895`, and `:1269` for spec 122's `job_eligibility`;
+action (`schema.py:907-913`, and `:1287` for spec 122's `job_eligibility`;
 spec 105). Deleting a user who owns rows is
 refused. The post-merge review of PR #216 (2026-10-10) added that the
-sign-up trigger, `harrier_new_owner()` (`schema.py:969-981`), gives every
+sign-up trigger, `harrier_new_owner()` (`schema.py:987-999`), gives every
 user a track 1 the moment the user row is inserted. So every auth user owns
 a row, including one who was invited and never signed in, and the Supabase
 dashboard's delete fails the same way: Supabase's own troubleshooting guide
@@ -308,7 +309,7 @@ It lets a row through only when all four hold:
   DEFINER` function owned by the migrating role runs as;
 - implicitly, the session holds `DELETE` on the table, which no grantee
   does: `harrier_tenant` holds `SELECT, INSERT` on `job_events` and
-  `SELECT, INSERT, UPDATE` on `tracks` (`schema.py:1026-1027`), and
+  `SELECT, INSERT, UPDATE` on `tracks` (`schema.py:1044-1045`), and
   `service_role` holds nothing. The privilege check refuses before any
   trigger fires (spec 105, Amendment).
 
@@ -338,7 +339,7 @@ In order:
 2. If the role it runs as is neither superuser nor `BYPASSRLS`, it raises
    `harrier_erase_owner runs as a role that does not bypass row security;
    it would erase nothing`. Every owned table forces row security
-   (`schema.py:990-998`, `:1287-1290`) with a policy only for `harrier_tenant`, so a
+   (`schema.py:1008-1016`, `:1305-1308`) with a policy only for `harrier_tenant`, so a
    definer subject to it would see no rows, delete none, and report
    success.
 3. `pg_catalog.set_config('harrier.erase_owner', target::text, true)`.
@@ -346,8 +347,8 @@ In order:
    `OWNED_TABLES` order: `job_events`, `jobs`,
    `contacts`, `profile_documents`, `user_config`, `job_runs`, `tracks`.
    (This cited `schema.py:606-614`. Since spec 122, 2026-10-11, those
-   seven are `MIGRATION_10_OWNED_TABLES`, `:688-696`, and `OWNED_TABLES`,
-   `:700`, puts `job_eligibility` before them.)
+   seven are `MIGRATION_10_OWNED_TABLES`, `:691-699`, and `OWNED_TABLES`,
+   `:703`, puts `job_eligibility` before them.)
    That order deletes a referencing row before the row it references
    (`job_events` to `jobs`, `jobs` and `profile_documents` to `tracks`).
    One result row per table, with the count `GET DIAGNOSTICS ... ROW_COUNT`
@@ -634,7 +635,7 @@ Gates:
   print; it cannot narrow what the platform shows its project owner.
 - **The table owner can still bypass the refusals.** The role that owns the
   tables can set `harrier.erase_owner` by hand, or disable or drop the
-  triggers, as migration 10 did (`schema.py:886-888`). The refusals guard
+  triggers, as migration 10 did (`schema.py:904-906`). The refusals guard
   against application code and every other role, not against the schema
   owner.
 - **Erasure is not instant everywhere.** Backups keep erased rows until
@@ -844,13 +845,13 @@ Repository:
 - `specs/079-decisions-are-recorded-as-events.md:149-150`: append-only is a
   database rule.
 - `services/api/src/harrier/tracker/schema.py`: `harrier_refuse()` at
-  `:560-564`; the refusal triggers at `:581-582`, `:663-664`, `:667-668`,
-  `:957-958`, `:961-962`; `MIGRATION_10_OWNED_TABLES` at `:688-696` and
-  `OWNED_TABLES` at `:700` (one list, `OWNED_TABLES` at `:606-614`, until
+  `:563-567`; the refusal triggers at `:584-585`, `:666-667`, `:670-671`,
+  `:975-976`, `:979-980`; `MIGRATION_10_OWNED_TABLES` at `:691-699` and
+  `OWNED_TABLES` at `:703` (one list, `OWNED_TABLES` at `:606-614`, until
   spec 122 split it; noted 2026-10-11); the disabled trigger at
-  `:886-888`; the `owner_id` foreign key at `:889-895`;
-  `harrier_new_owner()` at `:969-981`; the grants at `:1010-1033`;
-  `POSTGRES_MIGRATIONS` at `:1299-1314`, whose latest version
+  `:904-906`; the `owner_id` foreign key at `:907-913`;
+  `harrier_new_owner()` at `:987-999`; the grants at `:1028-1051`;
+  `POSTGRES_MIGRATIONS` at `:1395-1411`, whose latest version
   `target_version()` returns (`services/api/src/harrier/pgstore.py:84-88`).
 - `services/api/tests/test_owner_policy.py`: `catalog_problems`, its
   definer allowlist and `NO_PRIVILEGE_ROLES`.
@@ -967,25 +968,26 @@ Assumptions for spec 110's staging check, each unconfirmed:
 
 Akin approved this section in chat on 2026-10-11 ("approve the spec 111
 amendment"); this line records it. Nothing below is built yet. Line
-numbers are from `main` at `f26abe0`.
+numbers are from `main` at `5c3d083`, after migration 16 (they were taken
+at `f26abe0`).
 
 ### Problem
 
 Spec 122 added an owned table after this spec was approved:
 `job_eligibility`, migration 15 (`POSTGRES_JOB_ELIGIBILITY`,
-`services/api/src/harrier/tracker/schema.py:1262-1297`). It holds one
+`services/api/src/harrier/tracker/schema.py:1280-1315`). It holds one
 owner's eligibility assessments of their jobs, with posting excerpts as
 evidence. Three facts about it meet this spec's erase:
 
 - It is in `OWNED_TABLES`, first: `("job_eligibility",
-  *MIGRATION_10_OWNED_TABLES)` (`schema.py:700`). Its `owner_id`
-  references `auth.users (id)` with no `ON DELETE` action (`:1269`), like
+  *MIGRATION_10_OWNED_TABLES)` (`schema.py:703`). Its `owner_id`
+  references `auth.users (id)` with no `ON DELETE` action (`:1287`), like
   every other owned table.
 - Its rows reference a job of the same owner: `FOREIGN KEY (owner_id,
-  job_id) REFERENCES jobs (owner_id, id)` (`:1270`).
+  job_id) REFERENCES jobs (owner_id, id)` (`:1288`).
 - It is append-only, as `job_events` is. Row triggers refuse `UPDATE` and
   `DELETE` and a statement trigger refuses `TRUNCATE`, each through
-  `harrier_refuse('job_eligibility is append-only')` (`:1276-1285`).
+  `harrier_refuse('job_eligibility is append-only')` (`:1294-1303`).
 
 Behavior, "`harrier_erase_owner(target uuid)`", step 4, names the seven
 tables migration 10 owned and deletes in that order. Built as it
@@ -1027,7 +1029,7 @@ are refused as today, with `job_eligibility is append-only`.
 
 **No session but the erase holds `DELETE` on it.** `harrier_tenant`
 holds `SELECT`, and `INSERT` on every column but `id`
-(`schema.py:1295-1296`). `service_role` holds nothing. As for
+(`schema.py:1313-1314`). `service_role` holds nothing. As for
 `job_events`, the privilege check refuses a tenant's delete before the
 trigger fires.
 
@@ -1169,10 +1171,10 @@ as before.
 - `specs/122-each-posting-says-whether-it-can-hire-from-turkiye.md`:
   Scope (migration 15, `OWNED_TABLES`), Storage ("Append-only by trigger
   on both dialects"), and Amendment item 2 (the frozen lists).
-- `services/api/src/harrier/tracker/schema.py`: `OWNED_TABLES` at `:700`,
-  `POSTGRES_JOB_ELIGIBILITY` at `:1262-1297`, the `owner_id` and job
-  references at `:1269-1270`, the refusal triggers at `:1276-1285`, the
-  tenant's grants at `:1295-1296`.
+- `services/api/src/harrier/tracker/schema.py`: `OWNED_TABLES` at `:703`,
+  `POSTGRES_JOB_ELIGIBILITY` at `:1280-1315`, the `owner_id` and job
+  references at `:1287-1288`, the refusal triggers at `:1294-1303`, the
+  tenant's grants at `:1313-1314`.
 - `services/api/tests/test_owner_policy.py`: `REQUIRED`, `fill` and
   `JOB_HISTORY_TABLES`, which already write and treat `job_eligibility`
   as an owned history table; `test_truncate_cannot_empty_events_or_tracks`.

@@ -39,7 +39,7 @@ and `ANTHROPIC_API_KEY` (`services/api/src/harrier/llm/config.py:131-153`),
 gives a run its owner's values under those names; this spec stores them.
 
 Line numbers are from `main` at `44ac0d7` (2026-10-10), except the
-`schema.py` ones, refreshed to `main` at `524dd8a` on 2026-10-11.
+`schema.py` ones, refreshed to `main` at `5c3d083` after migration 16.
 
 ## Scope
 
@@ -48,10 +48,10 @@ Line numbers are from `main` at `44ac0d7` (2026-10-10), except the
    `services/api/src/harrier/tracker/schema.py` gains it, with the
    `credentials` table, its policy and its grants (Behavior). `MIGRATIONS`
    gains the same version with no statements, declared Postgres only in
-   `SINGLE_DIALECT_MIGRATIONS` (`schema.py:737`) with its reason.
-   `OWNED_TABLES` (`schema.py:700`) gains `credentials`. Migration 10
+   `SINGLE_DIALECT_MIGRATIONS` (`schema.py:750`) with its reason.
+   `OWNED_TABLES` (`schema.py:703`) gains `credentials`. Migration 10
    reads its own frozen list, `MIGRATION_10_OWNED_TABLES`
-   (`schema.py:688-696`), not `OWNED_TABLES`, so its statements do not
+   (`schema.py:691-699`), not `OWNED_TABLES`, so its statements do not
    change. (Spec 122 added that list with migration 15; noted 2026-10-11.
    This text said spec 116 or spec 108, whichever landed first, would add
    it.) A guarded path, approved under this spec.

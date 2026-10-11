@@ -73,7 +73,7 @@ findings here, each kept below with its own criterion:
   out of `pgstore.py` on 2026-10-11; spec 103 Corrections). (privacy 5)
 - **Tracebacks hold the URL.** Above. (test-integrity follow-up)
 - **The grant is nobody's step yet.** Migration 10 creates `harrier_tenant`
-  with no member (`schema.py:849-864`). Spec 104's API connects as a login
+  with no member (`schema.py:867-882`). Spec 104's API connects as a login
   role that must be a member, and nothing grants it. (review of PR #216)
 
 ## Scope

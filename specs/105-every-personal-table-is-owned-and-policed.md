@@ -26,16 +26,16 @@ person, and several of its rules assume it:
 - Five uniqueness rules are global. `idx_jobs_url`,
   `idx_jobs_external_key`, `tracks.slug UNIQUE`, `user_config UNIQUE
   (kind)` and `profile_documents UNIQUE (kind, name)`
-  (`services/api/src/harrier/tracker/schema.py:603-604`, `:569`, `:634`,
-  `:625`) would refuse owner B's row because owner A has one like it.
+  (`services/api/src/harrier/tracker/schema.py:606-607`, `:572`, `:637`,
+  `:628`) would refuse owner B's row because owner A has one like it.
   Two people may track the same posting URL. Worse, the refusal itself
   tells B that someone else has that URL: Postgres checks unique and
   foreign key constraints without row security, and its manual warns of
   exactly this covert channel.
-- `job_runs` has `job` as its primary key (`schema.py:638-641`), so two
+- `job_runs` has `job` as its primary key (`schema.py:641-644`), so two
   owners' scheduled runs would overwrite one success time.
-- The baseline seeds track `id = 1` with no owner (`schema.py:576`), and
-  `jobs.track_id` defaults to 1 (`schema.py:597`). The domain treats
+- The baseline seeds track `id = 1` with no owner (`schema.py:579`), and
+  `jobs.track_id` defaults to 1 (`schema.py:600`). The domain treats
   id 1 as "the default track" (`DEFAULT_TRACK_ID`,
   `services/api/src/harrier/tracks.py:36`) in six places
   (`tracks.py:204`, `:333`, `:344`,
@@ -43,14 +43,14 @@ person, and several of its rules assume it:
   `services/api/src/harrier_api/tracks_routes.py:82`). With one global id 1, only
   one owner could have a default track.
 - `jobs.track_id REFERENCES tracks(id)` and `job_events.job_id REFERENCES
-  jobs(id)` (`schema.py:597`, `:646`) are checked without row security.
+  jobs(id)` (`schema.py:600`, `:649`) are checked without row security.
   Owner A could file a job under owner B's track, or an event against B's
   job, and the foreign key would accept it.
 
 Two rules of the repo shape how this lands:
 
 - Spec 103 requires every migration after the baseline to declare both
-  dialects, and `undeclared_dialects` (`schema.py:1317-1354`; since this spec it accepts
+  dialects, and `undeclared_dialects` (`schema.py:1414-1451`; since this spec it accepts
   an empty list for a version declared in `SINGLE_DIALECT_MIGRATIONS`,
   noted 2026-10-11) fails a version
   with an empty list. ADR-012 point 3 says nothing in the local schema
@@ -1214,7 +1214,7 @@ in chat on 2026-10-11, with the claim read narrowed to
 `request.jwt.claims` alone (Decisions taken, below).
 
 Migration 16, not 15: spec 122 took 15 for `job_eligibility`
-(`services/api/src/harrier/tracker/schema.py:1313`). `git grep` over
+(`services/api/src/harrier/tracker/schema.py:1409`). `git grep` over
 `origin/main` and every remote branch on 2026-10-11 found no other claim
 on 16.
 
@@ -1223,10 +1223,10 @@ on 16.
 **A2, refuted.** On the staging project (Postgres 17.6), schema `auth`'s
 ACL gives `postgres` `U/supabase_admin`: USAGE without the grant option.
 Migration 10's `GRANT USAGE ON SCHEMA auth TO harrier_tenant`
-(`schema.py:1032`) therefore grants nothing; Postgres warns and the
+(`schema.py:1050`) therefore grants nothing; Postgres warns and the
 migration completes. `EXECUTE` on `auth.uid()` reaches the tenant only
 through Supabase's own grant to `PUBLIC` (`=X/supabase_auth_admin`), so
-migration 10's grant of it (`schema.py:1033`) is a no-op too. Evidence:
+migration 10's grant of it (`schema.py:1051`) is a no-op too. Evidence:
 spec 115, "Amendment (staging findings)", rows A2 and A3, on PR #246.
 
 Postgres checks schema USAGE when a name is looked up, not when a stored
@@ -1234,14 +1234,14 @@ expression runs. Spec 115 found the effect object by object:
 
 | Object that names `auth.uid()` | Where | On staging, as `harrier_tenant` |
 |---|---|---|
-| `owner_id DEFAULT auth.uid()` on each migration 10 table | `schema.py:892` | works: the default holds the function by its id (A6) |
-| `owner_id DEFAULT auth.uid()` on `job_eligibility` | `schema.py:1269` | same form as above; not on staging, which stopped at 14 |
-| `owner_only` policy, `USING` and `WITH CHECK`, on each migration 10 table | `schema.py:800`, `:996-997` | works, by id (A6) |
-| `owner_only` on `job_eligibility` | `schema.py:1289-1290` | same form; not on staging |
-| `harrier_number_track()` body, migration 14 | `schema.py:1228-1243` | **refused**: PL/pgSQL looks the name up as the session role on first use, so `42501 permission denied for schema auth` on any track insert without an id |
+| `owner_id DEFAULT auth.uid()` on each migration 10 table | `schema.py:910` | works: the default holds the function by its id (A6) |
+| `owner_id DEFAULT auth.uid()` on `job_eligibility` | `schema.py:1287` | same form as above; not on staging, which stopped at 14 |
+| `owner_only` policy, `USING` and `WITH CHECK`, on each migration 10 table | `schema.py:818`, `:1014-1015` | works, by id (A6) |
+| `owner_only` on `job_eligibility` | `schema.py:1307-1308` | same form; not on staging |
+| `harrier_number_track()` body, migration 14 | `schema.py:1246-1261` | **refused**: PL/pgSQL looks the name up as the session role on first use, so `42501 permission denied for schema auth` on any track insert without an id |
 | any statement that names `auth.uid()` | tests, spec 104's planned request test | **refused**, same error |
 
-`harrier_new_owner()` (`schema.py:969-976`) names no `auth.uid()`. No other
+`harrier_new_owner()` (`schema.py:987-994`) names no `auth.uid()`. No other
 function, trigger or policy in `public` names it.
 
 So an owner cannot create any track after track 1. In staging mode, 9 of
