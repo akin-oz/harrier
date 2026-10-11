@@ -121,17 +121,28 @@ assumption, recorded, not retried.
 | A8 | `postgres` may insert into `auth.users` (the tests' `new_owner`, `pg_support.py:133-138`) | one insert of a random UUID |
 | A9 | No Supabase default privilege re-grants harrier's tables to `anon`, `authenticated` or `service_role` | `services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared` in staging mode |
 | A10 | `postgres` can grant `harrier_tenant` to a login role (Postgres 16 and later ask for the admin option, which the role's creator holds) | `GRANT harrier_tenant TO harrier_api_probe` succeeds |
-| A11 | Migration 13 applies as a non-superuser migrator shaped like Supabase's `postgres` (`CREATEROLE`, `BYPASSRLS`, not superuser), including its `ALTER ROLE` step and its `ALTER DEFAULT PRIVILEGES` revoke (decision D8, 2026-10-11) | the store reaches `target_version()` as `postgres`; `pg_default_acl` holds no default privilege of the migrating role, in `public` or global (no `IN SCHEMA`), that grants to `anon`, `authenticated` or `service_role`; and, inside a transaction that is rolled back, a function the migrating role creates in `public` is executable by none of `PUBLIC`, `anon`, `authenticated` and `service_role` |
+| A11 | The store migrates to `target_version()` as a non-superuser migrator shaped like Supabase's `postgres` (`CREATEROLE`, `BYPASSRLS`, not superuser), including migration 14's `ALTER ROLE` reset and its `ALTER DEFAULT PRIVILEGES` revokes (decision D8, 2026-10-11) | the store reaches `target_version()` as `postgres`; `pg_default_acl` holds no default privilege of the migrating role, in `public` or global (no `IN SCHEMA`), that grants to `anon`, `authenticated` or `service_role`; and, inside a transaction that is rolled back, a function the migrating role creates in `public` is executable by none of `PUBLIC`, `anon`, `authenticated` and `service_role` |
 
 A11 comes from a post-merge review of spec 105's migration 13. Its
 `ALTER ROLE harrier_tenant` names `NOSUPERUSER`, which a role that is not
 a superuser may not name, and its `ALTER DEFAULT PRIVILEGES` revoke covers
 `public` only, missing the global defaults (no `IN SCHEMA`) and the
-`EXECUTE` on functions that Postgres grants `PUBLIC` by default. The fix
-lands in spec 105's follow-up; A11 proves it on Supabase. If that
-follow-up corrects these in a later migration rather than in migration 13,
-A11 checks the store reaches `target_version()` as `postgres` and that the
-same catalog result holds.
+`EXECUTE` on functions that Postgres grants `PUBLIC` by default. Spec
+105's second post-merge review corrected both in migration 14, not in
+migration 13, so A11 checks that the store reaches `target_version()` as
+`postgres`, whatever the latest migration is, and that the catalog
+result holds.
+
+In the test suite, every `migrate_postgres` call runs as the superuser
+the tests connect as. Only `TENANT_ROLE_RESET`, migration 14's first
+statement, runs as a role that is not one
+(`services/api/tests/test_owner_policy.py::test_migration_14_resets_the_role_as_a_migrator_that_is_not_a_superuser`).
+So no test shows the whole chain applying as a non-superuser; this
+spec's run as `postgres`, and CI's `harrier_migrator` after it, are that
+proof. And
+`services/api/tests/test_owner_policy.py::test_a_failed_migration_leaves_no_trace_of_itself`
+at version 14 does not fingerprint `pg_roles`: it shows the catalog of
+the database unchanged, not the cluster-wide role's attributes.
 
 A5 is the one spec 110's design leans on hardest: if the transaction
 pooler drops `SET LOCAL`, spec 104's read-back answers 500 on every
@@ -188,9 +199,9 @@ found them and, on the shim, the privileges A1, A2 and A8 found:
 `TRIGGER` and `INSERT` on `auth.users`, `USAGE` on `auth` with grant
 option, `EXECUTE` on `auth.uid()` with grant option. A missing grant in a
 future migration then fails in CI, as it would on Supabase. If A4 finds
-something else, the role takes what A4 found. Migration 13, as spec 105's
-follow-up leaves it, applies as `harrier_migrator` in CI with the catalog
-result A11 names (decision D8).
+something else, the role takes what A4 found. The store migrates to
+`target_version()` as `harrier_migrator` in CI, with the catalog result
+A11 names (decision D8).
 
 ## Failure modes
 
@@ -221,7 +232,7 @@ result A11 names (decision D8).
       planned test_unqualified_names_resolve_to_public_for_both_roles,
       planned test_the_migrator_can_create_an_auth_user,
       planned test_the_migrator_can_grant_the_tenant_role,
-      planned test_migration_13_applies_as_a_non_superuser_migrator; A6 and A9 are the
+      planned test_the_store_migrates_to_the_target_as_a_non_superuser_migrator; A6 and A9 are the
       two existing tests named in the assumption table).
 - [ ] The module skips, naming the variable, when either URL is unset
       (planned test_supabase_checks_skip_without_a_project).
@@ -234,12 +245,12 @@ result A11 names (decision D8).
 - [ ] Every Postgres test migrates as `harrier_migrator`, which is not a
       superuser, and CI's `check-python` run shows them passing, none
       skipped (planned test_ci_migrates_as_a_non_superuser).
-- [ ] In CI, migration 13, as spec 105's follow-up leaves it, applies as
+- [ ] In CI, the store migrates to `target_version()` as
       `harrier_migrator`, and afterwards the migrating role holds no
       default privilege, in `public` or global, granting to `anon`,
       `authenticated` or `service_role`, and a function it creates is
       executable by none of them nor by `PUBLIC` (decision D8; planned
-      test_migration_13_applies_as_a_non_superuser_migrator, in CI form).
+      test_the_store_migrates_to_the_target_as_a_non_superuser_migrator, in CI form).
 - [ ] This spec gains "Amendment (staging findings)" with A1 to A11 each
       marked confirmed or refuted, the date and the Postgres version, and
       `docs/architecture.md` says the isolation tests ran on a real
@@ -304,7 +315,10 @@ The text above says where each changed it.
   `ALTER ROLE` step and its `ALTER DEFAULT PRIVILEGES` revoke, global
   defaults and `PUBLIC`'s function `EXECUTE` included. The fix is spec
   105's follow-up; this spec proves it on Supabase and in CI (A11, "CI
-  migrates as a non-superuser", Acceptance criteria).
+  migrates as a non-superuser", Acceptance criteria). The follow-up
+  landed as migration 14 (spec 105, second post-merge review), so the
+  check is that the store reaches `target_version()` as that migrator
+  (post-merge review of PR #231).
 - **D9, line numbers.** Refreshed by this spec's implementing change
   (Honest limitations).
 
