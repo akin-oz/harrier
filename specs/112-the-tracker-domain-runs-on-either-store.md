@@ -87,9 +87,9 @@ modules execute SQL and are local by nature: `backup.py:106-133`,
   `lock_timeout = 0` means no limit, not no wait.
 
 **The gate.** Until this spec, every CLI command except `harrier store`
-refuses a Postgres URL (`harrier_cli/main.py:2865-2868`) and so does the
-API (`harrier_api/app.py:931-932`), both with `POSTGRES_NOT_YET`
-(`connection.py:41-43`; in `pgstore.py` until PR #241 moved it on
+refuses a Postgres URL (`harrier_cli/main.py:3079-3082`) and so does the
+API (`harrier_api/app.py:1370-1371`), both with `POSTGRES_NOT_YET`
+(`connection.py:42-44`; in `pgstore.py` until PR #241 moved it on
 2026-10-11), which says "until spec 112".
 
 ## Scope
@@ -838,3 +838,31 @@ The follow-up adds these proofs:
   longer passes by finding nothing. It also fails when a moved name that
   `harrier.pgstore` holds is not the very object `harrier.connection`
   defines.
+
+### Note (2026-10-11): post-merge review of PR #244
+
+A local review of PR #244 after it merged found that the last proof above
+says more than its check did. The text above stands as written; this
+note corrects it.
+
+- **`is` cannot see a same-valued string.** The test compared each moved
+  name `harrier.pgstore` holds with `harrier.connection`'s by `is`. The
+  moved names `URL_VARIABLE` and `POSTGRES_SCHEME` are interned strings,
+  so `URL_VARIABLE = "HARRIER_DATABASE_URL"` written in `pgstore.py` is
+  the same object, and the test passed with it. `POSTGRES_SCHEME` was
+  also missing from the list of names `pgstore` must not hold.
+- **The test now reads `pgstore.py`.** Every moved name it binds must
+  come from `from harrier.connection import` under its own name: never an
+  assignment, a `def`, a `class`, another import, or any other binding.
+  The names `pgstore` must not hold are every moved name it does not
+  import from the seam, so `POSTGRES_SCHEME` is among them without a
+  list to keep
+  (`services/api/tests/test_connection.py::test_store_neutral_names_live_in_connection`).
+  With `URL_VARIABLE = "HARRIER_DATABASE_URL"` or `POSTGRES_SCHEME =
+  "postgresql"` added to `pgstore.py`, it fails. The check finds each
+  binding form
+  (`services/api/tests/test_connection.py::test_the_local_binding_check_finds_every_form`).
+- **Stale line numbers.** Problem's citations of the gate were stale:
+  they are now `harrier_cli/main.py:3079-3082`, `harrier_api/app.py:1370-1371`
+  and `connection.py:42-44`. Scope item 13's ranges are a dated record of
+  where the names went on 2026-10-11 and stay as written.

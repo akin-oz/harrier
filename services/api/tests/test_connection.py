@@ -171,13 +171,93 @@ def _parsed(roots: tuple[str, ...], known: tuple[str, ...]) -> dict[Path, ast.Mo
     return trees
 
 
+def moved_names_bound_locally(tree: ast.Module) -> list[str]:
+    """Each MOVED name the module binds other than by importing it, under the
+    same name, from `harrier.connection`, with the form that binds it.
+
+    Read from the module's own scope: an assignment of any kind, a `def`, a
+    `class`, an `import`, an import from another module or under another
+    name, a `for` or `with` target, a walrus, a match capture, an `except`
+    name, and a `global` declaration in a function or class body.
+    """
+
+    def from_the_seam(node: ast.ImportFrom, alias: ast.alias) -> bool:
+        seam = (node.level == 0 and node.module == "harrier.connection") or (
+            node.level == 1 and node.module == "connection"
+        )
+        return seam and alias.asname is None
+
+    found: list[str] = []
+
+    def bind(name: str, form: str) -> None:
+        if name in MOVED:
+            found.append(f"{name}: {form}")
+
+    def visit(node: ast.AST, at_module: bool) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if at_module:
+                bind(node.name, type(node).__name__)
+            for inner in ast.walk(node):
+                if isinstance(inner, ast.Global):
+                    for name in inner.names:
+                        bind(name, "global")
+            return
+        if isinstance(node, ast.Lambda):
+            return
+        if at_module:
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    bound = alias.asname or alias.name
+                    if not from_the_seam(node, alias):
+                        bind(bound, f"from {'.' * node.level}{node.module or ''} import")
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    bind(alias.asname or alias.name.split(".")[0], "import")
+            elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                bind(node.id, "assignment")
+            elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+                bind(node.name, "match capture")
+            elif isinstance(node, ast.MatchMapping) and node.rest:
+                bind(node.rest, "match capture")
+            elif isinstance(node, ast.ExceptHandler) and node.name:
+                bind(node.name, "except name")
+        # A comprehension has its own scope, but a walrus inside it binds in
+        # the enclosing one.
+        for child in ast.iter_child_nodes(node):
+            if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+                for inner in ast.walk(child):
+                    if isinstance(inner, ast.NamedExpr):
+                        bind(inner.target.id, "walrus")
+                continue
+            visit(child, at_module)
+
+    visit(tree, True)
+    return found
+
+
 def test_store_neutral_names_live_in_connection() -> None:
     for error in _store_errors():
         assert error.__module__ == "harrier.connection", error
     assert StoreTarget.__module__ == "harrier.connection"
     assert store_target.__module__ == "harrier.connection"
-    # Names pgstore has no use for are not in it at all.
-    for name in ("StoreError", "StoreUrlError", "StoreTarget", "store_target", "POSTGRES_NOT_YET"):
+    # No moved name is pgstore's own. `is` cannot show it for an interned
+    # string: a pgstore-local `URL_VARIABLE = "HARRIER_DATABASE_URL"` is the
+    # very object the seam holds (post-merge review of PR #244). So the
+    # source is read: pgstore binds a moved name only by importing it from
+    # the seam.
+    source = API_ROOT / "src" / "harrier" / "pgstore.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    assert moved_names_bound_locally(tree) == []
+    # Names pgstore has no use for are not in it at all: every moved name it
+    # does not import from the seam.
+    imported = {
+        alias.name
+        for node in tree.body
+        if isinstance(node, ast.ImportFrom) and node.module == "harrier.connection"
+        for alias in node.names
+    }
+    assert {"StoreError", "POSTGRES_SCHEME"} <= MOVED - imported
+    for name in sorted(MOVED - imported):
         assert not hasattr(pgstore, name), name
     # A moved name pgstore does hold is the object it imported from the seam,
     # never a pgstore-local one shadowing it.
@@ -191,6 +271,43 @@ def test_store_neutral_names_live_in_connection() -> None:
         names = pgstore_imports_of_moved_names(tree, _package_of(path))
         stale += [f"{path.relative_to(API_ROOT)}: {name}" for name in names]
     assert stale == []
+
+
+def test_the_local_binding_check_finds_every_form() -> None:
+    """The check above fails on each way a module binds a name of its own,
+    and passes the one import it allows (post-merge review of PR #244)."""
+    tree = ast.parse(
+        "from harrier.connection import URL_VARIABLE, url_parts\n"
+        "from .connection import StoreError\n"
+        'POSTGRES_SCHEME = "postgresql"\n'
+        "StoreTarget: type = object\n"
+        "POSTGRES_NOT_YET += ''\n"
+        "def store_target(): ...\n"
+        "async def UrlParts(): ...\n"
+        "class StoreUrlError(Exception): ...\n"
+        "from harrier.other import StoreVersionError\n"
+        "from harrier.connection import StoreDriverMissing as StoreConnectionError\n"
+        "import StoreMigrationRefused\n"
+        "for StoreDriverMissing in (): ...\n"
+        "def later():\n"
+        "    global URL_VARIABLE\n"
+        "    URL_VARIABLE = 'x'\n"
+        "[(url_parts := 1) for _ in ()]\n"
+    )
+    assert sorted(moved_names_bound_locally(tree)) == [
+        "POSTGRES_NOT_YET: assignment",
+        "POSTGRES_SCHEME: assignment",
+        "StoreConnectionError: from harrier.connection import",
+        "StoreDriverMissing: assignment",
+        "StoreMigrationRefused: import",
+        "StoreTarget: assignment",
+        "StoreUrlError: ClassDef",
+        "StoreVersionError: from harrier.other import",
+        "URL_VARIABLE: global",
+        "UrlParts: AsyncFunctionDef",
+        "store_target: FunctionDef",
+        "url_parts: walrus",
+    ]
 
 
 def test_the_import_check_finds_every_way_to_reach_pgstore() -> None:
