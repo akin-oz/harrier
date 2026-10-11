@@ -926,14 +926,19 @@ The text above says where each changed it.
 Akin decided in chat on 2026-10-11 that the hosted deployment targets
 under 5 USD per month, with ADR-013's topology kept: the API and its runs
 stay on Fly. Spec 110's "Hosting budget (2026-10-11)" holds the prices
-and the arithmetic. One shared-cpu-1x 1GB machine always on in Frankfurt
-costs $7.73 a month (Fly, Pricing, read 2026-10-11), over the budget, so
+and the arithmetic. One shared-cpu-1x 1GB machine always on in Amsterdam
+costs $6.95 a month (Fly, Pricing, read 2026-10-11: 6.70 × 1.038461538 =
+6.96, shown by the page's region selector as $6.95), over the budget, so
 the API's one machine runs with `auto_stop_machines = "stop"` and
 `min_machines_running = 0`. Fly's proxy "stops Machines when the app has
 excess capacity", in a loop that "runs every few minutes" (Fly,
 Autostop/autostart, read 2026-10-11). Fly's page does not say whether an
 open connection keeps a machine running, and does not mention
 background work.
+
+Region: Fly `ams` (Amsterdam) and Supabase `eu-west-1` (Ireland) since
+2026-10-11, replacing Frankfurt; spec 110's "Region (2026-10-11)" holds
+the decision.
 
 A run is background work: once the browser closes its stream, nothing
 the proxy sees says the machine is busy. The run registry, the live
@@ -1081,8 +1086,9 @@ unchanged and `run_records` is not read.
 
 ### Proof / origin (hosting budget)
 
-- Fly, Pricing: shared-cpu-1x 1GB in Frankfurt $7.73 a month for 30 days
-  of continuous runtime; a stopped Machine billed only for its root file
+- Fly, Pricing: shared-cpu-1x 1GB in the base region $6.70 a month for
+  30 days of continuous runtime, times Amsterdam's region multiplier
+  1.038461538, shown as $6.95; a stopped Machine billed only for its root file
   system; volumes $0.15/GB a month. Read 2026-10-11.
   https://docs.fly.io/about/pricing
 - Fly, Autostop/autostart: stops on excess capacity by `soft_limit`; the
