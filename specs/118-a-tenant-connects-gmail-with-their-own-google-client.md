@@ -1,8 +1,8 @@
 ---
 spec: 118
 title: A tenant connects Gmail with their own Google client
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [040, 106, 107, 108, 109, 116]
 ---
