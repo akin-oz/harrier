@@ -50,8 +50,14 @@ at a glance.
   import` name what they collapsed.
 - `services/api/src/harrier/discovery.py`: the run reports what routing
   skipped as duplicate.
+- `services/api/src/harrier/userconfig/importer.py`: `config import` names
+  what it collapsed and counts what it stored.
+- `services/api/src/harrier/feedhealth.py`: `check_feeds` probes the
+  collapsed list.
 - Tests under `services/api/tests/`, with synthetic board slugs from the
-  declared set in `tests/test_demo.py`.
+  declared set in `tests/test_demo.py`. One existing test,
+  `test_a_fresh_install_with_no_store_and_no_files_runs_with_no_sources`,
+  pins the routed watchlist's exact shape and gains the `duplicate` key.
 
 No schema, contract or web change. `PUT /config/{kind}` already answers
 with the stored value, so the browser's editor shows the collapsed list
@@ -136,38 +142,38 @@ It happens in three places, one function behind all of them:
 
 ## Acceptance criteria
 
-Tests in `services/api/tests/test_sources.py` unless named otherwise. Planned
-test names are given without backticks until the tests exist. Every board
-slug is a declared synthetic one.
+Tests in `services/api/tests/test_sources.py` unless named otherwise. Every
+board slug is a declared synthetic one.
 
-- [ ] `boards.greenhouse.io/acme`, `job-boards.greenhouse.io/acme/` and
+- [x] `boards.greenhouse.io/acme`, `job-boards.greenhouse.io/acme/` and
       `job-boards.eu.greenhouse.io/ACME?gh_src=x` have one identity
-      (planned test_greenhouse_hosts_share_an_identity)
-- [ ] `jobs.lever.co/acme` and `jobs.eu.lever.co/acme` have different
-      identities (planned test_lever_eu_is_its_own_board)
-- [ ] An unrouted entry has no identity and collapses only with an exact
-      repeat (planned test_an_unrouted_entry_collapses_only_when_repeated)
-- [ ] Collapsing keeps the first entry of each identity, spelled as
+      (`test_greenhouse_hosts_share_an_identity`)
+- [x] `jobs.lever.co/acme` and `jobs.eu.lever.co/acme` have different
+      identities (`test_lever_eu_is_its_own_board`)
+- [x] An unrouted entry has no identity and collapses only with an exact
+      repeat (`test_an_unrouted_entry_collapses_only_when_repeated`)
+- [x] Collapsing keeps the first entry of each identity, spelled as
       written, in order, and leaves a list with no duplicates unchanged
-      (planned test_collapsing_keeps_the_first_spelling_and_the_order)
-- [ ] `set_config(conn, "feeds", ...)` stores the collapsed list, and a
+      (`test_collapsing_keeps_the_first_spelling_and_the_order`)
+- [x] `set_config(conn, "feeds", ...)` stores the collapsed list, and a
       duplicated list stored directly reads collapsed through `get_config`
       without its row changing
-      (`services/api/tests/test_userconfig.py`, planned
-      test_feeds_are_collapsed_on_write_and_on_read)
-- [ ] A discovery run over a file watchlist with a duplicate fetches the
+      (`services/api/tests/test_userconfig.py::test_feeds_are_collapsed_on_write_and_on_read`)
+- [x] A discovery run over a file watchlist with a duplicate fetches the
       board once and reports the dropped URL as `duplicate`
-      (`services/api/tests/test_discovery.py`, planned
-      test_a_duplicate_board_is_fetched_once)
-- [ ] `harrier config set feeds` names each dropped entry and the entry it
+      (`services/api/tests/test_discovery.py::test_a_duplicate_board_is_fetched_once`)
+- [x] `harrier config set feeds` names each dropped entry and the entry it
       duplicated; with no duplicates it prints only "stored"
-      (planned test_config_set_names_what_it_dropped)
-- [ ] Feed health reports a duplicated board once
-      (`services/api/tests/test_feed_health.py`, planned
-      test_a_duplicated_board_is_probed_once)
-- [ ] `config/feeds.txt` is never written
-      (planned test_the_feeds_file_is_never_rewritten)
-- [ ] `just check` passes
+      (`services/api/tests/test_userconfig.py::test_config_set_names_what_it_dropped`);
+      `config import` names it too and stores the collapsed list
+      (`services/api/tests/test_userconfig.py::test_config_import_names_what_it_dropped`)
+- [x] Feed health reports a duplicated board once
+      (`services/api/tests/test_feed_health.py::test_a_duplicated_board_is_probed_once`)
+- [x] Routing fetches each board once and names the rest under
+      `duplicate` (`test_routing_fetches_each_board_once_and_names_the_rest`)
+- [x] `config/feeds.txt` is never written
+      (`test_the_feeds_file_is_never_rewritten`)
+- [x] `just check` passes
 
 ## Proof / origin
 

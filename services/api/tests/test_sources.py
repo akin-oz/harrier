@@ -11,7 +11,14 @@ from harrier.sources import ashby as ashby_module
 from harrier.sources import fetch_many
 from harrier.sources import lever as lever_module
 from harrier.sources.ashby import fetch_ashby_jobs
-from harrier.sources.feeds import UNROUTED, parse_ats_feeds
+from harrier.sources.feeds import (
+    DUPLICATE,
+    UNROUTED,
+    board_identity,
+    collapse_feeds,
+    parse_ats_feeds,
+    route_ats_feeds,
+)
 from harrier.sources.greenhouse import normalize_greenhouse_job
 from harrier.sources.lever import fetch_lever_jobs
 
@@ -195,3 +202,86 @@ def test_the_unrouted_key_is_never_treated_as_an_importer() -> None:
     from harrier.sources.feeds import IMPORTER_KEYS, UNROUTED
 
     assert UNROUTED not in IMPORTER_KEYS
+
+
+# --- each board once (spec 124) ------------------------------------------------
+
+
+def test_greenhouse_hosts_share_an_identity() -> None:
+    """Discovery fetches every Greenhouse host from one API, so they are one
+    board: case, a trailing slash, a query and a longer path do not count."""
+    urls = [
+        "https://boards.greenhouse.io/acme",
+        "https://job-boards.greenhouse.io/acme/",
+        "https://job-boards.eu.greenhouse.io/ACME?gh_src=x",
+        "https://boards.greenhouse.io/acme/jobs/123#apply",
+    ]
+    assert {board_identity(url) for url in urls} == {("greenhouse", "acme")}
+    assert board_identity("https://jobs.ashbyhq.com/Acme") == ("ashby", "acme")
+    assert board_identity("https://boards.greenhouse.io/") is None
+
+
+def test_lever_eu_is_its_own_board() -> None:
+    """Lever's EU host is fetched from a different API, so it is not the same
+    board as the global host's, whatever the name."""
+    assert board_identity("https://jobs.lever.co/acme") == ("lever", "acme")
+    assert board_identity("https://jobs.eu.lever.co/acme") == ("lever-eu", "acme")
+    collapsed = collapse_feeds(["https://jobs.lever.co/acme", "https://jobs.eu.lever.co/acme"])
+    assert collapsed.dropped == []
+
+
+def test_an_unrouted_entry_collapses_only_when_repeated() -> None:
+    unrouted = "https://jobs.workable.com/acme"
+    assert board_identity(unrouted) is None
+    assert board_identity("https://badgreenhouse.io/acme") is None
+    collapsed = collapse_feeds(
+        [unrouted, "https://jobs.workable.com/ACME", f"  {unrouted}  ", "not a url"]
+    )
+    assert collapsed.kept == [unrouted, "https://jobs.workable.com/ACME", "not a url"]
+    assert collapsed.dropped == [(f"  {unrouted}  ", unrouted)]
+
+
+def test_collapsing_keeps_the_first_spelling_and_the_order() -> None:
+    urls = [
+        "https://job-boards.greenhouse.io/Acme",
+        "https://jobs.ashbyhq.com/exampleco",
+        "https://boards.greenhouse.io/acme",
+        "https://jobs.lever.co/acme",
+        "https://jobs.ashbyhq.com/ExampleCo/",
+    ]
+    collapsed = collapse_feeds(urls)
+    assert collapsed.kept == [
+        "https://job-boards.greenhouse.io/Acme",
+        "https://jobs.ashbyhq.com/exampleco",
+        "https://jobs.lever.co/acme",
+    ]
+    # Built from the list, so no URL here is written followed by a colon,
+    # which the synthetic-slug guard in test_demo.py would read as the slug.
+    assert collapsed.lines() == [
+        f"dropped {urls[2]}: the same board as {urls[0]}",
+        f"dropped {urls[4]}: the same board as {urls[1]}",
+    ]
+    # A list with no duplicates comes back as it went in, and collapsing is
+    # idempotent.
+    assert collapse_feeds(collapsed.kept).kept == collapsed.kept
+    assert collapse_feeds(collapsed.kept).dropped == []
+
+
+def test_routing_fetches_each_board_once_and_names_the_rest() -> None:
+    grouped = route_ats_feeds(
+        ["https://boards.greenhouse.io/acme", "https://job-boards.greenhouse.io/acme"]
+    )
+    assert grouped["greenhouse"] == ["https://boards.greenhouse.io/acme"]
+    assert grouped[DUPLICATE] == ["https://job-boards.greenhouse.io/acme"]
+    assert grouped[UNROUTED] == []
+
+
+def test_the_feeds_file_is_never_rewritten(tmp_path: Path) -> None:
+    """Reading a file watchlist with duplicates routes it collapsed and
+    leaves the file exactly as the operator wrote it."""
+    path = tmp_path / "feeds.txt"
+    text = "https://boards.greenhouse.io/acme\nhttps://job-boards.greenhouse.io/acme\n"
+    path.write_text(text, encoding="utf-8")
+    grouped = parse_ats_feeds(path)
+    assert grouped["greenhouse"] == ["https://boards.greenhouse.io/acme"]
+    assert path.read_text(encoding="utf-8") == text

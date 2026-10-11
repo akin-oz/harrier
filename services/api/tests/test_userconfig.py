@@ -138,7 +138,14 @@ def test_a_fresh_install_with_no_store_and_no_files_runs_with_no_sources(
     assert load_search_urls(db) == []
     assert load_hold_companies(db) == set()
     assert load_discovery_settings(db) == {}
-    assert load_ats_feeds(db) == {"greenhouse": [], "ashby": [], "lever": [], "unrouted": []}
+    assert load_ats_feeds(db) == {
+        "greenhouse": [],
+        "ashby": [],
+        "lever": [],
+        "unrouted": [],
+        # Entries naming a board already listed (spec 124).
+        "duplicate": [],
+    }
 
 
 def test_the_file_is_used_until_something_is_stored(db: Connection, tmp_path: Path) -> None:
@@ -596,3 +603,67 @@ def test_every_migration_version_is_unique_and_ordered() -> None:
     assert versions == sorted(versions), f"migrations are out of order: {versions}"
     assert len(versions) == len(set(versions)), f"duplicate migration version in {versions}"
     assert versions[0] == 1, "migrations start at 1"
+
+
+# --- each board once (spec 124) ------------------------------------------------
+
+
+def test_feeds_are_collapsed_on_write_and_on_read(db: Connection) -> None:
+    duplicated = [
+        "https://boards.greenhouse.io/exampleco",
+        "https://job-boards.greenhouse.io/exampleco/",
+        "https://jobs.ashbyhq.com/exampleco",
+    ]
+    set_config(db, FEEDS, duplicated)
+    assert get_config(db, FEEDS) == [
+        "https://boards.greenhouse.io/exampleco",
+        "https://jobs.ashbyhq.com/exampleco",
+    ]
+
+    # A list stored before spec 124, written past set_config, reads
+    # collapsed, and the row itself is left as it was until the next save.
+    with db.transaction():
+        db.execute(
+            "UPDATE user_config SET value = ? WHERE kind = ?", (json.dumps(duplicated), FEEDS)
+        )
+    assert get_config(db, FEEDS) == [
+        "https://boards.greenhouse.io/exampleco",
+        "https://jobs.ashbyhq.com/exampleco",
+    ]
+    stored = db.execute("SELECT value FROM user_config WHERE kind = ?", (FEEDS,)).fetchone()
+    assert json.loads(str(stored[0])) == duplicated
+
+
+def test_config_set_names_what_it_dropped(
+    db: Connection, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    kept, dropped = (
+        "https://boards.greenhouse.io/exampleco",
+        "https://job-boards.greenhouse.io/exampleco",
+    )
+    path = tmp_path / "feeds.json"
+    path.write_text(json.dumps([kept, dropped]), encoding="utf-8")
+    assert main(["config", "set", FEEDS, "--file", str(path)]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "feeds stored",
+        f"dropped {dropped}: the same board as {kept}",
+    ]
+
+    path.write_text(json.dumps(EXAMPLE_FEEDS), encoding="utf-8")
+    assert main(["config", "set", FEEDS, "--file", str(path)]) == 0
+    assert capsys.readouterr().out.splitlines() == ["feeds stored"]
+
+
+def test_config_import_names_what_it_dropped(
+    db: Connection, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "feeds.txt").write_text(
+        "https://boards.greenhouse.io/exampleco\nhttps://job-boards.greenhouse.io/exampleco\n",
+        encoding="utf-8",
+    )
+    assert main(["config", "import"]) == 0
+    out = capsys.readouterr().out
+    duplicate = "https://job-boards.greenhouse.io/exampleco"
+    assert f"dropped {duplicate}: the same board as" in out
+    assert get_config(db, FEEDS) == ["https://boards.greenhouse.io/exampleco"]

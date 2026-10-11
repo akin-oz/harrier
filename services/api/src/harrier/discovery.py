@@ -40,7 +40,7 @@ from harrier.sources.apify_linkedin import (
 )
 from harrier.sources.ashby import fetch_ashby_jobs
 from harrier.sources.batch_exports import load_wellfound_exports, load_wttj_exports
-from harrier.sources.feeds import UNROUTED
+from harrier.sources.feeds import DUPLICATE, UNROUTED
 from harrier.sources.greenhouse import fetch_greenhouse_jobs
 from harrier.sources.lever import fetch_lever_jobs
 from harrier.sources.remoteok import fetch_remoteok_jobs
@@ -264,6 +264,26 @@ def run_discovery(
                 "fetched_count": 0,
                 "new_prospects": 0,
                 "errors": [f"no importer handles {url}" for url in unrouted],
+            }
+        )
+
+    # An entry naming a board already listed is fetched once, under its
+    # first spelling. Only a file watchlist can hold one: a stored list is
+    # collapsed when it is saved and when it is read (spec 124).
+    duplicates = feeds.get(DUPLICATE, [])
+    if duplicates:
+        logger.warning(
+            "%d watchlist entr%s name a board already listed and were skipped: %s",
+            len(duplicates),
+            "y" if len(duplicates) == 1 else "ies",
+            ", ".join(duplicates),
+        )
+        summaries.append(
+            {
+                "source": DUPLICATE,
+                "fetched_count": 0,
+                "new_prospects": 0,
+                "errors": [f"{url} names a board already listed" for url in duplicates],
             }
         )
 

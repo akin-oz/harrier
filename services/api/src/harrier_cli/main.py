@@ -1679,6 +1679,7 @@ def _cmd_events(args: argparse.Namespace) -> int:
 
 def _cmd_config(args: argparse.Namespace) -> int:
     from harrier.userconfig import (
+        FEEDS,
         ConfigError,
         delete_config,
         get_config,
@@ -1704,8 +1705,19 @@ def _cmd_config(args: argparse.Namespace) -> int:
             print(json.dumps(value, indent=2, ensure_ascii=False))
         elif args.config_command == "set":
             raw = Path(args.file).read_text(encoding="utf-8") if args.file else sys.stdin.read()
-            set_config(conn, args.kind, json.loads(raw))
+            value = json.loads(raw)
+            set_config(conn, args.kind, value)
             print(f"{args.kind} stored")
+            if args.kind == FEEDS and isinstance(value, list):
+                # The store kept each board once; say which entries went and
+                # why (spec 124).
+                from typing import cast
+
+                from harrier.sources.feeds import collapse_feeds
+
+                entries = [str(item).strip() for item in cast("list[object]", value)]
+                for line in collapse_feeds([item for item in entries if item]).lines():
+                    print(line)
         elif args.config_command == "unset":
             removed = delete_config(conn, args.kind)
             print(f"{args.kind} {'removed' if removed else 'was not stored'}")
