@@ -294,6 +294,7 @@ Each is recorded here for its own change.
   `apps/web/src/pages/outreach/OutreachPage.tsx`. Spec 125 took over the
   run routes, the outreach routes and the brief routes. `APPLY_ERRORS`,
   `ARTIFACT_ERRORS` and the pages' readers stay out of scope there too.
+  Spec 129 types the outreach page's reader.
 - **`ConfigErrorOut`** has `ErrorOut`'s shape. Folding the two renames a
   schema on the config routes, which is a contract change for them.
 - **`AddJob.tsx` shows a 403, 422 or 503 as raw JSON**

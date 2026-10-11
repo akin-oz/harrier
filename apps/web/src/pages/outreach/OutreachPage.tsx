@@ -11,24 +11,34 @@ type OutreachRow = components["schemas"]["OutreachRowOut"];
 type Candidate = components["schemas"]["CandidateOut"];
 type Contact = components["schemas"]["ContactOut"];
 
-function refused(error: unknown, fallback: string): string {
-  if (typeof error === "object" && error !== null && "detail" in error) {
-    const detail = (error as { detail?: unknown }).detail;
-    if (typeof detail === "string") return detail;
-  }
-  return fallback;
+// The error bodies the contract declares for every call this page makes:
+// `ErrorOut` on a 404 or 409, `DatabaseHeldOut` on a 503, and the field
+// errors on a 422. Named from the generated types, so a body that loses or
+// renames `detail` fails the type check here rather than reaching the
+// operator as the fallback (spec 129).
+type Refusal =
+  | components["schemas"]["ErrorOut"]
+  | components["schemas"]["DatabaseHeldOut"]
+  | components["schemas"]["HTTPValidationError"];
+
+// The domain's own words, verbatim, as the CLI prints them. A 422's `detail`
+// is a list of field errors, which only a malformed request from this page
+// can produce, so it reads as the call's fallback. Exported for the
+// type-level test that pins what it accepts.
+export function refused(error: Refusal, fallback: string): string {
+  return typeof error.detail === "string" ? error.detail : fallback;
 }
 
 /**
  * One place that turns a client result into a value or a message.
  *
- * The refusal responses here declare a status and no body, so the generated
- * `error` is `never` while `data` becomes optional. Both still happen at
- * runtime: FastAPI sends `{"detail": ...}` with a 403 or 404. Taking a
- * widened result rather than repeating two half-checks per call is what
- * keeps that difference from being handled three slightly different ways.
+ * Every refusal here declares its body (specs 094 and 125) except the 403,
+ * which declares none, so `data` can still be absent with no `error` by
+ * type. At runtime FastAPI sends `{"detail": ...}` with the 403 too, and
+ * `refused` reads it like any other body. Taking one result type rather than
+ * repeating two half-checks per call keeps that case handled one way.
  */
-function unwrap<T>(result: { data?: T; error?: unknown }, fallback: string): T {
+function unwrap<T>(result: { data?: T; error?: Refusal }, fallback: string): T {
   if (result.error !== undefined) throw new Error(refused(result.error, fallback));
   if (result.data === undefined) throw new Error(fallback);
   return result.data;
