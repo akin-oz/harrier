@@ -11,12 +11,14 @@ from __future__ import annotations
 import json
 import sqlite3
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 from pg_support import fresh_database, new_owner, set_session_owner
 from resume_support import REPO_ROOT, example_bundle_raw, store_example
+from test_academic_documents import LONG_PARAGRAPH
 from test_apply_claims import (
     CHECKOUT,
     CHECKOUT_EVIDENCE,
@@ -31,6 +33,7 @@ from test_apply_claims import (
 
 import harrier.apply.answers as answers_module
 import harrier.apply.letters as letters_module
+import harrier.resume.ai as ai_module
 import harrier.resume.pdf as pdf_module
 from harrier.apply.claims import ClaimCheckError
 from harrier.apply.profile import load_profile_json, load_profile_markdown, validate_profile
@@ -39,6 +42,7 @@ from harrier.profile.store import put_document
 from harrier.resume.markdown import UnverifiedClaimError
 from harrier.resume.tailor import run_tailor
 from harrier.tracker import add_job, get_job, schema
+from harrier.tracker.actions import add_manually
 from harrier.tracks import Scope, add_track, default_scope, resolve_scope
 from harrier_cli.main import main
 
@@ -236,15 +240,56 @@ def test_academic_letters_pass_the_same_claims_checks(
         letters_module.generate_cover_letter(db, COMPANY, ROLE, jd_text=POSTING, scope=scope)
     assert any("unverified evidence" in violation for violation in refused.value.violations)
 
+    # Evidence found only in the lab track's own profile is named as profile
+    # text (spec 069): the check reads that track's profile, not the default
+    # track's (review of PR #224).
+    quoted = "I hold academic positioning."
+    claims = [candidate(quoted, ACADEMIC_SIGN.rstrip("."))]
+    _sent(monkeypatch, letters_module, letter_json(f"{CHECKOUT} {INVOICES} {quoted}", claims))
+    with pytest.raises(ClaimCheckError) as named:
+        letters_module.generate_cover_letter(db, COMPANY, ROLE, jd_text=POSTING, scope=scope)
+    assert any(
+        violation.startswith("application profile cited as candidate evidence")
+        for violation in named.value.violations
+    ), named.value.violations
+
 
 def test_a_track_with_no_application_profile_is_refused(db: sqlite3.Connection) -> None:
+    """The default track has one, so a fallback would find it; the lab track
+    still refuses (review of PR #224)."""
     store_example(db)
     store_candidate(db)
+    store_profile(db, 1, INDUSTRY_SIGN)
     put_document(db, "resume_truth", "truth.md", "markdown", TRUTH)
     add_track(db, SLUG, "academic", "Lab search")
     scope = resolve_scope(db, SLUG)
     with pytest.raises(ValueError, match=f"track {SLUG} has no application profile"):
         letters_module.generate_cover_letter(db, COMPANY, ROLE, jd_text=POSTING, scope=scope)
+
+
+def test_a_missing_half_of_the_profile_names_the_command(db: sqlite3.Connection) -> None:
+    """Letters read both halves; with only the markdown stored, the refusal
+    says how to store the JSON (review of PR #224)."""
+    store_example(db)
+    store_candidate(db)
+    put_document(db, "resume_truth", "truth.md", "markdown", TRUTH)
+    add_track(db, SLUG, "academic", "Lab search")
+    scope = resolve_scope(db, SLUG)
+    markdown, _ = profile_pair(ACADEMIC_SIGN)
+    put_document(
+        db,
+        "application_profile",
+        "application-profile.md",
+        "markdown",
+        markdown,
+        track_id=scope.track.id,
+    )
+    with pytest.raises(ValueError) as refused:
+        letters_module.generate_cover_letter(db, COMPANY, ROLE, jd_text=POSTING, scope=scope)
+    assert str(refused.value) == (
+        f"track {SLUG} has no application_profile json document; store one with "
+        f"harrier --track {SLUG} profile put application_profile --file PATH.json"
+    )
 
 
 # --- migration 12 ----------------------------------------------------------------
@@ -434,3 +479,144 @@ def test_an_answer_built_without_the_model_needs_no_profile(db: sqlite3.Connecti
         answers_module.generate_answer_set(
             db, COMPANY, ROLE, ["What relevant experience do you have?"], scope=scope
         )
+
+
+# --- the three commands, end to end on an academic call (review of PR #224) ------
+
+
+class _FakePage:
+    def set_content(self, *_args: object, **_kwargs: object) -> None:
+        return None
+
+    def emulate_media(self, *_args: object, **_kwargs: object) -> None:
+        return None
+
+    def pdf(self, *, path: str, **_kwargs: object) -> None:
+        Path(path).write_bytes(b"%PDF-1.4 fake")
+
+
+class _FakeBrowser:
+    def new_page(self) -> _FakePage:
+        return _FakePage()
+
+    def close(self) -> None:
+        return None
+
+
+class _FakePlaywright:
+    class chromium:
+        @staticmethod
+        def launch() -> _FakeBrowser:
+            return _FakeBrowser()
+
+    def __enter__(self) -> _FakePlaywright:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+
+def _no_browser(monkeypatch: pytest.MonkeyPatch, pages: int) -> None:
+    """The real render and gate code, with a stand-in for Chromium and for
+    `pdfinfo` reporting `pages`."""
+    import types
+
+    fake = types.ModuleType("playwright.sync_api")
+    fake.sync_playwright = _FakePlaywright  # type: ignore[attr-defined]
+    fake.Error = RuntimeError  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", fake)
+    _pages(monkeypatch, pages)
+
+
+def test_the_three_commands_run_on_an_academic_call(
+    db: sqlite3.Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Through the command line, on a lab call whose deadline has passed:
+    each command warns and still writes; `tailor` asks the ranker with the
+    academic prompt; a two-page letter longer than the industry cap passes
+    the academic gate."""
+    pool: dict[str, str] = example_bundle_raw()["bullet_pool"]
+    # The pool first: TRUTH ends under its "Claims I must not make" heading.
+    scope = lab(db, truth="\n".join([*pool.values(), TRUTH]))
+    _, row = add_manually(
+        db,
+        scope,
+        company=COMPANY,
+        title=ROLE,
+        url="https://calls.example.test/late",
+        deadline="2020-01-02",
+    )
+    assert row is not None
+    posting = tmp_path / "posting.txt"
+    posting.write_text(POSTING, encoding="utf-8")
+    _no_browser(monkeypatch, pages=2)
+
+    ranking = _sent_prompt(monkeypatch, ai_module, "{}")
+    long_letter = letter_json(extra_paragraphs=(LONG_PARAGRAPH, LONG_PARAGRAPH))
+    assert len(json.loads(long_letter)["full_version"].split()) > 240
+    _sent(monkeypatch, letters_module, long_letter)
+    claims = [candidate(CHECKOUT, CHECKOUT_EVIDENCE)]
+    _sent(
+        monkeypatch,
+        answers_module,
+        json.dumps(
+            {
+                "answers": [
+                    {
+                        "question": "What relevant experience do you have?",
+                        "short_answer": "The checkout work is close to this.",
+                        "medium_answer": CHECKOUT,
+                        "notes": [],
+                        "claims": claims,
+                    }
+                ]
+            }
+        ),
+    )
+    for argv, written in (
+        (["tailor", "--job-id", row["id"], "--jd-file", str(posting)], "tailored_pdf="),
+        (["cover-letter", "--job-id", row["id"], "--jd-file", str(posting)], "pdf="),
+        (
+            [
+                "answers",
+                "--job-id",
+                row["id"],
+                "--jd-file",
+                str(posting),
+                "--question",
+                "What relevant experience do you have?",
+            ],
+            "answers=",
+        ),
+    ):
+        code = main(["--track", SLUG, *argv])
+        captured = capsys.readouterr()
+        assert code == 0, (argv[0], captured.err)
+        assert "warning: the deadline for this call passed on 2020-01-02" in captured.err, argv[0]
+        assert written in captured.out, (argv[0], captured.out)
+    assert ranking == [ai_module.tailor_prompt("academic")]
+
+
+def test_an_archived_academic_track_refuses_tailor(
+    db: sqlite3.Connection, capsys: pytest.CaptureFixture[str]
+) -> None:
+    scope = lab(db)
+    job_id = call(db, scope)
+    assert main(["tracks", "archive", SLUG]) == 0
+    capsys.readouterr()
+    assert main(["--track", SLUG, "tailor", "--job-id", str(job_id)]) == 2
+    assert "archived" in capsys.readouterr().err
+
+
+def _sent_prompt(monkeypatch: pytest.MonkeyPatch, module: object, response: str) -> list[str]:
+    seen: list[str] = []
+
+    def fake(system_prompt: str, user_input: str) -> str:
+        seen.append(system_prompt)
+        return response
+
+    monkeypatch.setattr(module, "generate_text", fake)
+    return seen

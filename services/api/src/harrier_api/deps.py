@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Annotated, Any
 
 from fastapi import Depends, HTTPException, Query, params
@@ -121,6 +121,28 @@ TRACK_REFUSAL_RESPONSES: dict[int | str, dict[str, Any]] = {
         "description": "the track may not run this operation, or it is archived",
     },
 }
+
+
+def merge_responses(
+    *sets: Mapping[int | str, Mapping[str, Any]],
+) -> dict[int | str, dict[str, Any]]:
+    """One route's response declarations, one entry per status. Two causes of
+    the same status are both described, joined, rather than the later one
+    replacing the earlier: a run conflict and a track refusal are both 409,
+    and unpacking one dict over another kept only the last (review of
+    PR #224)."""
+    merged: dict[int | str, dict[str, Any]] = {}
+    for responses in sets:
+        for status, entry in responses.items():
+            first = merged.get(status)
+            if first is None:
+                merged[status] = dict(entry)
+                continue
+            known = str(first.get("description", ""))
+            more = str(entry.get("description", ""))
+            joined = known if not more or more in known else f"{known}; or {more}"
+            merged[status] = {**first, **entry, "description": joined}
+    return merged
 
 
 def _track_operation(dependant: Dependant) -> str | None:

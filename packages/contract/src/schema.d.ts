@@ -2525,7 +2525,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
+            /** @description the track may not run this operation, or it is archived; or application documents from the browser are the default track's; or refused: a run of this kind is active with other options, or the request lacks its explicit field */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -2593,7 +2593,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description application documents from the browser are the default track's */
+            /** @description the track may not run this operation, or it is archived */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -2894,7 +2894,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
+            /** @description the track may not run this operation, or it is archived; or application documents from the browser are the default track's; or refused: a run of this kind is active with other options, or the request lacks its explicit field */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -2966,7 +2966,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
+            /** @description the track may not run this operation, or it is archived; or refused: a run of this kind is active with other options, or the request lacks its explicit field */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3038,7 +3038,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
+            /** @description the track may not run this operation, or it is archived; or application documents from the browser are the default track's; or refused: a run of this kind is active with other options, or the request lacks its explicit field */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3974,7 +3974,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
+            /** @description discovery from the browser is the default track's; or the track may not run this operation, or it is archived; or refused: a run of this kind is active with other options, or the request lacks its explicit field */
             409: {
                 headers: {
                     [name: string]: unknown;

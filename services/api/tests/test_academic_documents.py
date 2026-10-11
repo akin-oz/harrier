@@ -81,6 +81,18 @@ NAMED_TRUTH_RULES = {
 }
 
 
+# The shared blocks as they stand, each joined on NUL. A rule moved out of a
+# shared block into the industry voice keeps the industry prompt's bytes but
+# drops the rule from the academic prompt, so the block itself is pinned
+# (review of PR #224). Adding a truth rule to a block changes its pin on
+# purpose: the reviewer sees it.
+SHARED_BLOCK_SHA256 = {
+    "tailor": "a329a5bab049cb38abdc5d41866f7df4b922a4ba1eb1db5511797988d1afb30e",
+    "letter": "8eeef861c807b7784883572f21d3e09cb147eadeedb10a939a9ac96bc0254405",
+    "answers": "4ecacc81eec0b311f60307d946db6da1f62a8602c214c59a767f38047850bbad",
+}
+
+
 def _prompts() -> dict[str, tuple[object, tuple[str, ...]]]:
     return {
         "tailor": (ai_module.tailor_prompt, ai_module.TAILOR_SHARED),
@@ -99,6 +111,12 @@ def test_both_kinds_share_every_truth_rule() -> None:
     for name, (build, shared) in _prompts().items():
         assert callable(build)
         prompts = {kind: cast("str", build(kind)) for kind in TRACK_KINDS}
+        joined = "\x00".join(shared)
+        assert hashlib.sha256(joined.encode("utf-8")).hexdigest() == SHARED_BLOCK_SHA256[name], (
+            f"the {name} shared block changed"
+        )
+        for rule in NAMED_TRUTH_RULES[name]:
+            assert rule in _flat(joined), f"{name}: {rule!r} is not in the shared block"
         for kind, prompt in prompts.items():
             for segment in shared:
                 assert segment in prompt, f"{name} on {kind} is missing a shared segment"

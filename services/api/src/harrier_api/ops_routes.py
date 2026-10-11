@@ -26,7 +26,14 @@ from pydantic import BaseModel, Field
 from harrier.discovery import APIFY_MAX_COUNT, SOURCE_ORDER
 from harrier.tracks import DEFAULT_TRACK_ID
 from harrier.tracks import Scope as TrackScope
-from harrier_api.deps import Conn, DatabaseRoute, ErrorOut, scope_for
+from harrier_api.deps import (
+    TRACK_REFUSAL_RESPONSES,
+    Conn,
+    DatabaseRoute,
+    ErrorOut,
+    merge_responses,
+    scope_for,
+)
 from harrier_api.localauth import TOKEN_RESPONSES, require_token
 from harrier_api.runmodels import RUN_CONFLICT_RESPONSES, Manager, RunOut, run_out
 from harrier_api.runs import RunParams, backup_hidden_directories, write_run_input
@@ -514,7 +521,9 @@ def _suffix(upload: UploadFile) -> str:
     "/ops/discover",
     operation_id="runDiscover",
     dependencies=[Depends(require_token)],
-    responses={**DISCOVER_RESPONSES, **RUN_CONFLICT_RESPONSES},
+    responses=merge_responses(
+        DISCOVER_RESPONSES, {409: TRACK_REFUSAL_RESPONSES[409]}, RUN_CONFLICT_RESPONSES
+    ),
 )
 async def run_discover(
     manager: Manager,

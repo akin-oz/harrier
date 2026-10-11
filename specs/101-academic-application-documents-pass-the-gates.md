@@ -107,7 +107,7 @@ Spec 099's ownership rule widens by one kind. `application_profile` is
 always owned by a track, like `resume_framing`. Every other kind stays
 shared.
 
-- **Migration 11** gives every existing `application_profile` row to the
+- **Migration 12** gives every existing `application_profile` row to the
   default track: `UPDATE profile_documents SET track_id = 1 WHERE kind =
   'application_profile' AND track_id IS NULL`. Content and `updated_at` are
   unchanged. If spec 103 has shipped, the migration carries the same
@@ -172,7 +172,9 @@ continues. It does not refuse: some calls are reviewed on a rolling basis.
 ## Failure modes
 
 - **No academic framing on the track.** `load_bundle` refuses (spec 099),
-  and each command fails naming `profile put resume_framing`.
+  so `tailor` fails naming `profile put resume_framing`. `cover-letter` and
+  `answers` read no framing (only the shared facts' vocabulary and
+  never-claim list) and are not refused for it.
 - **No application profile on the track.** `cover-letter` and `answers`
   fail naming `profile put application_profile`. `tailor` does not read it
   and runs. An answer built without the model (salary, from the candidate
@@ -188,7 +190,7 @@ continues. It does not refuse: some calls are reviewed on a rolling basis.
   operator reads the draft; nothing auto-sends (product invariant).
 - **A three-page academic CV.** The PDF gate fails with today's message
   naming the page count and the allowed counts.
-- **The default track after migration 11.** Its application profile is
+- **The default track after migration 12.** Its application profile is
   owned by it, so every default-track letter, answer and outreach draft
   reads the same documents as before. No output changes.
 - **`--track <academic slug> evaluate`, `outreach-draft`, `find-contacts`,
@@ -232,12 +234,15 @@ continues. It does not refuse: some calls are reviewed on a rolling basis.
       (`services/api/tests/test_academic_documents.py::test_page_gate_reads_the_kind`).
 - [x] A passed deadline prints the warning and the command still runs
       (`services/api/tests/test_academic_documents.py::test_a_passed_deadline_warns_and_continues`).
-- [x] `tailor` on the default track's demo job produces the same markdown
+- [x] `tailor` on a synthetic default-track job produces the same markdown
       as before this change
       (`services/api/tests/test_academic_documents.py::test_industry_tailor_is_unchanged_by_kind_prompts`).
-- [x] `test_academic_commands_read_no_profile_document` passes with
-      `tailor`, `cover-letter` and `answers` added to its exceptions
-      (`services/api/tests/test_tracks_cli.py::test_academic_commands_read_no_profile_document`).
+- [x] `test_academic_commands_read_no_profile_document` still passes, and
+      its docstring names `tailor`, `cover-letter` and `answers` as reading
+      the track's own documents by design. They are not traced there; that
+      each reads only its own track is tested by behavior
+      (`services/api/tests/test_academic_applications.py::test_academic_documents_read_only_their_track`,
+      `test_a_track_with_no_application_profile_is_refused`).
 - [x] `config/resume-framing.academic.example.json` and
       `config/application-profile.academic.example.md` are synthetic,
       classified public; their real names are never-in-git in
@@ -267,14 +272,15 @@ continues. It does not refuse: some calls are reviewed on a rolling basis.
 
 ## Migration
 
-Migration 11 runs on the next open (`just container-up`), after
-migration 10 (spec 099). Then, for each academic track:
+Migration 12 runs on the next open (`just container-up`), after
+migration 11 (spec 099). Then, for each academic track:
 
 1. Write an application profile from
    `config/application-profile.academic.example.md` and store it with
    `harrier --track <slug> profile put application_profile --file PATH`.
-2. If letters or answers need the JSON half, store it the same way from a
-   `.json` file.
+2. Store the JSON half the same way from a `.json` file (start from
+   `config/application-profile.academic.example.json`). Letters and answers
+   read both halves.
 3. `harrier --track <slug> profile check`, then
    `harrier --track <slug> tailor <job>` on one call and read the CV.
 
@@ -374,8 +380,8 @@ gate. Each is a consequence of behavior the spec already states.
 
 ## Amendment (2026-10-10, wiring after spec 099)
 
-- **Migration 11 is migration 12.** Spec 099 took 11. Every "migration 11"
-  above means migration 12. On Postgres each owner already has a track 1
+- **The migration is 12.** Spec 099 took 11, so the text above says
+  migration 12. On Postgres each owner already has a track 1
   (spec 105), so the same `UPDATE` gives each owner's application profile
   to that owner's own default track.
 - **The browser apply routes refuse an academic track.** The CLI and the
@@ -416,3 +422,29 @@ afterwards.
   it;** `put` holds only what this spec requires (JSON is an object,
   markdown is not empty). Whether `put` should validate the structure is
   left to a later spec.
+
+## Amendment (2026-10-11, test and claims audit of PR #224)
+
+- **The contract names every 409 cause.** Unpacking one response dict over
+  another kept only the last 409, so the apply routes declared only the run
+  conflict and the artifacts route took the apply text in place of its
+  track refusal. `merge_responses` (`services/api/src/harrier_api/deps.py`)
+  joins the causes of one status; discovery had the same loss and is fixed
+  with it (`services/api/tests/test_api_tracks.py::test_every_409_a_route_can_answer_is_in_the_contract`).
+- **A missing half of the profile names the command that stores it**
+  (`services/api/tests/test_academic_applications.py::test_a_missing_half_of_the_profile_names_the_command`).
+- **Tests that could not fail now can,** each checked by mutating the
+  source: the commands end to end on an academic call (the deadline
+  warning on all three, the academic ranking prompt, a letter over the
+  industry cap passing the two-page gate,
+  `services/api/tests/test_academic_applications.py::test_the_three_commands_run_on_an_academic_call`);
+  `tailor` refused on an archived track
+  (`test_an_archived_academic_track_refuses_tailor`); no fallback to the
+  default track's profile and C2 naming the track's own profile (the two
+  tests above, now with a profile on the default track and evidence only
+  in the lab profile); and each shared prompt block pinned by its hash, so
+  a truth rule cannot move into one kind's voice
+  (`services/api/tests/test_academic_documents.py::test_both_kinds_share_every_truth_rule`).
+- **The text above is corrected:** what `cover-letter` and `answers` need
+  without a framing, that letters always read both profile halves, the
+  migration number, and what the read-trace criterion actually proves.

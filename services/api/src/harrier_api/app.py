@@ -38,12 +38,14 @@ from harrier_api.capture_routes import capture_router
 from harrier_api.demo import demo_db_path, is_demo_mode, seed_demo_db
 from harrier_api.deps import (
     DATABASE_HELD_DETAIL,
+    TRACK_REFUSAL_RESPONSES,
     VERB_IN_BODY,
     Conn,
     DatabaseHeldOut,
     DatabaseHoldOut,
     DatabaseRoute,
     ErrorOut,
+    merge_responses,
     require_operation,
     scope_for,
 )
@@ -559,9 +561,22 @@ class ArtifactOut(BaseModel):
 
 APPLY_ERRORS: dict[int | str, dict[str, str]] = {
     404: {"description": "no job matched the selector"},
-    409: {"description": "application documents from the browser are the default track's"},
     **TOKEN_RESPONSES,
 }
+
+# What an apply run route can answer 409 for: the track refusal every scoped
+# route has, a non-default track from the browser (spec 101), and a run of
+# the kind already active. Joined, so the contract names every cause.
+APPLY_RUN_RESPONSES = merge_responses(
+    APPLY_ERRORS,
+    {409: TRACK_REFUSAL_RESPONSES[409]},
+    {409: {"description": "application documents from the browser are the default track's"}},
+    RUN_CONFLICT_RESPONSES,
+)
+# `evaluate` never runs on another track: the track refusal answers first.
+EVALUATE_RESPONSES = merge_responses(
+    APPLY_ERRORS, {409: TRACK_REFUSAL_RESPONSES[409]}, RUN_CONFLICT_RESPONSES
+)
 
 ARTIFACT_ERRORS: dict[int | str, dict[str, str]] = {
     404: {"description": "no such job, artifact kind, or the artifact is not produced yet"},
@@ -613,7 +628,7 @@ def _apply_params(
     "/apply/{selector}/resume",
     operation_id="tailorResume",
     dependencies=[Depends(require_token)],
-    responses={**APPLY_ERRORS, **RUN_CONFLICT_RESPONSES},
+    responses=APPLY_RUN_RESPONSES,
 )
 async def tailor_resume(
     selector: str,
@@ -631,7 +646,7 @@ async def tailor_resume(
     "/apply/{selector}/cover-letter",
     operation_id="draftCoverLetter",
     dependencies=[Depends(require_token)],
-    responses={**APPLY_ERRORS, **RUN_CONFLICT_RESPONSES},
+    responses=APPLY_RUN_RESPONSES,
 )
 async def draft_cover_letter(
     selector: str,
@@ -648,7 +663,7 @@ async def draft_cover_letter(
     "/apply/{selector}/answers",
     operation_id="draftAnswers",
     dependencies=[Depends(require_token)],
-    responses={**APPLY_ERRORS, **RUN_CONFLICT_RESPONSES},
+    responses=APPLY_RUN_RESPONSES,
 )
 async def draft_answers(
     selector: str,
@@ -665,7 +680,7 @@ async def draft_answers(
     "/apply/{selector}/evaluate",
     operation_id="evaluateOffer",
     dependencies=[Depends(require_token)],
-    responses={**APPLY_ERRORS, **RUN_CONFLICT_RESPONSES},
+    responses=EVALUATE_RESPONSES,
 )
 async def evaluate_offer_route(
     selector: str,
