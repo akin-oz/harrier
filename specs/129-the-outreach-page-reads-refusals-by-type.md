@@ -128,32 +128,30 @@ correctly, so nothing is lost (Honest limitations).
 
 ## Acceptance criteria
 
-- [ ] `refused` takes `ErrorOut`, `DatabaseHeldOut` and
+- [x] `refused` takes `ErrorOut`, `DatabaseHeldOut` and
       `HTTPValidationError` by generated name, with no `unknown` and no
       cast. A type-level test pins its parameter to that union, and pins
       the 404 and 409 of each of the page's eight `{selector}` and `due`
       operations to `ErrorOut` and every 503 to `DatabaseHeldOut`, using
-      vitest's `expectTypeOf`, which `pnpm type-check` compiles (planned
-      OutreachPage.test.tsx::"an outreach refusal is read through the
+      vitest's `expectTypeOf`, which `pnpm type-check` compiles (OutreachPage.test.tsx::"an outreach refusal is read through the
       contract's types"). Without the change it does not compile:
       `refused` is not exported.
-- [ ] Each call site shows a refusal's `detail` verbatim: the due queue,
+- [x] Each call site shows a refusal's `detail` verbatim: the due queue,
       the contacts list and the candidates list for a read, and Mark sent,
-      Mark replied, Snooze, Reject and Find contacts for a write (planned
-      OutreachPage.test.tsx::"each outreach call shows its refusal in the
+      Mark replied, Snooze, Reject and Find contacts for a write (OutreachPage.test.tsx::"each outreach call shows its refusal in the
       API's words"). The existing approval test already covers Approve.
       This passes before the change too. It pins that typing the reader
       did not change what the page shows.
-- [ ] The implementing pull request shows the type-level test failing to
+- [x] The implementing pull request shows the type-level test failing to
       compile on main's code, and records what was tried (its description,
       and an amendment here).
-- [ ] The comment above `unwrap` no longer says the refusals declare no
+- [x] The comment above `unwrap` no longer says the refusals declare no
       body.
-- [ ] Spec 082's Out of scope entry for the pages' readers says the
+- [x] Spec 082's Out of scope entry for the pages' readers says the
       outreach page's is done here.
-- [ ] `pnpm type-check`, `pnpm lint` and the web tests pass under Node 22,
+- [x] `pnpm type-check`, `pnpm lint` and the web tests pass under Node 22,
       and `just check` passes.
-- [ ] No real person or application appears in a fixture (ADR-008). The
+- [x] No real person or application appears in a fixture (ADR-008). The
       new cases use the suite's invented candidate and job.
 
 ## Honest limitations
@@ -216,3 +214,24 @@ None.
 - A throwaway edit while this spec was written: with `refused` typed and
   `unwrap` taking `Refusal`, `pnpm type-check` passed on main's contract;
   with `DatabaseHeldOut` removed from the union, it still passed.
+
+## Amendment (2026-10-11, during implementation)
+
+What implementation found, each with its proof. Scope and behavior are as
+specified.
+
+- **The stub gained one option.** `stubApi` in `OutreachPage.test.tsx`
+  takes `refuse`, a status and body for the route whose path ends a given
+  way, answered before any other stub. Without it every route answers as
+  before, so no existing test sees a different answer.
+- **The rendered test covers eight call sites in one test.** Each case
+  renders the page, refuses one call with an invented message, and finds
+  that message in an alert. Snooze stubs `prompt` with a date.
+- **Each new test was run against main's page code.** With
+  `OutreachPage.tsx` put back to main, `pnpm type-check` fails: the page
+  declares `refused` locally and does not export it. The rendered test
+  passes there, as this spec said it would.
+- **The type-level test fails on the old reader alone.** With main's
+  reader exported but still taking `unknown`, `pnpm type-check` fails at
+  `expectTypeOf(refused).parameter(0)`. Both were temporary edits, run and
+  reverted.

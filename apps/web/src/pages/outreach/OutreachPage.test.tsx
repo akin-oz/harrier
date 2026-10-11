@@ -1,9 +1,10 @@
+import type { components, operations } from "@harrier/contract";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
 
-import { OutreachPage } from "./OutreachPage";
+import { OutreachPage, refused } from "./OutreachPage";
 
 /**
  * The Outreach page, and the two invariants a UI erodes quietly (spec 048).
@@ -53,6 +54,9 @@ function stubApi(options: {
   candidates?: unknown[];
   approve?: { code: number; body: unknown };
   mark?: { code: number; body: unknown };
+  // A refusal for the route whose path ends this way, answered before any
+  // other stub, so one call can be refused while the rest of the page loads.
+  refuse?: { ending: string; code: number; body: unknown };
 }): Call[] {
   const calls: Call[] = [];
   vi.stubGlobal(
@@ -79,6 +83,9 @@ function stubApi(options: {
         );
 
       if (url.pathname === "/api/session") return reply(200, { token: "test-token" });
+      if (options.refuse !== undefined && url.pathname.endsWith(options.refuse.ending)) {
+        return reply(options.refuse.code, options.refuse.body);
+      }
       if (url.pathname === "/api/outreach/due") return reply(200, options.due ?? []);
       if (url.pathname === "/api/outreach/contacts") return reply(200, options.contacts ?? []);
       if (url.pathname.endsWith("/candidates")) return reply(200, options.candidates ?? []);
@@ -199,6 +206,204 @@ test("a refused approval is shown in the words the API used", async () => {
 
   const alert = await screen.findByRole("alert");
   expect(alert.textContent).toContain("candidate not found in the staged artifact");
+});
+
+// --- refusals in the API's words --------------------------------------------
+
+type Act = (user: ReturnType<typeof userEvent.setup>) => Promise<void>;
+
+async function clickInDueRow(user: ReturnType<typeof userEvent.setup>, name: string) {
+  const row = (await screen.findByText("Northwind Labs")).closest("tr");
+  expect(row).not.toBeNull();
+  await user.click(within(row as HTMLElement).getByRole("button", { name }));
+}
+
+async function openJob(user: ReturnType<typeof userEvent.setup>) {
+  await user.type(screen.getByLabelText("Job id"), "12");
+}
+
+const HELD = {
+  detail: "A host process holds the tracker database. This request is refused until it ends.",
+  hold: { subcommand: "backup", since: "2026-10-11T09:00:00Z" },
+};
+
+// Every call site but Approve, which has its own test above. Each message is
+// invented, so seeing it proves the page showed the body it was given.
+const REFUSALS: { call: string; ending: string; code: number; body: unknown; act: Act }[] = [
+  { call: "the due queue", ending: "/outreach/due", code: 503, body: HELD, act: async () => {} },
+  {
+    call: "the contacts list",
+    ending: "/outreach/contacts",
+    code: 503,
+    body: HELD,
+    act: async () => {},
+  },
+  {
+    call: "the candidates list",
+    ending: "/candidates",
+    code: 404,
+    body: { detail: "no job matches 12 (an invented refusal)" },
+    act: openJob,
+  },
+  {
+    call: "Mark sent",
+    ending: "/sent",
+    code: 409,
+    body: { detail: "cannot mark outreach sent (an invented refusal)" },
+    act: (user) => clickInDueRow(user, "Mark sent"),
+  },
+  {
+    call: "Mark replied",
+    ending: "/replied",
+    code: 409,
+    body: { detail: "cannot mark outreach replied (an invented refusal)" },
+    act: (user) => clickInDueRow(user, "Mark replied"),
+  },
+  {
+    call: "Snooze",
+    ending: "/snooze",
+    code: 409,
+    body: { detail: "cannot snooze until then (an invented refusal)" },
+    act: (user) => clickInDueRow(user, "Snooze"),
+  },
+  {
+    call: "Reject",
+    ending: "/candidates/reject",
+    code: 404,
+    body: { detail: "candidate not staged (an invented refusal)" },
+    act: async (user) => {
+      await openJob(user);
+      await user.click(await screen.findByRole("button", { name: "Reject" }));
+    },
+  },
+  {
+    call: "Find contacts",
+    ending: "/find-contacts",
+    code: 409,
+    body: { detail: "a discovery run is active (an invented refusal)" },
+    act: async (user) => {
+      await openJob(user);
+      await screen.findByRole("button", { name: "Approve" });
+      await user.click(screen.getByRole("button", { name: "Find contacts" }));
+    },
+  },
+];
+
+test("each outreach call shows its refusal in the API's words", async () => {
+  for (const refusal of REFUSALS) {
+    stubApi({
+      due: [dueRow()],
+      candidates: [candidate()],
+      refuse: { ending: refusal.ending, code: refusal.code, body: refusal.body },
+    });
+    vi.stubGlobal("prompt", () => "2026-12-01");
+    const user = userEvent.setup();
+    renderPage();
+
+    await refusal.act(user);
+    const detail = (refusal.body as { detail: string }).detail;
+    await waitFor(() => {
+      const alerts = screen.queryAllByRole("alert").map((alert) => alert.textContent);
+      expect(
+        alerts.some((text) => text.includes(detail)),
+        refusal.call,
+      ).toBe(true);
+    });
+    cleanup();
+    vi.unstubAllGlobals();
+  }
+});
+
+type ErrorOut = components["schemas"]["ErrorOut"];
+type DatabaseHeldOut = components["schemas"]["DatabaseHeldOut"];
+
+// The JSON body a response declares, or `never` when it declares none.
+type Declared<Answer> = Answer extends { content: { "application/json": infer Body } }
+  ? Body
+  : never;
+
+test("an outreach refusal is read through the contract's types", () => {
+  // Checked by `pnpm type-check`, which compiles this file; when the test
+  // runs, `expectTypeOf` does nothing. A reader that took `unknown` again,
+  // or a call whose 404, 409 or 503 lost its declared body, does not compile.
+  // `DatabaseHeldOut` fits `ErrorOut` by shape, so the reader's union is
+  // pinned here by name (spec 129, Honest limitations).
+  expectTypeOf(refused)
+    .parameter(0)
+    .toEqualTypeOf<ErrorOut | DatabaseHeldOut | components["schemas"]["HTTPValidationError"]>();
+
+  expectTypeOf<
+    Declared<operations["listOutreachDue"]["responses"][404]>
+  >().toEqualTypeOf<ErrorOut>();
+  expectTypeOf<
+    Declared<operations["listOutreachDue"]["responses"][409]>
+  >().toEqualTypeOf<ErrorOut>();
+  expectTypeOf<
+    Declared<operations["listCandidates"]["responses"][404]>
+  >().toEqualTypeOf<ErrorOut>();
+  expectTypeOf<
+    Declared<operations["listCandidates"]["responses"][409]>
+  >().toEqualTypeOf<ErrorOut>();
+  expectTypeOf<
+    Declared<operations["markOutreachSent"]["responses"][404]>
+  >().toEqualTypeOf<ErrorOut>();
+  expectTypeOf<
+    Declared<operations["markOutreachSent"]["responses"][409]>
+  >().toEqualTypeOf<ErrorOut>();
+  expectTypeOf<
+    Declared<operations["markOutreachReplied"]["responses"][404]>
+  >().toEqualTypeOf<ErrorOut>();
+  expectTypeOf<
+    Declared<operations["markOutreachReplied"]["responses"][409]>
+  >().toEqualTypeOf<ErrorOut>();
+  expectTypeOf<
+    Declared<operations["snoozeOutreach"]["responses"][404]>
+  >().toEqualTypeOf<ErrorOut>();
+  expectTypeOf<
+    Declared<operations["snoozeOutreach"]["responses"][409]>
+  >().toEqualTypeOf<ErrorOut>();
+  expectTypeOf<
+    Declared<operations["approveCandidate"]["responses"][404]>
+  >().toEqualTypeOf<ErrorOut>();
+  expectTypeOf<
+    Declared<operations["approveCandidate"]["responses"][409]>
+  >().toEqualTypeOf<ErrorOut>();
+  expectTypeOf<
+    Declared<operations["rejectCandidate"]["responses"][404]>
+  >().toEqualTypeOf<ErrorOut>();
+  expectTypeOf<
+    Declared<operations["rejectCandidate"]["responses"][409]>
+  >().toEqualTypeOf<ErrorOut>();
+  expectTypeOf<Declared<operations["findContacts"]["responses"][404]>>().toEqualTypeOf<ErrorOut>();
+  expectTypeOf<Declared<operations["findContacts"]["responses"][409]>>().toEqualTypeOf<ErrorOut>();
+
+  expectTypeOf<
+    Declared<operations["listOutreachDue"]["responses"][503]>
+  >().toEqualTypeOf<DatabaseHeldOut>();
+  expectTypeOf<
+    Declared<operations["listOutreachContacts"]["responses"][503]>
+  >().toEqualTypeOf<DatabaseHeldOut>();
+  expectTypeOf<
+    Declared<operations["listCandidates"]["responses"][503]>
+  >().toEqualTypeOf<DatabaseHeldOut>();
+  expectTypeOf<
+    Declared<operations["markOutreachSent"]["responses"][503]>
+  >().toEqualTypeOf<DatabaseHeldOut>();
+  expectTypeOf<
+    Declared<operations["markOutreachReplied"]["responses"][503]>
+  >().toEqualTypeOf<DatabaseHeldOut>();
+  expectTypeOf<
+    Declared<operations["snoozeOutreach"]["responses"][503]>
+  >().toEqualTypeOf<DatabaseHeldOut>();
+  expectTypeOf<
+    Declared<operations["approveCandidate"]["responses"][503]>
+  >().toEqualTypeOf<DatabaseHeldOut>();
+  expectTypeOf<
+    Declared<operations["rejectCandidate"]["responses"][503]>
+  >().toEqualTypeOf<DatabaseHeldOut>();
+  expectTypeOf<
+    Declared<operations["findContacts"]["responses"][503]>
+  >().toEqualTypeOf<DatabaseHeldOut>();
 });
 
 test("no candidates reads as none found rather than an empty table", async () => {
