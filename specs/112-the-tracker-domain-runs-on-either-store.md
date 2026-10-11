@@ -4,7 +4,7 @@ title: The tracker domain runs on either store
 status: accepted
 approved: yes
 milestone: M10
-depends: [076, 079, 090, 092, 103, 105]
+depends: [076, 079, 090, 092, 103, 105, 115]
 ---
 
 # Spec 112: The tracker domain runs on either store
@@ -96,6 +96,13 @@ API (`harrier_api/app.py:1370-1371`), both with `POSTGRES_NOT_YET`
 
 ## Scope
 
+**Narrowed (2026-10-11).** This spec now covers the seam only: items 1,
+2, 5 and 7, the placeholder part of item 4, and item 3 and item 13, which
+PR 1 built. The rest of item 4, and items 6, 8, 10 and 12, moved to spec
+126; item 9 to spec 127; items 11, 14 and 15 to spec 128. The Amendment
+(2026-10-11): split, owner and nesting, at the end of this file, says
+what this spec delivers now and where each item went.
+
 1. **One connection type.** A new module,
    `services/api/src/harrier/connection.py`, defines `Connection`, `Row`,
    `transaction()` and the store errors (Behavior). Every domain function
@@ -181,6 +188,12 @@ import and fixture-type edits. PR 2 is the behavior: items 2 (Postgres), 4
 to 12, 14 and 15.
 
 ## Behavior
+
+**Narrowed (2026-10-11).** Read with the Amendment (2026-10-11): split,
+owner and nesting. It replaces "Opened inside another transaction, it
+joins that one" with a savepoint, adds the owner's identity to the
+Postgres `Connection`, and names which sections below moved to specs 126,
+127 and 128.
 
 **Local, URL unset.** Every command, the API and the demo behave as today.
 The values read through the API keep their shapes and text. The visible
@@ -428,6 +441,11 @@ integrity 4, 2026-10-10)
   (post-merge review of PRs #194 and #207, 2026-10-10)
 
 ## Acceptance criteria
+
+**Narrowed (2026-10-11).** PR 1's criteria stand. PR 2's list below is
+replaced by the criteria under the Amendment (2026-10-11): split, owner
+and nesting; each criterion below that this spec no longer carries is
+listed there with the spec that now carries it.
 
 PR 1 (refactor):
 
@@ -701,6 +719,12 @@ rewrites the three upserts.
 
 ## Amendment (2026-10-11): operator and run classes
 
+**Moved (2026-10-11).** This amendment now lives in spec 127, and its
+effect here is replaced by decision 4 of the Amendment (2026-10-11):
+split, owner and nesting. Until spec 127 lands, only `harrier store` runs
+on a Postgres URL. The text below stands as the record of what was
+decided.
+
 Akin took this in chat on 2026-10-11 ("go with your recommendations"),
 with specs 106, 108 and 111, which asked it of this spec. It changes "The
 CLI on a Postgres URL" and nothing else here. Where Scope item 9,
@@ -868,3 +892,374 @@ note corrects it.
   they are now `harrier_cli/main.py:3079-3082`, `harrier_api/app.py:1370-1371`
   and `connection.py:42-44`. Scope item 13's ranges are a dated record of
   where the names went on 2026-10-11 and stay as written.
+
+## Amendment (2026-10-11): split, owner and nesting
+
+An agent preparing PR 2 found it too large to review against this spec.
+Its analysis of 2026-10-11 counted about 45 files: the Postgres seam; the
+`execute(` sites of eight domain modules and the write lock's rewrite;
+the catch sites in `src` and the test files naming `sqlite3` error
+classes; a dual-store fixture and the conversion of seven test files and
+`test_runs.py`; a restructure of `harrier_cli/main.py` into five gate
+classes; three review findings unrelated to the domain; and about 22 new
+planned tests. The rule for that case is to split the spec, not the
+branch (CLAUDE.md, change-boundary). The same analysis found five gaps,
+answered below.
+
+### Decisions (Akin, in chat, 2026-10-11)
+
+1. **Split the spec as proposed.** A, the seam speaks both dialects, is
+   this spec. B, domain SQL is portable, is
+   `specs/126-domain-sql-is-portable.md`. C, the CLI and API gates name
+   their classes, is
+   `specs/127-the-cli-and-api-gates-name-their-classes.md`. D, the three
+   review findings on PRs #194 and #207, is
+   `specs/128-three-postgres-store-review-findings.md`. This file keeps its
+   name and title, so the citations other specs make of it hold.
+2. **Owner on Postgres: the seam sets role and claims.**
+   `open_store(owner=...)` runs `SET LOCAL ROLE harrier_tenant` and sets
+   `request.jwt.claims` with `set_config(..., true)` at the start of every
+   transaction. That is the path spec 106's runs and spec 104's requests
+   use. The domain's Postgres tests run under the real row policy:
+   migration 16 makes `owner_id` default from `public.harrier_owner_id()`,
+   which reads only `request.jwt.claims`
+   (`services/api/src/harrier/tracker/schema.py:1338-1344`, `:1351-1354`).
+3. **Nesting: savepoint.** A `transaction()` opened inside another is a
+   SAVEPOINT on both stores. An inner error the domain catches rolls back
+   only the inner part, and the outer transaction stays usable on
+   Postgres. This replaces "Opened inside another transaction, it joins
+   that one" under Behavior, and the PR 1 amendment's "Nested
+   `transaction()` joins in PR 2". It matches spec 104 (Behavior, the
+   request transaction, step 4; Open decision 3).
+4. **Gate classes deferred to spec 127.** Until spec 127 lands, only
+   `harrier store` runs on a Postgres URL. Run commands refuse even with
+   `HARRIER_RUN_OWNER`, and no empty `harrier operator` group ships. Spec
+   127 is sequenced after specs 106, 108 and 111 build their commands.
+   This replaces the effect of the Amendment (2026-10-11): operator and
+   run classes, which moved to spec 127 whole.
+
+### Gaps the analysis found, and where each is answered
+
+1. **No owner identity on Postgres.** Decision 2, under "The owner's
+   identity" below.
+2. **Four upserts, not three.** `profile/store.py` has two since spec 099,
+   with partial-index conflict targets (migration 11). Spec 126 rewrites
+   all four.
+3. **Nested transactions disagreed with spec 104.** Decision 3.
+4. **The gate classes pointed at commands that do not exist.** There is
+   no `harrier operator` group in `harrier_cli/main.py` today, and the run
+   class needs spec 106's owner. Decision 4.
+5. **Spec 115 asked that this spec's `depends` gain 115**
+   (`specs/115-spec-105-holds-on-a-real-supabase-project.md`, Changes to
+   approved specs). The frontmatter now carries it. This spec's PR 2 is
+   built after spec 115's acceptance, as Akin decided on 2026-10-10. Spec
+   126 is gated the same way; spec 128 is not, because it changes no
+   domain code. Several line numbers under Problem were stale; the
+   citations in this amendment are from `main` at `87c3926` on
+   2026-10-11, and Problem stands as a dated record.
+
+### Where each item went
+
+| Item of this spec | Now in |
+|---|---|
+| Scope 1, one connection type | this spec (PR 1 built the SQLite side) |
+| Scope 2, two openers and `open_store()` | this spec, with the owner (decision 2) |
+| Scope 3, the annotations | this spec (PR 1 built it) |
+| Scope 4, portable SQL: placeholders | this spec |
+| Scope 4: timestamps, case folding, text ordering, new ids, upserts | spec 126 |
+| Scope 4: transactions | this spec (PR 1 replaced `with conn:`; nesting is decision 3) |
+| Scope 5, one set of store errors, and the catch sites | this spec |
+| Scope 6, the write lock per store | spec 126 |
+| Scope 7, a bounded wait on both | this spec |
+| Scope 8, local-only functions refuse a Postgres connection | spec 126 |
+| Scope 9, the gate's refusals | spec 127 |
+| Scope 10, the tests on both stores | spec 126; the seam's own Postgres tests stay here |
+| Scope 11, psycopg has two importers | spec 128 |
+| Scope 12, docs | spec 126 |
+| Scope 13, store-neutral names leave `pgstore.py` | this spec (PR 1 built it) |
+| Scope 14, `scrub_secrets` and a Postgres URL | spec 128 |
+| Scope 15, `harrier store migrate` reports from under the lock | spec 128 |
+| Behavior: Local, URL unset; `Connection`; `Row`; Store errors | this spec |
+| Behavior: New ids, the 3.35 check | this spec |
+| Behavior: New ids, `RETURNING id`; Timestamps; Case folding; Text ordering; Upserts; The write lock; The tests on both stores | spec 126 |
+| Behavior: Local-only work, the refusals of `cutover` and `migrate_legacy.migrate` | spec 126 |
+| Behavior: Local-only work, opening a Postgres store takes no lease | this spec |
+| Behavior: The CLI on a Postgres URL; The API on a Postgres URL | spec 127 |
+| Behavior: A Postgres URL's password is scrubbed; `harrier store migrate` reports what it found under the lock | spec 128 |
+| Amendment (2026-10-11): operator and run classes | spec 127 |
+| Open decision 8 (the CLI on a Postgres URL) | spec 127 |
+| Open decision 10 (Postgres test databases) | spec 126 |
+
+Other specs cite this one for things that moved. Their text is not edited
+here. Read "spec 112" in them as follows: the update-then-insert upsert
+shape (specs 108 and 116) is spec 126's; the CLI's Postgres classes and
+refusal texts (specs 106, 108, 109 and 111) are spec 127's; the
+session-level migration lock (spec 110, Open decision 8) is spec 128's.
+`Connection.dialect` (specs 108 and 109), `open_store(owner=...)` (spec
+106) and the savepoint (spec 104) stay here.
+
+### What PR 2 of this spec delivers
+
+**`open_store()`.** `harrier.connection.open_store(environ=None, *,
+owner=None)` opens the store `store_target(environ)` names and returns a
+`Connection`.
+
+- SQLite, no owner: `harrier.db.connect()`, unchanged.
+- SQLite with an owner: `StoreError` `an owner applies only to a Postgres
+  store`, and nothing opens. Spec 106 refuses `HARRIER_RUN_OWNER` beside a
+  SQLite store for the same reason.
+- An owner that is not a UUID: `StoreError` `the owner is not an owner
+  id`, and nothing opens.
+- Postgres: `harrier.pgstore.open_postgres_store(url)`, with spec 103's
+  version check, wrapped in a Postgres `Connection`. It takes no host
+  lease, asks the Docker engine nothing and writes nothing under `data/`
+  (ADR-011 concerns the SQLite file).
+- psycopg not installed: `StoreDriverMissing`, as today.
+
+**The Postgres `Connection`.** Behavior's `Connection` and `Row` bullets
+hold on Postgres, including the placeholder rewrite. `close()` closes the
+psycopg connection. `sqlite_driver` raises `StoreError` `this connection
+is not SQLite`. The driver connection is in autocommit mode
+(`pgstore.py:125`), and the seam opens every transaction itself: a
+statement issued outside `transaction()` runs in a transaction of its own
+with the same first statements, so no statement runs without them.
+
+**Every Postgres transaction starts the same way.** The outermost
+transaction's first statement is `SET LOCAL lock_timeout = '<n>ms'`, where
+`n` is the connection's `busy_timeout_ms`, or 1 when that is 0, because
+`0` on Postgres means no limit. `SET LOCAL` ends with the transaction, so
+nothing carries over to another client behind a transaction-mode pooler.
+
+**The owner's identity (decision 2).** On a connection opened with an
+owner, every outermost transaction then, before any other statement:
+
+1. runs `SET LOCAL ROLE harrier_tenant`;
+2. runs `SELECT set_config('request.jwt.claims', <claims>, true)`, where
+   the claims are `{"sub": "<owner>", "role": "authenticated", "aud":
+   "authenticated"}` (spec 106, "The run's database session");
+3. reads back `current_user` and `current_setting('request.jwt.claims',
+   true)::jsonb ->> 'sub'`. When either differs from what it set, the
+   transaction rolls back and raises `StoreDatabaseError` `the run's
+   database identity did not hold` (spec 106's text), and no other
+   statement runs.
+
+So every insert into an owned table takes the owner's id as its
+`owner_id` default, and the `owner_only` policies limit every read and
+write to the owner's rows. Domain SQL names no tenant (ADR-013 decision
+2). The three steps are one function in `harrier.connection` that takes
+the claims to set. `open_store(owner=...)` passes spec 106's three.
+Spec 104's request transaction passes the request's verified claims to the
+same function; how spec 104 obtains and pools its connections stays spec
+104's.
+
+A Postgres connection opened without an owner runs as its login role,
+with no role switch and no claims. `harrier_owner_id()` is then null, and
+an insert into an owned table is refused
+(`services/api/tests/test_owner_policy.py::test_an_insert_without_an_owner_is_refused`
+shows the store refusing an insert that has no owner). It exists for the
+seam's own tests and for spec 127's operator roles.
+
+**`dialect` and `busy_timeout_ms`.** `dialect` is `"sqlite"` or
+`"postgres"`, read only. `busy_timeout_ms` defaults to `BUSY_TIMEOUT_MS`
+(`db.py:33`) and is settable. On SQLite, setting it sets `PRAGMA
+busy_timeout`, and `0` means do not wait. On Postgres it sets the
+`lock_timeout` of every later transaction, `0` sending 1 ms.
+
+**Nesting (decision 3).** A `transaction()` opened while another is open
+on the same connection is a SAVEPOINT, on both stores.
+
+- The inner block exits normally: the savepoint is released. Nothing
+  commits until the outermost block exits.
+- The inner block raises: its work rolls back to the savepoint and the
+  exception propagates. When the domain catches it inside the outer
+  block, the outer transaction goes on without the inner work. On
+  Postgres it stays usable, because rolling back to a savepoint ends the
+  aborted state. When the exception leaves the outer block, everything
+  rolls back.
+- The outermost block commits on success and rolls back on any
+  exception.
+- On an owner connection the identity steps run once, at the start of the
+  outermost transaction; `SET LOCAL` holds for its savepoints too.
+
+Spec 126's upserts depend on this: an insert that meets a unique
+violation is caught and the update runs again, which Postgres allows only
+when the insert ran in a savepoint.
+
+**`commit()`, `rollback()` and `in_transaction`.** `commit()` and
+`rollback()` leave `Connection`. `in_transaction` stays, read only, on
+both stores. Their two users change:
+
+- `_write_lock` (`tracker/store.py:309-330`) becomes
+  `transaction(immediate=True)`. On SQLite the outermost such transaction
+  begins with `BEGIN IMMEDIATE`, as today; nested, it is a savepoint and
+  the caller keeps the lock it holds, as today. On Postgres `immediate`
+  adds nothing in this spec; spec 126 adds the per-job row lock. Each of
+  the four writers under the lock (`set_status`, `update_fields`,
+  `backfill_events` and spec 122's `record_eligibility`) ends its locked
+  block with its inner transaction, so moving the commit from the inner
+  block to the lock's exit runs no statement at another time.
+- `runoutcome.record_success` (`runoutcome.py:139-153`): its
+  `conn.commit()` becomes a `transaction()` around its statement. Spec
+  126 rewrites the statement.
+
+**Store errors.** Behavior's table holds on both stores.
+`StoreDatabaseError` subclasses `StoreError`, and `StoreIntegrityError`
+and `StoreBusyError` subclass `StoreDatabaseError`, all in
+`harrier.connection`. The only CLI code that catches `StoreError` is
+`harrier store` (`harrier_cli/main.py:1535`), and the API catches none,
+so no local command or route prints anything new. The unknown-track
+mapping matches the composite foreign key migration 10 adds
+(`tracker/schema.py:942`) by its constraint name, read from the migrated
+store's catalog in the test.
+
+**The catch sites.** `add_job` (`tracker/store.py:203`) catches
+`StoreIntegrityError` and raises `DuplicateJobError`; `add_track`
+(`tracks.py:400`) catches it and raises `DuplicateTrackError`;
+`logredact.py:105` and `:206` catch `StoreDatabaseError`;
+`logsetup.py:140` catches `StoreDatabaseError` and keeps `sqlite3.Error`
+and `OSError`, because `harrier.db.connect` raises the driver's own
+classes while it opens the file (Scope 3 keeps `db.py` raw). `backup.py`
+(`:120`, `:144`), `doctor.py:204` and `db.py:285` work on the SQLite file
+itself and keep `sqlite3` classes. A test that catches a `sqlite3` error
+class raised through a `Connection` catches the store class instead
+(`test_job_events.py` and `test_concurrent_writers.py` among them); a
+test whose subject is SQLite itself keeps the driver class. The PR lists
+each file.
+
+**The SQLite library check.** `harrier.db.connect` refuses a SQLite
+library older than 3.35 with Failure modes' text. Spec 126's `RETURNING
+id` needs it.
+
+**What does not change.** The CLI and the API gates
+(`harrier_cli/main.py:3079-3082`, `harrier_api/app.py:1370-1371`) and
+their text, `POSTGRES_NOT_YET` (`connection.py:41-43`), are unchanged.
+Domain SQL is unchanged apart from the two users of `commit()` above.
+
+### Failure modes (amendment of 2026-10-11)
+
+Failure modes above hold for what this spec keeps. In addition:
+
+- **An owner identity that does not hold.** Rollback, `StoreDatabaseError`
+  `the run's database identity did not hold`, no domain statement runs.
+- **An owner beside SQLite, or not a UUID.** `StoreError` with the texts
+  above, before anything opens.
+- **An inner transaction fails and the domain catches it.** The inner
+  work is undone, the outer transaction continues and commits its own
+  work, on both stores.
+- **An inner transaction fails and nothing catches it.** The whole
+  transaction rolls back, as one block would.
+- **A domain function on a Postgres `Connection` before spec 126.** It
+  can fail on SQLite-only SQL (`datetime('now')`, `COLLATE NOCASE`,
+  `lastrowid`, `ON CONFLICT` targets). Nothing outside the tests opens a
+  Postgres `Connection` before spec 127, so nothing reaches one.
+
+### Acceptance criteria (amendment of 2026-10-11)
+
+PR 2, as narrowed:
+
+- [ ] A row reads by position, by name, as values and as a dict on both
+      (planned test_a_row_reads_by_position_by_name_and_as_a_dict).
+- [ ] A `?` statement binds on both, including one whose literal holds a
+      `%` (planned test_question_marks_bind_on_both_stores).
+- [ ] On both stores, a nested `transaction()` whose error the outer
+      block catches leaves the outer block's own writes committed and the
+      inner block's undone; on Postgres a statement after the caught
+      error runs; an error leaving the outer block rolls back both
+      (planned test_a_nested_transaction_is_a_savepoint_on_both_stores).
+      This replaces planned test_a_nested_transaction_joins_the_outer_one.
+- [ ] On a connection opened with an owner, a statement inside
+      `transaction()` and one outside it both run as `harrier_tenant` with
+      the owner's `sub`; an insert into an owned table that names no
+      `owner_id` stores the owner's id; and with a second owner's row in
+      the store, a read returns only the first owner's (planned
+      test_an_owner_connection_sets_its_identity_in_every_transaction).
+- [ ] When the read-back differs from what the seam set, the transaction
+      rolls back with the identity error and the statement that followed
+      never runs (planned test_a_lost_owner_identity_runs_no_statement).
+- [ ] An owner beside SQLite, and an owner that is not a UUID, are
+      refused with the texts above and open nothing (planned
+      test_an_owner_needs_a_postgres_store).
+- [ ] `dialect` names each store, and `busy_timeout_ms` sets SQLite's
+      busy timeout and Postgres's `lock_timeout`, 0 sending 1 ms on
+      Postgres (planned test_a_connection_names_its_dialect_and_its_wait).
+- [ ] `Connection` has no `commit` or `rollback`, and `in_transaction` is
+      true inside `transaction()` and false outside it, on both (planned
+      test_a_connection_offers_no_commit_or_rollback).
+- [ ] The three lock tests pass on SQLite unchanged apart from catching
+      `StoreBusyError`:
+      `services/api/tests/test_job_events.py::test_a_first_move_holds_the_lock_from_read_to_write`,
+      `services/api/tests/test_job_events.py::test_backfill_holds_the_lock_from_read_to_write`,
+      `services/api/tests/test_job_events.py::test_a_field_update_holds_the_lock_from_read_to_write`.
+- [ ] A SQLite library below 3.35 is refused with the text under Failure
+      modes (planned test_an_old_sqlite_library_is_refused).
+- [ ] Every refused probe of spec 103's parity table, run through a
+      `Connection` as an owner on Postgres, raises the same class, kind
+      and message on both, `unknown track` included (planned
+      test_every_parity_probe_raises_one_error_on_both_stores).
+- [ ] A Postgres integrity error's message holds no `DETAIL` text (planned
+      test_a_postgres_refusal_never_quotes_the_row).
+- [ ] A writer held past a short timeout gets `StoreBusyError` on both, and
+      a Postgres `busy_timeout_ms` of 0 does not wait forever (planned
+      test_a_stuck_writer_reports_busy_on_both_stores).
+- [ ] Opening a Postgres store writes no lease and makes no engine query
+      (planned test_opening_a_postgres_store_takes_no_lease).
+- [ ] On SQLite, the unique-index race in `add_job` is still
+      `DuplicateJobError`
+      (`services/api/tests/test_tracker_store.py::test_unique_index_race_maps_to_duplicate_error`),
+      and a duplicate track slug is `DuplicateTrackError` (planned
+      test_a_duplicate_slug_is_a_duplicate_track_error). Spec 126 proves
+      both on Postgres.
+- [ ] The identity loaders in `logredact.py` return what they can when a
+      store read fails, on both (planned
+      test_identity_reads_survive_a_store_error_on_both_stores).
+- [ ] The PR lists every test file that changed from a `sqlite3` error
+      class to a store class, and every caller of the four locked writers
+      that wraps one in its own transaction (none is expected).
+- [ ] `services/api/tests/test_store_cli.py::test_a_data_command_is_refused_on_a_postgres_url`
+      and
+      `services/api/tests/test_store_cli.py::test_the_api_refuses_to_start_on_a_postgres_url`
+      pass unchanged.
+- [ ] `services/api/src/harrier/tracker/schema.py` and
+      `packages/contract` do not change.
+- [ ] The CI log of `check-python` shows this spec's Postgres tests
+      passing, not skipped, and `just check` passes.
+
+Moved out of PR 2's list above, each to the spec that now carries it:
+the upsert race, the seven files on both stores, the three lock tests on
+Postgres, one job not waiting for another, the timestamp shape, the
+folding table, text ordering, an insert returning its id, a duplicate
+refused alike through the domain on both, local-only refusals, the docs
+and no domain insert supplying an id go to spec 126; the refusal classes
+and texts to spec 127; the import-linter contract (both items),
+`scrub_secrets` and the concurrent migrate runs to spec 128.
+
+### Honest limitations (amendment of 2026-10-11)
+
+- After this spec, only tests open a Postgres `Connection`.
+  `open_store()` has no caller in `services/api/src`: the CLI gate is
+  spec 127's, and the API serves Postgres only under spec 104.
+- The domain's SQL still speaks SQLite in places until spec 126, so this
+  spec's Postgres tests run statements written for the test, not domain
+  functions.
+- `transaction(immediate=True)` locks nothing on Postgres until spec 126.
+  No domain write runs there before then, so nothing relies on it.
+- Each Postgres transaction costs one statement more, and on an owner
+  connection four more, round trips included. Not measured; the PR
+  records `check-python`'s duration before and after.
+- `POSTGRES_NOT_YET` still says "until spec 112" after this spec ships.
+  Spec 127 replaces the CLI's text and spec 104 the API's.
+
+### Proof / origin (amendment of 2026-10-11)
+
+- `specs/104-the-hosted-api-authenticates-every-request.md`, Behavior
+  (the request transaction, steps 2 to 4) and Open decision 3: role and
+  claims per transaction, and a savepoint for the domain's own.
+- `specs/106-tenant-credentials-and-run-isolation.md`, "The run's database
+  session": the claims, the read-back and its text.
+- `specs/105-every-personal-table-is-owned-and-policed.md`, the amendment
+  of 2026-10-11 (migration 16): `harrier_owner_id()` reads only
+  `request.jwt.claims`.
+- `specs/115-spec-105-holds-on-a-real-supabase-project.md`, Changes to
+  approved specs: this spec's `depends` gains 115.
+- `services/api/tests/pg_support.py`, `as_role` and `as_owner`: the
+  pattern decision 2 moves into the seam.
