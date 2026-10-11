@@ -7,7 +7,6 @@ Routes speak Pydantic models only; the web app speaks generated types only.
 from __future__ import annotations
 
 import os
-import sqlite3
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date
@@ -23,11 +22,11 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from harrier.apply.brief import Brief
+from harrier.connection import POSTGRES_NOT_YET, Connection, store_target
 from harrier.db import DatabaseOwnedByHost, connect, default_db_path, lease_directory
 from harrier.demo import repo_root
 from harrier.hostlease import oldest_hold
 from harrier.logsetup import configure_logging
-from harrier.pgstore import POSTGRES_NOT_YET, store_target
 from harrier.tracker import list_jobs
 from harrier.tracker.reasons import CANDIDATE, COMPANY, SYSTEM, codes_for
 from harrier.tracker.selector import SelectorError
@@ -584,7 +583,7 @@ ARTIFACT_ERRORS: dict[int | str, dict[str, str]] = {
 }
 
 
-def _job_id_for(conn: sqlite3.Connection, scope: TrackScope, selector: str) -> int:
+def _job_id_for(conn: Connection, scope: TrackScope, selector: str) -> int:
     from harrier.tracker.selector import resolve_selector
 
     try:
@@ -594,7 +593,7 @@ def _job_id_for(conn: sqlite3.Connection, scope: TrackScope, selector: str) -> i
 
 
 def _apply_params(
-    conn: sqlite3.Connection,
+    conn: Connection,
     scope: TrackScope,
     operation: str,
     selector: str,
@@ -990,7 +989,7 @@ CONFIG_ERRORS: dict[int | str, dict[str, object]] = {
 config_router = APIRouter(route_class=DatabaseRoute)
 
 
-def _config_out(conn: sqlite3.Connection, kind: str) -> ConfigOut:
+def _config_out(conn: Connection, kind: str) -> ConfigOut:
     """What is in effect for one kind, including when it cannot be read.
 
     A kind whose value the store refuses is described rather than raised

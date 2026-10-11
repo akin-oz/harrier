@@ -17,6 +17,7 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import date, timedelta
 
+from harrier.connection import Connection, Row
 from harrier.logredact import refresh_installed
 from harrier.tracker.invariants import all_breaches
 from harrier.tracker.reasons import (
@@ -70,12 +71,12 @@ def expand_notes(notes: str) -> dict[str, str]:
     return {key: extract_note_value(notes, key) for key in NOTE_KEYS}
 
 
-def _job_row_to_dict(row: sqlite3.Row) -> dict[str, str]:
-    return {key: str(row[key]) for key in row.keys()}  # noqa: SIM118 - sqlite3.Row has no __iter__
+def _job_row_to_dict(row: Row) -> dict[str, str]:
+    return {key: str(row[key]) for key in row.keys()}  # noqa: SIM118 - a Row iterates values
 
 
 def find_duplicate(
-    conn: sqlite3.Connection,
+    conn: Connection,
     url: str,
     company: str,
     title: str,
@@ -116,7 +117,7 @@ def find_duplicate(
     return None
 
 
-def add_job(conn: sqlite3.Connection, fields: Mapping[str, str], *, scope: Scope) -> int:
+def add_job(conn: Connection, fields: Mapping[str, str], *, scope: Scope) -> int:
     """Insert one job in the scope's track (spec 091).
 
     Raises DuplicateJobError on a url, external_key or company+title match.
@@ -172,7 +173,7 @@ def add_job(conn: sqlite3.Connection, fields: Mapping[str, str], *, scope: Scope
     row_values.append(deadline)
     placeholders = ", ".join("?" for _ in columns)
     description_sha256 = _description_sha256(values["url"])
-    with conn:
+    with conn.transaction():
         try:
             cursor = conn.execute(
                 f"INSERT INTO jobs ({', '.join(columns)}, track_id, deadline) "
@@ -202,7 +203,7 @@ def add_job(conn: sqlite3.Connection, fields: Mapping[str, str], *, scope: Scope
     return int(row_id)
 
 
-def _refuse_archived(conn: sqlite3.Connection, scope: Scope) -> None:
+def _refuse_archived(conn: Connection, scope: Scope) -> None:
     """An archived track reads and does not write, for every caller of the
     write path, not only the CLI (spec 093, review of PR #182), whenever the
     scope was resolved (review of PR #227)."""
@@ -219,12 +220,12 @@ def _is_iso_date(value: str) -> bool:
         return False
 
 
-def _track_slug(conn: sqlite3.Connection, track_id: str) -> str:
+def _track_slug(conn: Connection, track_id: str) -> str:
     row = conn.execute("SELECT slug FROM tracks WHERE id = ?", (int(track_id),)).fetchone()
     return str(row[0]) if row is not None else f"id {track_id}"
 
 
-def get_job(conn: sqlite3.Connection, scope: Scope, job_id: int) -> dict[str, str]:
+def get_job(conn: Connection, scope: Scope, job_id: int) -> dict[str, str]:
     """One row of the scope's track. An id from another track is not found,
     with the same error a missing id raises and nothing about the other
     track's row in it (spec 092)."""
@@ -237,7 +238,7 @@ def get_job(conn: sqlite3.Connection, scope: Scope, job_id: int) -> dict[str, st
 
 
 def list_jobs(
-    conn: sqlite3.Connection,
+    conn: Connection,
     scope: Scope,
     status: str | None = None,
     source: str | None = None,
@@ -258,7 +259,7 @@ def list_jobs(
     return [_job_row_to_dict(row) for row in rows]
 
 
-def track_of_job(conn: sqlite3.Connection, job_id: int) -> int | None:
+def track_of_job(conn: Connection, job_id: int) -> int | None:
     """Which track a job id belongs to, or None when no job has it.
 
     For contact links only: a contact is the person's, not a track's, so a
@@ -270,7 +271,7 @@ def track_of_job(conn: sqlite3.Connection, job_id: int) -> int | None:
     return int(row[0]) if row is not None else None
 
 
-def all_tracks_dedupe_rows(conn: sqlite3.Connection) -> list[dict[str, str]]:
+def all_tracks_dedupe_rows(conn: Connection) -> list[dict[str, str]]:
     """The identity columns of every row in every track, for the dedupe
     index only (spec 092). url and external_key are unique across the whole
     file, so a posting stored in one track is a duplicate in every other;
@@ -284,7 +285,7 @@ def all_tracks_dedupe_rows(conn: sqlite3.Connection) -> list[dict[str, str]]:
 
 
 @contextmanager
-def _write_lock(conn: sqlite3.Connection) -> Generator[None, None, None]:
+def _write_lock(conn: Connection) -> Generator[None, None, None]:
     """The write lock, taken before reading what a write depends on.
 
     A writer that read a row, decided, and only then opened its transaction
@@ -307,7 +308,7 @@ def _write_lock(conn: sqlite3.Connection) -> Generator[None, None, None]:
     conn.commit()
 
 
-def company_has_responded(conn: sqlite3.Connection, scope: Scope, job_id: int) -> bool:
+def company_has_responded(conn: Connection, scope: Scope, job_id: int) -> bool:
     """Whether a company outcome is recorded for this job (spec 079).
 
     The row forgets an invited interview once the company's first response
@@ -323,7 +324,7 @@ def company_has_responded(conn: sqlite3.Connection, scope: Scope, job_id: int) -
 
 
 def set_status(
-    conn: sqlite3.Connection,
+    conn: Connection,
     scope: Scope,
     job_id: int,
     status: str,
@@ -407,7 +408,7 @@ def set_status(
             updates["next_action"] = rules.next_action[status]
 
         assignments = ", ".join(f"{name} = ?" for name in updates)
-        with conn:
+        with conn.transaction():
             for event in history:
                 _append_event(
                     conn,
@@ -446,7 +447,7 @@ def set_status(
 
 
 def update_fields(
-    conn: sqlite3.Connection, scope: Scope, job_id: int, fields: Mapping[str, str]
+    conn: Connection, scope: Scope, job_id: int, fields: Mapping[str, str]
 ) -> dict[str, str]:
     """Update non-status columns, refusing writes that break a status invariant.
 
@@ -481,7 +482,7 @@ def update_fields(
         if introduced:
             raise TrackerError(introduced[0])
         assignments = ", ".join(f"{name} = ?" for name in fields)
-        with conn:
+        with conn.transaction():
             conn.execute(
                 f"UPDATE jobs SET {assignments}, updated_at = datetime('now') "
                 "WHERE id = ? AND track_id = ?",
@@ -510,7 +511,7 @@ def _description_sha256(url: str) -> str:
 
 
 def _append_event(
-    conn: sqlite3.Connection,
+    conn: Connection,
     *,
     job_id: int,
     kind: str,
@@ -554,7 +555,7 @@ def _append_event(
     logger.debug("job event: job=%s kind=%s actor=%s code=%s", job_id, kind, actor, reason_code)
 
 
-def _has_events(conn: sqlite3.Connection, scope: Scope, job_id: int) -> bool:
+def _has_events(conn: Connection, scope: Scope, job_id: int) -> bool:
     row = conn.execute(
         "SELECT 1 FROM job_events AS e JOIN jobs AS j ON j.id = e.job_id "
         "WHERE e.job_id = ? AND j.track_id = ? LIMIT 1",
@@ -563,7 +564,7 @@ def _has_events(conn: sqlite3.Connection, scope: Scope, job_id: int) -> bool:
     return row is not None
 
 
-def list_events(conn: sqlite3.Connection, scope: Scope, job_id: int) -> list[dict[str, str]]:
+def list_events(conn: Connection, scope: Scope, job_id: int) -> list[dict[str, str]]:
     """A job's events in the order they were recorded, for a job of the
     scope's track. Another track's job is not found, with the same error a
     missing id raises (spec 092)."""
@@ -647,7 +648,7 @@ def _plan_backfill(job: Mapping[str, str]) -> list[_PlannedEvent]:
 
 
 def backfill_events(
-    conn: sqlite3.Connection, scope: Scope, *, dry_run: bool = False
+    conn: Connection, scope: Scope, *, dry_run: bool = False
 ) -> Counter[tuple[str, str, str]]:
     """Events for every job of the scope's track that has none, reconstructed
     and marked so. Per track, because the reconstruction rules are a kind's
@@ -671,7 +672,7 @@ def backfill_events(
         )
         if dry_run:
             return counts
-        with conn:
+        with conn.transaction():
             for job_id, events in plans:
                 for event in events:
                     _append_event(
@@ -689,10 +690,10 @@ def backfill_events(
     return counts
 
 
-def add_contact(conn: sqlite3.Connection, fields: Mapping[str, str]) -> int:
+def add_contact(conn: Connection, fields: Mapping[str, str]) -> int:
     values = [str(fields.get(name, "") or "") for name in CONTACT_FIELDS]
     placeholders = ", ".join("?" for _ in CONTACT_FIELDS)
-    with conn:
+    with conn.transaction():
         cursor = conn.execute(
             f"INSERT INTO contacts ({', '.join(CONTACT_FIELDS)}) VALUES ({placeholders})",
             values,
@@ -706,14 +707,12 @@ def add_contact(conn: sqlite3.Connection, fields: Mapping[str, str]) -> int:
     return int(row_id)
 
 
-def list_contacts(conn: sqlite3.Connection) -> list[dict[str, str]]:
+def list_contacts(conn: Connection) -> list[dict[str, str]]:
     rows = conn.execute("SELECT * FROM contacts ORDER BY id").fetchall()
     return [_job_row_to_dict(row) for row in rows]
 
 
-def update_contact_fields(
-    conn: sqlite3.Connection, contact_id: int, fields: Mapping[str, str]
-) -> None:
+def update_contact_fields(conn: Connection, contact_id: int, fields: Mapping[str, str]) -> None:
     """Update contact columns by id (spec 016). Unknown fields are an error."""
     unknown = [name for name in fields if name not in CONTACT_FIELDS]
     if unknown:
@@ -721,14 +720,14 @@ def update_contact_fields(
     if not fields:
         return
     assignments = ", ".join(f"{name} = ?" for name in fields)
-    with conn:
+    with conn.transaction():
         conn.execute(
             f"UPDATE contacts SET {assignments} WHERE id = ?",
             [*[str(value) for value in fields.values()], contact_id],
         )
 
 
-def delete_contact(conn: sqlite3.Connection, contact_id: int) -> bool:
-    with conn:
+def delete_contact(conn: Connection, contact_id: int) -> bool:
+    with conn.transaction():
         cursor = conn.execute("DELETE FROM contacts WHERE id = ?", (contact_id,))
     return cursor.rowcount > 0

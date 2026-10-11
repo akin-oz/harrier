@@ -366,7 +366,7 @@ def stored() -> dict[str, object]:
 def clear() -> None:
     conn = connect()
     try:
-        with conn:
+        with conn.transaction():
             conn.execute("DELETE FROM user_config")
     finally:
         conn.close()

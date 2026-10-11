@@ -25,10 +25,11 @@ evidence is the absence of a recent success.
 
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, cast
+
+from harrier.connection import Connection
 
 # Exit codes. 0 and 1 are the shell's; 2 is already taken by the CLI for
 # usage errors, so a failed run is 3 and cannot be confused with a bad flag.
@@ -135,7 +136,7 @@ def now_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def record_success(conn: sqlite3.Connection, job: str, *, at: str | None = None) -> None:
+def record_success(conn: Connection, job: str, *, at: str | None = None) -> None:
     """Written on the success path only.
 
     A failing run must leave the previous value alone: the number the digest
@@ -152,12 +153,12 @@ def record_success(conn: sqlite3.Connection, job: str, *, at: str | None = None)
     conn.commit()
 
 
-def last_success(conn: sqlite3.Connection, job: str) -> str | None:
+def last_success(conn: Connection, job: str) -> str | None:
     row = conn.execute("SELECT last_success_at FROM job_runs WHERE job = ?", (job,)).fetchone()
     return str(row[0]) if row and row[0] else None
 
 
-def all_last_success(conn: sqlite3.Connection) -> dict[str, str]:
+def all_last_success(conn: Connection) -> dict[str, str]:
     rows: list[Any] = conn.execute("SELECT job, last_success_at FROM job_runs").fetchall()
     return {str(row[0]): str(row[1]) for row in rows if row[1]}
 

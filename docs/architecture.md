@@ -173,7 +173,7 @@ not change.
 A Postgres store can be created; nothing reads or writes tracker rows on it
 yet. `HARRIER_DATABASE_URL` chooses the store: unset or empty, the local
 SQLite store; a `postgresql://` URL, the Postgres store; any other value is
-refused (`services/api/src/harrier/pgstore.py`,
+refused (`services/api/src/harrier/connection.py`,
 `services/api/tests/test_postgres_store.py`). `harrier store migrate`
 applies pending migrations and `harrier store status` prints the dialect
 and version. Until spec 112 they are the only commands that run on

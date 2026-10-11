@@ -11,7 +11,6 @@ test_api_jobs.py.
 from __future__ import annotations
 
 import json
-import sqlite3
 from datetime import date
 from pathlib import Path
 
@@ -19,6 +18,7 @@ import pytest
 from conftest import auth
 from fastapi.testclient import TestClient
 
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.discovery import scheduled_apify_count
 from harrier.userconfig import (
@@ -44,7 +44,7 @@ EXAMPLE_FEEDS = ["https://boards.greenhouse.io/exampleco", "https://jobs.ashbyhq
 
 
 @pytest.fixture()
-def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
+def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Connection:
     monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("HARRIER_DEMO", raising=False)
     # No config/ tree in the working directory, so a file fallback that
@@ -56,13 +56,13 @@ def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
 # --- the store ---------------------------------------------------------------
 
 
-def test_a_stored_value_round_trips(db: sqlite3.Connection) -> None:
+def test_a_stored_value_round_trips(db: Connection) -> None:
     set_config(db, FEEDS, EXAMPLE_FEEDS)
     assert get_config(db, FEEDS) == EXAMPLE_FEEDS
     assert load_feed_urls(db) == EXAMPLE_FEEDS
 
 
-def test_the_schema_carries_no_scope_column(db: sqlite3.Connection) -> None:
+def test_the_schema_carries_no_scope_column(db: Connection) -> None:
     """`scope` is gone (spec 041).
 
     It never held anything but 'default', it was threaded through eight
@@ -75,7 +75,7 @@ def test_the_schema_carries_no_scope_column(db: sqlite3.Connection) -> None:
     assert {"kind", "value", "updated_at"} <= columns
 
 
-def test_a_kind_is_unique_on_its_own(db: sqlite3.Connection) -> None:
+def test_a_kind_is_unique_on_its_own(db: Connection) -> None:
     """The uniqueness that used to be (scope, kind). Setting a kind twice
     updates rather than adding a second row."""
     set_config(db, FEEDS, ["https://boards.greenhouse.io/one"])
@@ -86,7 +86,7 @@ def test_a_kind_is_unique_on_its_own(db: sqlite3.Connection) -> None:
 
 
 def test_setting_the_same_kind_twice_updates_rather_than_duplicates(
-    db: sqlite3.Connection,
+    db: Connection,
 ) -> None:
     set_config(db, FEEDS, EXAMPLE_FEEDS)
     set_config(db, FEEDS, ["https://jobs.lever.co/exampleco"])
@@ -94,7 +94,7 @@ def test_setting_the_same_kind_twice_updates_rather_than_duplicates(
     assert load_feed_urls(db) == ["https://jobs.lever.co/exampleco"]
 
 
-def test_an_empty_list_is_not_the_same_as_no_row(db: sqlite3.Connection, tmp_path: Path) -> None:
+def test_an_empty_list_is_not_the_same_as_no_row(db: Connection, tmp_path: Path) -> None:
     """Clearing the watchlist has to mean something different from never
     having set one, or a user who empties it gets the file back."""
     config = tmp_path / "config"
@@ -109,7 +109,7 @@ def test_an_empty_list_is_not_the_same_as_no_row(db: sqlite3.Connection, tmp_pat
     assert load_feed_urls(db) == ["https://boards.greenhouse.io/from-file"]
 
 
-def test_a_bad_shape_is_refused_at_the_write(db: sqlite3.Connection) -> None:
+def test_a_bad_shape_is_refused_at_the_write(db: Connection) -> None:
     # Validating on read would surface a bad value inside discovery, far
     # from whoever set it.
     with pytest.raises(ConfigError, match="must be a JSON list"):
@@ -122,7 +122,7 @@ def test_a_bad_shape_is_refused_at_the_write(db: sqlite3.Connection) -> None:
         set_config(db, "nonsense", [])
 
 
-def test_blank_entries_are_dropped_on_the_way_in(db: sqlite3.Connection) -> None:
+def test_blank_entries_are_dropped_on_the_way_in(db: Connection) -> None:
     set_config(db, FEEDS, ["  https://boards.greenhouse.io/exampleco  ", "", "   "])
     assert load_feed_urls(db) == ["https://boards.greenhouse.io/exampleco"]
 
@@ -131,7 +131,7 @@ def test_blank_entries_are_dropped_on_the_way_in(db: sqlite3.Connection) -> None
 
 
 def test_a_fresh_install_with_no_store_and_no_files_runs_with_no_sources(
-    db: sqlite3.Connection,
+    db: Connection,
 ) -> None:
     """The spec's acceptance criterion: this is a clean state, not an error."""
     assert load_feed_urls(db) == []
@@ -141,7 +141,7 @@ def test_a_fresh_install_with_no_store_and_no_files_runs_with_no_sources(
     assert load_ats_feeds(db) == {"greenhouse": [], "ashby": [], "lever": [], "unrouted": []}
 
 
-def test_the_file_is_used_until_something_is_stored(db: sqlite3.Connection, tmp_path: Path) -> None:
+def test_the_file_is_used_until_something_is_stored(db: Connection, tmp_path: Path) -> None:
     """An existing install keeps working before `harrier config import` runs."""
     config = tmp_path / "config"
     config.mkdir()
@@ -153,7 +153,7 @@ def test_the_file_is_used_until_something_is_stored(db: sqlite3.Connection, tmp_
     assert load_feed_urls(db) == EXAMPLE_FEEDS
 
 
-def test_stored_feeds_route_to_their_importers(db: sqlite3.Connection) -> None:
+def test_stored_feeds_route_to_their_importers(db: Connection) -> None:
     set_config(db, FEEDS, [*EXAMPLE_FEEDS, "https://jobs.eu.lever.co/example-eu-co"])
     grouped = load_ats_feeds(db)
     assert grouped["greenhouse"] == ["https://boards.greenhouse.io/exampleco"]
@@ -161,12 +161,12 @@ def test_stored_feeds_route_to_their_importers(db: sqlite3.Connection) -> None:
     assert grouped["lever"] == ["https://jobs.eu.lever.co/example-eu-co"]
 
 
-def test_hold_companies_are_normalized_from_the_store(db: sqlite3.Connection) -> None:
+def test_hold_companies_are_normalized_from_the_store(db: Connection) -> None:
     set_config(db, COMPANY_HOLDS, ["Example Co", "  Other Co  "])
     assert load_hold_companies(db) == {"example co", "other co"}
 
 
-def test_discovery_settings_come_from_the_store(db: sqlite3.Connection) -> None:
+def test_discovery_settings_come_from_the_store(db: Connection) -> None:
     set_config(db, DISCOVERY, {"apify_scheduled_count": 50})
     assert scheduled_apify_count(conn=db) == 50
     delete_config(db, DISCOVERY)
@@ -174,20 +174,20 @@ def test_discovery_settings_come_from_the_store(db: sqlite3.Connection) -> None:
     assert scheduled_apify_count(conn=db) == 150
 
 
-def test_a_boolean_count_does_not_pass_as_an_integer(db: sqlite3.Connection) -> None:
+def test_a_boolean_count_does_not_pass_as_an_integer(db: Connection) -> None:
     # JSON true satisfies isinstance(x, int); it must not become a count.
     set_config(db, DISCOVERY, {"apify_scheduled_count": True})
     assert scheduled_apify_count(conn=db) == 150
 
 
-def test_accessors_work_without_a_connection(db: sqlite3.Connection) -> None:
+def test_accessors_work_without_a_connection(db: Connection) -> None:
     # None means "no store here", which is how file-based callers and every
     # test predating spec 023 keep working unchanged.
     assert load_feed_urls(None) == []
     assert load_hold_companies() == set()
 
 
-def test_stored_json_that_is_not_a_list_is_reported(db: sqlite3.Connection) -> None:
+def test_stored_json_that_is_not_a_list_is_reported(db: Connection) -> None:
     db.execute(
         "INSERT INTO user_config (kind, value) VALUES (?, ?)",
         (FEEDS, json.dumps({"unexpected": True})),
@@ -213,33 +213,33 @@ def write_holds(tmp_path: Path, rows: str) -> Path:
 
 
 def test_a_csv_hold_past_its_date_no_longer_excludes_the_company(
-    db: sqlite3.Connection, tmp_path: Path
+    db: Connection, tmp_path: Path
 ) -> None:
     write_holds(tmp_path, "Lapsed Co,cooldown,2026-06-29,\nHeld Co,cooldown,2026-07-31,\n")
     assert load_hold_companies(db, today=TODAY) == {"held co"}
 
 
-def test_a_csv_hold_is_active_on_its_own_date(db: sqlite3.Connection, tmp_path: Path) -> None:
+def test_a_csv_hold_is_active_on_its_own_date(db: Connection, tmp_path: Path) -> None:
     write_holds(tmp_path, "Example Co,cooldown,2026-06-30,\n")
     assert load_hold_companies(db, today=TODAY) == {"example co"}
     assert load_hold_companies(db, today=date(2026, 7, 1)) == set()
 
 
-def test_a_hold_with_no_date_never_lapses(db: sqlite3.Connection, tmp_path: Path) -> None:
+def test_a_hold_with_no_date_never_lapses(db: Connection, tmp_path: Path) -> None:
     write_holds(tmp_path, "Example Co,cooldown,,\n")
     assert load_hold_companies(db, today=date(2999, 1, 1)) == {"example co"}
     set_config(db, COMPANY_HOLDS, ["Other Co"])
     assert load_hold_companies(db, today=date(2999, 1, 1)) == {"other co"}
 
 
-def test_a_stored_dated_hold_lapses_after_its_date(db: sqlite3.Connection) -> None:
+def test_a_stored_dated_hold_lapses_after_its_date(db: Connection) -> None:
     set_config(db, COMPANY_HOLDS, [{"company": "Example Co", "hold_until": "2026-06-29"}])
     assert load_hold_companies(db, today=TODAY) == set()
     set_config(db, COMPANY_HOLDS, [{"company": "Example Co", "hold_until": "2026-07-01"}])
     assert load_hold_companies(db, today=TODAY) == {"example co"}
 
 
-def test_a_company_is_held_while_any_of_its_holds_is_active(db: sqlite3.Connection) -> None:
+def test_a_company_is_held_while_any_of_its_holds_is_active(db: Connection) -> None:
     set_config(
         db,
         COMPANY_HOLDS,
@@ -252,7 +252,7 @@ def test_a_company_is_held_while_any_of_its_holds_is_active(db: sqlite3.Connecti
 
 
 @pytest.mark.parametrize("bad", ["2026-6-1", "30-06-2026", "soon", "2026-02-30", "20260630"])
-def test_a_malformed_hold_date_is_refused_at_the_write(db: sqlite3.Connection, bad: str) -> None:
+def test_a_malformed_hold_date_is_refused_at_the_write(db: Connection, bad: str) -> None:
     # Never read as "no expiry": that fallback is the permanent hold again.
     with pytest.raises(ConfigError, match=r"'Example Co'.*malformed hold_until"):
         set_config(db, COMPANY_HOLDS, [{"company": "Example Co", "hold_until": bad}])
@@ -268,14 +268,14 @@ def test_a_malformed_hold_date_is_refused_at_the_write(db: sqlite3.Connection, b
     ],
 )
 def test_a_hold_entry_without_a_company_or_with_an_unknown_key_is_refused(
-    db: sqlite3.Connection, entry: object
+    db: Connection, entry: object
 ) -> None:
     with pytest.raises(ConfigError):
         set_config(db, COMPANY_HOLDS, [entry])
 
 
 def test_a_malformed_csv_date_refuses_the_read_and_the_import(
-    db: sqlite3.Connection, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    db: Connection, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     path = write_holds(tmp_path, "Example Co,cooldown,end of june,\n")
     with pytest.raises(ConfigError) as raised:
@@ -293,7 +293,7 @@ def test_a_malformed_csv_date_refuses_the_read_and_the_import(
 
 
 def test_import_keeps_hold_dates_including_expired_ones(
-    db: sqlite3.Connection, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    db: Connection, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     write_holds(
         tmp_path,
@@ -310,7 +310,7 @@ def test_import_keeps_hold_dates_including_expired_ones(
 
 
 def test_a_hold_list_stored_before_expiry_existed_still_holds_everyone(
-    db: sqlite3.Connection,
+    db: Connection,
 ) -> None:
     db.execute(
         "INSERT INTO user_config (kind, value) VALUES (?, ?)",
@@ -324,7 +324,7 @@ def test_a_hold_list_stored_before_expiry_existed_still_holds_everyone(
 # --- the CLI -----------------------------------------------------------------
 
 
-def test_import_round_trips_the_current_files(db: sqlite3.Connection, tmp_path: Path) -> None:
+def test_import_round_trips_the_current_files(db: Connection, tmp_path: Path) -> None:
     config = tmp_path / "config"
     config.mkdir()
     (config / "feeds.txt").write_text("\n".join(EXAMPLE_FEEDS) + "\n", encoding="utf-8")
@@ -351,18 +351,18 @@ def test_import_round_trips_the_current_files(db: sqlite3.Connection, tmp_path: 
         fresh.close()
 
 
-def test_import_with_no_files_reports_rather_than_claiming_success(db: sqlite3.Connection) -> None:
+def test_import_with_no_files_reports_rather_than_claiming_success(db: Connection) -> None:
     assert main(["config", "import"]) == 1
 
 
-def test_unset_reports_whether_anything_was_removed(db: sqlite3.Connection) -> None:
+def test_unset_reports_whether_anything_was_removed(db: Connection) -> None:
     set_config(db, FEEDS, EXAMPLE_FEEDS)
     db.commit()
     assert main(["config", "unset", "feeds"]) == 0
     assert main(["config", "unset", "feeds"]) == 1
 
 
-def test_get_on_an_unstored_kind_exits_non_zero(db: sqlite3.Connection) -> None:
+def test_get_on_an_unstored_kind_exits_non_zero(db: Connection) -> None:
     assert main(["config", "get", "feeds"]) == 1
 
 
@@ -370,7 +370,7 @@ def test_get_on_an_unstored_kind_exits_non_zero(db: sqlite3.Connection) -> None:
 
 
 @pytest.fixture()
-def client(db: sqlite3.Connection) -> TestClient:
+def client(db: Connection) -> TestClient:
     return TestClient(create_app())
 
 
@@ -418,9 +418,7 @@ def test_a_malformed_body_and_a_bad_value_are_different_failures(client: TestCli
     assert isinstance(bad_value.json()["detail"], str)
 
 
-def test_a_corrupted_row_is_refused_rather_than_coerced(
-    client: TestClient, db: sqlite3.Connection
-) -> None:
+def test_a_corrupted_row_is_refused_rather_than_coerced(client: TestClient, db: Connection) -> None:
     """A row can appear without going through set_config: a hand-edited
     database, a restored backup, a future migration. The read path was
     coercing [7] into ["7"] (review finding on PR #20)."""
@@ -463,16 +461,14 @@ def test_the_api_shows_stored_holds_as_written_and_file_holds_as_active(
 # --- a broken kind is described, not raised (spec 073) -------------------------
 
 
-def store_raw(db: sqlite3.Connection, kind: str, raw: str) -> None:
+def store_raw(db: Connection, kind: str, raw: str) -> None:
     """A row written around set_config: a hand-edited database, a restored
     backup, a future migration."""
     db.execute("INSERT INTO user_config (kind, value) VALUES (?, ?)", (kind, raw))
     db.commit()
 
 
-def test_one_broken_kind_does_not_hide_the_others(
-    client: TestClient, db: sqlite3.Connection
-) -> None:
+def test_one_broken_kind_does_not_hide_the_others(client: TestClient, db: Connection) -> None:
     store_raw(db, FEEDS, json.dumps([7]))
     response = client.get("/config", headers=auth())
     assert response.status_code == 200
@@ -486,9 +482,7 @@ def test_one_broken_kind_does_not_hide_the_others(
     assert all(by_kind[kind]["error"] is None for kind in KINDS if kind != FEEDS)
 
 
-def test_a_broken_stored_kind_is_described_not_raised(
-    client: TestClient, db: sqlite3.Connection
-) -> None:
+def test_a_broken_stored_kind_is_described_not_raised(client: TestClient, db: Connection) -> None:
     store_raw(db, FEEDS, json.dumps([7]))
     response = client.get("/config/feeds", headers=auth())
     assert response.status_code == 200
@@ -497,9 +491,7 @@ def test_a_broken_stored_kind_is_described_not_raised(
     assert "entries must be strings" in body["error"]
 
 
-def test_a_stored_row_that_is_not_json_is_described(
-    client: TestClient, db: sqlite3.Connection
-) -> None:
+def test_a_stored_row_that_is_not_json_is_described(client: TestClient, db: Connection) -> None:
     store_raw(db, FEEDS, "not json [")
     body = client.get("/config/feeds", headers=auth()).json()
     assert (body["source"], body["value"]) == ("store", None)
@@ -507,7 +499,7 @@ def test_a_stored_row_that_is_not_json_is_described(
 
 
 def test_a_broken_stored_row_does_not_fall_back_to_the_file(
-    client: TestClient, db: sqlite3.Connection, tmp_path: Path
+    client: TestClient, db: Connection, tmp_path: Path
 ) -> None:
     # Discovery reads the same row and fails on it, so showing the file's
     # healthy value would describe configuration nothing uses.
@@ -533,7 +525,7 @@ def test_a_broken_hold_file_is_described_with_the_company(
 
 
 def test_a_delete_that_succeeds_is_never_reported_as_failed(
-    client: TestClient, db: sqlite3.Connection, tmp_path: Path
+    client: TestClient, db: Connection, tmp_path: Path
 ) -> None:
     write_holds(tmp_path, "Example Co,cooldown,soon,\n")
     client.put("/config/company_holds", json={"value": ["Other Co"]}, headers=auth())
@@ -548,7 +540,7 @@ def test_a_delete_that_succeeds_is_never_reported_as_failed(
 
 
 def test_two_broken_kinds_each_carry_their_own_error(
-    client: TestClient, db: sqlite3.Connection, tmp_path: Path
+    client: TestClient, db: Connection, tmp_path: Path
 ) -> None:
     store_raw(db, FEEDS, json.dumps([7]))
     write_holds(tmp_path, "Example Co,cooldown,soon,\n")
@@ -567,7 +559,7 @@ def test_a_delete_with_nothing_stored_and_a_broken_file_still_answers(
     assert "Example Co" in response.json()["error"]
 
 
-def test_put_repairs_a_broken_kind(client: TestClient, db: sqlite3.Connection) -> None:
+def test_put_repairs_a_broken_kind(client: TestClient, db: Connection) -> None:
     store_raw(db, FEEDS, json.dumps([7]))
     response = client.put("/config/feeds", json={"value": EXAMPLE_FEEDS}, headers=auth())
     assert response.status_code == 200

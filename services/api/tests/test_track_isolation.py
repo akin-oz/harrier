@@ -20,6 +20,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.digest import build_digest
 from harrier.mail.run import run_watch
@@ -73,7 +74,7 @@ def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture()
-def two_tracks(data_dir: Path) -> Iterator[tuple[sqlite3.Connection, Scope, Scope]]:
+def two_tracks(data_dir: Path) -> Iterator[tuple[Connection, Scope, Scope]]:
     conn = connect()
     conn.execute(
         "INSERT INTO tracks (id, slug, kind, label) VALUES (2, 'second', 'academic', 'Second')"
@@ -97,7 +98,7 @@ def ids(rows: list[dict[str, str]]) -> set[str]:
 
 
 def test_queue_never_shows_another_tracks_rows(
-    two_tracks: tuple[sqlite3.Connection, Scope, Scope],
+    two_tracks: tuple[Connection, Scope, Scope],
 ) -> None:
     conn, first, second = two_tracks
     mine = ids(list_jobs(conn, first))
@@ -117,7 +118,7 @@ def test_queue_never_shows_another_tracks_rows(
 
 
 def test_digest_and_export_read_one_track(
-    two_tracks: tuple[sqlite3.Connection, Scope, Scope], tmp_path: Path
+    two_tracks: tuple[Connection, Scope, Scope], tmp_path: Path
 ) -> None:
     conn, first, second = two_tracks
     digest = build_digest(conn, first, date(2026, 8, 3))
@@ -138,7 +139,7 @@ def test_digest_and_export_read_one_track(
 
 
 def test_a_url_stored_in_one_track_is_a_duplicate_in_another(
-    two_tracks: tuple[sqlite3.Connection, Scope, Scope],
+    two_tracks: tuple[Connection, Scope, Scope],
 ) -> None:
     conn, first, second = two_tracks
     before = len(list_jobs(conn, second))
@@ -163,7 +164,7 @@ def test_a_url_stored_in_one_track_is_a_duplicate_in_another(
 
 
 def test_a_row_outside_the_scope_is_not_found_by_id(
-    two_tracks: tuple[sqlite3.Connection, Scope, Scope],
+    two_tracks: tuple[Connection, Scope, Scope],
 ) -> None:
     conn, first, second = two_tracks
     other_id = int(list_jobs(conn, second)[0]["id"])
@@ -184,7 +185,7 @@ def test_a_row_outside_the_scope_is_not_found_by_id(
 
 
 def test_training_labels_ignore_other_tracks(
-    two_tracks: tuple[sqlite3.Connection, Scope, Scope],
+    two_tracks: tuple[Connection, Scope, Scope],
 ) -> None:
     conn, first, second = two_tracks
     for scope in (first, second):
@@ -199,7 +200,7 @@ def test_training_labels_ignore_other_tracks(
 
 
 def test_mail_matching_reads_one_track_and_records_it(
-    two_tracks: tuple[sqlite3.Connection, Scope, Scope],
+    two_tracks: tuple[Connection, Scope, Scope],
 ) -> None:
     conn, first, _ = two_tracks
 
@@ -229,7 +230,7 @@ def _send_nothing(*_: object) -> int:
 
 
 def test_backfill_reconstructs_one_track(
-    two_tracks: tuple[sqlite3.Connection, Scope, Scope],
+    two_tracks: tuple[Connection, Scope, Scope],
 ) -> None:
     conn, first, _ = two_tracks
     # Rows written around the write path, so they have no events.
@@ -249,7 +250,7 @@ def test_backfill_reconstructs_one_track(
 
 
 def test_reconsider_and_batch_evaluation_read_one_track(
-    two_tracks: tuple[sqlite3.Connection, Scope, Scope], monkeypatch: pytest.MonkeyPatch
+    two_tracks: tuple[Connection, Scope, Scope], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     conn, first, second = two_tracks
     for scope in (first, second):
@@ -264,9 +265,7 @@ def test_reconsider_and_batch_evaluation_read_one_track(
 
     looked_at: list[str] = []
 
-    def stub_evaluate(
-        conn: sqlite3.Connection, company: str, title: str, url: str, jd_text: str
-    ) -> object:
+    def stub_evaluate(conn: Connection, company: str, title: str, url: str, jd_text: str) -> object:
         looked_at.append(url)
         raise batch_module.EvaluationError("stubbed: no evaluator in this test")
 
@@ -315,7 +314,7 @@ def test_the_default_scope_is_resolved_once_per_entry(
 
 
 def test_the_digest_shows_mail_events_of_its_own_track_only(
-    two_tracks: tuple[sqlite3.Connection, Scope, Scope],
+    two_tracks: tuple[Connection, Scope, Scope],
 ) -> None:
     from harrier.digest import actionable_updates
     from harrier.mail.watch import events_path
@@ -343,7 +342,7 @@ def test_the_digest_shows_mail_events_of_its_own_track_only(
 
 
 def test_a_contact_linked_to_another_tracks_job_is_not_reported_gone(
-    two_tracks: tuple[sqlite3.Connection, Scope, Scope],
+    two_tracks: tuple[Connection, Scope, Scope],
 ) -> None:
     from harrier.outreach.joblink import unresolved_links
     from harrier.tracker.store import add_contact
@@ -370,7 +369,7 @@ def test_a_contact_linked_to_another_tracks_job_is_not_reported_gone(
 
 
 def test_each_track_gets_its_own_export_and_the_trainer_reads_industry_only(
-    two_tracks: tuple[sqlite3.Connection, Scope, Scope],
+    two_tracks: tuple[Connection, Scope, Scope],
 ) -> None:
     from harrier.scoring.train import ExportError, latest_export, read_export
 

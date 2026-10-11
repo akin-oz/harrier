@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 
 import harrier.capture as capture_module
 import harrier_cli.main as cli_module
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.tracker import TrackerError, add_job, list_jobs, set_status, update_fields
 from harrier.tracker.queue import rank_by_deadline
@@ -49,7 +50,7 @@ def academic(data_dir: Path, capsys: pytest.CaptureFixture[str]) -> Iterator[Pat
     yield data_dir
 
 
-def scopes(conn: sqlite3.Connection) -> tuple[Scope, Scope]:
+def scopes(conn: Connection) -> tuple[Scope, Scope]:
     return default_scope(conn), resolve_scope(conn, SLUG)
 
 
@@ -64,7 +65,7 @@ def add_position(
     return main(argv)
 
 
-def only_row(conn: sqlite3.Connection, scope: Scope) -> dict[str, str]:
+def only_row(conn: Connection, scope: Scope) -> dict[str, str]:
     found = list_jobs(conn, scope)
     assert len(found) == 1, found
     return found[0]

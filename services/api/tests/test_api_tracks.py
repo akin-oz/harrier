@@ -9,7 +9,6 @@ Every database is built under `tmp_path`; every track and row is synthetic
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -22,6 +21,7 @@ from fastapi.testclient import TestClient
 
 import harrier.tracks as tracks_module
 import harrier_cli.main as cli_module
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.tracker import add_job
 from harrier.tracks import NON_DEFAULT_OPERATIONS, default_scope, resolve_scope
@@ -156,9 +156,9 @@ def test_routes_outside_the_allowlist_refuse_a_non_default_track(
     statements: list[str] = []
     real_get_conn = get_conn
 
-    def tracing_conn() -> Iterator[sqlite3.Connection]:
+    def tracing_conn() -> Iterator[Connection]:
         for conn in real_get_conn():
-            conn.set_trace_callback(statements.append)
+            conn.sqlite_driver.set_trace_callback(statements.append)
             yield conn
 
     client.app.dependency_overrides[get_conn] = tracing_conn  # type: ignore[attr-defined]

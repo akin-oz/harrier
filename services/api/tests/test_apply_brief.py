@@ -9,7 +9,6 @@ and truth documents are synthetic.
 from __future__ import annotations
 
 import json
-import sqlite3
 from pathlib import Path
 from typing import cast
 
@@ -49,6 +48,7 @@ from harrier.apply.brief import (
 from harrier.apply.claims import ClaimCheckError, NeedsInputError
 from harrier.apply.requirements import Flag
 from harrier.apply.review import Review
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.profile.store import get_document, put_document
 from harrier.resume.tailor import run_tailor
@@ -60,7 +60,7 @@ EXPERIENCE = "What relevant experience do you have?"
 
 
 @pytest.fixture()
-def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
+def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Connection:
     monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
     return seed(connect())
 
@@ -69,13 +69,13 @@ def brief(**fields: object) -> Brief:
     return parse_brief(fields)
 
 
-def letter(db: sqlite3.Connection, with_brief: Brief = EMPTY_BRIEF, posting: str = POSTING):
+def letter(db: Connection, with_brief: Brief = EMPTY_BRIEF, posting: str = POSTING):
     return generate_cover_letter(
         db, COMPANY, ROLE, jd_text=posting, brief=with_brief, scope=DEFAULT_SCOPE
     )
 
 
-def refusal(db: sqlite3.Connection, with_brief: Brief, posting: str = POSTING) -> str:
+def refusal(db: Connection, with_brief: Brief, posting: str = POSTING) -> str:
     with pytest.raises(ClaimCheckError) as caught:
         letter(db, with_brief, posting)
     return str(caught.value)
@@ -100,7 +100,7 @@ def capture_letter_call(monkeypatch: pytest.MonkeyPatch, response: str) -> dict[
     return seen
 
 
-def add_job(db: sqlite3.Connection, url: str = "https://example.com/jobs/1") -> str:
+def add_job(db: Connection, url: str = "https://example.com/jobs/1") -> str:
     _, row = add_manually(db, default_scope(db), company=COMPANY, title=ROLE, url=url)
     assert row is not None
     return row["id"]
@@ -123,7 +123,7 @@ def markdown_from(out: str) -> str:
 DOCKER_TRUTH_LINE = "Ran production services in Docker containers."
 
 
-def seed_resume(db: sqlite3.Connection) -> None:
+def seed_resume(db: Connection) -> None:
     """The synthetic resume bundle, with a truth document holding every
     bullet and one line naming Docker, which the bundle's skills omit. That
     is the example brief's confirmed skill (spec 071 O9)."""
@@ -133,7 +133,7 @@ def seed_resume(db: sqlite3.Connection) -> None:
     put_document(db, "resume_truth", "truth.md", "markdown", truth)
 
 
-def test_a_brief_round_trips_through_put_document(db: sqlite3.Connection) -> None:
+def test_a_brief_round_trips_through_put_document(db: Connection) -> None:
     seed_resume(db)
     text = (REPO_ROOT / "config" / "application-brief.example.json").read_text(encoding="utf-8")
     stored = store_brief(db, 7, text)
@@ -144,7 +144,7 @@ def test_a_brief_round_trips_through_put_document(db: sqlite3.Connection) -> Non
 
 
 def test_brief_set_refuses_an_unknown_key(
-    db: sqlite3.Connection, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    db: Connection, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     job_id = add_job(db)
     path = tmp_path / "brief.json"
@@ -156,7 +156,7 @@ def test_brief_set_refuses_an_unknown_key(
 
 
 def test_brief_set_refuses_a_wrong_type(
-    db: sqlite3.Connection, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    db: Connection, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     job_id = add_job(db)
     path = tmp_path / "brief.json"
@@ -171,7 +171,7 @@ def test_brief_set_refuses_a_wrong_type(
 
 
 def test_a_never_name_in_the_letter_refuses_it(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     stub_letter(
         monkeypatch, letter_json(last=f"{PARAGRAPH_THREE} I did that work for Northwind Retail.")
@@ -181,7 +181,7 @@ def test_a_never_name_in_the_letter_refuses_it(
 
 
 def test_a_never_name_in_an_answer_note_refuses_the_set(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     stub_answers(
         monkeypatch,
@@ -200,7 +200,7 @@ def test_a_never_name_in_an_answer_note_refuses_the_set(
 
 
 def test_never_name_matches_case_insensitively_on_word_boundaries(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     hidden = brief(never_name=["Fabrikam"])
     stub_letter(monkeypatch, letter_json(last=f"{PARAGRAPH_THREE} The client was fabrikam."))
@@ -211,7 +211,7 @@ def test_never_name_matches_case_insensitively_on_word_boundaries(
 
 
 def test_the_never_name_list_reaches_the_prompt(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     seen = capture_letter_call(monkeypatch, letter_json())
     letter(db, brief(never_name=["Northwind Retail"]))
@@ -223,7 +223,7 @@ def test_the_never_name_list_reaches_the_prompt(
 
 
 def test_a_letter_over_the_stated_word_limit_is_refused(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     stub_letter(monkeypatch, letter_json())
     message = refusal(db, brief(letter={"max_words": 40}))
@@ -231,7 +231,7 @@ def test_a_letter_over_the_stated_word_limit_is_refused(
 
 
 def test_an_answer_over_the_stated_sentence_limit_is_refused(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     stub_answers(monkeypatch, [answer(f"{CHECKOUT} {INVOICES}", GROUNDED_CLAIMS)])
     with pytest.raises(ClaimCheckError) as caught:
@@ -250,7 +250,7 @@ def test_an_answer_over_the_stated_sentence_limit_is_refused(
 
 
 def test_a_two_paragraph_brief_accepts_two_paragraphs(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     two = brief(letter={"paragraphs": 2})
     stub_letter(monkeypatch, letter_json(last=""))
@@ -261,7 +261,7 @@ def test_a_two_paragraph_brief_accepts_two_paragraphs(
 
 
 def test_abbreviations_and_versions_do_not_split_sentences(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     medium = "I checked the build, e.g. the lint step, on v1.2 of the billing service."
     stub_answers(monkeypatch, [answer(medium, [])])
@@ -284,7 +284,7 @@ ROTA_EVIDENCE = "Ran the on-call rota for the billing service"
 
 
 def test_brief_evidence_verifies_only_for_its_own_job(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store_brief(db, 1, json.dumps({"evidence": [ROTA_EVIDENCE]}))
     claims = [*GROUNDED_CLAIMS, candidate(ROTA, ROTA_EVIDENCE)]
@@ -297,7 +297,7 @@ GUIDANCE = "We read every letter ourselves and reply within two weeks."
 
 
 def test_employer_guidance_reaches_the_prompt(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     seen = capture_letter_call(monkeypatch, letter_json())
     letter(db, brief(employer_guidance=GUIDANCE))
@@ -306,7 +306,7 @@ def test_employer_guidance_reaches_the_prompt(
 
 
 def test_employer_guidance_verifies_an_employer_claim(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sentence = "Examplesoft reads every letter itself."
     claims = [*GROUNDED_CLAIMS, employer(sentence, "We read every letter ourselves")]
@@ -328,7 +328,7 @@ REQUIREMENTS = {
 @pytest.mark.parametrize("kind", sorted(REQUIREMENTS))
 def test_each_requirement_kind_is_flagged(
     kind: str,
-    db: sqlite3.Connection,
+    db: Connection,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -343,7 +343,7 @@ def test_each_requirement_kind_is_flagged(
 
 
 def test_a_posting_without_requirements_has_no_flags(
-    db: sqlite3.Connection,
+    db: Connection,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -357,7 +357,7 @@ def test_a_posting_without_requirements_has_no_flags(
 
 
 def test_a_work_authorization_question_is_not_sent_to_the_model(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     model_must_not_be_called(monkeypatch)
     posting = f"{POSTING} {REQUIREMENTS['work_authorization']}"
@@ -380,7 +380,7 @@ VIEW = "I dislike tools that hide their configuration."
 
 
 def test_an_opinion_question_without_a_view_is_a_placeholder(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     model_must_not_be_called(monkeypatch)
     drafts = generate_answer_set(db, COMPANY, ROLE, [OPINION], jd_text=POSTING, scope=DEFAULT_SCOPE)
@@ -388,7 +388,7 @@ def test_an_opinion_question_without_a_view_is_a_placeholder(
 
 
 def test_love_working_here_is_not_an_opinion_question(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     question = "Why would you love working here?"
     stub_answers(monkeypatch, [answer(CHECKOUT, GROUNDED_CLAIMS[:1]) | {"question": question}])
@@ -399,7 +399,7 @@ def test_love_working_here_is_not_an_opinion_question(
 
 
 def test_a_supplied_view_is_sent_and_counts_as_evidence(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     seen: dict[str, object] = {}
 
@@ -424,7 +424,7 @@ PAID_POSTING = f"{POSTING} The salary range is €60,000 - €75,000 per year."
 
 
 def test_the_salary_answer_quotes_the_posted_range(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     model_must_not_be_called(monkeypatch)
     drafts = generate_answer_set(
@@ -443,7 +443,7 @@ def test_the_salary_answer_quotes_the_posted_range(
 
 
 def test_the_salary_question_is_not_sent_to_the_model(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sent: list[list[str]] = []
 
@@ -461,7 +461,7 @@ def test_the_salary_question_is_not_sent_to_the_model(
 
 
 def test_salary_without_range_or_number_says_so_and_asks(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     model_must_not_be_called(monkeypatch)
     drafts = generate_answer_set(db, COMPANY, ROLE, [SALARY], jd_text=POSTING, scope=DEFAULT_SCOPE)
@@ -477,7 +477,7 @@ TRAVEL = Flag("travel", REQUIREMENTS["travel"])
 
 
 def write(
-    db: sqlite3.Connection, tmp_path: Path, full: str, review: Review
+    db: Connection, tmp_path: Path, full: str, review: Review
 ) -> tuple[Path, dict[str, Path] | None]:
     """Write the letter; return the markdown path and the artifacts, or None
     when the draft stopped on a placeholder."""
@@ -515,7 +515,7 @@ def next_actions(markdown: str) -> list[str]:
 
 
 def test_the_letter_markdown_ends_with_verify_and_next_action(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    db: Connection, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     stub_letter(monkeypatch, letter_json())
     draft = letter(db)
@@ -529,7 +529,7 @@ def test_the_letter_markdown_ends_with_verify_and_next_action(
     assert markdown.rstrip().endswith(f"Read {path} once against the posting.")
 
 
-def test_the_review_lists_a_number_in_inline_code(db: sqlite3.Connection, tmp_path: Path) -> None:
+def test_the_review_lists_a_number_in_inline_code(db: Connection, tmp_path: Path) -> None:
     """Spec 113: the checklist reads the same number tokens as C5."""
     path, _ = write(db, tmp_path, f"{PARAGRAPH_ONE} I led `12` engineers.", Review())
     assert "- Number: 12" in path.read_text(encoding="utf-8")
@@ -549,13 +549,13 @@ def test_the_review_lists_a_number_in_inline_code(db: sqlite3.Connection, tmp_pa
     ids=["placeholder-first", "then-a-flag", "then-reading"],
 )
 def test_next_action_priority(
-    full: str, flags: tuple[Flag, ...], expected: str, db: sqlite3.Connection, tmp_path: Path
+    full: str, flags: tuple[Flag, ...], expected: str, db: Connection, tmp_path: Path
 ) -> None:
     path, _ = write(db, tmp_path, full, Review(flags=flags))
     assert expected in next_actions(path.read_text(encoding="utf-8"))[0]
 
 
-def test_there_is_exactly_one_next_action(db: sqlite3.Connection, tmp_path: Path) -> None:
+def test_there_is_exactly_one_next_action(db: Connection, tmp_path: Path) -> None:
     second = "[[TODO: the team size]]"
     path, _ = write(
         db, tmp_path, f"{PARAGRAPH_ONE} {PLACEHOLDER} {second}", Review(flags=(TRAVEL,))
@@ -563,9 +563,7 @@ def test_there_is_exactly_one_next_action(db: sqlite3.Connection, tmp_path: Path
     assert len(next_actions(path.read_text(encoding="utf-8"))) == 1
 
 
-def test_the_letter_html_has_no_review_section_or_flag(
-    db: sqlite3.Connection, tmp_path: Path
-) -> None:
+def test_the_letter_html_has_no_review_section_or_flag(db: Connection, tmp_path: Path) -> None:
     path, paths = write(db, tmp_path, PARAGRAPH_ONE, Review(flags=(TRAVEL,)))
     assert paths is not None
     assert "## To verify" in path.read_text(encoding="utf-8")
@@ -575,7 +573,7 @@ def test_the_letter_html_has_no_review_section_or_flag(
 
 
 def test_the_answers_markdown_ends_with_verify_and_next_action(
-    db: sqlite3.Connection,
+    db: Connection,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -609,7 +607,7 @@ def test_the_answers_markdown_ends_with_verify_and_next_action(
 
 
 def test_cli_cover_letter_uses_the_brief_for_its_job(
-    db: sqlite3.Connection,
+    db: Connection,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -641,7 +639,7 @@ def _skills_line(markdown_path: Path) -> str:
 
 
 def test_confirmed_skill_enters_skills_for_its_job_only(
-    db: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    db: Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(REPO_ROOT)
     seed_resume(db)
@@ -674,14 +672,14 @@ def test_confirmed_skill_enters_skills_for_its_job_only(
     assert "Docker" not in run(other)
 
 
-def test_confirmed_skill_without_source_is_refused(db: sqlite3.Connection) -> None:
+def test_confirmed_skill_without_source_is_refused(db: Connection) -> None:
     seed_resume(db)
     with pytest.raises(BriefError, match="not found in all_skills or the truth documents: Haskell"):
         store_brief(db, 7, json.dumps({"confirmed_skills": ["Docker", "Haskell"]}))
     assert get_document(db, "application_brief", "7") is None
 
 
-def test_a_confirmed_skill_must_be_a_whole_word_in_the_truth(db: sqlite3.Connection) -> None:
+def test_a_confirmed_skill_must_be_a_whole_word_in_the_truth(db: Connection) -> None:
     # "duct" sits inside "production" in the truth line. A substring match
     # would accept a skill the candidate never named.
     seed_resume(db)

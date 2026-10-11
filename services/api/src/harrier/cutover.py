@@ -26,13 +26,13 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import cast
 
+from harrier.connection import Connection
 from harrier.db import data_dir
 from harrier.parity import checklist_status, parse_matrix
 from harrier.parity.checklist import CHECKLIST_PATH
@@ -107,7 +107,7 @@ def old_jobs_check(labels: tuple[str, ...], launchctl: LaunchctlFn) -> Check:
     return Check("old jobs loaded", True, f"{len(loaded)} of {len(labels)} loaded")
 
 
-def tracker_check(conn: sqlite3.Connection) -> Check:
+def tracker_check(conn: Connection) -> Check:
     """Migrated data has to be present, or go-live points the schedule at an
     empty tracker and the first run rediscovers a year of postings."""
     jobs = int(conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0])
@@ -143,7 +143,7 @@ def env_check(env_path: Path) -> Check:
 
 
 def preflight(
-    conn: sqlite3.Connection,
+    conn: Connection,
     *,
     old_root: Path,
     checklist_path: Path | None = None,
@@ -294,7 +294,7 @@ def snapshot(old_root: Path, destination: Path, *, execute: bool, result: Cutove
     result.lines.append(f"snapshotted {', '.join(present)} to {destination}")
 
 
-def verify(conn: sqlite3.Connection, *, result: CutoverResult) -> None:
+def verify(conn: Connection, *, result: CutoverResult) -> None:
     jobs = int(conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0])
     contacts = int(conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0])
     documents = int(conn.execute("SELECT COUNT(*) FROM profile_documents").fetchone()[0])
@@ -428,7 +428,7 @@ def _refuse(stamp: str, result: CutoverResult, *, execute: bool, reason: str) ->
 
 
 def run_cutover(
-    conn: sqlite3.Connection,
+    conn: Connection,
     *,
     old_root: Path,
     stamp: str,

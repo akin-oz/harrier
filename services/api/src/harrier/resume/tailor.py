@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 
 from harrier.apply.brief import load_brief
+from harrier.connection import Connection
 from harrier.db import data_dir
 from harrier.resume.ai import build_ai_tailored_content
 from harrier.resume.content import load_bundle, load_truth_sources
@@ -78,7 +78,7 @@ def resume_paths_for(
 
 
 def run_tailor(
-    conn: sqlite3.Connection,
+    conn: Connection,
     scope: Scope,
     job_id: int,
     *,

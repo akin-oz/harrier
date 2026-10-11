@@ -7,12 +7,12 @@ say so. Three mechanisms, tested separately because each fails alone.
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.notify import build_telegram_message
 from harrier.runoutcome import (
@@ -32,7 +32,7 @@ from harrier.tracks import default_scope
 
 
 @pytest.fixture
-def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
+def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Connection:
     monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("HARRIER_DEMO", raising=False)
     return connect()
@@ -164,23 +164,23 @@ def test_the_message_without_an_outcome_is_unchanged() -> None:
 # --- last success -----------------------------------------------------------
 
 
-def test_a_success_is_recorded_and_read_back(db: sqlite3.Connection) -> None:
+def test_a_success_is_recorded_and_read_back(db: Connection) -> None:
     record_success(db, DISCOVERY_JOB, at="2026-08-01T09:00:00Z")
     assert last_success(db, DISCOVERY_JOB) == "2026-08-01T09:00:00Z"
 
 
-def test_a_job_that_has_never_succeeded_has_no_row(db: sqlite3.Connection) -> None:
+def test_a_job_that_has_never_succeeded_has_no_row(db: Connection) -> None:
     assert last_success(db, DISCOVERY_JOB) is None
 
 
-def test_recording_again_replaces_the_previous_value(db: sqlite3.Connection) -> None:
+def test_recording_again_replaces_the_previous_value(db: Connection) -> None:
     record_success(db, DISCOVERY_JOB, at="2026-08-01T09:00:00Z")
     record_success(db, DISCOVERY_JOB, at="2026-08-02T09:00:00Z")
     assert last_success(db, DISCOVERY_JOB) == "2026-08-02T09:00:00Z"
     assert len(all_last_success(db)) == 1
 
 
-def test_each_job_keeps_its_own_timestamp(db: sqlite3.Connection) -> None:
+def test_each_job_keeps_its_own_timestamp(db: Connection) -> None:
     record_success(db, DISCOVERY_JOB, at="2026-08-01T09:00:00Z")
     record_success(db, DIGEST_JOB, at="2026-08-08T20:30:00Z")
     assert all_last_success(db) == {
@@ -219,7 +219,7 @@ def test_a_success_today_reads_as_today() -> None:
 # --- the digest reports the schedule ----------------------------------------
 
 
-def test_the_digest_leads_with_every_scheduled_job(db: sqlite3.Connection) -> None:
+def test_the_digest_leads_with_every_scheduled_job(db: Connection) -> None:
     """Every job is named even when it has no row, because a job missing from
     the list is exactly the job nobody notices has stopped."""
     from harrier.digest import SCHEDULED_JOBS, schedule_health_lines
@@ -230,7 +230,7 @@ def test_the_digest_leads_with_every_scheduled_job(db: sqlite3.Connection) -> No
         assert any(line.startswith(f"{job}:") for line in lines)
 
 
-def test_a_two_month_outage_is_legible_in_the_digest(db: sqlite3.Connection) -> None:
+def test_a_two_month_outage_is_legible_in_the_digest(db: Connection) -> None:
     """The whole point. `New prospects today: 0` reads the same on a quiet
     Tuesday and in the second month of a silent failure."""
     from harrier.digest import build_digest
@@ -242,7 +242,7 @@ def test_a_two_month_outage_is_legible_in_the_digest(db: sqlite3.Connection) -> 
     assert digest.index("last succeeded") < digest.index("New prospects today")
 
 
-def test_a_job_with_no_history_is_named_in_the_digest(db: sqlite3.Connection) -> None:
+def test_a_job_with_no_history_is_named_in_the_digest(db: Connection) -> None:
     from harrier.digest import build_digest
 
     assert "has never recorded a success" in build_digest(
@@ -321,7 +321,7 @@ def run_discover(monkeypatch: pytest.MonkeyPatch, aggregate_value: dict[str, obj
 
 
 def test_the_command_exits_non_zero_when_every_source_failed(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    db: Connection, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     code = run_discover(
         monkeypatch, aggregate([failed_source("greenhouse"), failed_source("lever")])
@@ -331,7 +331,7 @@ def test_the_command_exits_non_zero_when_every_source_failed(
 
 
 def test_the_command_exits_zero_on_a_partial_failure(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    db: Connection, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Reported on stderr, but not fatal: this is a normal day."""
     code = run_discover(monkeypatch, aggregate([ok_source("greenhouse"), failed_source("lever")]))
@@ -340,12 +340,12 @@ def test_the_command_exits_zero_on_a_partial_failure(
 
 
 def test_the_command_exits_non_zero_when_nothing_was_attempted(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     assert run_discover(monkeypatch, aggregate([])) == EXIT_RUN_FAILED
 
 
 def test_the_command_exits_zero_on_a_healthy_run(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     assert run_discover(monkeypatch, aggregate([ok_source("greenhouse")])) == EXIT_OK

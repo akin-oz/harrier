@@ -6,7 +6,6 @@ config/application-profile.example.json and .md (which these tests
 thereby prove valid)."""
 
 import json
-import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 from typing import cast
@@ -34,6 +33,7 @@ from harrier.apply import (
     write_cover_letter_artifacts,
 )
 from harrier.apply.answers import AnswerDraft
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.llm import LLMClientError
 from harrier.profile.store import put_document
@@ -53,7 +53,7 @@ SHORT_LETTER = "I'm interested in this role because it fits my background well."
 
 
 @pytest.fixture()
-def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
+def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Connection:
     monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
     conn = connect()
     put_document(
@@ -108,7 +108,7 @@ def profile_json() -> dict[str, object]:
 # ---------------------------------------------------------------------------
 
 
-def test_profile_validation_passes_on_committed_example(db: sqlite3.Connection) -> None:
+def test_profile_validation_passes_on_committed_example(db: Connection) -> None:
     assert validate_profile(db, DEFAULT_SCOPE) == []
 
 
@@ -134,7 +134,7 @@ def test_safe_framing_includes_do_not_claims() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_build_answers_payload_includes_context(db: sqlite3.Connection) -> None:
+def test_build_answers_payload_includes_context(db: Connection) -> None:
     payload = build_answers_payload(
         db,
         "exampleco",
@@ -200,7 +200,7 @@ def test_parse_answers_response_tolerates_trailing_comma() -> None:
 
 
 def test_generate_answers_propagates_ai_error(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def boom(system_prompt: str, user_input: str) -> str:
         raise LLMClientError("configured backend is unavailable")
@@ -213,7 +213,7 @@ def test_generate_answers_propagates_ai_error(
 
 
 def test_generated_answers_with_banned_phrases_are_refused(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """These phrases used to be deleted from the answer as substrings, which
     changed what it said without saying so. They now refuse the set
@@ -283,7 +283,7 @@ def test_render_markdown_has_draft_sections() -> None:
 
 
 def test_deterministic_salary_answer_uses_candidate_compensation(
-    db: sqlite3.Connection,
+    db: Connection,
 ) -> None:
     from harrier.apply.profile import load_candidate_document, load_profile_json
 
@@ -298,7 +298,7 @@ def test_deterministic_salary_answer_uses_candidate_compensation(
 
 
 def test_deterministic_interest_answer_fills_company_and_product_signal(
-    db: sqlite3.Connection,
+    db: Connection,
 ) -> None:
     from harrier.apply.profile import load_candidate_document, load_profile_json
 
@@ -318,7 +318,7 @@ def test_deterministic_interest_answer_fills_company_and_product_signal(
 # ---------------------------------------------------------------------------
 
 
-def test_build_cover_letter_payload_includes_context(db: sqlite3.Connection) -> None:
+def test_build_cover_letter_payload_includes_context(db: Connection) -> None:
     payload = build_cover_letter_payload(
         db,
         "examplesoft",
@@ -354,7 +354,7 @@ def test_parse_cover_letter_response_tolerates_trailing_comma() -> None:
 
 
 def test_internal_dump_language_refuses_the_letter(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Normalization used to delete this scaffolding. Deleting text the model
     wrote changes the letter silently, and substring deletion cut words in
@@ -390,9 +390,7 @@ def test_normalize_cover_letter_text_changes_formatting_only() -> None:
     )
 
 
-def test_write_cover_letter_artifacts_creates_md_html_pdf(
-    db: sqlite3.Connection, tmp_path: Path
-) -> None:
+def test_write_cover_letter_artifacts_creates_md_html_pdf(db: Connection, tmp_path: Path) -> None:
     def fake_render(html_text: str, pdf_path: Path) -> None:
         pdf_path.write_bytes(b"%PDF-1.4\n")
 
@@ -424,7 +422,7 @@ def test_write_cover_letter_artifacts_creates_md_html_pdf(
 
 
 def test_write_cover_letter_artifacts_fails_when_pdf_not_created(
-    db: sqlite3.Connection, tmp_path: Path
+    db: Connection, tmp_path: Path
 ) -> None:
     def no_render(html_text: str, pdf_path: Path) -> None:
         return None
@@ -456,7 +454,7 @@ def _seed_earlier_letter(directory: Path) -> dict[str, Path]:
 
 
 def test_a_letter_that_fails_the_gate_removes_the_earlier_pdf_and_keeps_the_draft(
-    db: sqlite3.Connection, tmp_path: Path
+    db: Connection, tmp_path: Path
 ) -> None:
     """Spec 067: neither the refused PDF nor the earlier one is left for the
     Apply page to offer, and the new draft stays so the operator can fix it."""
@@ -491,7 +489,7 @@ def test_a_letter_that_fails_the_gate_removes_the_earlier_pdf_and_keeps_the_draf
 
 
 def test_a_letter_render_that_raises_removes_the_earlier_pdf(
-    db: sqlite3.Connection, tmp_path: Path
+    db: Connection, tmp_path: Path
 ) -> None:
     directory = tmp_path / "letters"
     paths = _seed_earlier_letter(directory)
@@ -518,7 +516,7 @@ def test_a_letter_render_that_raises_removes_the_earlier_pdf(
     assert paths["markdown"].is_file()
 
 
-def test_render_cover_letter_html_contains_only_full_letter(db: sqlite3.Connection) -> None:
+def test_render_cover_letter_html_contains_only_full_letter(db: Connection) -> None:
     html = render_cover_letter_html(
         db,
         "examplesoft",
@@ -533,7 +531,7 @@ def test_render_cover_letter_html_contains_only_full_letter(db: sqlite3.Connecti
 
 
 def test_generate_cover_letter_propagates_ai_error(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def boom(system_prompt: str, user_input: str) -> str:
         raise LLMClientError("configured backend is unavailable")
@@ -544,7 +542,7 @@ def test_generate_cover_letter_propagates_ai_error(
 
 
 def test_generate_cover_letter_validates_three_paragraphs(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def two_paragraph_response(system_prompt: str, user_input: str) -> str:
         return json.dumps(
@@ -573,7 +571,7 @@ def test_generate_cover_letter_validates_three_paragraphs(
 # ---------------------------------------------------------------------------
 
 
-def _store_forbidden(conn: sqlite3.Connection, *phrases: str) -> None:
+def _store_forbidden(conn: Connection, *phrases: str) -> None:
     store_documents(conn, {"forbidden_phrases": list(phrases)}, {})
 
 
@@ -605,7 +603,7 @@ def _answers_json(note: str) -> str:
 
 
 def test_a_forbidden_phrase_refuses_the_cover_letter(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _store_forbidden(db, "Product Engineering")
     monkeypatch.setattr(letters_module, "generate_text", _letter_response)
@@ -614,7 +612,7 @@ def test_a_forbidden_phrase_refuses_the_cover_letter(
 
 
 def test_a_clean_cover_letter_passes_the_forbidden_list(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _store_forbidden(db, "world-class expert")
     monkeypatch.setattr(letters_module, "generate_text", _letter_response)
@@ -625,7 +623,7 @@ def test_a_clean_cover_letter_passes_the_forbidden_list(
 
 
 def test_a_forbidden_phrase_refuses_the_answers(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _store_forbidden(db, "typescript product features")
     monkeypatch.setattr(answers_module, "generate_text", _answers_stub())
@@ -636,7 +634,7 @@ def test_a_forbidden_phrase_refuses_the_answers(
 
 
 def test_a_forbidden_phrase_in_an_answer_note_refuses_the_answers(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _store_forbidden(db, "open source maintainer")
     monkeypatch.setattr(
@@ -649,7 +647,7 @@ def test_a_forbidden_phrase_in_an_answer_note_refuses_the_answers(
 
 
 def test_an_unreadable_resume_facts_document_refuses_the_letter(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A broken document must not read as an empty list. Skipping the check
     because the list could not be read is the silent pass spec 034 removed."""

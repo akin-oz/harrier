@@ -26,10 +26,10 @@ Two refusals matter more than the feature:
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from harrier.connection import Connection
 from harrier.screening.normalized import normalize, stable_key
 from harrier.screening.policy import policy_version
 from harrier.screening.rules import CandidateConfig
@@ -66,7 +66,7 @@ class ReconsiderReport:
         )
 
 
-def human_rejected_keys(conn: sqlite3.Connection, scope: Scope) -> set[str]:
+def human_rejected_keys(conn: Connection, scope: Scope) -> set[str]:
     """Normalized identities of jobs the operator has rejected.
 
     Matched on url and on company plus title, the same identities screening
@@ -87,7 +87,7 @@ def human_rejected_keys(conn: sqlite3.Connection, scope: Scope) -> set[str]:
     return protected
 
 
-def human_rejected_seen_keys(conn: sqlite3.Connection, scope: Scope, source: str) -> set[str]:
+def human_rejected_seen_keys(conn: Connection, scope: Scope, source: str) -> set[str]:
     """The seen keys discovery recorded for this source's rejected rows.
 
     Discovery keys a decision by `job_key`, a hash of the source, the board
@@ -117,7 +117,7 @@ def human_rejected_seen_keys(conn: sqlite3.Connection, scope: Scope, source: str
 
 
 def reconsider_source(
-    conn: sqlite3.Connection,
+    conn: Connection,
     scope: Scope,
     source: str,
     candidate_cfg: CandidateConfig | None,

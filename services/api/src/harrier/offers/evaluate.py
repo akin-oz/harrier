@@ -10,12 +10,12 @@ from __future__ import annotations
 import json
 import logging
 import re
-import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
 from harrier.apply.profile import load_candidate_document
+from harrier.connection import Connection
 from harrier.db import data_dir
 from harrier.llm import LLMClientError, generate_text
 from harrier.llm.jsonparse import loads_tolerant
@@ -117,7 +117,7 @@ def report_path_for(company: str, role: str) -> Path:
     return reports_dir() / f"{slugify(f'{company}-{role}')}.md"
 
 
-def build_system_prompt(conn: sqlite3.Connection) -> str:
+def build_system_prompt(conn: Connection) -> str:
     """Assemble the persona header from data (stated change)."""
     # `evaluate` runs on the default track only (spec 093).
     bundle = load_bundle(conn, default_scope(conn))
@@ -193,7 +193,7 @@ def parse_verdict(data: dict[str, object]) -> Verdict:
 
 
 def evaluate_offer(
-    conn: sqlite3.Connection,
+    conn: Connection,
     company: str,
     role: str,
     job_url: str,

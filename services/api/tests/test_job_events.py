@@ -28,6 +28,7 @@ import pytest
 from conftest import auth
 from fastapi.testclient import TestClient
 
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.screening.descriptions import save_description_cache
 from harrier.tracker import store as tracker_store
@@ -58,13 +59,13 @@ from harrier_cli.main import main
 
 
 @pytest.fixture
-def conn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
+def conn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Connection:
     monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("HARRIER_DEMO", raising=False)
     return connect()
 
 
-def _job(conn: sqlite3.Connection, index: int = 1, **fields: str) -> int:
+def _job(conn: Connection, index: int = 1, **fields: str) -> int:
     return add_job(
         conn,
         {
@@ -80,14 +81,14 @@ def _job(conn: sqlite3.Connection, index: int = 1, **fields: str) -> int:
     )
 
 
-def _count(conn: sqlite3.Connection) -> int:
+def _count(conn: Connection) -> int:
     return int(conn.execute("SELECT COUNT(*) FROM job_events").fetchone()[0])
 
 
 # --- one event per change, committed with it -----------------------------------
 
 
-def test_every_status_change_appends_one_event(conn: sqlite3.Connection) -> None:
+def test_every_status_change_appends_one_event(conn: Connection) -> None:
     job_id = _job(conn)
     created = list_events(conn, default_scope(conn), job_id)
     assert [(e["kind"], e["actor"], e["to_status"]) for e in created] == [
@@ -104,7 +105,7 @@ def test_every_status_change_appends_one_event(conn: sqlite3.Connection) -> None
         previous = status
 
 
-def test_an_event_records_the_score_the_candidate_saw(conn: sqlite3.Connection) -> None:
+def test_an_event_records_the_score_the_candidate_saw(conn: Connection) -> None:
     """The score and version from before the write, and the description that
     was judged. A later rescore changes the row and never the event."""
     job_id = _job(conn, scoring_version="0a1b2c3d4e5f")
@@ -126,7 +127,7 @@ def test_an_event_records_the_score_the_candidate_saw(conn: sqlite3.Connection) 
 
 
 def test_a_damaged_description_file_does_not_block_a_decision(
-    conn: sqlite3.Connection, tmp_path: Path
+    conn: Connection, tmp_path: Path
 ) -> None:
     """A cache write cut off mid-character leaves bytes that are not UTF-8.
     The entry reads as missing, as malformed JSON already did, so the move is
@@ -144,7 +145,7 @@ def test_a_damaged_description_file_does_not_block_a_decision(
     assert list_events(conn, default_scope(conn), job_id)[-1]["description_sha256"] == ""
 
 
-def test_a_status_change_and_its_event_commit_together(conn: sqlite3.Connection) -> None:
+def test_a_status_change_and_its_event_commit_together(conn: Connection) -> None:
     """Both or neither. A trigger makes the event insert fail; the status
     change it belonged to must not survive it, and neither may a new row."""
     job_id = _job(conn)
@@ -162,7 +163,7 @@ def test_a_status_change_and_its_event_commit_together(conn: sqlite3.Connection)
     assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == jobs_before
 
 
-def test_job_events_is_append_only(conn: sqlite3.Connection) -> None:
+def test_job_events_is_append_only(conn: Connection) -> None:
     job_id = _job(conn)
     with pytest.raises(sqlite3.IntegrityError, match="append-only"):
         conn.execute("UPDATE job_events SET actor = 'company'")
@@ -177,7 +178,7 @@ def test_job_events_is_append_only(conn: sqlite3.Connection) -> None:
 
 
 def test_a_company_verdict_is_never_a_candidate_decision(
-    conn: sqlite3.Connection, capsys: pytest.CaptureFixture[str]
+    conn: Connection, capsys: pytest.CaptureFixture[str]
 ) -> None:
     applied = _job(conn, 1)
     other = _job(conn, 2)
@@ -219,7 +220,7 @@ def test_a_company_verdict_is_never_a_candidate_decision(
             assert row["actor"] == "company"
 
 
-def test_the_interviewing_verb_is_a_company_outcome(conn: sqlite3.Connection) -> None:
+def test_the_interviewing_verb_is_a_company_outcome(conn: Connection) -> None:
     """From the command line and from the browser alike: an interview is
     something the company did, so the old verb cannot file it as the
     candidate's decision."""
@@ -245,7 +246,7 @@ def test_the_interviewing_verb_is_a_company_outcome(conn: sqlite3.Connection) ->
 
 
 def test_a_company_cannot_reject_an_application_never_sent(
-    conn: sqlite3.Connection, capsys: pytest.CaptureFixture[str]
+    conn: Connection, capsys: pytest.CaptureFixture[str]
 ) -> None:
     job_id = _job(conn)
     events_before = _count(conn)
@@ -271,7 +272,7 @@ def test_a_company_cannot_reject_an_application_never_sent(
     assert _count(conn) == events_before
 
 
-def test_an_interview_invitation_needs_no_application(conn: sqlite3.Connection) -> None:
+def test_an_interview_invitation_needs_no_application(conn: Connection) -> None:
     """A recruiter can approach about a job nobody applied to, and
     `harrier.tracker.transitions` keeps that move legal on purpose. The
     application rule is about rejections (spec 079 amendment)."""
@@ -292,7 +293,7 @@ def test_an_interview_invitation_needs_no_application(conn: sqlite3.Connection) 
 # --- the reason table -----------------------------------------------------------
 
 
-def test_a_company_can_answer_the_interview_it_invited(conn: sqlite3.Connection) -> None:
+def test_a_company_can_answer_the_interview_it_invited(conn: Connection) -> None:
     """An invited interview is engagement, like an application: after a
     recruiter's approach the company can still turn the candidate down, and
     that is its outcome on every path that records it (spec 079 amendment).
@@ -370,7 +371,7 @@ def test_infer_code(text: str, code: str) -> None:
 # --- reopening and the batch evaluator ------------------------------------------
 
 
-def test_reopening_keeps_the_history(conn: sqlite3.Connection) -> None:
+def test_reopening_keeps_the_history(conn: Connection) -> None:
     job_id = _job(conn)
     change_status(conn, default_scope(conn), str(job_id), "reject", reason="missing stack")
     rejection = list_events(conn, default_scope(conn), job_id)[-1]
@@ -392,7 +393,7 @@ def test_reopening_keeps_the_history(conn: sqlite3.Connection) -> None:
 # --- backfill ---------------------------------------------------------------------
 
 
-def _legacy_row(conn: sqlite3.Connection, index: int, **fields: str) -> int:
+def _legacy_row(conn: Connection, index: int, **fields: str) -> int:
     """A row as it existed before spec 079: written with no events, the way
     the old tracker's import wrote them."""
     values = {
@@ -416,14 +417,14 @@ def _legacy_row(conn: sqlite3.Connection, index: int, **fields: str) -> int:
     return int(cursor.lastrowid)
 
 
-def _shape(conn: sqlite3.Connection, job_id: int) -> list[tuple[str, str, str, str, str, str]]:
+def _shape(conn: Connection, job_id: int) -> list[tuple[str, str, str, str, str, str]]:
     return [
         (e["at"], e["kind"], e["actor"], e["from_status"], e["to_status"], e["reason_code"])
         for e in list_events(conn, default_scope(conn), job_id)
     ]
 
 
-def test_backfill_reconstructs_what_the_row_still_holds(conn: sqlite3.Connection) -> None:
+def test_backfill_reconstructs_what_the_row_still_holds(conn: Connection) -> None:
     waiting = _legacy_row(conn, 1)
     company_said_no = _legacy_row(
         conn,
@@ -505,7 +506,7 @@ def test_backfill_reconstructs_what_the_row_still_holds(conn: sqlite3.Connection
     assert list_events(conn, default_scope(conn), skipped)[-1]["reason_text"] == "hybrid"
 
 
-def test_a_legacy_row_decided_live_keeps_its_history(conn: sqlite3.Connection) -> None:
+def test_a_legacy_row_decided_live_keeps_its_history(conn: Connection) -> None:
     """Backfill skips a job with any event, so a pre-079 row's first live move
     used to cost it everything before that move, for good under the
     append-only trigger. Its history is now written first, in the same
@@ -525,7 +526,7 @@ def test_a_legacy_row_decided_live_keeps_its_history(conn: sqlite3.Connection) -
     )
 
 
-def test_backfill_is_idempotent(conn: sqlite3.Connection) -> None:
+def test_backfill_is_idempotent(conn: Connection) -> None:
     _legacy_row(conn, 1, status="rejected", rejection_reason="duplicate")
     live = _job(conn, 2)  # recorded live, so it already has its history
     first = backfill_events(conn, default_scope(conn))
@@ -536,9 +537,7 @@ def test_backfill_is_idempotent(conn: sqlite3.Connection) -> None:
     assert [e["backfilled"] for e in list_events(conn, default_scope(conn), live)] == ["0"]
 
 
-def test_the_event_commands_run(
-    conn: sqlite3.Connection, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_event_commands_run(conn: Connection, capsys: pytest.CaptureFixture[str]) -> None:
     legacy = _legacy_row(conn, 1, status="rejected", rejection_reason="missing stack")
     assert main(["events", "backfill", "--dry-run"]) == 0
     assert "would write 2 events" in capsys.readouterr().out
@@ -553,7 +552,7 @@ def test_the_event_commands_run(
 
 
 def test_event_writes_log_no_reason_text(
-    conn: sqlite3.Connection, caplog: pytest.LogCaptureFixture
+    conn: Connection, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Ids and codes only. The reason is the candidate's own words, and the
     company and title identify the search."""
@@ -595,7 +594,7 @@ def test_event_writes_log_no_reason_text(
 
 
 @pytest.fixture
-def rival(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
+def rival(conn: Connection) -> Iterator[Connection]:
     """A second connection to the same database, one that will not wait."""
     other = connect()
     other.execute("PRAGMA busy_timeout=0")
@@ -603,7 +602,7 @@ def rival(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
     other.close()
 
 
-def _race_once(rival: sqlite3.Connection, job_id: int, outcome: list[str]) -> None:
+def _race_once(rival: Connection, job_id: int, outcome: list[str]) -> None:
     """One competing move from the rival, recorded as getting in or waiting."""
     if outcome:
         return
@@ -616,7 +615,7 @@ def _race_once(rival: sqlite3.Connection, job_id: int, outcome: list[str]) -> No
 
 
 def test_a_first_move_holds_the_lock_from_read_to_write(
-    conn: sqlite3.Connection, rival: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    conn: Connection, rival: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Two writers on a job with no events both read "no events" and both
     wrote its history, for good under the append-only trigger. The row is now
@@ -639,7 +638,7 @@ def test_a_first_move_holds_the_lock_from_read_to_write(
 
 
 def test_backfill_holds_the_lock_from_read_to_write(
-    conn: sqlite3.Connection, rival: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    conn: Connection, rival: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The same race from the other side: a live first move landing while
     backfill plans the same job."""
@@ -660,7 +659,7 @@ def test_backfill_holds_the_lock_from_read_to_write(
 
 
 def test_a_field_update_holds_the_lock_from_read_to_write(
-    conn: sqlite3.Connection, rival: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    conn: Connection, rival: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The invariants a field write is checked against are read under the
     same lock, so they are the row the write lands on."""
@@ -677,7 +676,7 @@ def test_a_field_update_holds_the_lock_from_read_to_write(
     assert outcome == ["waited"]
 
 
-def test_a_company_that_has_responded_has_engaged(conn: sqlite3.Connection) -> None:
+def test_a_company_that_has_responded_has_engaged(conn: Connection) -> None:
     """A recruiter's invite, then the company's first response: the row now
     holds neither an application nor the interviewing status, but the events
     show the company engaged, so a later response is still its outcome, on
@@ -696,7 +695,7 @@ def test_a_company_that_has_responded_has_engaged(conn: sqlite3.Connection) -> N
 
 @pytest.mark.parametrize("steps", [[], ["shortlisted"], ["shortlisted", "tailored_cv_requested"]])
 def test_the_candidate_moving_a_job_is_not_the_company_engaging(
-    conn: sqlite3.Connection, steps: list[str]
+    conn: Connection, steps: list[str]
 ) -> None:
     """Shortlisting and asking for a tailored CV are the candidate's side.
     With no application, invited interview or earlier response, no company
@@ -719,7 +718,7 @@ def test_the_candidate_moving_a_job_is_not_the_company_engaging(
 
 
 def test_a_description_no_encoding_can_write_reads_as_missing(
-    conn: sqlite3.Connection, tmp_path: Path
+    conn: Connection, tmp_path: Path
 ) -> None:
     """Valid JSON can carry a lone surrogate, which no text encodes, and
     hashing it raised inside the status writer. Only an outside writer can

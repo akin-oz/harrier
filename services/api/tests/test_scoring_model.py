@@ -23,7 +23,6 @@ import json
 import logging
 import math
 import random
-import sqlite3
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
@@ -37,6 +36,7 @@ from sklearn.linear_model import LogisticRegression
 import harrier.scoring.model as model_module
 import harrier.scoring.train as train_module
 from harrier.atomicio import write_bytes_atomic
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.scoring.export import export_features, exports_dir
 from harrier.scoring.features import FEATURE_ORDER, NUMERIC_FEATURES, extract, required_years
@@ -454,11 +454,11 @@ def test_signals_name_the_top_contributions_with_signs(cfg: dict[str, object]) -
 
 
 @pytest.fixture
-def conn() -> sqlite3.Connection:
+def conn() -> Connection:
     return connect()
 
 
-def _tracked(conn: sqlite3.Connection, index: int, *, described: bool = True) -> int:
+def _tracked(conn: Connection, index: int, *, described: bool = True) -> int:
     url = f"https://boards.example.com/quillfeather/{index}"
     if described:
         save_description_cache(url, f"Posting {index}. {BODY}")
@@ -475,14 +475,14 @@ def _tracked(conn: sqlite3.Connection, index: int, *, described: bool = True) ->
     )
 
 
-def _label(conn: sqlite3.Connection, job_id: int) -> Labelled | str:
+def _label(conn: Connection, job_id: int) -> Labelled | str:
     job = get_job(conn, default_scope(conn), job_id)
     return label_job(
         job, list_events(conn, default_scope(conn), job_id), load_cached_description(job["url"])
     )
 
 
-def test_labels_come_from_candidate_decisions(conn: sqlite3.Connection) -> None:
+def test_labels_come_from_candidate_decisions(conn: Connection) -> None:
     acted = _tracked(conn, 1)
     change_status(conn, default_scope(conn), str(acted), "shortlist")
     skipped = _tracked(conn, 2)
@@ -542,7 +542,7 @@ def test_labels_come_from_candidate_decisions(conn: sqlite3.Connection) -> None:
     )
 
 
-def test_a_company_outcome_is_never_a_label(conn: sqlite3.Connection) -> None:
+def test_a_company_outcome_is_never_a_label(conn: Connection) -> None:
     applied = _tracked(conn, 1)
     change_status(conn, default_scope(conn), str(applied), "applied")
     record_company_outcome(conn, default_scope(conn), str(applied), "ghosted")
@@ -556,7 +556,7 @@ def test_a_company_outcome_is_never_a_label(conn: sqlite3.Connection) -> None:
     assert _label(conn, approached) == UNDECIDED
 
 
-def test_system_decisions_are_excluded(conn: sqlite3.Connection) -> None:
+def test_system_decisions_are_excluded(conn: Connection) -> None:
     closed = _tracked(conn, 1)
     set_status(
         conn,
@@ -570,7 +570,7 @@ def test_system_decisions_are_excluded(conn: sqlite3.Connection) -> None:
     assert _label(conn, closed) == SYSTEM_CLOSED
 
 
-def test_a_decision_on_a_different_description_is_excluded(conn: sqlite3.Connection) -> None:
+def test_a_decision_on_a_different_description_is_excluded(conn: Connection) -> None:
     judged = _tracked(conn, 1)
     change_status(conn, default_scope(conn), str(judged), "shortlist")
     # The cache is keyed by URL and can be rewritten: this text is not the one
@@ -586,7 +586,7 @@ def test_a_decision_on_a_different_description_is_excluded(conn: sqlite3.Connect
     assert header["excluded"][DESCRIPTION_CHANGED] == 1
 
 
-def test_the_export_carries_no_text(conn: sqlite3.Connection) -> None:
+def test_the_export_carries_no_text(conn: Connection) -> None:
     """An export is a file that travels: ids, labels and numbers only.
 
     A skipped job with a planted reason is exported too, so reason text has
@@ -615,7 +615,7 @@ def test_the_export_carries_no_text(conn: sqlite3.Connection) -> None:
         assert secret not in text, secret
 
 
-def test_blocked_postings_are_excluded_from_labels(conn: sqlite3.Connection) -> None:
+def test_blocked_postings_are_excluded_from_labels(conn: Connection) -> None:
     """The floor ranks a blocked posting, not the model, so it is not a label
     (spec 081)."""
     blocked_url = "https://boards.example.com/quillfeather/blocked"
@@ -927,9 +927,7 @@ def test_every_scoring_path_is_never_in_git() -> None:
         assert ignored.returncode == 0, f"{path} is not gitignored"
 
 
-def test_the_scoring_commands_run(
-    conn: sqlite3.Connection, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_scoring_commands_run(conn: Connection, capsys: pytest.CaptureFixture[str]) -> None:
     job_id = _tracked(conn, 1)
     change_status(conn, default_scope(conn), str(job_id), "shortlist")
     assert main(["scoring", "export"]) == 0

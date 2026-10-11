@@ -11,7 +11,6 @@ document, and runs no industry source.
 from __future__ import annotations
 
 import logging
-import sqlite3
 import time
 from collections import Counter
 from collections.abc import Callable
@@ -30,6 +29,7 @@ from harrier.academic.search import (
     worst_case_usd,
 )
 from harrier.atomicio import write_json_atomic
+from harrier.connection import Connection
 from harrier.db import data_dir
 from harrier.demo import fixtures_dir, is_demo_mode
 from harrier.notify import build_academic_telegram_message, send_telegram_message
@@ -71,13 +71,13 @@ def discovery_job(scope: Scope) -> str:
     return f"discovery:{scope.track.id}"
 
 
-def load_searches(conn: sqlite3.Connection) -> dict[str, object]:
+def load_searches(conn: Connection) -> dict[str, object]:
     """The stored row, or empty. No file fallback (ADR-009, decision 2)."""
     value = get_config(conn, ACADEMIC_SEARCHES)
     return cast("dict[str, object]", value) if isinstance(value, dict) else {}
 
 
-def entry_for(conn: sqlite3.Connection, scope: Scope) -> SearchEntry:
+def entry_for(conn: Connection, scope: Scope) -> SearchEntry:
     if rules_for(scope.track.kind).screening != "academic":
         raise AcademicDiscoveryError(
             f"track {scope.track.slug} is not an academic track; its discovery is the default one"
@@ -182,7 +182,7 @@ def _term_hits(entry: SearchEntry, hits: dict[str, int]) -> tuple[dict[str, int]
     return counts, [term for term, count in counts.items() if count == 0]
 
 
-def _gap(conn: sqlite3.Connection, scope: Scope, entry: SearchEntry, now: datetime) -> str:
+def _gap(conn: Connection, scope: Scope, entry: SearchEntry, now: datetime) -> str:
     last = last_success(conn, discovery_job(scope))
     if last is None:
         return ""
@@ -197,7 +197,7 @@ def _gap(conn: sqlite3.Connection, scope: Scope, entry: SearchEntry, now: dateti
 
 
 def run_academic_discovery(
-    conn: sqlite3.Connection, scope: Scope, options: AcademicOptions
+    conn: Connection, scope: Scope, options: AcademicOptions
 ) -> dict[str, object]:
     """One discovery on an academic track. Raises AcademicDiscoveryError for
     a refusal before any request; a failed run is reported in the summary
@@ -361,7 +361,7 @@ class TrackReport:
     problem: str = ""
 
 
-def run_configured_tracks(conn: sqlite3.Connection, options: AcademicOptions) -> list[TrackReport]:
+def run_configured_tracks(conn: Connection, options: AcademicOptions) -> list[TrackReport]:
     """One discovery per track named in the stored search, each in its own
     scope. Never the default track. An unknown, archived or industry slug is
     reported, and one track's failure never stops the next."""
@@ -394,7 +394,7 @@ def run_configured_tracks(conn: sqlite3.Connection, options: AcademicOptions) ->
     return reports
 
 
-def protected_seen_keys(conn: sqlite3.Connection, scope: Scope) -> frozenset[str]:
+def protected_seen_keys(conn: Connection, scope: Scope) -> frozenset[str]:
     """The seen keys of postings the operator rejected on this track.
 
     A seen key is derived from the posting's identity

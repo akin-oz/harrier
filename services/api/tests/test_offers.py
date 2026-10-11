@@ -5,7 +5,6 @@ on the synthetic fixtures (resume bundle, candidate document, story
 seeds) so no personal content enters the repo."""
 
 import json
-import sqlite3
 from pathlib import Path
 from typing import cast
 
@@ -14,6 +13,7 @@ from resume_support import store_example
 
 import harrier.offers.batch as batch_module
 import harrier.offers.evaluate as evaluate_module
+from harrier.connection import Connection
 from harrier.db import connect, data_dir
 from harrier.llm import LLMClientError
 from harrier.offers import (
@@ -39,7 +39,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 @pytest.fixture()
-def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
+def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Connection:
     monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
     conn = connect()
     store_example(conn)
@@ -123,7 +123,7 @@ def ai_response(verdict: str = "apply", confidence: object = 0.7) -> str:
 # ---------------------------------------------------------------------------
 
 
-def test_system_prompt_is_assembled_from_data(db: sqlite3.Connection) -> None:
+def test_system_prompt_is_assembled_from_data(db: Connection) -> None:
     prompt = build_system_prompt(db)
     assert "Deniz Örnek" in prompt
     assert "Senior Frontend Engineer" in prompt
@@ -160,7 +160,7 @@ def test_parse_verdict_contract_defends_against_malformed_output() -> None:
 
 
 def test_evaluate_offer_writes_report_with_verdict_first(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def fake_generate(system_prompt: str, user_input: str) -> str:
         return ai_response()
@@ -175,14 +175,12 @@ def test_evaluate_offer_writes_report_with_verdict_first(
     assert [entry["story_id"] for entry in bank] == ["architecture_migration"]
 
 
-def test_evaluate_offer_requires_jd(db: sqlite3.Connection) -> None:
+def test_evaluate_offer_requires_jd(db: Connection) -> None:
     with pytest.raises(EvaluationError, match="no job description"):
         evaluate_offer(db, "Example Co", "Role", "https://x.test", "   ")
 
 
-def test_evaluate_offer_wraps_ai_failure(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_evaluate_offer_wraps_ai_failure(db: Connection, monkeypatch: pytest.MonkeyPatch) -> None:
     def boom(system_prompt: str, user_input: str) -> str:
         raise LLMClientError("backend unavailable")
 
@@ -191,7 +189,7 @@ def test_evaluate_offer_wraps_ai_failure(
         evaluate_offer(db, "Example Co", "Role", "https://x.test", "JD")
 
 
-def test_story_bank_dedupes_and_respects_bound(db: sqlite3.Connection) -> None:
+def test_story_bank_dedupes_and_respects_bound(db: Connection) -> None:
     first = [{"story_id": "a", "theme": "one"}]
     updated = [{"story_id": "a", "theme": "two"}]
     capture_stories(db, cast("list[dict[str, object]]", first), "Co", "Role")
@@ -210,7 +208,7 @@ def test_story_bank_dedupes_and_respects_bound(db: sqlite3.Connection) -> None:
 # ---------------------------------------------------------------------------
 
 
-def add_prospect(conn: sqlite3.Connection, index: int = 1) -> int:
+def add_prospect(conn: Connection, index: int = 1) -> int:
     return add_job(
         conn,
         {
@@ -233,7 +231,7 @@ def fake_result(company: str, role: str, verdict: Verdict) -> EvaluationResult:
 
 
 def test_skip_verdict_above_threshold_rejects_only_with_apply(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     job_id = add_prospect(db)
     skip_verdict = Verdict(
@@ -241,7 +239,7 @@ def test_skip_verdict_above_threshold_rejects_only_with_apply(
     )
 
     def fake_evaluate(
-        conn: sqlite3.Connection,
+        conn: Connection,
         company: str,
         role: str,
         url: str,
@@ -272,7 +270,7 @@ def test_skip_verdict_above_threshold_rejects_only_with_apply(
 
 
 def test_a_reopened_row_is_not_evaluated_again(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Spec 072 R5: Reopen sends `shortlist`, which the batch never reads.
 
@@ -284,7 +282,7 @@ def test_a_reopened_row_is_not_evaluated_again(
     calls: list[str] = []
 
     def fake_evaluate(
-        conn: sqlite3.Connection,
+        conn: Connection,
         company: str,
         role: str,
         url: str,
@@ -310,14 +308,14 @@ def test_a_reopened_row_is_not_evaluated_again(
 
 
 def test_existing_report_gates_rerun_unless_refresh(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     add_prospect(db)
     apply_verdict = Verdict(verdict="apply", confidence=0.7, reason="fit", deal_breakers=())
     calls = {"count": 0}
 
     def fake_evaluate(
-        conn: sqlite3.Connection,
+        conn: Connection,
         company: str,
         role: str,
         url: str,
@@ -339,7 +337,7 @@ def test_existing_report_gates_rerun_unless_refresh(
 
 
 def test_invalid_confidence_never_clears_the_threshold(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     job_id = add_prospect(db)
     # parse_verdict has already coerced an invalid confidence to 0.0 by the
@@ -347,7 +345,7 @@ def test_invalid_confidence_never_clears_the_threshold(
     malformed = parse_verdict({"block_f": {"verdict": "skip", "confidence": "very sure"}})
 
     def fake_evaluate(
-        conn: sqlite3.Connection,
+        conn: Connection,
         company: str,
         role: str,
         url: str,
@@ -362,9 +360,7 @@ def test_invalid_confidence_never_clears_the_threshold(
     assert get_job(db, default_scope(db), job_id)["status"] == "prospect"
 
 
-def test_auto_reject_is_a_system_decision(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_auto_reject_is_a_system_decision(db: Connection, monkeypatch: pytest.MonkeyPatch) -> None:
     """The evaluator judged the posting, not the candidate, and the history
     says so (spec 079)."""
     from harrier.tracker.store import list_events
@@ -375,7 +371,7 @@ def test_auto_reject_is_a_system_decision(
     )
 
     def fake_evaluate(
-        conn: sqlite3.Connection,
+        conn: Connection,
         company: str,
         role: str,
         url: str,
@@ -397,13 +393,13 @@ def test_auto_reject_is_a_system_decision(
 
 
 def test_borderline_rejected_only_with_include_borderline(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     job_id = add_prospect(db)
     borderline = Verdict(verdict="borderline", confidence=0.95, reason="mixed", deal_breakers=())
 
     def fake_evaluate(
-        conn: sqlite3.Connection,
+        conn: Connection,
         company: str,
         role: str,
         url: str,
