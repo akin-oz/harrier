@@ -924,6 +924,29 @@ _SAMPLED = [
 _CANDIDATES = sorted({*range(0x3100), *_WHITESPACE, *_SAMPLED})
 
 
+@pytest.mark.parametrize(
+    "padding",
+    [(" ", ""), ("", " "), ("\t", ""), ("", "\n"), (" ", " ")],
+    ids=["leading-space", "trailing-space", "leading-tab", "trailing-newline", "both"],
+)
+def test_whitespace_around_the_url_is_refused_not_stripped(padding: tuple[str, str]) -> None:
+    """store_target stripped the value before checking it, so a password
+    ending in a space was accepted with that space removed: the configured
+    value changed silently (CodeRabbit review of PR #285). Whitespace
+    around a Postgres URL is refused with the text that names the fix; a
+    value of whitespace alone still means SQLite."""
+    before, after = padding
+    password = f"synthetic{uuid.uuid4().hex}"
+    url = f"{before}postgresql://harrier:{password}@db.example.test:5432/tracker{after}"
+
+    with pytest.raises(StoreUrlError) as refused:
+        store_target({"HARRIER_DATABASE_URL": url})
+
+    assert str(refused.value) == DELIMITER_REFUSAL
+    assert password not in str(refused.value)
+    assert store_target({"HARRIER_DATABASE_URL": f"{before}{after}"}).dialect == "sqlite"
+
+
 def test_every_url_store_target_accepts_has_its_password_scrubbed() -> None:
     """`scrub_secrets` ends a URL's password at whitespace, and store_target
     refused only a raw tab, CR and LF of it. A password holding a raw

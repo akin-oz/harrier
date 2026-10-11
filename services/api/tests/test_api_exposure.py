@@ -382,7 +382,20 @@ def test_a_generated_postgres_password_leaves_no_part_behind(scheme: str) -> Non
 
 @pytest.mark.parametrize(
     "name",
-    ["password", "PASSWORD", "sslpassword", "SSLPassword", "oauth_client_secret", "db.passphrase"],
+    [
+        "password",
+        "PASSWORD",
+        "sslpassword",
+        "SSLPassword",
+        "oauth_client_secret",
+        "db.passphrase",
+        # Percent-encoded names, which libpq decodes (CodeRabbit review of
+        # PR #285): `p`, `W` and `s` encoded.
+        "%70assword",
+        "ssl%70assword",
+        "PASS%57ORD",
+        "oauth_client_%73ecret",
+    ],
 )
 @pytest.mark.parametrize(
     "template",

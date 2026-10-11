@@ -344,3 +344,24 @@ now say what the code does.
   while only `harrier store` runs on Postgres, so the gap belongs to spec
   112, which lets domain code run there. It is an acceptance criterion of
   that spec.
+
+## Amendment (2026-10-11): the CodeRabbit review of PR #285
+
+Two findings, both reproduced before the fix.
+
+- **A percent-encoded parameter name.** libpq percent-decodes a query
+  parameter's name, so `?%70assword=` sets the password, and store_target
+  accepted that URL. `scrub_secrets` read the name as written and left the
+  value whole. It now treats `%` as a name character and classifies the
+  name after percent-decoding it
+  (`services/api/tests/test_api_exposure.py::test_every_secret_named_parameter_is_scrubbed`,
+  with `%70assword`, `ssl%70assword`, `PASS%57ORD` and
+  `oauth_client_%73ecret` added).
+- **Whitespace around the URL.** store_target stripped the value before
+  checking it, so a URL with a trailing space was accepted with the space
+  removed, a password's last character included. Whitespace around a
+  Postgres URL is now refused with the text that names the fix, and a
+  value of whitespace alone still means SQLite
+  (`services/api/tests/test_postgres_store.py::test_whitespace_around_the_url_is_refused_not_stripped`).
+  A `.env` value is still stripped by `harrier.envfile.read_env_file`, so
+  only a process environment variable can carry the whitespace.

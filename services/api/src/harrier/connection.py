@@ -244,8 +244,7 @@ def store_target(environ: Mapping[str, str] | None = None) -> StoreTarget:
             raw = read_env_file(Path(".env")).get(URL_VARIABLE, "")
     else:
         raw = environ.get(URL_VARIABLE, "")
-    raw = raw.strip()
-    if not raw:
+    if not raw.strip():
         return StoreTarget("sqlite")
     # Only `postgresql://`, in lower case, and a host and port that parse:
     # anything else failed later as a traceback or an unrelated driver
@@ -253,7 +252,10 @@ def store_target(environ: Mapping[str, str] | None = None) -> StoreTarget:
     # the scheme in another case. It also accepts `postgres://`, which is
     # refused here on purpose: spec 103 names one scheme.
     refused = StoreUrlError(f"{URL_VARIABLE} must be empty or a postgresql:// URL")
-    if not raw.startswith(f"{POSTGRES_SCHEME}://"):
+    # Leading or trailing whitespace is not stripped: it would change the
+    # configured value silently, a password's last character included. It
+    # reaches the raw-character refusal below (CodeRabbit review of PR #285).
+    if not raw.lstrip().startswith(f"{POSTGRES_SCHEME}://"):
         raise refused
     # Before the parse below, so a raw delimiter is refused with the text
     # that names the fix even where the parse would fail too.

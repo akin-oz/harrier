@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import unquote, urlparse, urlunparse
 
 from harrier.screening.normalized import NormalizedJob
 
@@ -41,8 +41,10 @@ _POSTGRES_URL_PASSWORD = re.compile(
 )
 # A parameter name and its `=`, in a query or in libpq's keyword/value form
 # (`password = 'x'`). Atomic, and only where no name character comes
-# before, so a long run of name characters is read once.
-_PARAMETER_NAME = re.compile(r"(?<![\w.-])((?>[\w.-]+))\s*=\s*")
+# before, so a long run of name characters is read once. `%` is a name
+# character because libpq percent-decodes a query parameter's name, so
+# `?%70assword=` sets the password (CodeRabbit review of PR #285).
+_PARAMETER_NAME = re.compile(r"(?<![\w.%-])((?>[\w.%-]+))\s*=\s*")
 # Its value: quoted as libpq quotes one, the closing quote optional for a
 # message cut short, or up to the next `&`, quote or whitespace.
 _PARAMETER_VALUE = re.compile(r"'(?:[^'\\\n]|\\.)*'?|[^&\s\"']+")
@@ -51,8 +53,9 @@ _PARAMETER_VALUE = re.compile(r"'(?:[^'\\\n]|\\.)*'?|[^&\s\"']+")
 def _is_secret_parameter(name: str) -> bool:
     """`harrier.connection`'s rule for a connection parameter that carries a
     secret: its name holds `pass` or `secret` (`password`, `sslpassword`,
-    `oauth_client_secret`), in any case here."""
-    folded = name.lower()
+    `oauth_client_secret`), in any case here, read after percent-decoding
+    as libpq reads a query parameter's name."""
+    folded = unquote(name).lower()
     return "pass" in folded or "secret" in folded
 
 
