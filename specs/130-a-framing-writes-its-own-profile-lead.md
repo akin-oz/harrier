@@ -1,8 +1,8 @@
 ---
 spec: 130
 title: A track's framing can write the CV's opening sentence
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M9
 depends: [071, 098, 099, 101]
 ---
@@ -171,19 +171,15 @@ length being present, forbidden phrases, and dash marks
    start with the experience sentence. It leaves the CV without an opening
    claim and still gives the operator no say.
 
-## Open decisions for Akin
+## Decisions recorded (Akin, 2026-10-11)
 
-1. **The field, not a kind default.** Proposed: option 1 alone. A kind
-   default (option 2) could be added later as a fallback for a framing with
-   no lead.
-2. **Skills are not appended to the lead.** Proposed: the lead is verbatim,
-   and the operator names technologies in it if they want them. The
-   alternative is a `{skills}` placeholder the code fills from
-   `positioning_technologies`.
-3. **The experience sentence stays.** Proposed: it always follows the lead,
-   because the plan and the markdown require the calculated experience
-   length in the profile (spec 071). The alternative is letting the lead
-   carry it, which would move that check onto operator prose.
+Approved as written, so each open decision keeps the behavior the spec
+states:
+
+1. **A framing field only.** No per-kind default lead.
+2. **Skills are not appended.** The lead is verbatim; the operator names
+   technologies in it.
+3. **The experience sentence always follows the lead.**
 
 ## Out of scope
 
