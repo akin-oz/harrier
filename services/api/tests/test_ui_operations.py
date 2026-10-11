@@ -36,7 +36,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from conftest import auth
+from conftest import assert_only_provoked_causes_are_declared, assert_refusal_is_declared, auth
 from fastapi.testclient import TestClient
 
 from harrier.backup import ARCHIVE_PREFIX, ARCHIVE_SUFFIX
@@ -1226,6 +1226,62 @@ def test_a_damaged_stored_brief_is_refused_in_the_store_s_words(
     unknown = client.get(f"/apply/{job}/brief", headers=auth())
     assert unknown.status_code == 409
     assert unknown.json()["detail"] == "unknown brief keys: retired_key"
+
+
+BRIEF_SELECTOR_CAUSE = "the selector named no job, or more than one"
+NO_BRIEF_CAUSE = "no brief is stored for the job"
+DAMAGED_BRIEF_CAUSE = (
+    "the stored brief no longer parses, in the store's words; saving a brief replaces it"
+)
+REFUSED_BRIEF_CAUSE = "the store refused the brief, in its words"
+
+
+def test_every_brief_refusal_is_one_its_contract_names(env: Path, client: TestClient) -> None:
+    """Each brief route's refusals, provoked, against what its contract
+    declares: every refusal is declared with `ErrorOut` and its cause, and
+    every cause the route declares itself is one of these. The two routes
+    shared one set, so the read declared a 400 and the write a 409 that
+    neither sends (spec 125)."""
+    from harrier.apply.brief import APPLICATION_BRIEF_KIND
+    from harrier.profile.store import put_document
+
+    no_brief = _job_id()
+    conn = connect()
+    try:
+        damaged = add_job(
+            conn, {"company": "Example Co", "title": "Second Role"}, scope=default_scope(conn)
+        )
+        put_document(conn, APPLICATION_BRIEF_KIND, str(damaged), "json", "{not json")
+    finally:
+        conn.close()
+    no_row = damaged + 1000
+
+    paths = create_app().openapi()["paths"]["/apply/{selector}/brief"]
+    reads = [
+        (client.get(f"/apply/{no_row}/brief", headers=auth()), 404, BRIEF_SELECTOR_CAUSE),
+        (client.get(f"/apply/{no_brief}/brief", headers=auth()), 404, NO_BRIEF_CAUSE),
+        (client.get(f"/apply/{damaged}/brief", headers=auth()), 409, DAMAGED_BRIEF_CAUSE),
+    ]
+    writes = [
+        (
+            client.put(f"/apply/{no_brief}/brief", json={"unknown": 1}, headers=auth()),
+            400,
+            REFUSED_BRIEF_CAUSE,
+        ),
+        (
+            client.put(f"/apply/{no_row}/brief", json={}, headers=auth()),
+            404,
+            BRIEF_SELECTOR_CAUSE,
+        ),
+    ]
+    for method, operation, refusals in (("get", "getBrief", reads), ("put", "putBrief", writes)):
+        responses = paths[method]["responses"]
+        assert paths[method]["operationId"] == operation
+        for response, status, cause in refusals:
+            assert_refusal_is_declared(response, responses, status, cause)
+        assert_only_provoked_causes_are_declared(
+            responses, {(status, cause) for _, status, cause in refusals}
+        )
 
 
 def test_the_brief_saved_is_the_one_the_store_parsed(env: Path, client: TestClient) -> None:

@@ -196,43 +196,40 @@ against the suite's scratch database:
 | `markOutreachReplied` | 409 | a prospect row, whose invariants refuse an outreach claim | the domain refused the change |
 | `snoozeOutreach` | 409 | an `until` that is not a date | the domain refused the change |
 
-- [ ] For each run row, the response is that status with a body that is
+- [x] For each run row, the response is that status with a body that is
       exactly `{"detail": "run not found"}`, and `create_app().openapi()`
       declares the status as `application/json` with `ErrorOut` and the
-      row's cause (planned test_an_unknown_run_is_the_404_its_contract_declares in
-      test_runs.py).
+      row's cause (`services/api/tests/test_runs.py::test_an_unknown_run_is_the_404_its_contract_declares`).
       On main it fails: no run operation declares a 404.
-- [ ] For each brief row, the response has that status and a body that is
+- [x] For each brief row, the response has that status and a body that is
       exactly `{"detail": <non-empty string>}`; the status is declared with
       `ErrorOut` and the row's cause; and each brief operation's own
       declared causes, per status, are exactly the causes of its rows
-      (planned test_every_brief_refusal_is_one_its_contract_names in
-      test_ui_operations.py).
+      (`services/api/tests/test_ui_operations.py::test_every_brief_refusal_is_one_its_contract_names`).
       On main it fails: `getBrief` declares a 400 and `putBrief` a 409
       that no row provokes.
-- [ ] The same for each outreach row, and the table has rows for every
-      operation under `/outreach/{selector}/` (planned test_every_outreach_refusal_is_one_its_contract_names in
-      test_ui_outreach.py).
+- [x] The same for each outreach row, and the table has rows for every
+      operation under `/outreach/{selector}/` (`services/api/tests/test_ui_outreach.py::test_every_outreach_refusal_is_one_its_contract_names`).
       On main it fails: five operations declare the domain 409 and seven
       declare the candidate 404 with no row to provoke them.
-- [ ] In both pairing tests, "own causes" are a status's description split
+- [x] In both pairing tests, "own causes" are a status's description split
       on the route class's join, minus the track causes and the run
       conflict cause. Those two are proved where they are defined
       (`services/api/tests/test_api_tracks.py::test_every_scoped_route_declares_the_track_refusal`
       for the track's).
-- [ ] `test_every_scoped_route_declares_the_track_refusal` keeps checking
+- [x] `test_every_scoped_route_declares_the_track_refusal` keeps checking
       that a route's own 409 cause sits beside the track's, on a route that
       still has one (`markOutreachSent`), since `draftOutreach` no longer
       does.
-- [ ] `just contract` regenerates both artifacts, and their diff is what
+- [x] `just contract` regenerates both artifacts, and their diff is what
       "What the contract declares" lists and nothing else (CI
       `contract-drift`, and the diff itself).
-- [ ] The implementing pull request shows each new test failing on main's
+- [x] The implementing pull request shows each new test failing on main's
       code (its description, and an amendment here).
-- [ ] Spec 082's Out of scope entry for these routers points here.
-- [ ] `uv run ruff check`, `uv run pyright`, `pnpm type-check` and
+- [x] Spec 082's Out of scope entry for these routers points here.
+- [x] `uv run ruff check`, `uv run pyright`, `pnpm type-check` and
       `pnpm lint` pass, and `just check` passes.
-- [ ] No real tracker row, contact or brief appears in a fixture
+- [x] No real tracker row, contact or brief appears in a fixture
       (ADR-008). The new rows use the suites' existing invented companies
       and `linkedin.com/in/` URLs that name no one.
 
@@ -314,3 +311,28 @@ no longer branch on a status the route never sends.
   Spec 094: the route class that joins track causes, and the review of
   PR #239 that removed phantom track causes.
 - The local review of PR #255; PR #263's Out of scope list.
+
+## Amendment (2026-10-11, during implementation)
+
+What implementation found, each with its proof. Scope and behavior are as
+specified; "The refusals today" stays as the record of the state before
+this change.
+
+- **The pairing helpers live in `services/api/tests/conftest.py`.**
+  `own_causes`, `assert_refusal_is_declared` and
+  `assert_only_provoked_causes_are_declared` are shared by the three tests,
+  so the rule for "own causes" is written once.
+- **Each new test was run against main's route code first.** With only
+  `services/api/src` put back to main, all three fail. The run test fails
+  at its first 404, which main declares with no body. The brief and
+  outreach tests fail first on the 404 wording (decision 2), before they
+  reach the phantom statuses.
+- **So the phantom statuses were checked on their own.** With this
+  change's wording kept and one phantom put back, a 409 on `putBrief` and
+  the domain 409 on `listCandidates`, both pairing tests fail on that
+  cause alone (`assert own_causes(...) == set()`). Both were temporary
+  edits, run and reverted.
+- **The contract diff is the 14 operations and nothing else.** A
+  comparison of `openapi.json` before and after finds those operation ids
+  changed, `components` equal and every other key equal; a second
+  `just contract` leaves no further diff.

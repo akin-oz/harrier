@@ -385,10 +385,14 @@ def test_every_scoped_route_declares_the_track_refusal(two_tracks: Path) -> None
         "/ops/export/jobs.csv",
     ):
         assert "409" not in paths[path]["get"]["responses"], path
-    # A route's own causes stay beside the track's.
+    # A route's own causes stay beside the track's: the domain's on an outreach
+    # write, the run conflict on a route that starts a run (spec 125).
+    sent = paths["/outreach/{selector}/sent"]["post"]["responses"]["409"]["description"]
+    assert "the domain refused the change" in sent
+    assert NOT_AVAILABLE_CAUSE in sent
     draft = paths["/outreach/{selector}/draft"]["post"]["responses"]["409"]["description"]
-    assert "the domain refused the change" in draft
     assert "a run of this kind is active" in draft
+    assert NOT_AVAILABLE_CAUSE in draft
     events = paths["/tracker/{selector}/events"]["get"]["responses"]["404"]["description"]
     assert events.startswith("the selector named no job, or more than one")
 

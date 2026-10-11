@@ -41,6 +41,7 @@ from harrier.tracks import Scope as TrackScope
 from harrier_api.capture_routes import capture_router
 from harrier_api.demo import demo_db_path, is_demo_mode, seed_demo_db
 from harrier_api.deps import (
+    CAUSE_JOIN,
     DATABASE_HELD_DETAIL,
     VERB_IN_BODY,
     Conn,
@@ -1010,14 +1011,27 @@ class BriefOut(BaseModel):
     confirmed_skills: list[str]
 
 
-BRIEF_ERRORS: dict[int | str, dict[str, Any]] = {
-    400: {"model": ErrorOut, "description": "the store refused the brief, in its words"},
-    404: {"model": ErrorOut, "description": "no such job, or no brief stored for it"},
+# One set per route, each listing only what that route sends: a read cannot
+# be refused a brief, and a write cannot meet a stored brief that no longer
+# parses (spec 125).
+BRIEF_SELECTOR_CAUSE = "the selector named no job, or more than one"
+
+GET_BRIEF_ERRORS: dict[int | str, dict[str, Any]] = {
+    404: {
+        "model": ErrorOut,
+        "description": CAUSE_JOIN.join((BRIEF_SELECTOR_CAUSE, "no brief is stored for the job")),
+    },
     409: {
         "model": ErrorOut,
         "description": "the stored brief no longer parses, in the store's words; "
         "saving a brief replaces it",
     },
+    **TOKEN_RESPONSES,
+}
+
+PUT_BRIEF_ERRORS: dict[int | str, dict[str, Any]] = {
+    400: {"model": ErrorOut, "description": "the store refused the brief, in its words"},
+    404: {"model": ErrorOut, "description": BRIEF_SELECTOR_CAUSE},
     **TOKEN_RESPONSES,
 }
 
@@ -1047,7 +1061,7 @@ def _brief_out(brief: Brief) -> BriefOut:
     "/apply/{selector}/brief",
     operation_id="getBrief",
     dependencies=[Depends(require_token)],
-    responses=BRIEF_ERRORS,
+    responses=GET_BRIEF_ERRORS,
 )
 def get_brief(
     selector: str, conn: Conn, scope: Annotated[TrackScope, Depends(scope_for("brief show"))]
@@ -1072,7 +1086,7 @@ def get_brief(
     "/apply/{selector}/brief",
     operation_id="putBrief",
     dependencies=[Depends(require_token)],
-    responses=BRIEF_ERRORS,
+    responses=PUT_BRIEF_ERRORS,
 )
 def put_brief(
     selector: str,
@@ -1100,6 +1114,12 @@ def put_brief(
 
 runs_router = APIRouter(route_class=DatabaseRoute)
 
+# The run manager holds its runs in memory, so an id from before a restart
+# is unknown too (spec 125).
+RUN_NOT_FOUND: dict[int | str, dict[str, Any]] = {
+    404: {"model": ErrorOut, "description": "the run id names no run this server holds"}
+}
+
 
 @runs_router.post(
     "/runs",
@@ -1116,7 +1136,7 @@ def list_runs(manager: Manager) -> list[RunOut]:
     return [run_out(run) for run in manager.list_runs()]
 
 
-@runs_router.get("/runs/{run_id}", operation_id="getRun")
+@runs_router.get("/runs/{run_id}", operation_id="getRun", responses=RUN_NOT_FOUND)
 def get_run(run_id: str, manager: Manager) -> RunOut:
     run = manager.get(run_id)
     if run is None:
@@ -1128,7 +1148,7 @@ def get_run(run_id: str, manager: Manager) -> RunOut:
     "/runs/{run_id}/cancel",
     operation_id="cancelRun",
     dependencies=[Depends(require_token)],
-    responses=TOKEN_RESPONSES,
+    responses=merge_responses(TOKEN_RESPONSES, RUN_NOT_FOUND),
 )
 async def cancel_run(run_id: str, manager: Manager) -> RunOut:
     run = await manager.cancel(run_id)
@@ -1144,7 +1164,8 @@ async def cancel_run(run_id: str, manager: Manager) -> RunOut:
         200: {
             "model": RunEventOut,
             "description": "SSE stream; each message's data field is a RunEventOut JSON payload.",
-        }
+        },
+        **RUN_NOT_FOUND,
     },
 )
 async def stream_run_events(run_id: str, request: Request, manager: Manager) -> StreamingResponse:

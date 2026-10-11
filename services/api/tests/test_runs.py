@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 import pytest
-from conftest import auth
+from conftest import assert_only_provoked_causes_are_declared, assert_refusal_is_declared, auth
 from fastapi.testclient import TestClient
 
 from harrier_api.app import create_app
@@ -199,6 +199,38 @@ def test_endpoints_start_poll_cancel(tmp_path: Path, monkeypatch: pytest.MonkeyP
             time.sleep(0.05)
         assert state == "cancelled"
         assert client.get("/runs/nope").status_code == 404
+
+
+RUN_NOT_FOUND_CAUSE = "the run id names no run this server holds"
+
+
+def test_an_unknown_run_is_the_404_its_contract_declares(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each route that names a run answers an unknown id with 404 "run not
+    found", and the contract declares that 404 with `ErrorOut` and nothing
+    else of its own (spec 125). They declared no 404 before."""
+    monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("HARRIER_DEMO", raising=False)
+    app = create_app(run_manager=_manager(tmp_path, FAST_SCRIPT))
+    paths = app.openapi()["paths"]
+    with TestClient(app) as client:
+        refusals = [
+            ("getRun", "get", "/runs/{run_id}", client.get("/runs/nope")),
+            (
+                "cancelRun",
+                "post",
+                "/runs/{run_id}/cancel",
+                client.post("/runs/nope/cancel", headers=auth()),
+            ),
+            ("streamRunEvents", "get", "/runs/{run_id}/events", client.get("/runs/nope/events")),
+        ]
+    for operation, method, path, response in refusals:
+        responses = paths[path][method]["responses"]
+        assert paths[path][method]["operationId"] == operation
+        assert response.json() == {"detail": "run not found"}, operation
+        assert_refusal_is_declared(response, responses, 404, RUN_NOT_FOUND_CAUSE)
+        assert_only_provoked_causes_are_declared(responses, {(404, RUN_NOT_FOUND_CAUSE)})
 
 
 def test_run_event_payload_is_in_the_contract() -> None:
