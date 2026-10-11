@@ -354,6 +354,8 @@ def _check_markdown_structure(data: dict[str, object], errors: list[str]) -> Non
                 errors.append("candidate.profile_lead must be a string")
             elif not lead.strip():
                 errors.append("candidate.profile_lead must not be empty")
+            else:
+                _check_lead_wording(lead, errors)
         _check_emitted_list(
             "candidate.positioning_technologies",
             candidate.get("positioning_technologies"),
@@ -389,6 +391,20 @@ def _check_markdown_structure(data: dict[str, object], errors: list[str]) -> Non
     if isinstance(pool_raw, dict):
         for bullet_id, text in cast("dict[object, object]", pool_raw).items():
             _check_emitted(f"bullet_pool[{bullet_id}]", text, errors)
+
+
+def _check_lead_wording(lead: str, errors: list[str]) -> None:
+    """What the plan and the rendered resume refuse in a lead, refused here
+    too, so `profile put` stores no lead that tailoring would later refuse
+    (review of PR #282)."""
+    # Imported here: the plan reads the bundle type defined in this module.
+    from harrier.resume.plan import HEDGE_WORDS
+
+    hedges = [word for word in HEDGE_WORDS if re.search(rf"\b{word}\b", lead, re.IGNORECASE)]
+    if hedges:
+        errors.append(f"candidate.profile_lead hedges: {', '.join(hedges)}")
+    if re.search(r"\bdecades?\b", lead, re.IGNORECASE):
+        errors.append("candidate.profile_lead counts experience in decades")
 
 
 _YEAR_COUNT = re.compile(r"\b(\d{1,3})\s*\+?\s*years?\b", re.IGNORECASE)

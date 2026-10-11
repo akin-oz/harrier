@@ -45,7 +45,8 @@ framing can change the identity, the technologies and the summary, but
   framing's sentence when one is set.
 - `config/resume-framing.academic.example.json`: a synthetic
   `profile_lead`, so the example shows the field.
-- Tests in `services/api/tests/test_resume.py` and
+- Tests in `services/api/tests/test_resume.py`,
+  `services/api/tests/test_resume_documents.py` and
   `services/api/tests/test_track_framing.py`.
 
 Nothing else changes. No migration: the field lives inside a framing
@@ -112,8 +113,10 @@ length being present, forbidden phrases, and dash marks
   parser: the lead is operator prose, like `profile_summary`, and carries
   the same trust. The forbidden-phrase check on the rendered resume still
   applies (Honest limitations).
-- **A lead with a hedge word.** Refused by the plan's existing hedge check,
-  as a derived lead would be.
+- **A lead with a hedge word, or one counting experience in decades.**
+  Refused at parse time, so `profile put` refuses it, and again by the
+  plan's hedge check and the rendered resume's decade check (Amendment of
+  2026-10-11, review of PR #282).
 
 ## Acceptance criteria
 
@@ -129,7 +132,8 @@ length being present, forbidden phrases, and dash marks
       (`services/api/tests/test_resume.py::test_profile_lead_without_a_statement_keeps_the_derived_years`).
 - [x] Without `profile_lead`, the profile is identical to today's for a
       framing with and without `experience_statement`
-      (`services/api/tests/test_resume.py::test_a_framing_without_a_lead_renders_as_before`).
+      (`services/api/tests/test_resume.py::test_a_framing_without_a_lead_renders_as_before`,
+      `services/api/tests/test_resume.py::test_a_framing_without_a_lead_renders_byte_for_byte_as_before`).
 - [x] An empty, multi-line, dash-punctuated or heading-marked lead, and one
       stating more years than computed, are each refused at parse time with
       a message naming `candidate.profile_lead`
@@ -222,3 +226,28 @@ None. The field is optional inside a stored framing's JSON.
   leaving `profile_lead` out of the framing table, accepting an empty
   lead, not counting the lead's years, and allowing a heading marker each
   failed a test above.
+
+## Amendment (2026-10-11, review of PR #282)
+
+The local review of the merged PR found three claims the tests did not
+prove, and one refusal that came too late.
+
+- **A hedged lead and a lead counting decades are refused at parse
+  time.** As first written, `profile put` stored them and tailoring
+  refused them later. The parser now refuses both, naming
+  `candidate.profile_lead`; the plan's hedge check still refuses a hedged
+  lead in a bundle that never passed the parser
+  (`services/api/tests/test_resume.py::test_profile_lead_with_a_hedge_word_is_refused`,
+  `services/api/tests/test_resume.py::test_profile_lead_is_refused_on_the_emitted_string_rules`).
+- **A lead's years are counted beside an `experience_statement`.** The
+  first test of the year rule ran without a statement
+  (`services/api/tests/test_resume.py::test_profile_lead_years_are_counted_beside_a_statement`).
+- **"Byte for byte" is now proved.** Both no-lead profiles are compared
+  whole with the output of the commit before PR #282
+  (`services/api/tests/test_resume.py::test_a_framing_without_a_lead_renders_byte_for_byte_as_before`).
+- **The example lead no longer repeats the example summary's opening
+  words.**
+- **Left for a decision:** a lead ending in `."`, `:` or `…` gains a period
+  as Behavior states. Changing the closing-punctuation rule changes this
+  spec's approved behavior, so it waits for Akin.
+

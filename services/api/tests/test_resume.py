@@ -1525,6 +1525,56 @@ def test_a_framing_without_a_lead_renders_as_before() -> None:
     assert derived.profile_lead == ""
 
 
+# Both no-lead profiles as the code wrote them before spec 130, computed at
+# the commit before PR #282 from the synthetic examples (review of PR #282).
+SUMMARY = (
+    "Brings end-to-end frontend ownership across conversion-critical flows, "
+    "shared UI systems, architecture, and quality engineering."
+)
+BEFORE_130 = {
+    "stated": (
+        "Senior Frontend Engineer building user-facing web products with React, "
+        "TypeScript, Vue 3, and Nuxt. Professional career since 2014, 12+ years in "
+        f"software. {SUMMARY}"
+    ),
+    "derived": (
+        "Senior Frontend Engineer with 12+ years of professional experience building "
+        f"user-facing web products with React, TypeScript, Vue 3, and Nuxt. {SUMMARY}"
+    ),
+}
+
+
+def test_a_framing_without_a_lead_renders_byte_for_byte_as_before() -> None:
+    stated = parse_bundle(_with_candidate(experience_statement=STATEMENT))
+    derived = parse_bundle(_with_candidate())
+    assert {
+        "stated": build_content_plan(stated, REACT_POSTING, "Engineer", AS_OF).profile,
+        "derived": build_content_plan(derived, REACT_POSTING, "Engineer", AS_OF).profile,
+    } == BEFORE_130
+
+
+def test_profile_lead_with_a_hedge_word_is_refused() -> None:
+    """At parse time, so `profile put` refuses it, and by the plan's own
+    check for a bundle that never passed the parser (review of PR #282)."""
+    hedged = "Engineer who may suit research"
+    with pytest.raises(ResumeBundleError, match=r"candidate\.profile_lead hedges: may"):
+        parse_bundle(_with_candidate(profile_lead=hedged))
+    bundle = replace(parse_bundle(_with_candidate(profile_lead=LEAD)), profile_lead=hedged)
+    plan = build_content_plan(bundle, REACT_POSTING, "Engineer", AS_OF)
+    assert "profile lead hedges: may" in validate_content_plan(plan, bundle)
+
+
+def test_profile_lead_years_are_counted_beside_a_statement() -> None:
+    """The framings that set a lead usually set a statement too (review of
+    PR #282)."""
+    with pytest.raises(ResumeBundleError, match=r"candidate\.profile_lead states 40 years"):
+        parse_bundle(
+            _with_candidate(
+                profile_lead="Engineer with 40+ years in science", experience_statement=STATEMENT
+            )
+        )
+
+
 @pytest.mark.parametrize(
     ("lead", "reason"),
     [
@@ -1534,6 +1584,7 @@ def test_a_framing_without_a_lead_renders_as_before() -> None:
         ("Doctoral applicant \u2014 in science", "must not use a dash as punctuation"),
         ("# Doctoral applicant", "must not start with a heading marker"),
         ("Doctoral applicant with 40+ years in science", "states 40 years"),
+        ("Doctoral applicant with a decade in science", "counts experience in decades"),
         (7, "must be a string"),
     ],
 )
