@@ -38,9 +38,12 @@ modules execute SQL and are local by nature: `backup.py:106-133`,
 **What does not run on Postgres as written:**
 
 - `?` placeholders in every statement. psycopg 3 takes `%s`.
-- `with conn:` as a transaction: 13 sites in 5 modules (`tracker/store.py`
-  7, `tracks.py` 2, `userconfig/store.py` 2, `profile/store.py` 1,
-  `tracker/migrate_legacy.py` 1). On a `sqlite3.Connection` it commits or
+- `with conn:` as a transaction: 14 sites in 5 modules (`tracker/store.py`
+  7, `tracks.py` 2, `userconfig/store.py` 2, `profile/store.py` 2,
+  `tracker/migrate_legacy.py` 1). (Corrected 2026-10-11, post-merge review
+  of PR #241: this line said 13 sites and `profile/store.py` 1, which
+  missed the second site in `profile/store.py`. `git grep -c "with conn:"`
+  at the commit before PR #241, `96ac216^1`, counts 2 there.) On a `sqlite3.Connection` it commits or
   rolls back and leaves the connection open (spec 076). On a psycopg
   connection the same statement closes the connection on exit. Also
   `conn.commit()` at `runoutcome.py:152`, and `in_transaction`, `commit`
@@ -786,3 +789,49 @@ PR 2 still owns everything Behavior lists for Postgres.
 
 `services/api/tests/test_connection.py::test_store_neutral_names_live_in_connection`
 proves the moved names live in `harrier.connection`.
+
+### Note (2026-10-11): post-merge review of PR #241
+
+Two local reviews of PR #241 after it merged found gaps in the record
+above and in its tests. The text above stands as written; this note
+corrects it.
+
+- **Test edits the list above misses.** Three test modules imported a
+  moved name from `harrier.pgstore` and now import it from
+  `harrier.connection`: `test_postgres_store.py` and `test_owner_policy.py`
+  split their import between the two modules, and `test_store_cli.py`
+  moved its import whole. `test_database_ownership.py` changed annotations
+  only, but annotated its stand-ins for `sqlite3.connect` as returning
+  `Connection`, which none of them does. The follow-up makes the two that
+  always raise return `NoReturn` and the one that returns the real
+  connection return `sqlite3.Connection`, which lets it drop its
+  `type: ignore`.
+- **The count of `with conn:` sites** under Problem was 14, not 13. The
+  line there is corrected and says so.
+- **Moved names.** The import guard's set of moved names now includes the
+  ones this amendment adds (`URL_VARIABLE`, `POSTGRES_SCHEME`, `UrlParts`,
+  `url_parts`), not only Scope item 13's.
+
+The follow-up adds these proofs:
+
+- `Connection` has no `__enter__` or `__exit__` (nor the async pair), so
+  pyright keeps refusing `with conn:`
+  (`services/api/tests/test_connection.py::test_a_connection_offers_no_with_block`).
+- No module under `services/api/src` reads `sqlite_driver`, as an
+  attribute or through `getattr`
+  (`services/api/tests/test_connection.py::test_no_module_under_src_reaches_the_sqlite_driver`),
+  and the check finds each form
+  (`services/api/tests/test_connection.py::test_the_driver_check_finds_every_read`).
+- An exception inside `transaction()` rolls the write back and leaves the
+  connection open and usable; a clean exit commits, seen from a second
+  connection
+  (`services/api/tests/test_connection.py::test_a_transaction_rolls_back_on_error_and_commits_on_success`).
+- The import guard resolves a relative import against the file's package,
+  so `from .pgstore import StoreError` in `harrier` is caught
+  (`services/api/tests/test_connection.py::test_the_import_check_resolves_relative_imports`).
+- `services/api/tests/test_connection.py::test_store_neutral_names_live_in_connection`
+  now fails when its scan did not read `harrier_cli/main.py`,
+  `harrier_api/app.py` and `tests/test_store_cli.py`, so a wrong root no
+  longer passes by finding nothing. It also fails when a moved name that
+  `harrier.pgstore` holds is not the very object `harrier.connection`
+  defines.

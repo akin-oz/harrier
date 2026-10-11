@@ -24,11 +24,11 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any, NoReturn
 
 import pytest
 
 from harrier import backup, container, db, delegate, logsetup
-from harrier.connection import Connection
 from harrier.container import ContainerState
 from harrier.db import DatabaseOwnedByContainer, DatabaseOwnershipUnknown, connect
 from harrier_cli.main import main
@@ -95,7 +95,7 @@ def detector(monkeypatch: pytest.MonkeyPatch) -> Callable[[ContainerState], list
 def no_sqlite_open(monkeypatch: pytest.MonkeyPatch) -> None:
     """Fail the test if anything reaches sqlite3.connect."""
 
-    def refuse(*args: object, **kwargs: object) -> Connection:
+    def refuse(*args: object, **kwargs: object) -> NoReturn:
         raise AssertionError("sqlite3.connect was called on a database the host may not open")
 
     monkeypatch.setattr(sqlite3, "connect", refuse)
@@ -148,7 +148,7 @@ def test_the_backup_snapshot_and_verify_are_refused_on_the_live_file(
     make_database(live / "tracker.db")
     detector(owned_by_container(live))
 
-    def refuse(*args: object, **kwargs: object) -> Connection:
+    def refuse(*args: object, **kwargs: object) -> NoReturn:
         raise AssertionError("sqlite3.connect was called on the live database")
 
     monkeypatch.setattr(sqlite3, "connect", refuse)
@@ -387,9 +387,9 @@ def test_integrity_does_not_open_the_file_the_container_owns(
     opened: list[object] = []
     real_connect = sqlite3.connect
 
-    def watch(*args: object, **kwargs: object) -> Connection:
+    def watch(*args: Any, **kwargs: Any) -> sqlite3.Connection:
         opened.append(args[0] if args else None)
-        return real_connect(*args, **kwargs)  # type: ignore[arg-type]
+        return real_connect(*args, **kwargs)
 
     monkeypatch.setattr(sqlite3, "connect", watch)
     assert main(["doctor", "--integrity"]) == 0
