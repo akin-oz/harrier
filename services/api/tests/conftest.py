@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import atexit
 import fcntl
+import inspect
 import os
 import shutil
 import sys
@@ -237,38 +238,87 @@ def pytest_configure(config: pytest.Config) -> None:
     )
 
 
+# What each kind of event did to the pin, said of a test and said alone.
+# Every kind but "set" is a moment `.env` could choose the store.
+_PIN_EVENTS: dict[str, tuple[str, str]] = {
+    "unset": ("unset HARRIER_DATABASE_URL", "unset"),
+    "child": ("started a child without HARRIER_DATABASE_URL", "left out of a child's environment"),
+    "loader": ("let the .env loader write HARRIER_DATABASE_URL", "written by the .env loader"),
+    "gone": (
+        "removed HARRIER_DATABASE_URL without an unset event",
+        "removed without an unset event",
+    ),
+}
+
+
 @dataclass(frozen=True)
 class _PinUnset:
-    """One unset of the pin, recorded as it happened."""
+    """One event on the pin, recorded as it happened."""
 
+    # A key of _PIN_EVENTS, or "set" for a plain set.
+    kind: str
     # Collection, the setup, call or teardown of a test, or between tests.
     phase: str
-    # The working directory then, whose `.env` chose the store.
+    # The working directory then, whose `.env` chose the store; for a
+    # child, the child's.
     cwd: Path
     # The test whose watch was open, or None outside every test's watch.
     test: str | None
 
 
-# Every unset of the pin in this session, and what was running at the time.
+# Every event on the pin in this session, and what was running at the time.
 _pin_unsets: list[_PinUnset] = []
 _pin_phase = "collection"
 _watched_test: str | None = None
 
 
+def _names_the_pin(name: object) -> bool:
+    return isinstance(name, (str, bytes)) and os.fsdecode(name) == URL_PIN
+
+
+def _from_the_dotenv_loader() -> bool:
+    """Whether the CLI's `.env` loader is on the stack. It writes only a
+    key that is absent, so its writing the pin means the pin was gone."""
+    frame = inspect.currentframe()
+    while frame is not None:
+        if (
+            frame.f_code.co_name == "load_project_env"
+            and frame.f_globals.get("__name__") == "harrier_cli.main"
+        ):
+            return True
+        frame = frame.f_back
+    return False
+
+
+def _record(kind: str, cwd: Path) -> None:
+    _pin_unsets.append(_PinUnset(kind, _pin_phase, cwd.resolve(), _watched_test))
+
+
 def _watch_the_pin(event: str, args: tuple[Any, ...]) -> None:
-    """Record every unset of the pin, whenever it happens.
+    """Record every event on the pin, whenever it happens.
 
     Every way code removes a variable (`del os.environ[...]`, `pop`,
     monkeypatch's `delenv`) calls `os.unsetenv`, which raises this event.
     The value at the end of a test cannot show it: once the pin is gone,
     anything that loads `.env`, as the CLI's `main()` does, writes the
     variable back with the URL the file names.
+
+    A child started with an `env` that leaves the pin out loads `.env` from
+    its own working directory, and the `.env` loader writing the pin means
+    it was gone, by whatever path (privacy review of PR #243).
     """
-    if event != "os.unsetenv" or not args:
-        return
-    name = args[0]
-    if (os.fsdecode(name) if isinstance(name, (str, bytes)) else None) == URL_PIN:
-        _pin_unsets.append(_PinUnset(_pin_phase, Path.cwd().resolve(), _watched_test))
+    if event == "os.unsetenv" and args and _names_the_pin(args[0]):
+        _record("unset", Path.cwd())
+    elif event == "os.putenv" and args and _names_the_pin(args[0]):
+        _record("loader" if _from_the_dotenv_loader() else "set", Path.cwd())
+    elif (
+        event == "subprocess.Popen"
+        and len(args) >= 4
+        and args[3] is not None
+        and not any(_names_the_pin(name) for name in args[3])
+    ):
+        cwd = args[2]
+        _record("child", Path(os.fsdecode(cwd)) if cwd is not None else Path.cwd())
 
 
 sys.addaudithook(_watch_the_pin)
@@ -317,11 +367,19 @@ def _database_url_stays_pinned(  # pyright: ignore[reportUnusedFunction]
     This detects after the fact; it does not prevent. A test that unsets
     the pin has already run against whatever store `.env` named when it
     fails here. Every unset is recorded as it happens, so a test whose
-    `.env` wrote the variable back still fails (review of PR #225). This
-    test's watch opens after `_data_dir` sets the pin, so the pin is always
-    set when it opens. An unset before it opens, or after it closes, is
-    outside every watch, and the session fails on it below (post-merge
-    review of PR #231).
+    `.env` wrote the variable back still fails (review of PR #225). A child
+    started without the pin, and the `.env` loader writing it, count as an
+    unset. This test's watch opens after `_data_dir` sets the pin to an
+    empty string. An event before it opens, or after it closes, is outside
+    every watch, and the session fails on it below (post-merge review of
+    PR #231).
+
+    A path that raises no event, such as deleting from `os.environ._data`
+    or replacing `os.environ` with a mapping that lacks the pin, is caught
+    at the end of the test: the pin must still be present. If `.env` wrote
+    it back meanwhile, the loader's write is the event (a claims audit of
+    PR #243). The value is not required to be empty: a Postgres test sets
+    its own URL through monkeypatch.
 
     Checked after the test and before the monkeypatch fixture restores the
     environment: this fixture asks for `monkeypatch`, so it is set up after
@@ -337,22 +395,31 @@ def _database_url_stays_pinned(  # pyright: ignore[reportUnusedFunction]
         yield
     finally:
         _watched_test = None
-    unset_in = [unset.cwd for unset in _pin_unsets[first:]]
-    if not unset_in:
+    events = _pin_unsets[first:]
+    here = Path.cwd().resolve()
+    ending = f"teardown of {test.nodeid}"
+    if URL_PIN not in os.environ and not any(event.kind == "unset" for event in events):
+        events.append(_PinUnset("gone", ending, here, test.nodeid))
+    breaches = [event for event in events if event.kind != "set"]
+    if not breaches:
         return
     home = tmp_path.resolve()
     if test.get_closest_marker(DOTENV_FALLBACK) is not None:
-        outside = [here for here in unset_in if here != home and home not in here.parents]
+        outside = [
+            event
+            for event in breaches
+            if event.kind == "gone" or (event.cwd != home and home not in event.cwd.parents)
+        ]
         if not outside:
             return
         pytest.fail(
-            f"{test.nodeid} unset HARRIER_DATABASE_URL outside its tmp_path, "
-            f"so .env in {outside[0]} chose the store"
+            f"{test.nodeid} {_PIN_EVENTS[outside[0].kind][0]} outside its tmp_path, "
+            f"so .env in {outside[0].cwd} chose the store"
         )
     pytest.fail(
-        f"{test.nodeid} unset HARRIER_DATABASE_URL, so .env in {unset_in[0]} chose the store, "
-        f"whatever it holds now. Set it to an empty string for SQLite, or mark the test "
-        f"{DOTENV_FALLBACK} and move to tmp_path first (spec 103)"
+        f"{test.nodeid} {_PIN_EVENTS[breaches[0].kind][0]}, so .env in {breaches[0].cwd} chose "
+        f"the store, whatever it holds now. Set it to an empty string for SQLite, or mark the "
+        f"test {DOTENV_FALLBACK} and move to tmp_path first (spec 103)"
     )
 
 
@@ -366,11 +433,12 @@ def _database_url_never_unset_outside_a_test() -> Iterator[None]:  # pyright: ig
     teardown of its last test, naming the phase.
     """
     yield
-    stray = [unset for unset in _pin_unsets if unset.test is None]
+    stray = [event for event in _pin_unsets if event.test is None and event.kind != "set"]
     if stray:
         pytest.fail(
-            f"HARRIER_DATABASE_URL was unset outside every test's watch, during "
-            f"{stray[0].phase}, so .env in {stray[0].cwd} chose the store for what ran then. "
+            f"HARRIER_DATABASE_URL was {_PIN_EVENTS[stray[0].kind][1]} outside every test's "
+            f"watch, during {stray[0].phase}, so .env in {stray[0].cwd} chose the store for "
+            f"what ran then. "
             f"Keep it set in fixtures and at import; a test that needs the .env fallback "
             f"is marked {DOTENV_FALLBACK} and unsets it itself (spec 103)"
         )

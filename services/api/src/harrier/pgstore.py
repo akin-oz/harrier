@@ -158,9 +158,45 @@ def store_target(environ: Mapping[str, str] | None = None) -> StoreTarget:
     # chained as `__context__`. Its text can quote the password: a raw `/` in
     # the password ends the authority, so the password before it is read as
     # the port (review of PR #218).
-    if not parses or not _one_reading_of_the_authority(raw):
+    if not parses or not _one_reading_of_the_authority(raw) or not _libpq_parses(raw):
         raise refused
     return StoreTarget("postgres", raw)
+
+
+def _libpq_parse(url: str) -> dict[str, object] | None:
+    """The URL as libpq reads it, or None when libpq cannot read it.
+
+    None also when psycopg is missing: the command that needs it refuses
+    on its own (`require_driver`). Every failure is swallowed here, so no
+    text of libpq's, which can quote the URL whole, leaves this function.
+    """
+    try:
+        from psycopg.conninfo import conninfo_to_dict
+    except ImportError:
+        return None
+    try:
+        return dict(conninfo_to_dict(url))
+    except Exception:
+        # A psycopg error quoting the URL, or a decode or encode error for
+        # a value that is not UTF-8.
+        return None
+
+
+def _libpq_parses(url: str) -> bool:
+    """Whether libpq's own parser reads the URL, or psycopg is missing.
+
+    libpq quotes the text of a URL it cannot parse: a query parameter
+    without its `=` whole, an invalid escape in any parameter, and for an
+    unclosed `[` host the whole URL. A value that is not UTF-8 once decoded
+    raised a decode error with a traceback. Each reached the CLI (privacy
+    review of PR #243). Refusing what libpq cannot parse closes all of
+    them where they start.
+    """
+    try:
+        import psycopg  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    except ImportError:
+        return True
+    return _libpq_parse(url) is not None
 
 
 def _one_reading_of_the_authority(url: str) -> bool:
@@ -185,34 +221,63 @@ def _one_reading_of_the_authority(url: str) -> bool:
     return libpq_at == urlsplit(url).netloc.rfind("@")
 
 
+def _is_secret(name: str) -> bool:
+    """Whether a connection parameter carries a secret: `password`,
+    `sslpassword`, `oauth_client_secret` and any later one named alike."""
+    return "pass" in name or "secret" in name
+
+
 def _where(url: str) -> _Where:
     parts = urlsplit(url)
     written = [parts.password or ""]
-    # libpq also takes the password from `?password=`, and quotes that
-    # parameter as written when it refuses it (review of PR #218).
+    # libpq also takes secrets from the query (`?password=`, `?sslpassword=`
+    # and others), and quotes a parameter as written when it refuses it
+    # (review of PR #218; privacy review of PR #243).
     for pair in parts.query.split("&"):
         name, _, value = pair.partition("=")
-        if unquote(name) == "password":
+        if _is_secret(unquote(name)):
             written.append(value)
     decoded = [
-        value
-        for name, value in parse_qsl(parts.query, keep_blank_values=True)
-        if name == "password"
+        value for name, value in parse_qsl(parts.query, keep_blank_values=True) if _is_secret(name)
     ]
+    # And the values as libpq itself reads them, when it can.
+    parsed = _libpq_parse(url) or {}
+    read = [str(value) for name, value in parsed.items() if _is_secret(name) and value]
     return _Where(
         host=parts.hostname or "localhost",
         port=str(parts.port or 5432),
         database=parts.path.lstrip("/") or "postgres",
-        passwords=tuple(form for form in (*written, *map(unquote, written), *decoded) if form),
+        passwords=tuple(
+            form for form in (*written, *map(unquote, written), *decoded, *read) if form
+        ),
     )
 
 
 def _scrub(message: str, where: _Where) -> str:
-    # Longest first, so a decoded form inside an encoded one cannot leave a
-    # fragment of the other behind.
-    for password in sorted(set(where.passwords), key=len, reverse=True):
-        message = message.replace(password, "***")
-    return " ".join(message.split())
+    # Every occurrence of every form is found in the text as written, and
+    # the union of those spans is replaced. Replacing the longest form first
+    # broke a shorter one that overlapped it, and left its other part behind
+    # (privacy review of PR #243).
+    spans: list[tuple[int, int]] = []
+    for form in set(where.passwords):
+        start = message.find(form)
+        while start >= 0:
+            spans.append((start, start + len(form)))
+            start = message.find(form, start + 1)
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    kept: list[str] = []
+    at = 0
+    for start, end in merged:
+        kept.append(message[at:start])
+        kept.append("***")
+        at = end
+    kept.append(message[at:])
+    return " ".join("".join(kept).split())
 
 
 def require_driver() -> None:
@@ -230,14 +295,33 @@ def postgres_connect(url: str) -> psycopg.Connection[tuple[object, ...]]:
     require_driver()
     import psycopg
 
-    where = _where(url)
     try:
-        return psycopg.connect(url, autocommit=True, connect_timeout=10)
-    except psycopg.Error as error:
-        message = (
-            f"cannot connect to the Postgres store at {where.describe()}: "
-            f"{_scrub(str(error), where)}"
-        )
+        where = _where(url)
+    except ValueError:
+        where = None
+    if where is None:
+        # urlsplit could not read the port, and its error quotes the text it
+        # read as one, which can be the password. store_target refuses such
+        # a URL; this is for a caller that came another way.
+        message = f"cannot connect to the Postgres store: {URL_VARIABLE} is malformed"
+    else:
+        try:
+            return psycopg.connect(url, autocommit=True, connect_timeout=10)
+        except psycopg.Error as error:
+            message = (
+                f"cannot connect to the Postgres store at {where.describe()}: "
+                f"{_scrub(str(error), where)}"
+            )
+        except Exception as error:
+            # A decode or encode error for a value that is not UTF-8, or
+            # anything else the driver raises outside its own classes. Its
+            # text gives positions in the URL, so only its class is named,
+            # and the CLI, which catches StoreError, prints one line
+            # (privacy review of PR #243).
+            message = (
+                f"cannot connect to the Postgres store at {where.describe()}: "
+                f"{type(error).__name__}"
+            )
     # Raised after the except block, not inside it. `from None` only hides
     # the driver's error from a printed traceback; it stays attached as
     # `__context__`, and its text may quote the password (post-merge review
