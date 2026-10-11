@@ -1096,3 +1096,512 @@ the pull request carries the runs.
       shim, and each fails without its fix or under the mutation the pull
       request records.
 - [ ] CI's `check-python` job runs these tests against Postgres.
+
+## Amendment (2026-10-11): owner identity without schema auth
+
+Spec 115's staging run refuted an assumption this spec rests on, and found
+a Supabase object the catalog test cannot pass. This section is the fix
+spec 115 assigns here (its "Amendment (staging findings)", "What A2
+breaks" and N2, on PR #246). It proposes migration 16. It is not approved
+until Akin approves it; nothing below is built.
+
+Migration 16, not 15: spec 122 took 15 for `job_eligibility`
+(`services/api/src/harrier/tracker/schema.py:1313`). `git grep` over
+`origin/main` and every remote branch on 2026-10-11 found no other claim
+on 16.
+
+### Problem
+
+**A2, refuted.** On the staging project (Postgres 17.6), schema `auth`'s
+ACL gives `postgres` `U/supabase_admin`: USAGE without the grant option.
+Migration 10's `GRANT USAGE ON SCHEMA auth TO harrier_tenant`
+(`schema.py:1032`) therefore grants nothing; Postgres warns and the
+migration completes. `EXECUTE` on `auth.uid()` reaches the tenant only
+through Supabase's own grant to `PUBLIC` (`=X/supabase_auth_admin`), so
+migration 10's grant of it (`schema.py:1033`) is a no-op too. Evidence:
+spec 115, "Amendment (staging findings)", rows A2 and A3, on PR #246.
+
+Postgres checks schema USAGE when a name is looked up, not when a stored
+expression runs. Spec 115 found the effect object by object:
+
+| Object that names `auth.uid()` | Where | On staging, as `harrier_tenant` |
+|---|---|---|
+| `owner_id DEFAULT auth.uid()` on each migration 10 table | `schema.py:892` | works: the default holds the function by its id (A6) |
+| `owner_id DEFAULT auth.uid()` on `job_eligibility` | `schema.py:1269` | same form as above; not on staging, which stopped at 14 |
+| `owner_only` policy, `USING` and `WITH CHECK`, on each migration 10 table | `schema.py:800`, `:996-997` | works, by id (A6) |
+| `owner_only` on `job_eligibility` | `schema.py:1289-1290` | same form; not on staging |
+| `harrier_number_track()` body, migration 14 | `schema.py:1228-1243` | **refused**: PL/pgSQL looks the name up as the session role on first use, so `42501 permission denied for schema auth` on any track insert without an id |
+| any statement that names `auth.uid()` | tests, spec 104's planned request test | **refused**, same error |
+
+`harrier_new_owner()` (`schema.py:969-976`) names no `auth.uid()`. No other
+function, trigger or policy in `public` names it.
+
+So an owner cannot create any track after track 1. In staging mode, 9 of
+the 11 isolation tests failed on this, at their first tenant insert into
+`tracks` without an id or at `SELECT auth.uid()` as the tenant (spec 115,
+"The isolation tests in staging mode"). The policy and the defaults work
+today only because of when Postgres checks USAGE. A design that depends on
+that is one refactor away from the same refusal.
+
+The migrating role cannot fix this by granting. It holds no grant option
+on `auth`, and Supabase's changelog of 2025-04-21 restricts the `auth`
+schema further (Proof / origin).
+
+**N2.** Supabase installs `public.rls_auto_enable()`: `SECURITY DEFINER`,
+`search_path=pg_catalog`, executable by `PUBLIC`, `anon`, `authenticated`
+and `service_role`, returning `event_trigger`, fired by Supabase's event
+trigger `ensure_rls` on `CREATE TABLE`. It cannot be called directly (as
+`anon`: `0A000 cannot display a value of type event_trigger`). The catalog
+check in `services/api/tests/test_owner_policy.py` (`catalog_problems`,
+lines 900-926) names it four ways: a definer function in `public`, a
+definer without an empty `search_path`, executable by each Data API role
+and `harrier_tenant`, and executable by `PUBLIC`. In staging mode
+`test_every_table_is_owned_or_declared` fails, and every problem it names
+is this function (spec 115, rows A9 and N2).
+
+Spec 115 records the function's owner as `postgres`, the role that
+migrates the store. It is still Supabase's object, not harrier's, and
+spec 115 left it alone; this amendment does too.
+
+### Recommended design
+
+**Migration 16, Postgres only.** `POSTGRES_MIGRATIONS` gains `(16, ...)`,
+`MIGRATIONS` gains `(16, [])`, and `SINGLE_DIALECT_MIGRATIONS` declares 16
+as `postgres` with the reason "owner identity read from the request claims
+without schema auth (spec 105, amendment of 2026-10-11); the local schema
+has no owner". In one transaction, under spec 103's advisory lock:
+
+1. **Create the identity function.**
+
+   ```sql
+   CREATE FUNCTION public.harrier_owner_id() RETURNS uuid
+   LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$
+       SELECT coalesce(
+           nullif(pg_catalog.current_setting('request.jwt.claim.sub', true), ''),
+           nullif(pg_catalog.current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'
+       )::uuid
+   $$;
+   ```
+
+   The body is the one spec 115 found deployed as `auth.uid()` (row A3:
+   the deployed `prosrc` equals the shim's, `services/api/tests/pg_support.py:93-98`
+   on main), with every function call qualified. It reads the setting spec
+   104's request transaction sets with `set_config('request.jwt.claims',
+   <claims>, true)` (spec 104, "The request transaction", step 2), so a
+   request gets the same value `auth.uid()` would return. Without claims
+   it returns null, as `auth.uid()` does, so the policy matches no row and
+   a defaulted `owner_id` is null. A `sub` that is not a UUID raises
+   `22P02`, as `auth.uid()` does; spec 104 refuses such a token with 401
+   before any statement runs.
+
+   `SECURITY INVOKER`: it runs with the caller's rights and reads only
+   settings the caller already has. `SET search_path = ''`: names resolve
+   in `pg_catalog` only, whatever the caller's path. `STABLE`: the
+   settings do not change within a statement.
+
+2. **Grant it to the tenant role only.** `REVOKE ALL ON FUNCTION
+   public.harrier_owner_id() FROM PUBLIC, anon, authenticated,
+   service_role`, then `GRANT EXECUTE ON FUNCTION public.harrier_owner_id()
+   TO harrier_tenant`. Stated, not left to migration 14's default
+   privileges.
+
+3. **Repoint every owner default.** For each table in a frozen copy of
+   `OWNED_TABLES` as it stands at version 15 (as migration 10 reads
+   `MIGRATION_10_OWNED_TABLES`): `ALTER TABLE <t> ALTER COLUMN owner_id SET
+   DEFAULT public.harrier_owner_id()`.
+
+4. **Repoint every policy.** For the same tables: `ALTER POLICY owner_only
+   ON <t> USING (owner_id = (SELECT public.harrier_owner_id())) WITH CHECK
+   (owner_id = (SELECT public.harrier_owner_id()))`. The policy keeps its
+   name, its role and its command. `version_readable` names no function and
+   is unchanged.
+
+5. **Replace `harrier_number_track()`.** Migration 14's logic, with the
+   owner read from the new function, and the read nested so only the
+   tenant branch reaches it:
+
+   ```sql
+   IF NEW.id IS NULL THEN
+       IF current_user = 'harrier_tenant' THEN
+           IF NEW.owner_id IS DISTINCT FROM public.harrier_owner_id() THEN
+               RETURN NEW;
+           END IF;
+       END IF;
+       /* migration 14's row lock and numbering, unchanged */
+   END IF;
+   ```
+
+   The nesting matters. Postgres checks `EXECUTE` when it prepares an
+   expression, and SQL does not promise to evaluate `AND` left to right,
+   so migration 14's single condition would make an operator role
+   (spec 108) need `EXECUTE` on the function to number a track. PL/pgSQL
+   prepares an inner `IF` only when it first runs it, so a role that is
+   not the tenant never prepares the call. Qualified names throughout, as
+   before: `harrier_new_owner()` fires this trigger with an empty
+   `search_path`.
+
+6. **Withdraw migration 10's grants on `auth`.** `REVOKE EXECUTE ON
+   FUNCTION auth.uid() FROM harrier_tenant` and `REVOKE USAGE ON SCHEMA
+   auth FROM harrier_tenant`. Where migration 10's grant took effect (a
+   store migrated by a role with the grant option), the tenant loses it.
+   Where it did not (Supabase, and the faithful shim below), Postgres
+   warns that no privilege could be revoked and the statement does
+   nothing. Either way the end state is the same: harrier grants the
+   tenant nothing in `auth`.
+
+Migration 16 names `auth.uid()` only in the revoke of step 6, as the
+migrating role. It creates no table, so Supabase's `ensure_rls` does not
+fire.
+
+**What `harrier_tenant` can and cannot do after migration 16.**
+
+- It can: execute `public.harrier_owner_id()`, the one function in
+  `public` it may execute; hold every table and column privilege this spec
+  already lists (Grants, as amended by the post-merge reviews); insert rows
+  whose `owner_id` is checked against `auth.users` by the foreign key, which
+  Postgres runs as the referenced table's owner (A6 confirmed it on
+  staging without schema usage); number its own tracks.
+- It cannot: look up any name in schema `auth`, so it cannot call
+  `auth.uid()` or `auth.jwt()` or read `auth.users`; execute any other
+  function in `public`; create anything in `public`. It still holds
+  `EXECUTE` on `auth.uid()` through Supabase's grant to `PUBLIC`, which
+  harrier does not own and which is unusable without schema usage.
+- Unchanged: SQL running as the tenant can still set its own claims
+  (Honest limitations, "The boundary holds against a forgotten
+  predicate").
+
+**`harrier_new_owner()` needs nothing new in `auth`.** It is `SECURITY
+DEFINER`, so it runs as its owner, the migrating role, not as the role
+inserting into `auth.users` (Supabase's auth service, or `postgres` in the
+tests). It names `NEW.id` and `public.tracks`, never `auth.uid()`. Its
+insert gives `id` 1 explicitly, so `harrier_number_track()` skips the
+numbering branch and never reaches `harrier_owner_id()`; the migrating
+role owns that function and could execute it anyway. The trigger on
+`auth.users` itself needs only `TRIGGER` on that table, which A1
+confirmed. Nothing here changes for it.
+
+**Failure modes this changes.**
+
+- **An insert with no owner from `service_role`, given a table privilege by
+  a later spec.** Before: the default `auth.uid()` was null and NOT NULL
+  refused the row. After: `service_role` cannot execute
+  `harrier_owner_id()`, so the default is refused with `42501 permission
+  denied for function harrier_owner_id`. Still refused, nothing written. An
+  operator command names the owner, as Failure modes already requires. The
+  migrating role owns the function, so for it NOT NULL still refuses.
+- **A session as the tenant with no claims.** Unchanged: the function
+  returns null, the policy refuses.
+
+### Options weighed
+
+- **(a) A harrier-owned invoker function that reads the claims.**
+  Recommended. It needs no privilege in `auth`, no definer rights, and
+  reads exactly the setting harrier's own request transaction writes.
+  Cost: it copies `auth.uid()`'s body, so a change Supabase makes to its
+  function is not followed (Honest limitations).
+- **(b) A `SECURITY DEFINER` wrapper, owned by the migrating role, that
+  calls `auth.uid()`.** Rejected. It would follow Supabase's body. But it
+  runs as `postgres`, which has `BYPASSRLS` (A4), so any later edit that
+  adds a query reads past every policy; it must pin `search_path` exactly
+  or the caller's path decides what it resolves; and it adds a second
+  definer function to the catalog's exception list beside
+  `harrier_new_owner()`. The gain does not pay for a broad-rights function
+  on every request.
+- **(c) USAGE on `auth` with the grant option for the migrating role.**
+  Not available. Supabase's `supabase_admin` granted `postgres` USAGE on
+  `auth` without the grant option (A2), and a role cannot grant itself an
+  option it lacks. Harrier cannot depend on a support request.
+- **(d) Make `harrier_tenant` a member of a role that has USAGE on `auth`,
+  such as `authenticated`.** Rejected. The tenant would gain, or could
+  `SET ROLE` to, whatever Supabase grants `authenticated`: the Data API's
+  privileges, Storage and Realtime policies written `TO authenticated`,
+  and any grant Supabase adds later. Migration 13 refuses a tenant that is
+  a member of any role, and the catalog test fails on one, for this
+  reason. It is also not enough on its own: the tenant is `NOINHERIT`.
+- **(e) Fix only the trigger, keep `auth.uid()` in the policies and
+  defaults.** Rejected. Smaller, but two identity sources would coexist,
+  and the policies would keep working only because USAGE is checked at
+  lookup. The catalog could not assert one source of owner identity.
+
+### The catalog and Supabase's objects (N2)
+
+`services/api/src/harrier/tracker/schema.py` gains, beside
+`UNOWNED_TABLES`, a declaration of Supabase's functions in `public`:
+
+```python
+SUPABASE_FUNCTIONS_IN_PUBLIC: dict[str, str] = {
+    "rls_auto_enable()": "Supabase's event trigger function behind ensure_rls; "
+    "returns event_trigger, so no role can call it (spec 115, N2)",
+}
+```
+
+The catalog check skips its four function rules (definer in `public`,
+definer `search_path`, `EXECUTE` for a named role, `EXECUTE` for `PUBLIC`)
+for a function in `public` only when both hold: its signature, as
+`oid::regprocedure` prints it, is a key here, and its return type is
+`event_trigger`. Every other rule still applies to it. A declared function
+that is absent is not a problem, since CI's shim has none. A function with
+a declared name and any other return type is checked as usual, because a
+callable function under that name is a different object. A Supabase
+function not on the list fails the check, naming it, so a new one is
+noticed and declared by a spec change, never silently.
+
+**Why a named list, not "owner is not the migrating role".** Spec 115
+recorded `rls_auto_enable()` as owned by `postgres`, the migrating role.
+An owner rule would exempt nothing on Supabase, and would exempt any
+function some other role puts in `public` later without anyone reading
+it. Exempting every `event_trigger` function would also pass N2, but it is
+a class: a definer event trigger function harrier or Supabase adds later
+would pass unread. The named list is the narrower rule, fails closed on
+anything new, and keeps the return type as the property that makes the
+exemption safe.
+
+**The catalog's rules for the new function.** Behavior's catalog list, as
+amended by the post-merge reviews, changes so:
+
+- an owned table's `owner_id` default is `harrier_owner_id()`, not
+  `auth.uid()`;
+- `owner_only`'s `USING` and `WITH CHECK` equal `owner_id = (SELECT
+  harrier_owner_id())` as Postgres prints it (`POLICY_EXPRESSION` in
+  `services/api/tests/test_owner_policy.py:77`);
+- `harrier_tenant` executes exactly one function in `public`,
+  `harrier_owner_id()`, and must hold it; every other `EXECUTE` rule
+  stands;
+- `harrier_owner_id()` is `SECURITY INVOKER`, `STABLE`, returns `uuid`,
+  and its configuration is exactly `search_path=""`;
+- no policy, column default or trigger on a table in `public` depends on
+  `auth.uid()` (`pg_depend` from `pg_policy`, `pg_attrdef` and
+  `pg_trigger` to `'auth.uid()'::regprocedure`), and no function in
+  `public` has `auth.uid` in its source, since PL/pgSQL bodies record no
+  dependency;
+- `harrier_tenant` holds no USAGE on schema `auth`.
+
+### The test shim
+
+PR #246 makes every Postgres test migrate as `harrier_migrator`, shaped as
+spec 115 found `postgres`. It keeps one recorded difference from the
+project: `SHIM_STATEMENTS` in `services/api/tests/pg_support.py` grants
+`USAGE ON SCHEMA auth TO harrier_migrator WITH GRANT OPTION` (line 154 on
+PR #246's branch), so the suite stays green until this fix (spec 115, "CI
+migrates as a non-superuser"). This amendment removes the grant option:
+the migrator holds USAGE on `auth` without it, as `postgres` does. The
+shim's comment that records the difference goes with it.
+
+Then, in CI, migration 10's grant to the tenant does nothing, as on
+Supabase. A store stopped at version 15 refuses a tenant's track insert
+without an id with `42501 permission denied for schema auth`, which
+reproduces A2; at version 16 the same insert gets id 2. Spec 115 recorded
+that with the grant option removed, the tests in
+`services/api/tests/test_owner_policy.py` fail as the project does; after
+migration 16 they must pass.
+
+Tests that name `auth.uid()` while the tenant role is current change to
+`harrier_owner_id()`: `test_an_insert_without_an_owner_is_refused` and
+`test_a_tenant_without_claims_never_waits_on_an_owners_track`. The first
+also expects `service_role`, given a table privilege, to be refused with
+`permission denied for function harrier_owner_id` instead of NOT NULL
+(Failure modes this changes). A test that stops below version 16 and
+inserts a track without an id as the tenant meets A2, as the project
+would, and migrates to 16 first or names the id.
+
+This depends on PR #246 merging first: `harrier_migrator` does not exist
+on `main` before it.
+
+### Acceptance criteria (owner identity without schema auth)
+
+- [ ] `POSTGRES_MIGRATIONS` has version 16 with the steps above;
+      `MIGRATIONS` has `(16, [])`; `SINGLE_DIALECT_MIGRATIONS` declares 16
+      as Postgres only with its reason. Migrations 9 to 15 are unchanged
+      (`services/api/tests/test_postgres_store.py::test_every_new_migration_declares_both_dialects`,
+      `services/api/tests/test_postgres_store.py::test_a_hosted_only_migration_leaves_sqlite_empty_on_purpose`).
+- [ ] The shim's migrator holds USAGE on `auth` without the grant option,
+      and nothing on `auth.uid()` beyond `PUBLIC`'s (planned
+      test_the_shim_migrator_holds_auth_usage_without_grant_option).
+- [ ] On that shim, a store at version 15 refuses an owner's track insert
+      without an id with `42501 permission denied for schema auth`; after
+      migration 16 the same insert, as `harrier_tenant`, gets id 2, and a
+      third gets id 3 (planned test_track_two_needs_migration_16_on_the_faithful_shim).
+- [ ] After migration 16, no policy, column default or trigger on a table
+      in `public` depends on `auth.uid()`, and no function in `public`
+      names it in its source, by the catalog query above (planned
+      test_nothing_harrier_owns_references_auth_uid); the catalog check
+      names a policy re-pointed at `auth.uid()` as a breach
+      (`services/api/tests/test_owner_policy.py::test_the_catalog_names_each_breach`,
+      with that case added).
+- [ ] `harrier_owner_id()` is executable by `harrier_tenant` and by none of
+      `PUBLIC`, `anon`, `authenticated` and `service_role`, and is
+      `SECURITY INVOKER`, `STABLE`, with `search_path=""` (planned
+      test_only_the_tenant_executes_harrier_owner_id).
+- [ ] As the tenant, `harrier_owner_id()` returns the `sub` of
+      `request.jwt.claims` set local, null with no claims, the legacy
+      `request.jwt.claim.sub` when that is set, and raises `22P02` on a
+      `sub` that is not a UUID (planned
+      test_harrier_owner_id_reads_the_request_claims).
+- [ ] After migration 16, `harrier_tenant` holds no USAGE on `auth`, and
+      `SELECT auth.uid()` as the tenant is refused, while its inserts and
+      reads under the policy work (planned
+      test_the_tenant_role_holds_nothing_in_auth).
+- [ ] A role that is not the tenant, given `SELECT, INSERT, UPDATE` on
+      `tracks` and no `EXECUTE` on `harrier_owner_id()`, numbers a track
+      inserted without an id (planned
+      test_an_operator_numbers_a_track_without_harrier_owner_id).
+- [ ] Owner isolation is unchanged on the faithful shim:
+      `services/api/tests/test_owner_policy.py::test_owner_a_reads_nothing_of_owner_b`,
+      `::test_owner_a_cannot_write_as_owner_b`,
+      `::test_an_insert_without_an_owner_is_refused`,
+      `::test_the_data_api_role_reaches_no_harrier_table`,
+      `::test_uniqueness_is_per_owner`,
+      `::test_references_stay_inside_one_owner`,
+      `::test_every_owner_starts_with_track_one`,
+      `::test_an_owner_files_a_job_with_the_defaults`,
+      `::test_a_bypassrls_role_sees_every_owner` and
+      `::test_truncate_cannot_empty_events_or_tracks` pass, as do the
+      numbering tests named in the second post-merge review.
+- [ ] The catalog check passes a function shaped as N2 found it
+      (`SECURITY DEFINER`, `search_path=pg_catalog`, returning
+      `event_trigger`, executable by `PUBLIC`) when it is named
+      `rls_auto_enable()`, made inside a transaction that is rolled back
+      (planned test_a_declared_supabase_function_is_not_a_catalog_problem);
+      it names the same function under another name, and a function
+      named `rls_auto_enable()` that returns `void` (planned
+      test_an_undeclared_supabase_function_is_a_catalog_problem).
+- [ ] Dialect parity holds:
+      `services/api/tests/test_dialect_parity.py::test_both_dialects_build_the_same_tracker`
+      passes, with every owned table's `owner_id` defaulting to the
+      session's owner through the new function.
+- [ ] Migration 16 applies as the non-superuser `harrier_migrator` on the
+      faithful shim, in CI, including step 6's revokes, which warn and do
+      nothing there; CI's `check-python` run shows every Postgres test
+      passing, none skipped.
+- [ ] Migration 16 failing after its last statement leaves the store at
+      version 15 with its catalog unchanged
+      (`services/api/tests/test_owner_policy.py::test_a_failed_migration_leaves_no_trace_of_itself`,
+      with 16 added to its versions, and its fingerprint gaining column
+      defaults and policy expressions, which it does not compare today).
+- [ ] On the staging project, `harrier store migrate` as `postgres` reaches
+      `target_version()`, and a rerun of spec 115's module
+      (`services/api/tests/test_supabase_project.py`, from PR #246) passes
+      the eleven isolation tests in staging mode. The pull request carries
+      the output with no project reference or password.
+- [ ] In that run, `test_every_table_is_owned_or_declared` passes in
+      staging mode with `rls_auto_enable()` declared and nothing else
+      exempted.
+- [ ] `docs/architecture.md` says `owner_id` defaults to
+      `harrier_owner_id()` and the tenant role needs nothing in `auth`.
+- [ ] `uv run ruff check` and `uv run pyright` pass on the service, and
+      `just check` passes.
+
+### Honest limitations (owner identity without schema auth)
+
+- **The function copies `auth.uid()`'s body.** If Supabase changes how
+  `auth.uid()` reads the claims, harrier does not follow. Harrier sets the
+  claims itself (spec 104), so its own requests stay correct; it is
+  Supabase's semantics it stops sharing. A rerun of spec 115's A3 test
+  compares the deployed body and notices a change; nothing else does.
+- **The legacy claim wins.** The body reads `request.jwt.claim.sub` first,
+  as `auth.uid()` does. A session-level value of it left on a pooled
+  connection would override the request's local claims. Spec 104's
+  read-back checks `request.jwt.claims` only, so it would not see this.
+  A follow-up below asks spec 104 to read back `harrier_owner_id()`;
+  Open decisions offers dropping the legacy claim instead.
+- **The exemption trusts a name and a return type.** A Supabase change to
+  `rls_auto_enable()` that keeps both passes unread. One that changes
+  either fails the check and is noticed.
+- **The faithful shim copies A2 as observed on 2026-10-11** on Postgres
+  17.6. If Supabase changes the grant, CI does not notice until a rerun of
+  spec 115's module.
+- **Operator writes must name the owner.** A role without `EXECUTE` on
+  `harrier_owner_id()` that omits `owner_id` is refused by the function
+  privilege, not by NOT NULL. Both refuse; the message differs.
+- **Staging mode still runs as `postgres`** and keeps its synthetic owners
+  (spec 115, "What the run leaves behind").
+- **No performance claim.** The function's `SET search_path` stops
+  Postgres inlining it. The policy wraps it in `(SELECT ...)`, so it runs
+  once per statement. Nothing is measured.
+
+### Specs this touches, and follow-ups
+
+None of these specs is edited here. Each line is a change for Akin to
+approve with this amendment, or in that spec's own change.
+
+- **Spec 104.** Its request transaction must keep setting
+  `request.jwt.claims` with `set_config(..., true)` (step 2), because that
+  is the setting `harrier_owner_id()` reads. Follow-ups: its read-back
+  (step 3) also reads `public.harrier_owner_id()` and requires it to equal
+  the token's `sub`, which closes the legacy claim limitation above; its
+  planned criterion that "`auth.uid()` is the token's `sub`, and
+  `auth.jwt()` is its payload" inside a request (planned
+  test_the_request_transaction_runs_as_its_user) cannot hold as
+  `harrier_tenant` on Supabase and reads `harrier_owner_id()` and the
+  claims setting instead.
+- **Spec 115.** Its acceptance criterion "The eleven
+  `test_owner_policy.py` tests listed under Behavior pass in staging mode"
+  is met by this amendment's staging rerun, and its catalog failure on N2
+  by the declaration. Follow-ups: A2 as written ("It can grant
+  `harrier_tenant` `USAGE` on `auth`") stops being an assumption spec 105
+  rests on, and A3's tenant half calls `auth.uid()` as the tenant; spec
+  115 restates both, or marks them superseded by this amendment, so its
+  module's A2 and A3 tests assert what spec 105 now needs. Its "one
+  recorded difference" in the shim is removed here.
+- **Spec 110.** Its runbook: the API's login role and `harrier_tenant`
+  need nothing in `auth`, so no step asks Supabase for a grant there;
+  migrate each project to version 16 before spec 112's hosted mode serves
+  a request; leave Supabase's `ensure_rls` and `rls_auto_enable()` in
+  place; and if a deploy's catalog check names a new Supabase object in
+  `public`, the fix is a spec change to `SUPABASE_FUNCTIONS_IN_PUBLIC`,
+  not a revoke.
+- **Spec 112.** Its second pull request is already gated on spec 115's
+  acceptance, which now waits on this amendment.
+
+### Open decisions for Akin (owner identity without schema auth)
+
+1. **Approve migration 16 as designed** (recommended), or one of the
+   options weighed above.
+2. **The legacy claim.** Recommended: keep `request.jwt.claim.sub` first,
+   so the function equals what spec 115 found deployed as `auth.uid()`,
+   and close the stale-setting gap in spec 104's read-back. Alternative:
+   read `request.jwt.claims ->> 'sub'` only, the one setting harrier sets.
+   Simpler and immune to a stale legacy value, at the cost of differing
+   from `auth.uid()`.
+3. **Where the Supabase declaration lives.** Recommended:
+   `services/api/src/harrier/tracker/schema.py`, beside `UNOWNED_TABLES`,
+   since it declares what the store holds. Alternative: a constant in the
+   catalog test, which keeps Supabase's names out of the schema module.
+
+### Proof / origin (owner identity without schema auth)
+
+- `specs/115-spec-105-holds-on-a-real-supabase-project.md` on PR #246
+  (branch `feat-115-supabase-staging`), "Amendment (staging findings)":
+  rows A2, A3, A4, A6, A9 and A11, "What A2 breaks", "The isolation tests
+  in staging mode", N2, and "CI migrates as a non-superuser".
+- `services/api/tests/test_supabase_project.py` on PR #246: the A2 test
+  asserts the tenant's USAGE on `auth` and `EXECUTE` on `auth.uid()`; the
+  A3 test compares the deployed body and calls `auth.uid()` as the tenant;
+  the staging fixtures collect the isolation tests from
+  `test_owner_policy.py`.
+- `services/api/tests/pg_support.py` on PR #246: `SHIM_STATEMENTS`, the
+  grant with the grant option at line 154. On `main`: the shim's
+  `auth.uid()` body, lines 93-98.
+- `services/api/src/harrier/tracker/schema.py` on `main` at `1d1b414`:
+  migration 10 (`POSTGRES_OWNERS`, lines 878-1034), migration 13
+  (`POSTGRES_OWNER_CORRECTIONS`, 1096-1169), migration 14
+  (`POSTGRES_OWNER_CORRECTIONS_2`, 1205-1257, with the numbering trigger at
+  1228-1243), migration 15 (`POSTGRES_JOB_ELIGIBILITY`, 1262-1297),
+  `SINGLE_DIALECT_MIGRATIONS` (737-754).
+- `services/api/tests/test_owner_policy.py` on `main`: `POLICY_EXPRESSION`
+  (line 77), the default check (714-715), the function rules (900-926),
+  `catalog_fingerprint` (452-482).
+- `specs/104-the-hosted-api-authenticates-every-request.md`: "The request
+  transaction", steps 2 and 3, and its planned request criteria.
+- PostgreSQL, Privileges: USAGE on a schema allows looking up objects in
+  it, and revoking it does not stop statements that already performed the
+  lookup. https://www.postgresql.org/docs/current/ddl-priv.html
+- PostgreSQL, REVOKE: a role with some privilege but no grant option gets
+  a warning and revokes nothing.
+  https://www.postgresql.org/docs/current/sql-revoke.html
+- PostgreSQL, CREATE FUNCTION: `SECURITY INVOKER`, `SET` clauses, and
+  writing definer functions safely with a fixed `search_path`.
+  https://www.postgresql.org/docs/current/sql-createfunction.html
+- Supabase, Restricting access on auth, storage and realtime schemas
+  (2025-04-21), as cited by spec 115.
+  https://supabase.com/changelog/34270-restricting-access-on-auth-storage-and-realtime-schemas-on-april-21-2025
