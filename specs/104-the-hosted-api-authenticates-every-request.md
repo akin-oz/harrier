@@ -842,3 +842,64 @@ here, each with its own criterion:
   refuses the start (The store version). It is not checked per request.
 - Hosted configuration comes from the process environment, set by Fly
   secrets, never from a `.env` file (Configuration).
+
+## Amendment (2026-10-11): request-role timeouts
+
+A post-merge review of PR #231 found that spec 105's Honest limitations
+name "a statement and transaction timeout on the request role (spec 104)"
+as what bounds a whole-table lock, and this spec had none. Spec 105 owns
+the limitation; the bound belongs to the request path, so it is recorded
+here, with its own criteria, per the review-response rule.
+
+The limitation, as spec 105 now states it: `LOCK TABLE` checks table
+privileges, not the row policy. `harrier_tenant` holds `UPDATE` or
+`DELETE` on six of the seven owned tables, so a session running as it can
+take `ACCESS EXCLUSIVE` on any of them and hold every owner's reads and
+writes until its transaction ends. harrier's own statements never lock a
+table; the risk is SQL injected into a request, or a bug.
+
+- **Every request transaction runs with three timeouts set:**
+  `lock_timeout`, `statement_timeout` and
+  `idle_in_transaction_session_timeout`. `lock_timeout` bounds how long a
+  request waits on a lock another session holds, so a request stalled by
+  another session's table lock fails rather than hangs. The other two
+  bound how long a request's own transaction can hold a lock while
+  harrier's statements run or sit idle. The values, and where they are
+  set (on the login role, or with `SET LOCAL` in step 2 of the request
+  transaction), are chosen by this spec's implementation, from what the
+  routes need, and justified in the change that sets them. No number is
+  fixed here. A statement or lock wait that a timeout cancels raises a
+  database error, and the request fails as on any other exception: step 5
+  rolls it back. `idle_in_transaction_session_timeout` ends the
+  connection, not only the transaction, so the pool must not hand that
+  connection out again.
+- **The request transaction runs at `READ COMMITTED`,** Postgres's
+  default, and never sets another isolation level. Two track inserts for
+  one owner rely on it: spec 105's numbering trigger locks the owner's
+  track 1, and the second insert's next statement then sees the first's
+  track and numbers after it. Under `REPEATABLE READ` the second insert's
+  snapshot misses the first's track; it takes the same id and fails with
+  a unique violation on `tracks_pkey` (`23505`), so it fails closed rather
+  than writing a duplicate. Checked on Postgres 17 for this amendment.
+- Honest limitation: any role may `SET` all three of these settings for
+  its own session. SQL injected into a request can raise its own
+  `statement_timeout` and `idle_in_transaction_session_timeout` and hold a
+  table lock longer. What then bounds the stall for every other owner is
+  each other request's own `lock_timeout`, which the injected session
+  cannot change.
+
+### Acceptance criteria (request-role timeouts)
+
+- [ ] Inside a request, `current_setting('lock_timeout')`,
+      `current_setting('statement_timeout')` and
+      `current_setting('idle_in_transaction_session_timeout')` are each the
+      value the implementation chose, none of them `0`; a request that
+      waits on a table another session holds in `ACCESS EXCLUSIVE` mode
+      fails once its `lock_timeout` passes, rather than waiting for that
+      session, and commits nothing
+      (planned test_the_request_role_has_lock_and_statement_timeouts).
+- [ ] Inside a request, `current_setting('transaction_isolation')` is
+      `read committed`, and two concurrent track inserts for one owner
+      through the request transaction get two ids
+      (planned test_the_request_transaction_reads_committed).
+- [ ] The change that sets the values says, for each, why that value.
