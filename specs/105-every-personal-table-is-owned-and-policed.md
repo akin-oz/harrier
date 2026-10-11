@@ -1206,8 +1206,9 @@ changes: migrations 9 to 14 are unchanged, and no migration 15 is added.
 Spec 115's staging run refuted an assumption this spec rests on, and found
 a Supabase object the catalog test cannot pass. This section is the fix
 spec 115 assigns here (its "Amendment (staging findings)", "What A2
-breaks" and N2, on PR #246). It proposes migration 16. It is not approved
-until Akin approves it; nothing below is built.
+breaks" and N2, on PR #246). It proposes migration 16. Akin approved it
+in chat on 2026-10-11, with the claim read narrowed to
+`request.jwt.claims` alone (Decisions taken, below).
 
 Migration 16, not 15: spec 122 took 15 for `job_eligibility`
 (`services/api/src/harrier/tracker/schema.py:1313`). `git grep` over
@@ -1280,19 +1281,20 @@ has no owner". In one transaction, under spec 103's advisory lock:
    ```sql
    CREATE FUNCTION public.harrier_owner_id() RETURNS uuid
    LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$
-       SELECT coalesce(
-           nullif(pg_catalog.current_setting('request.jwt.claim.sub', true), ''),
-           nullif(pg_catalog.current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'
-       )::uuid
+       SELECT (nullif(pg_catalog.current_setting('request.jwt.claims', true), '')::jsonb
+               ->> 'sub')::uuid
    $$;
    ```
 
-   The body is the one spec 115 found deployed as `auth.uid()` (row A3:
-   the deployed `prosrc` equals the shim's, `services/api/tests/pg_support.py:93-98`
-   on main), with every function call qualified. It reads the setting spec
+   The body is the second half of the one spec 115 found deployed as
+   `auth.uid()` (row A3: the deployed `prosrc` equals the shim's,
+   `services/api/tests/pg_support.py:93-98` on main), with every function
+   call qualified. It does not read the legacy `request.jwt.claim.sub`,
+   which `auth.uid()` reads first (Decisions taken, 2). It reads the setting spec
    104's request transaction sets with `set_config('request.jwt.claims',
    <claims>, true)` (spec 104, "The request transaction", step 2), so a
-   request gets the same value `auth.uid()` would return. Without claims
+   request gets the same value `auth.uid()` would return, since harrier
+   sets no legacy claim. Without claims
    it returns null, as `auth.uid()` does, so the policy matches no row and
    a defaulted `owner_id` is null. A `sub` that is not a UUID raises
    `22P02`, as `auth.uid()` does; spec 104 refuses such a token with 401
@@ -1537,9 +1539,10 @@ on `main` before it.
       `SECURITY INVOKER`, `STABLE`, with `search_path=""` (planned
       test_only_the_tenant_executes_harrier_owner_id).
 - [ ] As the tenant, `harrier_owner_id()` returns the `sub` of
-      `request.jwt.claims` set local, null with no claims, the legacy
-      `request.jwt.claim.sub` when that is set, and raises `22P02` on a
-      `sub` that is not a UUID (planned
+      `request.jwt.claims` set local, null with no claims, ignores a
+      `request.jwt.claim.sub` set at session level (the claims' `sub` still
+      wins, and with no claims the result is null), and raises `22P02` on
+      a `sub` that is not a UUID (planned
       test_harrier_owner_id_reads_the_request_claims).
 - [ ] After migration 16, `harrier_tenant` holds no USAGE on `auth`, and
       `SELECT auth.uid()` as the tenant is refused, while its inserts and
@@ -1597,17 +1600,14 @@ on `main` before it.
 
 ### Honest limitations (owner identity without schema auth)
 
-- **The function copies `auth.uid()`'s body.** If Supabase changes how
-  `auth.uid()` reads the claims, harrier does not follow. Harrier sets the
-  claims itself (spec 104), so its own requests stay correct; it is
-  Supabase's semantics it stops sharing. A rerun of spec 115's A3 test
-  compares the deployed body and notices a change; nothing else does.
-- **The legacy claim wins.** The body reads `request.jwt.claim.sub` first,
-  as `auth.uid()` does. A session-level value of it left on a pooled
-  connection would override the request's local claims. Spec 104's
-  read-back checks `request.jwt.claims` only, so it would not see this.
-  A follow-up below asks spec 104 to read back `harrier_owner_id()`;
-  Open decisions offers dropping the legacy claim instead.
+- **The function differs from `auth.uid()`.** It reads only
+  `request.jwt.claims`; `auth.uid()` reads the legacy
+  `request.jwt.claim.sub` first. Where only the legacy setting is set,
+  `auth.uid()` returns a user and `harrier_owner_id()` returns null, so
+  the policy matches no row. Harrier sets only `request.jwt.claims`
+  (spec 104), so its own requests are unaffected. If Supabase changes how
+  `auth.uid()` reads the claims, harrier does not follow; a rerun of spec
+  115's A3 test compares the deployed body and notices a change.
 - **The exemption trusts a name and a return type.** A Supabase change to
   `rls_auto_enable()` that keeps both passes unread. One that changes
   either fails the check and is noticed.
@@ -1632,7 +1632,7 @@ approve with this amendment, or in that spec's own change.
   `request.jwt.claims` with `set_config(..., true)` (step 2), because that
   is the setting `harrier_owner_id()` reads. Follow-ups: its read-back
   (step 3) also reads `public.harrier_owner_id()` and requires it to equal
-  the token's `sub`, which closes the legacy claim limitation above; its
+  the token's `sub`; its
   planned criterion that "`auth.uid()` is the token's `sub`, and
   `auth.jwt()` is its payload" inside a request (planned
   test_the_request_transaction_runs_as_its_user) cannot hold as
@@ -1671,6 +1671,21 @@ approve with this amendment, or in that spec's own change.
    `services/api/src/harrier/tracker/schema.py`, beside `UNOWNED_TABLES`,
    since it declares what the store holds. Alternative: a constant in the
    catalog test, which keeps Supabase's names out of the schema module.
+
+### Decisions taken (2026-10-11)
+
+Akin answered the three open decisions above in chat on 2026-10-11:
+
+1. **Migration 16 as designed.** Approved.
+2. **The claim read: `request.jwt.claims` only.** Not the recommendation.
+   The function ignores the legacy `request.jwt.claim.sub`, so a stale
+   session-level value of it on a pooled connection cannot override a
+   request's claims. The function body, its acceptance criterion and
+   Honest limitations above say so. The limitation that the legacy claim
+   wins is gone, and so is its spec 104 follow-up to close it; the other
+   spec 104 follow-ups stand.
+3. **The Supabase declaration lives in `schema.py`,** beside
+   `UNOWNED_TABLES`. As recommended.
 
 ### Proof / origin (owner identity without schema auth)
 
