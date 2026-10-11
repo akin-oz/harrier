@@ -221,6 +221,10 @@ def _data_dir(  # pyright: ignore[reportUnusedFunction]
 # --- the store URL pin (spec 103) ---
 
 DOTENV_FALLBACK = "dotenv_fallback"
+URL_PIN = "HARRIER_DATABASE_URL"
+
+# pytester runs the net's own test (test_store_cli.py) against this file.
+pytest_plugins = ["pytester"]
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -231,41 +235,97 @@ def pytest_configure(config: pytest.Config) -> None:
     )
 
 
+# Where the working directory was each time the pin was unset during the
+# running test, or None between tests.
+_pin_unset_in: list[Path] | None = None
+
+
+def _watch_the_pin(event: str, args: tuple[Any, ...]) -> None:
+    """Record every unset of the pin while a test runs.
+
+    Every way a test removes a variable (`del os.environ[...]`, `pop`,
+    monkeypatch's `delenv`) calls `os.unsetenv`, which raises this event.
+    The value at the end of the test cannot show it: once the pin is gone,
+    anything that loads `.env`, as the CLI's `main()` does, writes the
+    variable back with the URL the file names.
+    """
+    if _pin_unset_in is None or event != "os.unsetenv" or not args:
+        return
+    name = args[0]
+    if (os.fsdecode(name) if isinstance(name, (str, bytes)) else None) == URL_PIN:
+        _pin_unset_in.append(Path.cwd().resolve())
+
+
+sys.addaudithook(_watch_the_pin)
+
+
 @pytest.fixture(autouse=True)
 def _database_url_stays_pinned(  # pyright: ignore[reportUnusedFunction]
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> Iterator[None]:
-    """Fail a test that left HARRIER_DATABASE_URL unset.
+    """Fail a test during which HARRIER_DATABASE_URL was ever unset.
 
     Unset, the store is chosen from `.env` in the working directory, which is
     wherever pytest was started. A fixture that deleted the pin above ran
     SQLite tests against the database an operator's `.env` named (review of
-    PR #218). A test marked `dotenv_fallback` may unset it, if it has moved
-    to a directory under its own tmp_path first.
+    PR #218). A test marked `dotenv_fallback` may unset it from a working
+    directory under its own tmp_path.
+
+    This detects after the fact; it does not prevent. A test that unsets
+    the pin has already run against whatever store `.env` named when it
+    fails here. The pin's state is recorded at setup, and every unset during
+    the test is recorded as it happens, so a test whose `.env` wrote the
+    variable back still fails (review of PR #225).
 
     Checked after the test and before the monkeypatch fixture restores the
     environment: this fixture asks for `monkeypatch`, so it is set up after
     it and torn down before it.
     """
-    yield
-    if "HARRIER_DATABASE_URL" in os.environ:
+    global _pin_unset_in
+    at_setup = os.environ.get(URL_PIN)
+    _pin_unset_in = []
+    try:
+        yield
+        unset_in = list(_pin_unset_in)
+    finally:
+        _pin_unset_in = None
+    if URL_PIN not in os.environ and not unset_in:
+        # Unset before this fixture ran, or by a path that raised no event.
+        unset_in = [Path.cwd().resolve()]
+    if not unset_in:
         return
     # pytest leaves `node` untyped on FixtureRequest; inside a function
     # fixture it is the test item.
     test = cast("pytest.Item", request.node)  # pyright: ignore[reportUnknownMemberType]
+    home = tmp_path.resolve()
     if test.get_closest_marker(DOTENV_FALLBACK) is not None:
-        here = Path.cwd().resolve()
-        if here == tmp_path.resolve() or tmp_path.resolve() in here.parents:
+        outside = [here for here in unset_in if here != home and home not in here.parents]
+        if not outside:
             return
         pytest.fail(
             f"{test.nodeid} unset HARRIER_DATABASE_URL outside its tmp_path, "
-            f"so .env in {here} chose the store"
+            f"so .env in {outside[0]} chose the store"
         )
     pytest.fail(
-        f"{test.nodeid} left HARRIER_DATABASE_URL unset, so .env in the working "
-        "directory chose the store. Set it to an empty string for SQLite, or mark the "
-        f"test {DOTENV_FALLBACK} and move to tmp_path first (spec 103)"
+        f"{test.nodeid} unset HARRIER_DATABASE_URL (it was {at_setup!r} at setup), so .env "
+        f"in {unset_in[0]} chose the store, whatever it holds now. Set it to an empty string "
+        f"for SQLite, or mark the test {DOTENV_FALLBACK} and move to tmp_path first (spec 103)"
     )
+
+
+@pytest.fixture(autouse=True)
+def _no_built_spa(  # pyright: ignore[reportUnusedFunction]
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`create_app` mounts `apps/web/dist` when it exists, and `just check`
+    builds it, so a test's routes used to depend on whether the web app had
+    been built on that machine: a POST that normalizes to a path no API route
+    holds got 405 from the static mount there and 404 in CI. Every test now
+    sees no built SPA unless it passes `spa_dir` itself, as test_demo.py's
+    SPA tests do (spec 096, review of PR #224)."""
+    import harrier_api.app as app_module
+
+    monkeypatch.setattr(app_module, "spa_dist_dir", lambda: tmp_path / "no-built-spa")
 
 
 @pytest.fixture(autouse=True)

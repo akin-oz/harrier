@@ -454,6 +454,9 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
     # corrections to migration 10. Empty on purpose, and declared so in
     # SINGLE_DIALECT_MIGRATIONS.
     (13, []),
+    # Postgres only (spec 105, second post-merge review): corrections to
+    # migration 13. Empty on purpose, and declared so.
+    (14, []),
 ]
 
 # --- Postgres (spec 103, ADR-013) ---
@@ -674,6 +677,12 @@ SINGLE_DIALECT_MIGRATIONS: dict[int, tuple[Dialect, str]] = {
         "corrections to migration 10's roles, grants and track numbering "
         "(spec 105, post-merge review); the local schema has none of them",
     ),
+    14: (
+        "postgres",
+        "corrections to migration 13's role reset, track numbering lock and "
+        "default privileges (spec 105, second post-merge review); the local "
+        "schema has none of them",
+    ),
 }
 
 MIGRATION_10_NEEDS_AUTH = (
@@ -689,11 +698,32 @@ MIGRATION_10_NEEDS_AUTH = (
 TENANT_ROLE = "harrier_tenant"
 
 # A role that harrier_tenant is a member of could be SET ROLE to, whatever
-# NOINHERIT says, so migration 12 refuses one rather than revoke a grant
+# NOINHERIT says, so migration 13 refuses one rather than revoke a grant
 # someone made on purpose (spec 105, post-merge review).
-MIGRATION_12_TENANT_HAS_A_ROLE = (
+MIGRATION_13_TENANT_HAS_A_ROLE = (
     f"migration 13 found {TENANT_ROLE} a member of another role; "
     "the tenant role must be a member of none"
+)
+
+# Only a superuser may alter a superuser, so a migrating role that is not
+# one, like Supabase's postgres, cannot reset this attribute. Migration 14
+# refuses rather than fail on the ALTER (spec 105, second post-merge review).
+MIGRATION_14_TENANT_IS_A_SUPERUSER = (
+    f"migration 14 found {TENANT_ROLE} with SUPERUSER, which only a superuser may "
+    f"remove; ask one to run ALTER ROLE {TENANT_ROLE} NOSUPERUSER"
+)
+
+# The attributes the tenant role must not have, as pg_roles names each and
+# the keyword that removes it. SUPERUSER first: while the role has it, only
+# a superuser may alter the role at all.
+TENANT_ROLE_ATTRIBUTES: tuple[tuple[str, str], ...] = (
+    ("rolsuper", "NOSUPERUSER"),
+    ("rolbypassrls", "NOBYPASSRLS"),
+    ("rolcanlogin", "NOLOGIN"),
+    ("rolinherit", "NOINHERIT"),
+    ("rolcreatedb", "NOCREATEDB"),
+    ("rolcreaterole", "NOCREATEROLE"),
+    ("rolreplication", "NOREPLICATION"),
 )
 
 # Every role a revoke names. Supabase creates anon, authenticated and
@@ -704,7 +734,7 @@ _OWNER_IS_SESSION = "owner_id = (SELECT auth.uid())"
 _FIRST_TRACK = "1, 'job', 'industry', 'Job search'"
 # The owned tables whose id comes from one global identity sequence (spec
 # 105, Honest limitations). tracks loses its own when its id stops being an
-# identity. Since migration 12 the tenant role may not write their id, so
+# identity. Since migration 13 the tenant role may not write their id, so
 # one owner cannot learn or take another's ids.
 GLOBAL_ID_TABLES: tuple[str, ...] = (
     "jobs",
@@ -957,11 +987,18 @@ POSTGRES_TRACK_OWNED_DOCUMENTS: list[str] = [
 ]
 
 
-def _tenant_writes_all_but_id(table: str, privileges: tuple[str, ...]) -> str:
-    # The columns are read from the catalog when the migration runs, so the
-    # list is the table's at version 11. A later migration that adds a
-    # column to one of these tables grants it too; the catalog test names a
-    # column without its grant.
+def tenant_writes_all_but_id(table: str, privileges: tuple[str, ...]) -> str:
+    """A statement granting the tenant role `privileges` on every column of
+    `table` but `id`, for a table in GLOBAL_ID_TABLES.
+
+    The columns are read from the catalog when the statement runs, so
+    migration 13's grants cover the columns each table had at version 12
+    and no column added later. A later migration that adds a column to one
+    of these tables ends with this statement for that table, with the
+    privileges EXPECTED_COLUMN_GRANTS in tests/test_owner_policy.py lists.
+    Without it the tenant role cannot write the new column, and the catalog
+    test names the column and the grant it lacks (spec 105).
+    """
     grants = "\n".join(
         f"EXECUTE format('GRANT {privilege} (%s) ON public.{table} TO {TENANT_ROLE}', writable);"
         for privilege in privileges
@@ -996,7 +1033,7 @@ POSTGRES_OWNER_CORRECTIONS: list[str] = [
             SELECT 1 FROM pg_catalog.pg_auth_members
             WHERE member = '{TENANT_ROLE}'::regrole
         ) THEN
-            RAISE EXCEPTION {_sql_text(MIGRATION_12_TENANT_HAS_A_ROLE)};
+            RAISE EXCEPTION {_sql_text(MIGRATION_13_TENANT_HAS_A_ROLE)};
         END IF;
         IF EXISTS (
             SELECT 1 FROM pg_catalog.pg_roles
@@ -1018,7 +1055,7 @@ POSTGRES_OWNER_CORRECTIONS: list[str] = [
     # writes every column but id instead of the whole table.
     f"REVOKE INSERT, UPDATE ON {', '.join(GLOBAL_ID_TABLES)} FROM {TENANT_ROLE}",
     *(
-        _tenant_writes_all_but_id(
+        tenant_writes_all_but_id(
             table, ("INSERT",) if table == "job_events" else ("INSERT", "UPDATE")
         )
         for table in GLOBAL_ID_TABLES
@@ -1058,6 +1095,94 @@ POSTGRES_OWNER_CORRECTIONS: list[str] = [
     ),
 ]
 
+
+def _reset_tenant_role() -> str:
+    # One ALTER per wrong attribute. Migration 13 named every attribute in
+    # one ALTER, and a migrating role that is not a superuser may not name
+    # SUPERUSER at all, so it failed whenever any attribute was wrong. Each
+    # ALTER here needs only the privilege its own attribute needs, which
+    # Supabase's postgres holds for every attribute but SUPERUSER.
+    fixes = "\n".join(
+        f"IF tenant.{column} THEN ALTER ROLE {TENANT_ROLE} {keyword}; END IF;"
+        for column, keyword in TENANT_ROLE_ATTRIBUTES
+    )
+    return f"""
+    DO $$
+    DECLARE
+        tenant record;
+    BEGIN
+        SELECT * INTO tenant FROM pg_catalog.pg_roles WHERE rolname = '{TENANT_ROLE}';
+        IF tenant.rolsuper AND NOT (
+            SELECT rolsuper FROM pg_catalog.pg_roles WHERE rolname = current_user
+        ) THEN
+            RAISE EXCEPTION {_sql_text(MIGRATION_14_TENANT_IS_A_SUPERUSER)};
+        END IF;
+        {fixes}
+    END
+    $$
+    """
+
+
+# Migration 14's first statement, by name, so a test can run it as a role
+# shaped like Supabase's postgres.
+TENANT_ROLE_RESET = _reset_tenant_role()
+
+# Spec 105's second post-merge review. Migrations 10 and 13 are merged
+# history, so each correction lands here.
+POSTGRES_OWNER_CORRECTIONS_2: list[str] = [
+    TENANT_ROLE_RESET,
+    # Numbering a track. Migration 13's advisory lock had a key any role
+    # can compute from an owner's id, read in pg_locks, and take first, so
+    # one owner could hold up another's track inserts. A tenant session
+    # without claims also took it for a row naming another owner. Now:
+    #
+    # - For the tenant role, a row whose owner is not the session's own is
+    #   left unnumbered and unlocked, and the policy refuses it at once. A
+    #   session without claims has no owner: an owner_id is distinct from
+    #   its null auth.uid(), and a null owner_id matches no row to lock.
+    # - Otherwise the owner's track 1 row is locked. Every owner has one
+    #   from the moment it exists (harrier_new_owner(), or migration 10's
+    #   seed), and tracks are never deleted. The policy hides another
+    #   owner's rows from the tenant role, so it cannot lock them. FOR NO
+    #   KEY UPDATE conflicts with itself but not with the key share lock a
+    #   job's reference takes, so filing a job never waits on it.
+    # - An operator session (spec 108) is not the tenant role and numbers
+    #   any owner's track, claims or none.
+    #
+    # Qualified names throughout: harrier_new_owner() fires this with an
+    # empty search_path.
+    f"""
+    CREATE OR REPLACE FUNCTION harrier_number_track() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.id IS NULL THEN
+            IF current_user = '{TENANT_ROLE}' AND NEW.owner_id IS DISTINCT FROM auth.uid() THEN
+                RETURN NEW;
+            END IF;
+            PERFORM 1 FROM public.tracks
+            WHERE owner_id = NEW.owner_id AND id = 1
+            FOR NO KEY UPDATE;
+            SELECT coalesce(max(id), 0) + 1 INTO NEW.id
+            FROM public.tracks WHERE owner_id = NEW.owner_id;
+        END IF;
+        RETURN NEW;
+    END
+    $$
+    """,
+    # Default privileges. Migration 13 revoked the migrating role's defaults
+    # in public. A global default (no IN SCHEMA) applies in every schema and
+    # survived it; so did the EXECUTE that PUBLIC holds on every new
+    # function unless revoked. Both are revoked here. A default privilege
+    # belongs to the role that set it: these reach the migrating role's
+    # own, not another role's, such as Supabase's supabase_admin. Spec 115
+    # checks those on a real project.
+    *(
+        f"ALTER DEFAULT PRIVILEGES REVOKE ALL ON {kind} FROM anon, authenticated, service_role"
+        for kind in ("TABLES", "SEQUENCES", "FUNCTIONS")
+    ),
+    "ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC",
+    "ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC",
+]
+
 POSTGRES_MIGRATIONS: list[tuple[int, list[str]]] = [
     (POSTGRES_BASELINE_VERSION, POSTGRES_BASELINE),
     (10, POSTGRES_OWNERS),
@@ -1071,6 +1196,7 @@ POSTGRES_MIGRATIONS: list[tuple[int, list[str]]] = [
         ],
     ),
     (13, POSTGRES_OWNER_CORRECTIONS),
+    (14, POSTGRES_OWNER_CORRECTIONS_2),
 ]
 
 

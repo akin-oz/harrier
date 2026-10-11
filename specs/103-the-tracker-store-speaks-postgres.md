@@ -466,11 +466,14 @@ that adds this list:
   the store, and SQLite tests ran `harrier store migrate` against the
   database it named. The fixture now sets it empty. An audit of
   `services/api/tests` found one other test that removes it, and it tests
-  the `.env` fallback; it now moves to `tmp_path` first. An autouse
-  fixture in `conftest.py` fails any test that leaves the variable unset,
-  unless the test is marked `dotenv_fallback` and runs under its own
-  `tmp_path`
+  the `.env` fallback; it now moves to `tmp_path` first
   (`services/api/tests/test_store_cli.py::test_a_postgres_url_in_dotenv_never_reaches_a_sqlite_test`).
+  An autouse fixture in `conftest.py` fails any test that unsets the
+  variable, unless the test is marked `dotenv_fallback` and runs under its
+  own `tmp_path`. It detects after the fact; it does not prevent: the test
+  has already run against the store `.env` named when the fixture fails it
+  (`services/api/tests/test_store_cli.py::test_the_pin_net_fails_a_test_that_dropped_the_pin_whatever_it_holds_after`,
+  as amended by the third review below).
 - **A malformed URL's refusal no longer carries the parse error.** It was
   raised inside `except ValueError`, so the ValueError stayed as
   `__context__`. A raw `/` in the password makes that error quote the
@@ -503,3 +506,63 @@ that adds this list:
   `services/api/tests/test_dialect_parity.py::test_both_dialects_build_the_same_tracker`).
 - The count of files with the `sqlite3.Connection` annotation under
   Problem is recounted, with its command.
+
+### Third review, of PR #225 (2026-10-11)
+
+A review of the corrections above found these, corrected in the change
+that adds this list:
+
+- **A raw `@` in the password leaked its tail.** urlsplit splits the user
+  from the host at the last `@` before the path, and reads all of
+  `p@tail` as the password, which the scrub replaces. libpq splits at the
+  first `@`, takes `tail@127.0.0.1` as the host, and the driver quotes
+  that host when it cannot resolve it. An `@` in a query with no path
+  before it does the same. `store_target` now refuses a URL whose
+  authority, read up to the first `/` as libpq reads it, holds more than
+  one `@`, or a different number of them than urlsplit's authority, with
+  the same message as any malformed URL and nothing chained
+  (`services/api/tests/test_postgres_store.py::test_a_malformed_url_is_refused_like_any_other`,
+  `services/api/tests/test_postgres_store.py::test_an_at_sign_libpq_reads_as_the_host_never_reaches_the_cli`).
+- **The scrub's decoded name had no test of its own.** libpq decodes a
+  query parameter's name, so `?pass%77ord=` is a password. The query
+  string test now also runs `pass%77ord=<secret>%zz`, and
+  `pass%77ord=<secret>+tail%zz`
+  (`services/api/tests/test_postgres_store.py::test_a_password_in_the_query_string_never_reaches_the_error`).
+  The first case alone still passes with the name compared undecoded,
+  because the form-decoded forms (`parse_qsl`) leave `<secret>%zz` as it
+  is written and scrub it. The `+` case fails that mutation: `parse_qsl`
+  reads `+` as a space, so only the decoded name finds the written value.
+  Removing the form-decoded forms, or the percent-decoded written forms,
+  still passes every test: libpq quoted only the written form in every
+  run. They stay as a second line, and nothing here proves them needed.
+- **The pin net went quiet when `.env` wrote the variable back.** It
+  checked only at the end of a test, and only that the variable was set.
+  A test that deleted the pin and then called `main()`, whose `.env`
+  loader sets every key that is absent, ended with the variable set to
+  the URL `.env` named, and passed. The net now records the variable's
+  state at setup and every unset during the test as it happens, through
+  the `os.unsetenv` audit event, with the working directory at that
+  moment. It fails a test during which the pin was ever unset, unless the
+  test is marked `dotenv_fallback` and was under its own `tmp_path` each
+  time. A test that sets another value, as the Postgres tests do through
+  `monkeypatch`, is not failed: that value is the test's own choice, and
+  `.env` never overrides a variable that is set. A `pytester` test runs
+  this suite's `conftest.py` in its own pytest process against a test
+  that deletes the pin and calls `main()` with a `.env` naming a Postgres
+  URL. The net fails it at teardown, and none of the tests there asks for
+  the net, so it is autouse
+  (`services/api/tests/test_store_cli.py::test_the_pin_net_fails_a_test_that_dropped_the_pin_whatever_it_holds_after`).
+  It still detects after the fact rather than prevents.
+- **The zone test could pass where its zone never took.** It asserted
+  only that local time differed from UTC, which holds on any host outside
+  UTC whether or not `process_zone` changed anything. Both zone checks now
+  assert SQLite's local offset is exactly Tokyo's, nine hours
+  (`services/api/tests/test_dialect_parity.py::test_the_sqlite_side_runs_in_a_zone_that_is_not_utc`,
+  `services/api/tests/test_dialect_parity.py::test_both_dialects_build_the_same_tracker`).
+- **The full comparison could drop `merged_keys`.** Only a test of the
+  function itself, on hand-built shapes, would have noticed. The parity
+  test's comparison is now one function, and a test runs it on a real
+  Postgres store with a global unique index on `jobs (url)` beside the
+  per-owner one: it reports the pair, and without the `merged_keys` call
+  it reports nothing
+  (`services/api/tests/test_dialect_parity.py::test_a_global_key_beside_its_per_owner_form_fails_the_whole_comparison`).

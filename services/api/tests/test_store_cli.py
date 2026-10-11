@@ -326,3 +326,58 @@ def test_the_first_line_for_the_url_wins_in_dotenv(
 
     assert store_target().dialect == "sqlite"
     assert run(["store", "status"], capsys) == (0, "sqlite 0\n", "")
+
+
+# What the net in conftest.py runs against: a test that drops the pin and
+# calls main(), whose `.env` loader writes the URL back, so the variable is
+# set again by the time the test ends. Run in its own pytest process, with
+# this suite's conftest.py.
+PIN_DROPPING_TESTS = f'''
+import os
+
+import pytest
+
+from harrier_cli.main import main
+
+
+def test_drops_the_pin_and_lets_dotenv_choose(monkeypatch):
+    monkeypatch.delenv("{URL_VARIABLE}")
+    assert main(["tracks", "list"]) == 1
+    assert os.environ["{URL_VARIABLE}"] == "{UNREACHABLE_URL}"
+
+
+@pytest.mark.dotenv_fallback
+def test_drops_the_pin_inside_its_tmp_path(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("{URL_VARIABLE}")
+    assert main(["tracks", "list"]) == 0
+
+
+def test_leaves_the_pin_alone():
+    assert os.environ["{URL_VARIABLE}"] == ""
+'''
+
+
+def test_the_pin_net_fails_a_test_that_dropped_the_pin_whatever_it_holds_after(
+    pytester: pytest.Pytester,
+) -> None:
+    """The net checked the variable only at the end of a test, and only for
+    absence. A test that deleted the pin and then called main() let `.env`
+    write the variable back, so the net said nothing (review of PR #225).
+    It now records every unset as it happens. None of the tests below asks
+    for the net, so a failure also proves it is autouse."""
+    pytester.makeconftest(Path(__file__).with_name("conftest.py").read_text(encoding="utf-8"))
+    pytester.makepyfile(test_pin=PIN_DROPPING_TESTS)
+    (pytester.path / ".env").write_text(f"{URL_VARIABLE}={UNREACHABLE_URL}\n", encoding="utf-8")
+
+    result = pytester.runpytest_subprocess("-p", "no:cacheprovider")
+
+    # The first test passes and fails at teardown, in the net; the marked
+    # test and the one that leaves the pin alone pass.
+    result.assert_outcomes(passed=3, errors=1)
+    result.stdout.fnmatch_lines(
+        [
+            "*ERROR at teardown of test_drops_the_pin_and_lets_dotenv_choose*",
+            "*test_drops_the_pin_and_lets_dotenv_choose unset HARRIER_DATABASE_URL*",
+        ]
+    )

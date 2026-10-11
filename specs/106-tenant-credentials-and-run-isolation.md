@@ -56,7 +56,10 @@ problems this spec owns:
   machine answers 404, and Fly's auto-stop kills a machine's runs. Either
   one machine with auto-stop off, or `fly-replay` routing of run requests
   to the machine that holds the run, decided with spec 110.
-  (architecture 8)
+  (architecture 8) The hosting budget of 2026-10-11 rules out auto-stop
+  off: one machine stays, auto-stop is on, and this spec keeps the
+  machine awake while a run is active and records a run cut off by a
+  stop (Hosting budget (2026-10-11)).
 
 Spec 105 routed one more here: a track id is no longer unique across
 owners on Postgres, so every run key built from one, such as academic
@@ -165,6 +168,15 @@ function.
     owner before any domain code runs. Spec 107 consumes that binding and
     does not define it. How the run gets a token Storage accepts is Open
     decision 8.
+13. **The machine stays awake while a run is active** (hosting budget,
+    2026-10-11). Hosted, the run manager holds the API's machine up
+    through Fly's proxy while any run is active (Hosting budget, Open
+    decision 9).
+14. **A run cut off by a stop is recorded, never lost** (hosting budget,
+    2026-10-11). Hosted, each run has a row in a new hosted-only owned
+    table, `run_records`, and a run whose machine stopped under it is
+    shown and stored as `interrupted` (Hosting budget, Open decision 10).
+    This adds one Postgres-only migration.
 
 Classification: every new file sits under `services/api/src/`,
 `services/api/tests/` or `specs/`, which `config/data-classification.json`
@@ -456,12 +468,14 @@ The registry, the journal (`runs.py:575-577`) and a run's process are on
 one machine. A request for a run reaches the right machine only if there
 is one.
 
-Recommended for the first hosted release: exactly one machine serves the
-API, with `auto_stop_machines = "off"`. Fly documents that with `"off"` the
-proxy never stops machines. Spec 110 configures it and checks the machine
-count at deploy (Changes to approved specs). The run
-routes keep answering 404 for a run id this machine does not hold, which
-is then true only of runs that ended before a restart.
+For the first hosted release exactly one machine serves the API. Spec
+110 configures it and checks the machine count at deploy (Changes to
+approved specs). This text first had that machine run with
+`auto_stop_machines = "off"`; the hosting budget of 2026-10-11 replaced
+that with auto-stop on, and "Hosting budget (2026-10-11)" below says how
+a run keeps the machine up and how a run cut off by a stop is recorded.
+A live run is held in memory on that machine; a run that ended, or was
+cut off, is read from `run_records`.
 
 A second machine needs `fly-replay` routing first (Options weighed), as
 its own spec.
@@ -508,10 +522,12 @@ Decision 8's note naming the key's location is spec 116's.
   `LLMClientError`; the run reports it as today's provider errors are.
 - **A provider error message quotes the owner's key.** Replaced with
   `REDACTED` before it reaches the stream.
-- **The machine restarts or a deploy replaces it.** Runs in flight end with
-  their process. The journal and the owner directories are on the
-  machine's ephemeral disk and are gone, so those runs are not listed
-  afterwards (Honest limitations).
+- **The machine restarts, stops, or a deploy replaces it.** Runs in
+  flight end with their process. The owner directories are on the
+  machine's ephemeral disk and are gone. Each run's row in `run_records`
+  stays and shows the run `interrupted` (Hosting budget (2026-10-11));
+  this replaces "those runs are not listed afterwards", which this line
+  said before the hosting budget.
 - **A second API machine is started by hand.** Run requests reaching it
   answer 404. Spec 110's deploy check is the guard; nothing in this spec
   detects it.
@@ -617,15 +633,18 @@ Documents and gates:
   API and of sibling runs in Fly's machine image (proc_pid_environ(5)
   names the ptrace check, not its result there); that Supabase's pooler,
   if the run URL goes through it, keeps `SET LOCAL` within one
-  transaction; that `auto_stop_machines = "off"` leaves a machine running
-  while a run has no open request (Fly's page describes stopping on excess
-  capacity and does not mention background work); and that a rolling
-  deploy of the API app replaces its one machine, ending runs in flight.
-- **Hosted run history and run files are lost on restart.** The journal and
-  the owner directories are on the machine's root disk, which Fly resets
-  on restart and redeploy. Spec 107 moves run state and files to Storage.
-  Until then, discovery's seen-state is relearned after a restart; the
-  tracker's per-owner URL key still refuses a duplicate.
+  transaction; and that a rolling deploy of the API app replaces its one
+  machine, ending runs in flight. The assumption that
+  `auto_stop_machines = "off"` leaves a machine running is superseded by
+  the hosting budget (2026-10-11); its replacements are spec 115's F1 and
+  F2.
+- **Hosted run files are lost on every stop.** The owner directories are
+  on the machine's root disk, which Fly resets on restart and redeploy,
+  and, with auto-stop on, at each start after an idle stop (spec 115's
+  F2). Spec 107 moves run files to Storage. Until then, discovery's
+  seen-state is relearned after each stop; the tracker's per-owner URL
+  key still refuses a duplicate. Run history is kept in `run_records`
+  since the hosting budget, not in the journal file.
 - **Half the run kinds wait for spec 107.** Those whose result is a file
   answer 501 hosted.
 - **The claims in a run are not a token.** `auth.jwt()` in a run holds
@@ -650,13 +669,17 @@ Documents and gates:
 ## Migration
 
 None for the local product. No variable it reads changes meaning, and
-runs inherit their environment as before. This spec adds no migration;
-the `credentials` table is spec 116's.
+runs inherit their environment as before. The `credentials` table is spec
+116's. Since the hosting budget (2026-10-11) this spec adds one
+Postgres-only migration, `run_records`, declared Postgres-only in
+`SINGLE_DIALECT_MIGRATIONS`, which records the version on SQLite and
+changes nothing there.
 
 A hosted deploy needs, before this spec's API starts: the `harrier_run`
 login role granted `harrier_tenant`, `HARRIER_RUN_DATABASE_URL` as a Fly
-secret, spec 116's `HARRIER_CREDENTIALS_KEY`, and one API machine with
-auto-stop off (spec 110).
+secret, spec 116's `HARRIER_CREDENTIALS_KEY`, the store at the version
+that creates `run_records`, and one API machine with auto-stop on as spec
+110's "Hosting budget (2026-10-11)" sets it.
 
 ## Changes to approved specs
 
@@ -690,7 +713,18 @@ spec.
   machine count check at deploy; the `harrier_run` login role, granted
   `harrier_tenant`; `HARRIER_RUN_DATABASE_URL` as a Fly secret (Migration).
   Written into spec 110's Amendment (2026-10-11) (decision D4), with the
-  staging assumptions under Honest limitations.
+  staging assumptions under Honest limitations. The hosting budget of
+  2026-10-11 replaced `"off"` with auto-stop on; spec 110's "Hosting
+  budget (2026-10-11)" carries that, and the machine count check stays.
+- **Spec 104 (hosting budget):** hosted `GET /runs` and `GET
+  /runs/{run_id}` read a run that is not live on this machine from
+  `run_records` under the owner's policy, so they show an interrupted run
+  instead of answering 404 for it.
+- **Spec 105 (hosting budget):** the catalog gains `run_records` as an
+  owned, policed, hosted-only table. `OWNED_TABLES` gains it, migration
+  10 keeps its frozen list, and `HOSTED_ONLY_TABLES` declares it. Specs
+  108 and 116 ask the same freeze and declaration; whichever lands first
+  adds them.
 - **Spec 114:** the SPA's credentials page for spec 116's routes. Written
   into spec 114's Amendment (2026-10-11) (decision D5).
 
@@ -777,6 +811,9 @@ The text above says where each changed it.
    for the first hosted release, configured and checked by spec 110.
    Alternative: `fly-replay` by machine id in run ids, its own spec,
    needed before a second machine.
+   Superseded 2026-10-11 by the hosting budget: one API machine stays and
+   `fly-replay` stays out, but auto-stop is on. Open decisions 9 and 10
+   take the two questions that raises.
 6. **The hosted-only table.** Moved to spec 116 (its Open decision 3).
 7. **Containing a compromised run.** Recommended: state the limit now, and
    leave containment (a user or machine per run, and a database path that
@@ -791,6 +828,30 @@ The text above says where each changed it.
    owner, which gives the holder of that key the power to act as any owner
    in Storage. No recommendation is made in this text. Until this is
    taken, Behavior, "The run's Storage identity" states the guarantee only.
+9. **Keeping the machine awake during a run.** Added 2026-10-11 by the
+   Taken 2026-10-11 (Akin, "go with your recommendations"): the recommended answer.
+   hosting budget. Recommended: while any run is active, the run manager
+   sends `GET /health` to the API's own public hostname, through Fly's
+   proxy, at a fixed interval shorter than the proxy's stop loop, and
+   stops when the last run ends (Hosting budget, "Keeping the machine
+   awake"). It works whether or not a browser is watching. Whether the
+   proxy counts it as load is spec 115's F1. Alternatives: hold one
+   request to the API's own hostname open while runs are active, which
+   puts a connection on the machine at every pass of the stop loop; or
+   Fly's documented "exit when idle" pattern, `auto_stop_machines =
+   "off"` with `auto_start_machines = true` and the API exiting itself
+   when no run is active and no request has arrived for a while, which
+   needs no assumption about the proxy but changes spec 110's setting.
+10. **Where an interrupted run is recorded.** Added 2026-10-11 by the
+   Taken 2026-10-11 (Akin, "go with your recommendations"): the recommended answer.
+    hosting budget. Recommended: `run_records`, a hosted-only owned table
+    in Supabase, written as the owner, with each run's API process id, so
+    a row left `queued` or `running` by an earlier process reads as
+    `interrupted` (Hosting budget, "A run cut off by a stop"). Alternatives:
+    the journal on a Fly volume, which costs $0.15/GB a month, ties runs
+    to one machine, and is ruled out by spec 110's no-volume rule; or the
+    run lost with the machine's disk, as this text said before, which the
+    hosting budget forbids.
 
 ## Proof / origin
 
@@ -859,3 +920,174 @@ The text above says where each changed it.
 - The SPA's credentials page: spec 114's Amendment (2026-10-11).
 - Containing a compromised run (Open decision 7).
 - Rate limits and quotas per owner.
+
+## Hosting budget (2026-10-11)
+
+Akin decided in chat on 2026-10-11 that the hosted deployment targets
+under 5 USD per month, with ADR-013's topology kept: the API and its runs
+stay on Fly. Spec 110's "Hosting budget (2026-10-11)" holds the prices
+and the arithmetic. One shared-cpu-1x 1GB machine always on in Frankfurt
+costs $7.73 a month (Fly, Pricing, read 2026-10-11), over the budget, so
+the API's one machine runs with `auto_stop_machines = "stop"` and
+`min_machines_running = 0`. Fly's proxy "stops Machines when the app has
+excess capacity", in a loop that "runs every few minutes" (Fly,
+Autostop/autostart, read 2026-10-11). Fly's page does not say whether an
+open connection keeps a machine running, and does not mention
+background work.
+
+A run is background work: once the browser closes its stream, nothing
+the proxy sees says the machine is busy. The run registry, the live
+events and the run's process are on that machine. So this spec now
+states two things it did not: the machine is kept up while a run is
+active, and a run cut off by a stop anyway is recorded. One machine
+stays, and `fly-replay` stays out (Open decision 5, superseded).
+
+### Keeping the machine awake
+
+Hosted, while any run is `queued` or `running`, the run manager sends
+`GET /health` to the API's own public hostname, the first host in
+`HARRIER_ALLOWED_HOSTS`, so the request passes through Fly's proxy to
+this machine. It sends one when the first run becomes active and then at
+a fixed interval, a constant in the code chosen shorter than the proxy's
+stop loop. Fly gives that loop only as "every few minutes", so the
+constant's value is confirmed by spec 115's F1, not asserted here. The
+beats stop when the last active run reaches a terminal state, and the
+proxy may then stop the machine as usual.
+
+- A beat that fails or times out is logged with its status class and no
+  URL, and the next beat is sent at the interval. A failed beat never
+  fails a run.
+- Locally nothing is sent.
+- A scheduled run (spec 108) runs on the scheduler machine, not here, and
+  needs none of this.
+- Whether the proxy counts these requests as load is an assumption (spec
+  115's F1). If F1 refutes it, Open decision 9's alternatives are next,
+  and this section is amended before the hosted run kinds are offered.
+
+### A run cut off by a stop
+
+The run journal is a file on the machine's root disk (`runs.py:575-577`),
+which a start after an idle stop resets (spec 115's F2). Hosted, the
+record lives in Supabase instead, in a new hosted-only owned table:
+
+```sql
+CREATE TABLE run_records (
+    owner_id uuid NOT NULL DEFAULT auth.uid() REFERENCES auth.users (id),
+    run_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    target TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN
+        ('queued', 'running', 'succeeded', 'failed', 'cancelled',
+         'interrupted')),
+    api_instance TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    ended_at TEXT,
+    exit_code INTEGER,
+    PRIMARY KEY (owner_id, run_id)
+);
+```
+
+- The states are `RunState`'s (`runs.py:35`). Timestamps are ISO 8601 UTC
+  text, as `schedule_state` (spec 108) and `job_runs` use.
+- Row security is enabled and forced with the `owner_only` policy every
+  owned table has (spec 105, Amendment); the primary key leads with
+  `owner_id`. `harrier_tenant` gets `SELECT, INSERT, UPDATE`; no grant
+  includes `DELETE` or `TRUNCATE`, since deleting an owner's rows is spec
+  111's. `PUBLIC`, `anon`, `authenticated` and `service_role` get
+  nothing. It is declared in `HOSTED_ONLY_TABLES`: "per-owner run
+  records (spec 106); the journal file keeps the local equivalent".
+- It holds the run's id, kind, target, state, times and exit code. No
+  parameters, no event and no output. The target is a track slug or a
+  date for the kinds that run hosted.
+- `api_instance` is a random UUID the API draws once at each process
+  start and writes nowhere else.
+
+Writes, each as the run's owner:
+
+1. **Start.** `RunManager.start` inserts the row in the route's request
+   transaction, before it spawns anything.
+2. **Each state change.** The run manager opens a transaction on the
+   API's login with `SET LOCAL ROLE harrier_tenant` and the run's owner's
+   claims, read back as spec 104's request transaction does, and updates
+   the row `WHERE run_id = %s AND api_instance = %s`. The owner is the one
+   `start` recorded from a verified `sub`; this is the reach the API
+   already has (The trust model).
+3. **The stop signal.** When the API receives the signal Fly sends before
+   it stops the machine, it records every active run `interrupted`, each
+   in a transaction as its owner, then terminates the children with the
+   run manager's grace (`runs.py:567`). Whether an auto-stop sends that
+   signal and waits is spec 115's F2.
+4. **A hard stop.** If the process ends with no chance to write, rows stay
+   `queued` or `running` with the earlier `api_instance`. From the next
+   start on, the first time the owner's request reads such a row through
+   `GET /runs` or `GET /runs/{run_id}`, it is updated to `interrupted`
+   with `ended_at` set, in that request's transaction, and shown so. The
+   API runs no sweep across owners at start: it holds no role that writes
+   another owner's rows outside a transaction as that owner, and gains
+   none here (ADR-013 decision 3).
+
+So a run cut off by a stop is never silently lost: its owner sees it
+`interrupted`, as spec 041 names a run whose process disappeared, and it
+is not a failure. Its events are not kept; the events route answers for a
+run that is not live on this machine as it does today for an unknown id.
+Hosted, the run manager writes no journal file. Locally the journal is
+unchanged and `run_records` is not read.
+
+### Acceptance criteria (hosting budget)
+
+- [ ] Hosted, with a fake clock and a fake HTTP client, the first active
+      run sends `GET /health` to the first host in
+      `HARRIER_ALLOWED_HOSTS`, beats repeat at the interval while any run
+      is active, and stop after the last run ends; a failed beat fails no
+      run; locally nothing is sent (planned
+      test_an_active_run_keeps_the_machine_awake).
+- [ ] The new Postgres-only migration creates `run_records` as under
+      "A run cut off by a stop", declared in `SINGLE_DIALECT_MIGRATIONS`
+      and `HOSTED_ONLY_TABLES`, and
+      `services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared`
+      and
+      `services/api/tests/test_owner_policy.py::test_owner_a_reads_nothing_of_owner_b`
+      pass with it.
+- [ ] A hosted run's row is inserted at start and follows each state
+      change as its owner; a row left `running` by another
+      `api_instance` reads and is stored `interrupted` on its owner's
+      next `GET /runs`, and another owner's such row is untouched
+      (planned test_a_run_cut_off_by_a_stop_reads_interrupted).
+- [ ] On the stop signal, every active hosted run is recorded
+      `interrupted` as its owner before the process exits (planned
+      test_the_stop_signal_records_active_runs_interrupted).
+- [ ] Locally, `services/api/tests/test_runs.py::test_journal_survives_restart`
+      passes unchanged and nothing reads or writes `run_records`.
+- [ ] Spec 115's F1 and F2 are recorded confirmed or refuted before a
+      hosted run kind is offered, and a refuted one amends this section
+      first.
+
+### Honest limitations (hosting budget)
+
+- Keeping the machine awake rests on an assumption about Fly's proxy
+  (F1). Fly documents excess capacity by `soft_limit`, not traffic, and
+  says nothing about background work.
+- A run keeps the machine up for its whole length, so run time is machine
+  time against the budget. Spec 110's cost check sees it; nothing here
+  caps it beyond each kind's own limits.
+- `/health` is public. Anyone polling it keeps the machine awake and
+  spends the budget. That was already true of any request once
+  `auto_start_machines` is on; this section does not add a guard.
+- A hard stop leaves a row `running` until its owner next reads the run
+  list, so the row is stale in the database, though never shown as live
+  once the process that owned it is gone.
+- Run events are lost with the machine, as before.
+
+### Proof / origin (hosting budget)
+
+- Fly, Pricing: shared-cpu-1x 1GB in Frankfurt $7.73 a month for 30 days
+  of continuous runtime; a stopped Machine billed only for its root file
+  system; volumes $0.15/GB a month. Read 2026-10-11.
+  https://docs.fly.io/about/pricing
+- Fly, Autostop/autostart: stops on excess capacity by `soft_limit`; the
+  stop loop "runs every few minutes"; `min_machines_running` only with
+  stopping on; the "exit when idle" pattern with `auto_stop_machines =
+  "off"` and `auto_start_machines = true`; nothing on open connections
+  or background work. Read 2026-10-11.
+  https://docs.fly.io/launch/autostop-autostart

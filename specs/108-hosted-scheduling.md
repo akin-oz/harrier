@@ -122,10 +122,13 @@ starts nothing; PR 2 adds no migration.
    the hosted job set, the due computation, the claim and finish writes,
    and the outcome classes. It names no tenant in SQL (ADR-013 decision
    2).
-6. **The scheduler process,** `harrier operator scheduler`: a
-   long-running loop that holds a singleton lock, lists due work through
-   `harrier_schedule_inputs()`, claims each slot as its owner, and starts
-   each run through spec 106's run binding (Behavior).
+6. **The scheduler process,** `harrier operator scheduler`: one tick
+   per start that holds a singleton lock, lists due work through
+   `harrier_schedule_inputs()`, claims each slot as its owner, starts
+   each run through spec 106's run binding, waits for its runs, and exits
+   (Behavior). This text first made it a long-running loop; the hosting
+   budget of 2026-10-11 made it one tick per start (Hosting budget
+   (2026-10-11)).
 7. **The operator's report,** `harrier operator schedule-report`: one
    line per owner and job, exit 1 when anything needs the operator
    (Behavior).
@@ -169,10 +172,12 @@ configuration files are spec 110's and are classified there.
 
 ### Where the scheduler runs
 
-A long-lived process, `harrier operator scheduler`, in its own Fly
-process group with one machine, built from the API image. The image
-already carries `config/schedule.json` (`Dockerfile:74`). The group has
-no service, so Fly's proxy routes it no request. It runs as its own
+`harrier operator scheduler`, on a Fly scheduled machine built from the
+API image, started on Fly's `hourly` cycle. Each start runs one tick and
+exits (Hosting budget (2026-10-11), which replaced the long-lived process
+in its own process group that this paragraph first described). The image
+already carries `config/schedule.json` (`Dockerfile:74`). The machine
+has no service, so Fly's proxy routes it no request. It runs as its own
 database login, never the API's (Options weighed).
 
 ### The hosted job set
@@ -322,13 +327,15 @@ HTTP route, which is ADR-013 decision 3's rule for the service role.
 
 The scheduler holds a session-level advisory lock,
 `pg_try_advisory_lock(hashtext('harrier.scheduler'), 0)`, on a dedicated
-connection for its whole life. A session-level advisory lock is held until
-released or the session ends (PostgreSQL, Explicit Locking). The two-key
-form never meets spec 103's one-key migration lock.
+connection for its whole life, which since the hosting budget is one
+tick. A session-level advisory lock is held until released or the
+session ends (PostgreSQL, Explicit Locking). The two-key form never
+meets spec 103's one-key migration lock.
 
-- Without the lock, an instance stands by: it retries each tick, lists
-  nothing, starts nothing, and logs `scheduler standing by: another
-  instance holds the lock` once.
+- Without the lock, an instance stands by: it lists nothing, starts
+  nothing, logs `scheduler standing by: another instance holds the lock`
+  once, and exits 0. The next start tries again. (Before the hosting
+  budget it retried each tick in a loop.)
 - The lock needs a session that outlives a transaction. Supabase's
   transaction-mode pooler does not support session advisory locks; a
   direct connection or the session-mode pooler does (Supabase, Connecting
@@ -336,7 +343,9 @@ form never meets spec 103's one-key migration lock.
   attempt that cannot be held across ticks fails the start.
 - When the lock connection fails, the scheduler terminates its children,
   records each as `interrupted`, logs `scheduler lost its lock`, and exits
-  1. Fly restarts it.
+  1. The machine's restart policy is `no`, so it stays stopped until its
+  next scheduled start (Hosting budget), which sweeps any row left
+  `running`. Before the hosting budget, Fly restarted it.
 
 The lock keeps two schedulers from running children at once and from
 sweeping each other's runs. It is not what prevents a slot from starting
@@ -344,7 +353,9 @@ twice: the claim does that, lock or no lock.
 
 ### A tick
 
-Every 60 seconds, while holding the lock:
+Once per start, while holding the lock (every 60 seconds in a loop
+before the hosting budget; the start of each tick is now Fly's hourly
+cycle):
 
 1. **List.** In a transaction that runs `SET LOCAL ROLE
    harrier_schedule_reader` first, select every row of
@@ -362,6 +373,10 @@ Every 60 seconds, while holding the lock:
    An owner and job already queued is not queued twice.
 4. **Start.** While fewer than `HARRIER_SCHEDULER_CONCURRENCY` scheduled
    runs are running, take the head of the queue and start it (below).
+5. **Exit.** When the queue is empty and every run it started has
+   finished, timed out or been refused, and each outcome is recorded, the
+   process exits 0. A slot that falls due while it runs is listed by the
+   next start. (Added by the hosting budget.)
 
 The listing is the only cross-owner read. Every other statement the
 scheduler runs is in a transaction as one owner.
@@ -484,14 +499,19 @@ through `harrier_schedule_inputs()` in a transaction as
 `harrier_schedule_reader`, and reads the lock's holder from `pg_locks`.
 It prints:
 
-- `scheduler: holding the lock` or `scheduler: not running`;
+- `scheduler: a tick is running` when a session holds the lock, or
+  `scheduler: no tick running` (since the hosting budget; this line first
+  read `holding the lock` or `not running`, which assumed a loop that is
+  always up);
 - one line per owner and job: owner id, job, cadence in words
   (`describe_cadence`, `schedule.py:477-491`), last slot, last outcome,
   exit, last ok time, and a problem when there is one.
 
-A problem is any of:
+A problem is any of the following. "No scheduler holds the lock" was one
+until the hosting budget; with one tick per start, no lock is held for
+most of each hour, and a scheduler that stopped starting shows as the
+unclaimed slot below.
 
-- no scheduler holds the lock;
 - the last outcome is `failed`, `crashed`, `timed_out` or `refused`;
 - the job is overdue: its last `ok` is older than twice its longest gap,
   spec 029's rule (`schedule.py:452`, `:494-508`), or it has never been
@@ -503,8 +523,12 @@ A problem is any of:
 `not_configured`, `interrupted` and `missed` are shown and are not
 problems on their own; a job that keeps missing becomes overdue. The
 command exits 1 when any problem exists and 0 otherwise, as
-`harrier schedule status` does (spec 040). The operator runs it on the
-scheduler machine, for example with `fly ssh console`.
+`harrier schedule status` does (spec 040). The operator runs it as a
+one-off machine in the app that holds the scheduler, which receives that
+app's secrets, for example `fly machine run <image> --rm` with the
+command. The scheduler machine itself is stopped between ticks, so `fly
+ssh console` on it, as this line first said, does not reach a running
+process.
 
 ### The CLI on each store
 
@@ -545,9 +569,11 @@ Asked of spec 106 (Changes to approved specs):
 
 Asked of spec 110 (Changes to approved specs):
 
-- A Fly process group `scheduler` with one machine, no service, the
-  restart policy that restarts it on exit, running `harrier operator
-  scheduler`.
+- A Fly scheduled machine, `--schedule hourly`, restart policy `no`, no
+  service, running `harrier operator scheduler` (one tick per start),
+  moved to each deploy's image. This replaced, on 2026-10-11 by the
+  hosting budget, a process group with one always-on machine that
+  restarted on exit. Which app holds it is spec 110's Open decision 10.
 - The login role `harrier_scheduler`, granted `harrier_tenant` and
   `harrier_schedule_reader` as named deploy steps, with a direct or
   session-mode database URL.
@@ -580,7 +606,9 @@ decision 5). An owner can set a usage limit on their own Apify account,
 at which Apify suspends the account's platform services (Apify, Billing).
 
 The operator's cost is machine time, bounded by the concurrency limit and
-the run timeout.
+the run timeout. Since the hosting budget it is only the time each tick
+runs, plus the stopped machine's root file system; spec 110's "Hosting
+budget (2026-10-11)" holds the rates and the monthly check.
 
 ## Failure modes
 
@@ -602,7 +630,8 @@ the run timeout.
   `running`. The next holder of the lock marks them `interrupted`. The
   slots do not run again.
 - **The lock connection drops mid-run.** The scheduler terminates its
-  children, records them `interrupted`, and exits 1. A child that
+  children, records them `interrupted`, and exits 1. Its next scheduled
+  start runs the next tick. A child that
   finished first keeps its true outcome, because a finish writes only its
   own slot.
 - **An invalid `schedule` row.** Refused at the write. A row that reaches
@@ -625,7 +654,8 @@ the run timeout.
   and a low concurrency limit, a 09:00 slot can start after 12:00 local,
   and the Apify gate is then closed for that run. The run still happens
   without Apify, and its start time shows it in the report. Sizing the
-  limit is the operator's.
+  limit is the operator's. Since the hosting budget, a slot also waits
+  for the next hourly start, which Fly gives as approximate.
 - **The machine's tz database lacks the owner's zone.** The store refuses
   the zone at the write when `zoneinfo` cannot load it. A child whose C
   library cannot load `TZ` would fall back to UTC silently; spec 110's
@@ -756,10 +786,10 @@ Documents
     assumption for `schema_version`);
   - that the migrating role may create `harrier_schedule_reader` and grant
     it, as for `harrier_tenant`;
-  - that a Fly machine in a process group with no service is never
-    stopped by Fly's proxy. Fly documents autostop as a setting of each
-    service (Fly, Autostop/autostart), and does not say so for a group
-    without one;
+  - superseded 2026-10-11 by the hosting budget, since no such group
+    exists: that a Fly machine in a process group with no service is
+    never stopped by Fly's proxy. The scheduled machine's assumptions
+    replace it (Hosting budget, "Assumptions for spec 115");
   - that the API image's C library honors `TZ` for every zone `zoneinfo`
     accepts. The image is `python:3.12-slim-bookworm` (`Dockerfile:34`)
     and installs no `tzdata` package explicitly (`Dockerfile:97-98`,
@@ -839,7 +869,11 @@ Where the clock lives:
   (Fly, `fly machine run`). Fly's own guide says there is no fine-grained
   control and that it is "Not for precise timing" (Fly, Task scheduling).
   The cadence is four fixed times a day and a Monday morning, in each
-  owner's timezone. Rejected.
+  owner's timezone. Rejected on 2026-10-10. Chosen on 2026-10-11 under
+  the hosting budget, as the clock for one tick per hourly start rather
+  than for each job: the due computation stays harrier's and each owner's
+  timezone stays exact, and only the start of a slot moves later, by up
+  to about an hour (Hosting budget (2026-10-11)).
 - **Supercronic in a process group.** A crontab in the image, one copy
   only, as Fly's guide warns (Fly, Task scheduling). A crontab cannot hold
   per-owner timezones or choices, so it would only tick a harrier command
@@ -864,7 +898,10 @@ Where the clock lives:
   auto-stopped (spec 106). Rejected.
 - **A harrier loop in its own Fly process group.** One machine, its own
   login, the committed cadence, any timezone, outcomes in the store.
-  Chosen.
+  Chosen on 2026-10-10. Superseded 2026-10-11 by the hosting budget: one
+  always-on shared-cpu-1x 1GB machine in Frankfurt costs $7.73 a month
+  (Fly, Pricing, read 2026-10-11), over the 5 USD target alone. The loop
+  body survives as one tick per scheduled start.
 
 How due owners are listed:
 
@@ -912,7 +949,10 @@ The text above says where each changed it.
   (Honest limitations).
 
 None of Open decisions 1 to 7 below was the subject of these decisions;
-they stand as written.
+they stand as written, except item 1, superseded the same day by the
+hosting budget, which adds item 8 (Hosting budget (2026-10-11)). Spec
+110's Open decision 9, which D4 names, is superseded with it; spec 110's
+Open decision 10 asks which app holds the scheduled machine.
 
 ## Open decisions for Akin
 
@@ -921,6 +961,8 @@ they stand as written.
    machine and a singleton advisory lock. Alternative: Supabase Cron with
    pg_net calling a scheduler endpoint, which keeps the clock in the
    database but puts service-side work behind HTTP.
+   Superseded 2026-10-11 by the hosting budget. Open decision 8 asks it
+   again.
 2. **The service-side role.** Recommended: `harrier_schedule_reader`
    with `EXECUTE` on one definer function, and ADR-013 decision 4 amended
    to say so. Alternative: Supabase's `service_role` with `SELECT` grants
@@ -946,6 +988,16 @@ they stand as written.
 7. **Delivery.** Recommended: this one spec, two pull requests, store
    first. Alternative: two specs, the store and the process, with the
    process depending on the store.
+8. **What starts a tick.** Added 2026-10-11 by the hosting budget.
+   Taken 2026-10-11 (Akin, "go with your recommendations"): the recommended answer.
+   Recommended: a Fly scheduled machine on the `hourly` cycle, restart
+   policy `no`, running one tick per start and exiting, billed only while
+   it runs plus its root file system while stopped. Alternatives: a plain
+   stopped machine started each hour by a GitHub Actions `schedule`
+   workflow with `fly machine start`, which needs a Fly token in GitHub
+   that can start the machine and whose own timing was not read here; or
+   Supabase Cron with pg_net waking the API, rejected under Options
+   weighed for putting service-side work behind HTTP.
 
 ## Proof / origin
 
@@ -1041,3 +1093,133 @@ they stand as written.
   - The number of academic tracks per owner is not bounded, so the
     academic job's weekly cost is the number of tracks times each
     track's ceiling. Spec 097 owns the ceilings.
+
+## Hosting budget (2026-10-11)
+
+Akin decided in chat on 2026-10-11 that the hosted deployment targets
+under 5 USD per month, with ADR-013's topology kept: the API and runs on
+Fly, Vercel serving only the SPA. Spec 110's "Hosting budget
+(2026-10-11)" holds the prices and the arithmetic. One always-on
+shared-cpu-1x 1GB machine in Frankfurt costs $7.73 a month (Fly, Pricing,
+read 2026-10-11), so an always-on scheduler machine would break the
+budget before the API ran at all. The long-lived loop in its own process
+group (Open decision 1) is superseded. This section replaces it, and the
+text above says where.
+
+The scheduler keeps its narrow role: it reads schedules only through
+`harrier_schedule_inputs()` as `harrier_schedule_reader`, and every other
+statement it runs is in a transaction as one owner. The bypass still
+carries no domain code: the definer function returns schedule fields
+only, and nothing else runs past the owner policy. None of that changes.
+
+### What starts a tick
+
+A Fly scheduled machine (Open decision 8):
+
+- Created once per environment with `fly machine run <image> --schedule
+  hourly --restart no`, running `harrier operator scheduler`, in the app
+  spec 110's Open decision 10 names, with no service.
+- Fly's `--schedule` "starts the Machine on a fuzzy `hourly`, `daily`,
+  `weekly`, or `monthly` cycle", running "once per (approximate)" interval.
+  Scheduled Machines "cannot be started via flyctl or Machines API
+  commands", and suit Machines "that do a finite job, then exit" (Fly,
+  `fly machine run`, read 2026-10-11).
+- The default restart policy of `fly machine run` is `always`, which
+  would restart the tick as soon as it exits; `--rm` destroys the Machine
+  when it stops, which would end the schedule. Restart policy `no` is
+  chosen.
+- A running Machine is billed at its rate; a stopped one only for its
+  root file system, at $0.15/GB a month (Fly, Pricing, read 2026-10-11).
+
+### What one start does
+
+One tick, as "A tick" under Behavior states it: take the lock or stand
+by and exit 0; mark rows left `running` as `interrupted`; list; compute;
+queue; start up to the concurrency limit; wait for each run to finish,
+time out or be refused; record each outcome; exit 0. A refused start
+check or a lost lock exits 1, and the next scheduled start is the retry.
+
+### Timing
+
+- Slots stay exact instants in each owner's timezone (The slot). A slot
+  is started by the first tick at or after it, so it starts late by the
+  time to the next hourly start. Fly calls the cycle approximate and
+  gives no bound; spec 115's F3 notes the spread it observes.
+- The Apify gate opens on weekday mornings before 12:00 local
+  (`discovery.py:130-133`), three hours after the 09:00 discovery slot
+  (`config/schedule.json:11-14`). A start delayed by about an hour keeps
+  the gate open; a long queue on top of it may not (Failure modes, "A
+  queue longer than the morning").
+- No catch-up and one start per slot are unchanged: the claim, not the
+  clock, decides.
+- A tick that runs past the next hourly start holds the lock. Whether Fly
+  skips that start or delays it is not stated; either way a second
+  holder cannot start runs (One scheduler at a time). Spec 115's F3
+  checks it.
+
+### Staging
+
+Staging's scheduler machine is created without `--schedule` and started
+by hand for a check, so it costs its root file system between checks
+(spec 110, "Hosting budget (2026-10-11)", Staging). The hourly cycle
+itself is probed by spec 115's F3.
+
+### Cost
+
+**Estimate:** an hourly cycle starts the machine at most 720 times in a
+30-day month (24 × 30). Its cost is the sum of those ticks' running
+times at the machine's rate, about 0.0107 USD an hour for 1GB in
+Frankfurt (7.73 / 720, spec 110), plus its root file system while
+stopped. A tick with nothing due has not been timed, so no monthly total
+is given. Spec 110's monthly cost check sees this line.
+
+### Assumptions for spec 115
+
+Spec 115's F3, recorded confirmed or refuted there:
+
+- the scheduled machine fires about hourly, and the observed spread of
+  its start times is recorded;
+- with restart policy `no` it stays stopped after exit until its next
+  scheduled start;
+- it is not started a second time while a tick still runs;
+- `fly machine update` to a new image keeps its schedule.
+
+### Acceptance criteria (hosting budget)
+
+- [ ] One start of `harrier operator scheduler`, with due slots for two
+      owners and a fake binding, starts both runs, waits for both,
+      records both outcomes and exits 0; with nothing due it lists once
+      and exits 0 (planned test_one_scheduler_start_runs_one_tick_and_exits).
+- [ ] With the lock held by another session, a start lists nothing,
+      starts nothing and exits 0 (planned test_a_second_scheduler_stands_by,
+      extended).
+- [ ] `schedule-report` with no tick running and no slot unclaimed prints
+      `scheduler: no tick running` and exits 0 (planned
+      test_the_report_exits_one_on_each_problem, extended).
+- [ ] Spec 115's F3 is recorded confirmed or refuted before production
+      schedules any owner, and a refuted item amends this section first.
+
+### Honest limitations (hosting budget)
+
+- A slot starts late by up to about an hour, by an amount Fly does not
+  bound. Not measured here.
+- If Fly stops firing the schedule, nothing alerts. `schedule-report`
+  shows it as an unclaimed slot when the operator runs it.
+- The report no longer treats an unheld lock as a problem, so a
+  scheduler that never starts is seen only through unclaimed slots, one
+  longest gap later.
+
+### Proof / origin (hosting budget)
+
+- Fly, `fly machine run`: `--schedule` fuzzy cycles, "once per
+  (approximate)" interval, scheduled Machines not startable by command,
+  for "a finite job, then exit", restart default `always` unless `--rm`,
+  which destroys the Machine when it stops. Read 2026-10-11.
+  https://docs.fly.io/machines/flyctl/fly-machine-run
+- Fly, Task scheduling: scheduled Machines are "Not for precise timing";
+  Cron Manager needs a separate app. Read 2026-10-11.
+  https://docs.fly.io/blueprints/task-scheduling
+- Fly, Pricing: shared-cpu-1x 1GB in Frankfurt $7.73 a month for 30 days
+  of continuous runtime; a stopped Machine billed only for its root file
+  system at $0.15/GB a month. Read 2026-10-11.
+  https://docs.fly.io/about/pricing
