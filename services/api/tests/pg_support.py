@@ -144,14 +144,12 @@ SHIM_STATEMENTS: tuple[str, ...] = (
     # What Supabase gives postgres in auth, as spec 115's staging run found
     # it (2026-10-11): on auth.users INSERT, UPDATE, DELETE, TRUNCATE,
     # REFERENCES, TRIGGER and MAINTAIN, and SELECT with the grant option
-    # (A1, A8); on auth.uid() nothing beyond PUBLIC's EXECUTE (A2). One
-    # difference: Supabase gives postgres USAGE on auth without the grant
-    # option, so migration 10's grant of it to the tenant role does nothing
-    # there (A2, refuted). The migrator holds the grant option here so the
-    # suite stays green; the spec that fixes A2 removes it, and CI then
-    # proves the fix. Conditional, so a partial shim without auth.users
-    # installs.
-    f"GRANT USAGE ON SCHEMA auth TO {MIGRATOR_ROLE} WITH GRANT OPTION",
+    # (A1, A8); on auth.uid() nothing beyond PUBLIC's EXECUTE (A2); and
+    # USAGE on auth without the grant option, so migration 10's grants on
+    # auth to the tenant role do nothing here, as on Supabase (A2, refuted;
+    # spec 105, amendment of 2026-10-11). The auth.users grants are
+    # conditional, so a partial shim without auth.users installs.
+    f"GRANT USAGE ON SCHEMA auth TO {MIGRATOR_ROLE}",
     f"""
     DO $$
     BEGIN
@@ -293,7 +291,8 @@ def new_owner(conn: PgConnection) -> str:
 
 
 def claims(owner: str) -> str:
-    """The JWT claims a request for `owner` carries, as auth.uid() reads them."""
+    """The JWT claims a request for `owner` carries, as harrier_owner_id()
+    reads them (spec 105, amendment of 2026-10-11)."""
     return json.dumps({"sub": owner, "role": "authenticated"})
 
 

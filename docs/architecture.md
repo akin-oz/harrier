@@ -187,9 +187,15 @@ writes to it.
 
 On Postgres every personal row has an owner (spec 105). Migration 10 in
 `schema.py` gives each table in `OWNED_TABLES` an `owner_id` column that
-defaults to `auth.uid()` and references `auth.users`, and one policy,
+references `auth.users`, and one policy,
 `owner_only`: the policed role, `harrier_tenant`, sees and stores only rows whose
-`owner_id` is its own. Row security is enabled and forced on every table.
+`owner_id` is its own. Since migration 16 the column defaults to
+`harrier_owner_id()`, and the policy compares with it: a function in
+`public`, executable by the tenant role alone, that reads the `sub` of the
+request's `request.jwt.claims`. The tenant role needs nothing in schema
+`auth` and holds nothing there
+(`services/api/tests/test_owner_policy.py::test_the_tenant_role_holds_nothing_in_auth`,
+`services/api/tests/test_owner_policy.py::test_harrier_owner_id_reads_the_request_claims`). Row security is enabled and forced on every table.
 Every unique key on an owned table leads with `owner_id`, except the
 primary key `id` of the tables numbered from one global sequence
 (`GLOBAL_ID_TABLES`): the tenant role may write every column of those
@@ -197,7 +203,7 @@ tables but `id` (migration 13), so no key a tenant can write into tells one
 owner what another holds
 (`services/api/tests/test_owner_policy.py::test_an_owner_cannot_choose_or_change_an_id`).
 Each owner has their own track 1, and a job or event can reference only its
-own owner's track or job. Migrations 10, 13 and 14 are Postgres only
+own owner's track or job. Migrations 10, 13, 14 and 16 are Postgres only
 (`SINGLE_DIALECT_MIGRATIONS`): SQLite records those versions and changes
 nothing, so the local schema names no tenant. The catalog test,
 `services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared`,
@@ -205,8 +211,12 @@ fails naming any table that is neither owned nor declared unowned, lacks
 the column, the forced policy or an owner index, has a unique key that
 breaks the rule above, a rule, or an owner other than the migrating role,
 or carries an unexpected table, column, sequence or function grant, view,
-definer function, default privilege, or tenant role attribute or
-membership.
+definer function, default privilege, tenant role attribute or
+membership, or anything in `public` that still reaches `auth.uid()`.
+Supabase's own functions in `public` are declared in
+`SUPABASE_FUNCTIONS_IN_PUBLIC` and skip the function rules only while they
+return `event_trigger`
+(`services/api/tests/test_owner_policy.py::test_a_declared_supabase_function_is_not_a_catalog_problem`).
 The isolation tests in the same file act as two synthetic owners
 (`services/api/tests/test_owner_policy.py::test_owner_a_reads_nothing_of_owner_b`,
 `services/api/tests/test_owner_policy.py::test_owner_a_cannot_write_as_owner_b`).
@@ -238,13 +248,16 @@ it is a recorded check and not a gate. The run refuted one assumption: the
 migrating role cannot give `harrier_tenant` usage on schema `auth`, so a
 tenant statement that names `auth.uid()`, such as the trigger that numbers
 a new track, is refused there. Spec 115's "Amendment (staging findings)"
-records every result and the spec that owns each fix. What the run found
-is kept in CI: every Postgres test now migrates and connects as
-`harrier_migrator`, a role that is not a superuser and holds in the shim
-what `postgres` holds on the project
-(`services/api/tests/test_owner_policy.py::test_ci_migrates_as_a_non_superuser`),
-except the one grant the refuted assumption needs, which the shim keeps
-until spec 105's fix lands.
+records every result and the spec that owns each fix. Migration 16 is that
+fix (spec 105, amendment of 2026-10-11). What the run found is kept in CI:
+every Postgres test now migrates and connects as `harrier_migrator`, a role
+that is not a superuser and holds in the shim what `postgres` holds on the
+project, USAGE on `auth` without the grant option included
+(`services/api/tests/test_owner_policy.py::test_ci_migrates_as_a_non_superuser`,
+`services/api/tests/test_owner_policy.py::test_the_shim_migrator_holds_auth_usage_without_grant_option`).
+A store stopped at version 15 refuses an owner's second track there, as the
+project did
+(`services/api/tests/test_owner_policy.py::test_track_two_needs_migration_16_on_the_faithful_shim`).
 
 No other hosted component exists yet. Specs 103 to 112 sequence the build:
 the Postgres store (103, approved), API authentication (104), row-level

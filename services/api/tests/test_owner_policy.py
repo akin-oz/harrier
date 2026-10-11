@@ -17,6 +17,7 @@ locally without one (`tests/pg_support.py`).
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 import threading
@@ -54,9 +55,12 @@ from harrier.tracker.schema import (
     MIGRATION_10_OWNED_TABLES,
     MIGRATION_13_TENANT_HAS_A_ROLE,
     MIGRATION_14_TENANT_IS_A_SUPERUSER,
+    MIGRATION_16_OWNED_TABLES,
     MIGRATIONS,
     OWNED_TABLES,
+    OWNER_ID_FUNCTION,
     POSTGRES_BASELINE_VERSION,
+    SUPABASE_FUNCTIONS_IN_PUBLIC,
     SUPABASE_ROLES,
     TENANT_ROLE,
     TENANT_ROLE_RESET,
@@ -78,8 +82,8 @@ FOREIGN_KEY = "23503"
 UNIQUE = "23505"
 RAISED = "P0001"  # harrier_refuse()
 
-# The policy's expression, as Postgres 17 prints it back.
-POLICY_EXPRESSION = "(owner_id = ( SELECT auth.uid() AS uid))"
+# The policy's expression, as Postgres 17 prints it back (migration 16).
+POLICY_EXPRESSION = "(owner_id = ( SELECT harrier_owner_id() AS harrier_owner_id))"
 
 # What the tenant role may do on each whole table: spec 105's Grants list,
 # with the tenant role in the place of `authenticated` (spec 105 amendment).
@@ -260,6 +264,16 @@ def migrate_to(url: str, version: int, monkeypatch: pytest.MonkeyPatch) -> None:
     with monkeypatch.context() as patch:
         patch.setattr(schema, "POSTGRES_MIGRATIONS", [m for m in real if m[0] <= version])
         migrate_postgres(url)
+
+
+def server_pid(conn: PgConnection) -> int:
+    """The server process `conn` runs on, as pg_locks names it. Not
+    `conn.info.backend_pid`: through Supabase's session pooler that is the
+    pooler's own number, which no server process has (spec 105, amendment
+    of 2026-10-11, staging rerun)."""
+    row = conn.execute("SELECT pg_backend_pid()").fetchone()
+    assert row is not None
+    return int(row[0])
 
 
 def owners_seen(conn: PgConnection, table: str) -> set[UUID]:
@@ -468,8 +482,9 @@ def test_migration_10_gives_existing_users_track_one(monkeypatch: pytest.MonkeyP
 
 
 def catalog_fingerprint(conn: PgConnection) -> dict[str, list[tuple[Any, ...]]]:
-    """What a migration can change: relations, columns, keys, functions,
-    triggers, policies, grants, default privileges, and the seeded rows."""
+    """What a migration can change: relations, columns and their defaults,
+    keys, functions, triggers, policies and their expressions, grants,
+    default privileges, and the seeded rows."""
     queries = {
         "relations": "SELECT relname, relkind, relacl::text, relrowsecurity, "
         "relforcerowsecurity, pg_get_userbyid(relowner) FROM pg_class "
@@ -478,13 +493,18 @@ def catalog_fingerprint(conn: PgConnection) -> dict[str, list[tuple[Any, ...]]]:
         "attnotnull, attidentity, attacl::text FROM pg_attribute WHERE attrelid IN "
         "(SELECT oid FROM pg_class WHERE relnamespace = 'public'::regnamespace) "
         "AND attnum > 0 AND NOT attisdropped",
+        "column defaults": "SELECT adrelid::regclass::text, adnum, pg_get_expr(adbin, adrelid) "
+        "FROM pg_attrdef WHERE adrelid IN "
+        "(SELECT oid FROM pg_class WHERE relnamespace = 'public'::regnamespace)",
         "constraints": "SELECT conrelid::regclass::text, conname, pg_get_constraintdef(oid) "
         "FROM pg_constraint WHERE connamespace = 'public'::regnamespace",
         "functions": "SELECT proname, prosrc, prosecdef, proconfig, proacl::text FROM pg_proc "
         "WHERE pronamespace = 'public'::regnamespace",
         "triggers": "SELECT tgrelid::regclass::text, tgname, tgenabled FROM pg_trigger "
         "WHERE NOT tgisinternal",
-        "policies": "SELECT polrelid::regclass::text, polname FROM pg_policy",
+        "policies": "SELECT polrelid::regclass::text, polname, polcmd::text, "
+        "polroles::regrole[]::text[], pg_get_expr(polqual, polrelid), "
+        "pg_get_expr(polwithcheck, polrelid) FROM pg_policy",
         "default privileges": "SELECT defaclrole::regrole::text, "
         "defaclnamespace::regnamespace::text, defaclobjtype, defaclacl::text "
         "FROM pg_default_acl",
@@ -499,7 +519,7 @@ def catalog_fingerprint(conn: PgConnection) -> dict[str, list[tuple[Any, ...]]]:
     }
 
 
-@pytest.mark.parametrize("version", [10, 13, 14])
+@pytest.mark.parametrize("version", [10, 13, 14, 16])
 def test_a_failed_migration_leaves_no_trace_of_itself(
     version: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -790,8 +810,10 @@ def catalog_problems(conn: PgConnection) -> list[str]:
             "WHERE a.attrelid = %s::regclass AND a.attname = 'owner_id' AND NOT a.attisdropped",
             (table,),
         ).fetchone()
-        if column != ("uuid", True, "auth.uid()"):
-            problems.append(f"{table}: owner_id is {column}, not uuid NOT NULL DEFAULT auth.uid()")
+        if column != ("uuid", True, OWNER_ID_FUNCTION):
+            problems.append(
+                f"{table}: owner_id is {column}, not uuid NOT NULL DEFAULT {OWNER_ID_FUNCTION}"
+            )
         references = conn.execute(
             "SELECT count(*) FROM pg_constraint WHERE conrelid = %s::regclass AND contype = 'f' "
             "AND pg_get_constraintdef(oid) = 'FOREIGN KEY (owner_id) REFERENCES auth.users(id)'",
@@ -976,11 +998,26 @@ def catalog_problems(conn: PgConnection) -> list[str]:
                 f"on new {DEFAULT_ACL_KINDS.get(kind, kind)} ({scope})"
             )
 
-    for name, definer, config in conn.execute(
-        "SELECT proname, prosecdef, proconfig FROM pg_proc "
-        "WHERE pronamespace = 'public'::regnamespace"
-    ).fetchall():
-        if not definer:
+    # Functions in public, by signature. Supabase's declared functions skip
+    # the four rules below only while they return event_trigger, which no
+    # role can call; under any other return type a declared name is a
+    # different object and is checked as usual (spec 105, amendment of
+    # 2026-10-11). The signature is read without a schema, whatever the
+    # session's search_path.
+    functions = [
+        (str(signature).removeprefix("public."), str(name), bool(definer), config, str(returns))
+        for signature, name, definer, config, returns in conn.execute(
+            "SELECT oid::regprocedure::text, proname, prosecdef, proconfig, "
+            "prorettype::regtype::text FROM pg_proc WHERE pronamespace = 'public'::regnamespace"
+        ).fetchall()
+    ]
+    exempt = {
+        signature
+        for signature, _, _, _, returns in functions
+        if signature in SUPABASE_FUNCTIONS_IN_PUBLIC and returns == "event_trigger"
+    }
+    for signature, name, definer, config, _ in functions:
+        if not definer or signature in exempt:
             continue
         if name != "harrier_new_owner":
             problems.append(f"{name}(): SECURITY DEFINER in public")
@@ -989,21 +1026,102 @@ def catalog_problems(conn: PgConnection) -> list[str]:
         if 'search_path=""' not in (config or []):
             problems.append(f"{name}(): SECURITY DEFINER without an empty search_path")
     for grantee in (*NO_PRIVILEGE_ROLES, TENANT_ROLE):
-        for (name,) in conn.execute(
-            "SELECT proname FROM pg_proc WHERE pronamespace = 'public'::regnamespace "
+        for signature, name in conn.execute(
+            "SELECT oid::regprocedure::text, proname FROM pg_proc "
+            "WHERE pronamespace = 'public'::regnamespace "
             "AND has_function_privilege(%s, oid, 'EXECUTE')",
             (grantee,),
         ).fetchall():
+            signature = str(signature).removeprefix("public.")
+            if signature in exempt:
+                continue
+            # The one function the tenant role executes: owner identity.
+            if grantee == TENANT_ROLE and signature == OWNER_ID_FUNCTION:
+                continue
             problems.append(f"{name}(): executable by {grantee}")
     # PUBLIC on its own, so the problem names the grant that reaches every
     # role. A function with no ACL has the built-in one: PUBLIC executes it.
-    for (name,) in conn.execute(
-        "SELECT proname FROM pg_proc WHERE pronamespace = 'public'::regnamespace "
+    for signature, name in conn.execute(
+        "SELECT oid::regprocedure::text, proname FROM pg_proc "
+        "WHERE pronamespace = 'public'::regnamespace "
         "AND (proacl IS NULL OR EXISTS (SELECT 1 FROM aclexplode(proacl) x "
         "WHERE x.grantee = 0 AND x.privilege_type = 'EXECUTE'))"
     ).fetchall():
-        problems.append(f"{name}(): executable by PUBLIC")
+        if str(signature).removeprefix("public.") not in exempt:
+            problems.append(f"{name}(): executable by PUBLIC")
+    problems += owner_identity_problems(conn)
+    problems += auth_uid_references(conn)
     return sorted(problems)
+
+
+def owner_identity_problems(conn: PgConnection) -> list[str]:
+    """What breaks migration 16's rules for harrier_owner_id(): it exists
+    in public, is SECURITY INVOKER, STABLE, returns uuid, has exactly an
+    empty search_path, and the tenant role executes it; and the tenant role
+    holds no USAGE on schema auth (spec 105, amendment of 2026-10-11)."""
+    problems: list[str] = []
+    found = conn.execute(
+        "SELECT prosecdef, provolatile::text, prorettype::regtype::text, proconfig "
+        "FROM pg_proc WHERE oid = to_regprocedure(%s)",
+        (f"public.{OWNER_ID_FUNCTION}",),
+    ).fetchone()
+    if found is None:
+        problems.append(f"{OWNER_ID_FUNCTION}: no such function in public")
+    else:
+        definer, volatility, returns, config = found
+        if (definer, volatility, returns, config) != (False, "s", "uuid", ['search_path=""']):
+            problems.append(
+                f"{OWNER_ID_FUNCTION}: (definer, volatility, returns, config) is "
+                f"{(definer, volatility, returns, config)}, not "
+                "(False, 's', 'uuid', ['search_path=\"\"'])"
+            )
+        executes = conn.execute(
+            "SELECT has_function_privilege(%s, to_regprocedure(%s), 'EXECUTE')",
+            (TENANT_ROLE, f"public.{OWNER_ID_FUNCTION}"),
+        ).fetchone()
+        if executes != (True,):
+            problems.append(f"{OWNER_ID_FUNCTION}: {TENANT_ROLE} cannot execute it")
+    in_auth = conn.execute(
+        "SELECT has_schema_privilege(%s, 'auth', 'USAGE')", (TENANT_ROLE,)
+    ).fetchone()
+    if in_auth != (False,):
+        problems.append(f"auth: {TENANT_ROLE} holds USAGE")
+    return problems
+
+
+def auth_uid_references(conn: PgConnection) -> list[str]:
+    """Everything harrier owns in public that reaches auth.uid(): a policy,
+    column default or trigger on a table in public that depends on it, by
+    pg_depend, and a function in public that names it in its source, since
+    a PL/pgSQL body records no dependency (spec 105, amendment of
+    2026-10-11). Since migration 16 owner identity is harrier_owner_id()."""
+    found: list[str] = [
+        str(problem)
+        for (problem,) in conn.execute(
+            "WITH uid AS (SELECT to_regprocedure('auth.uid()') AS oid), "
+            "depends AS (SELECT d.classid, d.objid FROM pg_depend d, uid "
+            "WHERE d.refclassid = 'pg_proc'::regclass AND d.refobjid = uid.oid) "
+            "SELECT c.relname || ': policy ' || p.polname || ' depends on auth.uid()' "
+            "FROM depends d JOIN pg_policy p ON d.classid = 'pg_policy'::regclass "
+            "AND p.oid = d.objid JOIN pg_class c ON c.oid = p.polrelid "
+            "WHERE c.relnamespace = 'public'::regnamespace "
+            "UNION "
+            "SELECT c.relname || '.' || a.attname || ': default depends on auth.uid()' "
+            "FROM depends d JOIN pg_attrdef ad ON d.classid = 'pg_attrdef'::regclass "
+            "AND ad.oid = d.objid JOIN pg_class c ON c.oid = ad.adrelid "
+            "JOIN pg_attribute a ON a.attrelid = ad.adrelid AND a.attnum = ad.adnum "
+            "WHERE c.relnamespace = 'public'::regnamespace "
+            "UNION "
+            "SELECT c.relname || ': trigger ' || t.tgname || ' depends on auth.uid()' "
+            "FROM depends d JOIN pg_trigger t ON d.classid = 'pg_trigger'::regclass "
+            "AND t.oid = d.objid JOIN pg_class c ON c.oid = t.tgrelid "
+            "WHERE c.relnamespace = 'public'::regnamespace "
+            "UNION "
+            "SELECT proname || '(): names auth.uid in its source' FROM pg_proc "
+            "WHERE pronamespace = 'public'::regnamespace AND prosrc ILIKE '%auth.uid%'"
+        ).fetchall()
+    ]
+    return sorted(found)
 
 
 def test_every_table_is_owned_or_declared(store: PgConnection) -> None:
@@ -1105,6 +1223,42 @@ def test_every_table_is_owned_or_declared(store: PgConnection) -> None:
             "ALTER TABLE contacts ADD COLUMN extra text",
             "contacts.extra: harrier_tenant lacks ['INSERT', 'UPDATE']",
         ),
+        # Owner identity without schema auth (spec 105, amendment of
+        # 2026-10-11).
+        (
+            "ALTER POLICY owner_only ON jobs USING (owner_id = (SELECT auth.uid())) "
+            "WITH CHECK (owner_id = (SELECT auth.uid()))",
+            "jobs: policy owner_only depends on auth.uid()",
+        ),
+        (
+            "ALTER TABLE contacts ALTER COLUMN owner_id SET DEFAULT auth.uid()",
+            "contacts.owner_id: default depends on auth.uid()",
+        ),
+        (
+            "CREATE TRIGGER uid_check BEFORE INSERT ON jobs FOR EACH ROW "
+            "WHEN (auth.uid() IS NULL) EXECUTE FUNCTION harrier_refuse('no owner')",
+            "jobs: trigger uid_check depends on auth.uid()",
+        ),
+        (
+            "CREATE FUNCTION who() RETURNS uuid LANGUAGE sql AS 'SELECT auth.uid()'",
+            "who(): names auth.uid in its source",
+        ),
+        (
+            "GRANT EXECUTE ON FUNCTION harrier_owner_id() TO authenticated",
+            "harrier_owner_id(): executable by authenticated",
+        ),
+        (
+            "REVOKE EXECUTE ON FUNCTION harrier_owner_id() FROM harrier_tenant",
+            "harrier_owner_id(): harrier_tenant cannot execute it",
+        ),
+        (
+            "ALTER FUNCTION harrier_owner_id() VOLATILE",
+            "harrier_owner_id(): (definer, volatility, returns, config)",
+        ),
+        (
+            "ALTER FUNCTION harrier_owner_id() SECURITY DEFINER",
+            "harrier_owner_id(): SECURITY DEFINER in public",
+        ),
     ],
 )
 def test_the_catalog_names_each_breach(store: PgConnection, breach: str, named: str) -> None:
@@ -1132,6 +1286,306 @@ def test_a_later_column_is_granted_by_the_helper(store: PgConnection) -> None:
                 ).encode()
             )
         assert catalog_problems(store) == []
+
+
+# --- migration 16: owner identity without schema auth ---
+#
+# Spec 105's amendment of 2026-10-11. Supabase's postgres holds USAGE on
+# auth without the grant option, so migration 10's grants on auth gave the
+# tenant role nothing, and the shim now copies that (spec 115, A2).
+
+
+def test_the_shim_migrator_holds_auth_usage_without_grant_option() -> None:
+    """The shim gives the migrator what spec 115 found Supabase's postgres
+    holds: USAGE on auth without the grant option, and on auth.uid()
+    nothing beyond PUBLIC's EXECUTE. A migration that needs more fails in CI
+    as it would on Supabase."""
+    import psycopg
+
+    with fresh_database() as url, psycopg.connect(url, autocommit=True) as conn:
+        held = conn.execute(
+            "SELECT has_schema_privilege(current_user, 'auth', 'USAGE'), "
+            "has_schema_privilege(current_user, 'auth', 'USAGE WITH GRANT OPTION'), "
+            "has_function_privilege(current_user, 'auth.uid()', 'EXECUTE'), "
+            "has_function_privilege(current_user, 'auth.uid()', 'EXECUTE WITH GRANT OPTION')"
+        ).fetchone()
+        own = conn.execute(
+            "SELECT x.privilege_type, x.is_grantable FROM pg_proc p "
+            "CROSS JOIN LATERAL aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) x "
+            "WHERE p.oid = 'auth.uid()'::regprocedure AND x.grantee = current_user::regrole"
+        ).fetchall()
+    assert held == (True, False, True, False)
+    assert own == []
+
+
+def test_track_two_needs_migration_16_on_the_faithful_shim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A2 reproduced: at version 15 migration 14's numbering trigger looks
+    auth.uid() up as the tenant role, which holds no USAGE on auth, so an
+    owner's track without an id is refused. After migration 16 the same
+    insert gets id 2, and the next id 3."""
+    import psycopg
+
+    insert_track = "INSERT INTO tracks (slug, kind, label) VALUES (%s, 'industry', 'Synthetic')"
+    with fresh_database() as url:
+        migrate_to(url, 15, monkeypatch)
+        with psycopg.connect(url, autocommit=True) as conn:
+            owner = new_owner(conn)
+            with as_owner(conn, owner):
+                error = refusal(conn, insert_track, ("second",))
+            assert error.sqlstate == INSUFFICIENT_PRIVILEGE
+            assert error.diag.message_primary == "permission denied for schema auth"
+        migrate_postgres(url)
+        with psycopg.connect(url, autocommit=True) as conn:
+            assert postgres_version(conn) == 16
+            ids: list[Any] = []
+            for slug in ("second", "third"):
+                with as_owner(conn, owner):
+                    ids.append(
+                        conn.execute(f"{insert_track} RETURNING id".encode(), (slug,)).fetchone()
+                    )
+    assert ids == [(2,), (3,)]
+
+
+def test_nothing_harrier_owns_references_auth_uid(monkeypatch: pytest.MonkeyPatch) -> None:
+    """At version 15 every owned table's policy and owner_id default depend
+    on auth.uid(), and the numbering trigger names it. Migration 16 leaves
+    nothing in public that reaches it."""
+    import psycopg
+
+    with fresh_database() as url:
+        migrate_to(url, 15, monkeypatch)
+        with psycopg.connect(url, autocommit=True) as conn:
+            before = auth_uid_references(conn)
+        migrate_postgres(url)
+        with psycopg.connect(url, autocommit=True) as conn:
+            after = auth_uid_references(conn)
+    assert before == sorted(
+        [
+            *(
+                f"{table}: policy owner_only depends on auth.uid()"
+                for table in MIGRATION_16_OWNED_TABLES
+            ),
+            *(
+                f"{table}.owner_id: default depends on auth.uid()"
+                for table in MIGRATION_16_OWNED_TABLES
+            ),
+            "harrier_number_track(): names auth.uid in its source",
+        ]
+    )
+    assert after == []
+
+
+def test_only_the_tenant_executes_harrier_owner_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Migration 16 states the function's privileges rather than leave them
+    to migration 14's default privileges: on a store at version 15 whose
+    migrating role grants every new function in public to PUBLIC and
+    Supabase's three roles, the function still reaches the tenant role
+    alone. It is SECURITY INVOKER, STABLE, returns uuid, and its only
+    setting is an empty search_path."""
+    import psycopg
+
+    roles = (TENANT_ROLE, "anon", "authenticated", "service_role")
+    function = f"public.{OWNER_ID_FUNCTION}"
+    with fresh_database() as url:
+        migrate_to(url, 15, monkeypatch)
+        with psycopg.connect(url, autocommit=True) as conn:
+            conn.execute(
+                "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS "
+                "TO PUBLIC, anon, authenticated, service_role"
+            )
+        migrate_postgres(url)
+        with psycopg.connect(url, autocommit=True) as conn:
+            executes = {
+                role: conn.execute(
+                    "SELECT has_function_privilege(%s, %s::regprocedure, 'EXECUTE')",
+                    (role, function),
+                ).fetchone()
+                for role in roles
+            }
+            by_public = conn.execute(
+                "SELECT proacl IS NULL OR EXISTS (SELECT 1 FROM aclexplode(proacl) x "
+                "WHERE x.grantee = 0) FROM pg_proc WHERE oid = %s::regprocedure",
+                (function,),
+            ).fetchone()
+            shape = conn.execute(
+                "SELECT prosecdef, provolatile::text, prorettype::regtype::text, proconfig "
+                "FROM pg_proc WHERE oid = %s::regprocedure",
+                (function,),
+            ).fetchone()
+    assert executes == {role: (role == TENANT_ROLE,) for role in roles}
+    assert by_public == (False,)
+    assert shape == (False, "s", "uuid", ['search_path=""'])
+
+
+def test_harrier_owner_id_reads_the_request_claims(store: PgConnection) -> None:
+    """As the tenant role: the sub of request.jwt.claims set local; null
+    with no claims; the legacy request.jwt.claim.sub, set for the whole
+    session, never read (decision 2 of the amendment), so the claims' sub
+    wins and without claims the result is null; a sub that is not a uuid
+    raises 22P02."""
+    owner, stale = str(uuid.uuid4()), str(uuid.uuid4())
+    read = "SELECT harrier_owner_id()"
+    with as_role(store, TENANT_ROLE, owner):
+        assert store.execute(read).fetchone() == (UUID(owner),)
+    with as_role(store, TENANT_ROLE):
+        assert store.execute(read).fetchone() == (None,)
+
+    store.execute("SELECT set_config('request.jwt.claim.sub', %s, false)", (stale,))
+    with as_role(store, TENANT_ROLE, owner):
+        assert store.execute(read).fetchone() == (UUID(owner),)
+    with as_role(store, TENANT_ROLE):
+        legacy = store.execute("SELECT current_setting('request.jwt.claim.sub', true)")
+        assert legacy.fetchone() == (stale,)
+        assert store.execute(read).fetchone() == (None,)
+    store.execute("SELECT set_config('request.jwt.claim.sub', '', false)")
+
+    with as_role(store, TENANT_ROLE):
+        store.execute(
+            "SELECT set_config('request.jwt.claims', %s, true)",
+            (json.dumps({"sub": "not-a-uuid", "role": "authenticated"}),),
+        )
+        error = refusal(store, read)
+    assert error.sqlstate == "22P02"
+
+
+def tenant_in_auth(conn: PgConnection) -> tuple[Any, list[tuple[Any, ...]]]:
+    """Whether the tenant role holds USAGE on auth, and its own entries in
+    auth.uid()'s ACL (PUBLIC's EXECUTE is Supabase's, not harrier's)."""
+    usage = conn.execute(
+        "SELECT has_schema_privilege(%s, 'auth', 'USAGE')", (TENANT_ROLE,)
+    ).fetchone()
+    entries = conn.execute(
+        "SELECT x.privilege_type FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) x "
+        "WHERE p.oid = 'auth.uid()'::regprocedure AND x.grantee = %s::regrole",
+        (TENANT_ROLE,),
+    ).fetchall()
+    return usage, entries
+
+
+def test_the_tenant_role_holds_nothing_in_auth(
+    store: PgConnection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On the faithful shim the tenant role holds nothing in auth, cannot
+    look auth.uid() up, and still writes and reads its rows under the
+    policy. On a store migrated by a role holding the grant options, as the
+    shim did before this amendment, migration 10's grants took effect, and
+    migration 16 withdraws them."""
+    import psycopg
+
+    owner = new_owner(store)
+    assert tenant_in_auth(store) == ((False,), [])
+    with as_owner(store, owner):
+        error = refusal(store, "SELECT auth.uid()")
+        assert error.sqlstate == INSUFFICIENT_PRIVILEGE
+        assert error.diag.message_primary == "permission denied for schema auth"
+        job = store.execute("INSERT INTO jobs DEFAULT VALUES RETURNING owner_id, track_id")
+        assert job.fetchone() == (UUID(owner), 1)
+        track = store.execute(
+            "INSERT INTO tracks (slug, kind, label) VALUES ('second', 'industry', 'Second') "
+            "RETURNING owner_id, id"
+        )
+        assert track.fetchone() == (UUID(owner), 2)
+        seen = store.execute("SELECT owner_id, id FROM tracks ORDER BY id").fetchall()
+        assert seen == [(UUID(owner), 1), (UUID(owner), 2)]
+
+    granting = (
+        *SHIM_STATEMENTS,
+        f"GRANT USAGE ON SCHEMA auth TO {MIGRATOR_ROLE} WITH GRANT OPTION",
+        f"GRANT EXECUTE ON FUNCTION auth.uid() TO {MIGRATOR_ROLE} WITH GRANT OPTION",
+    )
+    with fresh_database(shim=False) as url:
+        install_shim(url, granting)
+        migrate_to(url, 15, monkeypatch)
+        with psycopg.connect(url, autocommit=True) as conn:
+            assert tenant_in_auth(conn) == ((True,), [("EXECUTE",)])
+        migrate_postgres(url)
+        with psycopg.connect(url, autocommit=True) as conn:
+            assert tenant_in_auth(conn) == ((False,), [])
+
+
+def test_an_operator_numbers_a_track_without_harrier_owner_id(store: PgConnection) -> None:
+    """An operator (spec 108) is a role other than the tenant that bypasses
+    row security: service_role here, given SELECT, INSERT and UPDATE on
+    tracks for one transaction, and no EXECUTE on harrier_owner_id(). It
+    numbers a track inserted without an id, with no claims and with
+    another owner's. The trigger reaches the function only in the tenant's
+    branch; one condition joined with AND would ready the call for every
+    role, and refuse this one."""
+    a, b = new_owner(store), new_owner(store)
+    insert_track = (
+        "INSERT INTO tracks (owner_id, slug, kind, label) "
+        "VALUES (%s, %s, 'industry', 'Operator') RETURNING owner_id, id"
+    )
+    with store.transaction(force_rollback=True):
+        store.execute(b"GRANT SELECT, INSERT, UPDATE ON tracks TO service_role")
+        store.execute("SET LOCAL ROLE service_role")
+        executes = store.execute(
+            "SELECT has_function_privilege(current_user, %s::regprocedure, 'EXECUTE')",
+            (f"public.{OWNER_ID_FUNCTION}",),
+        ).fetchone()
+        assert executes == (False,)
+        assert store.execute(insert_track.encode(), (b, "operator")).fetchone() == (UUID(b), 2)
+        store.execute("SELECT set_config('request.jwt.claims', %s, true)", (claims(a),))
+        assert store.execute(insert_track.encode(), (b, "operator-2")).fetchone() == (UUID(b), 3)
+
+
+def supabase_like_function(conn: PgConnection, name: str, returns: str) -> None:
+    """A function shaped as spec 115 found Supabase's rls_auto_enable() (N2):
+    SECURITY DEFINER, search_path=pg_catalog, executable by PUBLIC and
+    Supabase's three roles. The caller rolls it back."""
+    conn.execute(
+        f"CREATE FUNCTION public.{name}() RETURNS {returns} LANGUAGE plpgsql "
+        "SECURITY DEFINER SET search_path = pg_catalog AS $$ BEGIN END $$".encode()
+    )
+    conn.execute(
+        f"GRANT EXECUTE ON FUNCTION public.{name}() "
+        "TO PUBLIC, anon, authenticated, service_role".encode()
+    )
+
+
+def test_a_declared_supabase_function_is_not_a_catalog_problem(store: PgConnection) -> None:
+    """N2: Supabase's rls_auto_enable() in public, as spec 115 found it, is
+    declared in SUPABASE_FUNCTIONS_IN_PUBLIC and returns event_trigger, so
+    the catalog's function rules skip it."""
+    assert "rls_auto_enable()" in SUPABASE_FUNCTIONS_IN_PUBLIC
+    with store.transaction(force_rollback=True):
+        supabase_like_function(store, "rls_auto_enable", "event_trigger")
+        shape = store.execute(
+            "SELECT prosecdef, proconfig, prorettype::regtype::text, "
+            "has_function_privilege('anon', oid, 'EXECUTE') "
+            "FROM pg_proc WHERE oid = 'public.rls_auto_enable()'::regprocedure"
+        ).fetchone()
+        assert shape == (True, ["search_path=pg_catalog"], "event_trigger", True)
+        problems = catalog_problems(store)
+    assert problems == []
+
+
+@pytest.mark.parametrize(
+    ("name", "returns"),
+    [("rls_auto_enable_too", "event_trigger"), ("rls_auto_enable", "void")],
+    ids=["another-name", "another-return-type"],
+)
+def test_an_undeclared_supabase_function_is_a_catalog_problem(
+    store: PgConnection, name: str, returns: str
+) -> None:
+    """The same shape under a name that is not declared, or under the
+    declared name with a return type a role can call, is checked as any
+    function: the catalog names each rule it breaks."""
+    with store.transaction(force_rollback=True):
+        supabase_like_function(store, name, returns)
+        problems = catalog_problems(store)
+    assert problems == sorted(
+        [
+            f"{name}(): SECURITY DEFINER in public",
+            f"{name}(): SECURITY DEFINER without an empty search_path",
+            *(
+                f"{name}(): executable by {grantee}"
+                for grantee in (*NO_PRIVILEGE_ROLES, TENANT_ROLE, "PUBLIC")
+            ),
+        ]
+    )
 
 
 # --- isolation ---
@@ -1296,7 +1750,9 @@ def test_an_owner_cannot_choose_or_change_an_id(store: PgConnection) -> None:
 
 
 def test_an_insert_without_an_owner_is_refused(store: PgConnection) -> None:
-    """No claims, so auth.uid() is null and owner_id defaults to null."""
+    """No claims, so harrier_owner_id() is null and owner_id defaults to
+    null. A role that may not execute harrier_owner_id() is refused the
+    default itself (spec 105, amendment of 2026-10-11)."""
     new_owner(store)
     before = snapshot(store)
 
@@ -1313,7 +1769,7 @@ def test_an_insert_without_an_owner_is_refused(store: PgConnection) -> None:
         # As the tenant role: the policy's WITH CHECK runs before NOT NULL,
         # and null = null is not true, so the policy refuses it.
         with as_role(store, TENANT_ROLE):
-            uid = store.execute("SELECT auth.uid()").fetchone()
+            uid = store.execute("SELECT harrier_owner_id()").fetchone()
             assert uid == (None,)
             error = refusal(store, statement, params)
             assert error.sqlstate == INSUFFICIENT_PRIVILEGE, table
@@ -1324,19 +1780,23 @@ def test_an_insert_without_an_owner_is_refused(store: PgConnection) -> None:
             error = refusal(store, statement, params)
             assert error.diag.message_primary == f"permission denied for table {table}"
 
-        # As service_role given the privilege a later spec might grant, and
-        # as the role the store connects as (the migrating role, or
-        # Supabase's postgres in staging mode, which bypass the policy
-        # without being superusers): NOT NULL refuses both. The message
-        # names the role, so a record of the run says which was refused.
+        # As service_role given the privilege a later spec might grant: it
+        # may not execute harrier_owner_id(), so the default is refused
+        # (migration 16). As the role the store connects as (the migrating
+        # role, or Supabase's postgres in staging mode, which bypass the
+        # policy without being superusers, and own the function): NOT NULL
+        # refuses it. The message names the role, so a record of the run
+        # says which was refused.
         with store.transaction(force_rollback=True):
             # SELECT and UPDATE too: numbering a track reads the owner's
             # highest id and locks the owner's track 1 (migration 14).
             store.execute(f"GRANT SELECT, INSERT, UPDATE ON {table} TO service_role".encode())
             store.execute("SET LOCAL ROLE service_role")
             error = refusal(store, statement, params)
-            assert error.sqlstate == NOT_NULL, (table, "service_role")
-            assert error.diag.column_name == "owner_id"
+            assert error.sqlstate == INSUFFICIENT_PRIVILEGE, (table, "service_role")
+            assert error.diag.message_primary == (
+                "permission denied for function harrier_owner_id"
+            ), table
         connected = store.execute("SELECT current_user").fetchone()
         error = refusal(store, statement, params)
         assert error.sqlstate == NOT_NULL, (table, connected)
@@ -1506,7 +1966,7 @@ def test_every_owner_starts_with_track_one(store_url: str, store: PgConnection) 
     def second_insert() -> None:
         try:
             with psycopg.connect(store_url, autocommit=True) as other:
-                second_backend.append(other.info.backend_pid)
+                second_backend.append(server_pid(other))
                 connected.set()
                 with as_owner(other, a):
                     found = other.execute(
@@ -1598,7 +2058,7 @@ def test_a_tenant_without_claims_never_waits_on_an_owners_track(
         # B's transaction stays open, holding B's numbering lock.
         other.execute("INSERT INTO tracks (slug, kind, label) VALUES ('b-open', 'industry', 'B')")
         with as_role(store, TENANT_ROLE):
-            uid = store.execute("SELECT auth.uid()").fetchone()
+            uid = store.execute("SELECT harrier_owner_id()").fetchone()
             assert uid == (None,)
             # Were it to wait, give up soon rather than hang the test.
             store.execute("SET LOCAL lock_timeout = '2s'")
@@ -1649,7 +2109,7 @@ def test_an_owner_cannot_hold_up_another_owners_track(store_url: str, store: PgC
             # and transactionid locks, none of which names an owner.
             shown = store.execute(
                 "SELECT count(*) FROM pg_locks WHERE pid = %s AND locktype = 'advisory'",
-                (other.info.backend_pid,),
+                (server_pid(other),),
             ).fetchone()
             assert shown == (0,)
 
