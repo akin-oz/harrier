@@ -4,7 +4,8 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
 
-import { OutreachPage, refused } from "./OutreachPage";
+import { refusalMessage } from "../../shared/api/refusal";
+import { OutreachPage } from "./OutreachPage";
 
 /**
  * The Outreach page, and the two invariants a UI erodes quietly (spec 048).
@@ -210,32 +211,51 @@ test("a refused approval is shown in the words the API used", async () => {
 
 // --- refusals in the API's words --------------------------------------------
 
-type Act = (user: ReturnType<typeof userEvent.setup>) => Promise<void>;
+type ErrorOut = components["schemas"]["ErrorOut"];
+type DatabaseHeldOut = components["schemas"]["DatabaseHeldOut"];
+type HTTPValidationError = components["schemas"]["HTTPValidationError"];
+type User = ReturnType<typeof userEvent.setup>;
 
-async function clickInDueRow(user: ReturnType<typeof userEvent.setup>, name: string) {
+async function clickInDueRow(user: User, name: string): Promise<void> {
   const row = (await screen.findByText("Northwind Labs")).closest("tr");
   expect(row).not.toBeNull();
   await user.click(within(row as HTMLElement).getByRole("button", { name }));
 }
 
-async function openJob(user: ReturnType<typeof userEvent.setup>) {
+async function openJob(user: User): Promise<void> {
   await user.type(screen.getByLabelText("Job id"), "12");
 }
 
-const HELD = {
+const HELD: DatabaseHeldOut = {
   detail: "A host process holds the tracker database. This request is refused until it ends.",
-  hold: { subcommand: "backup", since: "2026-10-11T09:00:00Z" },
+  hold: { subcommand: "backup", since: "2000-01-01T00:00:00Z" },
 };
 
-// Every call site but Approve, which has its own test above. Each message is
-// invented, so seeing it proves the page showed the body it was given.
-const REFUSALS: { call: string; ending: string; code: number; body: unknown; act: Act }[] = [
-  { call: "the due queue", ending: "/outreach/due", code: 503, body: HELD, act: async () => {} },
+// Every call site but Approve, which has its own test above, and a 422, which
+// only a malformed request from this page produces. Each message is invented,
+// so seeing it proves the page showed the body it was given.
+const REFUSALS: {
+  call: string;
+  ending: string;
+  code: number;
+  body: ErrorOut | DatabaseHeldOut | HTTPValidationError;
+  shown: string;
+  act: (user: User) => Promise<void>;
+}[] = [
+  {
+    call: "the due queue",
+    ending: "/outreach/due",
+    code: 503,
+    body: HELD,
+    shown: HELD.detail,
+    act: async () => {},
+  },
   {
     call: "the contacts list",
     ending: "/outreach/contacts",
     code: 503,
     body: HELD,
+    shown: HELD.detail,
     act: async () => {},
   },
   {
@@ -243,6 +263,7 @@ const REFUSALS: { call: string; ending: string; code: number; body: unknown; act
     ending: "/candidates",
     code: 404,
     body: { detail: "no job matches 12 (an invented refusal)" },
+    shown: "no job matches 12 (an invented refusal)",
     act: openJob,
   },
   {
@@ -250,6 +271,7 @@ const REFUSALS: { call: string; ending: string; code: number; body: unknown; act
     ending: "/sent",
     code: 409,
     body: { detail: "cannot mark outreach sent (an invented refusal)" },
+    shown: "cannot mark outreach sent (an invented refusal)",
     act: (user) => clickInDueRow(user, "Mark sent"),
   },
   {
@@ -257,6 +279,7 @@ const REFUSALS: { call: string; ending: string; code: number; body: unknown; act
     ending: "/replied",
     code: 409,
     body: { detail: "cannot mark outreach replied (an invented refusal)" },
+    shown: "cannot mark outreach replied (an invented refusal)",
     act: (user) => clickInDueRow(user, "Mark replied"),
   },
   {
@@ -264,6 +287,16 @@ const REFUSALS: { call: string; ending: string; code: number; body: unknown; act
     ending: "/snooze",
     code: 409,
     body: { detail: "cannot snooze until then (an invented refusal)" },
+    shown: "cannot snooze until then (an invented refusal)",
+    act: (user) => clickInDueRow(user, "Snooze"),
+  },
+  {
+    // A 422 names the field it refused, in the shared reader's words.
+    call: "Snooze, refused by the schema",
+    ending: "/snooze",
+    code: 422,
+    body: { detail: [{ loc: ["body", "until"], msg: "an invented field error", type: "x" }] },
+    shown: "until: an invented field error",
     act: (user) => clickInDueRow(user, "Snooze"),
   },
   {
@@ -271,6 +304,7 @@ const REFUSALS: { call: string; ending: string; code: number; body: unknown; act
     ending: "/candidates/reject",
     code: 404,
     body: { detail: "candidate not staged (an invented refusal)" },
+    shown: "candidate not staged (an invented refusal)",
     act: async (user) => {
       await openJob(user);
       await user.click(await screen.findByRole("button", { name: "Reject" }));
@@ -281,6 +315,7 @@ const REFUSALS: { call: string; ending: string; code: number; body: unknown; act
     ending: "/find-contacts",
     code: 409,
     body: { detail: "a discovery run is active (an invented refusal)" },
+    shown: "a discovery run is active (an invented refusal)",
     act: async (user) => {
       await openJob(user);
       await screen.findByRole("button", { name: "Approve" });
@@ -289,33 +324,31 @@ const REFUSALS: { call: string; ending: string; code: number; body: unknown; act
   },
 ];
 
-test("each outreach call shows its refusal in the API's words", async () => {
-  for (const refusal of REFUSALS) {
-    stubApi({
+// One test per call site, so one failing does not hide the rest. A loop over
+// `test` rather than `test.each`, so the spec citation check can read the name.
+for (const { call, ending, code, body, shown, act } of REFUSALS) {
+  test(`each outreach call shows its refusal in the API's words: ${call}`, async () => {
+    const calls = stubApi({
       due: [dueRow()],
       candidates: [candidate()],
-      refuse: { ending: refusal.ending, code: refusal.code, body: refusal.body },
+      refuse: { ending, code, body },
     });
     vi.stubGlobal("prompt", () => "2026-12-01");
-    const user = userEvent.setup();
     renderPage();
 
-    await refusal.act(user);
-    const detail = (refusal.body as { detail: string }).detail;
+    await act(userEvent.setup());
+    // Exactly the API's words: an alert that wrapped them would not match.
     await waitFor(() => {
-      const alerts = screen.queryAllByRole("alert").map((alert) => alert.textContent);
-      expect(
-        alerts.some((text) => text.includes(detail)),
-        refusal.call,
-      ).toBe(true);
+      expect(screen.queryAllByRole("alert").map((alert) => alert.textContent)).toContain(shown);
     });
-    cleanup();
-    vi.unstubAllGlobals();
-  }
-});
-
-type ErrorOut = components["schemas"]["ErrorOut"];
-type DatabaseHeldOut = components["schemas"]["DatabaseHeldOut"];
+    if (ending === "/snooze") {
+      // The date the operator gave is the one sent.
+      expect(calls.find((call) => call.url.endsWith("/snooze"))?.body).toEqual({
+        until: "2026-12-01",
+      });
+    }
+  });
+}
 
 // The JSON body a response declares, or `never` when it declares none.
 type Declared<Answer> = Answer extends { content: { "application/json": infer Body } }
@@ -328,9 +361,9 @@ test("an outreach refusal is read through the contract's types", () => {
   // or a call whose 404, 409 or 503 lost its declared body, does not compile.
   // `DatabaseHeldOut` fits `ErrorOut` by shape, so the reader's union is
   // pinned here by name (spec 129, Honest limitations).
-  expectTypeOf(refused)
+  expectTypeOf(refusalMessage)
     .parameter(0)
-    .toEqualTypeOf<ErrorOut | DatabaseHeldOut | components["schemas"]["HTTPValidationError"]>();
+    .toEqualTypeOf<ErrorOut | DatabaseHeldOut | HTTPValidationError>();
 
   expectTypeOf<
     Declared<operations["listOutreachDue"]["responses"][404]>

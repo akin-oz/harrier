@@ -57,10 +57,11 @@ What the cast costs:
 ## Scope
 
 - `apps/web/src/pages/outreach/OutreachPage.tsx`:
-  - `refused` takes the error bodies the contract declares, by their
-    generated names, with no `unknown` and no cast. It is exported so a
-    test can pin its parameter.
-  - `unwrap` takes a result whose `error` is that same union.
+  - The page's own `refused` is removed. Every call site reads a refusal
+    through `refusalMessage` in `apps/web/src/shared/api/refusal.ts`, which
+    takes the error bodies the contract declares by their generated names
+    (amended in review of PR #278).
+  - `unwrap` takes a result whose `error` is that reader's `Refusal`.
   - The comment above `unwrap` says what is true now: the bodies are
     declared, and the `data === undefined` check stays for the 403, which
     still declares none.
@@ -70,32 +71,30 @@ What the cast costs:
   entry for the pages' readers is amended in the implementing change to
   say the outreach page's is done here.
 
-No API change, no contract change, and no change to what the operator
-sees. `ApplyPage.tsx`, `InboxPage.tsx`, the run panels and `JobActions.tsx`
+No API change and no contract change. What the operator sees changes only
+for a 422 (Behavior). `ApplyPage.tsx`, `InboxPage.tsx`, the run panels and `JobActions.tsx`
 are not touched.
 
 ## Behavior
 
 ### The reader
 
-```ts
-type Refusal =
-  | components["schemas"]["ErrorOut"] // 404, 409
-  | components["schemas"]["DatabaseHeldOut"] // 503
-  | components["schemas"]["HTTPValidationError"]; // 422
-
-export function refused(error: Refusal, fallback: string): string {
-  return typeof error.detail === "string" ? error.detail : fallback;
-}
-```
+The page uses the shared reader, `refusalMessage(error: Refusal,
+fallback: string)` in `apps/web/src/shared/api/refusal.ts`, whose
+`Refusal` is `ErrorOut | DatabaseHeldOut | HTTPValidationError` by
+generated name. Twenty-three other files already use it.
 
 - It returns `detail` when that is a string (`ErrorOut`,
-  `DatabaseHeldOut`) and the call site's fallback otherwise. A 422's
-  `detail` is a list of field errors, which only a malformed request from
-  this page can produce, so it reads as the fallback, as today.
+  `DatabaseHeldOut`).
+- A 422's `detail` is a list of field errors. The shared reader names each
+  field and its message, joined by "; " (for example "until: ..."), and
+  shows the call site's fallback only when the list is empty. The page's
+  old reader showed the fallback for every 422. Only a malformed request
+  from this page can produce a 422, so the operator should never see one;
+  if they do, they now see which field was refused.
 - Each call site keeps its own fallback ("could not load the due queue",
   "could not mark sent", and so on).
-- What the operator sees does not change for any status.
+- For every status but a 422, what the operator sees does not change.
 
 ### What now fails `pnpm type-check`
 
@@ -104,7 +103,7 @@ export function refused(error: Refusal, fallback: string): string {
    fits `Refusal`.
 2. **A call the page makes declares an error body with no `detail`.** Its
    result no longer fits `unwrap`'s parameter, or its `error` no longer
-   fits `refused`'s.
+   fits `refusalMessage`'s.
 
 A new body that carries `detail: string` still compiles, because
 TypeScript compares shapes, not names. The reader reads such a body
@@ -118,33 +117,44 @@ correctly, so nothing is lost (Honest limitations).
   types do not describe this body; ADR-005 adds no runtime validation, and
   this spec keeps that.
 - **A 403.** It declares no body, so by type the error is `undefined`. At
-  runtime FastAPI sends `{"detail": ...}`, which `refused` reads as it
-  reads any other body. The mutations' `error !== undefined` guard and
+  runtime FastAPI sends `{"detail": ...}`, which `refusalMessage` reads as
+  it reads any other body. The mutations' `error !== undefined` guard and
   `unwrap`'s `data === undefined` guard both stay.
 - **An error with an empty body.** openapi-fetch returns neither `error`
   nor `data`. `unwrap` throws its fallback, as today. The mutations ignore
   `data`, so an empty-bodied refusal of a write is read as success, as
   today (Out of scope).
+- **A JSON `null` body.** openapi-fetch parses an error body with
+  `JSON.parse`, so a body of `null` arrives as `error === null`, passes the
+  `!== undefined` guards, and `refusalMessage` throws reading `detail`. The
+  operator would see a `TypeError` message. The page's old reader returned
+  the fallback. No route sends `null`, and the shared reader has the same
+  gap for all twenty-three of its callers (Out of scope).
 
 ## Acceptance criteria
 
-- [x] `refused` takes `ErrorOut`, `DatabaseHeldOut` and
-      `HTTPValidationError` by generated name, with no `unknown` and no
-      cast. A type-level test pins its parameter to that union, and pins
-      the 404 and 409 of each of the page's eight `{selector}` and `due`
-      operations to `ErrorOut` and every 503 to `DatabaseHeldOut`, using
-      vitest's `expectTypeOf`, which `pnpm type-check` compiles (OutreachPage.test.tsx::"an outreach refusal is read through the
-      contract's types"). Without the change it does not compile:
-      `refused` is not exported.
-- [x] Each call site shows a refusal's `detail` verbatim: the due queue,
+- [x] The page has no reader of its own, no `unknown` and no cast: every
+      call site reads through the shared `refusalMessage`. A type-level
+      test pins that reader's parameter to `ErrorOut`, `DatabaseHeldOut`
+      and `HTTPValidationError` by name, and pins the 404 and 409 of each
+      of the page's eight `{selector}` and `due` operations to `ErrorOut`
+      and every 503 to `DatabaseHeldOut`, using vitest's `expectTypeOf`,
+      which `pnpm type-check` compiles
+      (OutreachPage.test.tsx::"an outreach refusal is read through the
+      contract's types").
+- [x] Each call site shows a refusal's `detail` exactly: the due queue,
       the contacts list and the candidates list for a read, and Mark sent,
-      Mark replied, Snooze, Reject and Find contacts for a write (OutreachPage.test.tsx::"each outreach call shows its refusal in the
-      API's words"). The existing approval test already covers Approve.
-      This passes before the change too. It pins that typing the reader
-      did not change what the page shows.
-- [x] The implementing pull request shows the type-level test failing to
-      compile on main's code, and records what was tried (its description,
-      and an amendment here).
+      Mark replied, Snooze, Reject and Find contacts for a write, one case
+      each, and a 422 on Snooze shows its field error. Snooze sends the
+      date the operator gave (the cases generated from `REFUSALS` in
+      `apps/web/src/pages/outreach/OutreachPage.test.tsx`, one per row,
+      titled "each outreach call shows its refusal in the API's words"
+      and the row's call; a title built at run time has no fixed name the
+      citation check can resolve). The existing approval test already covers
+      Approve. On main's page the 422 case fails, because the old reader
+      shows the fallback; every other case passes there too.
+- [x] The implementing pull request records what was run against main's
+      code and what failed (its description, and an amendment here).
 - [x] The comment above `unwrap` no longer says the refusals declare no
       body.
 - [x] Spec 082's Out of scope entry for the pages' readers says the
@@ -156,9 +166,13 @@ correctly, so nothing is lost (Honest limitations).
 
 ## Honest limitations
 
-- **The operator sees no difference.** Every message shown before is shown
-  after. What changes is that drift in `detail` fails a check instead of
-  degrading to the fallback.
+- **The operator sees one difference, on a 422.** Every other message
+  shown before is shown after. What changes is that drift in `detail`
+  fails a check instead of degrading to the fallback.
+- **The type-level test pins the shared reader, not the page's use of
+  it.** The 422 case is what tells the shared reader from the page's old
+  one. A page that went back to a reader of its own which also named a
+  422's fields would pass.
 - **Shapes, not names.** `DatabaseHeldOut` fits `ErrorOut`, because both
   carry `detail: string`. Removing `DatabaseHeldOut` from `Refusal` still
   compiles; this was tried with a throwaway edit while this spec was
@@ -175,10 +189,12 @@ Each is recorded here for its own change.
 - **The other pages' readers.** `ApplyPage.tsx` and `InboxPage.tsx` keep
   their untyped copies, and `useRunStream.ts` and `RunPanel.tsx` show a run
   error as `JSON.stringify(error)`.
-- **One shared reader.** `JobActions.tsx`'s `refusalMessage` and this
-  `refused` differ only in their fallback. Moving one reader into
-  `apps/web/src/shared/api` touches the tracker page, which this spec does
-  not (decision 1).
+- **`JobActions.tsx` keeps its own reader.** The tracker page's
+  `refusalMessage` predates the shared one and differs from it on a 422.
+  Moving it to the shared reader changes the tracker page, which this spec
+  does not touch.
+- **A JSON `null` refusal body** throws in the shared reader for every
+  caller (Failure modes). No route sends one.
 - **An empty-bodied refusal of a write reads as success.** The mutations
   check `error` and not `data`. No route sends an empty refusal today.
 - **The 403's body**, as spec 082 left it.
@@ -189,8 +205,10 @@ Akin answered both in chat, each as proposed.
 
 1. **A local reader.** `refused` stays in `OutreachPage.tsx`, as spec 082
    kept the tracker page's in `JobActions.tsx`. One shared reader is its
-   own change, because it touches the tracker page.
-2. **The name stays `refused`,** exported. No rename.
+   own change, because it touches the tracker page. *Revised in review of
+   PR #278; see the amendment below.*
+2. **The name stays `refused`,** exported. No rename. *Moot after the
+   revision of decision 1: the page has no reader of its own.*
 
 ## Data and privacy
 
@@ -235,3 +253,46 @@ specified.
   reader exported but still taking `unknown`, `pnpm type-check` fails at
   `expectTypeOf(refused).parameter(0)`. Both were temporary edits, run and
   reverted.
+
+## Amendment (2026-10-11, review of PR #278)
+
+CodeRabbit was rate limited on PR #278, so the repository's review agents
+reviewed it locally. Their findings, each checked against the code, and
+what was done.
+
+- **A shared reader already existed.** `apps/web/src/shared/api/refusal.ts`
+  has exported the same `Refusal` union and `refusalMessage(error,
+  fallback)` since 2026-10-10 (commit `fe22c11`), and twenty-three files
+  use it. This spec did not know it existed, and decision 1's reason
+  ("sharing touches the tracker page") was wrong. Akin chose the shared
+  reader in chat on 2026-10-11, knowing it shows a 422's field errors
+  where the page's reader showed the fallback. The page's `refused` is
+  removed; Scope, Behavior, Failure modes, the criteria, Honest
+  limitations and Out of scope are amended to match.
+- **What fails on main changed with it.** The type-level test now pins
+  the shared reader, which exists on main, so main's page compiles
+  against it. With `OutreachPage.tsx` put back to main, `pnpm type-check`
+  passes and one rendered case fails: the 422 on Snooze, which main's
+  reader shows as "could not snooze". The previous amendment's
+  "`refused` is not exported" evidence no longer applies.
+- **The rendered test is one case per call site.** A `test` per case,
+  generated in a loop, replaces one test that looped, so one call site
+  failing no longer hides the rest. Not `test.each`: the spec citation
+  check in `services/api/tests/test_spec_structure.py` reads `test("...")`
+  names only.
+- **The alert must equal the API's words.** A `contains` check let a
+  page that wrapped the message pass. With Snooze's message prefixed by
+  "Refused: ", both Snooze cases now fail.
+- **Snooze proves the date it sends.** jsdom's `prompt` returns
+  `undefined`, which the page let through, so the `prompt` stub did
+  nothing for the result. The cases now assert the request body is
+  `{ until: "2026-12-01" }`; without the stub both Snooze cases fail.
+- **The stubbed bodies are typed.** They are `ErrorOut`,
+  `DatabaseHeldOut` or `HTTPValidationError` by generated name, and the
+  cast to a hand-written `{ detail: string }` is gone.
+- **A JSON `null` body throws.** Confirmed in openapi-fetch's source; it
+  is recorded under Failure modes and Out of scope, because the gap is
+  the shared reader's and affects every caller.
+- **The hold's timestamp in the test** is now `2000-01-01T00:00:00Z`, so
+  it cannot be read as a real hold. The previous one was invented, not
+  copied from a hold.

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { components } from "@harrier/contract";
 
 import { api } from "../../shared/api/client";
+import { type Refusal, refusalMessage } from "../../shared/api/refusal";
 import { trackKey, useSelectedSlug } from "../../shared/track";
 import "./OutreachPage.css";
 
@@ -11,35 +12,17 @@ type OutreachRow = components["schemas"]["OutreachRowOut"];
 type Candidate = components["schemas"]["CandidateOut"];
 type Contact = components["schemas"]["ContactOut"];
 
-// The error bodies the contract declares for every call this page makes:
-// `ErrorOut` on a 404 or 409, `DatabaseHeldOut` on a 503, and the field
-// errors on a 422. Named from the generated types, so a body that loses or
-// renames `detail` fails the type check here rather than reaching the
-// operator as the fallback (spec 129).
-type Refusal =
-  | components["schemas"]["ErrorOut"]
-  | components["schemas"]["DatabaseHeldOut"]
-  | components["schemas"]["HTTPValidationError"];
-
-// The domain's own words, verbatim, as the CLI prints them. A 422's `detail`
-// is a list of field errors, which only a malformed request from this page
-// can produce, so it reads as the call's fallback. Exported for the
-// type-level test that pins what it accepts.
-export function refused(error: Refusal, fallback: string): string {
-  return typeof error.detail === "string" ? error.detail : fallback;
-}
-
 /**
  * One place that turns a client result into a value or a message.
  *
  * Every refusal here declares its body (specs 094 and 125) except the 403,
  * which declares none, so `data` can still be absent with no `error` by
  * type. At runtime FastAPI sends `{"detail": ...}` with the 403 too, and
- * `refused` reads it like any other body. Taking one result type rather than
+ * `refusalMessage` reads it like any other body (spec 129). Taking one result type rather than
  * repeating two half-checks per call keeps that case handled one way.
  */
 function unwrap<T>(result: { data?: T; error?: Refusal }, fallback: string): T {
-  if (result.error !== undefined) throw new Error(refused(result.error, fallback));
+  if (result.error !== undefined) throw new Error(refusalMessage(result.error, fallback));
   if (result.data === undefined) throw new Error(fallback);
   return result.data;
 }
@@ -100,7 +83,7 @@ export function OutreachPage() {
         params: { path: { selector: String(id) } },
         body: { date: null },
       });
-      if (error !== undefined) throw new Error(refused(error, `could not mark ${what}`));
+      if (error !== undefined) throw new Error(refusalMessage(error, `could not mark ${what}`));
     },
     onSuccess: refreshAll,
     onError: (error: Error) => {
@@ -114,7 +97,7 @@ export function OutreachPage() {
         params: { path: { selector: String(id) } },
         body: { until },
       });
-      if (error !== undefined) throw new Error(refused(error, "could not snooze"));
+      if (error !== undefined) throw new Error(refusalMessage(error, "could not snooze"));
     },
     onSuccess: refreshAll,
     onError: (error: Error) => {
@@ -135,7 +118,8 @@ export function OutreachPage() {
         params: { path: { selector: settled } },
         body: { linkedin_url: url },
       });
-      if (error !== undefined) throw new Error(refused(error, "could not record that decision"));
+      if (error !== undefined)
+        throw new Error(refusalMessage(error, "could not record that decision"));
     },
     onSuccess: refreshAll,
     onError: (error: Error) => {
@@ -149,7 +133,8 @@ export function OutreachPage() {
         params: { path: { selector: settled } },
         body: { best_only: false, max_items: null },
       });
-      if (error !== undefined) throw new Error(refused(error, "could not start contact discovery"));
+      if (error !== undefined)
+        throw new Error(refusalMessage(error, "could not start contact discovery"));
     },
     onSuccess: refreshAll,
     onError: (error: Error) => {
