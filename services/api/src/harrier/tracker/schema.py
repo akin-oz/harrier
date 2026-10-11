@@ -517,6 +517,9 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
             """,
         ],
     ),
+    # Postgres only (spec 105, amendment of 2026-10-11): owner identity
+    # without schema auth. Empty on purpose, and declared so.
+    (16, []),
 ]
 
 # --- Postgres (spec 103, ADR-013) ---
@@ -704,6 +707,16 @@ UNOWNED_TABLES: dict[str, str] = {
     "schema_version": "migration bookkeeping, no personal data",
 }
 
+# Supabase's own functions in public, by signature as `oid::regprocedure`
+# prints it, with the reason each is there. The catalog test skips its
+# function rules for one of these only while it returns event_trigger, so
+# no role can call it (spec 105, amendment of 2026-10-11; spec 115, N2).
+# A Supabase function not listed here fails that test, naming it.
+SUPABASE_FUNCTIONS_IN_PUBLIC: dict[str, str] = {
+    "rls_auto_enable()": "Supabase's event trigger function behind ensure_rls; "
+    "returns event_trigger, so no role can call it (spec 115, N2)",
+}
+
 # Columns only the hosted store has, as (table, column).
 HOSTED_ONLY_COLUMNS: tuple[tuple[str, str], ...] = tuple(
     (table, "owner_id") for table in OWNED_TABLES
@@ -750,6 +763,11 @@ SINGLE_DIALECT_MIGRATIONS: dict[int, tuple[Dialect, str]] = {
         "corrections to migration 13's role reset, track numbering lock and "
         "default privileges (spec 105, second post-merge review); the local "
         "schema has none of them",
+    ),
+    16: (
+        "postgres",
+        "owner identity read from the request claims without schema auth "
+        "(spec 105, amendment of 2026-10-11); the local schema has no owner",
     ),
 }
 
@@ -1296,6 +1314,84 @@ POSTGRES_JOB_ELIGIBILITY: list[str] = [
     tenant_writes_all_but_id("job_eligibility", ("INSERT",)),
 ]
 
+# The tables with an owner at version 15. Migration 16 reads this copy, for
+# the reason `MIGRATION_10_OWNED_TABLES` gives.
+MIGRATION_16_OWNED_TABLES: tuple[str, ...] = ("job_eligibility", *MIGRATION_10_OWNED_TABLES)
+
+# The one source of owner identity since migration 16 (spec 105, amendment
+# of 2026-10-11): the `sub` of the request's claims, read without schema
+# auth, which Supabase's postgres cannot grant the tenant role.
+OWNER_ID_FUNCTION = "harrier_owner_id()"
+_OWNER_IS_REQUEST = f"owner_id = (SELECT public.{OWNER_ID_FUNCTION})"
+
+# Spec 105's amendment of 2026-10-11. Supabase gives its postgres USAGE on
+# schema auth without the grant option, so migration 10's grants on auth
+# gave the tenant role nothing there, and a tenant statement that looks
+# auth.uid() up, such as migration 14's numbering trigger, is refused.
+# Every owner reference now goes through a harrier function in public.
+POSTGRES_OWNER_IDENTITY: list[str] = [
+    # Invoker rights: it reads only settings the caller already has. An
+    # empty search_path: names resolve in pg_catalog, whatever the caller's
+    # path. Only request.jwt.claims, never the legacy request.jwt.claim.sub,
+    # so a stale session value of that one cannot override a request's
+    # claims. Null without claims; a sub that is not a uuid raises 22P02.
+    f"""
+    CREATE FUNCTION public.{OWNER_ID_FUNCTION} RETURNS uuid
+    LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$
+        SELECT (nullif(pg_catalog.current_setting('request.jwt.claims', true), '')::jsonb
+                ->> 'sub')::uuid
+    $$
+    """,
+    # Stated, not left to migration 14's default privileges.
+    (
+        f"REVOKE ALL ON FUNCTION public.{OWNER_ID_FUNCTION} "
+        "FROM PUBLIC, anon, authenticated, service_role"
+    ),
+    f"GRANT EXECUTE ON FUNCTION public.{OWNER_ID_FUNCTION} TO {TENANT_ROLE}",
+    *(
+        f"ALTER TABLE {table} ALTER COLUMN owner_id SET DEFAULT public.{OWNER_ID_FUNCTION}"
+        for table in MIGRATION_16_OWNED_TABLES
+    ),
+    # The policy keeps its name, role and command.
+    *(
+        f"ALTER POLICY owner_only ON {table} "
+        f"USING ({_OWNER_IS_REQUEST}) WITH CHECK ({_OWNER_IS_REQUEST})"
+        for table in MIGRATION_16_OWNED_TABLES
+    ),
+    # Migration 14's numbering, with the owner read from the new function.
+    # Nested so only the tenant branch reaches it: Postgres checks EXECUTE
+    # when it readies an expression, and PL/pgSQL readies the inner IF only
+    # when it first runs it, so a role that is not the tenant (an operator,
+    # spec 108) numbers a track without EXECUTE on the function. One
+    # condition with AND would ready both sides. Qualified names
+    # throughout: harrier_new_owner() fires this with an empty search_path.
+    f"""
+    CREATE OR REPLACE FUNCTION harrier_number_track() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.id IS NULL THEN
+            IF current_user = '{TENANT_ROLE}' THEN
+                IF NEW.owner_id IS DISTINCT FROM public.{OWNER_ID_FUNCTION} THEN
+                    RETURN NEW;
+                END IF;
+            END IF;
+            PERFORM 1 FROM public.tracks
+            WHERE owner_id = NEW.owner_id AND id = 1
+            FOR NO KEY UPDATE;
+            SELECT coalesce(max(id), 0) + 1 INTO NEW.id
+            FROM public.tracks WHERE owner_id = NEW.owner_id;
+        END IF;
+        RETURN NEW;
+    END
+    $$
+    """,
+    # Withdraw migration 10's grants on auth. Where they took effect (a
+    # store migrated by a role with the grant option) the tenant role loses
+    # them; where they did not (Supabase), Postgres warns and nothing
+    # changes. Either way harrier grants the tenant role nothing in auth.
+    f"REVOKE EXECUTE ON FUNCTION auth.uid() FROM {TENANT_ROLE}",
+    f"REVOKE USAGE ON SCHEMA auth FROM {TENANT_ROLE}",
+]
+
 POSTGRES_MIGRATIONS: list[tuple[int, list[str]]] = [
     (POSTGRES_BASELINE_VERSION, POSTGRES_BASELINE),
     (10, POSTGRES_OWNERS),
@@ -1311,6 +1407,7 @@ POSTGRES_MIGRATIONS: list[tuple[int, list[str]]] = [
     (13, POSTGRES_OWNER_CORRECTIONS),
     (14, POSTGRES_OWNER_CORRECTIONS_2),
     (15, POSTGRES_JOB_ELIGIBILITY),
+    (16, POSTGRES_OWNER_IDENTITY),
 ]
 
 

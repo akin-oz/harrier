@@ -708,3 +708,27 @@ the shim's `auth.uid()` body is `:136-141`; `new_owner` is `:287-292`;
 the per-test database is `fresh_database`, `:398-427`. In
 `services/api/src/harrier/tracker/schema.py` the trigger on `auth.users`
 is `:908-911` and the grants on `auth` are `:959-960`.
+
+### Re-run after spec 105's amendment (2026-10-11)
+
+"The isolation tests in staging mode" says they are re-run after spec
+105's fix for A2 and its declaration for N2. Both landed as spec 105's
+"Amendment (2026-10-11): owner identity without schema auth" (migration
+16 and `SUPABASE_FUNCTIONS_IN_PUBLIC`), and the re-run is recorded in full
+there, under "Implementation record (2026-10-11)". In short, on the same
+project, on Postgres 17.6:
+
+- `harrier store migrate` as `postgres` printed `postgres 14 -> 16` and
+  exited 0.
+- The module, run as the first run did it: 2 failed, 29 passed. The
+  eleven `test_owner_policy.py` tests listed under Behavior pass in staging
+  mode, `services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared`
+  among them with `rls_auto_enable()` declared.
+- The two failures are this spec's A2 and A3 tests,
+  `services/api/tests/test_supabase_project.py::test_the_tenant_role_reaches_auth_uid`
+  and `services/api/tests/test_supabase_project.py::test_auth_uid_reads_the_claims_sub`.
+  They still assert that the tenant role reaches `auth.uid()`, which spec
+  105 no longer needs; restating or retiring them is the follow-up spec
+  105's amendment assigns this spec.
+- N3 again: after the probe role was dropped, two idle pooler sessions of
+  it were left, and were ended by hand.

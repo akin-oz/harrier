@@ -780,9 +780,19 @@ def test_both_dialects_build_the_same_tracker(tmp_path: Path) -> None:
             problems += compare_rows(table, lite_rows[table], pg_rows[table], now)
         assert not problems, "\n".join(problems)
 
-        # The hosted-only owner_id took the session's owner as its default.
-        owner = pg.execute("SELECT auth.uid()").fetchone()
+        # The hosted-only owner_id took the session's owner as its default,
+        # through harrier_owner_id() (spec 105, amendment of 2026-10-11).
+        owner = pg.execute("SELECT harrier_owner_id()").fetchone()
         assert owner is not None and owner[0] is not None
+        defaults = pg.execute(
+            "SELECT c.relname, pg_get_expr(d.adbin, d.adrelid) FROM pg_attrdef d "
+            "JOIN pg_class c ON c.oid = d.adrelid "
+            "JOIN pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum "
+            "WHERE c.relnamespace = 'public'::regnamespace AND a.attname = 'owner_id'"
+        ).fetchall()
+        assert {str(table): str(default) for table, default in defaults} == dict.fromkeys(
+            (table for table, _ in HOSTED_ONLY_COLUMNS), "harrier_owner_id()"
+        )
         hosted = {table for table, _ in HOSTED_ONLY_COLUMNS}
         assert {table: pg_rows[table]["owner_id"] for table in hosted} == dict.fromkeys(
             hosted, owner[0]
