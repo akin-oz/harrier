@@ -69,7 +69,7 @@ findings here, each kept below with its own criterion:
   credential in the local container's environment, and every run
   subprocess inherits it. The CLI and the API also read
   `HARRIER_DATABASE_URL` from `.env` when it is not exported
-  (`store_target`, `connection.py:190-196` since spec 112's PR 1 moved it
+  (`store_target`, `connection.py:228-234` since spec 112's PR 1 moved it
   out of `pgstore.py` on 2026-10-11; spec 103 Corrections). (privacy 5)
 - **Tracebacks hold the URL.** Above. (test-integrity follow-up)
 - **The grant is nobody's step yet.** Migration 10 creates `harrier_tenant`
@@ -787,7 +787,7 @@ Amendment (2026-10-11) at the end of this spec takes that step here.
   - Spec 104's Configuration says "The API reads no `.env` file itself
     (`grep -rn dotenv services/api/src` finds nothing)". Since spec 103's
     Corrections, `store_target` reads `HARRIER_DATABASE_URL` from `.env`
-    when it is not exported (`connection.py:190-196`, in `pgstore.py`
+    when it is not exported (`connection.py:228-234`, in `pgstore.py`
     until spec 112's PR 1 moved it on 2026-10-11; through
     `harrier.envfile`, which the grep does not match). `HARRIER_AUTH` is
     still read from the environment only, so the conclusion about hosted
