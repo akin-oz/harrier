@@ -34,7 +34,7 @@ from harrier.connection import Connection
 from harrier.screening.normalized import normalize, stable_key
 from harrier.screening.policy import policy_version
 from harrier.screening.rules import CandidateConfig
-from harrier.screening.seen import SeenDecision, load_seen, save_seen
+from harrier.screening.seen import SeenDecision, load_seen, posting_identities, save_seen
 from harrier.tracker.store import extract_note_value, list_jobs
 from harrier.tracks import Scope
 
@@ -86,6 +86,21 @@ def human_rejected_keys(conn: Connection, scope: Scope) -> set[str]:
         if company and title:
             protected.add(f"{company}|{title}")
     return protected
+
+
+def human_rejected_identities(conn: Connection, scope: Scope) -> set[str]:
+    """The hashed identities of every row the operator rejected on the
+    track, whatever its source, computed as the pipeline computes them for
+    a seen entry (`posting_identities`). A posting rejected on one source
+    and recorded on another meets its row here, where no key can be rebuilt
+    (spec 031, amendment of 2026-10-11)."""
+    identities: set[str] = set()
+    for job in list_jobs(conn, scope):
+        if job.get("status") in HUMAN_DECIDED:
+            identities.update(
+                posting_identities(job.get("url", ""), job.get("company", ""), job.get("title", ""))
+            )
+    return identities
 
 
 def _damaged_labels(board: str) -> set[str]:
@@ -172,6 +187,7 @@ def reconsider_source(
     decisions = load_seen(source, track_id)
     protected = human_rejected_keys(conn, scope)
     protected_seen = protected_keys | human_rejected_seen_keys(conn, scope, source)
+    protected_identities = human_rejected_identities(conn, scope)
     report = ReconsiderReport(source=source, current_policy=current, examined=len(decisions))
 
     remaining: dict[str, SeenDecision] = {}
@@ -185,8 +201,13 @@ def reconsider_source(
         identities = key_identity(key) if key_identity else {normalize(key)}
         # A seen key is a hash of a row's identity, so a rejected row is
         # matched by the key it would have been recorded under. A caller's
-        # `protected_keys` adds its own derivation (spec 097).
-        if key in protected_seen or identities & protected:
+        # `protected_keys` adds its own derivation (spec 097). An entry's
+        # recorded identities reach a row from any source.
+        if (
+            key in protected_seen
+            or identities & protected
+            or protected_identities.intersection(decision.identities)
+        ):
             # The operator said no. A rule change does not overturn that.
             report.protected += 1
             remaining[key] = decision
