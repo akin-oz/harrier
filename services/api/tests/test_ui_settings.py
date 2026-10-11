@@ -507,6 +507,23 @@ def test_backup_verify_takes_a_listed_name_never_a_path(env: Path) -> None:
         assert marked[0]["verification"] == "passed"
 
 
+def test_backup_verify_refuses_a_path_with_the_built_app_mounted(env: Path, tmp_path: Path) -> None:
+    """The container serves the built SPA, mounted at `/` after every API
+    route. A name that walks out of the backups path then reaches the static
+    mount, which answers 405 rather than 404; either way no verify run
+    starts (spec 096)."""
+    create_backup(env / "backups")
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<!doctype html><title>harrier</title>", encoding="utf-8")
+    manager = RunManager(journal_path=env / "data" / "runs" / "spa.jsonl")
+    with TestClient(create_app(run_manager=manager, spa_dir=dist)) as client:
+        for name in ("..", "..%2Felsewhere%2Fany.tar.gz", "notes.txt"):
+            refused = client.post(f"/settings/backups/{name}/verify", headers=auth())
+            assert refused.status_code in (404, 405), (name, refused.status_code)
+    assert manager.list_runs() == []
+
+
 def test_a_failed_verification_marks_the_archive(env: Path) -> None:
     broken = env / "backups" / f"{ARCHIVE_PREFIX}2026-01-01-000000{ARCHIVE_SUFFIX}"
     broken.parent.mkdir()
