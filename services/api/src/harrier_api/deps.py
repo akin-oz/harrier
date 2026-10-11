@@ -14,7 +14,9 @@ from pydantic import BaseModel
 from harrier.connection import Connection
 from harrier.db import connect
 from harrier.tracks import (
+    NON_DEFAULT_OPERATIONS,
     SLUG_MAX_LENGTH,
+    WRITE_OPERATIONS,
     Scope,
     UnknownTrackError,
     default_scope,
@@ -112,18 +114,31 @@ class ErrorOut(BaseModel):
     detail: str
 
 
-# What `scope_for` can answer on every route that takes `track`: an unknown
-# slug, and an operation the track may not run or an archived track's write.
-TRACK_REFUSAL_RESPONSES: dict[int | str, dict[str, Any]] = {
-    404: {"model": ErrorOut, "description": "the track parameter named no track"},
-    409: {
-        "model": ErrorOut,
-        "description": "the track may not run this operation, or it is archived",
-    },
-}
-
-
 CAUSE_JOIN = "; or "
+
+UNKNOWN_TRACK_CAUSE = "the track parameter named no track"
+NOT_AVAILABLE_CAUSE = "the track may not run this operation"
+ARCHIVED_CAUSE = "the track is archived"
+
+
+def track_refusal_responses(operation: str) -> dict[int | str, dict[str, Any]]:
+    """What `scope_for(operation)` can answer: a 404 for an unknown slug on
+    every route, and a 409 only for the causes this operation can meet, so a
+    read every track may run claims none (review of PR #239). The rule is
+    `operation_refusal`'s; the status route's verb is any string, so it can
+    meet both."""
+    in_body = operation == VERB_IN_BODY
+    causes: list[str] = []
+    if in_body or operation not in NON_DEFAULT_OPERATIONS:
+        causes.append(NOT_AVAILABLE_CAUSE)
+    if in_body or operation in WRITE_OPERATIONS:
+        causes.append(ARCHIVED_CAUSE)
+    responses: dict[int | str, dict[str, Any]] = {
+        404: {"model": ErrorOut, "description": UNKNOWN_TRACK_CAUSE}
+    }
+    if causes:
+        responses[409] = {"model": ErrorOut, "description": CAUSE_JOIN.join(causes)}
+    return responses
 
 
 def merge_responses(
@@ -149,9 +164,11 @@ def merge_responses(
             # Compared as whole causes, so one whose text sits inside
             # another's is still kept (review of PR #234).
             causes = [part for part in str(first.get("description", "")).split(CAUSE_JOIN) if part]
-            more = str(entry.get("description", ""))
-            if more and more not in causes:
-                causes.append(more)
+            # The new side is split too, so a joined cause list merged again
+            # adds nothing it already has (review of PR #239).
+            for more in str(entry.get("description", "")).split(CAUSE_JOIN):
+                if more and more not in causes:
+                    causes.append(more)
             merged[status] = {**first, **entry, "description": CAUSE_JOIN.join(causes)}
     return merged
 
@@ -220,8 +237,9 @@ class DatabaseRoute(APIRoute):
 
     Declared by the route class rather than in each decorator, so a new route
     that opens the database or names a track cannot forget them, and one that
-    does not never claims them (specs 075, 094). A route's own declaration of
-    a status wins: the tracker writes keep their 404 wording (spec 082).
+    does not never claims them (specs 075, 094). A route's own causes for a
+    status are joined with the track's, never replaced by them or replacing
+    them.
     """
 
     def __init__(self, path: str, endpoint: Callable[..., Any], **kwargs: Any) -> None:
@@ -229,22 +247,21 @@ class DatabaseRoute(APIRoute):
         declared: dict[int | str, dict[str, Any]] = {}
         if depends_on_conn(path, endpoint, kwargs.get("dependencies")):
             declared.update(DATABASE_HELD_RESPONSES)
-        if _track_operation(get_dependant(path=path, call=endpoint)) is not None:
-            # Merged per status. A route that declares its own 404 keeps its
-            # wording (spec 082) and gains the body model if it named none,
-            # since every refusal here is the same `HTTPException` body. A
-            # 409 is joined: the route's own causes and the track refusal are
-            # all answers the route can give, and letting the route's text
-            # replace the track's hid the track refusal on about twenty routes
-            # (review of PR #234).
-            for status, entry in TRACK_REFUSAL_RESPONSES.items():
+        operation = _track_operation(get_dependant(path=path, call=endpoint))
+        if operation is not None:
+            # Joined per status: the route's own causes and the track's are
+            # all answers the route can give. Letting the route's text
+            # replace the track's hid the track refusal, the 409 on about
+            # twenty routes (review of PR #234) and the unknown track's 404
+            # on every route that names a job (review of PR #239). A route
+            # that named no body model gains `ErrorOut`, since every refusal
+            # here is the same `HTTPException` body.
+            for status, entry in track_refusal_responses(operation).items():
                 mine = own.pop(status, None)
                 if mine is None:
                     declared[status] = dict(entry)
-                elif status == 409:
-                    declared[status] = merge_responses({409: mine}, {409: entry})[409]
                 else:
-                    declared[status] = {**entry, **mine}
+                    declared[status] = merge_responses({status: mine}, {status: entry})[status]
         if declared:
             kwargs["responses"] = {**declared, **own}
         super().__init__(path, endpoint, **kwargs)
