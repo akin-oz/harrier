@@ -411,8 +411,8 @@ def test_academic_commands_read_no_profile_document(
     (spec 097 narrows spec 093 to that one row). Logging setup's redaction
     read is the one shared read by design, named in the spec, and is left
     out of what is traced here. `profile put` and `profile check` read the
-    track's resume content by design (spec 099), and `tailor`,
-    `cover-letter` and `answers` read the track's own framing and application
+    track's resume content by design (spec 099); `tailor` reads the track's
+    own framing, and `cover-letter` and `answers` the track's own application
     profile (spec 101). They are not run here: that each reads only its own
     track is tested by behavior, not traced, in test_track_framing.py and
     test_academic_applications.py."""

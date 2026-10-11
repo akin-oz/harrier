@@ -63,7 +63,15 @@ def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
 
 
 def _pages(monkeypatch: pytest.MonkeyPatch, count: int) -> None:
-    def fake_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+    real_run = subprocess.run
+
+    def fake_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        # Only `pdfinfo` is answered; `subprocess.run` is shared, and every
+        # other caller gets the real one (review of PR #234).
+        argv: object = args[0] if args else kwargs.get("args")
+        first = cast("list[object]", argv)[0] if isinstance(argv, list) and argv else None
+        if first != "pdfinfo":
+            return cast("subprocess.CompletedProcess[str]", real_run(*args, **kwargs))
         stdout = f"Producer: stub\nPages:          {count}\n"
         return subprocess.CompletedProcess(args=["pdfinfo"], returncode=0, stdout=stdout)
 

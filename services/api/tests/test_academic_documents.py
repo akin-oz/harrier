@@ -14,7 +14,7 @@ import sqlite3
 import subprocess
 from datetime import date
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from resume_support import REPO_ROOT, example_bundle_raw, example_documents, store_example
@@ -300,7 +300,15 @@ def test_the_academic_cv_puts_education_before_achievements() -> None:
 
 
 def _pages(monkeypatch: pytest.MonkeyPatch, count: int) -> None:
-    def fake_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+    real_run = subprocess.run
+
+    def fake_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        # Only `pdfinfo` is answered; `subprocess.run` is shared, and every
+        # other caller gets the real one (review of PR #234).
+        argv: object = args[0] if args else kwargs.get("args")
+        first = cast("list[object]", argv)[0] if isinstance(argv, list) and argv else None
+        if first != "pdfinfo":
+            return cast("subprocess.CompletedProcess[str]", real_run(*args, **kwargs))
         stdout = f"Producer: stub\nPages:          {count}\n"
         return subprocess.CompletedProcess(args=["pdfinfo"], returncode=0, stdout=stdout)
 
