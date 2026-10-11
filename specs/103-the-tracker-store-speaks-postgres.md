@@ -585,8 +585,8 @@ corrected in the change that adds this list:
   takes the whole text as the password and quotes it when an escape in it
   is invalid. With `?password=x#<secret>%zz` the scrub replaced only the
   `x`; with a tab in the password it replaced nothing.
-  `harrier.pgstore.store_target` now refuses a URL holding any of the
-  four, with the same message as any malformed URL and nothing chained. A
+  `harrier.connection.store_target` (in `harrier.pgstore` until spec
+  112's PR 1 moved it) now refuses a URL holding any of the four, with the same message as any malformed URL and nothing chained. A
   written URL carries them percent-encoded
   (`services/api/tests/test_postgres_store.py::test_a_malformed_url_is_refused_like_any_other`,
   `services/api/tests/test_postgres_store.py::test_a_url_urlsplit_reads_differently_from_libpq_never_reaches_the_cli`).
@@ -634,16 +634,22 @@ it merged, found these, corrected in the same pull request:
   parameter, and for an unclosed `[` host the whole URL, which this spec
   forbids. A value that is not UTF-8 once decoded (`%FF`, a truncated
   `%C3`, a raw byte) crashed with a traceback giving the password's
-  length. `store_target` now also parses the URL with libpq's own parser
-  (`psycopg.conninfo.conninfo_to_dict`) and refuses it, with harrier's
+  length. `harrier.connection.store_target` now also parses the URL with
+  libpq's own parser (`psycopg.conninfo.conninfo_to_dict`, imported only
+  when a Postgres URL is read) and refuses it, with harrier's
   malformed-URL message alone and nothing chained, when that parse fails
   in any way, a decode or encode error included
   (`services/api/tests/test_postgres_store.py::test_a_url_libpq_cannot_parse_never_reaches_the_cli`).
   Without psycopg the parse is skipped; every command that would connect
-  refuses for the missing driver first.
+  refuses for the missing driver first. Each URL the fourth review's `#`,
+  tab, CR and LF refusal was tested with is refused by this parse as
+  well: with that refusal removed, every test passes. It stays as a
+  second line, because it also refuses a URL urlsplit misreads that libpq
+  parses; no such URL was found that leaks without it.
 - **Other secret parameters were never scrubbed.** libpq takes
   `sslpassword` and `oauth_client_secret` from the query too. The scrub
-  now learns every query parameter whose decoded name holds `pass` or
+  (`harrier.pgstore._scrub`, fed by `harrier.connection.url_parts`) now
+  learns every query parameter whose decoded name holds `pass` or
   `secret`
   (`services/api/tests/test_postgres_store.py::test_every_secret_parameter_is_scrubbed`).
   It also learns those values from libpq's parse when it succeeds. That
@@ -655,7 +661,8 @@ it merged, found these, corrected in the same pull request:
   now finds every occurrence of every form in the text as written and
   replaces the union of their spans
   (`services/api/tests/test_postgres_store.py::test_two_overlapping_secrets_are_both_scrubbed`).
-- **A failure outside psycopg's classes escaped `postgres_connect`.** A
+- **A failure outside psycopg's classes escaped
+  `harrier.pgstore.postgres_connect`.** A
   decode or encode error, and urlsplit's error on a port it cannot read,
   which quotes the text it read as the port, were tracebacks the CLI does
   not catch. Every failure to connect is now a `StoreConnectionError`
