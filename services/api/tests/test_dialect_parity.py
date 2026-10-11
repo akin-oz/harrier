@@ -44,9 +44,10 @@ every owned table, and some keys are per owner there and global here. Those
 differences are declared in `harrier.tracker.schema` (HOSTED_ONLY_COLUMNS,
 OWNER_SCOPED_KEYS), never skipped. This test removes the declared columns,
 maps each declared key to its SQLite form, and fails on a declaration that
-names a column or key neither store has. The Postgres side runs as the test
-superuser with one synthetic owner's claims, so each owner_id default
-resolves; the policy itself is `tests/test_owner_policy.py`'s to prove.
+names a column or key neither store has. The Postgres side runs as the
+migrating role (`harrier_migrator`, which bypasses row security, spec 115)
+with one synthetic owner's claims, so each owner_id default resolves; the
+policy itself is `tests/test_owner_policy.py`'s to prove.
 
 The SQLite probes run everywhere. The Postgres side needs a server and skips
 locally without one (`tests/pg_support.py`).
