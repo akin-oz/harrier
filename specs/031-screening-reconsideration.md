@@ -149,3 +149,158 @@ the tree.
 Changing any screening rule, which is spec 032. Storing full postings for
 rejected rows: the keys and the verdict are enough to reconsider, and the
 posting is refetchable.
+
+## Amendment (2026-10-11): a rejection made on one source protects the posting on every source
+
+This section is proposed. It is not approved until Akin approves it, and
+nothing below is built.
+
+### Problem
+
+`reconsider_source` (`services/api/src/harrier/screening/reconsider.py`)
+protects a stale seen entry when its key equals a key rebuilt from a
+rejected tracker row (`human_rejected_seen_keys`, PRs #233, #238, #248).
+A key is a hash of the source, the board and the posting's identity
+(`make_normalized_job` in `services/api/src/harrier/screening/normalized.py`),
+and a row records only the source it came from. So the rebuild can only
+reach the row's own source.
+
+The same posting is often listed on more than one source: a company's
+Greenhouse board and a LinkedIn listing of it. Say the operator rejects the
+Greenhouse row. The LinkedIn listing was seen, and rejected as
+`tracker_duplicate` or by a gate, under a policy that has since changed.
+Reconsideration clears the LinkedIn entry and counts it as eligible again.
+That is the failure mode this spec names: a rule change overturning the
+operator's decision. The tracker dedupe gate in
+`services/api/src/harrier/screening/pipeline.py` still stops the posting
+from becoming a second row, so the visible effects are a wrong report and
+churn in the seen file. But the guard this spec promises is not the one
+doing the work.
+
+Nothing in a seen entry can be compared with a row from another source,
+because an entry stores only the hashed key and its decision.
+
+### Behavior after the change
+
+- **Recording.** Every decision the industry pipeline records (`record` in
+  `screen_jobs`, `services/api/src/harrier/screening/pipeline.py`) also
+  stores the posting's identities: a hash of its normalized url, and a hash
+  of its normalized company and title joined by `|`. These are the same two
+  identities `human_rejected_keys` computes for a row, and the same ones
+  tracker dedupe matches on. A posting with no url stores only the company
+  and title hash. A posting with neither stores none. The hash is
+  `stable_key`, so a stored identity is 20 hex characters and no posting
+  text reaches the file.
+- **Reconsidering.** A stale entry is protected when its key matches, as
+  today, or when any of its stored identities equals the hash of an
+  identity of a rejected row on the same track, whatever that row's source.
+  It is counted in `protected` and stays in the seen file.
+- **Reading and writing.** `load_seen` reads `identities` when present and
+  reads an entry without the field as having none. `save_seen` writes the
+  field only for an entry that has identities. The academic pipeline
+  (`_screen_academic`) records none: its track has one source, so it has
+  no cross-source case, and its protection stays `protected_seen_keys`
+  (spec 097).
+
+### Failure modes
+
+- **An entry recorded before this change** has no identities. It keeps key
+  protection only. If its posting was rejected on another source, the first
+  reconsideration still clears it. The next discovery run that sees the
+  posting decides it again, at the latest at the tracker dedupe gate, and
+  records that decision with identities, so this heals after one run. It is not backfilled, because
+  the postings are not stored.
+- **The operator edits a row's url, company or title after the decision.**
+  The row's identities are read at reconsideration time and the entry's at
+  decision time. If both identities were edited, the entry is not protected.
+- **Two different postings with the same company and title.** One rejection
+  protects the other's stale entry. Tracker dedupe already treats a
+  matching company and title as the same posting (`find_duplicate` in
+  `services/api/src/harrier/tracker/store.py`), so the other posting could
+  not become a row anyway.
+- **A file written by this code and read by older code.** The older reader
+  ignores the field (`_decision_from` in
+  `services/api/src/harrier/screening/seen.py` reads fields by name), and
+  its next save drops it. A downgrade loses identities but keeps every
+  decision.
+- **Size.** `SEEN_CAP` stays a count of entries. An entry grows by at most
+  two 20-character hashes, a fixed amount whatever the posting's length.
+  Eviction stays age-based
+  (`test_eviction_keeps_the_newest_not_the_lexicographically_largest`).
+- **A damaged seen file.** Unchanged: refused, never read as empty (spec 040).
+- **Dry run.** Unchanged: it reports and writes nothing.
+
+### Acceptance criteria
+
+- An industry rejection is recorded with the url hash and the company and
+  title hash of its posting; a posting without a url gets only the latter
+  (planned test_a_rejection_records_the_posting_identities).
+- A rejected `greenhouse` row and a stale `apify_linkedin` entry with the
+  same url: the entry is protected and kept, and `protected == 1`
+  (planned test_a_posting_rejected_on_another_source_is_protected).
+- The same case matched by company and title alone, with different urls
+  (planned test_a_cross_source_match_on_company_and_title_is_protected).
+- The same identities on a shortlisted row protect nothing: the entry is
+  cleared (planned test_identities_of_a_row_not_rejected_protect_nothing).
+- An entry without identities is still protected by its key and cleared
+  across sources
+  (planned test_an_entry_without_identities_keeps_key_protection_only).
+- Identities survive a save and load, and a file from before this change
+  loads with none (planned test_identities_round_trip,
+  planned test_a_file_from_before_identities_loads_without_them).
+- The written seen file contains neither the posting's url nor its company
+  or title as text (planned test_the_seen_file_holds_no_posting_text).
+- The academic track is unchanged:
+  `test_reconsider_never_reopens_a_human_rejection_on_an_academic_track`
+  and the existing reconsideration tests in
+  `services/api/tests/test_seen_policy.py` pass unmodified.
+
+### What changes
+
+- `services/api/src/harrier/screening/seen.py`: `SeenDecision` gains
+  `identities`, and its read and write.
+- `services/api/src/harrier/screening/pipeline.py`: the industry `record`
+  passes the posting's identities.
+- `services/api/src/harrier/screening/reconsider.py`: the hashed identities
+  of rejected rows join the protection check. One function computes a
+  posting's identities, used by both recording and reconsideration, so the
+  two cannot drift.
+- `services/api/tests/test_seen_policy.py`: the tests above.
+
+### Out of scope
+
+- Backfilling identities into existing entries. The postings are not stored.
+- The academic track, for the reason given above.
+- Narrowing protection by who rejected the row (spec 079's actor). Decided
+  on 2026-10-11 to keep protecting every `rejected` row.
+- Changing tracker dedupe, or any screening rule.
+- Storing posting text in the seen file.
+
+### Migration
+
+None for the operator. Existing seen files load unchanged. Entries gain
+identities as discovery records new decisions. No command needs running.
+
+### Limitations
+
+An entry recorded before this change stays unprotected across sources until
+the posting is seen again. A posting whose url and company and title were
+all edited on the row after the decision is not matched.
+
+### Decisions (Akin, 2026-10-11)
+
+1. **Hashed identities, not plain text.** The seen file keeps holding keys
+   only, as this spec says it does, and the entry size stays fixed. Posting
+   text stays out of a file that spec 107 copies into hosted storage.
+2. **Identities on every decision, not only rejections.** Only rejections
+   are reconsidered, but one code path for `record` is worth two hashes per
+   accepted entry.
+3. **Url and company plus title, not the url alone.** Company and title
+   catches the same role listed under different urls, which is the common
+   cross-source case. It also protects a second posting with the same title
+   at the same company, which tracker dedupe already treats as a duplicate.
+
+### Proof / origin
+
+The cross-source gap was named on PR #233 and in its commit message, when
+the same-source fix landed. Akin asked for this amendment on 2026-10-11.
