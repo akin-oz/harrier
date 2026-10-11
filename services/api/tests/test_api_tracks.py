@@ -313,6 +313,37 @@ def test_every_409_a_route_can_answer_is_in_the_contract() -> None:
     assert track in discover and active in discover
 
 
+def test_every_scoped_route_declares_the_track_refusal() -> None:
+    """The route class joins the track refusal with a route's own 409 rather
+    than letting the route's text replace it. About twenty routes hid it
+    that way (review of PR #234)."""
+    paths = create_app().openapi()["paths"]
+    missing = [
+        (method, path)
+        for method, path, _, _ in scoped_routes()
+        if "the track may not run this operation"
+        not in str(paths[path][method.lower()]["responses"]["409"]["description"])
+    ]
+    assert missing == []
+    # And a route's own 409 cause stays beside it.
+    draft = paths["/outreach/{selector}/draft"]["post"]["responses"]["409"]["description"]
+    assert "the domain refused the change" in draft
+    assert "a run of this kind is active" in draft
+
+
+def test_merge_responses_keeps_every_whole_cause() -> None:
+    from harrier_api.deps import merge_responses
+
+    kept = merge_responses(
+        {409: {"description": "archived track"}}, {409: {"description": "archived"}}
+    )
+    assert kept[409]["description"] == "archived track; or archived"
+    unnamed = merge_responses({409: {"model": "A"}}, {409: {"description": "x"}})
+    assert unnamed[409]["description"] == "x"
+    with pytest.raises(ValueError, match="two body models"):
+        merge_responses({409: {"model": "A"}}, {409: {"model": "B"}})
+
+
 def test_merge_responses_joins_one_status_and_keeps_the_rest() -> None:
     from harrier_api.deps import merge_responses
 

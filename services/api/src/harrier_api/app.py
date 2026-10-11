@@ -37,7 +37,6 @@ from harrier_api.capture_routes import capture_router
 from harrier_api.demo import demo_db_path, is_demo_mode, seed_demo_db
 from harrier_api.deps import (
     DATABASE_HELD_DETAIL,
-    TRACK_REFUSAL_RESPONSES,
     VERB_IN_BODY,
     Conn,
     DatabaseHeldOut,
@@ -568,14 +567,11 @@ APPLY_ERRORS: dict[int | str, dict[str, str]] = {
 # the kind already active. Joined, so the contract names every cause.
 APPLY_RUN_RESPONSES = merge_responses(
     APPLY_ERRORS,
-    {409: TRACK_REFUSAL_RESPONSES[409]},
     {409: {"description": "application documents from the browser are the default track's"}},
     RUN_CONFLICT_RESPONSES,
 )
 # `evaluate` never runs on another track: the track refusal answers first.
-EVALUATE_RESPONSES = merge_responses(
-    APPLY_ERRORS, {409: TRACK_REFUSAL_RESPONSES[409]}, RUN_CONFLICT_RESPONSES
-)
+EVALUATE_RESPONSES = merge_responses(APPLY_ERRORS, RUN_CONFLICT_RESPONSES)
 
 ARTIFACT_ERRORS: dict[int | str, dict[str, str]] = {
     404: {"description": "no such job, artifact kind, or the artifact is not produced yet"},
@@ -879,7 +875,7 @@ runs_router = APIRouter(route_class=DatabaseRoute)
     "/runs",
     operation_id="startRun",
     dependencies=[Depends(require_token)],
-    responses={**TOKEN_RESPONSES, **RUN_CONFLICT_RESPONSES},
+    responses=merge_responses(TOKEN_RESPONSES, RUN_CONFLICT_RESPONSES),
 )
 async def start_run(body: StartRunIn, manager: Manager) -> RunOut:
     return run_out(await manager.start(body.kind))
@@ -1078,7 +1074,7 @@ def get_configuration(kind: str, conn: Conn) -> ConfigOut:
 @config_router.put(
     "/config/{kind}",
     operation_id="putConfig",
-    responses={**CONFIG_ERRORS, **TOKEN_RESPONSES},
+    responses=merge_responses(CONFIG_ERRORS, TOKEN_RESPONSES),
     dependencies=[Depends(require_token)],
 )
 def put_configuration(kind: str, body: ConfigIn, conn: Conn) -> ConfigOut:
