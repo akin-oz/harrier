@@ -1,8 +1,8 @@
 ---
 spec: 115
 title: Spec 105 holds on a real Supabase project
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [103, 105]
 ---
