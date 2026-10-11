@@ -1,8 +1,8 @@
 ---
 spec: 117
 title: An owner exports everything they own
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [104, 105, 107, 111, 112, 116]
 ---

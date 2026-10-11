@@ -1,8 +1,8 @@
 ---
 spec: 119
 title: The browser captures a job on the hosted service
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [104, 114]
 ---

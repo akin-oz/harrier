@@ -1,8 +1,8 @@
 ---
 spec: 116
 title: Tenant credentials are stored encrypted
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [102, 104, 105, 112]
 ---
