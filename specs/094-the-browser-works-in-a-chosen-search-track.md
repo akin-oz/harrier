@@ -462,9 +462,10 @@ routes and the bundle.
   (`services/api/tests/test_api_tracks.py::test_every_scoped_route_declares_the_track_refusal`).
   Spec 082's 404 wording gains the track cause with it. Every scoped route,
   writes included, is provoked with an unknown track and answers that 404
-  without changing a row
+  without changing a row in any table
   (`services/api/tests/test_api_tracks.py::test_an_unknown_track_is_a_404_on_every_scoped_route`,
-  added after the review of PR #255).
+  added after the review of PR #255; it compared only `jobs` until the
+  review of PR #263).
 - **A route claims only the track 409 it can send.** `GET /jobs`, the queue,
   the counts, a job's history and `jobs.csv` run operations every track may
   run and that write nothing, and returned 200 on an archived track while
