@@ -230,9 +230,10 @@ the bytes do not change.
   context variable for the rest of that request and resets it when the
   response ends. The binding happens in the middleware, before routing,
   so synchronous routes that FastAPI runs in a thread pool inherit it.
-- **Binding a run.** Not here. Spec 104 refuses every hosted run until
-  spec 106, and spec 106 decides how a run reaches Storage as its owner
-  (Changes to approved specs).
+- **Binding a run.** Spec 106's (decision D3, 2026-10-11). Binding a run
+  to its owner includes the identity the run uses for Storage. This spec
+  consumes that binding: in a hosted run, `files()` returns the store spec
+  106's binding sets. This spec defines no run token and no run binding.
 - **No domain function names an owner.** No function outside
   `harrier.filestore` and `harrier_api` takes an owner or a store
   parameter, and no domain module builds an object name. ADR-013
@@ -510,7 +511,7 @@ specs".
   storage catalog test fails on any policy on `storage.objects` other than
   `harrier_files_owner_only` (planned
   test_storage_objects_carries_only_the_harrier_policy). A real project's
-  other policies are checked by spec 110.
+  other policies are checked by spec 110 (its Amendment of 2026-10-11).
 
 ## Acceptance criteria
 
@@ -660,6 +661,8 @@ PR 2 (hosted):
 - **Vendor-side behavior is outside harrier's logs.** Harrier's own
   messages never name an object; what Supabase records about a request is
   Supabase's.
+- The line numbers cited here are refreshed by the change that implements
+  this spec, not before (decision D9, 2026-10-11).
 
 ## Migration
 
@@ -691,15 +694,18 @@ spec.
   session, and a harrier-held signing key that mints short-lived owner
   tokens, and binds the run's `files()` at start. Also: run inputs and the
   run journal (`harrier_api/runs.py:302-331`, `:792-812`) hold an owner's
-  free text on the machine's disk. Spec 106's refined text of 2026-10-10
-  does not yet carry this.
+  free text on the machine's disk. Decision D3 (2026-10-11) settles that
+  the Storage identity is spec 106's; spec 106 now carries it (its Scope
+  item 12 and its Open decision 8, the token). The run inputs and journal
+  point is not yet carried there.
 - **Spec 108:** a scheduled run binds its owner's store through spec 106's
   mechanism before any domain code runs.
 - **Spec 110:** the staging project confirms each assumption listed under
   Honest limitations; the bucket `harrier-files` has a backup story, since
   Supabase's database backups do not include Storage objects; hosted
   logging decides the LLM debug log and the log file. Spec 110's refined
-  text of 2026-10-10 carries the hosted log rules, not the rest.
+  text of 2026-10-10 carries the hosted log rules; the rest is written
+  into spec 110's Amendment (2026-10-11) (decision D4).
 - **Spec 111:** deletion covers every object under `<owner>/` in
   `harrier-files`. Spec 111's refined text carries it (its Deletion,
   steps 2 and 5).
@@ -736,6 +742,26 @@ spec.
 - **Resumable uploads** for large files. Not needed by any measured file.
   Not chosen; Open decision 7.
 
+## Decisions taken (2026-10-11)
+
+Akin took these in chat on 2026-10-11 ("go with your recommendations").
+The text above says where each changed it.
+
+- **D1, the Storage policy.** Hosted files live in Supabase Storage, with
+  the one policy on `authenticated`. A tenant can reach their own prefix
+  directly, within the bucket's size and type limits. This takes Open
+  decisions 2 and 3 as recommended.
+- **D3, a run's Storage identity is spec 106's.** Binding a run to its
+  owner includes the identity the run uses for Storage. This spec
+  consumes that binding and does not define it (Behavior, "Which store a
+  call uses").
+- **D4, spec 110 takes this spec's asks.** The spec 110 line under
+  "Changes to approved specs" is written into spec 110's Amendment
+  (2026-10-11): the staging checks, the bucket's backup statement, and the
+  deploy check of other policies on `storage.objects`.
+- **D9, line numbers.** Refreshed by this spec's implementing change
+  (Honest limitations).
+
 ## Open decisions for Akin
 
 1. **Build order: 107 after 104, 105 and 112, before 106.** Recommended.
@@ -751,11 +777,16 @@ spec.
    table. Choose the alternative if spec 106 finds neither a refreshed
    owner session nor a minting key acceptable, since without one no run or
    scheduled run can write Storage as its owner.
+   Taken 2026-10-11: Storage, with the policy on `authenticated` (D1); the
+   run's Storage identity is spec 106's (D3), and the token is spec 106's
+   Open decision 8.
 3. **Accept a tenant's direct access to their own prefix** (recommended),
    with the size and type limits and no other owner reachable.
    Alternative: give `authenticated` only `SELECT`, and write with a
    server credential confined by code, which is Options weighed's
    rejected secret key.
+   Taken 2026-10-11: a tenant may reach their own prefix directly, within
+   the size and type limits (D1).
 4. **Bind the store per context** (recommended): middleware sets it, the
    domain calls `files()`. Alternative: pass a store through every domain
    function.

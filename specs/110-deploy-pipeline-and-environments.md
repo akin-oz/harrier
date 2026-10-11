@@ -458,6 +458,8 @@ holds the URL and its password.
   none; a dump of tenants' data is personal data on another machine and
   needs its own spec.
 - No cost figures. Plans and prices are out of scope (spec 102).
+- The line numbers cited here are refreshed by the change that implements
+  this spec, not before (decision D9, 2026-10-11).
 
 ## Migration
 
@@ -516,6 +518,23 @@ spec.
   poppler and dependency layers the local image already proves. Open
   decision 3's alternative.
 
+## Decisions taken (2026-10-11)
+
+Akin took these in chat on 2026-10-11 ("go with your recommendations").
+
+- **D4, this spec takes what specs 106 to 111 ask of it.** Specs 106, 107,
+  108, 109 and 111 each list an ask of this spec, under "Changes to
+  approved specs" or as assumptions for its staging check. They are
+  gathered into one section, "Amendment (2026-10-11): what specs 106 to
+  111 ask of the deploy", with its own acceptance criteria. Gathering them
+  found one question none of them settles: where the scheduler runs on
+  Fly, now Open decision 9.
+- **D9, line numbers.** Refreshed by this spec's implementing change
+  (Honest limitations).
+
+Open decisions 1, 2 and 4 to 8 below were not the subject of these
+decisions and stand as written; item 3 is answered for `gmail` only.
+
 ## Open decisions for Akin
 
 1. **The first slice as its own spec.** Applied in this text: the slice
@@ -534,6 +553,9 @@ spec.
    and `pdf`, without the `claude` CLI (ADR-013 decision 8) and without the
    SPA (decision 7); `gmail` waits for spec 109. Alternative: a separate
    `deploy/hosted.Dockerfile`.
+   On `gmail` only, answered 2026-10-11 (D4): spec 109 offers no hosted
+   Gmail, so the hosted image installs no `gmail` group. The rest of this
+   item stands as written.
 4. **Vercel environments.** Recommended: two Vercel projects, each
    deploying to its own Production environment. Alternative: one project
    with a `staging` custom environment, which needs the Pro plan.
@@ -554,6 +576,14 @@ spec.
    a direct IPv6 connection from Fly for the API, which Supabase
    recommends for persistent servers and which one Fly community report
    found failing from one region.
+9. **Where the scheduler runs on Fly.** Added 2026-10-11 by the Amendment
+   below. Recommended: an app of its own per environment, deployed from
+   the same image, so its secrets (its login's URL, and what spec 106's
+   run start needs) are its own and the API's never reach it, which keeps
+   spec 108's rule that the scheduler never runs as the API's login.
+   Alternative: a process group of the API app, as spec 108 wrote it, one
+   app fewer, with every secret of each reaching the other's machines
+   (Fly secrets are app wide).
 
 ## Proof / origin
 
@@ -660,6 +690,9 @@ Assumptions this spec could not confirm, each checked where named:
 
 ## Out of scope
 
+Where an item below gives a deploy step to specs 106 to 111, the
+Amendment (2026-10-11) at the end of this spec takes that step here.
+
 - Pricing, billing and plans.
 - Running spec 105's isolation tests on a real Supabase project, and CI
   migrating as a non-superuser: spec 115.
@@ -691,3 +724,178 @@ Assumptions this spec could not confirm, each checked where named:
     `target_version()` (`pgstore.py:193-197`) returns. This text and its
     acceptance criteria cite `target_version()` rather than a number, so
     they do not go stale again.
+
+## Amendment (2026-10-11): what specs 106 to 111 ask of the deploy
+
+Akin took decision D4 on 2026-10-11: this spec takes what specs 106, 107,
+108, 109 and 111 ask of it, each listed there under "Changes to approved
+specs" or as assumptions for this spec's staging check. They are gathered
+here as one amendment. Where Out of scope above gives one of these steps
+to specs 106 to 111, read this section. Each item names the spec and
+section that asked it.
+
+### The API app
+
+- **One machine, never stopped** (spec 106, "Where a run lives on Fly").
+  Both Fly files set `auto_stop_machines = "off"` for the API's HTTP
+  service. A step after `fly deploy` counts the API process group's
+  machines and fails the deploy unless there is exactly one.
+- **The run login role** (spec 106, "One login role for requests, another
+  for runs"). The operator creates `harrier_run` once per environment, as
+  `harrier_api` is created (`CREATE ROLE ... LOGIN NOINHERIT`, the
+  password set with `\password`), and sets `HARRIER_RUN_DATABASE_URL` as a
+  Fly secret on the API app from the same shell. Deploy step 3 runs
+  `harrier store grant-tenant` for `harrier_run` as for `harrier_api`, and
+  `check-deploy` applies its login role checks to both.
+- **The credentials key** (spec 106, Migration; spec 116, Migration).
+  `HARRIER_CREDENTIALS_KEY` is a Fly secret on the API app, set once per
+  environment by the operator.
+- **The publishable key** (spec 107, "Configuration").
+  `HARRIER_SUPABASE_PUBLISHABLE_KEY` is not a secret and sits in `[env]`
+  in both Fly files, beside `HARRIER_SUPABASE_URL`.
+- **No operator notification settings** (spec 109, Migration). Neither
+  Fly file names a `TELEGRAM_` or `GMAIL_` variable, and the runbook sets
+  none as a Fly secret; spec 109's start check refuses the API otherwise.
+- **No `gmail` group in the hosted image** (spec 109, Scope item 4). Open
+  decision 3 left the group to spec 109, which offers no hosted Gmail.
+
+### The scheduler
+
+From spec 108, "What spec 110 provisions":
+
+- **A process group `scheduler`** with one machine and no service, a
+  restart policy that restarts it on exit, running `harrier operator
+  scheduler`. Where it lives, in the API app or an app of its own, is
+  Open decision 9.
+- **The scheduler's login role.** The operator creates `harrier_scheduler`
+  once per environment, as above. Two named deploy steps grant it
+  `harrier_tenant` (`harrier store grant-tenant`) and
+  `harrier_schedule_reader`, each refusing a role that fails spec 104's
+  login role checks and each idempotent. Its database URL is a direct or
+  session-mode connection, set as a secret where the scheduler runs.
+  `check-deploy` fails when `harrier_scheduler` is not a member of both
+  roles.
+- **Its limits.** `HARRIER_SCHEDULER_CONCURRENCY` and
+  `HARRIER_SCHEDULED_RUN_TIMEOUT_SECONDS` are set in the scheduler's Fly
+  configuration for each environment. Their values are the operator's
+  choice per environment; this amendment sets none.
+
+### Storage
+
+From spec 107, "Changes to approved specs" and Failure modes:
+
+- **Other policies on `storage.objects`.** `check-deploy` fails, naming the
+  policy, when `storage.objects` carries a policy other than
+  `harrier_files_owner_only`.
+- **The bucket's backup.** `docs/deploy.md` states what backs up
+  `harrier-files`: until a spec adds a backup, nothing does, and a deleted
+  or overwritten object is gone (spec 107, Honest limitations).
+- **Hosted logging** of the LLM debug log and the log file is already this
+  spec's ("hosted logs" under Behavior).
+
+### Auth settings
+
+From spec 111, "Changes to approved specs":
+
+- **Checked at every deploy.** The smoke step (step 6) also reads the
+  project's public Auth settings, `GET /auth/v1/settings` with the
+  publishable key, and fails the deploy when `disable_signup` is false,
+  when `external.anonymous_users` is true, or when any OAuth provider in
+  `external` is true (every entry but `email`, `phone` and
+  `anonymous_users`). The auth server's `Settings` handler returns these
+  fields (`internal/api/settings.go`, read 2026-10-11).
+- **The operator login.** The runbook creates, once per environment, the
+  login that can `SET ROLE service_role` which `harrier operator erase`
+  uses. Its URL and `HARRIER_SUPABASE_SECRET_KEY` live in the operator's
+  shell for the command that needs them: never on Fly, in GitHub, in
+  Vercel, in `.env` or in git.
+
+### Where each secret lives, added
+
+| Value | Lives in | Never in |
+|---|---|---|
+| `HARRIER_RUN_DATABASE_URL`, the `harrier_run` login | Fly secret on the API app | GitHub, Vercel, `.env`, git |
+| `HARRIER_CREDENTIALS_KEY` | Fly secret on the API app | GitHub, Vercel, `.env`, git |
+| The `harrier_scheduler` login's URL | a Fly secret where the scheduler runs (Open decision 9) | GitHub, Vercel, `.env`, git |
+| The operator login's URL and `HARRIER_SUPABASE_SECRET_KEY` | the operator's shell | Fly, GitHub, Vercel, `.env`, git |
+| `HARRIER_SUPABASE_PUBLISHABLE_KEY` | `[env]` in the Fly files | not secret |
+
+### Staging checks
+
+Each is checked on the staging environment by the first deploy that needs
+it, and the pull request records it as confirmed or refuted. A refuted
+check stops the dependent spec until a spec owns the fix.
+
+- **Spec 106** (Honest limitations): whether a process of the same user
+  can read `/proc/<pid>/environ` of the API and of sibling runs in Fly's
+  machine image; that Supabase's pooler, if the run URL goes through it,
+  keeps `SET LOCAL` within one transaction; that `auto_stop_machines =
+  "off"` leaves the machine running while a run has no open request; and
+  that a rolling deploy replaces the one API machine, ending runs in
+  flight.
+- **Spec 107** (Honest limitations): its assumptions 1 to 9 about the
+  Storage server, and the Storage REST paths the seam calls.
+- **Spec 108** (Honest limitations): that the migrating role owns
+  `harrier_schedule_inputs()` and has `BYPASSRLS`; that it may create
+  `harrier_schedule_reader` and grant it; that a Fly machine in a process
+  group with no service is never stopped by Fly's proxy; and that the
+  image's C library honors `TZ` for every zone `zoneinfo` accepts.
+- **Spec 109** (Proof / origin, assumptions): that a bot cannot send to a
+  private chat whose user has not written to it, and `sendMessage` then
+  answers `ok: false`; that a Fly machine reaches `api.telegram.org` with
+  no extra egress setting; and that the token pattern matches the tokens
+  @BotFather issues.
+- **Spec 111** (Proof / origin, assumptions for this spec's staging
+  check, as its decision D6 left them).
+
+### Honest limitations (amendment)
+
+- **Fly secrets are app wide** (Where each secret lives). If the scheduler
+  is a process group of the API app, the API's `HARRIER_DATABASE_URL`
+  reaches the scheduler machine and the scheduler's login reaches the API
+  machines, against spec 108's rule that the scheduler never runs as the
+  API's login. Open decision 9.
+- **The scheduler starts runs** through spec 106's run start (spec 108,
+  "What this spec needs from spec 106's run binding"), which decrypts the
+  owner's credentials. Wherever the scheduler runs, it then holds what a
+  run start needs, `HARRIER_CREDENTIALS_KEY` and `HARRIER_RUN_DATABASE_URL`
+  included. Spec 106's trust model names only the API process as holding
+  the key; that table changes with spec 106, not here.
+- **No value is chosen for the scheduler's limits.** The operator sets
+  them per environment.
+
+### Acceptance criteria (amendment of 2026-10-11)
+
+- [ ] Both Fly files set `auto_stop_machines = "off"` for the API's
+      service and `HARRIER_SUPABASE_PUBLISHABLE_KEY` in `[env]`, and name
+      no `TELEGRAM_` or `GMAIL_` variable (planned
+      test_the_fly_files_run_one_api_machine_that_never_stops).
+- [ ] The scheduler's Fly configuration runs `harrier operator scheduler`
+      in a group with one machine, no service and a restart on exit, and
+      sets `HARRIER_SCHEDULER_CONCURRENCY` and
+      `HARRIER_SCHEDULED_RUN_TIMEOUT_SECONDS` (planned
+      test_the_scheduler_runs_without_a_service).
+- [ ] `deploy.yml` grants `harrier_tenant` to `harrier_api`, `harrier_run`
+      and `harrier_scheduler`, and `harrier_schedule_reader` to
+      `harrier_scheduler`, before `check-deploy`; counts the API machines
+      after `fly deploy`; and reads the Auth settings in the smoke step
+      (planned test_the_deploy_workflow_migrates_before_it_deploys,
+      extended).
+- [ ] `check-deploy` fails, naming the check, when `harrier_run` or
+      `harrier_scheduler` fails a login role check or lacks
+      `harrier_tenant`, when `harrier_scheduler` lacks
+      `harrier_schedule_reader`, and when `storage.objects` carries a
+      policy other than `harrier_files_owner_only` (planned
+      test_check_deploy_names_the_failed_check, extended).
+- [ ] The Auth settings check fails on `disable_signup` false, on
+      `external.anonymous_users` true and on an OAuth provider turned on,
+      and passes on invite-only settings, against a fake settings response
+      (planned test_the_deploy_refuses_open_sign_up).
+- [ ] The hosted image installs no `gmail` group (planned
+      test_the_hosted_image_installs_no_gmail_group).
+- [ ] `docs/deploy.md` covers creating `harrier_run`, `harrier_scheduler`
+      and the operator login, every secret in the table above with its
+      home, and the statement on what backs up `harrier-files`.
+- [ ] The first staging deploy that needs each staging check records it as
+      confirmed or refuted in its pull request, and no refuted check is
+      left without a spec that owns its fix.

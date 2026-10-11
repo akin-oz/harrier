@@ -59,7 +59,7 @@ Line numbers are from `main` at `44ac0d7` (2026-10-10).
    `postgres` role, from a shell with the URL exported, and prints
    `postgres 0 -> <target_version()>`.
 3. A new test module, `services/api/tests/test_supabase_project.py`, holds
-   one test per assumption under Behavior (A1 to A10). It runs only when
+   one test per assumption under Behavior (A1 to A11). It runs only when
    `HARRIER_SUPABASE_TEST_URL` (the migrator) and
    `HARRIER_SUPABASE_API_TEST_URL` (a custom login role through the pooler)
    are set, and skips otherwise, in CI too (Honest limitations).
@@ -117,6 +117,17 @@ assumption, recorded, not retried.
 | A8 | `postgres` may insert into `auth.users` (the tests' `new_owner`, `pg_support.py:133-138`) | one insert of a random UUID |
 | A9 | No Supabase default privilege re-grants harrier's tables to `anon`, `authenticated` or `service_role` | `services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared` in staging mode |
 | A10 | `postgres` can grant `harrier_tenant` to a login role (Postgres 16 and later ask for the admin option, which the role's creator holds) | `GRANT harrier_tenant TO harrier_api_probe` succeeds |
+| A11 | Migration 13 applies as a non-superuser migrator shaped like Supabase's `postgres` (`CREATEROLE`, `BYPASSRLS`, not superuser), including its `ALTER ROLE` step and its `ALTER DEFAULT PRIVILEGES` revoke (decision D8, 2026-10-11) | the store reaches `target_version()` as `postgres`; `pg_default_acl` holds no default privilege of the migrating role, in `public` or global (no `IN SCHEMA`), that grants to `anon`, `authenticated` or `service_role`; and, inside a transaction that is rolled back, a function the migrating role creates in `public` is executable by none of `PUBLIC`, `anon`, `authenticated` and `service_role` |
+
+A11 comes from a post-merge review of spec 105's migration 13. Its
+`ALTER ROLE harrier_tenant` names `NOSUPERUSER`, which a role that is not
+a superuser may not name, and its `ALTER DEFAULT PRIVILEGES` revoke covers
+`public` only, missing the global defaults (no `IN SCHEMA`) and the
+`EXECUTE` on functions that Postgres grants `PUBLIC` by default. The fix
+lands in spec 105's follow-up; A11 proves it on Supabase. If that
+follow-up corrects these in a later migration rather than in migration 13,
+A11 checks the store reaches `target_version()` as `postgres` and that the
+same catalog result holds.
 
 A5 is the one spec 110's design leans on hardest: if the transaction
 pooler drops `SET LOCAL`, spec 104's read-back answers 500 on every
@@ -173,7 +184,9 @@ found them and, on the shim, the privileges A1, A2 and A8 found:
 `TRIGGER` and `INSERT` on `auth.users`, `USAGE` on `auth` with grant
 option, `EXECUTE` on `auth.uid()` with grant option. A missing grant in a
 future migration then fails in CI, as it would on Supabase. If A4 finds
-something else, the role takes what A4 found.
+something else, the role takes what A4 found. Migration 13, as spec 105's
+follow-up leaves it, applies as `harrier_migrator` in CI with the catalog
+result A11 names (decision D8).
 
 ## Failure modes
 
@@ -196,14 +209,15 @@ something else, the role takes what A4 found.
       printing `postgres 0 -> <target_version()>`, run as `postgres`, with
       no project reference or password in the output.
 - [ ] `services/api/tests/test_supabase_project.py` has one test per
-      assumption A1 to A10 (planned test_the_migrator_can_trigger_on_auth_users,
+      assumption A1 to A11 (planned test_the_migrator_can_trigger_on_auth_users,
       planned test_the_tenant_role_reaches_auth_uid,
       planned test_auth_uid_reads_the_claims_sub,
       planned test_postgres_bypasses_but_is_not_superuser,
       planned test_the_pooler_keeps_a_custom_role_and_set_local,
       planned test_unqualified_names_resolve_to_public_for_both_roles,
       planned test_the_migrator_can_create_an_auth_user,
-      planned test_the_migrator_can_grant_the_tenant_role; A6 and A9 are the
+      planned test_the_migrator_can_grant_the_tenant_role,
+      planned test_migration_13_applies_as_a_non_superuser_migrator; A6 and A9 are the
       two existing tests named in the assumption table).
 - [ ] The module skips, naming the variable, when either URL is unset
       (planned test_supabase_checks_skip_without_a_project).
@@ -216,7 +230,13 @@ something else, the role takes what A4 found.
 - [ ] Every Postgres test migrates as `harrier_migrator`, which is not a
       superuser, and CI's `check-python` run shows them passing, none
       skipped (planned test_ci_migrates_as_a_non_superuser).
-- [ ] This spec gains "Amendment (staging findings)" with A1 to A10 each
+- [ ] In CI, migration 13, as spec 105's follow-up leaves it, applies as
+      `harrier_migrator`, and afterwards the migrating role holds no
+      default privilege, in `public` or global, granting to `anon`,
+      `authenticated` or `service_role`, and a function it creates is
+      executable by none of them nor by `PUBLIC` (decision D8; planned
+      test_migration_13_applies_as_a_non_superuser_migrator, in CI form).
+- [ ] This spec gains "Amendment (staging findings)" with A1 to A11 each
       marked confirmed or refuted, the date and the Postgres version, and
       `docs/architecture.md` says the isolation tests ran on a real
       project and names the module.
@@ -236,6 +256,8 @@ something else, the role takes what A4 found.
   run. No personal data, and the policy hides them from every other owner.
 - A shim that copies Supabase's privileges as observed on one date drifts
   when Supabase changes them. Nothing notices until a re-run.
+- The line numbers cited here are refreshed by the change that implements
+  this spec, not before (decision D9, 2026-10-11).
 - Whether the existing `test_owner_policy.py` fixtures can run against one
   shared Supabase database at all is not tested yet. Each test commits its
   rows, and synthetic owners cannot be deleted (the foreign key,
@@ -263,6 +285,24 @@ spec.
 - **Spec 105:** its Honest limitations name the run of its isolation tests
   against a real staging project, and the check that `postgres` has
   `BYPASSRLS`, as spec 110's. Both are this spec's.
+
+## Decisions taken (2026-10-11)
+
+Akin took these in chat on 2026-10-11 ("go with your recommendations").
+The text above says where each changed it.
+
+- **D8, migration 13 as a non-superuser migrator.** This spec also checks
+  that migration 13 applies as a migrator shaped like Supabase's
+  `postgres` (`CREATEROLE`, `BYPASSRLS`, not superuser), covering its
+  `ALTER ROLE` step and its `ALTER DEFAULT PRIVILEGES` revoke, global
+  defaults and `PUBLIC`'s function `EXECUTE` included. The fix is spec
+  105's follow-up; this spec proves it on Supabase and in CI (A11, "CI
+  migrates as a non-superuser", Acceptance criteria).
+- **D9, line numbers.** Refreshed by this spec's implementing change
+  (Honest limitations).
+
+Open decision 1 below was not the subject of these decisions; it stands
+as written.
 
 ## Open decisions for Akin
 

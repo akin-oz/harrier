@@ -117,15 +117,18 @@ Open decision 1).
    `services/api/src/harrier_cli/main.py`, backed by a new module
    `services/api/src/harrier/operator.py`: `harrier operator invite` and
    `harrier operator erase`. It is the second command that runs on a
-   Postgres URL, beside `harrier store`. The CLI gate
+   Postgres URL, beside `harrier store`. It is one command group with spec
+   108's `scheduler` and `schedule-report`, and each subcommand declares
+   the database role it runs as (decision D2, 2026-10-11): `erase` runs
+   as `service_role`; `invite` declares that it opens no database
+   connection. The CLI gate
    (`harrier_cli/main.py:2913-2916` today, restructured by spec 112) gains
-   a third class, "operator: runs on Postgres as the service role". Spec
-   112's text is not edited here; the class and its refusal-class test
-   (planned test_every_command_has_a_postgres_refusal_class) are listed
-   under "Changes to approved specs".
+   the class "operator: each subcommand runs as its declared role",
+   written into spec 112 as its Amendment (2026-10-11) with its planned
+   test_the_postgres_gate_has_operator_and_run_classes.
 6. **A Supabase admin client** in `harrier/operator.py`, over `httpx`
-   (already a dependency, `services/api/pyproject.toml:40`): generate an
-   invite link, read, ban and delete a user. Storage listing and deletion
+   (already a dependency, `services/api/pyproject.toml:40`): create, read,
+   ban and delete a user. Storage listing and deletion
    go through spec 107's seam (item 8).
 7. **The project's sign-up settings** are stated under Behavior and checked
    by spec 110's deploy (item 8). This spec changes no Supabase setting
@@ -170,27 +173,40 @@ harrier operator invite
 
 - Reads one email address from standard input, never from the command
   line, so the address stays out of shell history and the process list.
-- Calls the auth server's `POST /auth/v1/admin/generate_link` with type
-  `invite`, the address, and `redirect_to` set to the hosted SPA's
-  invitation page (spec 114). The auth server creates the user and returns
-  the link without sending any email (`internal/api/mail.go`,
-  `adminGenerateLink`). Its sign-up guard sits in the public `Signup`
-  handler only, not in `signupNewUser`, which the invite path calls
-  (`internal/api/signup.go`), so an invite works with sign-up off. This is
+- Calls the auth server's admin user creation, `POST
+  /auth/v1/admin/users`, with the address and `email_confirm` true, and
+  no password. Supabase's `createUser` reference shows this form as
+  "Auto-confirm the user's email"; it does not say whether an email is
+  sent, which spec 110's staging check records. The admin routes sit
+  under `requireAdminCredentials` (`internal/api/api.go`), apart from the
+  public `Signup` handler that holds the sign-up guard
+  (`internal/api/signup.go`), so creation works with sign-up off. This is
   read from the auth server's source, not run; spec 110's staging check
   confirms it.
+- The user is created confirmed because the invitee signs in with spec
+  114's emailed code (decision D6, 2026-10-11), and the auth server's
+  magic link handler treats a request for an unconfirmed user as a new
+  sign-up (`isNewUser = !user.IsConfirmed()`, then `a.Signup(...)`,
+  `internal/api/magic_link.go`, read 2026-10-11), which sign-up off would
+  refuse.
 - Creating the user fires `harrier_new_owner()`, so the invitee owns track
   1 from that moment.
-- Prints the user's id and the action link, once, to standard output, and
-  nothing to any log. The operator delivers the link personally. Nothing
-  sends it, which is the "Nothing auto-sends" invariant applied to the
-  operator's own mail.
+- Prints the user's id once to standard output, and nothing to any log.
+  There is no link and no invitation page. The operator tells the invitee,
+  personally, to open the hosted SPA and sign in with their address; the
+  SPA's sign-in page (spec 114) then emails them a one-time code. Harrier
+  sends nothing itself, which is the "Nothing auto-sends" invariant
+  applied to the operator's own mail.
 - An address that already has a user is refused by the auth server; the
   command prints `error: that address already has an account` and exits 1.
   It never prints the address.
 
-The link is a credential until it is used or expires: whoever opens it
-signs in as the invitee. The command says so in its output.
+The code reaches the invitee only through the email sender every sign-in
+uses (spec 114, Honest limitations; configured by spec 110). Supabase's
+built-in sender does not reach addresses outside the project's team
+(Problem), so invitations work only once that sender is settled. If it
+needs a custom SMTP provider, that is a vendor the amended Local-first
+invariant does not list, and adding it is a spec of its own.
 
 ### Deletion: what is erased, in what order
 
@@ -388,7 +404,6 @@ Can:
   browser run with it. Row-level policy protects owners from each other,
   not from the operator.
 - Every auth user's email address, in the dashboard and in `auth.users`.
-- An invitation link, at the moment `invite` prints it.
 - Fly's logs, under the redaction spec 110 states.
 
 Cannot, through anything harrier builds:
@@ -445,7 +460,10 @@ never exported by value. The SPA's control for it is spec 114's or later.
 - **`invite` without the secret key or URL.** Refused before any call,
   naming the missing variable, exit 1.
 - **`invite` with an address that has a user.** Exit 1, `error: that
-  address already has an account`. No link is printed.
+  address already has an account`. No user id is printed.
+- **An invitee whose code never arrives.** The user exists and cannot sign
+  in until the email sender reaches them (Behavior). Nothing in this spec
+  detects it; the invitee tells the operator.
 - **`invite` with an empty or malformed address.** Refused before any
   call; the address is not echoed.
 - **An invitation never accepted.** The user exists with track 1 and no
@@ -559,12 +577,15 @@ Operator commands (admin and Storage calls through an injected `httpx`
 transport; no test reaches the network):
 
 - [ ] `harrier operator invite` reads the address from standard input,
-      posts `generate_link` with type `invite` and the configured
-      `redirect_to`, prints the user id and link, and the address appears
-      in no argument, log record or error text
-      (planned test_invite_prints_a_link_and_never_the_address).
+      posts the admin user creation with `email_confirm` true and no
+      password, prints the user id and no link, and the address appears
+      in no argument, log record or error text (decision D6; planned
+      test_invite_creates_a_confirmed_user_and_never_prints_the_address).
+- [ ] No `generate_link` call and no `redirect_to` appears in
+      `harrier/operator.py`, and no hosted SPA route is an invitation page
+      (decision D6).
 - [ ] An address with an account exits 1 with the fixed text and prints no
-      link (planned test_invite_refuses_an_existing_address).
+      user id (planned test_invite_refuses_an_existing_address).
 - [ ] `harrier operator erase` runs ban, Storage, rows, auth delete and
       stragglers in that order, appends one ledger line with no email, and
       exits 0 (planned test_erase_runs_its_steps_in_order).
@@ -577,10 +598,11 @@ transport; no test reaches the network):
       as `service_role`, and the secret key defined in `.env` each exit 1
       before any call, and no output contains the key, the URL's password
       or an address (planned test_operator_refusals_name_no_secret).
-- [ ] `harrier operator` runs on a Postgres URL; every other command but
-      `harrier store` still refuses (planned
-      test_every_command_has_a_postgres_refusal_class, spec 112, extended
-      with the operator class).
+- [ ] `harrier operator` runs on a Postgres URL; `erase` declares
+      `service_role` and `invite` declares that it opens no database
+      connection; every command outside the classes of spec 112's
+      Amendment (2026-10-11) still refuses (decision D2; spec 112's
+      planned test_the_postgres_gate_has_operator_and_run_classes).
 
 Documents and other specs:
 
@@ -633,6 +655,11 @@ Gates:
 - **The ledger is one file on one machine.** If the operator loses it, the
   restore procedure has no list. It is never-in-git by classification, so
   git is not its backup either.
+- **Invitations wait on the sign-in sender.** An invitee signs in with spec
+  114's emailed code (decision D6), so an invitation works only where that
+  sender reaches the invitee.
+- The line numbers cited here are refreshed by the change that implements
+  this spec, not before (decision D9, 2026-10-11).
 
 ## Migration
 
@@ -669,15 +696,18 @@ spec.
   sends no secret key and binds a store only to a request's token, so this
   is a new way to bind it.
 - **Spec 112:** the CLI's Postgres gate takes a class for `harrier
-  operator`, "operator: runs on Postgres as the service role" (Scope item
-  5), and its planned test_every_command_has_a_postgres_refusal_class
-  covers it. Its Out of scope ("A tenant export: spec 111") now reads
-  spec 117.
+  operator` (Scope item 5), and its planned
+  test_every_command_has_a_postgres_refusal_class covers it. Its Out of
+  scope ("A tenant export: spec 111") now reads spec 117. Decision D2
+  (2026-10-11) reworded the class: "operator: each subcommand runs as its
+  declared role", one group with spec 108's subcommands. Written into
+  spec 112 as its Amendment (2026-10-11); the Out of scope line is not.
 - **Spec 110:** the project's Auth settings under Behavior ("Sign-up is
   by invitation only") are provisioned and checked at deploy, and a
   project with sign-up or anonymous sign-ins on is refused; the operator
   login that can `SET ROLE service_role` is created per environment; and
-  the assumptions under Proof / origin are staging checks.
+  the assumptions under Proof / origin are staging checks. Written into
+  spec 110's Amendment (2026-10-11) (decision D4).
 
 ## Options weighed
 
@@ -710,6 +740,11 @@ spec.
   operator for the auth user, and is reachable from HTTP, which ADR-013
   decision 3 keeps the service-role path away from. Not chosen for now;
   open decision 2.
+- **`generate_link` with type `invite`, delivered by hand.** This text's
+  first recommendation. The link would land on an invitation page in the
+  SPA, and the link is a credential until used. Decision D6 (2026-10-11)
+  has the invitee sign in with spec 114's code instead, with no
+  invitation page, so the link has nowhere to land. Not chosen.
 - **`inviteUserByEmail` with custom SMTP.** Supabase sends the invitation.
   It needs an SMTP vendor the Local-first invariant does not list, so an
   invariant amendment by spec, and makes harrier send mail on the
@@ -721,6 +756,30 @@ spec.
 - **Soft delete.** Supabase can keep a hashed user id; its reference says a
   soft delete "is not reversible". It keeps a link to a person harrier no
   longer has a reason to hold. Not chosen; open decision 6.
+
+## Decisions taken (2026-10-11)
+
+Akin took these in chat on 2026-10-11 ("go with your recommendations").
+The text above says where each changed it.
+
+- **D2, one operator group.** `harrier operator` is one command group, and
+  each subcommand declares the database role it runs as: `erase` runs as
+  `service_role`, and `invite` opens no database connection. Spec 108's
+  `scheduler` and `schedule-report` are subcommands of the same group.
+  Spec 112's gate gains exactly two classes beyond `harrier store`:
+  operator, and spec 106's run class (Scope item 5, Changes to approved
+  specs).
+- **D4, spec 110 takes this spec's asks.** The spec 110 line under
+  "Changes to approved specs", with the assumptions under Proof / origin
+  as this text now states them, is written into spec 110's Amendment
+  (2026-10-11).
+- **D6, invitations.** An invited user signs in with the same emailed
+  one-time code as spec 114; there is no separate invitation page. The
+  invite creates a confirmed user and prints no link (Behavior, "Sign-up
+  is by invitation only"). This takes Open decision 4 in a form its
+  recommendation did not have.
+- **D9, line numbers.** Refreshed by this spec's implementing change
+  (Honest limitations).
 
 ## Open decisions for Akin
 
@@ -741,6 +800,10 @@ spec.
    by the operator by hand; no SMTP vendor. Alternative: Supabase sends it
    through a custom SMTP provider, which amends the Local-first invariant
    by spec.
+   Taken 2026-10-11 (D6): no link and no invitation page. The operator
+   creates the user, confirmed, and the invitee signs in with the same
+   emailed one-time code as spec 114 (Behavior, "Sign-up is by invitation
+   only").
 5. **Where the auth user is deleted.** Recommended: the auth admin API
    after the rows are gone, with a re-run for the race. Alternative:
    `DELETE FROM auth.users` inside `harrier_erase_owner`, atomic but
@@ -817,6 +880,14 @@ Vendors and law, each read 2026-10-10:
 - Supabase, Database backups: retention by plan, point-in-time recovery
   windows, Storage objects not included.
   https://supabase.com/docs/guides/platform/backups
+- Supabase, createUser reference: server only; the example titled
+  "Auto-confirm the user's email" sets `email_confirm: true` with no
+  password; the page does not say whether an email is sent. Read
+  2026-10-11.
+  https://supabase.com/docs/reference/javascript/auth-admin-createuser
+- Supabase auth server, `internal/api/magic_link.go`: an unconfirmed user
+  is treated as a new user and handed to `Signup`. Read 2026-10-11.
+  https://github.com/supabase/auth/blob/master/internal/api/magic_link.go
 - Supabase auth server source: admin routes under `requireAdminCredentials`
   (`internal/api/api.go`); `adminGenerateLink` creates an invited user and
   sends no email (`internal/api/mail.go`); `DisableSignup` is checked in the
@@ -844,8 +915,12 @@ Vendors and law, each read 2026-10-10:
 
 Assumptions for spec 110's staging check, each unconfirmed:
 
-- An invite through `generate_link` creates a user while sign-up is off
-  (read from source, not run).
+- The admin user creation creates a confirmed user while sign-up is off,
+  and sends that user no email (read from source and the reference, not
+  run). Added by decision D6, 2026-10-11, in place of the same assumption
+  about `generate_link`.
+- A user created that way can request and verify spec 114's emailed code
+  while sign-up is off (decision D6).
 - The operator login can `SET ROLE service_role`, and a definer function
   owned by the migrating role runs with `BYPASSRLS` (spec 105 already lists
   the second).
@@ -856,11 +931,10 @@ Assumptions for spec 110's staging check, each unconfirmed:
 - The auth admin delete succeeds once no public row references the user
   and no Storage object is owned by them, and removes the user's
   identities and sessions with it.
-- How long an invitation link stays valid, which the pages read do not
-  state.
-- `generate_link` with type `invite` refuses an address that already has
-  a confirmed user, rather than returning a link for it (not established
-  from the source read).
+- The admin user creation refuses an address that already has a user,
+  rather than returning it (not established from the source read). It
+  replaces, with decision D6, the two assumptions this list held about
+  `generate_link`'s links.
 
 ## Out of scope
 
@@ -868,7 +942,8 @@ Assumptions for spec 110's staging check, each unconfirmed:
 - Open sign-up, waitlists and self-service account creation. Spec 102's
   invite-only holds until 111 and 117 ship, and opening it is its own
   spec.
-- The SPA's invitation, password and sign-in pages: spec 114.
+- The SPA's sign-in page: spec 114. There is no invitation page and no
+  password (decision D6, 2026-10-11).
 - Changing Supabase settings from code, and the deploy check of them:
   spec 110.
 - The Storage seam itself: spec 107. This spec only states what it needs

@@ -690,3 +690,45 @@ rewrites the three upserts.
     included. Unreachable today, since the scope's track exists and the
     fields are validated first; kept as is here so both stores behave the
     same.
+
+## Amendment (2026-10-11): operator and run classes
+
+Akin took this in chat on 2026-10-11 ("go with your recommendations"),
+with specs 106, 108 and 111, which asked it of this spec. It changes "The
+CLI on a Postgres URL" and nothing else here. Where Scope item 9,
+Behavior, Honest limitations and Open decision 8 say that only `harrier
+store` runs on a Postgres URL, read this amendment.
+
+The gate gains exactly two classes beyond `harrier store`:
+
+| Class | Commands | On a Postgres URL |
+|---|---|---|
+| `harrier store` (spec 103) | `store` and its subcommands | runs |
+| operator (specs 108, 111) | `harrier operator`, one command group: `scheduler` and `schedule-report` (spec 108), `invite` and `erase` (spec 111) | runs; each subcommand runs as the database role it declares |
+| run command, owner required (spec 106) | the verbs of the run kinds spec 106 runs hosted | runs only with `HARRIER_RUN_OWNER` naming an owner; otherwise refused with spec 106's text |
+| local only | as Behavior lists, plus the commands spec 109 moves there | refused, Behavior's text |
+| everything else | the rest | refused, Behavior's text |
+
+- **One operator group.** Every operator subcommand is a subcommand of
+  `harrier operator`. No other top-level command is an operator command.
+- **Each subcommand declares its role.** The declaration sits beside the
+  parser, where the parser walk reads it, and names the database role the
+  subcommand runs as, or that it opens no database connection. Specs 108
+  and 111 state each one. A subcommand without a declaration fails the
+  walk.
+- **On SQLite,** `harrier operator` refuses before it opens anything, with
+  spec 108's text.
+- The run class's rules (no `.env` read, `HARRIER_RUN_OWNER` a UUID, never
+  beside SQLite) are spec 106's.
+
+### Acceptance criteria (amendment of 2026-10-11)
+
+- [ ] Walking the parser, every command and subcommand is in exactly one
+      class of the table above; every `harrier operator` subcommand
+      declares a database role or declares that it opens none, and a
+      subcommand added without a declaration fails the walk; a run command
+      on a Postgres URL without `HARRIER_RUN_OWNER` is refused with spec
+      106's text and opens nothing
+      (planned test_the_postgres_gate_has_operator_and_run_classes).
+      Planned test_every_command_has_a_postgres_refusal_class covers the
+      same walk.

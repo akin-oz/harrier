@@ -137,7 +137,8 @@ function.
    run's connection sets the role and the owner's claims first and reads
    them back (Behavior).
 5. **A CLI refusal class "run command, owner required"** beside spec
-   112's two (Changes to approved specs). `harrier_cli.main` runs a run
+   112's two, written into spec 112's Amendment (2026-10-11) with the
+   operator class (decision D2). `harrier_cli.main` runs a run
    command on a Postgres URL
    only when `HARRIER_RUN_OWNER` names an owner, never reads `.env` in a
    hosted run, and refuses `HARRIER_RUN_OWNER` beside a SQLite store.
@@ -158,6 +159,12 @@ function.
 11. **Changes this spec asks of approved specs** are listed under
     "Changes to approved specs". Each is written into its spec once Akin
     approves it with this one, and nothing else in those specs changes.
+12. **A run's Storage identity is this spec's** (decision D3,
+    2026-10-11). Binding a run to its owner includes the identity the run
+    uses for Storage: `start` binds the run's `files()` (spec 107) to its
+    owner before any domain code runs. Spec 107 consumes that binding and
+    does not define it. How the run gets a token Storage accepts is Open
+    decision 8.
 
 Classification: every new file sits under `services/api/src/`,
 `services/api/tests/` or `specs/`, which `config/data-classification.json`
@@ -312,6 +319,18 @@ The API's own inputs (`runs.py:302-332`) stay in the API's
 This directory is an interim. Spec 107 moves run files to Storage under
 the owner's prefix and removes it.
 
+### The run's Storage identity
+
+Decision D3 (2026-10-11) puts this here. A hosted run's `files()` is the
+store this spec's binding gives it, under its owner's prefix in
+`harrier-files`, and never spec 107's local store, although the child's
+environment carries no `HARRIER_AUTH`: `HARRIER_RUN_OWNER` is what makes a
+run hosted. Spec 107 states why a database login that sets claims is not
+enough: a Storage request needs a token Supabase accepts, with `sub` the
+run's owner. The request's token expires, and a scheduled run (spec 108)
+has none. Which token the binding gives the run is Open decision 8; until
+it is taken, the binding is specified by what it guarantees, not by how.
+
 ### Run keys built from a track id
 
 The run-outcome key `discovery:<track id>` (`academic/discovery.py:71`)
@@ -351,12 +370,15 @@ request's payload.
 
 ### The CLI on a Postgres URL
 
-Spec 112's table gets a third class (Changes to approved specs). Classes
-are by command and subcommand, as spec 112's local-only list already is
+Spec 112's gate gains this class and the operator class, written into
+spec 112 as its Amendment (2026-10-11) (decision D2). Classes are by
+command and subcommand, as spec 112's local-only list already is
 (`config import`, `profile import`).
 
 | Class | Commands | On a Postgres URL |
 |---|---|---|
+| `harrier store` (spec 103) | `store` and its subcommands | runs |
+| operator (specs 108, 111) | `harrier operator` and its subcommands | runs; each subcommand runs as the database role it declares |
 | local only (spec 112) | as spec 112 lists | refused, spec 112's text |
 | run command, owner required (this spec) | the verbs of the kinds that run hosted: `discover`, `demo-run`, `digest`, `config check-feeds`, `reconsider`, `events backfill`, `evaluate-prospects` | runs only with `HARRIER_RUN_OWNER` set; otherwise refused |
 | everything else (spec 112) | the rest | refused, spec 112's text |
@@ -406,9 +428,11 @@ logs are not redacted.
 `RunManager._append` already scrubs credential-shaped text
 (`services/api/tests/test_api_exposure.py::test_every_event_is_scrubbed_at_the_choke_point`).
 Hosted, it also replaces every exact occurrence of the run's secret field
-values (the kinds table's "Secret fields") with `REDACTED`, in log lines
-and structured events alike. `chat_id`, `provider` and `model` are not
-secret and are not replaced.
+values (spec 116's kinds table, "Secret fields") with `REDACTED`, in log
+lines, structured events and the run's summary alike. The Telegram
+`chat_id` is secret everywhere (decision D7, 2026-10-11) and is replaced
+like `bot_token`. `provider` and `model` are not secret and are not
+replaced.
 
 ### One login role for requests, another for runs
 
@@ -452,8 +476,9 @@ The CLI bullet becomes:
 >   become `harrier_tenant`, and an environment built from an allowlist,
 >   and every transaction it opens runs as that owner. On a Postgres
 >   store, a run command without an owner is refused, and every other
->   command is refused as spec 112 states. Operator commands run as the
->   service role and are named as such.
+>   command is refused as spec 112 states. Operator commands are
+>   subcommands of one group, `harrier operator`, and each declares the
+>   database role it runs as (specs 108 and 111).
 >
 > **Amended (spec 106).** This said there is no tenant CLI, while every
 > run is a CLI process. A run is bound to its owner by its parent, the API.
@@ -535,12 +560,12 @@ Decision 8's note naming the key's location is spec 116's.
       own success time (planned
       test_a_run_outcome_key_is_per_owner_without_naming_one).
 - [ ] Every command and subcommand on a Postgres URL is in exactly one of
-      the three classes; the run class refuses without
+      the classes in the table under Behavior (spec 112's Amendment of
+      2026-10-11); the run class refuses without
       `HARRIER_RUN_OWNER` with its text; `HARRIER_RUN_OWNER` that is not a
       UUID, or beside SQLite, is refused (planned
       test_a_run_command_needs_an_owner_on_postgres, and spec 112's
-      planned test_every_command_has_a_postgres_refusal_class extended to
-      the third class).
+      planned test_the_postgres_gate_has_operator_and_run_classes).
 - [ ] In a hosted run, `codex-cli` and `claude-cli` are refused, and `auto`
       never selects a CLI provider even with both binaries present
       (planned test_hosted_runs_offer_only_the_api_providers).
@@ -550,6 +575,14 @@ Decision 8's note naming the key's location is spec 116's.
 - [ ] A child that prints its owner's API key in a log line and in a
       structured event produces events holding `REDACTED` and not the key
       (planned test_a_credential_value_never_reaches_the_event_stream).
+- [ ] A child that prints its owner's Telegram chat id in a log line, a
+      structured event and its summary produces events and a summary
+      holding `REDACTED` and not the chat id (decision D7; planned
+      test_a_telegram_chat_id_never_reaches_the_event_stream).
+- [ ] In a hosted run, `files()` is bound to the run's owner before any
+      domain code runs, writes only under that owner's prefix, and never
+      returns spec 107's local store (decision D3; planned
+      test_a_hosted_run_binds_its_owners_storage).
 - [ ] Hosted start refuses a missing or non-Postgres
       `HARRIER_RUN_DATABASE_URL`, one whose role fails a login-role check,
       and one naming the API's own role (planned
@@ -604,6 +637,15 @@ Documents and gates:
   manager's cancel is the only stop.
 - **The run's own log file** under the owner's directory is identity
   redacted and scrubbed by pattern, not by the owner's exact secret values.
+- **A chat id is a number.** Replacing its exact occurrences also
+  replaces an unrelated number in an event that contains the same digits.
+  The scrub prefers a redacted number to a leaked chat id (decision D7).
+- **The run's Storage token is not chosen yet** (Open decision 8). Until
+  it is, a hosted run kind that writes files through spec 107's seam,
+  discovery's seen state included, cannot run once spec 107 binds hosted
+  `files()`.
+- The line numbers cited here are refreshed by the change that implements
+  this spec, not before (decision D9, 2026-10-11).
 
 ## Migration
 
@@ -635,19 +677,22 @@ spec.
   classes gain a third, "run command, owner required" (Behavior, "The CLI
   on a Postgres URL"), and its
   planned test_every_command_has_a_postgres_refusal_class covers the third
-  class.
+  class. Written into spec 112 as its Amendment (2026-10-11), with the
+  operator class of specs 108 and 111 (decision D2), and its planned
+  test_the_postgres_gate_has_operator_and_run_classes.
 - **Spec 107:** run files move to Storage under the owner's prefix, and the
   owner run directory (Behavior, "The owner's run directory") goes. Spec
   107's refined text of 2026-10-10 leaves a run's Storage identity to this
-  spec. A hosted run's environment carries no `HARRIER_AUTH` (Behavior,
-  "The child's environment"), so until one of the two settles it, a run's
-  `files()` is spec 107's local store under the owner run directory.
+  spec. Decision D3 (2026-10-11) settles it: the identity is this spec's
+  (Scope item 12, Behavior, "The run's Storage identity"), and spec 107
+  consumes the binding.
 - **Spec 110:** one API machine with `auto_stop_machines = "off"` and a
   machine count check at deploy; the `harrier_run` login role, granted
   `harrier_tenant`; `HARRIER_RUN_DATABASE_URL` as a Fly secret (Migration).
-  Spec 110's refined text of 2026-10-10 does not carry them.
-- **Spec 114:** the SPA's credentials page for spec 116's routes. Spec
-  114's refined text of 2026-10-10 does not carry it.
+  Written into spec 110's Amendment (2026-10-11) (decision D4), with the
+  staging assumptions under Honest limitations.
+- **Spec 114:** the SPA's credentials page for spec 116's routes. Written
+  into spec 114's Amendment (2026-10-11) (decision D5).
 
 ## Options weighed
 
@@ -690,6 +735,30 @@ spec.
   `job_runs` key is already per owner on Postgres, and the string would
   make domain SQL name a tenant. Not chosen.
 
+## Decisions taken (2026-10-11)
+
+Akin took these in chat on 2026-10-11 ("go with your recommendations").
+The text above says where each changed it.
+
+- **D2, one operator group.** `harrier operator` is one command group, and
+  each subcommand declares the database role it runs as. Spec 112's gate
+  gains exactly two classes beyond `harrier store`: operator, and this
+  spec's "run command, owner required". The CLI table, Scope item 5 and
+  the ADR text under Behavior say so.
+- **D3, a run's Storage identity is this spec's.** Binding a run to its
+  owner includes the identity the run uses for Storage; spec 107 consumes
+  the binding and does not define it (Scope item 12, Behavior, "The run's
+  Storage identity", Open decision 8).
+- **D4, spec 110 takes this spec's asks.** The spec 110 line under
+  "Changes to approved specs" and the staging assumptions under Honest
+  limitations are written into spec 110's Amendment (2026-10-11).
+- **D5, the credentials page.** Spec 114 gains it by amendment.
+- **D7, the Telegram chat id is secret everywhere.** This spec scrubs it
+  from run events and summaries (Behavior, "The owner's values never reach
+  the stream").
+- **D9, line numbers.** Refreshed by this spec's implementing change
+  (Honest limitations).
+
 ## Open decisions for Akin
 
 1. **Split.** Applied in this text: the credential store is spec 116,
@@ -714,6 +783,14 @@ spec.
    cannot claim another owner) to a later spec before open sign-up.
    Alternative: block this spec on it, which keeps every hosted run kind at
    501 until then.
+8. **The token a run uses for Storage.** Added 2026-10-11, when decision
+   D3 placed a run's Storage identity in this spec. Spec 107 names the two
+   ways it found: forward and refresh the owner's own session, which a
+   scheduled run (spec 108) does not have; or a signing key harrier holds,
+   imported into the project, that mints short-lived tokens for the run's
+   owner, which gives the holder of that key the power to act as any owner
+   in Storage. No recommendation is made in this text. Until this is
+   taken, Behavior, "The run's Storage identity" states the guarantee only.
 
 ## Proof / origin
 
@@ -779,7 +856,6 @@ spec.
 - Scheduled runs: spec 108 starts them through this spec's run start.
 - The Fly app, machine count, auto-stop setting, secrets and the
   `harrier_run` role's creation: spec 110.
-- The SPA's credentials page: asked of spec 114 (Changes to approved
-  specs).
+- The SPA's credentials page: spec 114's Amendment (2026-10-11).
 - Containing a compromised run (Open decision 7).
 - Rate limits and quotas per owner.
