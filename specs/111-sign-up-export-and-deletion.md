@@ -962,3 +962,216 @@ Assumptions for spec 110's staging check, each unconfirmed:
 - Erasing data held in an owner's own third-party accounts.
 - Local deletion: the local product has one owner, who deletes the data
   directory.
+
+## Amendment (2026-10-11): the erase covers `job_eligibility`
+
+This section is proposed. It is not approved until Akin approves it, and
+nothing below is built. Line numbers are from `main` at `f26abe0`.
+
+### Problem
+
+Spec 122 added an owned table after this spec was approved:
+`job_eligibility`, migration 15 (`POSTGRES_JOB_ELIGIBILITY`,
+`services/api/src/harrier/tracker/schema.py:1262-1297`). It holds one
+owner's eligibility assessments of their jobs, with posting excerpts as
+evidence. Three facts about it meet this spec's erase:
+
+- It is in `OWNED_TABLES`, first: `("job_eligibility",
+  *MIGRATION_10_OWNED_TABLES)` (`schema.py:700`). Its `owner_id`
+  references `auth.users (id)` with no `ON DELETE` action (`:1269`), like
+  every other owned table.
+- Its rows reference a job of the same owner: `FOREIGN KEY (owner_id,
+  job_id) REFERENCES jobs (owner_id, id)` (`:1270`).
+- It is append-only, as `job_events` is. Row triggers refuse `UPDATE` and
+  `DELETE` and a statement trigger refuses `TRUNCATE`, each through
+  `harrier_refuse('job_eligibility is append-only')` (`:1276-1285`).
+
+Behavior, "`harrier_erase_owner(target uuid)`", step 4, names the seven
+tables migration 10 owned and deletes in that order. Built as it
+stands, the function never deletes an assessment. Discovery and capture
+write one with every kept industry row (spec 122, Scope), so any owner
+with such a row since spec 122 has some. For that owner the function's
+`DELETE FROM jobs` fails on `job_eligibility`'s foreign key, the
+transaction rolls back, and the command exits 1 at its step 3 on every
+run. Nothing is erased, and a re-run cannot help.
+
+The planned test_erase_removes_one_owner_from_every_owned_table already
+fills every table in `OWNED_TABLES`, and `fill` in
+`services/api/tests/test_owner_policy.py` writes a `job_eligibility` row
+for each owner, so that test would fail. This amendment makes the text
+say what the test already demands.
+
+Export is not affected. Spec 117, and this spec's "Export (moved to spec
+117)", both say "one JSON Lines file per table in `OWNED_TABLES`", which
+now includes `job_eligibility`.
+
+### Behavior after the change
+
+**The function deletes eight tables, in `OWNED_TABLES` order.**
+`harrier_erase_owner`'s step 4 deletes `WHERE owner_id = target` from
+`job_eligibility`, `job_events`, `jobs`, `contacts`, `profile_documents`,
+`user_config`, `job_runs`, `tracks`, in that order. `job_eligibility`
+goes first because it references `jobs`. The erasure migration writes
+the list literally, as before. It returns one row per table, so eight
+rows, the first for `job_eligibility`.
+
+**`job_eligibility` stands aside exactly as `job_events` does.** The
+replaced `harrier_refuse()` (Behavior, "How `harrier_refuse()` stands
+aside") is unchanged. It decides by the operation, the row's own
+`owner_id`, the setting and the role, not by the table. So a row-level
+`DELETE` of a `job_eligibility` row passes only when
+`harrier.erase_owner` names that row's owner and the current role owns
+the table. An `UPDATE` of an assessment, and `TRUNCATE job_eligibility`,
+are refused as today, with `job_eligibility is append-only`.
+
+**No session but the erase holds `DELETE` on it.** `harrier_tenant`
+holds `SELECT`, and `INSERT` on every column but `id`
+(`schema.py:1295-1296`). `service_role` holds nothing. As for
+`job_events`, the privilege check refuses a tenant's delete before the
+trigger fires.
+
+**The table owner is the definer.** The role check in `harrier_refuse()`
+compares `current_user` with the table's owner. `job_eligibility` is the
+first owned table created after migration 10. A store migrated by one
+role gives it the same owner as the other seven, and the erase passes. A
+store whose migration 15 ran as a different role than the erasure
+migration would refuse the erase on `job_eligibility` with `job_eligibility
+is append-only`, and the whole erase rolls back. The erasure migration
+checks this before it creates the function (Failure modes).
+
+**The output names the new table.** `harrier operator erase` prints a
+`job_eligibility` line with its count, before the `job_events` line.
+Counts are not personal data, as before.
+
+**Concurrent writes.** Behavior, "Concurrent writes by the owner being
+erased", holds for assessments as for events. An assessment inserted for
+one of the owner's jobs after the erase deleted their assessments, but
+before it deleted that job, makes the job's delete fail its foreign key.
+The erase transaction rolls back whole, the command exits 1 at step 3,
+and a re-run erases both.
+
+### Failure modes
+
+- **An assessment written during the erase.** Exit 1 at step 3, nothing
+  deleted, a re-run completes (Behavior after the change).
+- **The erasure migration on a store whose `job_eligibility` has another
+  owner.** The migration refuses, before creating the function, with
+  `the erasure migration found owned tables with different owners; every
+  owned table must have one owner`, naming the tables and not the roles.
+  Without this check, the first erase would fail on `job_eligibility`
+  and report it as append-only, which points at the wrong cause.
+- **An update of an assessment during an erase.** Refused as today.
+- **`TRUNCATE job_eligibility` during an erase.** Refused as today; the
+  statement trigger never stands aside.
+- **A later owned table.** Unchanged from Failure modes: it replaces the
+  function in its own migration, and the planned test that fills every
+  table in `OWNED_TABLES` fails until it does.
+
+### Acceptance criteria
+
+These add to the criteria under "Migration and database". Where one
+names an existing planned test, that test gains the case.
+
+- [ ] The erasure migration's `harrier_erase_owner` lists the eight
+      tables of `OWNED_TABLES` in its order, `job_eligibility` first; a
+      test compares the list in the migration's text with `OWNED_TABLES`
+      (planned test_the_erase_lists_every_owned_table_in_order).
+- [ ] With two owners whose rows fill every table in `OWNED_TABLES`,
+      `harrier_erase_owner(A)` returns eight rows, the first
+      `job_eligibility` with a count of at least one, and leaves no
+      `job_eligibility` row of A and every one of B
+      (planned test_erase_removes_one_owner_from_every_owned_table).
+- [ ] As the table owner with `harrier.erase_owner` set to A: deleting
+      A's assessment passes; deleting B's is refused with
+      `job_eligibility is append-only`; updating A's is refused; and
+      `TRUNCATE job_eligibility` is refused
+      (planned test_the_erase_setting_lets_through_only_its_owners_deletes).
+- [ ] Without the setting, the table owner's delete of a `job_eligibility`
+      row is refused with `job_eligibility is append-only`
+      (planned test_refusals_hold_without_the_erase_setting), and
+      `services/api/tests/test_owner_policy.py::test_truncate_cannot_empty_events_or_tracks`
+      and `services/api/tests/test_eligibility.py::test_eligibility_history_is_append_only`
+      pass unchanged.
+- [ ] As `harrier_tenant` with the setting set to its own id, a delete on
+      `job_eligibility` is refused; with `DELETE` granted to it inside the
+      test, still refused by the trigger
+      (planned test_the_erase_setting_alone_lets_no_tenant_delete).
+- [ ] An assessment inserted for one of A's jobs between the erase's
+      `job_eligibility` delete and its `jobs` delete (simulated with a
+      trigger in the test) leaves every one of A's rows in place
+      (planned test_a_failed_erase_deletes_nothing).
+- [ ] The erasure migration on a store where `job_eligibility` has a
+      different owner from the other owned tables refuses with the text
+      under Failure modes and creates no function
+      (planned test_the_erasure_migration_refuses_mixed_table_owners).
+- [ ] `harrier operator erase` prints a `job_eligibility` line before the
+      `job_events` line (planned test_erase_runs_its_steps_in_order).
+
+### Changes to approved specs
+
+Written into each spec once Akin approves this amendment, as the list
+under "Changes to approved specs" above.
+
+- **Spec 122:** its Storage section says `job_eligibility` is
+  "Append-only by trigger on both dialects, as `job_events` is". It gains:
+  on Postgres, one owner's erasure removes that owner's rows, as it does
+  for `job_events` (spec 111). An update is never allowed, and
+  `TRUNCATE` is refused.
+- **ADR-013:** Scope item 10's "Amended (spec 111)" note names
+  `job_eligibility` with `job_events` and `tracks` as the tables that
+  yield to one owner's erasure and to nothing else.
+- **Spec 117:** no change. Its "one JSON Lines file per table in
+  `OWNED_TABLES`" already covers `job_eligibility`, and its refinement
+  keeps that wording.
+
+### Out of scope
+
+- Export: spec 117, unchanged (Problem).
+- SQLite. `job_eligibility` stays append-only on the local store, and
+  local deletion stays deleting the data directory.
+- The erase's mechanism. `harrier_refuse()`, the setting, the role check,
+  the grants and the command's steps are as Behavior states them.
+- Spec 116's `credentials` and spec 108's `schedule_state`. Each replaces
+  the function in its own migration, as Behavior already says.
+- Folding this section into Behavior step 4 and Scope item 10. The
+  implementing change does that. Step 4 already carries PR #253's dated
+  note that `OWNED_TABLES` now puts `job_eligibility` first.
+
+### Migration
+
+None beyond the erasure migration. The table list it writes now has
+eight entries. A hosted store reaches it through `harrier store migrate`,
+as before.
+
+### Limitations
+
+- **The owner check is new.** It is the only behavior here that the
+  stated design did not already imply. It assumes every migration of a
+  store runs as one role. A store migrated by two roles cannot gain the
+  erase until its tables are reassigned to one owner by hand.
+- **Spec 079's rule now yields twice.** `job_events` and
+  `job_eligibility` are both append-only by spec 079's reasoning, and
+  both yield to the erase. Nothing else changes about either.
+
+### Open decisions for Akin
+
+1. **The owner check in the erasure migration.** Recommended: refuse the
+   migration when the owned tables have more than one owner. Alternative:
+   no check, and a mixed-owner store fails at its first erase with the
+   append-only message.
+
+### Proof / origin
+
+- `specs/122-each-posting-says-whether-it-can-hire-from-turkiye.md`:
+  Scope (migration 15, `OWNED_TABLES`), Storage ("Append-only by trigger
+  on both dialects"), and Amendment item 2 (the frozen lists).
+- `services/api/src/harrier/tracker/schema.py`: `OWNED_TABLES` at `:700`,
+  `POSTGRES_JOB_ELIGIBILITY` at `:1262-1297`, the `owner_id` and job
+  references at `:1269-1270`, the refusal triggers at `:1276-1285`, the
+  tenant's grants at `:1295-1296`.
+- `services/api/tests/test_owner_policy.py`: `REQUIRED`, `fill` and
+  `JOB_HISTORY_TABLES`, which already write and treat `job_eligibility`
+  as an owned history table; `test_truncate_cannot_empty_events_or_tracks`.
+- `specs/117-an-owner-exports-everything-they-own.md`: Acceptance
+  criteria ("one JSON Lines file per table in `OWNED_TABLES`").
+- PR #253's out-of-scope note, which found the gap.
