@@ -26,6 +26,7 @@ Two refusals matter more than the feature:
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -87,6 +88,13 @@ def human_rejected_keys(conn: Connection, scope: Scope) -> set[str]:
     return protected
 
 
+def _damaged_labels(board: str) -> set[str]:
+    """The forms a board takes when written to notes and read back: cut at
+    the first `;` (industry rows), or with `;`, `|` and `=` turned to spaces
+    (academic rows). A board with no separator comes back as itself."""
+    return {board.split(";")[0].strip(), normalize(re.sub(r"[;|=]", " ", board))}
+
+
 def human_rejected_seen_keys(conn: Connection, scope: Scope, source: str) -> set[str]:
     """The seen keys discovery recorded for this source's rejected rows.
 
@@ -96,13 +104,16 @@ def human_rejected_seen_keys(conn: Connection, scope: Scope, source: str) -> set
     what the hash was built from: its source, its `source_label`
     (`source:board`), and its external id or url.
 
-    The label is read back from notes, which end a value at `;`, so a board
-    taken from a company name such as "Smith; Jones LLP" comes back cut
-    short. The company column is stored whole, so when the label is exactly
-    the company's board cut at its first `;`, the company's board is tried
-    as well. Only then: an intact label names the board, and a company board
-    beside it would protect a different posting. An external id containing
-    `;` is cut the same way and cannot be recovered from the row.
+    A label can come back damaged when the board was taken from a company
+    name with a note separator in it. Notes end a value at `;`, so the
+    industry row's "Smith; Jones LLP" reads back as "smith"; the academic row
+    turns `;`, `|` and `=` into spaces before writing (`_clean_note` in
+    harrier.screening.pipeline). The company column is stored whole, so when
+    the label is one of those damaged forms of the company's board, the
+    company's board is tried as well. Only then: an intact label names the
+    board, and a company board beside it would protect a different posting.
+    An external id is damaged the same way and cannot be recovered from the
+    row.
     """
     prefix = f"{source}:"
     keys: set[str] = set()
@@ -115,7 +126,7 @@ def human_rejected_seen_keys(conn: Connection, scope: Scope, source: str) -> set
         company_board = normalize(job.get("company", "") or source)
         if not label_board:
             boards = {company_board}
-        elif ";" in company_board and company_board.split(";")[0].strip() == label_board:
+        elif label_board in _damaged_labels(company_board):
             boards = {label_board, company_board}
         else:
             boards = {label_board}

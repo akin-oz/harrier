@@ -20,8 +20,8 @@ from harrier.connection import Connection
 from harrier.db import connect
 from harrier.screening import rules
 from harrier.screening.config import load_candidate_config
-from harrier.screening.normalized import NormalizedJob, make_normalized_job
-from harrier.screening.pipeline import build_tracker_row
+from harrier.screening.normalized import NormalizedJob, make_normalized_job, normalize
+from harrier.screening.pipeline import build_academic_row, build_tracker_row
 from harrier.screening.policy import DECIDING_PATHS, UNKNOWN_POLICY, policy_version
 from harrier.screening.reconsider import human_rejected_keys, reconsider_source
 from harrier.screening.seen import (
@@ -475,6 +475,36 @@ def test_a_board_cut_short_in_notes_is_still_matched(db: Connection, cfg: dict[s
     save_seen("apify_linkedin", {job["job_key"]: decision(policy="old-policy")})
 
     report = reconsider_source(db, default_scope(db), "apify_linkedin", cfg, dry_run=False)
+
+    assert report.protected == 1
+    assert report.changed == 0
+
+
+@pytest.mark.parametrize("organisation", ["Smith; Jones University", "A|B University", "A=B Univ"])
+def test_a_board_rewritten_by_the_academic_row_is_still_matched(
+    db: Connection, cfg: dict[str, Any], organisation: str
+) -> None:
+    """The academic row writes its label with separators turned to spaces
+    rather than cut short, so `Smith; Jones University` is stored as
+    `smith  jones university`. The key was hashed from the whole
+    organisation, which the company column keeps."""
+    job = make_normalized_job(
+        source="apify_academic",
+        company=organisation,
+        title="Postdoctoral Researcher",
+        location="Amsterdam, Netherlands",
+        url="https://positions.example.org/Job-7",
+        external_id="7",
+        board_key=normalize(organisation),
+    )
+    row = build_academic_row(job, area_hit=None, position_hit=None, flags=[])
+    job_id = add_job(db, row, scope=default_scope(db))
+    set_status(db, default_scope(db), job_id, "rejected")
+    save_seen("apify_academic", {job["job_key"]: decision(policy="old-policy")})
+
+    report = reconsider_source(
+        db, default_scope(db), "apify_academic", None, dry_run=False, policy="current"
+    )
 
     assert report.protected == 1
     assert report.changed == 0
