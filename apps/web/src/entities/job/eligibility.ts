@@ -48,10 +48,6 @@ export const ROUTE_ORDER: readonly EligibilityRoute[] = [
   "relocation",
 ];
 
-export function isVerdict(value: string): value is EligibilityVerdict {
-  return (VERDICT_ORDER as readonly string[]).includes(value);
-}
-
 // "Türkiye possible · contractor or B2B": the verdict, then its routes.
 export function eligibilitySummary(eligibility: Pick<Eligibility, "verdict" | "routes">): string {
   const routes = eligibility.routes.map((route) => ROUTE_LABEL[route]);

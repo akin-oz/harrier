@@ -1440,3 +1440,38 @@ test("another track shows no eligibility", async () => {
   await user.click(within(row).getByRole("button", { name: "History" }));
   expect(calls.some((call) => call.url.includes("eligibility"))).toBe(false);
 });
+
+test("the verdict counts describe the whole tracker in every view", async () => {
+  // The queue holds one row; the tracker holds three. The counts are the
+  // tracker's, as the status chips' are (post-review of PR #258).
+  stubApi({
+    jobs: [
+      assessed(job(1, "Northwind", "90"), "excluded"),
+      assessed(job(2, "Contoso", "80"), "possible"),
+      assessed(job(3, "Fabrikam", "70"), "possible"),
+    ],
+    queue: [assessed(job(2, "Contoso", "80"), "possible")],
+  });
+  const user = userEvent.setup();
+  renderPage();
+  await rowFor("Northwind");
+  await user.click(screen.getByRole("button", { name: "Next up" }));
+  await rowFor("Contoso");
+  const group = screen.getByRole("group", { name: "Filter by Türkiye eligibility" });
+  expect(within(group).getByRole("button", { name: /Türkiye possible/ }).textContent).toBe(
+    "Türkiye possible 2",
+  );
+  expect(within(group).getByRole("button", { name: /Türkiye excluded/ }).textContent).toBe(
+    "Türkiye excluded 1",
+  );
+});
+
+test("a verdict chip alone that matches nothing says the filter is too narrow", async () => {
+  stubApi({ jobs: [assessed(job(1, "Northwind", "90"), "possible")] });
+  const user = userEvent.setup();
+  renderPage();
+  await rowFor("Northwind");
+  const group = screen.getByRole("group", { name: "Filter by Türkiye eligibility" });
+  await user.click(within(group).getByRole("button", { name: /Türkiye excluded/ }));
+  expect(screen.getByText("No jobs match this filter.")).toBeTruthy();
+});

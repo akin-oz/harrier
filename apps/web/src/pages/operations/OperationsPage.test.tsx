@@ -175,7 +175,7 @@ function lastSource(): FakeEventSource {
   return source;
 }
 
-function renderPage(): void {
+function renderPage(): QueryClient {
   FakeEventSource.all = [];
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
@@ -185,6 +185,7 @@ function renderPage(): void {
       />
     </QueryClientProvider>,
   );
+  return queryClient;
 }
 
 function reassessReport(apply: boolean, overrides: Record<string, unknown> = {}) {
@@ -714,13 +715,18 @@ test("reassess reports before it writes", async () => {
 test("reassess apply shows what was written", async () => {
   const calls = stubApi();
   const user = userEvent.setup();
-  renderPage();
+  const invalidate = vi.spyOn(renderPage(), "invalidateQueries");
   await user.click(await screen.findByRole("button", { name: "Report what would be assessed" }));
   await user.click(await screen.findByRole("button", { name: "Assess what the report found" }));
   await waitFor(() => {
     expect(posted(calls, "/ops/eligibility-reassess")).toHaveLength(2);
   });
   expect(posted(calls, "/ops/eligibility-reassess")[1]?.body).toEqual({ apply: true });
+  // A write refreshes the default track's rows; a report does not.
+  await waitFor(() => {
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["", "jobs"] });
+  });
+  expect(invalidate).toHaveBeenCalledTimes(1);
   const report = await screen.findByRole("status", { name: "Eligibility report" });
   await waitFor(() => {
     expect(report.textContent).toContain("Written. Counts are from this run.");

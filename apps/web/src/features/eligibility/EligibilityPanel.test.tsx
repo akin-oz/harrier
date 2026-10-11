@@ -155,6 +155,9 @@ test("the panel reads history on open", async () => {
   const user = userEvent.setup();
   renderPanel(job());
 
+  // Long enough for a fetch to land, so "closed, it fetches nothing" is
+  // proven rather than raced (post-review of PR #258).
+  await new Promise((resolve) => setTimeout(resolve, 50));
   expect(reads(calls)).toHaveLength(0);
   await user.click(screen.getByRole("button", { name: "Eligibility" }));
   const list = await screen.findByRole("list", { name: "Eligibility history, newest first" });
@@ -199,7 +202,14 @@ test("the panel links only http evidence", async () => {
 });
 
 test("the panel explains a disagreement", async () => {
-  stubApi({ history: [entry(), entry({ origin: "candidate", verdict: "confirmed" })] });
+  // Newest first: the rules' latest is the first rule entry, not an older one.
+  stubApi({
+    history: [
+      entry(),
+      entry({ origin: "candidate", verdict: "confirmed" }),
+      entry({ verdict: "possible", routes: ["eor"], at: "2026-10-01T09:00:00Z" }),
+    ],
+  });
   const user = userEvent.setup();
   renderPanel(job({ verdict: "confirmed", origin: "candidate", disagrees: true }));
   await user.click(screen.getByRole("button", { name: "Eligibility" }));
@@ -223,7 +233,7 @@ test("the form sends what was entered and refreshes", async () => {
   await user.click(within(form).getByRole("radio", { name: "Türkiye possible" }));
   await user.click(within(form).getByRole("checkbox", { name: "employer of record" }));
   await user.click(within(form).getByRole("checkbox", { name: "contractor or B2B" }));
-  await user.type(within(form).getByLabelText("Evidence URL"), "https://careers.example.com/x");
+  await user.type(within(form).getByLabelText("Evidence URL"), "  https://careers.example.com/x  ");
   await user.type(within(form).getByLabelText("Excerpt"), "We hire contractors anywhere.");
   await user.click(submit);
 
@@ -242,8 +252,17 @@ test("the form sends what was entered and refreshes", async () => {
   await waitFor(() => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["", "jobs"] });
   });
-  // Cleared for the next verdict.
-  expect(within(form).getByLabelText<HTMLTextAreaElement>("Excerpt").value).toBe("");
+  // Cleared for the next verdict: every field, not only the excerpt.
+  await waitFor(() => {
+    expect(within(form).getByLabelText<HTMLTextAreaElement>("Excerpt").value).toBe("");
+  });
+  expect(within(form).getByLabelText<HTMLInputElement>("Evidence URL").value).toBe("");
+  for (const radio of within(form).getAllByRole<HTMLInputElement>("radio")) {
+    expect(radio.checked).toBe(false);
+  }
+  for (const box of within(form).getAllByRole<HTMLInputElement>("checkbox")) {
+    expect(box.checked).toBe(false);
+  }
 });
 
 test("the form sends a checked date when one is set", async () => {
@@ -328,4 +347,18 @@ test("the form is absent when the track is read only", async () => {
   renderPanel(job(), { ...INDUSTRY_TRACK, archived: true });
   await user.click(screen.getByRole("button", { name: "Eligibility" }));
   expect(screen.queryByRole("form", { name: "Record your verdict" })).toBeNull();
+});
+
+test("the excerpt keeps at most 300 characters and counts what is left", async () => {
+  stubApi({});
+  const user = userEvent.setup();
+  renderPanel(job());
+  await user.click(screen.getByRole("button", { name: "Eligibility" }));
+  const form = screen.getByRole("form", { name: "Record your verdict" });
+  const excerpt = within(form).getByLabelText<HTMLTextAreaElement>("Excerpt");
+  expect(within(form).getByText("300 characters left")).toBeTruthy();
+  await user.click(excerpt);
+  await user.paste("a".repeat(301));
+  expect(excerpt.value).toHaveLength(300);
+  expect(within(form).getByText("0 characters left")).toBeTruthy();
 });

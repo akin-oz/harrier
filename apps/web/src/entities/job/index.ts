@@ -8,7 +8,6 @@ export {
   VERDICT_LABEL,
   VERDICT_ORDER,
   eligibilitySummary,
-  isVerdict,
   isWebLink,
 } from "./eligibility";
 export type {

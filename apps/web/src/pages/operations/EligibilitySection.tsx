@@ -2,7 +2,7 @@ import type { components } from "@harrier/contract";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { VERDICT_LABEL, VERDICT_ORDER, isVerdict } from "../../entities/job";
+import { VERDICT_LABEL, VERDICT_ORDER } from "../../entities/job";
 import { api } from "../../shared/api/client";
 import { trackKey } from "../../shared/track";
 import { TOKEN_REFUSED, refusalMessage } from "./RunOutput";
@@ -84,9 +84,9 @@ export function EligibilitySection() {
 }
 
 function ReportView({ report }: { report: Report }) {
-  // `by_verdict` is a free string map in the contract; only the four
-  // verdicts are shown, in their order (spec 123).
-  const counts = new Map(Object.entries(report.by_verdict).filter(([key]) => isVerdict(key)));
+  // `by_verdict` is a free string map in the contract. The list is the four
+  // verdicts in their order, so a key outside them is never shown (spec 123).
+  const counts = new Map(Object.entries(report.by_verdict));
   return (
     <div className="ops-outcome" role="status" aria-label="Eligibility report">
       <p>

@@ -7,7 +7,6 @@ import {
   VERDICT_LABEL,
   VERDICT_ORDER,
   eligibilitySummary,
-  isVerdict,
   isWebLink,
 } from "./eligibility";
 import type { EligibilityOrigin, EligibilityRoute, EligibilityVerdict } from "./eligibility";
@@ -39,6 +38,7 @@ test("only http and https are links", () => {
   expect(isWebLink("http://jobs.example.com/acme/1")).toBe(true);
   expect(isWebLink("javascript:alert(1)")).toBe(false);
   expect(isWebLink("ftp://jobs.example.com")).toBe(false);
-  expect(isVerdict("possible")).toBe(true);
-  expect(isVerdict("maybe")).toBe(false);
+  // Anchored: a scheme that only mentions http later is not a link.
+  expect(isWebLink("javascript:alert('http://x')")).toBe(false);
+  expect(isWebLink(" https://jobs.example.com")).toBe(false);
 });
