@@ -1,8 +1,8 @@
 ---
 spec: 129
 title: The outreach page reads a refusal through the contract's types
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M8
 depends: [048, 082, 094, 125]
 ---
@@ -185,16 +185,14 @@ Each is recorded here for its own change.
   check `error` and not `data`. No route sends an empty refusal today.
 - **The 403's body**, as spec 082 left it.
 
-## Open decisions for Akin
+## Decided in review (2026-10-11)
 
-1. **A local reader or a shared one.** Proposed: local, in
-   `OutreachPage.tsx`, as spec 082 did for the tracker page. Sharing it
-   means changing `JobActions.tsx` and the tracker page's type-level test,
-   which is a second page's change. The alternative is one reader in
-   `shared/api` now, used by both pages.
-2. **The name.** Proposed: keep `refused`, exported. The alternative is to
-   rename it to `refusalMessage` to match the tracker page, which is a
-   rename in a change that is otherwise only types.
+Akin answered both in chat, each as proposed.
+
+1. **A local reader.** `refused` stays in `OutreachPage.tsx`, as spec 082
+   kept the tracker page's in `JobActions.tsx`. One shared reader is its
+   own change, because it touches the tracker page.
+2. **The name stays `refused`,** exported. No rename.
 
 ## Data and privacy
 
