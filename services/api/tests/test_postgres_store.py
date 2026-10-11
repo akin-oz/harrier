@@ -424,8 +424,21 @@ def test_a_store_target_never_shows_its_password() -> None:
         # A raw `/` in the password ends the authority there, so the rest of
         # the password is read as the port, and the parse error quotes it.
         "postgresql://harrier:{secret}/x@127.0.0.1/harrier",
+        # A raw `@` in the password: libpq splits at the first `@`, so the
+        # rest of the password becomes part of the host it fails to resolve
+        # and quotes (review of PR #225).
+        "postgresql://harrier:x@{secret}@127.0.0.1:1/harrier",
+        # The same split from an `@` in the query when no path comes first.
+        "postgresql://127.0.0.1:1?password=x@{secret}",
     ],
-    ids=["a-bad-port", "a-bad-host", "a-scheme-in-another-case", "a-slash-in-the-password"],
+    ids=[
+        "a-bad-port",
+        "a-bad-host",
+        "a-scheme-in-another-case",
+        "a-slash-in-the-password",
+        "an-at-sign-in-the-password",
+        "an-at-sign-in-a-query-without-a-path",
+    ],
 )
 def test_a_malformed_url_is_refused_like_any_other(template: str) -> None:
     """A bad port or host raised a bare ValueError traceback, and a scheme in
@@ -446,18 +459,62 @@ def test_a_malformed_url_is_refused_like_any_other(template: str) -> None:
         assert secret not in text
 
 
+@pytest.mark.parametrize(
+    "template",
+    [
+        "postgresql://harrier:x@{secret}@127.0.0.1:1/harrier",
+        "postgresql://127.0.0.1:1?password=x@{secret}",
+    ],
+    ids=["an-at-sign-in-the-password", "an-at-sign-in-a-query-without-a-path"],
+)
+def test_an_at_sign_libpq_reads_as_the_host_never_reaches_the_cli(
+    template: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The driver quotes the host it cannot resolve, and with a second `@` in
+    the authority that host holds the tail of the password, which the scrub
+    never knew as a password (review of PR #225). The CLI now refuses the
+    URL before it connects. No server is needed: the host never resolves."""
+    import psycopg
+
+    from harrier_cli.main import main
+
+    secret = f"synthetic{uuid.uuid4().hex}"
+    url = template.format(secret=secret)
+    with pytest.raises(psycopg.Error) as raw:
+        psycopg.connect(url, connect_timeout=2)
+    assert secret in str(raw.value)
+
+    monkeypatch.setenv("HARRIER_DATABASE_URL", url)
+    for command in ("status", "migrate"):
+        assert main(["store", command]) == 1
+        captured = capsys.readouterr()
+        assert captured.err == f"error: {URL_REFUSAL}\n", command
+        assert secret not in captured.out + captured.err
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("password", "{secret}+tail%zz"),
+        ("pass%77ord", "{secret}%zz"),
+        ("pass%77ord", "{secret}+tail%zz"),
+    ],
+    ids=["a-plain-name", "an-encoded-name", "an-encoded-name-and-a-plus"],
+)
 def test_a_password_in_the_query_string_never_reaches_the_error(
-    caplog: pytest.LogCaptureFixture,
+    name: str, value: str, caplog: pytest.LogCaptureFixture
 ) -> None:
     """libpq takes a password from `?password=` as well as from the authority,
     and quotes the parameter as written when it refuses it. Only the
     authority's password was scrubbed (review of PR #218). The `+` makes the
-    written, the percent-decoded and the form-decoded spellings differ."""
+    written, the percent-decoded and the form-decoded spellings differ.
+    libpq decodes the parameter's name too, so `pass%77ord` is the password
+    (review of PR #225)."""
     import psycopg
 
     secret = f"synthetic{uuid.uuid4().hex}"
-    written = f"{secret}+tail%zz"
-    url = f"postgresql://harrier@127.0.0.1:1/harrier?sslmode=disable&password={written}"
+    written = value.format(secret=secret)
+    url = f"postgresql://harrier@127.0.0.1:1/harrier?sslmode=disable&{name}={written}"
     # The driver's own error quotes the password, so the scrub has work to do.
     with pytest.raises(psycopg.Error) as raw:
         psycopg.connect(url, connect_timeout=2)

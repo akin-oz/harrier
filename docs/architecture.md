@@ -197,7 +197,7 @@ tables but `id` (migration 13), so no key a tenant can write into tells one
 owner what another holds
 (`services/api/tests/test_owner_policy.py::test_an_owner_cannot_choose_or_change_an_id`).
 Each owner has their own track 1, and a job or event can reference only its
-own owner's track or job. Migrations 10 and 12 are Postgres only
+own owner's track or job. Migrations 10, 13 and 14 are Postgres only
 (`SINGLE_DIALECT_MIGRATIONS`): SQLite records those versions and changes
 nothing, so the local schema names no tenant. The catalog test,
 `services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared`,
@@ -217,8 +217,8 @@ Supabase's auth objects, so `services/api/tests/pg_support.py` installs a
 test shim before migrating: the `anon`, `authenticated` and `service_role`
 roles, an `auth.users` table, an `auth.uid()` function, and Supabase's
 default privileges, which grant those roles everything the migrating role
-creates in `public`. No migration creates them, and migration 10 refuses a
-store without the roles and the auth objects.
+creates, in `public` and in every schema. No migration creates them, and
+migration 10 refuses a store without the roles and the auth objects.
 
 This polices rows; it does not yet serve anyone. Nothing authenticates a
 request until spec 104, and the domain does not run on Postgres until spec

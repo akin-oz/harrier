@@ -145,9 +145,24 @@ def store_target(environ: Mapping[str, str] | None = None) -> StoreTarget:
     # chained as `__context__`. Its text can quote the password: a raw `/` in
     # the password ends the authority, so the password before it is read as
     # the port (review of PR #218).
-    if not parses:
+    if not parses or not _one_reading_of_the_authority(raw):
         raise refused
     return StoreTarget("postgres", raw)
+
+
+def _one_reading_of_the_authority(url: str) -> bool:
+    """Whether libpq and urlsplit split the user from the host at one `@`.
+
+    urlsplit splits at the last `@` before the first `/`, `?` or `#`; libpq
+    at the first `@` before the first `/`. A raw `@` in the password makes
+    them disagree: urlsplit reads the whole of `p@rest` as the password and
+    scrubs that, while libpq takes `rest@host` as the host and quotes it
+    when it cannot resolve it, carrying the tail of the password. An `@` in
+    a query with no path before it does the same (review of PR #225).
+    """
+    libpq_authority = url.split("://", 1)[1].split("/", 1)[0]
+    ats = libpq_authority.count("@")
+    return ats <= 1 and ats == urlsplit(url).netloc.count("@")
 
 
 def _where(url: str) -> _Where:
