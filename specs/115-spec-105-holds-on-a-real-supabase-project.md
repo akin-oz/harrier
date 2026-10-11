@@ -127,6 +127,9 @@ assumption, recorded, not retried.
 | A10 | `postgres` can grant `harrier_tenant` to a login role (Postgres 16 and later ask for the admin option, which the role's creator holds) | `GRANT harrier_tenant TO harrier_api_probe` succeeds |
 | A11 | The store migrates to `target_version()` as a non-superuser migrator shaped like Supabase's `postgres` (`CREATEROLE`, `BYPASSRLS`, not superuser), including migration 14's `ALTER ROLE` reset and its `ALTER DEFAULT PRIVILEGES` revokes (decision D8, 2026-10-11) | the store reaches `target_version()` as `postgres`; `pg_default_acl` holds no default privilege of the migrating role, in `public` or global (no `IN SCHEMA`), that grants to `anon`, `authenticated` or `service_role`; and, inside a transaction that is rolled back, a function the migrating role creates in `public` is executable by none of `PUBLIC`, `anon`, `authenticated` and `service_role` |
 
+Rows A2 and A3 are restated by "Amendment (2026-10-11): A2 and A3 after
+migration 16", below, which replaces them.
+
 A11 comes from a post-merge review of spec 105's migration 13. Its
 `ALTER ROLE harrier_tenant` names `NOSUPERUSER`, which a role that is not
 a superuser may not name, and its `ALTER DEFAULT PRIVILEGES` revoke covers
@@ -732,3 +735,83 @@ project, on Postgres 17.6:
   105's amendment assigns this spec.
 - N3 again: after the probe role was dropped, two idle pooler sessions of
   it were left, and were ended by hand.
+
+## Amendment (2026-10-11): A2 and A3 after migration 16
+
+Spec 105's migration 16 (PR #260) moved owner identity off `auth.uid()`
+to `public.harrier_owner_id()` and revoked the tenant role's grants on
+schema `auth`. The re-run above failed only this spec's A2 and A3 tests,
+which still assert that the tenant role reaches `auth.uid()`. Migration
+16 removes that by design, so the tests fail on staging for a reason that
+is not a finding. This section restates both assumptions so the module
+asserts what spec 105 now rests on, and keeps what each still tells a
+re-run. It is the follow-up spec 105's amendment assigns this spec
+("Specs this touches, and follow-ups").
+
+### A2 and A3, restated
+
+These two rows replace A2 and A3 in the table under "The assumptions".
+The other rows stand.
+
+| | Assumption | Checked by |
+|---|---|---|
+| A2 | Harrier needs nothing in `auth`. The migrating role holds USAGE on `auth` without the grant option, as the shim copies it; `harrier_tenant` holds no USAGE on `auth`; and as `harrier_tenant`, with claims set, `SELECT auth.uid()` is refused with `42501 permission denied for schema auth` | `has_schema_privilege` for `current_user` on `auth` with `USAGE` (true) and with `USAGE WITH GRANT OPTION` (false), and for `harrier_tenant` with `USAGE` (false); the refused call, in a savepoint |
+| A3 | `auth.uid()` reads `sub` from `request.jwt.claims`, and `harrier_owner_id()` reads the same `sub` as the tenant role | the deployed `auth.uid()` body equals the shim's once whitespace and case are ignored, as before; as `authenticated`, with only `request.jwt.claims` set, `auth.uid()` returns its `sub`; as `harrier_tenant`, with the same claims, `public.harrier_owner_id()` returns it |
+
+Why each half stays:
+
+- **A2's migrating-role half** is the grant the CI shim copies
+  (`SHIM_STATEMENTS` in `services/api/tests/pg_support.py`). Spec 105's
+  Honest limitations say CI does not notice a change to it until a re-run
+  of this module; this assertion is what notices. The tenant half checks
+  migration 16's end state on the project, where its step 6 revokes warn
+  and do nothing because migration 10's grants never took effect.
+- **A3's body comparison** is how spec 105's Honest limitations say a
+  Supabase change to `auth.uid()` is noticed, since `harrier_owner_id()`
+  copies half of its body. The call as `authenticated`, which holds USAGE
+  on `auth`, keeps the comparison tied to the live function. The tenant
+  half moves from `auth.uid()` to `harrier_owner_id()`, the function
+  spec 105's policy and defaults call.
+
+A refuted A2 now means harrier's tenant role reaches `auth` on the
+project, or the shim's copy of the migrating role's grant is out of date.
+A refuted A3 means the owner a request is policed as differs from the
+`sub` Supabase would give it. Either is a finding with a spec that owns
+its fix, as Failure modes says.
+
+### The tests
+
+- `test_the_tenant_role_reaches_auth_uid` is retired: it asserts the
+  opposite of A2 as restated. Its replacement is planned
+  test_harrier_needs_nothing_in_auth_on_the_project, in the same module.
+  The change that writes it removes the old test, and in this spec's
+  Acceptance criteria and in row A2 of "Amendment (staging findings)" it
+  writes the old name outside a code span followed by "(retired
+  2026-10-11)", so the record of the first runs stays readable and the
+  citation check, which skips a removed test named in prose, still
+  passes.
+- `test_auth_uid_reads_the_claims_sub` keeps its name and is restated: it
+  calls `auth.uid()` as `authenticated` only, and calls
+  `public.harrier_owner_id()` as `harrier_tenant`.
+
+### Acceptance criteria (A2 and A3 after migration 16)
+
+- [ ] The module's A2 test asserts the three values in the restated row,
+      and its failure message names each observed value
+      (planned test_harrier_needs_nothing_in_auth_on_the_project).
+- [ ] The A3 test asserts the restated row: the body comparison, `auth.uid()`
+      as `authenticated`, and `public.harrier_owner_id()` as
+      `harrier_tenant`, and calls `auth.uid()` as no other role
+      (`services/api/tests/test_supabase_project.py::test_auth_uid_reads_the_claims_sub`).
+- [ ] Both tests were run against a local database built by the CI shim
+      and migrated to `target_version()`, named by the module's URL
+      variables, and pass there; each was then run against that database
+      broken one way and failed on the assertion named: the migrator
+      given the grant option on `auth` back, and USAGE on `auth` granted
+      to `harrier_tenant` (A2); `harrier_owner_id()` replaced to return
+      another UUID (A3). The pull request records each run.
+- [ ] A re-run of this module on the staging project, as the re-run above
+      did it, passes both, and the pull request records the output with no
+      project reference, host, URL or password.
+- [ ] `test_the_tenant_role_reaches_auth_uid` no longer exists, and every
+      citation of it in this spec is rewritten as "The tests" says.
