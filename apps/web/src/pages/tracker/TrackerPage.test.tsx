@@ -26,7 +26,21 @@ afterEach(() => {
   window.history.replaceState(null, "", "/");
 });
 
-type Row = Record<string, string | number | boolean>;
+type Row = Record<string, unknown>;
+
+// No assessment, which reads `unknown` (spec 122).
+const UNASSESSED = {
+  verdict: "unknown",
+  routes: [],
+  origin: "none",
+  evidence_url: "",
+  excerpt: "",
+  field: "",
+  checked_at: "",
+  version: "",
+  description_sha256: "",
+  disagrees: false,
+};
 
 function job(id: number, company: string, score: string, status = "prospect"): Row {
   return {
@@ -41,6 +55,7 @@ function job(id: number, company: string, score: string, status = "prospect"): R
     fit_score: "",
     next_action: "",
     added_at: "2026-01-01",
+    eligibility: UNASSESSED,
   };
 }
 
@@ -1333,4 +1348,95 @@ test("an archived track is readable and offers no change", async () => {
   ).toBeDefined();
   expect(screen.queryByRole("columnheader", { name: "Actions" })).toBeNull();
   expect(screen.queryByRole("button", { name: /by hand/ })).toBeNull();
+});
+
+// --- Türkiye eligibility (spec 123) -----------------------------------------
+
+function assessed(row: Row, verdict: string, routes: string[] = []): Row {
+  return { ...row, eligibility: { ...UNASSESSED, verdict, routes, origin: "rule" } };
+}
+
+test("the verdict filter counts and narrows", async () => {
+  stubApi({
+    jobs: [
+      assessed(job(1, "Northwind", "90"), "excluded"),
+      assessed(job(2, "Contoso", "80"), "possible", ["contractor"]),
+      assessed(job(3, "Fabrikam", "70", "rejected"), "possible"),
+      job(4, "Tailspin", "60"),
+    ],
+  });
+  const user = userEvent.setup();
+  renderPage();
+  await rowFor("Northwind");
+
+  const group = screen.getByRole("group", { name: "Filter by Türkiye eligibility" });
+  const chips = within(group)
+    .getAllByRole("button")
+    .map((chip) => chip.textContent);
+  // Counts over the whole tracker, in the verdict order.
+  expect(chips).toEqual([
+    "All 4",
+    "Türkiye confirmed 0",
+    "Türkiye possible 2",
+    "Türkiye unknown 1",
+    "Türkiye excluded 1",
+  ]);
+  // The pill names the routes; an unknown row shows none.
+  expect((await rowFor("Contoso")).textContent).toContain("Türkiye possible · contractor or B2B");
+  expect((await rowFor("Tailspin")).textContent).not.toContain("Türkiye");
+
+  await user.click(within(group).getByRole("button", { name: /Türkiye possible/ }));
+  expect(screen.queryByText("Northwind")).toBeNull();
+  expect(screen.getByText("Contoso")).toBeTruthy();
+  expect(screen.getByText("Fabrikam")).toBeTruthy();
+
+  // Combined with the status chips by AND.
+  const statuses = screen.getByRole("group", { name: "Filter by status" });
+  await user.click(within(statuses).getByRole("button", { name: /^rejected/i }));
+  expect(screen.queryByText("Contoso")).toBeNull();
+  expect(screen.getByText("Fabrikam")).toBeTruthy();
+
+  // Combined with the search, and an over-narrow filter says so.
+  await user.type(screen.getByRole("searchbox", { name: "Search tracker" }), "Northwind");
+  expect(screen.getByText("No jobs match this filter.")).toBeTruthy();
+});
+
+test("the verdict filter keeps the queue order", async () => {
+  // The server's order, deliberately not the score order.
+  stubApi({
+    jobs: [],
+    queue: [
+      assessed(job(1, "Northwind", "10"), "possible"),
+      assessed(job(2, "Contoso", "90"), "excluded"),
+      assessed(job(3, "Fabrikam", "50"), "possible"),
+    ],
+  });
+  const user = userEvent.setup();
+  renderPage();
+  await user.click(screen.getByRole("button", { name: "Next up" }));
+  await rowFor("Northwind");
+  const group = screen.getByRole("group", { name: "Filter by Türkiye eligibility" });
+  await user.click(within(group).getByRole("button", { name: /Türkiye possible/ }));
+
+  const companies = screen
+    .getAllByRole("row")
+    .slice(1)
+    .map((row) => within(row).getAllByRole("cell")[1]?.textContent ?? "");
+  expect(companies.map((text) => text.split("Senior")[0])).toEqual(["Northwind", "Fabrikam"]);
+});
+
+test("another track shows no eligibility", async () => {
+  const calls = stubApi({
+    queue: [{ ...assessed(position(1, "Example Lab", "prospect", "2099-01-01"), "possible") }],
+  });
+  const user = userEvent.setup();
+  renderAcademic();
+  const row = await rowFor("Example Lab");
+
+  expect(screen.queryByRole("group", { name: "Filter by Türkiye eligibility" })).toBeNull();
+  expect(row.textContent).not.toContain("Türkiye");
+  expect(within(row).queryByRole("button", { name: "Eligibility" })).toBeNull();
+  // History still opens; no eligibility route is called.
+  await user.click(within(row).getByRole("button", { name: "History" }));
+  expect(calls.some((call) => call.url.includes("eligibility"))).toBe(false);
 });

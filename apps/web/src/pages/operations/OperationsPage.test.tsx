@@ -83,6 +83,8 @@ function stubApi(
     refuse?: Record<string, { status: number; detail: unknown }>;
     check?: unknown;
     linked?: unknown;
+    // The eligibility report, given the request's `apply` (spec 123).
+    reassess?: (apply: boolean) => unknown;
   } = {},
 ): Call[] {
   const calls: Call[] = [];
@@ -121,6 +123,15 @@ function stubApi(
         return reply(200, runBody(`re${String(calls.length)}`, "reconsider"));
       }
       if (url.pathname === "/api/ops/digest") return reply(200, runBody("digest1", "digest"));
+      if (url.pathname === "/api/ops/eligibility-reassess") {
+        return request
+          .clone()
+          .text()
+          .then((raw) => {
+            const apply = (parsed(raw) as { apply?: boolean }).apply === true;
+            return reply(200, (options.reassess ?? reassessReport)(apply));
+          });
+      }
       if (url.pathname === "/api/ops/check") {
         return reply(200, options.check ?? { breaches: [], unresolved_links: [] });
       }
@@ -174,6 +185,21 @@ function renderPage(): void {
       />
     </QueryClientProvider>,
   );
+}
+
+function reassessReport(apply: boolean, overrides: Record<string, unknown> = {}) {
+  return {
+    applied: apply,
+    examined: 12,
+    assessed: 5,
+    unchanged: 1,
+    under_candidate: 2,
+    disagrees: 1,
+    rejected_skipped: 4,
+    no_description: 2,
+    by_verdict: { possible: 3, excluded: 1, unknown: 1 },
+    ...overrides,
+  };
 }
 
 function posted(calls: Call[], path: string): Call[] {
@@ -657,4 +683,71 @@ test("a run refused for another run's options is shown in the server's words", a
 
   await user.click(await screen.findByRole("button", { name: "Evaluate, reject nothing" }));
   expect(await screen.findByText(/already active \(run ev1\) with other options/)).toBeTruthy();
+});
+
+// --- Türkiye eligibility (spec 123) ---------------------------------------------
+
+test("reassess reports before it writes", async () => {
+  const calls = stubApi();
+  const user = userEvent.setup();
+  renderPage();
+
+  expect(screen.queryByRole("button", { name: "Assess what the report found" })).toBeNull();
+  await user.click(await screen.findByRole("button", { name: "Report what would be assessed" }));
+  const report = await screen.findByRole("status", { name: "Eligibility report" });
+  expect(posted(calls, "/ops/eligibility-reassess")[0]?.body).toEqual({ apply: false });
+  expect(posted(calls, "/ops/eligibility-reassess")[0]?.token).toBe("test-token");
+  expect(report.textContent).toContain("Nothing written yet.");
+  expect(report.textContent).toContain("Would assess 5 of 12 rows");
+  expect(report.textContent).toContain("4 rejected and skipped");
+  // Every verdict, in the verdict order, a missing one as zero.
+  expect([...report.querySelectorAll("li")].map((line) => line.textContent)).toEqual([
+    "Türkiye confirmed: 0",
+    "Türkiye possible: 3",
+    "Türkiye unknown: 1",
+    "Türkiye excluded: 1",
+  ]);
+  expect(report.textContent).toContain("2 have your verdict");
+  expect(screen.getByRole("button", { name: "Assess what the report found" })).toBeTruthy();
+});
+
+test("reassess apply shows what was written", async () => {
+  const calls = stubApi();
+  const user = userEvent.setup();
+  renderPage();
+  await user.click(await screen.findByRole("button", { name: "Report what would be assessed" }));
+  await user.click(await screen.findByRole("button", { name: "Assess what the report found" }));
+  await waitFor(() => {
+    expect(posted(calls, "/ops/eligibility-reassess")).toHaveLength(2);
+  });
+  expect(posted(calls, "/ops/eligibility-reassess")[1]?.body).toEqual({ apply: true });
+  const report = await screen.findByRole("status", { name: "Eligibility report" });
+  await waitFor(() => {
+    expect(report.textContent).toContain("Written. Counts are from this run.");
+  });
+  // Written: nothing further to apply until the next report.
+  expect(screen.queryByRole("button", { name: "Assess what the report found" })).toBeNull();
+});
+
+test("reassess ignores an unknown verdict key", async () => {
+  stubApi({
+    reassess: (apply) => reassessReport(apply, { by_verdict: { possible: 2, maybe: 9 } }),
+  });
+  const user = userEvent.setup();
+  renderPage();
+  await user.click(await screen.findByRole("button", { name: "Report what would be assessed" }));
+  const report = await screen.findByRole("status", { name: "Eligibility report" });
+  expect(report.textContent).not.toContain("maybe");
+  expect(report.textContent).not.toContain("9");
+});
+
+test("a refused reassess shows the API's words", async () => {
+  stubApi({
+    refuse: { "/api/ops/eligibility-reassess": { status: 409, detail: "the store is held" } },
+  });
+  const user = userEvent.setup();
+  renderPage();
+  await user.click(await screen.findByRole("button", { name: "Report what would be assessed" }));
+  const alerts = await screen.findAllByRole("alert");
+  expect(alerts.map((alert) => alert.textContent)).toContain("the store is held");
 });

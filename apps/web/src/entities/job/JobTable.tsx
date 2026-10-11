@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { useMemo } from "react";
 
 import { Deadline } from "./ui/Deadline";
+import { EligibilityPill } from "./ui/EligibilityPill";
 import { ScoreBar } from "./ui/ScoreBar";
 import { StatusPill } from "./ui/StatusPill";
 import type { Job, JobStatus } from "./types";
@@ -38,7 +39,9 @@ function metaLine(job: Job): string {
 // `statusLabel` is the selected track's word for a status (spec 093), and
 // `deadlineLed` puts the deadline where the score was, first in the row: on
 // an academic track the date a call closes is what decides the day's work,
-// and the queue is ordered by it (spec 094).
+// and the queue is ordered by it (spec 094). `showEligibility` adds the
+// Türkiye pill under the job, which the page sets on the default track only,
+// where eligibility is recorded (spec 123).
 export function JobTable({
   jobs,
   emptyMessage,
@@ -47,6 +50,7 @@ export function JobTable({
   renderDetails,
   keepOrder = false,
   deadlineLed = false,
+  showEligibility = false,
 }: {
   jobs: readonly Job[];
   emptyMessage: string;
@@ -58,6 +62,7 @@ export function JobTable({
   renderDetails?: (job: Job) => ReactNode;
   keepOrder?: boolean;
   deadlineLed?: boolean;
+  showEligibility?: boolean;
 }) {
   // Open rows first, then by score. Sorting on score alone reads well until
   // most of the tracker is rejected, and then the first screen fills with
@@ -147,6 +152,7 @@ export function JobTable({
                   )}
                 </span>
                 <span className="job-table__meta">{metaLine(job)}</span>
+                {showEligibility && <EligibilityPill eligibility={job.eligibility} />}
                 {renderDetails?.(job)}
               </td>
               {!deadlineLed && (

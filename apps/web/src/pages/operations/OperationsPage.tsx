@@ -4,6 +4,7 @@ import type { EventSourceFactory } from "../../features/runs/useRunStream";
 import { DataChecksSection } from "./DataChecksSection";
 import { DigestSection } from "./DigestSection";
 import { DiscoverySection } from "./DiscoverySection";
+import { EligibilitySection } from "./EligibilitySection";
 import { EvaluationSection } from "./EvaluationSection";
 import { FeedsSection } from "./FeedsSection";
 import { HistorySection } from "./HistorySection";
@@ -17,8 +18,9 @@ import { ScoringSection } from "./ScoringSection";
  * spec 096), and the commands that work on the operator's data (spec 095).
  * Sections in the order an operator checks them: the schedule first,
  * because a job that stopped is the failure nothing else announces; then
- * discovery runs; then feed health, reconsideration and the digest; then
- * the data checks, decision history, batch evaluation and the learned
+ * discovery runs; then feed health, reconsideration, Türkiye eligibility
+ * (spec 123) and the digest; then the data checks, decision history, batch
+ * evaluation and the learned
  * score's export.
  *
  * Configuration, backups and the list of commands with no button are on the
@@ -41,6 +43,7 @@ export function OperationsPage({
       <RunPanel createEventSource={createEventSource} stream={discovery} />
       <FeedsSection createEventSource={createEventSource} />
       <ReconsiderSection createEventSource={createEventSource} />
+      <EligibilitySection />
       <DigestSection createEventSource={createEventSource} />
       <DataChecksSection />
       <HistorySection createEventSource={createEventSource} />
