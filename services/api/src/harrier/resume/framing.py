@@ -39,7 +39,7 @@ def put_framing(conn: sqlite3.Connection, scope: Scope, text: str) -> CommandOut
     it parse as one bundle. Any refusal writes nothing."""
     # The CLI refuses an archived track first; this holds for every other
     # caller (review of PR #219).
-    refuse_if_archived(scope)
+    refuse_if_archived(conn, scope)
     try:
         raw: object = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -75,7 +75,7 @@ def put_application_profile(
     """Store `text` as the scope track's application profile, as read. The
     extension picks the document; JSON must be an object and markdown must
     not be empty. Any refusal writes nothing."""
-    refuse_if_archived(scope)
+    refuse_if_archived(conn, scope)
     if suffix.lower() not in PROFILE_FILES:
         return CommandOutcome(1, ("application_profile file must end in .md or .json",))
     name, fmt = PROFILE_FILES[suffix.lower()]

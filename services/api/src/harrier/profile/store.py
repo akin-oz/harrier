@@ -11,7 +11,7 @@ import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
 
-from harrier.tracks import DEFAULT_TRACK_ID
+from harrier.tracks import DEFAULT_TRACK_ID, refuse_archived_track
 
 # Old-repo-relative path -> (kind, format). Read-only sources.
 PROFILE_SOURCES: dict[str, tuple[str, str]] = {
@@ -68,6 +68,10 @@ def _upsert(
         conn.execute(_UPSERT_SHARED, (kind, name, fmt, content))
     else:
         conn.execute(_UPSERT_OWNED, (track_id, kind, name, fmt, content))
+        # Checked after the write, inside its transaction, so the archive
+        # state read is the one the write commits against; a refusal rolls
+        # the write back (review of PR #227).
+        refuse_archived_track(conn, track_id)
 
 
 def put_document(

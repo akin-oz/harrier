@@ -32,7 +32,7 @@ from harrier.profile.store import (
 from harrier.resume.content import ResumeBundleError, load_bundle, parse_bundle
 from harrier.resume.framing import put_framing
 from harrier.tracker import schema
-from harrier.tracks import ArchivedTrackError, default_scope, resolve_scope
+from harrier.tracks import ArchivedTrackError, archive_track, default_scope, resolve_scope
 from harrier_cli.main import main
 
 SLUG = "lab-search"
@@ -300,6 +300,24 @@ def test_profile_put_validates_before_it_writes(
     with pytest.raises(ArchivedTrackError):
         put_framing(academic, resolve_scope(academic, SLUG), other.read_text(encoding="utf-8"))
     assert stored_framing(academic, track_id) == text
+
+
+def test_a_scope_kept_from_before_the_archive_cannot_store_a_framing(
+    academic: sqlite3.Connection,
+) -> None:
+    """Both the put and the store read the track's row, not the scope's flag:
+    a scope resolved before the archive writes nothing (review of PR #227)."""
+    stale = resolve_scope(academic, SLUG)
+    archive_track(academic, SLUG)
+    assert not stale.track.archived
+    framing = json.dumps(academic_framing())
+    with pytest.raises(ArchivedTrackError):
+        put_framing(academic, stale, framing)
+    with pytest.raises(ArchivedTrackError):
+        put_document(
+            academic, "resume_framing", ACADEMIC_NAME, "json", framing, track_id=stale.track.id
+        )
+    assert stored_framing(academic, stale.track.id) is None
 
 
 def test_a_bundle_survives_migration_11(data_dir: Path) -> None:

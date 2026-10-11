@@ -77,14 +77,21 @@ class ArchivedTrackError(TrackError):
     (spec 093)."""
 
 
-def refuse_if_archived(scope: Scope) -> None:
-    """The one check every tracker write makes. The CLI refuses earlier with
-    its own exit status; this holds for every other caller (review of
-    PR #182)."""
-    if scope.track.archived:
-        raise ArchivedTrackError(
-            f"track {scope.track.slug} is archived; it reads but does not write"
-        )
+def refuse_if_archived(conn: sqlite3.Connection, scope: Scope) -> None:
+    """The one check every write to a track makes. The CLI refuses earlier
+    with its own exit status; this holds for every other caller (review of
+    PR #182).
+
+    It reads the track's row as the database holds it now, not the flag the
+    scope was resolved with: a scope kept from before the track was archived
+    must not write to it (review of PR #227)."""
+    refuse_archived_track(conn, scope.track.id)
+
+
+def refuse_archived_track(conn: sqlite3.Connection, track_id: int) -> None:
+    row = conn.execute("SELECT slug, archived_at FROM tracks WHERE id = ?", (track_id,)).fetchone()
+    if row is not None and row[1]:
+        raise ArchivedTrackError(f"track {row[0]} is archived; it reads but does not write")
 
 
 QueueOrder = Literal["stage_then_score", "nearest_deadline"]
