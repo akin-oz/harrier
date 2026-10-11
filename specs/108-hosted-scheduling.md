@@ -312,7 +312,7 @@ exit 1, naming the check, when:
   `BYPASSRLS` (the function would see no owner);
 - its environment holds `SUPABASE_SERVICE_ROLE_KEY` or a value beginning
   `sb_secret_`, as spec 104 refuses for the API;
-- the store is not at `target_version()` (`pgstore.py:193-197`);
+- the store is not at `target_version()` (`pgstore.py:84-88`);
 - `HARRIER_SCHEDULER_CONCURRENCY` or `HARRIER_SCHEDULED_RUN_TIMEOUT_SECONDS`
   is missing or not a positive integer.
 

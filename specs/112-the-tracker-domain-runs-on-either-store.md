@@ -89,7 +89,8 @@ modules execute SQL and are local by nature: `backup.py:106-133`,
 **The gate.** Until this spec, every CLI command except `harrier store`
 refuses a Postgres URL (`harrier_cli/main.py:2865-2868`) and so does the
 API (`harrier_api/app.py:931-932`), both with `POSTGRES_NOT_YET`
-(`pgstore.py:43-45`), which says "until spec 112".
+(`connection.py:41-43`; in `pgstore.py` until PR #241 moved it on
+2026-10-11), which says "until spec 112".
 
 ## Scope
 
@@ -149,10 +150,12 @@ API (`harrier_api/app.py:931-932`), both with `POSTGRES_NOT_YET`
     spec 112". `specs/103-the-tracker-store-speaks-postgres.md` is not
     edited.
 13. **Store-neutral names leave `pgstore.py`.** `StoreError` and its
-    subclasses (`services/api/src/harrier/pgstore.py:48-72`), `StoreTarget`
-    (`:75-84`) and `store_target` (`:100-108`), and the gate text
-    `POSTGRES_NOT_YET`
-    (`:43-45`) move into `harrier.connection`. `harrier.pgstore` keeps only
+    subclasses, `StoreTarget` and `store_target`, and the gate text
+    `POSTGRES_NOT_YET` move into `harrier.connection`. (PR #241 did
+    this. On 2026-10-11 the ranges here, which cited `pgstore.py` and were
+    stale before the move, became the new homes:
+    `services/api/src/harrier/connection.py:46-70`, `:152-163`, `:181-221`
+    and `:41-43`.) `harrier.pgstore` keeps only
     driver code: connecting, the version reads and the migration runner.
     The CLI and the API import them from `harrier.connection`
     (`harrier_cli/main.py:33`, `harrier_api/app.py:30` today). They are the
@@ -361,13 +364,13 @@ password in the userinfo of a `postgres://` or `postgresql://` URL with
 leaves `postgresql://user:pw@host/db` as written; only a `password=` query
 parameter is scrubbed (run against a synthetic URL, 2026-10-10). The
 pgstore connection error already scrubs its own message
-(`pgstore.py:142-149`); this covers every other text that reaches a run
+(`pgstore.py:69-81`); this covers every other text that reaches a run
 summary, an event or the exception boundary through `scrub_secrets`.
 (post-merge review of PRs #194 and #207, privacy 3, 2026-10-10)
 
 **`harrier store migrate` reports what it found under the lock.**
-`apply_postgres_migrations` reads `before` at `pgstore.py:182`, before it
-takes the advisory lock at `:187`, so two runs started together on an
+`apply_postgres_migrations` reads `before` at `pgstore.py:114`, before it
+takes the advisory lock at `:119`, so two runs started together on an
 empty store each print `postgres 0 -> 10` (`harrier_cli/main.py:1421`)
 though each migration was applied once. After this spec the runner reads
 `before` under the migration lock and holds a session-level advisory lock
