@@ -16,21 +16,24 @@ locally without one (`tests/pg_support.py`).
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import threading
 import time
 import uuid
-from collections.abc import Iterator
-from contextlib import closing
+from collections.abc import Generator, Iterator
+from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import pytest
 from pg_support import (
+    SHIM_ROLES,
     SHIM_STATEMENTS,
     as_owner,
     as_role,
+    claims,
     fresh_database,
     install_shim,
     new_owner,
@@ -42,14 +45,17 @@ from harrier.tracker import schema
 from harrier.tracker.schema import (
     GLOBAL_ID_TABLES,
     MIGRATION_10_NEEDS_AUTH,
-    MIGRATION_12_TENANT_HAS_A_ROLE,
+    MIGRATION_13_TENANT_HAS_A_ROLE,
+    MIGRATION_14_TENANT_IS_A_SUPERUSER,
     MIGRATIONS,
     OWNED_TABLES,
     POSTGRES_BASELINE_VERSION,
     SUPABASE_ROLES,
     TENANT_ROLE,
+    TENANT_ROLE_RESET,
     UNOWNED_TABLES,
     auth_precheck,
+    tenant_writes_all_but_id,
 )
 from harrier_cli.main import main
 
@@ -366,6 +372,47 @@ def test_migration_10_needs_every_supabase_role() -> None:
             assert raised.value.diag.message_primary == MIGRATION_10_NEEDS_AUTH, roles
 
 
+# Every role Supabase creates, as its documentation lists them. A migration
+# that names one of these depends on it, so the precheck must check it.
+SUPABASE_DOCUMENTED_ROLES = frozenset(
+    {
+        "anon",
+        "authenticated",
+        "service_role",
+        "authenticator",
+        "supabase_admin",
+        "supabase_auth_admin",
+        "supabase_storage_admin",
+        "supabase_functions_admin",
+        "supabase_realtime_admin",
+        "supabase_replication_admin",
+        "supabase_read_only_user",
+        "dashboard_user",
+        "pgbouncer",
+        "pgsodium_keyholder",
+        "pgsodium_keyiduser",
+        "pgsodium_keymaker",
+    }
+)
+
+
+def test_the_precheck_covers_every_supabase_role_the_migrations_name() -> None:
+    """SUPABASE_ROLES is what migration 10's precheck requires. Were a later
+    migration to grant to or revoke from a Supabase role it does not list,
+    a store without that role would fail mid-migration with a driver error
+    instead of the precheck's message. The roles a migration names are the
+    words of its statements that are Supabase roles; the shim makes the
+    same roles."""
+    named = {
+        word
+        for _, statements in schema.POSTGRES_MIGRATIONS
+        for statement in statements
+        for word in re.findall(r"[a-z_]+", statement.lower())
+    } & SUPABASE_DOCUMENTED_ROLES
+    assert named == set(SUPABASE_ROLES)
+    assert {name for name, _ in SHIM_ROLES} == set(SUPABASE_ROLES)
+
+
 def test_migration_10_gives_existing_users_track_one(monkeypatch: pytest.MonkeyPatch) -> None:
     """A user in auth.users before migration 10 gets no trigger's track 1:
     the trigger comes with the migration. Migration 10 seeds it instead."""
@@ -420,7 +467,7 @@ def catalog_fingerprint(conn: PgConnection) -> dict[str, list[tuple[Any, ...]]]:
     }
 
 
-@pytest.mark.parametrize("version", [10, 13])
+@pytest.mark.parametrize("version", [10, 13, 14])
 def test_a_failed_migration_leaves_no_trace_of_itself(
     version: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -505,9 +552,102 @@ def test_migration_13_refuses_a_tenant_role_that_is_a_member(
                 with pytest.raises(psycopg.errors.RaiseException) as raised:
                     for statement in migration(13):
                         conn.execute(statement.encode())
-                assert raised.value.diag.message_primary == MIGRATION_12_TENANT_HAS_A_ROLE
+                assert raised.value.diag.message_primary == MIGRATION_13_TENANT_HAS_A_ROLE
             left = conn.execute("SELECT count(*) FROM pg_roles WHERE rolname = %s", (other,))
             assert left.fetchone() == (0,)
+
+
+# --- migration 14: the tenant role, reset one attribute at a time ---
+
+# Shaped like Supabase's postgres: not a superuser, and every other
+# attribute the tenant role must not have (spec 115, assumption A4).
+SUPABASE_LIKE_MIGRATOR = "LOGIN CREATEROLE CREATEDB REPLICATION BYPASSRLS"
+
+
+def test_migration_14_starts_with_the_role_reset() -> None:
+    """The tests below run the reset alone, so it must be the statement the
+    migration runs."""
+    assert migration(14)[0] == TENANT_ROLE_RESET
+
+
+@pytest.mark.parametrize(
+    ("column", "attribute"),
+    TENANT_ATTRIBUTES,
+    ids=[attribute for _, attribute in TENANT_ATTRIBUTES],
+)
+def test_migration_14_resets_each_wrong_attribute(
+    store: PgConnection, column: str, attribute: str
+) -> None:
+    """One attribute wrong at a time, reset by the role the tests migrate
+    with. The role belongs to the whole server: the change lives in a
+    transaction that is rolled back."""
+    none = (False,) * len(TENANT_ATTRIBUTES)
+    assert tenant_attributes(store) == none
+    with store.transaction(force_rollback=True):
+        store.execute(f"ALTER ROLE {TENANT_ROLE} {attribute}".encode())
+        wrong = tenant_attributes(store)
+        assert [name for (name, _), has in zip(TENANT_ATTRIBUTES, wrong, strict=True) if has] == [
+            column
+        ]
+        store.execute(TENANT_ROLE_RESET.encode())
+        assert tenant_attributes(store) == none
+    assert tenant_attributes(store) == none
+
+
+@contextmanager
+def as_supabase_like_migrator(conn: PgConnection, wrong: str) -> Generator[None]:
+    """Inside a transaction that is rolled back: the tenant role given the
+    attribute `wrong`, then a role shaped like Supabase's postgres, holding
+    the admin option on the tenant role as its creator does. Roles belong to
+    the whole server, so nothing here outlives the transaction."""
+    migrator = f"harrier_test_migrator_{uuid.uuid4().hex[:12]}"
+    with conn.transaction(force_rollback=True):
+        conn.execute(f"ALTER ROLE {TENANT_ROLE} {wrong}".encode())
+        conn.execute(f"CREATE ROLE {migrator} {SUPABASE_LIKE_MIGRATOR}".encode())
+        conn.execute(f"GRANT {TENANT_ROLE} TO {migrator} WITH ADMIN OPTION".encode())
+        conn.execute(f"SET LOCAL ROLE {migrator}".encode())
+        is_superuser = conn.execute(
+            "SELECT rolsuper FROM pg_roles WHERE rolname = current_user"
+        ).fetchone()
+        assert is_superuser == (False,)
+        yield
+    left = conn.execute("SELECT count(*) FROM pg_roles WHERE rolname = %s", (migrator,))
+    assert left.fetchone() == (0,)
+
+
+@pytest.mark.parametrize(
+    ("column", "attribute"),
+    [entry for entry in TENANT_ATTRIBUTES if entry[0] != "rolsuper"],
+    ids=[attribute for column, attribute in TENANT_ATTRIBUTES if column != "rolsuper"],
+)
+def test_migration_14_resets_the_role_as_a_migrator_that_is_not_a_superuser(
+    store: PgConnection, column: str, attribute: str
+) -> None:
+    """Migration 13 reset the role with one ALTER naming every attribute,
+    SUPERUSER among them, which a migrating role that is not a superuser may
+    not name: Postgres refused it whenever any attribute was wrong (spec
+    105, second post-merge review). Migration 14 alters one attribute at a
+    time."""
+    none = (False,) * len(TENANT_ATTRIBUTES)
+    with as_supabase_like_migrator(store, attribute):
+        store.execute(TENANT_ROLE_RESET.encode())
+        assert tenant_attributes(store) == none, column
+    assert tenant_attributes(store) == none
+
+
+def test_migration_14_refuses_a_superuser_tenant_role_it_cannot_reset(
+    store: PgConnection,
+) -> None:
+    """Only a superuser may alter a superuser. A migrating role that is not
+    one is refused with a message naming the attribute, not Postgres's
+    permission error."""
+    import psycopg
+
+    with as_supabase_like_migrator(store, "SUPERUSER"):
+        with pytest.raises(psycopg.errors.RaiseException) as raised, store.transaction():
+            store.execute(TENANT_ROLE_RESET.encode())
+        assert raised.value.diag.message_primary == MIGRATION_14_TENANT_IS_A_SUPERUSER
+    assert tenant_attributes(store) == (False,) * len(TENANT_ATTRIBUTES)
 
 
 # --- the catalog ---
@@ -673,8 +813,16 @@ def catalog_problems(conn: PgConnection) -> list[str]:
             if column == "id"
             else EXPECTED_COLUMN_GRANTS.get(table, frozenset[str]())
         )
-        if held != wanted:
-            problems.append(f"{table}.{column}: {TENANT_ROLE} holds {sorted(held)}")
+        # A column a later migration added has no grant until that migration
+        # gives it one (schema.tenant_writes_all_but_id), so the problem
+        # names the grant and the helper.
+        if wanted - held:
+            problems.append(
+                f"{table}.{column}: {TENANT_ROLE} lacks {sorted(wanted - held)}; "
+                "the migration that added it grants them with tenant_writes_all_but_id"
+            )
+        if held - wanted:
+            problems.append(f"{table}.{column}: {TENANT_ROLE} holds {sorted(held - wanted)}")
 
     # The tenant role: no attribute that widens it, and no role it could
     # SET ROLE to.
@@ -704,16 +852,35 @@ def catalog_problems(conn: PgConnection) -> list[str]:
         ).fetchone()
         if creates != (False,):
             problems.append(f"public: {grantee} may CREATE")
-    for kind, grantee, privilege in conn.execute(
-        "SELECT d.defaclobjtype, pg_get_userbyid(x.grantee), x.privilege_type "
-        "FROM pg_default_acl d CROSS JOIN LATERAL aclexplode(d.defaclacl) x "
-        "WHERE d.defaclrole = current_user::regrole "
-        "AND d.defaclnamespace IN (0, 'public'::regnamespace) AND x.grantee <> 0"
-    ).fetchall():
-        if grantee in (*NO_PRIVILEGE_ROLES, TENANT_ROLE):
+    # A default privilege is the migrating role's own, set globally (for
+    # every schema) or for public. PUBLIC counts on tables, sequences and
+    # functions: every role holds what PUBLIC holds. With no global entry
+    # for functions, Postgres's built-in default applies, which gives PUBLIC
+    # EXECUTE on every new one.
+    defaults: list[tuple[str, str, str, str]] = [
+        (str(scope), str(kind), str(grantee), str(privilege))
+        for scope, kind, grantee, privilege in conn.execute(
+            "SELECT CASE WHEN d.defaclnamespace = 0 THEN 'global' ELSE 'in public' END, "
+            "d.defaclobjtype, CASE WHEN x.grantee = 0 THEN 'PUBLIC' "
+            "ELSE pg_get_userbyid(x.grantee) END, x.privilege_type "
+            "FROM pg_default_acl d CROSS JOIN LATERAL aclexplode(d.defaclacl) x "
+            "WHERE d.defaclrole = current_user::regrole "
+            "AND d.defaclnamespace IN (0, 'public'::regnamespace)"
+        ).fetchall()
+    ]
+    global_functions = conn.execute(
+        "SELECT count(*) FROM pg_default_acl WHERE defaclrole = current_user::regrole "
+        "AND defaclnamespace = 0 AND defaclobjtype = 'f'"
+    ).fetchone()
+    if global_functions == (0,):
+        defaults.append(("global", "f", "PUBLIC", "EXECUTE"))
+    for scope, kind, grantee, privilege in defaults:
+        if grantee in (*NO_PRIVILEGE_ROLES, TENANT_ROLE) or (
+            grantee == "PUBLIC" and kind in ("r", "S", "f")
+        ):
             problems.append(
                 f"default privileges: {grantee} gets {privilege} "
-                f"on new {DEFAULT_ACL_KINDS.get(str(kind), str(kind))}"
+                f"on new {DEFAULT_ACL_KINDS.get(kind, kind)} ({scope})"
             )
 
     for name, definer, config in conn.execute(
@@ -735,6 +902,14 @@ def catalog_problems(conn: PgConnection) -> list[str]:
             (grantee,),
         ).fetchall():
             problems.append(f"{name}(): executable by {grantee}")
+    # PUBLIC on its own, so the problem names the grant that reaches every
+    # role. A function with no ACL has the built-in one: PUBLIC executes it.
+    for (name,) in conn.execute(
+        "SELECT proname FROM pg_proc WHERE pronamespace = 'public'::regnamespace "
+        "AND (proacl IS NULL OR EXISTS (SELECT 1 FROM aclexplode(proacl) x "
+        "WHERE x.grantee = 0 AND x.privilege_type = 'EXECUTE'))"
+    ).fetchall():
+        problems.append(f"{name}(): executable by PUBLIC")
     return sorted(problems)
 
 
@@ -790,12 +965,46 @@ def test_every_table_is_owned_or_declared(store: PgConnection) -> None:
         ("GRANT CREATE ON SCHEMA public TO anon", "public: anon may CREATE"),
         (
             "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO anon",
-            "default privileges: anon gets SELECT on new tables",
+            "default privileges: anon gets SELECT on new tables (in public)",
         ),
         ("CREATE RULE keep AS ON DELETE TO contacts DO INSTEAD NOTHING", "contacts: rule keep"),
         (
             "ALTER FUNCTION harrier_new_owner() RESET search_path",
             "harrier_new_owner(): SECURITY DEFINER without an empty search_path",
+        ),
+        # The second post-merge review's (spec 105).
+        (
+            "ALTER FUNCTION harrier_new_owner() SET search_path = public",
+            "harrier_new_owner(): SECURITY DEFINER without an empty search_path",
+        ),
+        (
+            "ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO anon",
+            "default privileges: anon gets SELECT on new tables (global)",
+        ),
+        (
+            "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO harrier_tenant",
+            "default privileges: harrier_tenant gets SELECT on new tables (in public)",
+        ),
+        (
+            "ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO PUBLIC",
+            "default privileges: PUBLIC gets EXECUTE on new functions (global)",
+        ),
+        (
+            "GRANT EXECUTE ON FUNCTION harrier_number_track() TO harrier_tenant",
+            "harrier_number_track(): executable by harrier_tenant",
+        ),
+        (
+            "GRANT EXECUTE ON FUNCTION harrier_refuse() TO PUBLIC",
+            "harrier_refuse(): executable by PUBLIC",
+        ),
+        ("GRANT CREATE ON SCHEMA public TO harrier_tenant", "public: harrier_tenant may CREATE"),
+        (
+            "ALTER TABLE job_runs DROP CONSTRAINT job_runs_pkey, ADD PRIMARY KEY (job)",
+            "job_runs: unique index job_runs_pkey does not lead with owner_id",
+        ),
+        (
+            "ALTER TABLE contacts ADD COLUMN extra text",
+            "contacts.extra: harrier_tenant lacks ['INSERT', 'UPDATE']",
         ),
     ],
 )
@@ -805,6 +1014,25 @@ def test_the_catalog_names_each_breach(store: PgConnection, breach: str, named: 
         store.execute(breach.encode())
         problems = catalog_problems(store)
     assert any(problem.startswith(named) for problem in problems), problems
+
+
+def test_a_later_column_is_granted_by_the_helper(store: PgConnection) -> None:
+    """A column added to a table with a global id has no tenant grant, and
+    the catalog names it. The helper later migrations call grants it, and
+    the catalog is clean again (spec 105, second post-merge review)."""
+    with store.transaction(force_rollback=True):
+        for table in GLOBAL_ID_TABLES:
+            store.execute(f"ALTER TABLE {table} ADD COLUMN later text".encode())
+        assert {problem.split(":")[0] for problem in catalog_problems(store)} == {
+            f"{table}.later" for table in GLOBAL_ID_TABLES
+        }
+        for table in GLOBAL_ID_TABLES:
+            store.execute(
+                tenant_writes_all_but_id(
+                    table, tuple(sorted(EXPECTED_COLUMN_GRANTS[table]))
+                ).encode()
+            )
+        assert catalog_problems(store) == []
 
 
 # --- isolation ---
@@ -910,16 +1138,52 @@ def test_an_owner_cannot_choose_or_change_an_id(store: PgConnection) -> None:
             values = {**values_for(table, a_job), **unused.get(table, {}), "id": due[table]}
             columns = ", ".join(values)
             placeholders = ", ".join(["%s"] * len(values))
-            for statement, params in (
+            params = tuple(values.values())
+            # Every statement form that writes an id: plain, overriding the
+            # identity, from a query, and through an upsert.
+            writes: list[tuple[str, tuple[object, ...]]] = [
+                (f"INSERT INTO {table} ({columns}) VALUES ({placeholders})", params),
                 (
-                    f"INSERT INTO {table} ({columns}) VALUES ({placeholders})",
-                    tuple(values.values()),
+                    f"INSERT INTO {table} ({columns}) OVERRIDING SYSTEM VALUE "
+                    f"VALUES ({placeholders})",
+                    params,
                 ),
-                (f"UPDATE {table} SET id = %s", (due[table],)),
-            ):
-                error = refusal(store, statement, params)
+                (f"INSERT INTO {table} ({columns}) SELECT {placeholders}", params),
+            ]
+            # job_events holds no UPDATE at all, so an update or an upsert
+            # there would be refused whatever the column; only the tables
+            # the tenant may update prove the id rule for updates.
+            if "UPDATE" in EXPECTED_COLUMN_GRANTS[table]:
+                without_id = {k: v for k, v in values.items() if k != "id"}
+                insert_without_id = (
+                    f"INSERT INTO {table} ({', '.join(without_id)}) "
+                    f"VALUES ({', '.join(['%s'] * len(without_id))})"
+                    if without_id
+                    else f"INSERT INTO {table} DEFAULT VALUES"
+                )
+                writes += [
+                    (f"UPDATE {table} SET id = %s", (due[table],)),
+                    (
+                        f"{insert_without_id} ON CONFLICT (id) DO UPDATE SET id = %s",
+                        (*without_id.values(), due[table]),
+                    ),
+                ]
+                # The same update on a column that is not id is allowed, so
+                # the refusal above is the id rule and not the table's.
+                cursor = store.execute(f"UPDATE {table} SET owner_id = owner_id".encode())
+                assert cursor.rowcount > 0, table
+            for statement, statement_params in writes:
+                error = refusal(store, statement, statement_params)
                 assert error.sqlstate == INSUFFICIENT_PRIVILEGE, statement
                 assert error.diag.message_primary == f"permission denied for table {table}"
+            # The sequence itself: moving it would take the ids due next.
+            sequence = f"{table}_id_seq"
+            for statement in (f"SELECT setval('{sequence}', %s)", f"SELECT nextval('{sequence}')"):
+                error = refusal(
+                    store, statement, (due[table] + 100,) if "setval" in statement else ()
+                )
+                assert error.sqlstate == INSUFFICIENT_PRIVILEGE, statement
+                assert error.diag.message_primary == f"permission denied for sequence {sequence}"
     assert snapshot(store) == before
 
     # B's next row in each table gets the id A tried to take.
@@ -961,8 +1225,9 @@ def test_an_insert_without_an_owner_is_refused(store: PgConnection) -> None:
         # As service_role given the privilege a later spec might grant, and
         # as the superuser: both bypass the policy, and NOT NULL refuses.
         with store.transaction(force_rollback=True):
-            # SELECT too: numbering a track reads the owner's highest id.
-            store.execute(f"GRANT SELECT, INSERT ON {table} TO service_role".encode())
+            # SELECT and UPDATE too: numbering a track reads the owner's
+            # highest id and locks the owner's track 1 (migration 14).
+            store.execute(f"GRANT SELECT, INSERT, UPDATE ON {table} TO service_role".encode())
             store.execute("SET LOCAL ROLE service_role")
             error = refusal(store, statement, params)
             assert error.sqlstate == NOT_NULL, table
@@ -1120,11 +1385,13 @@ def test_every_owner_starts_with_track_one(store_url: str, store: PgConnection) 
     assert row == (2,)
 
     # Two tracks at once for one owner. The first holds its transaction open
-    # until the second is seen waiting on the per-owner numbering lock. Only
-    # the second's own backend counts, so a lock wait elsewhere on a shared
-    # server cannot end the wait early. Were the lock missing, the second
-    # would wait on the first's new key instead, never on an advisory lock,
-    # and the wait below would time out.
+    # until the second is seen waiting. Only the second's own backend
+    # counts, so a lock wait elsewhere on a shared server cannot end the wait
+    # early. With the numbering lock (a row lock on the owner's track 1,
+    # since migration 14) the second waits before it numbers, then numbers
+    # after the first's track. Were the lock missing, the second would take
+    # the first's id, wait on the first's new key instead, and fail with a
+    # unique violation once the first commits.
     ids: list[int] = []
     failures: list[BaseException] = []
     second_backend: list[int] = []
@@ -1161,11 +1428,10 @@ def test_every_owner_starts_with_track_one(store_url: str, store: PgConnection) 
         deadline = time.monotonic() + 30
         while True:
             waiting = store.execute(
-                "SELECT count(*) FROM pg_locks "
-                "WHERE pid = %s AND locktype = 'advisory' AND NOT granted",
+                "SELECT count(*) FROM pg_locks WHERE pid = %s AND NOT granted",
                 (second_backend[0],),
             ).fetchone()
-            if waiting == (1,):
+            if waiting != (0,):
                 break
             assert time.monotonic() < deadline, "the second insert never waited on the lock"
             time.sleep(0.05)
@@ -1200,6 +1466,117 @@ def test_an_owner_never_waits_on_another_owners_track(store_url: str, store: PgC
     assert error.diag.message_primary == (
         'new row violates row-level security policy for table "tracks"'
     )
+
+
+def test_a_tenant_without_claims_never_waits_on_an_owners_track(
+    store_url: str, store: PgConnection
+) -> None:
+    """Migration 13 skipped numbering only when the session had claims, so
+    a tenant session without any, naming another owner, still took that
+    owner's numbering lock and waited on their open insert (spec 105,
+    second post-merge review). For the tenant role, no claims is never the
+    row's owner."""
+    import psycopg
+
+    b = new_owner(store)
+    with psycopg.connect(store_url, autocommit=True) as other, as_owner(other, b):
+        # B's transaction stays open, holding B's numbering lock.
+        other.execute("INSERT INTO tracks (slug, kind, label) VALUES ('b-open', 'industry', 'B')")
+        with as_role(store, TENANT_ROLE):
+            uid = store.execute("SELECT auth.uid()").fetchone()
+            assert uid == (None,)
+            # Were it to wait, give up soon rather than hang the test.
+            store.execute("SET LOCAL lock_timeout = '2s'")
+            error = refusal(
+                store,
+                "INSERT INTO tracks (owner_id, slug, kind, label) "
+                "VALUES (%s, 'as-b', 'industry', 'As B')",
+                (b,),
+            )
+    assert error.sqlstate == INSUFFICIENT_PRIVILEGE
+    assert error.diag.message_primary == (
+        'new row violates row-level security policy for table "tracks"'
+    )
+
+
+def test_an_owner_cannot_hold_up_another_owners_track(store_url: str, store: PgConnection) -> None:
+    """Migration 13 numbered under an advisory lock keyed by the owner's id.
+    Any role may take an advisory lock, and pg_locks shows every key held,
+    so an owner who knew or saw another's key could take it first and hold
+    up that owner's track inserts (spec 105, second post-merge review). A
+    takes every lock it can name here: that key, and a row lock on every
+    track it can see or point at. B's next track goes through at once."""
+    import psycopg
+
+    a, b = new_owner(store), new_owner(store)
+    with psycopg.connect(store_url, autocommit=True) as holder, as_owner(holder, a):
+        took = holder.execute(
+            "SELECT pg_try_advisory_xact_lock(hashtext('harrier.tracks'), hashtext(%s))", (b,)
+        ).fetchone()
+        assert took == (True,)
+        mine = holder.execute("SELECT owner_id, id FROM tracks FOR UPDATE").fetchall()
+        assert mine == [(UUID(a), 1)]
+        theirs = holder.execute(
+            "SELECT id FROM tracks WHERE owner_id = %s AND id = 1 FOR UPDATE", (b,)
+        ).fetchall()
+        assert theirs == []
+
+        with psycopg.connect(store_url, autocommit=True) as other, as_owner(other, b):
+            other.execute("SET LOCAL lock_timeout = '2s'")
+            row = other.execute(
+                "INSERT INTO tracks (slug, kind, label) VALUES ('b-second', 'industry', 'B') "
+                "RETURNING id"
+            ).fetchone()
+            assert row == (2,)
+            # B's open insert holds no lock that pg_locks shows and that
+            # another session could take: a row lock lives in the row.
+            shown = store.execute(
+                "SELECT count(*) FROM pg_locks WHERE pid = %s AND locktype = 'advisory'",
+                (other.info.backend_pid,),
+            ).fetchone()
+            assert shown == (0,)
+
+
+def test_filing_a_job_never_waits_on_a_track_being_numbered(
+    store_url: str, store: PgConnection
+) -> None:
+    """Numbering holds a row lock on the owner's track 1 until the insert
+    commits. A job's reference to track 1 takes a key share lock, which that
+    lock does not block, so the owner's jobs go on being filed meanwhile."""
+    import psycopg
+
+    a = new_owner(store)
+    with psycopg.connect(store_url, autocommit=True) as other, as_owner(other, a):
+        other.execute("INSERT INTO tracks (slug, kind, label) VALUES ('open', 'industry', 'Open')")
+        with as_owner(store, a):
+            store.execute("SET LOCAL lock_timeout = '2s'")
+            job = store.execute("INSERT INTO jobs DEFAULT VALUES RETURNING track_id").fetchone()
+    assert job == (1,)
+
+
+def test_an_operator_without_claims_numbers_the_next_track(store: PgConnection) -> None:
+    """An operator command (spec 108) runs without claims, or with some
+    owner's, as a role the policy does not bind. Numbering takes it for
+    what it is: a session that is not the tenant role numbers any owner's
+    track. Migration 13 told the two apart by the claims alone, and this
+    path had no test."""
+    a, b = new_owner(store), new_owner(store)
+    uid = store.execute("SELECT auth.uid()").fetchone()
+    assert uid == (None,)
+    row = store.execute(
+        "INSERT INTO tracks (owner_id, slug, kind, label) "
+        "VALUES (%s, 'operator', 'industry', 'Operator') RETURNING owner_id, id",
+        (b,),
+    ).fetchone()
+    assert row == (UUID(b), 2)
+    with store.transaction():
+        store.execute("SELECT set_config('request.jwt.claims', %s, true)", (claims(a),))
+        row = store.execute(
+            "INSERT INTO tracks (owner_id, slug, kind, label) "
+            "VALUES (%s, 'operator-2', 'industry', 'Operator') RETURNING owner_id, id",
+            (b,),
+        ).fetchone()
+    assert row == (UUID(b), 3)
 
 
 def test_an_owner_files_a_job_with_the_defaults(store: PgConnection) -> None:

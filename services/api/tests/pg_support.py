@@ -16,7 +16,8 @@ To run them locally:
 Every fresh database gets a shim of Supabase's auth objects before anything
 migrates it (spec 105): the roles anon, authenticated and service_role, a
 schema auth with a table auth.users, auth.uid(), and Supabase's default
-privileges on public. Migration 10 needs them and creates none of them.
+privileges, in public and global. Migration 10 needs them and creates none
+of them.
 `as_owner` is how a test acts as one owner: the same role (harrier_tenant,
 which migration 10 creates) and claims a request's transaction will carry
 (ADR-013 decision 3, spec 104).
@@ -107,6 +108,13 @@ SHIM_STATEMENTS: tuple[str, ...] = (
     *(
         "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
         f"GRANT ALL ON {kind} TO anon, authenticated, service_role"
+        for kind in ("TABLES", "SEQUENCES", "FUNCTIONS")
+    ),
+    # The same grants with no schema named, which apply in every schema. A
+    # revoke in public alone leaves these in place, so the catalog test sees
+    # one that migration 14 forgot (spec 105, second post-merge review).
+    *(
+        f"ALTER DEFAULT PRIVILEGES GRANT ALL ON {kind} TO anon, authenticated, service_role"
         for kind in ("TABLES", "SEQUENCES", "FUNCTIONS")
     ),
 )
