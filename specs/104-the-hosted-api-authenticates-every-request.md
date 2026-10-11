@@ -854,6 +854,8 @@ here, with its own criteria, per the review-response rule. A claims audit
 of PR #243 found that the first text of this amendment let the values sit
 on the login role, where a session-level `SET` outlives its request; it
 now requires `SET LOCAL` in every request.
+Akin agreed to this amendment in chat on 2026-10-11, and confirmed the
+narrowed `SET LOCAL` text the same day.
 
 The limitation, as spec 105 now states it: `LOCK TABLE` checks table
 privileges, not the row policy. `harrier_tenant` holds `UPDATE` or
