@@ -441,6 +441,9 @@ REFUSALS: list[tuple[str, str, int, dict[str, str] | None, str]] = [
     ("recordCompanyOutcome", "outcome", 409, {"code": "company_rejected"}, "row"),
     ("rescoreJob", "rescore", 404, None, "missing"),
     ("rescoreJob", "rescore", 409, None, "row"),
+    # Spec 122: a confirmed verdict with no evidence is refused.
+    ("setJobEligibility", "eligibility", 404, {"verdict": "confirmed"}, "missing"),
+    ("setJobEligibility", "eligibility", 409, {"verdict": "confirmed"}, "row"),
 ]
 
 ERROR_OUT = {"$ref": "#/components/schemas/ErrorOut"}

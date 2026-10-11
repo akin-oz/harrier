@@ -58,6 +58,19 @@ const JOB: Job = {
   track: "second-search",
   deadline: "",
   deadline_passed: false,
+  // No assessment, which reads `unknown` (spec 122).
+  eligibility: {
+    verdict: "unknown",
+    routes: [],
+    origin: "none",
+    evidence_url: "",
+    excerpt: "",
+    field: "",
+    checked_at: "",
+    version: "",
+    description_sha256: "",
+    disagrees: false,
+  },
 };
 
 function event(overrides: Record<string, unknown>) {

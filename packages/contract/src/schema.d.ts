@@ -454,6 +454,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ops/eligibility-reassess": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reassess Job Eligibility
+         * @description `eligibility reassess`: the same function the CLI calls. The rules
+         *     run again on open rows with a stored description; nothing is written
+         *     without `apply`.
+         */
+        post: operations["reassessEligibility"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ops/evaluate-prospects": {
         parameters: {
             query?: never;
@@ -1184,6 +1206,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tracker/{selector}/eligibility": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Job Eligibility
+         * @description `eligibility show`: a job's assessments, newest first.
+         */
+        get: operations["listJobEligibility"];
+        put?: never;
+        /**
+         * Set Job Eligibility
+         * @description `eligibility set`: the same function the CLI calls. It stays the row's
+         *     current assessment until the candidate records another.
+         */
+        post: operations["setJobEligibility"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tracker/{selector}/events": {
         parameters: {
             query?: never;
@@ -1796,6 +1843,149 @@ export interface components {
             tone?: string;
         };
         /**
+         * EligibilityEntryOut
+         * @description One recorded assessment, as written (spec 122).
+         */
+        EligibilityEntryOut: {
+            /** At */
+            at: string;
+            /** Checked At */
+            checked_at: string;
+            /** Description Sha256 */
+            description_sha256: string;
+            /** Evidence Url */
+            evidence_url: string;
+            /** Excerpt */
+            excerpt: string;
+            /**
+             * Field
+             * @enum {string}
+             */
+            field: "" | "title" | "location" | "description" | "external";
+            /** Matched */
+            matched: string;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "rule" | "candidate";
+            /** Routes */
+            routes: ("employee" | "contractor" | "eor" | "relocation")[];
+            /**
+             * Verdict
+             * @enum {string}
+             */
+            verdict: "confirmed" | "possible" | "unknown" | "excluded";
+            /** Version */
+            version: string;
+        };
+        /**
+         * EligibilityOut
+         * @description What a row reads about Türkiye (spec 122). `verdict` is geography
+         *     only and `routes` engagement only. `origin` is `none` for a row with no
+         *     assessment, which reads `unknown`. `disagrees` is true when the current
+         *     assessment is the candidate's and the rules' latest differs from it in
+         *     verdict or routes; nothing else follows from it.
+         */
+        EligibilityOut: {
+            /** Checked At */
+            checked_at: string;
+            /** Description Sha256 */
+            description_sha256: string;
+            /** Disagrees */
+            disagrees: boolean;
+            /** Evidence Url */
+            evidence_url: string;
+            /** Excerpt */
+            excerpt: string;
+            /**
+             * Field
+             * @enum {string}
+             */
+            field: "" | "title" | "location" | "description" | "external";
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "rule" | "candidate" | "none";
+            /** Routes */
+            routes: ("employee" | "contractor" | "eor" | "relocation")[];
+            /**
+             * Verdict
+             * @enum {string}
+             */
+            verdict: "confirmed" | "possible" | "unknown" | "excluded";
+            /** Version */
+            version: string;
+        };
+        /**
+         * EligibilityReassessIn
+         * @description Report by default; `apply` writes, as a second, separate request.
+         */
+        EligibilityReassessIn: {
+            /**
+             * Apply
+             * @default false
+             */
+            apply?: boolean;
+        };
+        /**
+         * EligibilityReassessOut
+         * @description Counts only, never an excerpt (spec 122).
+         */
+        EligibilityReassessOut: {
+            /** Applied */
+            applied: boolean;
+            /** Assessed */
+            assessed: number;
+            /** By Verdict */
+            by_verdict: {
+                [key: string]: number;
+            };
+            /** Disagrees */
+            disagrees: number;
+            /** Examined */
+            examined: number;
+            /** No Description */
+            no_description: number;
+            /** Rejected Skipped */
+            rejected_skipped: number;
+            /** Unchanged */
+            unchanged: number;
+            /** Under Candidate */
+            under_candidate: number;
+        };
+        /**
+         * EligibilitySetIn
+         * @description The candidate's own assessment. `confirmed` and `excluded` need the
+         *     URL the evidence was read at and the words that decide it. `checked_at`
+         *     is a date or a UTC time; now when omitted.
+         */
+        EligibilitySetIn: {
+            /** Checked At */
+            checked_at?: string | null;
+            /**
+             * Evidence Url
+             * @default
+             */
+            evidence_url?: string;
+            /**
+             * Excerpt
+             * @default
+             */
+            excerpt?: string;
+            /**
+             * Routes
+             * @default []
+             */
+            routes?: ("employee" | "contractor" | "eor" | "relocation")[];
+            /**
+             * Verdict
+             * @enum {string}
+             */
+            verdict: "confirmed" | "possible" | "unknown" | "excluded";
+        };
+        /**
          * ErrorOut
          * @description The body of a refusal: the message the domain wrote, verbatim.
          */
@@ -2007,6 +2197,7 @@ export interface components {
             deadline: string;
             /** Deadline Passed */
             deadline_passed: boolean;
+            eligibility: components["schemas"]["EligibilityOut"];
             /** External Key */
             external_key: string;
             /** Fit Score */
@@ -4012,6 +4203,76 @@ export interface operations {
             };
         };
     };
+    reassessEligibility: {
+        parameters: {
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["EligibilityReassessIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EligibilityReassessOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the track parameter named no track */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description the track may not run this operation, or it is archived */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
+        };
+    };
     evaluateProspects: {
         parameters: {
             query?: {
@@ -5961,6 +6222,139 @@ export interface operations {
                 };
             };
             /** @description the track may not run this operation, or it is archived */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
+        };
+    };
+    listJobEligibility: {
+        parameters: {
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
+            header?: never;
+            path: {
+                selector: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EligibilityEntryOut"][];
+                };
+            };
+            /** @description the selector named no job, or more than one */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description the track may not run this operation, or it is archived */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                };
+            };
+        };
+    };
+    setJobEligibility: {
+        parameters: {
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
+            header?: never;
+            path: {
+                selector: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EligibilitySetIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EligibilityOut"];
+                };
+            };
+            /** @description missing or wrong local API token */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the selector named no job, or more than one */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description the tracker refused the change */
             409: {
                 headers: {
                     [name: string]: unknown;

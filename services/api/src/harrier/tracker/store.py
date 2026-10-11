@@ -33,6 +33,11 @@ from harrier.tracker.reasons import (
 )
 from harrier.tracker.schema import (
     CONTACT_FIELDS,
+    ELIGIBILITY_EXCERPT_LIMIT,
+    ELIGIBILITY_FIELDS,
+    ELIGIBILITY_ORIGINS,
+    ELIGIBILITY_ROUTES,
+    ELIGIBILITY_VERDICTS,
     NOTE_KEYS,
     STATUSES,
     TRACKER_FIELDS,
@@ -116,14 +121,25 @@ def find_duplicate(
     return None
 
 
-def add_job(conn: sqlite3.Connection, fields: Mapping[str, str], *, scope: Scope) -> int:
+def add_job(
+    conn: sqlite3.Connection,
+    fields: Mapping[str, str],
+    *,
+    scope: Scope,
+    eligibility: EligibilityAssessment | None = None,
+) -> int:
     """Insert one job in the scope's track (spec 091).
 
     Raises DuplicateJobError on a url, external_key or company+title match.
     The track is the scope's to say: a `track_id` in `fields` is refused
     rather than honoured, so no caller can file a row somewhere its scope
     was not resolved for.
+
+    `eligibility` is the row's first assessment, written in the same
+    transaction as the row, so neither exists without the other (spec 122).
     """
+    if eligibility is not None:
+        _check_assessment(eligibility)
     if "track_id" in fields:
         raise TrackerError("track_id is set from the scope, not from the fields")
     _refuse_archived(conn, scope)
@@ -199,6 +215,8 @@ def add_job(conn: sqlite3.Connection, fields: Mapping[str, str], *, scope: Scope
             scoring_version=promoted["scoring_version"],
             description_sha256=description_sha256,
         )
+        if eligibility is not None:
+            _insert_assessment(conn, int(row_id), eligibility)
     return int(row_id)
 
 
@@ -687,6 +705,205 @@ def backfill_events(
                         backfilled=True,
                     )
     return counts
+
+
+# --- eligibility (spec 122) ----------------------------------------------------
+
+
+class EligibilityError(TrackerError):
+    """An assessment the write path refuses. The message is the operator's."""
+
+
+@dataclass(frozen=True)
+class EligibilityAssessment:
+    """One answer to: can this posting engage someone based in Türkiye, and how.
+
+    `verdict` is geography only and `routes` engagement only (spec 122).
+    `at` is when the row was written, empty until it is.
+    """
+
+    verdict: str
+    routes: tuple[str, ...] = ()
+    evidence_url: str = ""
+    excerpt: str = ""
+    field: str = ""
+    matched: str = ""
+    checked_at: str = ""
+    origin: str = "rule"
+    version: str = ""
+    description_sha256: str = ""
+    at: str = ""
+
+
+@dataclass(frozen=True)
+class EligibilityView:
+    """What a row reads: its current assessment, and the rules' latest.
+
+    The current one is the candidate's latest when there is one, and
+    otherwise the rules' latest; None when the row has none, which reads as
+    `unknown`. A later rule assessment never replaces a candidate one.
+    """
+
+    current: EligibilityAssessment | None
+    latest_rule: EligibilityAssessment | None
+
+    @property
+    def disagrees(self) -> bool:
+        """The rules' latest differs from the candidate's current verdict or
+        routes. Nothing follows from it but this flag."""
+        current, rule = self.current, self.latest_rule
+        if current is None or rule is None or current.origin != "candidate":
+            return False
+        return (current.verdict, current.routes) != (rule.verdict, rule.routes)
+
+
+_ISO_INSTANT = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+
+
+def _check_assessment(assessment: EligibilityAssessment) -> None:
+    """The refusals every writer of `job_eligibility` gets, in words."""
+    if assessment.verdict not in ELIGIBILITY_VERDICTS:
+        raise EligibilityError(
+            f"unknown verdict {assessment.verdict!r}; legal: {', '.join(ELIGIBILITY_VERDICTS)}"
+        )
+    unknown_routes = [route for route in assessment.routes if route not in ELIGIBILITY_ROUTES]
+    if unknown_routes:
+        raise EligibilityError(
+            f"unknown route {unknown_routes[0]!r}; legal: {', '.join(ELIGIBILITY_ROUTES)}"
+        )
+    if assessment.origin not in ELIGIBILITY_ORIGINS:
+        raise EligibilityError(f"unknown origin {assessment.origin!r}")
+    if assessment.field and assessment.field not in ELIGIBILITY_FIELDS:
+        raise EligibilityError(
+            f"unknown field {assessment.field!r}; legal: {', '.join(ELIGIBILITY_FIELDS)}"
+        )
+    if len(assessment.excerpt) > ELIGIBILITY_EXCERPT_LIMIT:
+        raise EligibilityError(
+            f"the excerpt is {len(assessment.excerpt)} characters; "
+            f"at most {ELIGIBILITY_EXCERPT_LIMIT} are kept"
+        )
+    url = assessment.evidence_url
+    if url and not re.match(r"^https?://\S+$", url):
+        raise EligibilityError(f"the evidence URL must be an http or https URL, got {url!r}")
+    if not _ISO_INSTANT.match(assessment.checked_at):
+        raise EligibilityError(
+            f"checked_at must be a UTC time like 2026-10-11T09:30:00Z, "
+            f"got {assessment.checked_at!r}"
+        )
+    firm = assessment.verdict in ("confirmed", "excluded")
+    if firm and assessment.origin == "candidate" and not (url and assessment.excerpt.strip()):
+        raise EligibilityError(
+            f"a {assessment.verdict} verdict needs its evidence: "
+            "the URL it was read at and the words that decide it"
+        )
+
+
+def _insert_assessment(
+    conn: sqlite3.Connection, job_id: int, assessment: EligibilityAssessment
+) -> None:
+    """The only INSERT into `job_eligibility`, inside the caller's
+    transaction. The log line carries ids and the verdict, never the
+    excerpt or the matched phrases."""
+    routes = "|".join(route for route in ELIGIBILITY_ROUTES if route in assessment.routes)
+    conn.execute(
+        "INSERT INTO job_eligibility (job_id, verdict, routes, evidence_url, excerpt, field, "
+        "matched, checked_at, origin, version, description_sha256) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            job_id,
+            assessment.verdict,
+            routes,
+            assessment.evidence_url,
+            assessment.excerpt,
+            assessment.field,
+            assessment.matched,
+            assessment.checked_at,
+            assessment.origin,
+            assessment.version,
+            assessment.description_sha256,
+        ),
+    )
+    logger.debug(
+        "eligibility: job=%s origin=%s verdict=%s", job_id, assessment.origin, assessment.verdict
+    )
+
+
+def record_eligibility(
+    conn: sqlite3.Connection, scope: Scope, job_id: int, assessment: EligibilityAssessment
+) -> EligibilityView:
+    """Append one assessment to a job of the scope's track (spec 122).
+
+    Every assessment is kept; none is ever overwritten. A rule assessment
+    is refused on a rejected row: a rejection is not revisited by rule.
+    Returns what the row reads after the write.
+    """
+    _check_assessment(assessment)
+    _refuse_archived(conn, scope)
+    with _write_lock(conn):
+        job = get_job(conn, scope, job_id)
+        if assessment.origin == "rule" and job["status"] == "rejected":
+            raise EligibilityError(
+                f"job {job_id} is rejected; a rejected row is not assessed by rule"
+            )
+        with conn:
+            _insert_assessment(conn, job_id, assessment)
+    return eligibility_of(conn, scope, job_id)
+
+
+def _assessment_from_row(row: sqlite3.Row) -> EligibilityAssessment:
+    return EligibilityAssessment(
+        verdict=str(row["verdict"]),
+        routes=tuple(route for route in str(row["routes"]).split("|") if route),
+        evidence_url=str(row["evidence_url"]),
+        excerpt=str(row["excerpt"]),
+        field=str(row["field"]),
+        matched=str(row["matched"]),
+        checked_at=str(row["checked_at"]),
+        origin=str(row["origin"]),
+        version=str(row["version"]),
+        description_sha256=str(row["description_sha256"]),
+        at=str(row["at"]),
+    )
+
+
+def eligibility_history(
+    conn: sqlite3.Connection, scope: Scope, job_id: int
+) -> list[EligibilityAssessment]:
+    """A job's assessments, newest first. Another track's job is not found,
+    with the error a missing id raises (spec 092)."""
+    get_job(conn, scope, job_id)
+    rows = conn.execute(
+        "SELECT e.* FROM job_eligibility AS e JOIN jobs AS j ON j.id = e.job_id "
+        "WHERE e.job_id = ? AND j.track_id = ? ORDER BY e.id DESC",
+        (job_id, scope.track.id),
+    ).fetchall()
+    return [_assessment_from_row(row) for row in rows]
+
+
+def eligibility_views(conn: sqlite3.Connection, scope: Scope) -> dict[int, EligibilityView]:
+    """Every assessed job of the scope's track, by id, in one read. A job
+    with no assessment is absent and reads `EligibilityView(None, None)`."""
+    rows = conn.execute(
+        "SELECT e.* FROM job_eligibility AS e JOIN jobs AS j ON j.id = e.job_id "
+        "WHERE j.track_id = ? ORDER BY e.id",
+        (scope.track.id,),
+    ).fetchall()
+    candidate: dict[int, EligibilityAssessment] = {}
+    rule: dict[int, EligibilityAssessment] = {}
+    for row in rows:
+        latest = candidate if row["origin"] == "candidate" else rule
+        latest[int(row["job_id"])] = _assessment_from_row(row)
+    return {
+        job_id: EligibilityView(candidate.get(job_id) or rule.get(job_id), rule.get(job_id))
+        for job_id in candidate.keys() | rule.keys()
+    }
+
+
+def eligibility_of(conn: sqlite3.Connection, scope: Scope, job_id: int) -> EligibilityView:
+    history = eligibility_history(conn, scope, job_id)
+    candidate = next((entry for entry in history if entry.origin == "candidate"), None)
+    rule = next((entry for entry in history if entry.origin == "rule"), None)
+    return EligibilityView(candidate or rule, rule)
 
 
 def add_contact(conn: sqlite3.Connection, fields: Mapping[str, str]) -> int:

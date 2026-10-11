@@ -71,7 +71,14 @@ from pg_support import fresh_database, new_owner, set_session_owner
 from harrier.db import connect
 from harrier.pgstore import migrate_postgres, postgres_connect
 from harrier.tracker.reasons import ACTORS, KINDS
-from harrier.tracker.schema import HOSTED_ONLY_COLUMNS, OWNER_SCOPED_KEYS, STATUSES
+from harrier.tracker.schema import (
+    ELIGIBILITY_FIELDS,
+    ELIGIBILITY_ORIGINS,
+    ELIGIBILITY_VERDICTS,
+    HOSTED_ONLY_COLUMNS,
+    OWNER_SCOPED_KEYS,
+    STATUSES,
+)
 from harrier.tracks import TRACK_KINDS
 
 if TYPE_CHECKING:
@@ -583,6 +590,12 @@ MINIMAL_ROWS: tuple[tuple[str, str, str], ...] = (
         "SELECT * FROM job_events",
     ),
     (
+        "job_eligibility",
+        "INSERT INTO job_eligibility (job_id, verdict, checked_at, origin) "
+        "VALUES (1, 'unknown', '2026-10-11T00:00:00Z', 'rule')",
+        "SELECT * FROM job_eligibility",
+    ),
+    (
         "job_runs",
         "INSERT INTO job_runs (job, last_success_at) VALUES ('parity', '2026-10-10 00:00:00')",
         "SELECT * FROM job_runs",
@@ -625,7 +638,7 @@ NOT_UTC_OFFSET_SECONDS = 9 * 3600
 
 def timestamp_shape(table: str, column: str) -> TimestampShape | None:
     """The shape a column's default timestamp must have, or None if not one."""
-    if table == "job_events" and column == "at":
+    if table in {"job_events", "job_eligibility"} and column == "at":
         return ISO_NOW
     if column in {"created_at", "updated_at"}:
         return SQLITE_NOW
@@ -948,6 +961,44 @@ def _event(kind: str, actor: str, *, job_id: int = 1, backfilled: int = 0) -> st
     )
 
 
+def _assessment(
+    *,
+    verdict: str = "unknown",
+    origin: str = "rule",
+    field: str = "",
+    excerpt: str = "",
+    job_id: int = 1,
+) -> str:
+    return (
+        "INSERT INTO job_eligibility (job_id, verdict, origin, field, excerpt, checked_at) "
+        f"VALUES ({job_id}, '{verdict}', '{origin}', '{field}', '{excerpt}', "
+        "'2026-10-11T00:00:00Z')"
+    )
+
+
+ONE_ASSESSMENT = _assessment()
+
+
+def _every_eligibility_value() -> tuple[Probe, ...]:
+    """Each verdict, origin and field spec 122 names is one an assessment
+    can hold, in both (spec 122)."""
+    values = (
+        *(("verdict", value, _assessment(verdict=value)) for value in ELIGIBILITY_VERDICTS),
+        *(("origin", value, _assessment(origin=value)) for value in ELIGIBILITY_ORIGINS),
+        *(("field", value, _assessment(field=value)) for value in ELIGIBILITY_FIELDS),
+    )
+    return tuple(
+        Probe(
+            f"eligibility-{column}-{value}",
+            statement,
+            refused=False,
+            setup=(ONE_JOB,),
+            check=(f"SELECT count(*) FROM job_eligibility WHERE {column} = '{value}'", 1),
+        )
+        for column, value, statement in values
+    )
+
+
 def _every_status() -> tuple[Probe, ...]:
     """Each status the lifecycle names is one a job can hold, in both."""
     return tuple(
@@ -1130,6 +1181,54 @@ PROBES: tuple[Probe, ...] = (
         refused=False,
         check=("SELECT count(*) FROM tracks WHERE id = 1 AND label = 'y'", 1),
     ),
+    # Spec 122: what an assessment may hold, and that none is ever changed.
+    Probe(
+        "eligibility-verdict-bogus",
+        _assessment(verdict="bogus"),
+        refused=True,
+        setup=(ONE_JOB,),
+    ),
+    Probe(
+        "eligibility-origin-bogus",
+        _assessment(origin="bogus"),
+        refused=True,
+        setup=(ONE_JOB,),
+    ),
+    Probe(
+        "eligibility-field-bogus",
+        _assessment(field="bogus"),
+        refused=True,
+        setup=(ONE_JOB,),
+    ),
+    Probe(
+        "eligibility-excerpt-301",
+        _assessment(excerpt="a" * 301),
+        refused=True,
+        setup=(ONE_JOB,),
+    ),
+    Probe(
+        "eligibility-excerpt-300",
+        _assessment(excerpt="a" * 300),
+        refused=False,
+        setup=(ONE_JOB,),
+        check=("SELECT count(*) FROM job_eligibility", 1),
+    ),
+    Probe("eligibility-for-a-missing-job", _assessment(job_id=99), refused=True),
+    Probe(
+        "eligibility-update-verdict",
+        "UPDATE job_eligibility SET verdict = 'confirmed'",
+        refused=True,
+        message="job_eligibility is append-only",
+        setup=(ONE_JOB, ONE_ASSESSMENT),
+    ),
+    Probe(
+        "eligibility-delete",
+        "DELETE FROM job_eligibility",
+        refused=True,
+        message="job_eligibility is append-only",
+        setup=(ONE_JOB, ONE_ASSESSMENT),
+    ),
+    *_every_eligibility_value(),
     *_every_status(),
     *_every_track_kind(),
     *_every_event_kind_and_actor(),
