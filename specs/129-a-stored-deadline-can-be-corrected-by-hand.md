@@ -1,8 +1,8 @@
 ---
 spec: 129
 title: A stored deadline can be corrected by hand
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M9
 depends: [027, 074, 092, 093, 097, 101, 112, 126]
 ---
