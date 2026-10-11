@@ -1077,3 +1077,264 @@ All answered on 2026-10-08:
   `services/api/tests/test_academic_discovery.py::test_an_unconvertible_deadline_is_left_empty`
   and
   `services/api/tests/test_schedule.py::test_a_weekday_outside_one_to_seven_is_refused`.
+
+## Amendment (2026-10-11): `deadline` is the call's own closing date
+
+Akin approved this section in chat on 2026-10-11 ("approve the spec 097
+amendment"); this line records it. Nothing below is built yet. Line
+numbers are from `main` at `3b513d7`.
+
+### Problem
+
+An academic row's `deadline` orders the queue (spec 093), drives the
+`deadline_passed` gate (this spec, "The deadline") and the passed-deadline
+warning (spec 101). None of those specs says which date it is. The code
+takes it from one place: `FIELD_MAP["deadline"]` is the actor's `deadline`
+field (`services/api/src/harrier/sources/apify_academic.py:79`), and
+`normalize_items` passes that field, and nothing else, to `parse_deadline`
+(`:507`).
+
+On one portal the source reads, that field is not the call's deadline. On
+2026-10-11 the operator saw a stored call whose own text says to apply no
+later than a date about two weeks before the stored `deadline`. Checked
+against the saved run's dataset and the posting pages:
+
+- On every item from that portal in the run, the actor's `deadline` was
+  later than the date the posting page publishes in its schema.org
+  `JobPosting` structured data (`validThrough`), by days to weeks.
+- Where the call text states a closing date, it matched `validThrough`
+  in most cases. In one it was a few days later than `validThrough`, and
+  still earlier than the actor's field.
+- No fixed offset explains the actor's date: it is not `validThrough`, the
+  posting date or the scrape date plus a constant.
+- Items from the other portals in the run carried the same date their
+  pages label as the application deadline.
+
+Harrier cannot see the call text's own date today. The item's
+`descriptionRaw` is cut to a few hundred characters on that portal, and the
+deadline sentence is not in it. So a late date is stored with nothing to
+contradict it. The cost is one-sided: the queue shows the call as open for
+weeks after it closed, the gate keeps it, and spec 101's warning stays
+silent until the wrong date passes.
+
+### Behavior after the change
+
+**What `deadline` means.** An academic row's `deadline` is the last day the
+institution accepts applications for the call, as the call itself states
+it. A date the portal attaches to its listing (when the listing expires,
+stops being shown or was computed by the source) is not the deadline. This
+holds for every academic row. `add --deadline` (spec 093) is unchanged: the
+operator types the call's date.
+
+**Which portals are checked.** A new environment variable,
+`APIFY_ACADEMIC_CHECK_PORTALS`, names the portal ids whose posting page is
+read for the deadline. It is a comma-separated subset of
+`APIFY_ACADEMIC_PORTALS`, read from `.env` for the same reason (portal ids
+are real platform names, Amendment 2026-10-08). Unset or empty, no page is
+read and every item behaves as today. `.env.example` documents it with an
+empty value.
+
+**The candidate dates.** For an item whose `sourcePortal` is a checked
+portal, normalization reads the item's posting page (its `applicationUrl`)
+once and collects up to three dates, each converted by `parse_deadline`:
+
+- `text`: a date in the page's call text that begins within 40 characters
+  after one of a closed list of phrases, in the same sentence. The list is
+  a code constant: `apply no later than`, `no later than`, `application
+  deadline`, `deadline for applications`, `deadline`, `closing date`,
+  `accept applications until`, `up to and including`, `until and
+  including`, `apply by`, `apply before`. Matching ignores case. A phrase
+  followed by text that is not a full date (a month and year only) gives
+  nothing. When the matches give more than one distinct date, `text` is
+  unreadable.
+- `page`: the date part of `validThrough` in the page's `JobPosting`
+  structured data. Two `JobPosting` blocks with different dates make
+  `page` unreadable.
+- `listing`: the actor's `deadline` field, as today.
+
+An item from a portal that is not checked has only `listing`, and no page
+is read for it.
+
+**Which candidate is stored.** In order:
+
+1. A readable `text` date is the deadline, whether it is earlier or later
+   than the others. It is the call's own statement.
+2. Otherwise, the earliest of the readable `page` and `listing` dates. A
+   wrong early date costs the operator days; a wrong late date costs the
+   application.
+3. Otherwise, as today: empty, with `deadline_text` when the listing text
+   could not be read.
+
+**When the dates disagree.** When two or more readable candidates differ,
+the row's notes carry `deadline_dates=` naming each, for example
+`deadline_dates=text:2099-10-30|page:2099-10-30|listing:2099-11-13`, and
+`deadline_from=` naming the one stored. The run summary counts these items
+as `deadline_disagreed`. Agreeing candidates add nothing to the notes.
+
+**When the page cannot be read.** A checked portal's item whose page fails
+(any HTTP error after the retry policy of `harrier.screening.http`, a
+timeout, a redirect `url_allowed` refuses, or a page with neither a `text`
+nor a `page` date) is stored with an empty `deadline`, because its portal's
+`listing` date is the one known to be wrong. The notes carry
+`listing_deadline=<date>` when the listing gave one. The summary counts the
+item as `deadline_unconfirmed`. The run continues.
+
+**Where it happens.** In the source module's normalization, before
+screening. The gates and dedupe read the stored `deadline` exactly as
+today, so the `deadline_passed` gate, the deadline-aware dedupe, the queue
+and spec 101's warning all see the chosen date. Screening gains no
+per-source logic.
+
+**Which modes read pages.** A live run and `--from-run` read pages. A
+dataset-file replay and demo mode make no page request, as spec 009's
+replay promises no request: a checked portal's item there is treated as a
+page that could not be read. `--shadow` runs nothing and reads nothing.
+
+**The page request.** Through `harrier.screening.http` with a `url_allowed`
+hook: the scheme is `https`, and the initial host and every redirect host
+are the item's own `applicationUrl` host. Pages are read one at a time.
+Logging stays as this spec's "What is logged, sent and recorded" says: a
+fixed label and counts, never a URL, page text or date.
+
+### Failure modes
+
+- **`APIFY_ACADEMIC_CHECK_PORTALS` names a portal not in
+  `APIFY_ACADEMIC_PORTALS`.** Refused before any request, exit 2, naming
+  the variable and not the value.
+- **The page returns 404 or 410** (the call was removed). Unconfirmed, as
+  above.
+- **The portal rate-limits (429).** Retried by the existing policy, then
+  unconfirmed.
+- **The page redirects to another host or a private address.** Not
+  followed; unconfirmed.
+- **The call text names two different dates near the phrases** (an
+  extended deadline beside the old one). `text` is unreadable; the
+  earliest structured date is stored, and both dates are kept in
+  `deadline_dates`.
+- **`validThrough` carries a time and zone.** The date part is used, as
+  `parse_deadline` drops a time today.
+- **A posting returned again by a later run.** It is a duplicate by URL
+  and the stored row is not rewritten, so a row stored before this change
+  keeps its date (Migration).
+
+Must not introduce: a page read for an item from a portal not checked; a
+page request in a replay or in demo mode; a stored `deadline` later than a
+readable `text` date's or, without one, later than the earliest readable
+structured date; a URL, page text or date in a log line; a real portal
+name, institution, call or date from the operator's runs in a committed
+file.
+
+### Acceptance criteria
+
+Tests in `services/api/tests/test_academic_discovery.py`. Every page is a
+synthetic fixture (`fixtures/academic-posting-page.html`, an invented
+institution on portal `portal-a`) served by a stub transport; nothing
+reaches the network. `fixtures/` is public by the classification's
+complement rule, so no classification change is needed.
+
+- [ ] A checked portal's item stores the call text's date when the listing
+      field and `validThrough` differ from it
+      (planned test_the_call_text_date_is_the_deadline)
+- [ ] A call text date later than `validThrough` is still the one stored
+      (planned test_a_later_call_text_date_still_wins)
+- [ ] With no call text date, the earlier of `validThrough` and the
+      listing field is stored
+      (planned test_without_a_call_date_the_earlier_date_is_stored)
+- [ ] Disagreeing candidates are written as `deadline_dates` and
+      `deadline_from`, and counted as `deadline_disagreed`; agreeing ones
+      add no note
+      (planned test_disagreeing_dates_are_recorded_and_counted)
+- [ ] Two different call text dates make `text` unreadable and fall back
+      (planned test_two_call_text_dates_fall_back_to_the_structured_dates)
+- [ ] A failed page read stores an empty deadline with
+      `listing_deadline`, counts `deadline_unconfirmed`, and the run
+      continues (planned test_an_unreadable_page_leaves_the_deadline_empty)
+- [ ] An item from a portal not checked reads no page and keeps today's
+      behavior (planned test_an_unchecked_portal_reads_no_page)
+- [ ] A dataset-file replay and demo mode make no page request
+      (planned test_a_replay_reads_no_posting_page)
+- [ ] A redirect to another host is not followed
+      (planned test_a_page_redirect_to_another_host_is_refused)
+- [ ] A checked portal missing from `APIFY_ACADEMIC_PORTALS` is refused
+      before any request
+      (planned test_an_unknown_checked_portal_is_refused)
+- [ ] The `deadline_passed` gate reads the chosen date: an item whose
+      listing date is open but whose call text date is two days before
+      the run date is rejected
+      (planned test_the_gate_reads_the_call_text_date)
+- [ ] No log line carries the page URL, page text or a date
+      (planned test_page_reads_log_no_url_text_or_date)
+
+### Honest limitations
+
+- **The phrase list misses wording outside it.** Such a call falls back to
+  the earliest structured date.
+- **An early structured date can reject an open call.** Where `validThrough`
+  is earlier than the call's date and the text gives none, the stored
+  date is early. Past the one day of grace the gate rejects the posting as
+  `deadline_passed`, and it stays rejected while the dates stay the same.
+- **Why the actor's date is late is not known.** The fix reads around it;
+  it does not correct the actor.
+- **A page reflects the day it was read.** A deadline extended after the
+  run is not seen until a later run returns the posting, which the
+  posting window may never do.
+- **A run gets slower.** One request per checked item, one at a time,
+  within the run's result cap. The worst case is the retry policy's
+  timeout for every such item.
+- **A portal may refuse automated reads.** Every item from it is then
+  unconfirmed, which the summary shows.
+
+### Migration
+
+None for data. Rows already stored keep their deadline; a later run does
+not rewrite them. After this ships, the operator sets
+`APIFY_ACADEMIC_CHECK_PORTALS` in `.env` and checks by hand each open
+academic row from a checked portal against its call text. Correcting a
+stored row needs a command no spec provides yet (Open decision 4).
+
+### Out of scope
+
+- Rewriting stored rows, or a backfill.
+- A command to set or correct a stored row's deadline (Open decision 4).
+- More than one date per call (spec 093, Honest limitations).
+- Reading pages for `add`, capture or the industry track.
+- A change to the Telegram summary.
+
+### Open decisions for Akin
+
+All four taken 2026-10-11 by Akin, in chat ("1a, 2 call text first, 3
+empty, 4 separate spec"). The amendment was approved later the same day.
+
+1. **How harrier gets a second date.** (a) Read the posting page for
+   portals named in `APIFY_ACADEMIC_CHECK_PORTALS`. (b) Read every
+   portal's page. (c) No page read: a named portal's listing date is
+   stored empty with a `listing_deadline` note. Recommendation: (a). The
+   evidence points at one portal, and (c) leaves those rows undated.
+   Taken: (a).
+2. **Precedence.** Call text first, then the earliest structured date, as
+   above; or the earliest of all three always. Recommendation: call text
+   first, because it is what `deadline` means.
+   Taken: call text first.
+3. **A page that cannot be read.** Empty with a note, as above; or keep
+   the listing date marked unconfirmed. Recommendation: empty, because
+   that portal's listing date is the one known to be late.
+   Taken: empty with a note.
+4. **Correcting a stored row.** A separate spec for
+   `harrier --track <slug> deadline <id> YYYY-MM-DD` through the tracker's
+   write path, or fold it into this amendment. Recommendation: a separate
+   spec. It is a new write on an existing row and serves hand-added rows
+   too. Taken: a separate spec.
+
+### Proof / origin
+
+- The field map and the one date read:
+  `services/api/src/harrier/sources/apify_academic.py:79` and `:507`;
+  conversion: `parse_deadline` (`:434`).
+- The gate, the queue and the warning that read the stored date: this
+  spec, "The deadline"; `services/api/src/harrier/tracker/queue.py`
+  (`rank_by_deadline`, `deadline_warning`); spec 101, "The deadline".
+- The fetch helper and its redirect hook:
+  `services/api/src/harrier/screening/http.py`.
+- The comparison was made on 2026-10-11 from the saved run's dataset, read
+  inside the running container, and the public posting pages. Nothing
+  from it is committed.
