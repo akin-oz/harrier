@@ -14,12 +14,14 @@ path that applies migrations.
 A URL carries a password, in its authority or as a `password` query
 parameter. A connection error is built from the host, port and database
 name, never from the URL, and the driver's own message is scrubbed of the
-password, in its written and decoded forms, before it is quoted. The
-driver's error is not chained to the one raised, so it cannot be found as
-`__context__` either. Errors from a migration's statements are the
-driver's own; `harrier store migrate` prints only the server's primary
-message, which quotes SQL, not the URL. Spec 035 is the record of a
-credential leaking through an exception string.
+password, in its written and decoded forms, before it is quoted. The scrub
+learns the password from urlsplit, so `store_target` refuses a URL that
+urlsplit and libpq would read differently. The driver's error is not
+chained to the one raised, so it cannot be found as `__context__` either.
+Errors from a migration's statements are the driver's own; `harrier store
+migrate` prints only the server's primary message, which quotes SQL, not
+the URL. Spec 035 is the record of a credential leaking through an
+exception string.
 """
 
 from __future__ import annotations
@@ -49,6 +51,10 @@ MIGRATION_LOCK_KEY = 0x68_61_72_72_69_65_72
 POSTGRES_NOT_YET = (
     "HARRIER_DATABASE_URL names a Postgres store; only harrier store runs on it until spec 112"
 )
+
+# Characters urlsplit and libpq read differently: urlsplit starts a
+# fragment at `#` and drops a tab, CR or LF; libpq keeps each as text.
+_READ_DIFFERENTLY = ("#", "\t", "\r", "\n")
 
 
 class StoreError(Exception):
@@ -136,6 +142,13 @@ def store_target(environ: Mapping[str, str] | None = None) -> StoreTarget:
     refused = StoreUrlError(f"{URL_VARIABLE} must be empty or a postgresql:// URL")
     if not raw.startswith(f"{POSTGRES_SCHEME}://"):
         raise refused
+    # urlsplit, which tells the scrub what the password is, reads a raw `#`
+    # as the start of a fragment and drops a raw tab, CR or LF. libpq does
+    # neither, so it took a password the scrub never saw whole, and quoted
+    # it (post-merge review of PR #231). A written URL carries these
+    # percent-encoded.
+    if any(character in raw for character in _READ_DIFFERENTLY):
+        raise refused
     try:
         _where(raw)
         parses = True
@@ -158,11 +171,18 @@ def _one_reading_of_the_authority(url: str) -> bool:
     them disagree: urlsplit reads the whole of `p@rest` as the password and
     scrubs that, while libpq takes `rest@host` as the host and quotes it
     when it cannot resolve it, carrying the tail of the password. An `@` in
-    a query with no path before it does the same (review of PR #225).
+    a query with no path before it, and no `@` before the host, does the
+    same (review of PR #225).
+
+    The two agree when they split at the same `@`, or when neither finds
+    one. Counting every `@` before the first `/` refused a valid URL whose
+    query, with no path before it, holds an `@` after the host's own
+    (post-merge review of PR #231). Called after the `#`, tab, CR and LF
+    refusal, so urlsplit's authority is the URL's own text.
     """
-    libpq_authority = url.split("://", 1)[1].split("/", 1)[0]
-    ats = libpq_authority.count("@")
-    return ats <= 1 and ats == urlsplit(url).netloc.count("@")
+    rest = url.split("://", 1)[1]
+    libpq_at = rest.split("/", 1)[0].find("@")
+    return libpq_at == urlsplit(url).netloc.rfind("@")
 
 
 def _where(url: str) -> _Where:

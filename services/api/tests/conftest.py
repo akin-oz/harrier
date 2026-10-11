@@ -37,7 +37,9 @@ import os
 import shutil
 import sys
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import unquote, urlsplit
@@ -235,28 +237,69 @@ def pytest_configure(config: pytest.Config) -> None:
     )
 
 
-# Where the working directory was each time the pin was unset during the
-# running test, or None between tests.
-_pin_unset_in: list[Path] | None = None
+@dataclass(frozen=True)
+class _PinUnset:
+    """One unset of the pin, recorded as it happened."""
+
+    # Collection, the setup, call or teardown of a test, or between tests.
+    phase: str
+    # The working directory then, whose `.env` chose the store.
+    cwd: Path
+    # The test whose watch was open, or None outside every test's watch.
+    test: str | None
+
+
+# Every unset of the pin in this session, and what was running at the time.
+_pin_unsets: list[_PinUnset] = []
+_pin_phase = "collection"
+_watched_test: str | None = None
 
 
 def _watch_the_pin(event: str, args: tuple[Any, ...]) -> None:
-    """Record every unset of the pin while a test runs.
+    """Record every unset of the pin, whenever it happens.
 
-    Every way a test removes a variable (`del os.environ[...]`, `pop`,
+    Every way code removes a variable (`del os.environ[...]`, `pop`,
     monkeypatch's `delenv`) calls `os.unsetenv`, which raises this event.
-    The value at the end of the test cannot show it: once the pin is gone,
+    The value at the end of a test cannot show it: once the pin is gone,
     anything that loads `.env`, as the CLI's `main()` does, writes the
     variable back with the URL the file names.
     """
-    if _pin_unset_in is None or event != "os.unsetenv" or not args:
+    if event != "os.unsetenv" or not args:
         return
     name = args[0]
     if (os.fsdecode(name) if isinstance(name, (str, bytes)) else None) == URL_PIN:
-        _pin_unset_in.append(Path.cwd().resolve())
+        _pin_unsets.append(_PinUnset(_pin_phase, Path.cwd().resolve(), _watched_test))
 
 
 sys.addaudithook(_watch_the_pin)
+
+
+@contextmanager
+def _in_phase(phase: str) -> Generator[None]:
+    global _pin_phase
+    _pin_phase = phase
+    try:
+        yield
+    finally:
+        _pin_phase = "between tests"
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_setup(item: pytest.Item) -> Iterator[None]:
+    with _in_phase(f"setup of {item.nodeid}"):
+        yield
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_call(item: pytest.Item) -> Iterator[None]:
+    with _in_phase(f"call of {item.nodeid}"):
+        yield
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_teardown(item: pytest.Item) -> Iterator[None]:
+    with _in_phase(f"teardown of {item.nodeid}"):
+        yield
 
 
 @pytest.fixture(autouse=True)
@@ -273,30 +316,30 @@ def _database_url_stays_pinned(  # pyright: ignore[reportUnusedFunction]
 
     This detects after the fact; it does not prevent. A test that unsets
     the pin has already run against whatever store `.env` named when it
-    fails here. The pin's state is recorded at setup, and every unset during
-    the test is recorded as it happens, so a test whose `.env` wrote the
-    variable back still fails (review of PR #225).
+    fails here. Every unset is recorded as it happens, so a test whose
+    `.env` wrote the variable back still fails (review of PR #225). This
+    test's watch opens after `_data_dir` sets the pin, so the pin is always
+    set when it opens. An unset before it opens, or after it closes, is
+    outside every watch, and the session fails on it below (post-merge
+    review of PR #231).
 
     Checked after the test and before the monkeypatch fixture restores the
     environment: this fixture asks for `monkeypatch`, so it is set up after
     it and torn down before it.
     """
-    global _pin_unset_in
-    at_setup = os.environ.get(URL_PIN)
-    _pin_unset_in = []
-    try:
-        yield
-        unset_in = list(_pin_unset_in)
-    finally:
-        _pin_unset_in = None
-    if URL_PIN not in os.environ and not unset_in:
-        # Unset before this fixture ran, or by a path that raised no event.
-        unset_in = [Path.cwd().resolve()]
-    if not unset_in:
-        return
+    global _watched_test
     # pytest leaves `node` untyped on FixtureRequest; inside a function
     # fixture it is the test item.
     test = cast("pytest.Item", request.node)  # pyright: ignore[reportUnknownMemberType]
+    first = len(_pin_unsets)
+    _watched_test = test.nodeid
+    try:
+        yield
+    finally:
+        _watched_test = None
+    unset_in = [unset.cwd for unset in _pin_unsets[first:]]
+    if not unset_in:
+        return
     home = tmp_path.resolve()
     if test.get_closest_marker(DOTENV_FALLBACK) is not None:
         outside = [here for here in unset_in if here != home and home not in here.parents]
@@ -307,10 +350,30 @@ def _database_url_stays_pinned(  # pyright: ignore[reportUnusedFunction]
             f"so .env in {outside[0]} chose the store"
         )
     pytest.fail(
-        f"{test.nodeid} unset HARRIER_DATABASE_URL (it was {at_setup!r} at setup), so .env "
-        f"in {unset_in[0]} chose the store, whatever it holds now. Set it to an empty string "
-        f"for SQLite, or mark the test {DOTENV_FALLBACK} and move to tmp_path first (spec 103)"
+        f"{test.nodeid} unset HARRIER_DATABASE_URL, so .env in {unset_in[0]} chose the store, "
+        f"whatever it holds now. Set it to an empty string for SQLite, or mark the test "
+        f"{DOTENV_FALLBACK} and move to tmp_path first (spec 103)"
     )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _database_url_never_unset_outside_a_test() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
+    """Fail the session if the pin was unset outside every test's watch.
+
+    A module-scoped fixture, an import during collection, or a fixture's
+    teardown runs outside the watch above, and `.env` chooses the store for
+    whatever runs next. No test owns that, so the session fails, at the
+    teardown of its last test, naming the phase.
+    """
+    yield
+    stray = [unset for unset in _pin_unsets if unset.test is None]
+    if stray:
+        pytest.fail(
+            f"HARRIER_DATABASE_URL was unset outside every test's watch, during "
+            f"{stray[0].phase}, so .env in {stray[0].cwd} chose the store for what ran then. "
+            f"Keep it set in fixtures and at import; a test that needs the .env fallback "
+            f"is marked {DOTENV_FALLBACK} and unsets it itself (spec 103)"
+        )
 
 
 @pytest.fixture(autouse=True)

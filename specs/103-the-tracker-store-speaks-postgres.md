@@ -539,10 +539,13 @@ that adds this list:
   checked only at the end of a test, and only that the variable was set.
   A test that deleted the pin and then called `main()`, whose `.env`
   loader sets every key that is absent, ended with the variable set to
-  the URL `.env` named, and passed. The net now records the variable's
-  state at setup and every unset during the test as it happens, through
-  the `os.unsetenv` audit event, with the working directory at that
-  moment. It fails a test during which the pin was ever unset, unless the
+  the URL `.env` named, and passed. The net now records every unset
+  during the test as it happens, through the `os.unsetenv` audit event,
+  with the working directory at that moment. (This list said it also
+  recorded the variable's state at setup. It did, but nothing decided on
+  that record: `_data_dir` sets the pin just before the net's watch
+  opens, so the pin was always set there, and the branch for an unset at
+  setup could not run. The fourth review below removed both.) It fails a test during which the pin was ever unset, unless the
   test is marked `dotenv_fallback` and was under its own `tmp_path` each
   time. A test that sets another value, as the Postgres tests do through
   `monkeypatch`, is not failed: that value is the test's own choice, and
@@ -566,3 +569,49 @@ that adds this list:
   per-owner one: it reports the pair, and without the `merged_keys` call
   it reports nothing
   (`services/api/tests/test_dialect_parity.py::test_a_global_key_beside_its_per_owner_form_fails_the_whole_comparison`).
+
+### Fourth review, of PR #231 (2026-10-11)
+
+Two reviews of the corrections above, after PR #231 merged, found these,
+corrected in the change that adds this list:
+
+- **A `#`, tab, CR or LF in the URL leaked the password.** The scrub
+  learns the password from urlsplit, which reads a raw `#` as the start
+  of a fragment and drops a raw tab, CR or LF. libpq does neither: it
+  takes the whole text as the password and quotes it when an escape in it
+  is invalid. With `?password=x#<secret>%zz` the scrub replaced only the
+  `x`; with a tab in the password it replaced nothing.
+  `harrier.pgstore.store_target` now refuses a URL holding any of the
+  four, with the same message as any malformed URL and nothing chained. A
+  written URL carries them percent-encoded
+  (`services/api/tests/test_postgres_store.py::test_a_malformed_url_is_refused_like_any_other`,
+  `services/api/tests/test_postgres_store.py::test_a_url_urlsplit_reads_differently_from_libpq_never_reaches_the_cli`).
+  The review also offered deriving scrub forms from libpq's own parse
+  (`psycopg.conninfo.conninfo_to_dict`). Not done: in every case that
+  leaked, the escape that made libpq quote the password also made that
+  parse fail, so it would have added no form, and no test could show one
+  needed.
+- **A valid URL with an `@` in its query was refused.** The `@` rule
+  counted every `@` before the first `/`, so
+  `postgresql://u:p@host?application_name=a@b`, which libpq and urlsplit
+  read alike, was refused. libpq looks for the user's `@` up to the first
+  `/` and stops at the first one; urlsplit takes the last one before the
+  first `/`, `?` or `#`. `store_target` now refuses only when they split
+  at different `@`s, or one finds an `@` and the other none
+  (`services/api/tests/test_postgres_store.py::test_an_at_sign_in_the_query_after_the_host_is_accepted`).
+  The two-`@` refusals still hold
+  (`services/api/tests/test_postgres_store.py::test_a_malformed_url_is_refused_like_any_other`,
+  `services/api/tests/test_postgres_store.py::test_an_at_sign_libpq_reads_as_the_host_never_reaches_the_cli`).
+- **The pin net had gaps.** A marked `dotenv_fallback` test that unset
+  the pin outside its `tmp_path` had no case. The record of the pin at
+  setup decided nothing, and its branch could not run (see the third
+  review's correction above); both are removed. And an unset before the
+  net's per-test watch opened, as in a module-scoped fixture or an import
+  during collection, was never seen. Every unset of the pin is now
+  recorded whenever it happens, with its phase (collection, a test's
+  setup, call or teardown, or between tests) and the test whose watch was
+  open, if any. A test's own unsets fail that test, as before. An unset
+  outside every test's watch fails the session at the teardown of its
+  last test, naming the phase. The `pytester` run gains both cases
+  (`services/api/tests/test_store_cli.py::test_the_pin_net_fails_a_test_that_dropped_the_pin_whatever_it_holds_after`).
+  It still detects after the fact rather than prevents.
