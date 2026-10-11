@@ -773,7 +773,9 @@ Akin approved all three on 2026-10-10. Implementation found the rest.
 - **A refused migration exits 1.** The auth precheck raises inside the
   migration, which escaped `harrier store migrate` as a traceback.
   `services/api/src/harrier/pgstore.py`, which Scope does not name, gains
-  `StoreMigrationRefused`, and the command prints `error: migration 10
+  `StoreMigrationRefused` (since spec 112's PR 1, 2026-10-11, defined in
+  `services/api/src/harrier/connection.py` and imported by `pgstore.py`),
+  and the command prints `error: migration 10
   needs Supabase's auth schema (auth.users, auth.uid()) and the
   authenticated role; this store has none`. The precheck also requires
   `anon` and `service_role`, which the revokes name; the message is the
