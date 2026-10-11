@@ -610,6 +610,12 @@ EXPORT_RESPONSES: dict[int | str, dict[str, Any]] = {
     **TOKEN_RESPONSES,
 }
 
+# contacts.csv also refuses every track but the default, inside the route
+# (review of PR #239: the contract named no 409 for it).
+CONTACTS_EXPORT_RESPONSES = merge_responses(
+    EXPORT_RESPONSES, {409: {"model": ErrorOut, "description": CONTACTS_DEFAULT_ONLY}}
+)
+
 
 def _download(text: str, filename: str) -> Response:
     # Nothing between here and the browser may keep a copy: contacts.csv
@@ -648,7 +654,7 @@ def download_jobs(
     operation_id="downloadContactsCsv",
     dependencies=[Depends(require_token)],
     response_class=Response,
-    responses=EXPORT_RESPONSES,
+    responses=CONTACTS_EXPORT_RESPONSES,
 )
 def download_contacts(
     conn: Conn, scope: Annotated[TrackScope, Depends(scope_for("export"))]

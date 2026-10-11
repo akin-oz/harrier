@@ -537,3 +537,12 @@ Takes effect when spec 097 is approved and implemented.
   `apps/web/src/shared/api/client.ts` (`TOKENED_READS`).
 - The new `academic_searches` kind is shown read-only on the configuration
   page until an editor with spec 097's validation messages exists.
+
+## Amendment (2026-10-11, review of PR #239)
+
+- **The contract names `contacts.csv`'s 409.** The route refuses every
+  track but the default with "contacts are the person's, not a track's:
+  download them on the default track", and declared no 409 for it, since
+  `export` runs on every track and spec 094's track refusal does not cover
+  it. Its responses now declare that cause
+  (`services/api/tests/test_ui_settings.py::test_the_export_downloads_match_the_cli_export`).
