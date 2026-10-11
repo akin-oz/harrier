@@ -93,6 +93,9 @@ class ResumeBundle:
     # The operator's own wording for their experience, used in place of the
     # derived "<N>+ years of professional experience" (spec 071 O7).
     experience_statement: str = ""
+    # The track's own opening sentence for the CV, used in place of the
+    # derived "<identity> building user-facing web products" (spec 130).
+    profile_lead: str = ""
     ownership_terms: tuple[str, ...] = field(
         default=("owned", "led", "designed", "established", "authored")
     )
@@ -338,6 +341,19 @@ def _check_markdown_structure(data: dict[str, object], errors: list[str]) -> Non
         _check_emitted(
             "candidate.experience_statement", candidate.get("experience_statement"), errors
         )
+        # It opens the profile paragraph, so it begins a line (spec 130).
+        _check_emitted(
+            "candidate.profile_lead",
+            candidate.get("profile_lead"),
+            errors,
+            begins_unmarked_line=True,
+        )
+        if "profile_lead" in candidate:
+            lead = candidate["profile_lead"]
+            if not isinstance(lead, str):
+                errors.append("candidate.profile_lead must be a string")
+            elif not lead.strip():
+                errors.append("candidate.profile_lead must not be empty")
         _check_emitted_list(
             "candidate.positioning_technologies",
             candidate.get("positioning_technologies"),
@@ -385,8 +401,13 @@ def year_counts(text: str) -> list[int]:
 
 def _check_experience_statement(bundle: ResumeBundle, errors: list[str]) -> None:
     """The operator's wording may not state more years than the record
-    holds (spec 071 O7), counted to today."""
-    if not bundle.experience_statement or not bundle.roles:
+    holds (spec 071 O7), counted to today. The profile lead is the
+    operator's wording too (spec 130)."""
+    worded = {
+        "candidate.experience_statement": bundle.experience_statement,
+        "candidate.profile_lead": bundle.profile_lead,
+    }
+    if not any(worded.values()) or not bundle.roles:
         return
     # Imported here: facts reads the bundle type defined in this module.
     from harrier.resume.facts import professional_experience_years
@@ -395,12 +416,10 @@ def _check_experience_statement(bundle: ResumeBundle, errors: list[str]) -> None
         computed = professional_experience_years(bundle)
     except ValueError:
         return
-    larger = [count for count in year_counts(bundle.experience_statement) if count > computed]
-    if larger:
-        errors.append(
-            f"candidate.experience_statement states {max(larger)} years; "
-            f"the record holds {computed}"
-        )
+    for path, text in worded.items():
+        larger = [count for count in year_counts(text) if count > computed]
+        if larger:
+            errors.append(f"{path} states {max(larger)} years; the record holds {computed}")
 
 
 def parse_bundle(raw: object) -> ResumeBundle:
@@ -502,6 +521,7 @@ def _parse_bundle(data: dict[str, object]) -> tuple[ResumeBundle, list[str]]:
         certifications=_str_tuple(data.get("certifications")),
         profile_summary=str(data.get("profile_summary") or ""),
         experience_statement=str(candidate.get("experience_statement") or "").strip(),
+        profile_lead=str(candidate.get("profile_lead") or "").strip(),
     )
     _check_experience_statement(bundle, errors)
     if not bundle.positioning_technologies:

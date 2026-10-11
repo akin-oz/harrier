@@ -30,8 +30,14 @@ from harrier.profile.store import (
     get_document,
     put_document,
 )
-from harrier.resume.content import ResumeBundleError, load_bundle, parse_bundle
+from harrier.resume.content import (
+    ResumeBundleError,
+    bundle_from_documents,
+    load_bundle,
+    parse_bundle,
+)
 from harrier.resume.framing import put_framing
+from harrier.resume.plan import build_content_plan
 from harrier.tracker import schema
 from harrier.tracks import ArchivedTrackError, archive_track, default_scope, resolve_scope
 from harrier_cli.main import main
@@ -392,3 +398,42 @@ def test_profile_list_and_export_show_the_owner(
     assert f"tracks/{SLUG}/resume_framing/{ACADEMIC_NAME}" in names
     assert "tracks/job/resume_framing/industry.json" in names
     assert "resume_facts/resume-facts.json" in names
+
+
+# --- each track's own opening sentence (spec 130) ---
+
+POSTING = "Requirements\n- Experience with simulation software.\n"
+
+
+def test_each_track_writes_its_own_profile_lead(academic: Connection) -> None:
+    industry_framing = example_documents()[1]
+    industry_framing["candidate"]["profile_lead"] = "Product engineer for web platforms"
+    lab_framing = academic_framing()
+    lab_framing["candidate"]["profile_lead"] = "Doctoral applicant in computational science"
+    default, lab = default_scope(academic), resolve_scope(academic, SLUG)
+    assert put_framing(academic, default, json.dumps(industry_framing)).exit_code == 0
+    assert put_framing(academic, lab, json.dumps(lab_framing)).exit_code == 0
+
+    openings = {
+        scope.track.slug: build_content_plan(
+            load_bundle(academic, scope), POSTING, "Engineer"
+        ).profile.split(". ", 1)[0]
+        for scope in (default, lab)
+    }
+    assert openings == {
+        default.track.slug: "Product engineer for web platforms",
+        SLUG: "Doctoral applicant in computational science",
+    }
+
+
+def test_the_academic_example_framing_has_a_lead() -> None:
+    root = Path(__file__).resolve().parents[3] / "config"
+    facts = json.loads((root / "resume-facts.example.json").read_text(encoding="utf-8"))
+    framing = json.loads(
+        (root / "resume-framing.academic.example.json").read_text(encoding="utf-8")
+    )
+    bundle = bundle_from_documents(facts, framing)
+    assert bundle.profile_lead
+    plan = build_content_plan(bundle, POSTING, "Engineer")
+    assert plan.profile.startswith(bundle.profile_lead)
+    assert "building user-facing web products" not in plan.profile

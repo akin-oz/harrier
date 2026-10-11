@@ -31,7 +31,13 @@ FACTS_CANDIDATE = (
     "linkedin",
     "professional_career_start",
 )
-FRAMING_CANDIDATE = ("primary_identity", "positioning_technologies", "experience_statement")
+FRAMING_CANDIDATE = (
+    "primary_identity",
+    "positioning_technologies",
+    "experience_statement",
+    # The track's own opening sentence for the CV (spec 130).
+    "profile_lead",
+)
 FACTS_ROLE = (
     "id",
     "organization",

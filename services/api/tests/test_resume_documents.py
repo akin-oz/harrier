@@ -35,7 +35,12 @@ from harrier.resume.content import (
     load_skill_vocabulary,
     parse_bundle,
 )
-from harrier.resume.documents import FACTS_KIND, FRAMING_KIND, split_document
+from harrier.resume.documents import (
+    FACTS_KIND,
+    FRAMING_KIND,
+    merge_documents,
+    split_document,
+)
 from harrier.resume.split import PRESPLIT_KIND, split_resume
 from harrier.tracks import default_scope
 from harrier_cli.main import main
@@ -399,3 +404,18 @@ def test_split_resume_is_refused_on_another_track(
     assert main(["tracks", "add", ACADEMIC, "--kind", "academic", "--label", "Lab search"]) == 0
     capsys.readouterr()
     assert main(["--track", ACADEMIC, "profile", "split-resume"]) == 2
+
+
+def test_profile_lead_belongs_to_the_framing() -> None:
+    """A track's opening sentence is how it presents the facts (spec 130)."""
+    raw = example_bundle_raw()
+    raw["candidate"]["profile_lead"] = "Doctoral applicant in computational science"
+    facts, framing, unplaced = split_document(raw)
+    assert unplaced == []
+    fact_candidate = cast("dict[str, Any]", facts["candidate"])
+    frame_candidate = cast("dict[str, Any]", framing["candidate"])
+    assert frame_candidate["profile_lead"] == "Doctoral applicant in computational science"
+    assert "profile_lead" not in fact_candidate
+    fact_candidate["profile_lead"] = "Doctoral applicant in computational science"
+    refused = merge_documents(facts, framing)
+    assert any("profile_lead" in error for error in refused.errors), refused.errors

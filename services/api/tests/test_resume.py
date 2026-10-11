@@ -1461,3 +1461,83 @@ def test_profile_lead_has_no_hedge_words() -> None:
         build_content_plan(hedged, REACT_POSTING, "Engineer", AS_OF), hedged
     )
     assert "profile lead hedges: perhaps" in errors
+
+
+# --- a track's own opening sentence (spec 130) ---
+
+LEAD = "Doctoral applicant in computational science"
+STATEMENT = "professional career since 2014, 12+ years in software"
+
+
+def _with_candidate(**fields: object) -> dict[str, object]:
+    raw = load_raw_bundle()
+    candidate = cast("dict[str, Any]", raw["candidate"])
+    candidate.pop("experience_statement", None)
+    candidate.update(fields)
+    return raw
+
+
+def test_profile_lead_replaces_the_derived_sentence() -> None:
+    bundle = parse_bundle(_with_candidate(profile_lead=LEAD, experience_statement=STATEMENT))
+    plan = build_content_plan(bundle, REACT_POSTING, "Engineer", AS_OF)
+    opening = f"{LEAD}. Professional career since 2014, 12+ years in software."
+    assert plan.profile == " ".join(part for part in (opening, bundle.profile_summary) if part)
+    assert "building user-facing web products" not in plan.profile
+    assert not [error for error in validate_content_plan(plan, bundle) if "profile" in error]
+
+
+@pytest.mark.parametrize(
+    ("lead", "opening"),
+    [
+        (LEAD, f"{LEAD}."),
+        (f"{LEAD}.", f"{LEAD}."),
+        (f"{LEAD}!", f"{LEAD}!"),
+        (f"{LEAD}?", f"{LEAD}?"),
+    ],
+)
+def test_profile_lead_gains_one_period(lead: str, opening: str) -> None:
+    bundle = parse_bundle(_with_candidate(profile_lead=lead, experience_statement=STATEMENT))
+    plan = build_content_plan(bundle, REACT_POSTING, "Engineer", AS_OF)
+    assert plan.profile.startswith(f"{opening} Professional career since 2014")
+
+
+def test_profile_lead_without_a_statement_keeps_the_derived_years() -> None:
+    bundle = parse_bundle(_with_candidate(profile_lead=LEAD))
+    plan = build_content_plan(bundle, REACT_POSTING, "Engineer", AS_OF)
+    assert plan.profile.startswith(f"{LEAD}. 12+ years of professional experience.")
+    assert not [error for error in validate_content_plan(plan, bundle) if "profile" in error]
+
+
+def test_a_framing_without_a_lead_renders_as_before() -> None:
+    """Spec 071 O7's two forms, word for word, when no lead is set."""
+    stated = parse_bundle(_with_candidate(experience_statement=STATEMENT))
+    plan = build_content_plan(stated, REACT_POSTING, "Engineer", AS_OF)
+    assert plan.profile.startswith(
+        f"{stated.primary_identity} building user-facing web products with "
+    )
+    assert "Professional career since 2014, 12+ years in software." in plan.profile
+    derived = parse_bundle(_with_candidate())
+    plan = build_content_plan(derived, REACT_POSTING, "Engineer", AS_OF)
+    assert plan.profile.startswith(
+        f"{derived.primary_identity} with 12+ years of professional experience "
+        "building user-facing web products with "
+    )
+    assert derived.profile_lead == ""
+
+
+@pytest.mark.parametrize(
+    ("lead", "reason"),
+    [
+        ("", "must not be empty"),
+        ("   ", "must not be empty"),
+        ("Doctoral applicant\nin science", "must be a single line"),
+        ("Doctoral applicant \u2014 in science", "must not use a dash as punctuation"),
+        ("# Doctoral applicant", "must not start with a heading marker"),
+        ("Doctoral applicant with 40+ years in science", "states 40 years"),
+        (7, "must be a string"),
+    ],
+)
+def test_profile_lead_is_refused_on_the_emitted_string_rules(lead: object, reason: str) -> None:
+    with pytest.raises(ResumeBundleError) as refused:
+        parse_bundle(_with_candidate(profile_lead=lead))
+    assert f"candidate.profile_lead {reason}" in str(refused.value)

@@ -117,33 +117,33 @@ length being present, forbidden phrases, and dash marks
 
 ## Acceptance criteria
 
-- [ ] With `profile_lead` set, the profile is the lead, then the
+- [x] With `profile_lead` set, the profile is the lead, then the
       experience sentence, then `profile_summary`, and contains no
       "building user-facing web products"
-      (planned test_profile_lead_replaces_the_derived_sentence).
-- [ ] A lead without closing punctuation gains one period; a lead ending
+      (`services/api/tests/test_resume.py::test_profile_lead_replaces_the_derived_sentence`).
+- [x] A lead without closing punctuation gains one period; a lead ending
       in `.`, `!` or `?` is kept as written
-      (planned test_profile_lead_gains_one_period).
-- [ ] With `profile_lead` set and no `experience_statement`, the derived
+      (`services/api/tests/test_resume.py::test_profile_lead_gains_one_period`).
+- [x] With `profile_lead` set and no `experience_statement`, the derived
       `<N>+ years of professional experience.` sentence follows the lead
-      (planned test_profile_lead_without_a_statement_keeps_the_derived_years).
-- [ ] Without `profile_lead`, the profile is identical to today's for a
+      (`services/api/tests/test_resume.py::test_profile_lead_without_a_statement_keeps_the_derived_years`).
+- [x] Without `profile_lead`, the profile is identical to today's for a
       framing with and without `experience_statement`
-      (planned test_a_framing_without_a_lead_renders_as_before).
-- [ ] An empty, multi-line, dash-punctuated or heading-marked lead, and one
+      (`services/api/tests/test_resume.py::test_a_framing_without_a_lead_renders_as_before`).
+- [x] An empty, multi-line, dash-punctuated or heading-marked lead, and one
       stating more years than computed, are each refused at parse time with
       a message naming `candidate.profile_lead`
-      (planned test_profile_lead_is_refused_on_the_emitted_string_rules).
-- [ ] The split places `profile_lead` in the framing, and the merge refuses
+      (`services/api/tests/test_resume.py::test_profile_lead_is_refused_on_the_emitted_string_rules`).
+- [x] The split places `profile_lead` in the framing, and the merge refuses
       it in the facts
-      (planned test_profile_lead_belongs_to_the_framing).
-- [ ] Two tracks with different leads render different opening sentences
+      (`services/api/tests/test_resume_documents.py::test_profile_lead_belongs_to_the_framing`).
+- [x] Two tracks with different leads render different opening sentences
       over the same facts
-      (planned test_each_track_writes_its_own_profile_lead).
-- [ ] `config/resume-framing.academic.example.json` carries a synthetic
+      (`services/api/tests/test_track_framing.py::test_each_track_writes_its_own_profile_lead`).
+- [x] `config/resume-framing.academic.example.json` carries a synthetic
       `profile_lead` and parses with `config/resume-facts.example.json`
-      (planned test_the_academic_example_framing_has_a_lead).
-- [ ] `just check` passes, and no contract file changes.
+      (`services/api/tests/test_track_framing.py::test_the_academic_example_framing_has_a_lead`).
+- [x] `just check` passes, and no contract file changes.
 
 ## Honest limitations
 
@@ -209,3 +209,16 @@ None. The field is optional inside a stored framing's JSON.
   (spec 101) included.
 - Spec 071 O7 fixed the wording; this spec gives the framing a way to
   replace it.
+
+## Amendment (2026-10-11, during implementation)
+
+- **A lead that is not a string is refused** with "candidate.profile_lead
+  must be a string", beside the empty-lead refusal. The spec listed the
+  string rules only; a number or a list in that field would otherwise have
+  been read as no lead
+  (`services/api/tests/test_resume.py::test_profile_lead_is_refused_on_the_emitted_string_rules`).
+- **Each criterion was checked by mutating the source:** ignoring the
+  lead, always adding a period, dropping the derived years after a lead,
+  leaving `profile_lead` out of the framing table, accepting an empty
+  lead, not counting the lead's years, and allowing a heading marker each
+  failed a test above.
