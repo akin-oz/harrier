@@ -11,7 +11,7 @@ import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
 
-from harrier.tracks import DEFAULT_TRACK_ID
+from harrier.tracks import DEFAULT_TRACK_ID, refuse_archived_track
 
 # Old-repo-relative path -> (kind, format). Read-only sources.
 PROFILE_SOURCES: dict[str, tuple[str, str]] = {
@@ -38,7 +38,7 @@ class ProfileDocumentError(ValueError):
 
 
 # One upsert per owner, each naming the partial index it can conflict on
-# (migration 10): NULL is shared, and SQLite treats NULLs as distinct.
+# (migration 11): NULL is shared, and SQLite treats NULLs as distinct.
 _UPSERT_SHARED = """
     INSERT INTO profile_documents (kind, name, format, content, updated_at)
     VALUES (?, ?, ?, ?, datetime('now'))
@@ -68,6 +68,10 @@ def _upsert(
         conn.execute(_UPSERT_SHARED, (kind, name, fmt, content))
     else:
         conn.execute(_UPSERT_OWNED, (track_id, kind, name, fmt, content))
+        # Checked after the write, inside its transaction, so the archive
+        # state read is the one the write commits against; a refusal rolls
+        # the write back (review of PR #227).
+        refuse_archived_track(conn, track_id)
 
 
 def put_document(
@@ -98,11 +102,15 @@ def put_documents_and_rekind(
     with conn:
         for kind, document_name, fmt, content, track_id in documents:
             _upsert(conn, kind, document_name, fmt, content, track_id)
-        conn.execute(
+        moved = conn.execute(
             "UPDATE profile_documents SET kind = ? "
             "WHERE kind = ? AND name = ? AND track_id IS NULL",
             (new_kind, old_kind, name),
         )
+        if moved.rowcount != 1:
+            # Raised inside the transaction, so the writes above roll back:
+            # the whole of it or none of it (review of PR #219).
+            raise ProfileDocumentError(f"no shared {old_kind}/{name} to move to {new_kind}")
 
 
 def get_document(conn: sqlite3.Connection, kind: str, name: str) -> str | None:

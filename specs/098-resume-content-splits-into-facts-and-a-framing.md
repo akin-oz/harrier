@@ -187,9 +187,11 @@ documents by the table.
 
 - **No `resume_data` and no pair.** Exit 1:
   `no resume_data document to split`.
-- **Already split** (pair present, no `resume_data`). Exit 0:
+- **Already split** (the facts and the default track's own framing, no
+  `resume_data`). Exit 0:
   `already split: resume_facts and resume_framing are stored`. A second run
-  changes nothing.
+  changes nothing. With the facts and only another track's framing it exits
+  1 and names `harrier profile put resume_framing --file PATH` (spec 099).
 - **Both shapes present.** Exit 1 with the refusal above. The command does
   not choose between them.
 - **`resume_data` is not valid JSON, or does not parse as a bundle.**
@@ -213,19 +215,21 @@ documents by the table.
 
 ## Acceptance criteria
 
-- [x] For the committed example, `load_bundle` over the two example
-      documents returns a `ResumeBundle` equal to `parse_bundle` over the
-      single document the split was computed from
+- [x] The two example documents give a `ResumeBundle` equal to
+      `parse_bundle` over the single document they were split from, kept as
+      it was committed in `services/api/tests/fixtures/resume/resume-content.single.json`
       (`services/api/tests/test_resume_documents.py::test_split_bundle_equals_the_one_document_bundle`,
       `test_every_field_lands_in_exactly_one_document`).
-- [x] `tailor` on the demo job produces byte-identical markdown from the
-      pair and from the single document it was split from
+- [x] `tailor` on a synthetic job produces byte-identical markdown from the
+      stored pair and from that single document
       (`services/api/tests/test_resume.py::test_tailored_markdown_is_unchanged_by_the_split`).
 - [x] The cover letter and answers claim checks read the vocabulary and the
       never-claim list from `resume_facts`; an entry added only there is
-      enforced (`services/api/tests/test_resume_documents.py::test_letters_read_the_never_claim_list_from_facts`, and
-      `services/api/tests/test_apply.py::test_a_forbidden_phrase_refuses_the_cover_letter`
-      now storing the list in `resume_facts`).
+      enforced (`services/api/tests/test_resume_documents.py::test_letters_read_the_never_claim_list_from_facts`;
+      on a letter, `services/api/tests/test_apply.py::test_a_forbidden_phrase_refuses_the_cover_letter`
+      for the never-claim list and
+      `services/api/tests/test_apply_claims.py::test_an_unverified_skill_is_refused`
+      for the vocabulary, both storing them in `resume_facts`).
 - [x] Log redaction redacts a name stored only in `resume_facts`, and one
       stored only in `resume_data`
       (`services/api/tests/test_logging.py::test_redaction_reads_identity_from_either_shape`).
@@ -378,3 +382,27 @@ and the tracker keep working.
   document now breaks `resume_facts`, so it is
   `services/api/tests/test_apply.py::test_an_unreadable_resume_facts_document_refuses_the_letter`,
   and spec 034's table names it.
+
+## Amendment (2026-10-10, review of PR #212)
+
+The PR merged without a review, so the repository's own review agents ran
+afterwards. Fixed, each with a test that fails without it:
+
+- **The proofs compare with the original.** The single synthetic document
+  the examples were split from is kept as a test fixture, so the equality
+  and the tailored markdown are checked against it rather than against the
+  pair's own merge (the two criteria above).
+- **A dry run refuses what the write would refuse.** Every refusal is
+  checked with and without `--write`
+  (`services/api/tests/test_resume_documents.py::test_split_resume_failure_modes`).
+- **The split rolls back a failure partway**
+  (`services/api/tests/test_resume_documents.py::test_the_split_rolls_back_a_failure_partway`)
+  and **its equality guard refuses a split that loses a field**
+  (`services/api/tests/test_resume_documents.py::test_a_split_that_would_change_the_bundle_writes_nothing`).
+- **`put_documents_and_rekind` refuses a rename that moves nothing,** and
+  the writes before it roll back
+  (`services/api/tests/test_resume_documents.py::test_a_rename_with_nothing_to_move_writes_nothing`).
+- **A role key in the wrong document is refused,** which no test held
+  (`services/api/tests/test_resume_documents.py::test_a_role_key_in_the_wrong_document_is_refused`),
+  and `resume_data` beside a framing with no facts is still two shapes
+  (`services/api/tests/test_resume_documents.py::test_the_old_document_beside_a_framing_alone_is_refused`).

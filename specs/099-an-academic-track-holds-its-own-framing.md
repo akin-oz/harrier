@@ -17,7 +17,7 @@ those facts. After 098 there is still one framing, the industry one, and
 the store cannot hold another.
 
 The store is the reason. `profile_documents` is unique on `(kind, name)`
-(migration 2 in `services/api/src/harrier/tracker/schema.py`), and nothing
+(migration 1 in `services/api/src/harrier/tracker/schema.py`), and nothing
 in a row says which track it belongs to. So:
 
 - **An academic track has nowhere to keep its framing.** A second
@@ -43,7 +43,7 @@ those bullets pass the truth gate.
 
 ## Scope
 
-- Migration 10: `profile_documents` gains an owning track.
+- Migration 11: `profile_documents` gains an owning track.
 - Which kinds may be owned: `resume_framing` must be, every other kind must
   not be.
 - `load_bundle` reads the shared facts and the scope's own framing.
@@ -55,9 +55,9 @@ those bullets pass the truth gate.
 
 ## Behavior
 
-### Migration 10
+### Migration 11
 
-Migration 10 rebuilds `profile_documents`, as migration 7 rebuilt
+Migration 11 rebuilds `profile_documents`, as migration 6 rebuilt
 `user_config`, whole or not at all (spec 090):
 
 ```sql
@@ -83,7 +83,7 @@ CREATE UNIQUE INDEX idx_profile_documents_owned
 `track_id` NULL means shared by every track. SQLite treats NULLs as
 distinct in a plain `UNIQUE`, which is why there are two partial indexes
 (spec 091's design note). If spec 103 has shipped by the time this is
-built, migration 10 also carries its Postgres statements (spec 103 rule 3):
+built, migration 11 also carries its Postgres statements (spec 103 rule 3):
 the same two partial unique indexes, which Postgres supports in the same
 form. Content is copied byte for byte, so
 `profile export` before and after the migration writes the same bytes for
@@ -108,9 +108,11 @@ owns at most one framing.
 ### Reading
 
 Every existing reader of a profile document (`get_document`,
-`_document_by_kind`, log redaction, the stories, the outreach defaults, the
-brief, the screening candidate) reads shared rows only, as before. None of
-them can see an owned row.
+`_document_by_kind`, the stories, the outreach defaults, the brief, the
+screening candidate) reads shared rows only, as before. None of them can see
+an owned row. Log redaction reads the identity kinds (`resume_facts`,
+`resume_data`, `resume_data_presplit`) on every row; those kinds are always
+shared, because the write path refuses to own them.
 
 `load_bundle(conn, scope)` takes the scope. It reads `resume_facts`
 (shared) and the `resume_framing` owned by `scope.track`, and merges them
@@ -120,10 +122,12 @@ own never reads another track's.
 - No framing on the scope's track:
   `track <slug> has no resume framing; store one with harrier --track <slug> profile put resume_framing --file PATH`.
 
-Every current caller of `load_bundle` runs on the default track only
-(`tailor`, `cover-letter`, `answers`, `evaluate`, `brief set`; spec 093
-refuses them elsewhere) and passes its scope. On the default track the
-result is the bundle spec 098 returns, so no generated output changes.
+Every caller of `load_bundle` passes a scope: `tailor` its own, the
+artifact listing the request's, `evaluate` and `brief set` the default
+track's (the only track they run on, spec 093), and `profile check` and
+`profile put` the track they run on. `cover-letter` and `answers` read only
+the facts (the vocabulary and the never-claim list). On the default track
+the result is the bundle spec 098 returns, so no generated output changes.
 
 `harrier profile split-resume` (spec 098) writes the framing owned by the
 default track.
@@ -162,7 +166,10 @@ A database command (`_DB`), in `NON_DEFAULT_OPERATIONS`, read-only.
 3. Prints `resume content for track <slug>: valid` or each bundle error,
    then one line per bullet the truth does not support:
    `bullet <id>: not supported by the truth documents`. It prints bullet
-   ids, never bullet text or field values.
+   ids, never bullet text. A bundle error is printed as the parser writes
+   it, which can name a skill, a dimension or a field's raw value; no
+   bundle error names a candidate identity value (name, email, phone,
+   LinkedIn). `profile put` prints bundle errors the same way.
 
 Exit 0 when the bundle is valid and every bullet is supported, 1
 otherwise. On the default track it reports the industry framing the same
@@ -191,18 +198,18 @@ keeps asserting that for them.
 
 ## Failure modes
 
-- **Migration 10 on a store with no `resume_framing`** (spec 098 not yet
+- **Migration 11 on a store with no `resume_framing`** (spec 098 not yet
   run). Every row becomes shared. `split-resume` later writes the framing
   owned by the default track.
-- **Migration 10 fails partway.** Spec 090 rolls the whole migration back;
-  the store is at version 9 with the old table.
+- **Migration 11 fails partway.** Spec 090 rolls the whole migration back;
+  the store is at version 10 with the old table.
 - **Two `resume_framing` rows before the migration** (written by hand).
   Both are owned by the default track; distinct names keep them unique.
   `load_bundle` on the default track then refuses:
   `track <slug> owns more than one resume framing: <names>`. The operator
   removes one. Nothing is chosen silently.
 - **`put` with no `resume_facts` stored.** Exit 1:
-  `no resume_facts document; run harrier profile split-resume first`.
+  `no resume_facts document; run harrier profile split-resume first, or see config/resume-facts.example.json`.
 - **`put` with a file that is not JSON, not an object, or not UTF-8.**
   Exit 1 naming the problem; nothing written.
 - **`put` with a framing whose role ids are not facts roles.** Exit 1 with
@@ -222,13 +229,13 @@ keeps asserting that for them.
 
 ## Acceptance criteria
 
-- [x] Migration 10 on a version 9 store keeps every row's id, content and
+- [x] Migration 11 on a version 10 store keeps every row's id, content and
       `updated_at`, owns `resume_framing` rows by the default track and
       shares the rest; `profile export` output for shared documents is
       byte-identical before and after
       (`services/api/tests/test_track_framing.py::test_migration_11_keeps_every_document_and_owns_the_framing`;
       on Postgres, `test_migration_11_owns_the_framing_on_postgres`).
-- [x] A failure inside migration 10 leaves the store at version 9 with the
+- [x] A failure inside migration 11 leaves the store at version 10 with the
       old table (`services/api/tests/test_track_framing.py::test_migration_11_is_whole_or_nothing`).
 - [x] The two partial unique indexes refuse a second shared `(kind, name)`
       and a second owned `(track, kind, name)`, and allow one owned and one
@@ -252,12 +259,17 @@ keeps asserting that for them.
       bullet text (`services/api/tests/test_track_framing.py::test_profile_check_reports_bullet_ids_only`).
 - [x] `profile list` shows each document's owner, and `profile export`
       writes owned documents under `tracks/<slug>/`
-      (`services/api/tests/test_track_framing.py::test_profile_list_and_export_show_the_owner`).
+      (`services/api/tests/test_track_framing.py::test_profile_list_and_export_show_the_owner`;
+      the browser's list carries the same owner,
+      `services/api/tests/test_ui_operations.py::test_the_profile_list_is_the_one_the_cli_prints`).
 - [x] `test_academic_commands_read_no_profile_document` passes with
       `profile put` and `profile check` named as the exceptions
       (`services/api/tests/test_tracks_cli.py::test_academic_commands_read_no_profile_document`).
-- [x] `tailor` on the demo job produces the same markdown after migration
-      10: the run reads the framing the default track owns
+- [x] The default track's bundle is unchanged by migration 11: a version 10
+      store holding the pair as spec 098 wrote it gives the original
+      one-document bundle after the migration
+      (`services/api/tests/test_track_framing.py::test_a_bundle_survives_migration_11`),
+      and `tailor` reads the framing the default track owns
       (`services/api/tests/test_resume.py::test_tailored_markdown_is_unchanged_by_the_split`).
 - [x] `profile put` and `profile check` are placed in `COMMAND_CLASSES`;
       the parser walk test passes.
@@ -282,7 +294,7 @@ keeps asserting that for them.
 
 ## Migration
 
-Migration 10 runs on the next open after this ships (`just container-up`),
+Migration 11 runs on the next open after this ships (`just container-up`),
 whole or not at all. Spec 098's split can run before or after it: before,
 the migration gives the framing to the default track; after, the split
 writes it there. Then, for each academic track:
@@ -314,7 +326,7 @@ writes it there. Then, for each academic track:
 ## Proof / origin
 
 - The table and its migrations: `services/api/src/harrier/tracker/schema.py`
-  (migration 2 creates `profile_documents`, migration 7 is the rebuild
+  (migration 1 creates `profile_documents`, migration 6 is the rebuild
   precedent, migration 8 creates `tracks`). Whole-or-nothing: spec 090.
 - The store: `services/api/src/harrier/profile/store.py` (`put_document`,
   `get_document`, `list_documents`, `export_to`, `import_from`); ADR-008.
@@ -345,10 +357,9 @@ writes it there. Then, for each academic track:
 
 ## Amendment (2026-10-10, during implementation)
 
-- **Migration 10 is migration 11.** Spec 105 shipped first and took
-  version 10 (Postgres only, an empty SQLite entry). Every "migration 10"
-  above means migration 11, and "version 9" in the failure modes means
-  version 10. On Postgres, migration 10 made a track `(owner_id, id)` and
+- **The migration is 11.** Spec 105 shipped first and took version 10
+  (Postgres only, an empty SQLite entry), so the text above says migration
+  11 and version 10. On Postgres, spec 105's migration 10 made a track `(owner_id, id)` and
   `profile_documents` unique on `(owner_id, kind, name)`, so migration 11
   references `(owner_id, track_id)`, drops that constraint, and leads both
   partial indexes with `owner_id`; each owner's framing goes to that
@@ -382,3 +393,22 @@ writes it there. Then, for each academic track:
   its scope; the artifact listing passes the request's; `evaluate` and
   `brief set` pass the default track's, the only track they run on
   (spec 093).
+
+## Amendment (2026-10-10, review of PRs #212 and #219)
+
+The PRs merged without a review, so the repository's own review agents ran
+afterwards. Fixed here, each with a test that fails without it:
+
+- **The write path refuses an archived track,** not only the CLI's check
+  (`services/api/tests/test_track_framing.py::test_profile_put_validates_before_it_writes`,
+  which now puts a different file after archiving, so a write would show).
+- **A framing role cannot carry a facts field, nor a facts role a framing
+  field.** The check existed but no test held it, and a framing role's
+  `title` would otherwise overwrite the facts
+  (`services/api/tests/test_resume_documents.py::test_a_role_key_in_the_wrong_document_is_refused`).
+- **"Already split" means the facts and the default track's own framing.**
+  With the facts and only another track's framing, `split-resume` refuses
+  and names `profile put` (`services/api/tests/test_resume_documents.py::test_split_resume_failure_modes`).
+- **The text above is corrected against the code:** the migration numbers,
+  the full no-facts message, the callers of `load_bundle`, what log
+  redaction reads, and what `profile check` and `profile put` can print.

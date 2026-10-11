@@ -404,7 +404,7 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
             # A profile document is owned by one track or shared by all
             # (spec 099, spec 091's design note). NULL is shared. SQLite
             # treats NULLs as distinct in a plain UNIQUE, so uniqueness is two
-            # partial indexes. A rebuild, as migration 7, because the inline
+            # partial indexes. A rebuild, as migration 6, because the inline
             # UNIQUE (kind, name) cannot be dropped. `track_id` goes last, as
             # Postgres's ADD COLUMN puts it, so the two stores keep one column
             # order (spec 103).

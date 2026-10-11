@@ -27,6 +27,10 @@ from harrier.tracks import DEFAULT_TRACK_ID, Scope, Track
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FACTS_EXAMPLE = REPO_ROOT / "config" / "resume-facts.example.json"
 FRAMING_EXAMPLE = REPO_ROOT / "config" / "resume-framing.example.json"
+# The single synthetic document the two examples were split from (spec 098),
+# kept as it was committed so a test can compare the pair with the original
+# rather than with their own merge.
+SINGLE_EXAMPLE = Path(__file__).parent / "fixtures" / "resume" / "resume-content.single.json"
 
 
 def _read(path: Path) -> dict[str, Any]:
@@ -35,6 +39,11 @@ def _read(path: Path) -> dict[str, Any]:
 
 def example_documents() -> tuple[dict[str, Any], dict[str, Any]]:
     return _read(FACTS_EXAMPLE), _read(FRAMING_EXAMPLE)
+
+
+def single_document_raw() -> dict[str, Any]:
+    """The original one-document example, never merged from anything."""
+    return cast("dict[str, Any]", json.loads(SINGLE_EXAMPLE.read_text(encoding="utf-8")))
 
 
 def example_bundle_raw() -> dict[str, Any]:

@@ -12,7 +12,7 @@ import json
 import sqlite3
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pg_support import fresh_database, new_owner, set_session_owner
@@ -33,7 +33,7 @@ import harrier.apply.answers as answers_module
 import harrier.apply.letters as letters_module
 import harrier.resume.pdf as pdf_module
 from harrier.apply.claims import ClaimCheckError
-from harrier.apply.profile import load_profile_markdown
+from harrier.apply.profile import load_profile_json, load_profile_markdown, validate_profile
 from harrier.db import connect
 from harrier.profile.store import put_document
 from harrier.resume.markdown import UnverifiedClaimError
@@ -401,3 +401,36 @@ def test_the_academic_examples_store_and_check(
         assert main(["--track", SLUG, "profile", "put", kind, "--file", str(CONFIG / name)]) == 0
     assert main(["--track", SLUG, "profile", "check"]) == 0
     assert f"resume content for track {SLUG}: valid" in capsys.readouterr().out
+    # The academic profile is valid, and carries none of the industry
+    # example's stories (review of PR #224).
+    scope = resolve_scope(db, SLUG)
+    assert validate_profile(db, scope) == []
+    industry = json.loads((CONFIG / "application-profile.example.json").read_text("utf-8"))
+    academic = load_profile_json(db, scope)
+    industry_stories = {story["id"] for story in industry["professional_stories"]}
+    academic_stories = {
+        story["id"] for story in cast("list[dict[str, str]]", academic["professional_stories"])
+    }
+    assert industry_stories - academic_stories == {"funnel_conversion_improvement"}
+    assert "frontend" not in json.dumps(academic).lower()
+
+
+def test_an_answer_built_without_the_model_needs_no_profile(db: sqlite3.Connection) -> None:
+    """A salary answer is assembled from the candidate document alone, so a
+    track with no application profile still gets it; only a question sent to
+    the model needs the profile (spec 101, amended)."""
+    store_example(db)
+    compensation = {"salary_min_eur": 50000, "salary_target_eur": 60000}
+    candidate_document = {"candidate": {"name": "Deniz Örnek"}, "compensation": compensation}
+    put_document(db, "candidate", "candidate.json", "json", json.dumps(candidate_document))
+    put_document(db, "resume_truth", "truth.md", "markdown", TRUTH)
+    add_track(db, SLUG, "academic", "Lab search")
+    scope = resolve_scope(db, SLUG)
+    drafts = answers_module.generate_answer_set(
+        db, COMPANY, ROLE, ["What are your salary expectations?"], scope=scope
+    )
+    assert "60,000" in drafts[0].short_answer
+    with pytest.raises(ValueError, match=f"track {SLUG} has no application profile"):
+        answers_module.generate_answer_set(
+            db, COMPANY, ROLE, ["What relevant experience do you have?"], scope=scope
+        )

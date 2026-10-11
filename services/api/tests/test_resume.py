@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from resume_support import example_bundle_raw, store_example, store_resume
+from resume_support import example_bundle_raw, single_document_raw, store_example, store_resume
 
 from harrier.db import connect
 from harrier.profile.store import put_document
@@ -881,6 +881,8 @@ def test_a_bullet_denied_by_a_contraction_is_refused(bundle: ResumeBundle) -> No
     with pytest.raises(UnverifiedClaimError) as raised:
         resolve_bullets(bundle, TruthSources(truth_text=denied, achievements_text=""), ["r1_b1"])
     assert raised.value.bullet_id == "r1_b1"
+    # Today's refusal message, naming the bullet (spec 034).
+    assert str(raised.value).startswith("unverifiable claim r1_b1: ")
 
 
 def test_bundle_validation_rejects_invalid_bullet_count() -> None:
@@ -1226,11 +1228,12 @@ def test_bundle_with_a_line_break_fails_tailor_before_any_file_is_written(
 
 
 def test_tailored_markdown_is_unchanged_by_the_split(tailor_env: int) -> None:
-    """The run reads the two stored documents; its markdown is what the one
-    object they were split from produces (spec 098)."""
+    """The run reads the two stored documents; its markdown is what the
+    original one-document example produces (spec 098). That document is the
+    committed fixture, never the pair's own merge (review of PR #212)."""
     conn = connect()
     jd = "React and TypeScript product role."
-    bundle = parse_bundle(example_bundle_raw())
+    bundle = parse_bundle(single_document_raw())
     plan = build_content_plan(bundle, jd, "Senior Frontend Engineer")
     expected = build_markdown(bundle, load_truth_sources(conn), plan, kind="industry") + "\n"
 

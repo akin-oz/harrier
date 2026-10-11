@@ -126,7 +126,7 @@ def add_job(conn: sqlite3.Connection, fields: Mapping[str, str], *, scope: Scope
     """
     if "track_id" in fields:
         raise TrackerError("track_id is set from the scope, not from the fields")
-    _refuse_archived(scope)
+    _refuse_archived(conn, scope)
     values = {name: str(fields.get(name, "") or "") for name in TRACKER_FIELDS}
     promoted = expand_notes(values["notes"])
     for key in NOTE_KEYS:
@@ -202,11 +202,12 @@ def add_job(conn: sqlite3.Connection, fields: Mapping[str, str], *, scope: Scope
     return int(row_id)
 
 
-def _refuse_archived(scope: Scope) -> None:
+def _refuse_archived(conn: sqlite3.Connection, scope: Scope) -> None:
     """An archived track reads and does not write, for every caller of the
-    write path, not only the CLI (spec 093, review of PR #182)."""
+    write path, not only the CLI (spec 093, review of PR #182), whenever the
+    scope was resolved (review of PR #227)."""
     try:
-        refuse_if_archived(scope)
+        refuse_if_archived(conn, scope)
     except ArchivedTrackError as error:
         raise TrackerError(str(error)) from error
 
@@ -351,7 +352,7 @@ def set_status(
     """
     if status not in STATUSES:
         raise UnknownStatusError(f"unknown status {status!r}; legal: {', '.join(STATUSES)}")
-    _refuse_archived(scope)
+    _refuse_archived(conn, scope)
     with _write_lock(conn):
         job = get_job(conn, scope, job_id)
         check_transition(job["status"], status)
@@ -465,7 +466,7 @@ def update_fields(
         )
     if not fields:
         return get_job(conn, scope, job_id)
-    _refuse_archived(scope)
+    _refuse_archived(conn, scope)
     # Read under the write lock, so the invariants are checked against the
     # row this write lands on (spec 079 amendment).
     with _write_lock(conn):

@@ -413,8 +413,9 @@ def test_academic_commands_read_no_profile_document(
     out of what is traced here. `profile put` and `profile check` read the
     track's resume content by design (spec 099), and `tailor`,
     `cover-letter` and `answers` read the track's own framing and application
-    profile (spec 101); they are not run here, and their reads are pinned in
-    test_track_framing.py and test_academic_documents.py."""
+    profile (spec 101). They are not run here: that each reads only its own
+    track is tested by behavior, not traced, in test_track_framing.py and
+    test_academic_applications.py."""
     assert add_position("Example Lab") == 0
     conn = connect()
     try:
@@ -517,6 +518,28 @@ def test_the_store_refuses_writes_on_an_archived_track(academic: Path) -> None:
         with pytest.raises(TrackerError, match="archived"):
             update_fields(conn, archived, int(row["id"]), {"notes": "touched"})
         after = only_row(conn, archived)
+        assert after["status"] == "prospect" and after["notes"] == row["notes"]
+    finally:
+        conn.close()
+
+
+def test_a_scope_kept_from_before_the_archive_cannot_write(academic: Path) -> None:
+    """The store reads the track's row when it writes, not the flag the scope
+    was resolved with (review of PR #227)."""
+    assert add_position("Example Lab") == 0
+    conn = connect()
+    try:
+        stale = resolve_scope(conn, SLUG)
+        row = only_row(conn, stale)
+        assert main(["tracks", "archive", SLUG]) == 0
+        assert not stale.track.archived
+        with pytest.raises(TrackerError, match="archived"):
+            add_job(conn, {"company": "Later Lab", "title": "Engineer"}, scope=stale)
+        with pytest.raises(TrackerError, match="archived"):
+            set_status(conn, stale, int(row["id"]), "shortlisted")
+        with pytest.raises(TrackerError, match="archived"):
+            update_fields(conn, stale, int(row["id"]), {"notes": "touched"})
+        after = only_row(conn, resolve_scope(conn, SLUG))
         assert after["status"] == "prospect" and after["notes"] == row["notes"]
     finally:
         conn.close()
