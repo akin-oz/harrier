@@ -16,12 +16,12 @@ themselves. No route in this file reaches a send path, and a test asserts it.
 from __future__ import annotations
 
 import json
-import sqlite3
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from harrier.connection import Connection
 from harrier.tracker.selector import SelectorError
 from harrier.tracker.store import TrackerError
 from harrier.tracks import Scope
@@ -110,7 +110,7 @@ OUTREACH_ERRORS: dict[int | str, dict[str, str]] = {
 }
 
 
-def _job_row(conn: sqlite3.Connection, scope: Scope, selector: str) -> dict[str, str]:
+def _job_row(conn: Connection, scope: Scope, selector: str) -> dict[str, str]:
     from harrier.tracker.selector import resolve_selector
 
     try:

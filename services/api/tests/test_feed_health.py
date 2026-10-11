@@ -11,7 +11,6 @@ from __future__ import annotations
 import io
 import json
 import socket
-import sqlite3
 import threading
 import time
 from email.message import Message
@@ -24,6 +23,7 @@ from urllib.request import Request
 import pytest
 
 from harrier import feedhealth
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.demo import OfflineFixtureError
 from harrier.feedhealth import (
@@ -351,7 +351,7 @@ def test_the_report_is_ordered_the_same_way_twice() -> None:
 
 
 @pytest.fixture
-def conn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
+def conn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Connection:
     monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("HARRIER_DEMO", raising=False)
     return connect()
@@ -363,7 +363,7 @@ def report_of(*rows: tuple[str, str]) -> FeedHealthReport:
     )
 
 
-def test_prune_removes_only_the_dead_entries(conn: sqlite3.Connection) -> None:
+def test_prune_removes_only_the_dead_entries(conn: Connection) -> None:
     report = report_of(
         ("https://boards.greenhouse.io/live", LIVE),
         ("https://boards.greenhouse.io/gone", DEAD),
@@ -378,7 +378,7 @@ def test_prune_removes_only_the_dead_entries(conn: sqlite3.Connection) -> None:
     ]
 
 
-def test_prune_reports_every_entry_it_removed(conn: sqlite3.Connection) -> None:
+def test_prune_reports_every_entry_it_removed(conn: Connection) -> None:
     report = report_of(
         ("https://boards.greenhouse.io/gone", DEAD),
         ("https://boards.greenhouse.io/also-gone", DEAD),
@@ -386,7 +386,7 @@ def test_prune_reports_every_entry_it_removed(conn: sqlite3.Connection) -> None:
     assert len(prune_dead(conn, report)) == 2
 
 
-def test_prune_writes_nothing_when_nothing_is_dead(conn: sqlite3.Connection) -> None:
+def test_prune_writes_nothing_when_nothing_is_dead(conn: Connection) -> None:
     """Not an optimisation. The watchlist may still be coming from
     config/feeds.txt, and storing a copy that removed nothing would shadow
     the file from then on, freezing a configuration still edited by hand."""
@@ -395,7 +395,7 @@ def test_prune_writes_nothing_when_nothing_is_dead(conn: sqlite3.Connection) -> 
 
 
 def test_prune_does_not_resurrect_an_entry_that_was_never_probed(
-    conn: sqlite3.Connection,
+    conn: Connection,
 ) -> None:
     """The pruned list is built from this report, so a board added to the
     store after the probe began is not written back by the prune."""
@@ -473,7 +473,7 @@ def run_cli(argv: list[str], results: tuple[BoardHealth, ...]) -> int:
 
 
 def test_the_command_prints_a_row_per_board(
-    conn: sqlite3.Connection, capsys: pytest.CaptureFixture[str]
+    conn: Connection, capsys: pytest.CaptureFixture[str]
 ) -> None:
     set_config(conn, FEEDS, [GREENHOUSE, ASHBY])
     code = run_cli(
@@ -492,7 +492,7 @@ def test_the_command_prints_a_row_per_board(
 
 
 def test_the_command_reports_an_empty_watchlist_rather_than_succeeding_silently(
-    conn: sqlite3.Connection, capsys: pytest.CaptureFixture[str]
+    conn: Connection, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A run that probed nothing must not look like a run that found
     everything healthy."""
@@ -500,7 +500,7 @@ def test_the_command_reports_an_empty_watchlist_rather_than_succeeding_silently(
     assert "no boards configured" in capsys.readouterr().err
 
 
-def test_prune_always_probes_in_the_same_invocation(conn: sqlite3.Connection) -> None:
+def test_prune_always_probes_in_the_same_invocation(conn: Connection) -> None:
     """Spec 025: --prune acts only on a probe performed in this invocation,
     so there is no stored report that could go stale. The command has no path
     that prunes without calling check_feeds first."""
@@ -518,7 +518,7 @@ def test_prune_always_probes_in_the_same_invocation(conn: sqlite3.Connection) ->
 
 
 def test_prune_says_so_when_nothing_was_dead(
-    conn: sqlite3.Connection, capsys: pytest.CaptureFixture[str]
+    conn: Connection, capsys: pytest.CaptureFixture[str]
 ) -> None:
     set_config(conn, FEEDS, [GREENHOUSE])
     code = run_cli(
@@ -531,7 +531,7 @@ def test_prune_says_so_when_nothing_was_dead(
 
 
 def test_prune_names_every_board_it_removed(
-    conn: sqlite3.Connection, capsys: pytest.CaptureFixture[str]
+    conn: Connection, capsys: pytest.CaptureFixture[str]
 ) -> None:
     set_config(conn, FEEDS, [GREENHOUSE, ASHBY])
     run_cli(
@@ -569,7 +569,7 @@ def test_an_entry_on_an_unknown_host_is_reported_rather_than_dropped() -> None:
 
 
 def test_pruning_keeps_entries_on_hosts_the_router_does_not_know(
-    conn: sqlite3.Connection,
+    conn: Connection,
 ) -> None:
     """The data-loss case. Pruning rebuilds the watchlist, so anything the
     report did not cover would be deleted by a prune triggered by an entirely
@@ -588,7 +588,7 @@ def test_pruning_keeps_entries_on_hosts_the_router_does_not_know(
     assert set(cast("list[str]", remaining)) == {UNKNOWN, ASHBY}
 
 
-def test_an_unknown_host_alone_still_produces_a_report(conn: sqlite3.Connection) -> None:
+def test_an_unknown_host_alone_still_produces_a_report(conn: Connection) -> None:
     """No routable board is not the same as no configuration, and a run that
     reported nothing would read as an empty watchlist."""
     report = check_feeds([UNKNOWN])

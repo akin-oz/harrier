@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
 from dataclasses import dataclass, field
 from typing import cast
 
+from harrier.connection import Connection
 from harrier.profile.store import owned_documents
 from harrier.resume import heading as heading_module
 from harrier.resume.dashes import dash_marks, describe
@@ -757,7 +757,7 @@ def forbidden_hits(phrases: tuple[str, ...], text: str) -> list[str]:
     return [phrase for phrase in phrases if phrase.strip() and phrase.strip().lower() in haystack]
 
 
-def _document_by_kind(conn: sqlite3.Connection, kind: str) -> str | None:
+def _document_by_kind(conn: Connection, kind: str) -> str | None:
     """The first shared document of a kind. An owned row is never read here
     (spec 099)."""
     row = conn.execute(
@@ -768,7 +768,7 @@ def _document_by_kind(conn: sqlite3.Connection, kind: str) -> str | None:
     return str(row[0]) if row is not None else None
 
 
-def _any_framing(conn: sqlite3.Connection) -> bool:
+def _any_framing(conn: Connection) -> bool:
     row = conn.execute(
         "SELECT 1 FROM profile_documents WHERE kind = ? LIMIT 1", (FRAMING_KIND,)
     ).fetchone()
@@ -788,7 +788,7 @@ def _json_object(content: str, kind: str) -> dict[str, object]:
     return cast("dict[str, object]", raw)
 
 
-def _stored_facts(conn: sqlite3.Connection) -> str | None:
+def _stored_facts(conn: Connection) -> str | None:
     """The shared facts document, after refusing the old single document,
     alone or beside the new shape (spec 098)."""
     data = _document_by_kind(conn, RESUME_DATA_KIND)
@@ -809,7 +809,7 @@ def framing_name(scope: Scope) -> str:
     return f"{scope.track.kind}.json"
 
 
-def _stored_framing(conn: sqlite3.Connection, scope: Scope) -> str | None:
+def _stored_framing(conn: Connection, scope: Scope) -> str | None:
     """The framing the scope's track owns. Never another track's: there is
     no fallback (spec 099)."""
     owned = owned_documents(conn, FRAMING_KIND, scope.track.id)
@@ -840,7 +840,7 @@ def bundle_from_documents(facts: dict[str, object], framing: dict[str, object]) 
     return bundle
 
 
-def load_facts(conn: sqlite3.Connection) -> dict[str, object]:
+def load_facts(conn: Connection) -> dict[str, object]:
     """The shared facts, or a refusal naming what to run."""
     facts = _stored_facts(conn)
     if facts is None:
@@ -851,7 +851,7 @@ def load_facts(conn: sqlite3.Connection) -> dict[str, object]:
     return _json_object(facts, FACTS_KIND)
 
 
-def load_bundle(conn: sqlite3.Connection, scope: Scope) -> ResumeBundle:
+def load_bundle(conn: Connection, scope: Scope) -> ResumeBundle:
     """The shared facts and the scope's own framing, as one bundle."""
     facts = _stored_facts(conn)
     framing = _stored_framing(conn, scope)
@@ -869,7 +869,7 @@ def load_bundle(conn: sqlite3.Connection, scope: Scope) -> ResumeBundle:
     )
 
 
-def _facts_fields(conn: sqlite3.Connection) -> dict[str, object]:
+def _facts_fields(conn: Connection) -> dict[str, object]:
     """The facts document's top-level fields, for surfaces that need a few
     of them without the whole bundle (the letter and the answers).
 
@@ -881,7 +881,7 @@ def _facts_fields(conn: sqlite3.Connection) -> dict[str, object]:
     return _json_object(facts, FACTS_KIND) if facts is not None else {}
 
 
-def load_forbidden_phrases(conn: sqlite3.Connection) -> tuple[str, ...]:
+def load_forbidden_phrases(conn: Connection) -> tuple[str, ...]:
     """The candidate's never-claim list, for the letter and the answers
     (spec 034)."""
     return _str_tuple(_facts_fields(conn).get("forbidden_phrases"))
@@ -899,7 +899,7 @@ class SkillVocabulary:
         return term.casefold() in self.verified
 
 
-def load_skill_vocabulary(conn: sqlite3.Connection) -> SkillVocabulary:
+def load_skill_vocabulary(conn: Connection) -> SkillVocabulary:
     """`technology_aliases` keys and aliases plus `all_skills` are the
     vocabulary. A verified skill verifies its aliases too."""
     fields = _facts_fields(conn)
@@ -917,7 +917,7 @@ def load_skill_vocabulary(conn: sqlite3.Connection) -> SkillVocabulary:
     return SkillVocabulary(terms=unique, verified=frozenset(verified))
 
 
-def load_truth_sources(conn: sqlite3.Connection) -> TruthSources:
+def load_truth_sources(conn: Connection) -> TruthSources:
     truth = _document_by_kind(conn, RESUME_TRUTH_KIND)
     achievements = _document_by_kind(conn, ACHIEVEMENTS_KIND)
     if truth is None:

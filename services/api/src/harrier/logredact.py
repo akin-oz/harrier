@@ -32,6 +32,8 @@ import sqlite3
 import traceback
 from typing import cast
 
+from harrier.connection import Connection
+
 # A one-character value is not identifying and matches everywhere. Everything
 # longer is redacted, but a short value only where it stands as its own word:
 # that was the real reason for the old four-character floor, and a boundary
@@ -52,7 +54,7 @@ _CONTACT_IDENTITY_COLUMNS = ("person_name", "person_email", "linkedin_url")
 _IDENTITY_KINDS = ("resume_facts", "resume_data", "resume_data_presplit")
 
 
-def _candidate_identity_values(conn: sqlite3.Connection) -> set[str]:
+def _candidate_identity_values(conn: Connection) -> set[str]:
     import json
 
     placeholders = ", ".join("?" for _ in _IDENTITY_KINDS)
@@ -80,7 +82,7 @@ def _candidate_identity_values(conn: sqlite3.Connection) -> set[str]:
     return values
 
 
-def _contact_identity_values(conn: sqlite3.Connection) -> set[str]:
+def _contact_identity_values(conn: Connection) -> set[str]:
     columns = ", ".join(_CONTACT_IDENTITY_COLUMNS)
     values: set[str] = set()
     for row in conn.execute(f"SELECT {columns} FROM contacts"):
@@ -90,7 +92,7 @@ def _contact_identity_values(conn: sqlite3.Connection) -> set[str]:
     return values
 
 
-def identity_values(conn: sqlite3.Connection) -> set[str]:
+def identity_values(conn: Connection) -> set[str]:
     """Every literal that names the candidate or a contact.
 
     Best effort by design: a database that predates these tables, or one that
@@ -189,7 +191,7 @@ def forget_all() -> None:
     _INSTALLED.clear()
 
 
-def refresh_installed(conn: sqlite3.Connection) -> None:
+def refresh_installed(conn: Connection) -> None:
     """Re-read identity values and push them into every installed filter.
 
     Called from the tracker write path, so a contact is redactable from the

@@ -2,12 +2,12 @@
 send_daily_digest.py had no tests; every pin here is new."""
 
 import json
-import sqlite3
 from datetime import date
 from pathlib import Path
 
 import pytest
 
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.digest import (
     build_digest,
@@ -24,13 +24,13 @@ TARGET = date(2026, 8, 10)
 
 
 @pytest.fixture()
-def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
+def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Connection:
     monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
     return connect()
 
 
 def seed_job(
-    conn: sqlite3.Connection,
+    conn: Connection,
     company: str,
     *,
     status: str = "prospect",
@@ -81,7 +81,7 @@ def write_event(**overrides: object) -> None:
         handle.write(json.dumps(event) + "\n")
 
 
-def test_digest_renders_all_five_sections(db: sqlite3.Connection) -> None:
+def test_digest_renders_all_five_sections(db: Connection) -> None:
     seed_job(db, "Fresh Co", added_at="2026-08-10", fit_score="91")
     seed_job(db, "Top Co", status="shortlisted", fit_score="95")
     seed_job(
@@ -104,7 +104,7 @@ def test_digest_renders_all_five_sections(db: sqlite3.Connection) -> None:
     assert "interview invite: Example Co" in digest
 
 
-def test_dry_run_sends_nothing(db: sqlite3.Connection) -> None:
+def test_dry_run_sends_nothing(db: Connection) -> None:
     def no_send(message: str) -> int:
         raise AssertionError("dry run must never send")
 
@@ -113,7 +113,7 @@ def test_dry_run_sends_nothing(db: sqlite3.Connection) -> None:
     assert digest.startswith("Daily job digest — 2026-08-10")
 
 
-def test_live_run_sends_once(db: sqlite3.Connection) -> None:
+def test_live_run_sends_once(db: Connection) -> None:
     sent: list[str] = []
 
     def capture(message: str) -> int:
@@ -125,7 +125,7 @@ def test_live_run_sends_once(db: sqlite3.Connection) -> None:
     assert sent == [digest]
 
 
-def test_legacy_auto_added_note_counts_as_added_at(db: sqlite3.Connection) -> None:
+def test_legacy_auto_added_note_counts_as_added_at(db: Connection) -> None:
     # Migrated rows can carry the date only in their notes (spec 019).
     from harrier.tracker import update_fields
 
@@ -141,7 +141,7 @@ def test_legacy_auto_added_note_counts_as_added_at(db: sqlite3.Connection) -> No
     assert "Seeded Co" in digest
 
 
-def test_malformed_event_kind_is_skipped(db: sqlite3.Connection) -> None:
+def test_malformed_event_kind_is_skipped(db: Connection) -> None:
     # A list or dict kind must not abort the digest on an unhashable
     # membership test (review finding).
     path = events_path()
@@ -158,7 +158,7 @@ def test_malformed_event_kind_is_skipped(db: sqlite3.Connection) -> None:
     assert "interview invite: Good Co" in digest
 
 
-def test_ghosted_cutoff_boundary(db: sqlite3.Connection) -> None:
+def test_ghosted_cutoff_boundary(db: Connection) -> None:
     seed_job(db, "Exactly 21", status="applied", applied_date="2026-07-20")
     seed_job(db, "Twenty Days", status="applied", applied_date="2026-07-21")
     from harrier.tracker import list_jobs
@@ -169,7 +169,7 @@ def test_ghosted_cutoff_boundary(db: sqlite3.Connection) -> None:
     assert "≥21d no response" in build_digest(db, default_scope(db), TARGET)
 
 
-def test_outreach_grouping_excludes_wait_states(db: sqlite3.Connection) -> None:
+def test_outreach_grouping_excludes_wait_states(db: Connection) -> None:
     seed_job(
         db,
         "Waiting Co",
@@ -190,7 +190,7 @@ def test_outreach_grouping_excludes_wait_states(db: sqlite3.Connection) -> None:
     assert groups == {"send follow-up": ["Followup Co"]}
 
 
-def test_updates_filter_dedupe_and_order(db: sqlite3.Connection) -> None:
+def test_updates_filter_dedupe_and_order(db: Connection) -> None:
     write_event(company="Older", timestamp="2026-08-10T08:00:00+00:00")
     write_event(company="Newer", timestamp="2026-08-10T10:00:00+00:00")
     write_event(company="Newer", timestamp="2026-08-10T10:00:00+00:00")  # duplicate
@@ -203,7 +203,7 @@ def test_updates_filter_dedupe_and_order(db: sqlite3.Connection) -> None:
     assert "Confirmation" not in digest
 
 
-def test_legacy_handler_output_prefix_is_tolerated(db: sqlite3.Connection) -> None:
+def test_legacy_handler_output_prefix_is_tolerated(db: Connection) -> None:
     path = events_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     legacy = {

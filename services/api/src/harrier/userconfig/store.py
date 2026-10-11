@@ -28,9 +28,10 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
 from datetime import date
 from typing import cast
+
+from harrier.connection import Connection
 
 FEEDS = "feeds"
 LINKEDIN_SEARCHES = "linkedin_searches"
@@ -161,9 +162,9 @@ def _validate(kind: str, value: object, *, on_read: bool = False) -> object:
     return [item.strip() for item in cast("list[str]", items) if item.strip()]
 
 
-def set_config(conn: sqlite3.Connection, kind: str, value: object) -> None:
+def set_config(conn: Connection, kind: str, value: object) -> None:
     stored = _validate(kind, value)
-    with conn:
+    with conn.transaction():
         conn.execute(
             """
             INSERT INTO user_config (kind, value, updated_at)
@@ -176,7 +177,7 @@ def set_config(conn: sqlite3.Connection, kind: str, value: object) -> None:
         )
 
 
-def get_config(conn: sqlite3.Connection, kind: str) -> object | None:
+def get_config(conn: Connection, kind: str) -> object | None:
     """The stored value, or None when there is no row for the kind.
 
     None and an empty list are different answers: no row means fall back to
@@ -197,19 +198,19 @@ def get_config(conn: sqlite3.Connection, kind: str) -> object | None:
     return _validate(kind, parsed, on_read=True)
 
 
-def delete_config(conn: sqlite3.Connection, kind: str) -> bool:
-    with conn:
+def delete_config(conn: Connection, kind: str) -> bool:
+    with conn.transaction():
         cursor = conn.execute("DELETE FROM user_config WHERE kind = ?", (kind,))
     return cursor.rowcount > 0
 
 
-def list_config(conn: sqlite3.Connection) -> list[dict[str, str]]:
+def list_config(conn: Connection) -> list[dict[str, str]]:
     columns = ("kind", "value", "updated_at")
     rows = conn.execute(f"SELECT {', '.join(columns)} FROM user_config ORDER BY kind").fetchall()
     return [dict(zip(columns, (str(value) for value in row), strict=True)) for row in rows]
 
 
-def stored_list(conn: sqlite3.Connection | None, kind: str) -> list[str] | None:
+def stored_list(conn: Connection | None, kind: str) -> list[str] | None:
     """A stored list of strings, or None to mean "fall back to the file".
 
     For the line-list kinds only. A hold list may carry objects (spec 052)

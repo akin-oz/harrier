@@ -24,6 +24,7 @@ from typing import cast
 
 import pytest
 
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.screening import rules
 from harrier.screening.config import load_candidate_config
@@ -320,7 +321,7 @@ def test_a_migrated_database_matches_a_fresh_one(
     stopped.commit()
     stopped.close()
 
-    def schema(conn: sqlite3.Connection) -> list[tuple[str, str, str]]:
+    def schema(conn: Connection) -> list[tuple[str, str, str]]:
         rows = conn.execute("SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL")
         return sorted((row[0], row[1], " ".join(str(row[2]).split())) for row in rows)
 

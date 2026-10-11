@@ -11,13 +11,13 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
+from harrier.connection import Connection
 from harrier.db import data_dir
 from harrier.profile.store import get_document
 
@@ -115,7 +115,7 @@ def _read_config(name: str, config_dir: Path | None = None) -> dict[str, Any]:
     return cast("dict[str, Any]", parsed) if isinstance(parsed, dict) else {}
 
 
-def load_configs(conn: sqlite3.Connection, config_dir: Path | None = None) -> dict[str, Any]:
+def load_configs(conn: Connection, config_dir: Path | None = None) -> dict[str, Any]:
     """Committed template config plus the private defaults document."""
     defaults_raw = get_document(conn, OUTREACH_DEFAULTS_KIND, OUTREACH_DEFAULTS_NAME)
     if defaults_raw is None:

@@ -37,6 +37,7 @@ import harrier.resume.ai as ai_module
 import harrier.resume.pdf as pdf_module
 from harrier.apply.claims import ClaimCheckError
 from harrier.apply.profile import load_profile_json, load_profile_markdown, validate_profile
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.profile.store import put_document
 from harrier.resume.markdown import UnverifiedClaimError
@@ -74,7 +75,7 @@ def _fake_render(html_text: str, pdf_path: Path) -> None:
     pdf_path.write_bytes(b"%PDF-1.4 fake")
 
 
-def store_candidate(conn: sqlite3.Connection) -> None:
+def store_candidate(conn: Connection) -> None:
     candidate_document = {"candidate": {"name": "Deniz Örnek", "location": "Exampleland"}}
     put_document(conn, "candidate", "candidate.json", "json", json.dumps(candidate_document))
 
@@ -86,7 +87,7 @@ def profile_pair(sign: str) -> tuple[str, str]:
     return f"{markdown}\n{sign}\n", json.dumps(profile)
 
 
-def store_profile(conn: sqlite3.Connection, track_id: int, sign: str) -> None:
+def store_profile(conn: Connection, track_id: int, sign: str) -> None:
     markdown, profile = profile_pair(sign)
     put_document(
         conn,
@@ -101,7 +102,7 @@ def store_profile(conn: sqlite3.Connection, track_id: int, sign: str) -> None:
     )
 
 
-def lab(conn: sqlite3.Connection, *, truth: str | None = None) -> Scope:
+def lab(conn: Connection, *, truth: str | None = None) -> Scope:
     """The industry documents on the default track, the academic examples on
     a lab track, one truth for both."""
     store_example(conn)
@@ -118,7 +119,7 @@ def lab(conn: sqlite3.Connection, *, truth: str | None = None) -> Scope:
     return scope
 
 
-def call(conn: sqlite3.Connection, scope: Scope) -> int:
+def call(conn: Connection, scope: Scope) -> int:
     return add_job(
         conn,
         {
@@ -136,7 +137,7 @@ def call(conn: sqlite3.Connection, scope: Scope) -> int:
 
 
 def test_academic_tailor_uses_the_track_framing_and_shape(
-    db: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    db: Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     scope = lab(db)
     job_id = call(db, scope)
@@ -158,7 +159,7 @@ def test_academic_tailor_uses_the_track_framing_and_shape(
 
 
 def test_academic_cv_refuses_an_unsupported_bullet(
-    db: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    db: Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     scope = lab(db, truth="- A line that supports no bullet.\n")
     job_id = call(db, scope)
@@ -193,7 +194,7 @@ def _sent(monkeypatch: pytest.MonkeyPatch, module: object, response: str) -> lis
 
 
 def test_academic_documents_read_only_their_track(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     scope = lab(db, truth=TRUTH)
     letters = _sent(monkeypatch, letters_module, letter_json())
@@ -230,7 +231,7 @@ def test_academic_documents_read_only_their_track(
 
 
 def test_academic_letters_pass_the_same_claims_checks(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     scope = lab(db, truth=TRUTH)
     sentence = "I ran the research group's data platform."
@@ -254,7 +255,7 @@ def test_academic_letters_pass_the_same_claims_checks(
     ), named.value.violations
 
 
-def test_a_track_with_no_application_profile_is_refused(db: sqlite3.Connection) -> None:
+def test_a_track_with_no_application_profile_is_refused(db: Connection) -> None:
     """The default track has one, so a fallback would find it; the lab track
     still refuses (review of PR #224)."""
     store_example(db)
@@ -267,7 +268,7 @@ def test_a_track_with_no_application_profile_is_refused(db: sqlite3.Connection) 
         letters_module.generate_cover_letter(db, COMPANY, ROLE, jd_text=POSTING, scope=scope)
 
 
-def test_a_missing_half_of_the_profile_names_the_command(db: sqlite3.Connection) -> None:
+def test_a_missing_half_of_the_profile_names_the_command(db: Connection) -> None:
     """Letters read both halves; with only the markdown stored, the refusal
     says how to store the JSON (review of PR #224)."""
     store_example(db)
@@ -387,7 +388,7 @@ def data_dir_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 # --- profile put application_profile ---------------------------------------------
 
 
-def stored(conn: sqlite3.Connection, track_id: int) -> dict[str, str]:
+def stored(conn: Connection, track_id: int) -> dict[str, str]:
     rows = conn.execute(
         "SELECT name, content FROM profile_documents "
         "WHERE kind = 'application_profile' AND track_id = ?",
@@ -397,7 +398,7 @@ def stored(conn: sqlite3.Connection, track_id: int) -> dict[str, str]:
 
 
 def test_profile_put_stores_an_application_profile(
-    db: sqlite3.Connection, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    db: Connection, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     add_track(db, SLUG, "academic", "Lab search")
     track_id = resolve_scope(db, SLUG).track.id
@@ -430,7 +431,7 @@ def test_profile_put_stores_an_application_profile(
 
 
 def test_the_academic_examples_store_and_check(
-    db: sqlite3.Connection, capsys: pytest.CaptureFixture[str]
+    db: Connection, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The committed academic examples are a valid track: the framing parses
     with the facts and every bullet is in the truth used here."""
@@ -460,7 +461,7 @@ def test_the_academic_examples_store_and_check(
     assert "frontend" not in json.dumps(academic).lower()
 
 
-def test_an_answer_built_without_the_model_needs_no_profile(db: sqlite3.Connection) -> None:
+def test_an_answer_built_without_the_model_needs_no_profile(db: Connection) -> None:
     """A salary answer is assembled from the candidate document alone, so a
     track with no application profile still gets it; only a question sent to
     the model needs the profile (spec 101, amended)."""
@@ -529,7 +530,7 @@ def _no_browser(monkeypatch: pytest.MonkeyPatch, pages: int) -> None:
 
 
 def test_the_three_commands_run_on_an_academic_call(
-    db: sqlite3.Connection,
+    db: Connection,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -601,7 +602,7 @@ def test_the_three_commands_run_on_an_academic_call(
 
 
 def test_an_archived_academic_track_refuses_tailor(
-    db: sqlite3.Connection, capsys: pytest.CaptureFixture[str]
+    db: Connection, capsys: pytest.CaptureFixture[str]
 ) -> None:
     scope = lab(db)
     job_id = call(db, scope)

@@ -11,7 +11,6 @@ import html
 import json
 import logging
 import re
-import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
@@ -46,6 +45,7 @@ from harrier.apply.profile import (
     profile_text,
 )
 from harrier.apply.review import Review, render_review
+from harrier.connection import Connection
 from harrier.db import data_dir
 from harrier.llm import LLMClientError, generate_text
 from harrier.llm.jsonparse import loads_tolerant
@@ -182,7 +182,7 @@ def cover_letter_paths_for(
     }
 
 
-def candidate_contact(conn: sqlite3.Connection) -> dict[str, str]:
+def candidate_contact(conn: Connection) -> dict[str, str]:
     candidate = load_candidate_document(conn)
     block_raw = candidate.get("candidate")
     block = cast("dict[str, object]", block_raw) if isinstance(block_raw, dict) else {}
@@ -203,7 +203,7 @@ def candidate_contact(conn: sqlite3.Connection) -> dict[str, str]:
 
 
 def build_cover_letter_payload(
-    conn: sqlite3.Connection,
+    conn: Connection,
     company: str,
     role: str,
     job_url: str | None = None,
@@ -373,7 +373,7 @@ def validate_cover_letter(letter: dict[str, str], *, kind: str) -> None:
 
 
 def generate_cover_letter(
-    conn: sqlite3.Connection,
+    conn: Connection,
     company: str,
     role: str,
     job_url: str | None = None,
@@ -425,7 +425,7 @@ def _request_letter(system_prompt: str, payload: dict[str, object]) -> str:
 
 
 def _checked_letter(
-    conn: sqlite3.Connection,
+    conn: Connection,
     output_text: str,
     company: str,
     role: str,
@@ -501,7 +501,7 @@ def markdown_to_html_paragraphs(text: str) -> str:
 
 
 def render_cover_letter_html(
-    conn: sqlite3.Connection,
+    conn: Connection,
     company: str,
     role: str,
     full_version: str,
@@ -540,7 +540,7 @@ def _default_render(html_text: str, pdf_path: Path) -> None:
 
 
 def write_cover_letter_artifacts(
-    conn: sqlite3.Connection,
+    conn: Connection,
     company: str,
     role: str,
     job_url: str | None,

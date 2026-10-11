@@ -437,7 +437,7 @@ PR 1 (refactor):
       `POSTGRES_NOT_YET` are defined in `harrier.connection`, not in
       `harrier.pgstore`, and no module under `services/api/src` imports
       them from `harrier.pgstore`
-      (planned test_store_neutral_names_live_in_connection).
+      (`services/api/tests/test_connection.py::test_store_neutral_names_live_in_connection`).
       (post-merge review of PRs #194 and #207, 2026-10-10)
 
 PR 2 (behavior):
@@ -732,3 +732,57 @@ The gate gains exactly two classes beyond `harrier store`:
       (planned test_the_postgres_gate_has_operator_and_run_classes).
       Planned test_every_command_has_a_postgres_refusal_class covers the
       same walk.
+
+## Amendment (2026-10-11): what PR 1 built
+
+Implementing PR 1 settled choices this spec left open. Each one is stated
+here so the code and the spec agree. None changes behavior a user sees;
+PR 2 still owns everything Behavior lists for Postgres.
+
+- **`transaction()` is a method only.** `with conn.transaction():` is the
+  one spelling. No module function exists.
+- **Nested `transaction()` joins in PR 2, not PR 1.** In PR 1 it is the
+  sqlite3 connection's own context manager, exactly what `with conn:` did.
+  Joining now would move the commit inside `_write_lock`
+  (`tracker/store.py`) from the inner block to `_write_lock`, a behavior
+  change PR 1 may not make. No `transaction()` nests inside another today.
+  Joining arrives with PR 2 and its planned test
+  test_a_nested_transaction_joins_the_outer_one.
+- **`Connection` keeps `commit()`, `rollback()` and `in_transaction`.**
+  `_write_lock` uses all three and `runoutcome.record_success` calls
+  `commit()`. PR 2 decides whether they survive.
+- **`dialect` and `busy_timeout_ms` arrive with PR 2.** Nothing in PR 1
+  reads them.
+- **`Connection.sqlite_driver`** returns the sqlite3 connection underneath,
+  for code whose subject is SQLite itself. Only three test modules use it:
+  `test_api_tracks.py` (statement tracing), `test_dialect_parity.py`
+  (autocommit for the SQLite probes) and `test_migration_runner.py`
+  (transaction mode). No module under `src` uses it.
+- **Cursor reads stay `Any`.** `execute()` returns a `Cursor` protocol
+  whose `fetchone()` and `fetchall()` are typed as `sqlite3.Cursor` types
+  them today. Narrowing them would force edits at every unchecked
+  `fetchone()[0]`, which PR 1 forbids. `Cursor` carries `lastrowid` until
+  PR 2 moves `add_job` and `add_contact` to `RETURNING id`.
+- **`Row` replaces `sqlite3.Row` in two annotations only:**
+  `_job_row_to_dict` (`tracker/store.py`) and `_track_from_row`
+  (`tracks.py`).
+- **More moved to `harrier.connection` than Scope item 13 lists.**
+  `store_target` needs `URL_VARIABLE`, `POSTGRES_SCHEME` and the URL
+  parsing helpers, and `harrier.connection` cannot import
+  `harrier.pgstore` at import time. So those moved too, with the parser
+  made public as `UrlParts` and `url_parts` because `pgstore` still uses
+  it. `StoreMigrationRefused` (spec 105) moved with the other `StoreError`
+  subclasses.
+- **`db.schema_version` takes a `Connection` or a raw sqlite3
+  connection.** The migration runner calls it before wrapping.
+- **Test edits beyond annotations.** Six test modules needed more than an
+  annotation because pyright refuses the old form: `test_ui_settings.py`
+  and `test_migration_runner.py` (`with conn:` became
+  `with conn.transaction():`), `test_migration_runner.py`,
+  `test_api_tracks.py` and `test_dialect_parity.py` (through
+  `sqlite_driver`), and `test_backup.py` and `test_logging.py` (a
+  hand-opened sqlite3 connection is wrapped in `Connection` before a domain
+  reader gets it).
+
+`services/api/tests/test_connection.py::test_store_neutral_names_live_in_connection`
+proves the moved names live in `harrier.connection`.

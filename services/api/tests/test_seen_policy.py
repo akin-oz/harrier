@@ -9,7 +9,6 @@ because spec 032 is a set of screening fixes.
 from __future__ import annotations
 
 import json
-import sqlite3
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -17,6 +16,7 @@ from typing import Any
 import pytest
 
 from harrier.atomicio import DamagedStateError
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.screening import rules
 from harrier.screening.config import load_candidate_config
@@ -337,13 +337,11 @@ def test_the_reason_recorded_is_the_gate_that_decided(env: Path, cfg: dict[str, 
 
 
 @pytest.fixture
-def db(env: Path) -> sqlite3.Connection:
+def db(env: Path) -> Connection:
     return connect()
 
 
-def test_a_rejection_under_an_older_policy_is_cleared(
-    db: sqlite3.Connection, cfg: dict[str, Any]
-) -> None:
+def test_a_rejection_under_an_older_policy_is_cleared(db: Connection, cfg: dict[str, Any]) -> None:
     save_seen("greenhouse", {"k1": decision(policy="old-policy")})
     report = reconsider_source(db, default_scope(db), "greenhouse", cfg, dry_run=False)
     assert report.changed == 1
@@ -351,7 +349,7 @@ def test_a_rejection_under_an_older_policy_is_cleared(
 
 
 def test_a_rejection_under_the_current_policy_is_left_alone(
-    db: sqlite3.Connection, cfg: dict[str, Any]
+    db: Connection, cfg: dict[str, Any]
 ) -> None:
     """Otherwise every reconsideration would re-offer everything, and the
     operator would see the same rejected postings on a loop."""
@@ -362,7 +360,7 @@ def test_a_rejection_under_the_current_policy_is_left_alone(
     assert set(load_seen("greenhouse")) == {"k1"}
 
 
-def test_an_acceptance_is_never_reconsidered(db: sqlite3.Connection, cfg: dict[str, Any]) -> None:
+def test_an_acceptance_is_never_reconsidered(db: Connection, cfg: dict[str, Any]) -> None:
     """It already produced a tracker row. Re-running it would at best do
     nothing and at worst duplicate the row."""
     save_seen("greenhouse", {"k1": decision(ACCEPTED, policy="old-policy")})
@@ -372,15 +370,13 @@ def test_an_acceptance_is_never_reconsidered(db: sqlite3.Connection, cfg: dict[s
 
 
 def test_a_migrated_entry_is_eligible_for_the_first_reconsideration(
-    db: sqlite3.Connection, cfg: dict[str, Any]
+    db: Connection, cfg: dict[str, Any]
 ) -> None:
     save_seen("greenhouse", {"k1": SeenDecision(UNKNOWN, "", UNKNOWN_POLICY, "2026-01-01")})
     assert reconsider_source(db, default_scope(db), "greenhouse", cfg, dry_run=False).changed == 1
 
 
-def test_a_dry_run_reports_without_changing_anything(
-    db: sqlite3.Connection, cfg: dict[str, Any]
-) -> None:
+def test_a_dry_run_reports_without_changing_anything(db: Connection, cfg: dict[str, Any]) -> None:
     save_seen("greenhouse", {"k1": decision(policy="old-policy")})
     report = reconsider_source(db, default_scope(db), "greenhouse", cfg, dry_run=True)
     assert report.changed == 1
@@ -388,7 +384,7 @@ def test_a_dry_run_reports_without_changing_anything(
 
 
 def test_a_job_the_operator_rejected_is_never_resurrected(
-    db: sqlite3.Connection, cfg: dict[str, Any]
+    db: Connection, cfg: dict[str, Any]
 ) -> None:
     """The refusal that matters more than the feature. Rules get to change
     their own minds, not somebody else's."""
@@ -432,7 +428,7 @@ def _screened_posting(external_id: str) -> NormalizedJob:
 
 @pytest.mark.parametrize("external_id", ["4001", ""], ids=["external-id", "url-only"])
 def test_a_rejected_row_is_protected_under_the_key_discovery_records(
-    db: sqlite3.Connection, cfg: dict[str, Any], external_id: str
+    db: Connection, cfg: dict[str, Any], external_id: str
 ) -> None:
     """Discovery records a hashed `job_key`, not a url. A protection that
     compared the key against urls and company plus title never matched, so a
@@ -451,7 +447,7 @@ def test_a_rejected_row_is_protected_under_the_key_discovery_records(
 
 
 def test_a_row_the_operator_has_not_rejected_leaves_its_key_eligible(
-    db: sqlite3.Connection, cfg: dict[str, Any]
+    db: Connection, cfg: dict[str, Any]
 ) -> None:
     """The protection follows the operator's decision, not the row's
     existence: a shortlisted row's stale entry is still cleared."""
@@ -467,7 +463,7 @@ def test_a_row_the_operator_has_not_rejected_leaves_its_key_eligible(
 
 
 def test_a_job_the_operator_has_not_rejected_is_not_protected(
-    db: sqlite3.Connection, cfg: dict[str, Any]
+    db: Connection, cfg: dict[str, Any]
 ) -> None:
     job_id = add_job(
         db,
@@ -485,7 +481,7 @@ def test_a_job_the_operator_has_not_rejected_is_not_protected(
 
 
 def test_the_protection_matches_on_company_and_title_too(
-    db: sqlite3.Connection, cfg: dict[str, Any]
+    db: Connection, cfg: dict[str, Any]
 ) -> None:
     """A reconsidered posting arriving under a slightly different URL would
     defeat a url-only check entirely."""
@@ -551,7 +547,7 @@ def test_a_state_file_that_is_not_an_object_is_refused(env: Path) -> None:
 
 
 def test_nothing_eligible_is_not_reported_as_everything_current(
-    db: sqlite3.Connection, cfg: dict[str, Any], capsys: pytest.CaptureFixture[str]
+    db: Connection, cfg: dict[str, Any], capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Zero cleared is also what a watchlist of protected manual rejections
     produces, and saying the wrong one of those is a claim about the

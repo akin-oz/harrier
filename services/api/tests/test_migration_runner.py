@@ -194,8 +194,8 @@ def test_connect_returns_a_connection_in_its_usual_transaction_mode(
     path = tmp_path / "tracker.db"
     fresh = connect(path)
     try:
-        assert fresh.isolation_level == MODULE_DEFAULT_ISOLATION
-        with fresh:
+        assert fresh.sqlite_driver.isolation_level == MODULE_DEFAULT_ISOLATION
+        with fresh.transaction():
             fresh.execute("INSERT INTO schema_version (version) VALUES (999)")
     finally:
         fresh.close()
@@ -209,7 +209,7 @@ def test_connect_returns_a_connection_in_its_usual_transaction_mode(
     monkeypatch.setattr(schema, "MIGRATIONS", REAL_MIGRATIONS)
     again = connect(tmp_path / "broken.db")
     try:
-        assert again.isolation_level == MODULE_DEFAULT_ISOLATION
+        assert again.sqlite_driver.isolation_level == MODULE_DEFAULT_ISOLATION
         assert not again.in_transaction
     finally:
         again.close()

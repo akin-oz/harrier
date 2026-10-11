@@ -7,10 +7,10 @@ byte-identically (spec 004 acceptance).
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
 
+from harrier.connection import Connection
 from harrier.tracks import DEFAULT_TRACK_ID, refuse_archived_track
 
 # Old-repo-relative path -> (kind, format). Read-only sources.
@@ -58,7 +58,7 @@ _UPSERT_OWNED = """
 
 
 def _upsert(
-    conn: sqlite3.Connection, kind: str, name: str, fmt: str, content: str, track_id: int | None
+    conn: Connection, kind: str, name: str, fmt: str, content: str, track_id: int | None
 ) -> None:
     if kind in TRACK_OWNED_KINDS and track_id is None:
         raise ProfileDocumentError(f"{kind} is owned by a track; it cannot be shared")
@@ -75,7 +75,7 @@ def _upsert(
 
 
 def put_document(
-    conn: sqlite3.Connection,
+    conn: Connection,
     kind: str,
     name: str,
     fmt: str,
@@ -85,12 +85,12 @@ def put_document(
 ) -> None:
     """Write one document: shared when `track_id` is None, else owned by that
     track. Which kinds may be owned is `TRACK_OWNED_KINDS` (spec 099)."""
-    with conn:
+    with conn.transaction():
         _upsert(conn, kind, name, fmt, content, track_id)
 
 
 def put_documents_and_rekind(
-    conn: sqlite3.Connection,
+    conn: Connection,
     documents: Sequence[tuple[str, str, str, str, int | None]],
     rekind: tuple[str, str, str],
 ) -> None:
@@ -99,7 +99,7 @@ def put_documents_and_rekind(
     transaction: all of it or none of it (spec 098). The moved row keeps its
     name, content and `updated_at`."""
     old_kind, name, new_kind = rekind
-    with conn:
+    with conn.transaction():
         for kind, document_name, fmt, content, track_id in documents:
             _upsert(conn, kind, document_name, fmt, content, track_id)
         moved = conn.execute(
@@ -113,7 +113,7 @@ def put_documents_and_rekind(
             raise ProfileDocumentError(f"no shared {old_kind}/{name} to move to {new_kind}")
 
 
-def get_document(conn: sqlite3.Connection, kind: str, name: str) -> str | None:
+def get_document(conn: Connection, kind: str, name: str) -> str | None:
     """A shared document. No reader of a shared kind sees an owned row."""
     # Positional access: works with any row factory, not only harrier.db.connect's.
     row = conn.execute(
@@ -123,7 +123,7 @@ def get_document(conn: sqlite3.Connection, kind: str, name: str) -> str | None:
     return str(row[0]) if row is not None else None
 
 
-def owned_documents(conn: sqlite3.Connection, kind: str, track_id: int) -> list[tuple[str, str]]:
+def owned_documents(conn: Connection, kind: str, track_id: int) -> list[tuple[str, str]]:
     """Every `(name, content)` of this kind that the track owns, by name."""
     rows = conn.execute(
         "SELECT name, content FROM profile_documents WHERE kind = ? AND track_id = ? ORDER BY name",
@@ -132,7 +132,7 @@ def owned_documents(conn: sqlite3.Connection, kind: str, track_id: int) -> list[
     return [(str(row[0]), str(row[1])) for row in rows]
 
 
-def list_documents(conn: sqlite3.Connection) -> list[dict[str, str]]:
+def list_documents(conn: Connection) -> list[dict[str, str]]:
     """Every document, with its owner: `shared`, or `track <slug>`."""
     rows = conn.execute(
         "SELECT p.kind, p.name, p.format, p.updated_at, t.slug "
@@ -168,7 +168,7 @@ def _write_exact(path: Path, content: str) -> None:
         handle.write(content)
 
 
-def import_from(conn: sqlite3.Connection, old_root: Path) -> tuple[list[str], list[str]]:
+def import_from(conn: Connection, old_root: Path) -> tuple[list[str], list[str]]:
     """Read the old repo's profile files (read-only) into profile_documents.
 
     Returns (imported descriptions, missing paths).
@@ -206,7 +206,7 @@ def import_from(conn: sqlite3.Connection, old_root: Path) -> tuple[list[str], li
     return imported, missing
 
 
-def export_to(conn: sqlite3.Connection, dest: Path) -> list[Path]:
+def export_to(conn: Connection, dest: Path) -> list[Path]:
     """Write every document byte-identical to import: a shared one to
     dest/<kind>/<name>, a track's own to dest/tracks/<slug>/<kind>/<name>
     (spec 099)."""

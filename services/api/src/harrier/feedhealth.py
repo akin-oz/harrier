@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import json
 import socket
-import sqlite3
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -39,6 +38,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from harrier.connection import Connection
 from harrier.demo import http_fixtures_dir
 from harrier.screening.http import USER_AGENT, fixture_body
 from harrier.sources.ashby import extract_ashby_board
@@ -325,7 +325,7 @@ def check_feeds(
 
 
 def prune_dead(
-    conn: sqlite3.Connection,
+    conn: Connection,
     report: FeedHealthReport,
 ) -> tuple[BoardHealth, ...]:
     """Remove the boards this report probed as dead. Returns what went.
@@ -345,7 +345,7 @@ def prune_dead(
     return dead
 
 
-def load_feeds_for_check(conn: sqlite3.Connection | None = None) -> list[str]:
+def load_feeds_for_check(conn: Connection | None = None) -> list[str]:
     """The watchlist exactly as configured, ungrouped.
 
     Ungrouped on purpose: what is written back after a prune has to be built

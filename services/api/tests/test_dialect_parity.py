@@ -110,8 +110,9 @@ class Shape:
 def sqlite_store(tmp_path: Path) -> Generator[sqlite3.Connection]:
     """A fresh SQLite store, migrated by the ordinary open, in autocommit."""
     with closing(connect(tmp_path / "parity.db")) as conn:
-        conn.isolation_level = None
-        yield conn
+        lite = conn.sqlite_driver
+        lite.isolation_level = None
+        yield lite
 
 
 @contextmanager

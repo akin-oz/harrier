@@ -18,13 +18,13 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
 from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 from harrier.atomicio import write_bytes_atomic
+from harrier.connection import Connection
 from harrier.scoring.features import FEATURE_ORDER, extract
 from harrier.scoring.labels import BLOCKED, EXCLUSIONS, Labelled, label_job
 from harrier.scoring.model import NO_MODEL, scoring_dir
@@ -70,9 +70,7 @@ class ExportResult:
     excluded: dict[str, int]
 
 
-def export_features(
-    conn: sqlite3.Connection, scope: Scope, *, today: str | None = None
-) -> ExportResult:
+def export_features(conn: Connection, scope: Scope, *, today: str | None = None) -> ExportResult:
     """Label every decided job, extract its features, and write the export.
 
     Reads the tracker and the description cache; writes nothing to either.

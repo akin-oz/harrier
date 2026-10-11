@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -49,6 +48,7 @@ from harrier.apply.requirements import (
     requirement_kind,
 )
 from harrier.apply.review import Review, render_review
+from harrier.connection import Connection
 from harrier.db import data_dir
 from harrier.llm import LLMClientError, generate_text
 from harrier.llm.jsonparse import loads_tolerant
@@ -337,7 +337,7 @@ def _tracker_metadata(tracker_row: dict[str, str] | None) -> dict[str, str] | No
 
 
 def build_answers_payload(
-    conn: sqlite3.Connection,
+    conn: Connection,
     company: str,
     role: str,
     questions: list[str],
@@ -510,7 +510,7 @@ def answer_without_the_model(
 
 
 def generate_answer_set(
-    conn: sqlite3.Connection,
+    conn: Connection,
     company: str,
     role: str,
     questions: list[str],
@@ -576,7 +576,7 @@ def generate_answer_set(
 
 
 def _checked_answers(
-    conn: sqlite3.Connection,
+    conn: Connection,
     output_text: str,
     company: str,
     role: str,

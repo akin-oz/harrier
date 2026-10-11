@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
 import subprocess
 from datetime import date
 from pathlib import Path
@@ -42,6 +41,7 @@ import harrier.resume.pdf as pdf_module
 import harrier.resume.ranking as ranking_module
 import harrier.resume.tailor as tailor_module
 import harrier.tracker.queue as queue_module
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.profile.store import put_document
 from harrier.resume.content import TruthSources, load_bundle, load_truth_sources, parse_bundle
@@ -142,7 +142,7 @@ def test_the_academic_letter_prompt_is_written_for_a_committee() -> None:
 
 
 @pytest.fixture()
-def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
+def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Connection:
     monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("HARRIER_DEMO", raising=False)
     monkeypatch.chdir(REPO_ROOT)
@@ -160,7 +160,7 @@ def _capture(monkeypatch: pytest.MonkeyPatch, module: object, response: str) -> 
     return seen
 
 
-def _scope_of_kind(conn: sqlite3.Connection, kind: str) -> Scope:
+def _scope_of_kind(conn: Connection, kind: str) -> Scope:
     """The default track for the industry kind; otherwise a new track of the
     kind, holding a copy of the default track's application profile, which
     every track owns for itself (spec 101)."""
@@ -179,7 +179,7 @@ def _scope_of_kind(conn: sqlite3.Connection, kind: str) -> Scope:
 
 @pytest.mark.parametrize("kind", TRACK_KINDS)
 def test_each_generator_sends_its_kinds_prompt(
-    kind: str, db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    kind: str, db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     scope = _scope_of_kind(db, kind)
     letters = _capture(monkeypatch, letters_module, letter_json())
@@ -312,7 +312,7 @@ def _fake_render(html_text: str, pdf_path: Path) -> None:
 
 
 def _tailor_job(
-    conn: sqlite3.Connection,
+    conn: Connection,
     scope: Scope,
     *,
     company: str = "Example University",
@@ -339,7 +339,7 @@ def _tailor_job(
     )
 
 
-def _academic_scope(conn: sqlite3.Connection) -> Scope:
+def _academic_scope(conn: Connection) -> Scope:
     add_track(conn, "lab", "academic", "Example lab search")
     return resolve_scope(conn, "lab")
 
@@ -357,7 +357,7 @@ def test_page_gate_reads_the_kind(
     kind: str,
     pages: int,
     error: str | None,
-    db: sqlite3.Connection,
+    db: Connection,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -420,7 +420,7 @@ class _PinnedDate(date):
 
 
 def test_industry_tailor_is_unchanged_by_kind_prompts(
-    db: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    db: Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(facts_module, "date", _PinnedDate)
     monkeypatch.setattr(ranking_module, "date", _PinnedDate)
@@ -455,7 +455,7 @@ def test_the_deadline_warning_is_decided_by_the_date() -> None:
 
 
 def test_a_passed_deadline_warns_and_continues(
-    db: sqlite3.Connection, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    db: Connection, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A warning on stderr, and the command still writes its draft. The
     question is one code answers, so no model is involved."""

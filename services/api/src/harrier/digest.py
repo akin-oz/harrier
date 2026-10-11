@@ -11,13 +11,13 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
 from collections import defaultdict
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from typing import cast
 
+from harrier.connection import Connection
 from harrier.mail.watch import events_path
 from harrier.notify import send_telegram_message
 from harrier.runoutcome import (
@@ -290,7 +290,7 @@ def render_digest(
 SCHEDULED_JOBS = (DISCOVERY_JOB, DIGEST_JOB, MAIL_WATCH_JOB)
 
 
-def schedule_health_lines(conn: sqlite3.Connection) -> list[str]:
+def schedule_health_lines(conn: Connection) -> list[str]:
     """One line per scheduled job, whether or not it has ever succeeded.
 
     Every job is named even when it has no row, because a job missing from
@@ -301,7 +301,7 @@ def schedule_health_lines(conn: sqlite3.Connection) -> list[str]:
     return [describe_age(job, recorded.get(job)) for job in jobs]
 
 
-def academic_discovery_jobs(conn: sqlite3.Connection) -> list[str]:
+def academic_discovery_jobs(conn: Connection) -> list[str]:
     """`discovery:<track id>` for every live academic track the stored search
     names (spec 097). Its success is recorded under its own key, so the
     default track's discovery line never reads an academic success."""
@@ -319,7 +319,7 @@ def academic_discovery_jobs(conn: sqlite3.Connection) -> list[str]:
     return [f"discovery:{ids[slug]}" for slug in slugs if slug in ids]
 
 
-def build_digest(conn: sqlite3.Connection, scope: Scope, target_date: date) -> str:
+def build_digest(conn: Connection, scope: Scope, target_date: date) -> str:
     rows = list_jobs(conn, scope)
     return render_digest(
         target_date,
@@ -333,7 +333,7 @@ def build_digest(conn: sqlite3.Connection, scope: Scope, target_date: date) -> s
 
 
 def run_digest(
-    conn: sqlite3.Connection,
+    conn: Connection,
     scope: Scope,
     target_date: date,
     *,
@@ -361,7 +361,7 @@ def delivery_key(target_date: date) -> str:
     return f"{DIGEST_JOB}:{target_date.isoformat()}"
 
 
-def delivered_at(conn: sqlite3.Connection, target_date: date) -> str | None:
+def delivered_at(conn: Connection, target_date: date) -> str | None:
     """When the digest for this day was delivered, or None if it never was."""
     from harrier.runoutcome import last_success
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Annotated, Any
 
@@ -12,6 +11,7 @@ from fastapi.dependencies.utils import get_dependant
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
 
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.tracks import (
     SLUG_MAX_LENGTH,
@@ -24,7 +24,7 @@ from harrier.tracks import (
 from harrier_api.demo import demo_db_path, is_demo_mode
 
 
-def get_conn() -> Iterator[sqlite3.Connection]:
+def get_conn() -> Iterator[Connection]:
     # same_thread=False: FastAPI runs this dependency and the endpoint on
     # different threadpool threads, so sqlite3's same-thread check fires
     # intermittently under concurrent requests even though this connection
@@ -36,7 +36,7 @@ def get_conn() -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
-Conn = Annotated[sqlite3.Connection, Depends(get_conn)]
+Conn = Annotated[Connection, Depends(get_conn)]
 
 
 def get_scope(conn: Conn) -> Scope:
