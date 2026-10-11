@@ -9,10 +9,10 @@ append-only markdown file.
 from __future__ import annotations
 
 import json
-import sqlite3
 from datetime import UTC, datetime
 from typing import cast
 
+from harrier.connection import Connection
 from harrier.profile.store import get_document, put_document
 
 STORY_SEEDS_KIND = "story_seeds"
@@ -22,7 +22,7 @@ STORY_BANK_NAME = "story-bank.json"
 STORY_BANK_LIMIT = 200
 
 
-def load_seed_stories(conn: sqlite3.Connection) -> list[dict[str, object]]:
+def load_seed_stories(conn: Connection) -> list[dict[str, object]]:
     content = get_document(conn, STORY_SEEDS_KIND, STORY_SEEDS_NAME)
     if content is None:
         return []
@@ -39,7 +39,7 @@ def load_seed_stories(conn: sqlite3.Connection) -> list[dict[str, object]]:
     ]
 
 
-def load_story_bank(conn: sqlite3.Connection) -> list[dict[str, object]]:
+def load_story_bank(conn: Connection) -> list[dict[str, object]]:
     content = get_document(conn, STORY_BANK_KIND, STORY_BANK_NAME)
     if content is None:
         return []
@@ -57,7 +57,7 @@ def load_story_bank(conn: sqlite3.Connection) -> list[dict[str, object]]:
 
 
 def capture_stories(
-    conn: sqlite3.Connection,
+    conn: Connection,
     stories: list[dict[str, object]],
     company: str,
     role: str,

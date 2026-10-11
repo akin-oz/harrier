@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from test_screening import candidate_cfg
 
 import harrier.discovery as discovery_module
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.discovery import DiscoveryOptions, run_discovery
 from harrier.scoring.features import FEATURE_ORDER
@@ -97,7 +98,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture
-def conn(env: Path) -> Iterator[sqlite3.Connection]:
+def conn(env: Path) -> Iterator[Connection]:
     connection = connect()
     try:
         yield connection
@@ -106,7 +107,7 @@ def conn(env: Path) -> Iterator[sqlite3.Connection]:
 
 
 @pytest.fixture
-def scope(conn: sqlite3.Connection) -> Scope:
+def scope(conn: Connection) -> Scope:
     return default_scope(conn)
 
 
@@ -116,7 +117,7 @@ def client(env: Path) -> TestClient:
 
 
 def new_row(
-    conn: sqlite3.Connection,
+    conn: Connection,
     scope: Scope,
     *,
     number: int = 1,
@@ -338,7 +339,7 @@ def test_eligibility_is_not_a_learned_feature() -> None:
     )
 
 
-def test_an_excluded_row_is_not_reordered(conn: sqlite3.Connection, scope: Scope) -> None:
+def test_an_excluded_row_is_not_reordered(conn: Connection, scope: Scope) -> None:
     first = new_row(conn, scope, number=1, fit_score="90")
     second = new_row(conn, scope, number=2, fit_score="40")
     order = [row["id"] for row in next_up(conn, scope)]
@@ -412,7 +413,7 @@ def test_discovery_assesses_in_the_row_transaction(
         connection.close()
 
 
-def test_the_academic_kind_is_not_assessed(conn: sqlite3.Connection) -> None:
+def test_the_academic_kind_is_not_assessed(conn: Connection) -> None:
     conn.execute(
         "INSERT INTO tracks (id, slug, kind, label) VALUES (2, ?, 'academic', 'PhD search')",
         (ACADEMIC,),
@@ -434,7 +435,7 @@ def test_the_academic_kind_is_not_assessed(conn: sqlite3.Connection) -> None:
     assert main(["--track", ACADEMIC, "eligibility", "show", str(row["id"])]) == 2
 
 
-def test_a_manual_add_is_assessed(conn: sqlite3.Connection, scope: Scope) -> None:
+def test_a_manual_add_is_assessed(conn: Connection, scope: Scope) -> None:
     result, row = add_manually(
         conn,
         scope,
@@ -448,9 +449,7 @@ def test_a_manual_add_is_assessed(conn: sqlite3.Connection, scope: Scope) -> Non
     assert view.current is not None and view.current.verdict == CONFIRMED
 
 
-def test_a_firm_verdict_needs_evidence(
-    conn: sqlite3.Connection, scope: Scope, client: TestClient
-) -> None:
+def test_a_firm_verdict_needs_evidence(conn: Connection, scope: Scope, client: TestClient) -> None:
     job_id = new_row(conn, scope)
     for verdict in (CONFIRMED, EXCLUDED):
         assert main(["eligibility", "set", str(job_id), "--verdict", verdict]) == 2
@@ -464,7 +463,7 @@ def test_a_firm_verdict_needs_evidence(
     assert eligibility_of(conn, scope, job_id).current is not None
 
 
-def _candidate_confirms(conn: sqlite3.Connection, scope: Scope, job_id: int) -> None:
+def _candidate_confirms(conn: Connection, scope: Scope, job_id: int) -> None:
     set_eligibility(
         conn,
         scope,
@@ -477,9 +476,7 @@ def _candidate_confirms(conn: sqlite3.Connection, scope: Scope, job_id: int) -> 
     )
 
 
-def test_the_candidate_stays_current_over_later_rules(
-    conn: sqlite3.Connection, scope: Scope
-) -> None:
+def test_the_candidate_stays_current_over_later_rules(conn: Connection, scope: Scope) -> None:
     job_id = new_row(
         conn, scope, location="Remote, Europe", description="You must be based in the UK."
     )
@@ -499,7 +496,7 @@ def test_the_candidate_stays_current_over_later_rules(
     assert view.disagrees is True
 
 
-def test_a_rule_that_agrees_does_not_disagree(conn: sqlite3.Connection, scope: Scope) -> None:
+def test_a_rule_that_agrees_does_not_disagree(conn: Connection, scope: Scope) -> None:
     job_id = new_row(conn, scope, location="Türkiye (Remote)", description="React.")
     set_eligibility(
         conn,
@@ -514,9 +511,7 @@ def test_a_rule_that_agrees_does_not_disagree(conn: sqlite3.Connection, scope: S
     assert eligibility_of(conn, scope, job_id).disagrees is False
 
 
-def test_only_the_candidate_changes_a_candidate_verdict(
-    conn: sqlite3.Connection, scope: Scope
-) -> None:
+def test_only_the_candidate_changes_a_candidate_verdict(conn: Connection, scope: Scope) -> None:
     job_id = new_row(conn, scope, description="You must be based in the UK.")
     _candidate_confirms(conn, scope, job_id)
     record_eligibility(
@@ -539,7 +534,7 @@ def test_only_the_candidate_changes_a_candidate_verdict(
     ]
 
 
-def test_eligibility_is_not_a_status(conn: sqlite3.Connection, scope: Scope) -> None:
+def test_eligibility_is_not_a_status(conn: Connection, scope: Scope) -> None:
     job_id = new_row(conn, scope)
     before = get_job(conn, scope, job_id)
     events = list_events(conn, scope, job_id)
@@ -550,7 +545,7 @@ def test_eligibility_is_not_a_status(conn: sqlite3.Connection, scope: Scope) -> 
     assert list_events(conn, scope, job_id) == events
 
 
-def test_eligibility_history_is_append_only(conn: sqlite3.Connection, scope: Scope) -> None:
+def test_eligibility_history_is_append_only(conn: Connection, scope: Scope) -> None:
     job_id = new_row(conn, scope)
     _candidate_confirms(conn, scope, job_id)
     for statement in (
@@ -561,9 +556,7 @@ def test_eligibility_history_is_append_only(conn: sqlite3.Connection, scope: Sco
             conn.execute(statement)
 
 
-def test_the_write_path_refuses_what_it_cannot_store(
-    conn: sqlite3.Connection, scope: Scope
-) -> None:
+def test_the_write_path_refuses_what_it_cannot_store(conn: Connection, scope: Scope) -> None:
     job_id = new_row(conn, scope)
     for bad, words in (
         (EligibilityAssessment(verdict="maybe", checked_at="2026-10-11T00:00:00Z"), "verdict"),
@@ -596,9 +589,7 @@ def test_the_write_path_refuses_what_it_cannot_store(
 # --- reassess and backfill -----------------------------------------------------------
 
 
-def test_migration_backfills_nothing(
-    conn: sqlite3.Connection, scope: Scope, client: TestClient
-) -> None:
+def test_migration_backfills_nothing(conn: Connection, scope: Scope, client: TestClient) -> None:
     new_row(conn, scope, location="Türkiye (Remote)", description="React.")
     assert conn.execute("SELECT count(*) FROM job_eligibility").fetchone()[0] == 0
     (job,) = client.get("/jobs").json()
@@ -607,7 +598,7 @@ def test_migration_backfills_nothing(
     assert job["eligibility"]["disagrees"] is False
 
 
-def test_reassess_touches_only_what_it_may(conn: sqlite3.Connection, scope: Scope) -> None:
+def test_reassess_touches_only_what_it_may(conn: Connection, scope: Scope) -> None:
     open_row = new_row(conn, scope, number=1, location="Türkiye (Remote)", description="React.")
     no_text = new_row(conn, scope, number=2)
     rejected = new_row(conn, scope, number=3, description="You must be based in the UK.")
@@ -627,7 +618,7 @@ def test_reassess_touches_only_what_it_may(conn: sqlite3.Connection, scope: Scop
     assert (again.assessed, again.unchanged) == (0, 1)
 
 
-def test_reassess_never_touches_a_rejected_row(conn: sqlite3.Connection, scope: Scope) -> None:
+def test_reassess_never_touches_a_rejected_row(conn: Connection, scope: Scope) -> None:
     rejected = new_row(conn, scope, description="You must be based in the UK.")
     change_status(conn, scope, str(rejected), "reject", reason="not a fit")
     reassess_eligibility(conn, scope, apply=True)
@@ -643,7 +634,7 @@ def test_reassess_never_touches_a_rejected_row(conn: sqlite3.Connection, scope: 
 
 
 def test_reassess_reads_version_and_description(
-    conn: sqlite3.Connection, scope: Scope, monkeypatch: pytest.MonkeyPatch
+    conn: Connection, scope: Scope, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     job_id = new_row(conn, scope, location="Remote", description="React.")
     reassess_eligibility(conn, scope, apply=True)
@@ -663,7 +654,7 @@ def test_reassess_reads_version_and_description(
 
 
 def test_the_api_reads_what_the_store_holds(
-    conn: sqlite3.Connection, scope: Scope, client: TestClient
+    conn: Connection, scope: Scope, client: TestClient
 ) -> None:
     job_id = new_row(conn, scope, description="You must be based in the UK.")
     response = client.post(
@@ -699,7 +690,7 @@ def test_the_api_reads_what_the_store_holds(
 
 
 def test_the_cli_and_the_api_call_the_same_eligibility_functions(
-    conn: sqlite3.Connection, scope: Scope, client: TestClient
+    conn: Connection, scope: Scope, client: TestClient
 ) -> None:
     job_id = new_row(conn, scope)
     real = eligibility_of(conn, scope, job_id)
@@ -734,7 +725,7 @@ def test_the_contract_names_the_schema_values() -> None:
 
 
 def test_excerpts_are_not_logged(
-    conn: sqlite3.Connection, scope: Scope, caplog: pytest.LogCaptureFixture
+    conn: Connection, scope: Scope, caplog: pytest.LogCaptureFixture
 ) -> None:
     secret = "We hire contractors in Türkiye."
     job_id = new_row(conn, scope, description=f"React. {secret}")

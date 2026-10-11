@@ -12,10 +12,10 @@ one loader rather than two that could drift.
 from __future__ import annotations
 
 import json
-import sqlite3
 from pathlib import Path
 from typing import cast
 
+from harrier.connection import Connection
 from harrier.demo import anchored_path
 from harrier.profile import get_document
 from harrier.screening.rules import CandidateConfig
@@ -24,7 +24,7 @@ EXAMPLE_CONFIG_PATH = Path("config") / "candidate.example.json"
 
 
 def load_candidate_config(
-    conn: sqlite3.Connection | None = None,
+    conn: Connection | None = None,
     *,
     example_path: Path | None = None,
 ) -> CandidateConfig:

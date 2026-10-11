@@ -10,9 +10,9 @@ one person can cover several applications.
 from __future__ import annotations
 
 import json
-import sqlite3
 from typing import cast
 
+from harrier.connection import Connection
 from harrier.tracker import (
     add_contact,
     list_contacts,
@@ -170,7 +170,7 @@ def contact_key(contact: dict[str, str]) -> str:
     return normalize(contact.get("linkedin_url", "") or contact.get("person_name", ""))
 
 
-def find_contact(conn: sqlite3.Connection, identifier: str) -> dict[str, str] | None:
+def find_contact(conn: Connection, identifier: str) -> dict[str, str] | None:
     """Match by linkedin_url first, then person_name. An empty identifier
     matches nothing (review finding: "" must never select a row)."""
     id_norm = normalize(identifier)
@@ -187,7 +187,7 @@ def find_contact(conn: sqlite3.Connection, identifier: str) -> dict[str, str] | 
 
 
 def upsert_contact(
-    conn: sqlite3.Connection,
+    conn: Connection,
     scope: Scope,
     *,
     company: str,
@@ -270,7 +270,7 @@ def upsert_contact(
 
 
 def update_contact(
-    conn: sqlite3.Connection, identifier: str, updates: dict[str, str]
+    conn: Connection, identifier: str, updates: dict[str, str]
 ) -> dict[str, str] | None:
     target = find_contact(conn, identifier)
     if target is None:
@@ -279,7 +279,7 @@ def update_contact(
     return {**target, **updates}
 
 
-def delete_contact(conn: sqlite3.Connection, identifier: str) -> bool:
+def delete_contact(conn: Connection, identifier: str) -> bool:
     target = find_contact(conn, identifier)
     if target is None:
         return False
@@ -287,7 +287,7 @@ def delete_contact(conn: sqlite3.Connection, identifier: str) -> bool:
 
 
 def update_contact_status(
-    conn: sqlite3.Connection,
+    conn: Connection,
     linkedin_url: str,
     *,
     contact_status: str | None = None,

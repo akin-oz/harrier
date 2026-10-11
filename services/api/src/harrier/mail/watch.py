@@ -17,7 +17,6 @@ import json
 import logging
 import os
 import re
-import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.header import decode_header, make_header
@@ -26,6 +25,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from harrier.atomicio import read_json_mapping, write_json_atomic
+from harrier.connection import Connection
 from harrier.db import data_dir
 from harrier.demo import is_demo_mode
 from harrier.tracker import list_jobs
@@ -577,7 +577,7 @@ def read_events(limit: int | None = None) -> EventsWindow:
     )
 
 
-def tracker_rows(conn: sqlite3.Connection, scope: Scope) -> list[dict[str, str]]:
+def tracker_rows(conn: Connection, scope: Scope) -> list[dict[str, str]]:
     """The scope's rows: a message is matched against one track (spec 092)."""
     return list_jobs(conn, scope)
 

@@ -899,8 +899,9 @@ Where the clock lives:
 - **A harrier loop in its own Fly process group.** One machine, its own
   login, the committed cadence, any timezone, outcomes in the store.
   Chosen on 2026-10-10. Superseded 2026-10-11 by the hosting budget: one
-  always-on shared-cpu-1x 1GB machine in Frankfurt costs $7.73 a month
-  (Fly, Pricing, read 2026-10-11), over the 5 USD target alone. The loop
+  always-on shared-cpu-1x 1GB machine in Amsterdam costs $6.95 a month
+  (Fly, Pricing, read 2026-10-11; spec 110, "Region (2026-10-11)"), over
+  the 5 USD target alone. The loop
   body survives as one tick per scheduled start.
 
 How due owners are listed:
@@ -1100,11 +1101,16 @@ Akin decided in chat on 2026-10-11 that the hosted deployment targets
 under 5 USD per month, with ADR-013's topology kept: the API and runs on
 Fly, Vercel serving only the SPA. Spec 110's "Hosting budget
 (2026-10-11)" holds the prices and the arithmetic. One always-on
-shared-cpu-1x 1GB machine in Frankfurt costs $7.73 a month (Fly, Pricing,
-read 2026-10-11), so an always-on scheduler machine would break the
+shared-cpu-1x 1GB machine in Amsterdam costs $6.95 a month (Fly, Pricing,
+read 2026-10-11: 6.70 × 1.038461538 = 6.96, shown by the page's region
+selector as $6.95), so an always-on scheduler machine would break the
 budget before the API ran at all. The long-lived loop in its own process
 group (Open decision 1) is superseded. This section replaces it, and the
 text above says where.
+
+Region: Fly `ams` (Amsterdam) and Supabase `eu-west-1` (Ireland) since
+2026-10-11, replacing Frankfurt; spec 110's "Region (2026-10-11)" holds
+the decision.
 
 The scheduler keeps its narrow role: it reads schedules only through
 `harrier_schedule_inputs()` as `harrier_schedule_reader`, and every other
@@ -1168,8 +1174,8 @@ itself is probed by spec 115's F3.
 
 **Estimate:** an hourly cycle starts the machine at most 720 times in a
 30-day month (24 × 30). Its cost is the sum of those ticks' running
-times at the machine's rate, about 0.0107 USD an hour for 1GB in
-Frankfurt (7.73 / 720, spec 110), plus its root file system while
+times at the machine's rate, about 0.0097 USD an hour for 1GB in
+Amsterdam (6.95 / 720 = 0.00965, spec 110), plus its root file system while
 stopped. A tick with nothing due has not been timed, so no monthly total
 is given. Spec 110's monthly cost check sees this line.
 
@@ -1219,7 +1225,8 @@ Spec 115's F3, recorded confirmed or refuted there:
 - Fly, Task scheduling: scheduled Machines are "Not for precise timing";
   Cron Manager needs a separate app. Read 2026-10-11.
   https://docs.fly.io/blueprints/task-scheduling
-- Fly, Pricing: shared-cpu-1x 1GB in Frankfurt $7.73 a month for 30 days
-  of continuous runtime; a stopped Machine billed only for its root file
+- Fly, Pricing: shared-cpu-1x 1GB in the base region $6.70 a month for
+  30 days of continuous runtime, times Amsterdam's region multiplier
+  1.038461538, shown as $6.95; a stopped Machine billed only for its root file
   system at $0.15/GB a month. Read 2026-10-11.
   https://docs.fly.io/about/pricing

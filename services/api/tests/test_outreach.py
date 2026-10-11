@@ -2,7 +2,6 @@
 (spec 016), ported from the old repo's tests/test_find_contacts.py and
 tests/test_outreach_lib.py onto the database store."""
 
-import sqlite3
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -10,6 +9,7 @@ from typing import Any
 import pytest
 
 import harrier.outreach.discovery as discovery_module
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.outreach import (
     approve_candidate,
@@ -44,7 +44,7 @@ RECRUITER_SPEC = {"query": '"Remote" recruiter', "target_relevance": "recruiter"
 
 
 @pytest.fixture()
-def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
+def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Connection:
     monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
     return connect()
 
@@ -128,7 +128,7 @@ def test_merge_ranked_contacts_dedupes_same_profile_by_best_fit_score() -> None:
 
 
 def test_find_contacts_requires_apify_token(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
         discovery_module, "env_config", lambda: {"token": "", "actor": DEFAULT_ACTOR}
@@ -140,7 +140,7 @@ def test_find_contacts_requires_apify_token(
 
 
 def test_find_contacts_stages_candidates_without_writing_contacts(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
         discovery_module, "env_config", lambda: {"token": "token", "actor": DEFAULT_ACTOR}
@@ -164,7 +164,7 @@ def test_find_contacts_stages_candidates_without_writing_contacts(
 
 
 def test_find_best_contacts_stops_after_strong_recruiter_match(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
         discovery_module, "env_config", lambda: {"token": "token", "actor": DEFAULT_ACTOR}
@@ -190,7 +190,7 @@ def test_find_best_contacts_stops_after_strong_recruiter_match(
     assert summary["max_items_per_search"] == 4
 
 
-def test_approve_adds_candidate_to_contacts(db: sqlite3.Connection) -> None:
+def test_approve_adds_candidate_to_contacts(db: Connection) -> None:
     payload: dict[str, object] = {
         "company": "Remote",
         "role": "Senior Frontend Engineer",
@@ -250,7 +250,7 @@ def test_infer_relevance() -> None:
 
 
 def test_upsert_contact_merges_same_person_across_multiple_jobs(
-    db: sqlite3.Connection,
+    db: Connection,
 ) -> None:
     upsert_contact(
         db,
@@ -358,7 +358,7 @@ def test_snoozed_job_without_contacts_stays_snoozed() -> None:
     assert filter_outreach_rows([row], due_only=True) == []
 
 
-def test_mark_sent_rejects_illegal_transitions(db: sqlite3.Connection) -> None:
+def test_mark_sent_rejects_illegal_transitions(db: Connection) -> None:
     from harrier.outreach import mark_job_outreach_sent
     from harrier.tracker import add_job, set_status, update_fields
 
@@ -386,7 +386,7 @@ def test_mark_sent_rejects_illegal_transitions(db: sqlite3.Connection) -> None:
         mark_job_outreach_sent(db, default_scope(db), job_id)
 
 
-def test_empty_identity_never_matches_or_writes(db: sqlite3.Connection) -> None:
+def test_empty_identity_never_matches_or_writes(db: Connection) -> None:
     from harrier.outreach import find_contact
 
     upsert_contact(
@@ -417,7 +417,7 @@ def test_empty_identity_never_matches_or_writes(db: sqlite3.Connection) -> None:
 
 
 def test_approve_marks_artifact_only_after_contact_write(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     payload: dict[str, object] = {
         "company": "Remote",
@@ -458,7 +458,7 @@ def test_approve_marks_artifact_only_after_contact_write(
 
 
 def test_backfill_stages_posters_without_writing_contacts(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import harrier.outreach.backfill as backfill_module
     from harrier.outreach import backfill_posters
@@ -519,7 +519,7 @@ def test_hunter_functions_require_api_key(monkeypatch: pytest.MonkeyPatch) -> No
         verify_email("jane@example.com")
 
 
-def test_set_best_contact_for_job(db: sqlite3.Connection) -> None:
+def test_set_best_contact_for_job(db: Connection) -> None:
     from harrier.outreach import set_best_contact_for_job
     from harrier.tracker import add_job
 

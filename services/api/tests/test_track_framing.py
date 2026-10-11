@@ -22,6 +22,7 @@ from resume_support import (
     store_example,
 )
 
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.profile.store import (
     ProfileDocumentError,
@@ -49,7 +50,7 @@ def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture()
-def academic(data_dir: Path, capsys: pytest.CaptureFixture[str]) -> Iterator[sqlite3.Connection]:
+def academic(data_dir: Path, capsys: pytest.CaptureFixture[str]) -> Iterator[Connection]:
     assert main(["tracks", "add", SLUG, "--kind", "academic", "--label", "Lab search"]) == 0
     capsys.readouterr()
     conn = connect()
@@ -67,7 +68,7 @@ def academic_framing() -> dict[str, Any]:
     return framing
 
 
-def rows(conn: sqlite3.Connection) -> list[tuple[Any, ...]]:
+def rows(conn: Connection) -> list[tuple[Any, ...]]:
     return [
         tuple(row)
         for row in conn.execute(
@@ -193,7 +194,7 @@ def test_migration_11_is_whole_or_nothing(data_dir: Path, monkeypatch: pytest.Mo
         raw.close()
 
 
-def test_profile_documents_unique_per_owner(academic: sqlite3.Connection) -> None:
+def test_profile_documents_unique_per_owner(academic: Connection) -> None:
     track_id = resolve_scope(academic, SLUG).track.id
     insert = "INSERT INTO profile_documents (kind, name, track_id) VALUES (?, ?, ?)"
     academic.execute(insert, ("note", "same.md", None))
@@ -205,7 +206,7 @@ def test_profile_documents_unique_per_owner(academic: sqlite3.Connection) -> Non
     academic.rollback()
 
 
-def test_only_the_framing_is_owned(academic: sqlite3.Connection) -> None:
+def test_only_the_framing_is_owned(academic: Connection) -> None:
     with pytest.raises(ProfileDocumentError, match="owned by a track"):
         put_document(academic, "resume_framing", "industry.json", "json", "{}")
     with pytest.raises(ProfileDocumentError, match="shared by every track"):
@@ -215,7 +216,7 @@ def test_only_the_framing_is_owned(academic: sqlite3.Connection) -> None:
 # --- reading ---------------------------------------------------------------------
 
 
-def test_a_track_reads_only_its_own_framing(academic: sqlite3.Connection) -> None:
+def test_a_track_reads_only_its_own_framing(academic: Connection) -> None:
     track_id = resolve_scope(academic, SLUG).track.id
     framing = json.dumps(academic_framing())
     put_document(academic, "resume_framing", ACADEMIC_NAME, "json", framing, track_id=track_id)
@@ -230,7 +231,7 @@ def test_a_track_reads_only_its_own_framing(academic: sqlite3.Connection) -> Non
     assert get_document(academic, "resume_framing", "industry.json") is None
 
 
-def test_no_framing_means_no_fallback(academic: sqlite3.Connection) -> None:
+def test_no_framing_means_no_fallback(academic: Connection) -> None:
     with pytest.raises(ResumeBundleError) as refused:
         load_bundle(academic, resolve_scope(academic, SLUG))
     message = str(refused.value)
@@ -238,7 +239,7 @@ def test_no_framing_means_no_fallback(academic: sqlite3.Connection) -> None:
     assert f"harrier --track {SLUG} profile put resume_framing --file PATH" in message
 
 
-def test_two_framings_on_one_track_are_refused(academic: sqlite3.Connection) -> None:
+def test_two_framings_on_one_track_are_refused(academic: Connection) -> None:
     put_document(academic, "resume_framing", "second.json", "json", "{}", track_id=1)
     with pytest.raises(ResumeBundleError, match="track job owns more than one resume framing"):
         load_bundle(academic, default_scope(academic))
@@ -247,7 +248,7 @@ def test_two_framings_on_one_track_are_refused(academic: sqlite3.Connection) -> 
 # --- profile put -----------------------------------------------------------------
 
 
-def stored_framing(conn: sqlite3.Connection, track_id: int) -> str | None:
+def stored_framing(conn: Connection, track_id: int) -> str | None:
     row = conn.execute(
         "SELECT content FROM profile_documents WHERE kind = 'resume_framing' AND track_id = ?",
         (track_id,),
@@ -256,7 +257,7 @@ def stored_framing(conn: sqlite3.Connection, track_id: int) -> str | None:
 
 
 def test_profile_put_validates_before_it_writes(
-    academic: sqlite3.Connection, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    academic: Connection, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     track_id = resolve_scope(academic, SLUG).track.id
     put = ["--track", SLUG, "profile", "put", "resume_framing", "--file"]
@@ -303,7 +304,7 @@ def test_profile_put_validates_before_it_writes(
 
 
 def test_a_scope_kept_from_before_the_archive_cannot_store_a_framing(
-    academic: sqlite3.Connection,
+    academic: Connection,
 ) -> None:
     """Both the put and the store read the track's row, not the scope's flag:
     a scope resolved before the archive writes nothing (review of PR #227)."""
@@ -354,7 +355,7 @@ def test_a_bundle_survives_migration_11(data_dir: Path) -> None:
 
 
 def test_profile_check_reports_bullet_ids_only(
-    academic: sqlite3.Connection, capsys: pytest.CaptureFixture[str]
+    academic: Connection, capsys: pytest.CaptureFixture[str]
 ) -> None:
     assert main(["profile", "check"]) == 0
     assert "resume content for track job: valid" in capsys.readouterr().out
@@ -376,7 +377,7 @@ def test_profile_check_reports_bullet_ids_only(
 
 
 def test_profile_list_and_export_show_the_owner(
-    academic: sqlite3.Connection, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    academic: Connection, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     track_id = resolve_scope(academic, SLUG).track.id
     put_document(academic, "resume_framing", ACADEMIC_NAME, "json", "{}", track_id=track_id)

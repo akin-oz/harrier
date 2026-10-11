@@ -1,10 +1,8 @@
-"""The store a process opens, and the Postgres store (spec 103, ADR-013).
+"""The Postgres store's driver code (spec 103, ADR-013).
 
-`HARRIER_DATABASE_URL` chooses. Unset or empty, the local SQLite store opens
-exactly as before (`harrier.db`). A `postgresql://` URL names the hosted
-store. Anything else is refused rather than read as "no URL", because a typo
-that fell back to SQLite would have the operator believe they were writing
-to Postgres.
+Connecting, reading the schema version and running the migrations. Which
+store a process opens, and the store errors, are `harrier.connection`'s
+(spec 112): they belong to no one driver.
 
 Opening a Postgres store never migrates it. Requests will run as a role
 that cannot run DDL (ADR-013 decision 3), and a deploy migrates once rather
@@ -24,18 +22,19 @@ credential leaking through an exception string.
 
 from __future__ import annotations
 
-import os
-from collections.abc import Mapping
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import TYPE_CHECKING, Literal
-from urllib.parse import parse_qsl, unquote, urlsplit
+from typing import TYPE_CHECKING
+
+from harrier.connection import (
+    StoreConnectionError,
+    StoreDriverMissing,
+    StoreMigrationRefused,
+    StoreVersionError,
+    UrlParts,
+    url_parts,
+)
 
 if TYPE_CHECKING:
     import psycopg
-
-URL_VARIABLE = "HARRIER_DATABASE_URL"
-POSTGRES_SCHEME = "postgresql"
 
 # The key of the transaction-scoped advisory lock the migration runner takes
 # before it re-reads the version: the Postgres counterpart of SQLite's
@@ -43,151 +42,8 @@ POSTGRES_SCHEME = "postgresql"
 # of "harrier" read as a number, so it is recognisable in pg_locks.
 MIGRATION_LOCK_KEY = 0x68_61_72_72_69_65_72
 
-# What every command but `harrier store`, and the API, answer while the
-# domain still speaks only SQLite. One text, so the CLI and the API cannot
-# drift apart (spec 103).
-POSTGRES_NOT_YET = (
-    "HARRIER_DATABASE_URL names a Postgres store; only harrier store runs on it until spec 112"
-)
 
-
-class StoreError(Exception):
-    """A store could not be chosen, reached or used. Safe to print."""
-
-
-class StoreUrlError(StoreError):
-    """`HARRIER_DATABASE_URL` is neither empty nor a postgresql:// URL."""
-
-
-class StoreDriverMissing(StoreError):
-    """A Postgres URL is set and psycopg is not installed."""
-
-
-class StoreConnectionError(StoreError):
-    """The Postgres store could not be reached or refused the connection."""
-
-
-class StoreVersionError(StoreError):
-    """The store's schema version is not the one this code needs."""
-
-
-class StoreMigrationRefused(StoreError):
-    """A migration's own precheck refused this store (spec 105).
-
-    The message is the text the migration raises, which names no URL.
-    """
-
-
-@dataclass(frozen=True)
-class StoreTarget:
-    """Which store this process opens."""
-
-    dialect: Literal["sqlite", "postgres"]
-    # Out of the repr: the URL carries the password, and a repr is what an
-    # assertion or a log line prints (post-merge privacy review of PR #207).
-    url: str = field(default="", repr=False)
-
-    @property
-    def is_postgres(self) -> bool:
-        return self.dialect == "postgres"
-
-
-@dataclass(frozen=True)
-class _Where:
-    """The parts of a URL that may be printed."""
-
-    host: str
-    port: str
-    database: str
-    # Every form: libpq quotes the URL as written, still percent-encoded,
-    # when it refuses it, and the decoded form when it quotes a parameter.
-    passwords: tuple[str, ...]
-
-    def describe(self) -> str:
-        return f"{self.host}:{self.port}/{self.database}"
-
-
-def store_target(environ: Mapping[str, str] | None = None) -> StoreTarget:
-    """The store `HARRIER_DATABASE_URL` names. Raises StoreUrlError.
-
-    Read from the process environment and, when it is not set there, from
-    `.env` in the working directory, the CLI's rule (spec 011). The CLI loads
-    `.env` and the API does not, so without this a URL set only in `.env`
-    made the CLI refuse while the API served SQLite (review of PR #207).
-    An exported value, even an empty one, wins over the file.
-    """
-    if environ is None:
-        if URL_VARIABLE in os.environ:
-            raw = os.environ[URL_VARIABLE]
-        else:
-            from harrier.envfile import read_env_file
-
-            raw = read_env_file(Path(".env")).get(URL_VARIABLE, "")
-    else:
-        raw = environ.get(URL_VARIABLE, "")
-    raw = raw.strip()
-    if not raw:
-        return StoreTarget("sqlite")
-    # Only `postgresql://`, in lower case, and a host and port that parse:
-    # anything else failed later as a traceback or an unrelated driver
-    # message (post-merge data integrity review of PR #207). libpq refuses
-    # the scheme in another case. It also accepts `postgres://`, which is
-    # refused here on purpose: spec 103 names one scheme.
-    refused = StoreUrlError(f"{URL_VARIABLE} must be empty or a postgresql:// URL")
-    if not raw.startswith(f"{POSTGRES_SCHEME}://"):
-        raise refused
-    try:
-        _where(raw)
-        parses = True
-    except ValueError:
-        parses = False
-    # Raised after the except block, not inside it, so the ValueError is not
-    # chained as `__context__`. Its text can quote the password: a raw `/` in
-    # the password ends the authority, so the password before it is read as
-    # the port (review of PR #218).
-    if not parses or not _one_reading_of_the_authority(raw):
-        raise refused
-    return StoreTarget("postgres", raw)
-
-
-def _one_reading_of_the_authority(url: str) -> bool:
-    """Whether libpq and urlsplit split the user from the host at one `@`.
-
-    urlsplit splits at the last `@` before the first `/`, `?` or `#`; libpq
-    at the first `@` before the first `/`. A raw `@` in the password makes
-    them disagree: urlsplit reads the whole of `p@rest` as the password and
-    scrubs that, while libpq takes `rest@host` as the host and quotes it
-    when it cannot resolve it, carrying the tail of the password. An `@` in
-    a query with no path before it does the same (review of PR #225).
-    """
-    libpq_authority = url.split("://", 1)[1].split("/", 1)[0]
-    ats = libpq_authority.count("@")
-    return ats <= 1 and ats == urlsplit(url).netloc.count("@")
-
-
-def _where(url: str) -> _Where:
-    parts = urlsplit(url)
-    written = [parts.password or ""]
-    # libpq also takes the password from `?password=`, and quotes that
-    # parameter as written when it refuses it (review of PR #218).
-    for pair in parts.query.split("&"):
-        name, _, value = pair.partition("=")
-        if unquote(name) == "password":
-            written.append(value)
-    decoded = [
-        value
-        for name, value in parse_qsl(parts.query, keep_blank_values=True)
-        if name == "password"
-    ]
-    return _Where(
-        host=parts.hostname or "localhost",
-        port=str(parts.port or 5432),
-        database=parts.path.lstrip("/") or "postgres",
-        passwords=tuple(form for form in (*written, *map(unquote, written), *decoded) if form),
-    )
-
-
-def _scrub(message: str, where: _Where) -> str:
+def _scrub(message: str, where: UrlParts) -> str:
     # Longest first, so a decoded form inside an encoded one cannot leave a
     # fragment of the other behind.
     for password in sorted(set(where.passwords), key=len, reverse=True):
@@ -210,7 +66,7 @@ def postgres_connect(url: str) -> psycopg.Connection[tuple[object, ...]]:
     require_driver()
     import psycopg
 
-    where = _where(url)
+    where = url_parts(url)
     try:
         return psycopg.connect(url, autocommit=True, connect_timeout=10)
     except psycopg.Error as error:

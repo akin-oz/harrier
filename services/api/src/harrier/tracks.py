@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from harrier import voices
+from harrier.connection import Connection, Row
 
 TrackKind = Literal["industry", "academic"]
 
@@ -77,7 +78,7 @@ class ArchivedTrackError(TrackError):
     (spec 093)."""
 
 
-def refuse_if_archived(conn: sqlite3.Connection, scope: Scope) -> None:
+def refuse_if_archived(conn: Connection, scope: Scope) -> None:
     """The one check every write to a track makes. The CLI refuses earlier
     with its own exit status; this holds for every other caller (review of
     PR #182).
@@ -88,7 +89,7 @@ def refuse_if_archived(conn: sqlite3.Connection, scope: Scope) -> None:
     refuse_archived_track(conn, scope.track.id)
 
 
-def refuse_archived_track(conn: sqlite3.Connection, track_id: int) -> None:
+def refuse_archived_track(conn: Connection, track_id: int) -> None:
     row = conn.execute("SELECT slug, archived_at FROM tracks WHERE id = ?", (track_id,)).fetchone()
     if row is not None and row[1]:
         raise ArchivedTrackError(f"track {row[0]} is archived; it reads but does not write")
@@ -332,7 +333,7 @@ def validate_slug(slug: str) -> str:
 _COLUMNS = "id, slug, kind, label, created_at, archived_at"
 
 
-def _track_from_row(row: sqlite3.Row | tuple[object, ...]) -> Track:
+def _track_from_row(row: Row | tuple[object, ...]) -> Track:
     values = tuple(row)
     return Track(
         id=int(str(values[0])),
@@ -344,13 +345,13 @@ def _track_from_row(row: sqlite3.Row | tuple[object, ...]) -> Track:
     )
 
 
-def list_tracks(conn: sqlite3.Connection) -> list[Track]:
+def list_tracks(conn: Connection) -> list[Track]:
     """Every track, archived ones included, in id order."""
     rows = conn.execute(f"SELECT {_COLUMNS} FROM tracks ORDER BY id").fetchall()
     return [_track_from_row(row) for row in rows]
 
 
-def resolve_scope(conn: sqlite3.Connection, slug: str | None) -> Scope:
+def resolve_scope(conn: Connection, slug: str | None) -> Scope:
     """The scope a slug names; `None` names the default track."""
     if slug is None:
         return default_scope(conn)
@@ -377,7 +378,7 @@ def kind_refusal(kind: str) -> str | None:
     return None
 
 
-def add_track(conn: sqlite3.Connection, slug: str, kind: str, label: str) -> Track:
+def add_track(conn: Connection, slug: str, kind: str, label: str) -> Track:
     """Create a track (spec 093).
 
     A second industry track is refused: it would share the one candidate
@@ -392,7 +393,7 @@ def add_track(conn: sqlite3.Connection, slug: str, kind: str, label: str) -> Tra
     if not label:
         raise TrackRefusedError("a track needs a label")
     try:
-        with conn:
+        with conn.transaction():
             conn.execute(
                 "INSERT INTO tracks (slug, kind, label) VALUES (?, ?, ?)", (slug, kind, label)
             )
@@ -401,7 +402,7 @@ def add_track(conn: sqlite3.Connection, slug: str, kind: str, label: str) -> Tra
     return resolve_scope(conn, slug).track
 
 
-def archive_track(conn: sqlite3.Connection, slug: str) -> Track:
+def archive_track(conn: Connection, slug: str) -> Track:
     """Archive a track: it still lists and reads, and refuses writes (spec 093).
     The default track cannot be archived, and archiving is one-way."""
     track = resolve_scope(conn, slug).track
@@ -409,12 +410,12 @@ def archive_track(conn: sqlite3.Connection, slug: str) -> Track:
         raise TrackRefusedError("the default track cannot be archived")
     if track.archived:
         raise AlreadyArchivedError(f"track {slug!r} is already archived")
-    with conn:
+    with conn.transaction():
         conn.execute("UPDATE tracks SET archived_at = datetime('now') WHERE id = ?", (track.id,))
     return resolve_scope(conn, slug).track
 
 
-def default_scope(conn: sqlite3.Connection) -> Scope:
+def default_scope(conn: Connection) -> Scope:
     row = conn.execute(
         f"SELECT {_COLUMNS} FROM tracks WHERE id = ?", (DEFAULT_TRACK_ID,)
     ).fetchone()

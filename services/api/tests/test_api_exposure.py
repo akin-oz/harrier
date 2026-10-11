@@ -17,13 +17,13 @@ These tests are the two closures and the smaller leaks alongside them.
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
 import pytest
 from conftest import TEST_TOKEN, auth
 from fastapi.testclient import TestClient
 
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.discovery import APIFY_MAX_COUNT, scheduled_apify_count
 from harrier.screening.normalized import NormalizedJob
@@ -400,7 +400,7 @@ def test_the_bookmarklet_path_still_reaches_the_tracker(client: TestClient) -> N
     )
     assert added.status_code == 200
 
-    conn: sqlite3.Connection = connect()
+    conn: Connection = connect()
     assert len(list_jobs(conn, default_scope(conn))) == 1
     conn.close()
 

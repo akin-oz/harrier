@@ -24,6 +24,7 @@ from resume_support import (
 )
 
 import harrier.resume.split as split_module
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.profile.store import ProfileDocumentError, put_document, put_documents_and_rekind
 from harrier.resume.content import (
@@ -51,17 +52,17 @@ def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture()
-def db(data_dir: Path) -> Iterator[sqlite3.Connection]:
+def db(data_dir: Path) -> Iterator[Connection]:
     conn = connect()
     yield conn
     conn.close()
 
 
-def store_old_shape(conn: sqlite3.Connection, raw: dict[str, Any]) -> None:
+def store_old_shape(conn: Connection, raw: dict[str, Any]) -> None:
     put_document(conn, "resume_data", "resume-content.json", "json", json.dumps(raw, indent=2))
 
 
-def documents(conn: sqlite3.Connection) -> list[tuple[str, str, str]]:
+def documents(conn: Connection) -> list[tuple[str, str, str]]:
     rows = conn.execute(
         "SELECT kind, name, content FROM profile_documents ORDER BY kind, name"
     ).fetchall()
@@ -107,7 +108,7 @@ def test_every_field_lands_in_exactly_one_document() -> None:
 # --- loading -------------------------------------------------------------------
 
 
-def test_load_bundle_refuses_each_mixed_shape(db: sqlite3.Connection) -> None:
+def test_load_bundle_refuses_each_mixed_shape(db: Connection) -> None:
     store_old_shape(db, example_bundle_raw())
     with pytest.raises(ResumeBundleError, match="run harrier profile split-resume"):
         load_bundle(db, default_scope(db))
@@ -126,7 +127,7 @@ def test_load_bundle_refuses_each_mixed_shape(db: sqlite3.Connection) -> None:
         load_bundle(db, default_scope(db))
 
 
-def test_a_key_in_the_wrong_document_is_refused(db: sqlite3.Connection) -> None:
+def test_a_key_in_the_wrong_document_is_refused(db: Connection) -> None:
     facts, framing = example_documents()
     facts["bullet_pool"] = {"x": "Shipped a thing."}
     framing_candidate = framing["candidate"]
@@ -139,7 +140,7 @@ def test_a_key_in_the_wrong_document_is_refused(db: sqlite3.Connection) -> None:
     assert "resume_framing: candidate.email belongs in resume_facts" in message
 
 
-def test_framing_role_must_name_a_facts_role(db: sqlite3.Connection) -> None:
+def test_framing_role_must_name_a_facts_role(db: Connection) -> None:
     facts, framing = example_documents()
     roles = framing["roles"]
     roles.append({"id": "no-such-role", "bullet_count": 2})
@@ -179,7 +180,7 @@ def test_a_missing_facts_candidate_is_blamed_on_the_facts_only() -> None:
     assert "resume_framing:" not in message
 
 
-def test_the_split_write_is_all_or_nothing(db: sqlite3.Connection) -> None:
+def test_the_split_write_is_all_or_nothing(db: Connection) -> None:
     """A failure after the first document is written leaves the store as it
     was: here the rename collides with a row already holding its target."""
     put_document(db, "resume_data", "resume-content.json", "json", "{}")
@@ -203,7 +204,7 @@ def test_a_facts_role_without_a_framing_keeps_the_defaults() -> None:
     assert (role.bullet_count, role.default_bullets, role.competencies) == (2, (), ())
 
 
-def test_letters_read_the_never_claim_list_from_facts(db: sqlite3.Connection) -> None:
+def test_letters_read_the_never_claim_list_from_facts(db: Connection) -> None:
     store_documents(db, {"forbidden_phrases": ["world-class expert"]}, {})
     assert load_forbidden_phrases(db) == ("world-class expert",)
     db.execute("DELETE FROM profile_documents")
@@ -215,7 +216,7 @@ def test_letters_read_the_never_claim_list_from_facts(db: sqlite3.Connection) ->
 
 
 def test_split_resume_dry_run_writes_nothing(
-    db: sqlite3.Connection, capsys: pytest.CaptureFixture[str]
+    db: Connection, capsys: pytest.CaptureFixture[str]
 ) -> None:
     raw = example_bundle_raw()
     store_old_shape(db, raw)
@@ -234,7 +235,7 @@ def test_split_resume_dry_run_writes_nothing(
 
 
 def test_split_resume_writes_the_pair_and_keeps_the_original(
-    db: sqlite3.Connection, capsys: pytest.CaptureFixture[str]
+    db: Connection, capsys: pytest.CaptureFixture[str]
 ) -> None:
     raw = example_bundle_raw()
     store_old_shape(db, raw)
@@ -257,7 +258,7 @@ def test_split_resume_writes_the_pair_and_keeps_the_original(
 
 
 def test_split_resume_refuses_an_unplaced_key(
-    db: sqlite3.Connection, capsys: pytest.CaptureFixture[str]
+    db: Connection, capsys: pytest.CaptureFixture[str]
 ) -> None:
     raw = copy.deepcopy(example_bundle_raw())
     raw["favourite_colour"] = "teal"
@@ -285,7 +286,7 @@ def test_split_resume_refuses_an_unplaced_key(
 )
 @pytest.mark.parametrize("write", [True, False], ids=["write", "dry-run"])
 def test_split_resume_failure_modes(
-    db: sqlite3.Connection,
+    db: Connection,
     capsys: pytest.CaptureFixture[str],
     setup: str,
     code: int,
@@ -325,7 +326,7 @@ def test_split_resume_failure_modes(
     assert documents(db) == before
 
 
-def test_the_split_rolls_back_a_failure_partway(db: sqlite3.Connection) -> None:
+def test_the_split_rolls_back_a_failure_partway(db: Connection) -> None:
     """A failure after the pair is written leaves the store as it was: the
     rename of the original is refused here by a trigger (review of PR #212)."""
     store_old_shape(db, example_bundle_raw())
@@ -341,7 +342,7 @@ def test_the_split_rolls_back_a_failure_partway(db: sqlite3.Connection) -> None:
 
 
 def test_a_split_that_would_change_the_bundle_writes_nothing(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    db: Connection, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The equality guard: a split that loses a field is refused, whatever
     the table says (review of PR #212)."""
@@ -373,7 +374,7 @@ def test_a_role_key_in_the_wrong_document_is_refused() -> None:
     assert "resume_facts: roles[0].competencies belongs in resume_framing" in message
 
 
-def test_the_old_document_beside_a_framing_alone_is_refused(db: sqlite3.Connection) -> None:
+def test_the_old_document_beside_a_framing_alone_is_refused(db: Connection) -> None:
     """`resume_data` with no facts but a track's framing is still two shapes."""
     store_old_shape(db, example_bundle_raw())
     put_document(db, FRAMING_KIND, "industry.json", "json", "{}", track_id=1)
@@ -381,7 +382,7 @@ def test_the_old_document_beside_a_framing_alone_is_refused(db: sqlite3.Connecti
         load_bundle(db, default_scope(db))
 
 
-def test_a_rename_with_nothing_to_move_writes_nothing(db: sqlite3.Connection) -> None:
+def test_a_rename_with_nothing_to_move_writes_nothing(db: Connection) -> None:
     before = documents(db)
     with pytest.raises(ProfileDocumentError, match=r"no shared resume_data/absent\.json"):
         put_documents_and_rekind(

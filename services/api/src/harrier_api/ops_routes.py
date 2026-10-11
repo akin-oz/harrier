@@ -27,7 +27,6 @@ from harrier.discovery import APIFY_MAX_COUNT, SOURCE_ORDER
 from harrier.tracks import DEFAULT_TRACK_ID
 from harrier.tracks import Scope as TrackScope
 from harrier_api.deps import (
-    TRACK_REFUSAL_RESPONSES,
     Conn,
     DatabaseRoute,
     ErrorOut,
@@ -78,7 +77,7 @@ class PruneIn(BaseModel):
     "/ops/feeds",
     operation_id="checkFeeds",
     dependencies=[Depends(require_token)],
-    responses={**TOKEN_RESPONSES, **RUN_CONFLICT_RESPONSES},
+    responses=merge_responses(TOKEN_RESPONSES, RUN_CONFLICT_RESPONSES),
 )
 async def check_feeds(manager: Manager) -> RunOut:
     """`config check-feeds` as a run: one probe per configured board.
@@ -95,7 +94,7 @@ async def check_feeds(manager: Manager) -> RunOut:
     "/ops/feeds/prune",
     operation_id="pruneDeadFeeds",
     dependencies=[Depends(require_token)],
-    responses={**REFUSAL_RESPONSES, **RUN_CONFLICT_RESPONSES},
+    responses=merge_responses(REFUSAL_RESPONSES, RUN_CONFLICT_RESPONSES),
 )
 async def prune_dead_feeds(manager: Manager, body: PruneIn = PruneIn()) -> RunOut:  # noqa: B008
     """`config check-feeds --prune`: probes again, then removes the boards
@@ -126,7 +125,7 @@ class ReconsiderIn(BaseModel):
     "/ops/reconsider",
     operation_id="reconsider",
     dependencies=[Depends(require_token)],
-    responses={**TOKEN_RESPONSES, **RUN_CONFLICT_RESPONSES},
+    responses=merge_responses(TOKEN_RESPONSES, RUN_CONFLICT_RESPONSES),
 )
 async def reconsider(
     manager: Manager,
@@ -160,7 +159,7 @@ class BackupIn(BaseModel):
     "/ops/backup",
     operation_id="takeBackup",
     dependencies=[Depends(require_token)],
-    responses={**TOKEN_RESPONSES, **RUN_CONFLICT_RESPONSES},
+    responses=merge_responses(TOKEN_RESPONSES, RUN_CONFLICT_RESPONSES),
 )
 async def take_backup(manager: Manager, body: BackupIn = BackupIn()) -> RunOut:  # noqa: B008
     """`backup` as a run, into the directory the Settings page lists, and
@@ -193,7 +192,7 @@ class DigestIn(BaseModel):
     "/ops/digest",
     operation_id="runDigest",
     dependencies=[Depends(require_token)],
-    responses={**REFUSAL_RESPONSES, **RUN_CONFLICT_RESPONSES},
+    responses=merge_responses(REFUSAL_RESPONSES, RUN_CONFLICT_RESPONSES),
 )
 async def run_digest_route(
     conn: Conn,
@@ -432,7 +431,7 @@ class EventsBackfillIn(BaseModel):
     "/ops/events/backfill",
     operation_id="backfillEvents",
     dependencies=[Depends(require_token)],
-    responses={**TOKEN_RESPONSES, **RUN_CONFLICT_RESPONSES},
+    responses=merge_responses(TOKEN_RESPONSES, RUN_CONFLICT_RESPONSES),
 )
 async def backfill_events_route(
     manager: Manager,
@@ -462,7 +461,7 @@ class EvaluateProspectsIn(BaseModel):
     "/ops/evaluate-prospects",
     operation_id="evaluateProspects",
     dependencies=[Depends(require_token)],
-    responses={**TOKEN_RESPONSES, **RUN_CONFLICT_RESPONSES},
+    responses=merge_responses(TOKEN_RESPONSES, RUN_CONFLICT_RESPONSES),
 )
 async def evaluate_prospects_route(
     manager: Manager,
@@ -492,7 +491,7 @@ async def evaluate_prospects_route(
     "/ops/scoring/export",
     operation_id="exportScoringFeatures",
     dependencies=[Depends(require_token)],
-    responses={**TOKEN_RESPONSES, **RUN_CONFLICT_RESPONSES},
+    responses=merge_responses(TOKEN_RESPONSES, RUN_CONFLICT_RESPONSES),
 )
 async def export_scoring_features(
     manager: Manager, scope: Annotated[TrackScope, Depends(scope_for("scoring export"))]
@@ -521,9 +520,7 @@ def _suffix(upload: UploadFile) -> str:
     "/ops/discover",
     operation_id="runDiscover",
     dependencies=[Depends(require_token)],
-    responses=merge_responses(
-        DISCOVER_RESPONSES, {409: TRACK_REFUSAL_RESPONSES[409]}, RUN_CONFLICT_RESPONSES
-    ),
+    responses=merge_responses(DISCOVER_RESPONSES, RUN_CONFLICT_RESPONSES),
 )
 async def run_discover(
     manager: Manager,

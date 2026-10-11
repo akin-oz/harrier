@@ -16,10 +16,10 @@ from __future__ import annotations
 
 import csv
 import re
-import sqlite3
 from pathlib import Path
 from typing import TextIO
 
+from harrier.connection import Connection
 from harrier.tracker.schema import CONTACT_FIELDS, TRACKER_FIELDS
 from harrier.tracker.store import extract_note_value, list_contacts, list_jobs
 from harrier.tracks import DEFAULT_TRACK_ID, Scope
@@ -64,9 +64,7 @@ def _cells(row: dict[str, str], fields: tuple[str, ...], *, neutralize: bool) ->
     return {name: neutralize_cell(row[name]) for name in fields}
 
 
-def write_jobs(
-    handle: TextIO, conn: sqlite3.Connection, scope: Scope, *, neutralize: bool = False
-) -> None:
+def write_jobs(handle: TextIO, conn: Connection, scope: Scope, *, neutralize: bool = False) -> None:
     """The track's jobs in the legacy 20-column shape, header first."""
     writer = csv.DictWriter(handle, fieldnames=list(TRACKER_FIELDS))
     writer.writeheader()
@@ -74,7 +72,7 @@ def write_jobs(
         writer.writerow(_cells(_legacy_faithful(row), TRACKER_FIELDS, neutralize=neutralize))
 
 
-def write_contacts(handle: TextIO, conn: sqlite3.Connection, *, neutralize: bool = False) -> None:
+def write_contacts(handle: TextIO, conn: Connection, *, neutralize: bool = False) -> None:
     """The person's contacts in the legacy 17-column shape, header first."""
     writer = csv.DictWriter(handle, fieldnames=list(CONTACT_FIELDS))
     writer.writeheader()
@@ -82,7 +80,7 @@ def write_contacts(handle: TextIO, conn: sqlite3.Connection, *, neutralize: bool
         writer.writerow(_cells(row, CONTACT_FIELDS, neutralize=neutralize))
 
 
-def export_csv(conn: sqlite3.Connection, scope: Scope, dest_dir: Path) -> tuple[Path, Path | None]:
+def export_csv(conn: Connection, scope: Scope, dest_dir: Path) -> tuple[Path, Path | None]:
     """The legacy-shape CSVs. The default track writes `jobs.csv` and
     `contacts.csv` into `dest_dir`, as it always has. Any other track writes
     only `<dest_dir>/<slug>/jobs.csv`: contacts are the person's, not a

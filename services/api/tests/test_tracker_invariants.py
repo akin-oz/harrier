@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.tracker.invariants import all_breaches, check_rows, invariant_breach
 from harrier.tracker.schema import STATUSES
@@ -25,7 +26,7 @@ from harrier_cli.main import main
 
 
 @pytest.fixture
-def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
+def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Connection:
     monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("HARRIER_DEMO", raising=False)
     conn = connect()
@@ -60,7 +61,7 @@ def test_every_status_is_reachable_from_every_wrong_one() -> None:
             assert transition_allowed(current, target), f"{current} to {target} was refused"
 
 
-def test_an_unknown_status_is_still_refused(db: sqlite3.Connection) -> None:
+def test_an_unknown_status_is_still_refused(db: Connection) -> None:
     from harrier.tracker.store import UnknownStatusError
 
     with pytest.raises(UnknownStatusError):
@@ -70,7 +71,7 @@ def test_an_unknown_status_is_still_refused(db: sqlite3.Connection) -> None:
 # --- applied carries its date -------------------------------------------------
 
 
-def test_applied_cannot_lose_its_date_through_the_generic_update(db: sqlite3.Connection) -> None:
+def test_applied_cannot_lose_its_date_through_the_generic_update(db: Connection) -> None:
     """The path that made the invariant escapable.
 
     `set_status` stamps the date, and then `update_fields` could clear it,
@@ -93,7 +94,7 @@ def test_the_breach_is_named_the_same_way_wherever_it_is_found() -> None:
 # --- leaving rejected drops the reason ----------------------------------------
 
 
-def test_leaving_rejected_clears_the_rejection_reason(db: sqlite3.Connection) -> None:
+def test_leaving_rejected_clears_the_rejection_reason(db: Connection) -> None:
     """A resurrected job carrying the reason it was rejected reads as though
     it were rejected again for that reason. Only the rejecting branch ever
     touched the field, so it survived forever."""
@@ -103,7 +104,7 @@ def test_leaving_rejected_clears_the_rejection_reason(db: sqlite3.Connection) ->
     assert get_job(db, default_scope(db), 1)["rejection_reason"] == ""
 
 
-def test_a_rejection_reason_cannot_be_added_to_a_live_job(db: sqlite3.Connection) -> None:
+def test_a_rejection_reason_cannot_be_added_to_a_live_job(db: Connection) -> None:
     set_status(db, default_scope(db), 1, "shortlisted")
     with pytest.raises(TrackerError, match="must not carry a rejection reason"):
         update_fields(db, default_scope(db), 1, {"rejection_reason": "changed my mind"})
@@ -112,7 +113,7 @@ def test_a_rejection_reason_cannot_be_added_to_a_live_job(db: sqlite3.Connection
 # --- the outreach axis ---------------------------------------------------------
 
 
-def test_walking_back_past_applied_resets_the_outreach_axis(db: sqlite3.Connection) -> None:
+def test_walking_back_past_applied_resets_the_outreach_axis(db: Connection) -> None:
     """The invariant the code contradicted.
 
     Outreach is documented as orthogonal to the pipeline status, and it was
@@ -134,7 +135,7 @@ def test_walking_back_past_applied_resets_the_outreach_axis(db: sqlite3.Connecti
 
 
 def test_outreach_survives_a_move_that_stays_at_or_above_applied(
-    db: sqlite3.Connection,
+    db: Connection,
 ) -> None:
     """Orthogonal means orthogonal. Moving applied to interviewing is not a
     reason to forget who was contacted."""
@@ -144,12 +145,12 @@ def test_outreach_survives_a_move_that_stays_at_or_above_applied(
     assert get_job(db, default_scope(db), 1)["outreach_status"] == "sent"
 
 
-def test_a_prospect_cannot_be_given_a_sent_outreach_status(db: sqlite3.Connection) -> None:
+def test_a_prospect_cannot_be_given_a_sent_outreach_status(db: Connection) -> None:
     with pytest.raises(TrackerError, match="must not claim outreach"):
         update_fields(db, default_scope(db), 1, {"outreach_status": "sent"})
 
 
-def test_a_planned_outreach_is_not_a_claim_that_it_happened(db: sqlite3.Connection) -> None:
+def test_a_planned_outreach_is_not_a_claim_that_it_happened(db: Connection) -> None:
     """`needs_contacts` is a plan and is fine on a prospect. Only the values
     that assert something happened are refused."""
     update_fields(db, default_scope(db), 1, {"outreach_status": "needs_contacts"})
@@ -160,7 +161,7 @@ def test_a_planned_outreach_is_not_a_claim_that_it_happened(db: sqlite3.Connecti
 
 
 def test_a_row_that_already_breaks_a_rule_can_still_be_repaired(
-    db: sqlite3.Connection,
+    db: Connection,
 ) -> None:
     """Refusing every write to a row that already breaks a rule would make
     rows written before these rules unrepairable, which is the opposite of
@@ -179,7 +180,7 @@ def test_a_row_that_already_breaks_a_rule_can_still_be_repaired(
 
 
 def test_check_reports_pre_existing_rows_and_changes_nothing(
-    db: sqlite3.Connection, capsys: pytest.CaptureFixture[str]
+    db: Connection, capsys: pytest.CaptureFixture[str]
 ) -> None:
     set_status(db, default_scope(db), 1, "applied")
     db.execute("UPDATE jobs SET applied_date = '' WHERE id = 1")
@@ -192,7 +193,7 @@ def test_check_reports_pre_existing_rows_and_changes_nothing(
 
 
 def test_check_is_quiet_and_succeeds_on_a_clean_tracker(
-    db: sqlite3.Connection, capsys: pytest.CaptureFixture[str]
+    db: Connection, capsys: pytest.CaptureFixture[str]
 ) -> None:
     assert main(["check"]) == 0
     assert "no tracker rows break" in capsys.readouterr().out
@@ -202,7 +203,7 @@ def test_check_is_quiet_and_succeeds_on_a_clean_tracker(
 
 
 def _a_contact(
-    conn: sqlite3.Connection,
+    conn: Connection,
     url: str,
     *,
     company: str = "Example Labs",
@@ -224,7 +225,7 @@ def _a_contact(
 
 
 def test_a_contact_stays_linked_to_its_job_after_the_title_is_edited(
-    db: sqlite3.Connection,
+    db: Connection,
 ) -> None:
     """The defect this closes. The link was a text comparison, so renaming a
     job silently detached every contact about it: nothing errors, the outreach
@@ -249,7 +250,7 @@ def test_a_contact_stays_linked_to_its_job_after_the_title_is_edited(
     assert link["job_title"] == "Senior Frontend Engineer"
 
 
-def test_a_link_to_an_untracked_job_is_kept_and_reported(db: sqlite3.Connection) -> None:
+def test_a_link_to_an_untracked_job_is_kept_and_reported(db: Connection) -> None:
     """A contact can be about a job that was never tracked. Dropping the link
     would lose the record of who was spoken to, so it is kept and named.
 
@@ -266,7 +267,7 @@ def test_a_link_to_an_untracked_job_is_kept_and_reported(db: sqlite3.Connection)
     assert "matches no tracked job" in problems[0][1]
 
 
-def test_the_backfill_links_old_records_and_drops_none(db: sqlite3.Connection) -> None:
+def test_the_backfill_links_old_records_and_drops_none(db: Connection) -> None:
     """Links written before the id existed. The count of unmatched ones is
     reported rather than swallowed, and nothing is deleted either way."""
     from harrier.outreach.contacts import parse_linked_jobs, serialize_linked_jobs
@@ -293,7 +294,7 @@ def test_the_backfill_links_old_records_and_drops_none(db: sqlite3.Connection) -
 
 
 def test_check_reports_an_unresolved_contact_link(
-    db: sqlite3.Connection, capsys: pytest.CaptureFixture[str]
+    db: Connection, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _a_contact(db, "https://boards.example.com/elsewhere/999", company="Someone Else Ltd")
     assert main(["check"]) == 1
@@ -352,7 +353,7 @@ def test_a_database_at_the_previous_version_loses_the_dead_column(
 
 
 def test_a_status_change_does_not_write_the_csv_export(
-    db: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    db: Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """ADR-003 said every mutating CLI command refreshed the export. Nothing
     ever did, and implementing it would rewrite the whole tracker to record
@@ -370,7 +371,7 @@ def test_a_status_change_does_not_write_the_csv_export(
 # --- the two the first pass left open -----------------------------------------
 
 
-def test_a_second_breach_cannot_ride_in_behind_the_first(db: sqlite3.Connection) -> None:
+def test_a_second_breach_cannot_ride_in_behind_the_first(db: Connection) -> None:
     """The write comparison used to look at one message.
 
     A row already failing the applied-date rule reported that same message
@@ -387,7 +388,7 @@ def test_a_second_breach_cannot_ride_in_behind_the_first(db: sqlite3.Connection)
     assert get_job(db, default_scope(db), 1)["rejection_reason"] == ""
 
 
-def test_the_pre_existing_breach_still_does_not_block_repair(db: sqlite3.Connection) -> None:
+def test_the_pre_existing_breach_still_does_not_block_repair(db: Connection) -> None:
     """The other half of the same rule: refusing a new breach must not refuse
     a write that leaves the old one alone."""
     set_status(db, default_scope(db), 1, "applied")
@@ -398,7 +399,7 @@ def test_the_pre_existing_breach_still_does_not_block_repair(db: sqlite3.Connect
 
 
 def test_rejecting_then_reviving_to_an_earlier_stage_clears_outreach(
-    db: sqlite3.Connection,
+    db: Connection,
 ) -> None:
     """The illegal state, reached in two steps instead of one.
 
@@ -420,7 +421,7 @@ def test_rejecting_then_reviving_to_an_earlier_stage_clears_outreach(
     assert all_breaches(row) == []
 
 
-def test_reviving_to_applied_keeps_the_outreach_it_earned(db: sqlite3.Connection) -> None:
+def test_reviving_to_applied_keeps_the_outreach_it_earned(db: Connection) -> None:
     """Only a move below applied loses it. Un-rejecting back to applied is
     not a reason to forget who was contacted."""
     set_status(db, default_scope(db), 1, "applied")
@@ -430,7 +431,7 @@ def test_reviving_to_applied_keeps_the_outreach_it_earned(db: sqlite3.Connection
     assert get_job(db, default_scope(db), 1)["outreach_status"] == "sent"
 
 
-def test_check_reports_every_breach_on_a_row(db: sqlite3.Connection) -> None:
+def test_check_reports_every_breach_on_a_row(db: Connection) -> None:
     """A row with two problems that reported one would send the operator
     round the loop again for the second."""
     set_status(db, default_scope(db), 1, "applied")
@@ -441,7 +442,7 @@ def test_check_reports_every_breach_on_a_row(db: sqlite3.Connection) -> None:
 
 
 def test_the_link_report_says_when_it_wrote(
-    db: sqlite3.Connection, capsys: pytest.CaptureFixture[str]
+    db: Connection, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """`--link-contacts` writes, and the summary used to say nothing changed
     whatever it did (review finding on PR #44)."""

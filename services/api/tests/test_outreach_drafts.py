@@ -4,13 +4,13 @@ onto the synthetic outreach defaults (config/outreach-defaults.example.json,
 which these tests thereby prove valid) and the committed template config."""
 
 import json
-import sqlite3
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 import harrier.outreach.drafts as drafts_module
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.llm import LLMClientError
 from harrier.outreach import (
@@ -34,7 +34,7 @@ CONFIG_DIR = REPO_ROOT / "config" / "outreach"
 
 
 @pytest.fixture()
-def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
+def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Connection:
     monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
     conn = connect()
     put_document(
@@ -48,7 +48,7 @@ def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
 
 
 @pytest.fixture()
-def configs(db: sqlite3.Connection) -> dict[str, Any]:
+def configs(db: Connection) -> dict[str, Any]:
     return load_configs(db, CONFIG_DIR)
 
 
@@ -117,9 +117,7 @@ def test_rewrite_message_removes_banned_language(
     assert len(rewritten) <= 300
 
 
-def test_save_target_upserts_by_identity(
-    db: sqlite3.Connection, request_fixture: OutreachRequest
-) -> None:
+def test_save_target_upserts_by_identity(db: Connection, request_fixture: OutreachRequest) -> None:
     save_target(request_fixture)
     warm = OutreachRequest.from_dict(
         {
@@ -150,7 +148,7 @@ def test_infer_audience_distinguishes_recruiter_hiring_manager_and_peer() -> Non
 
 
 def test_generate_outreach_returns_sections_and_primary_messages(
-    db: sqlite3.Connection,
+    db: Connection,
 ) -> None:
     payload = generate_outreach(
         db,
@@ -177,7 +175,7 @@ def test_generate_outreach_returns_sections_and_primary_messages(
     assert payload["follow_up_message"] == selected["follow_up_after_application_first"]
 
 
-def test_write_outreach_draft_renders_sections(db: sqlite3.Connection) -> None:
+def test_write_outreach_draft_renders_sections(db: Connection) -> None:
     payload = generate_outreach(
         db,
         company="Veriff",
@@ -219,7 +217,7 @@ def test_optional_sentences_keep_a_separator(
             )
 
 
-def test_supplied_jd_changes_deterministic_output(db: sqlite3.Connection) -> None:
+def test_supplied_jd_changes_deterministic_output(db: Connection) -> None:
     # The hiring-manager standard note consumes the company-note sentence,
     # which the resolved JD now feeds (review finding: the JD was loaded
     # but never reached the template request).
@@ -245,7 +243,7 @@ def test_supplied_jd_changes_deterministic_output(db: sqlite3.Connection) -> Non
     assert "verification platform" in json.dumps(with_jd["messages"]).lower()
 
 
-def test_drafts_for_two_contacts_write_distinct_artifacts(db: sqlite3.Connection) -> None:
+def test_drafts_for_two_contacts_write_distinct_artifacts(db: Connection) -> None:
     paths_by_contact: list[Path] = []
     for name in ("Fernanda", "Miguel"):
         payload = generate_outreach(
@@ -315,9 +313,7 @@ def test_parse_ai_response_hard_trims_short_notes() -> None:
     assert len(parsed["connection_note_short"][0]["text"]) <= 280
 
 
-def test_ai_outreach_propagates_ai_error(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_ai_outreach_propagates_ai_error(db: Connection, monkeypatch: pytest.MonkeyPatch) -> None:
     put_document(db, "resume_truth", "truth.md", "markdown", "- Verified fact.\n")
     put_document(
         db,

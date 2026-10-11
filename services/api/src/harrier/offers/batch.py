@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from harrier.connection import Connection
 from harrier.db import data_dir
 from harrier.offers.evaluate import (
     EvaluationError,
@@ -62,9 +62,7 @@ def _append_audit(entry: dict[str, object]) -> None:
         handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
-def evaluate_prospects(
-    conn: sqlite3.Connection, scope: Scope, options: BatchOptions
-) -> BatchSummary:
+def evaluate_prospects(conn: Connection, scope: Scope, options: BatchOptions) -> BatchSummary:
     summary = BatchSummary()
     prospects = [row for row in list_jobs(conn, scope) if row.get("status") == "prospect"]
     if options.limit > 0:

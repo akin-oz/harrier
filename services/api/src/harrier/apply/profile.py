@@ -9,9 +9,9 @@ operator's private data (ADR-008).
 from __future__ import annotations
 
 import json
-import sqlite3
 from typing import cast
 
+from harrier.connection import Connection
 from harrier.tracks import Scope
 
 APPLICATION_PROFILE_KIND = "application_profile"
@@ -42,7 +42,7 @@ class ApplicationProfileError(ValueError):
     pass
 
 
-def _document(conn: sqlite3.Connection, kind: str, fmt: str) -> str | None:
+def _document(conn: Connection, kind: str, fmt: str) -> str | None:
     """A shared document. The candidate document is shared by every track."""
     row = conn.execute(
         "SELECT content FROM profile_documents "
@@ -52,7 +52,7 @@ def _document(conn: sqlite3.Connection, kind: str, fmt: str) -> str | None:
     return str(row[0]) if row is not None else None
 
 
-def _profile_documents(conn: sqlite3.Connection, scope: Scope) -> list[tuple[str, str]]:
+def _profile_documents(conn: Connection, scope: Scope) -> list[tuple[str, str]]:
     """The scope track's own application profile documents, as (format,
     content) by name. Never another track's: there is no fallback (spec 101)."""
     rows = conn.execute(
@@ -71,7 +71,7 @@ def no_profile_message(scope: Scope) -> str:
     )
 
 
-def _profile_document(conn: sqlite3.Connection, scope: Scope, fmt: str) -> str:
+def _profile_document(conn: Connection, scope: Scope, fmt: str) -> str:
     documents = _profile_documents(conn, scope)
     if not documents:
         raise ApplicationProfileError(no_profile_message(scope))
@@ -88,18 +88,18 @@ def _profile_document(conn: sqlite3.Connection, scope: Scope, fmt: str) -> str:
     )
 
 
-def profile_text(conn: sqlite3.Connection, scope: Scope) -> str:
+def profile_text(conn: Connection, scope: Scope) -> str:
     """The scope track's application profile documents as raw text, or ""
     when it has none. Read only to name where misattributed evidence came
     from (spec 069), so it neither parses nor raises."""
     return "\n".join(content for _, content in _profile_documents(conn, scope))
 
 
-def load_profile_markdown(conn: sqlite3.Connection, scope: Scope) -> str:
+def load_profile_markdown(conn: Connection, scope: Scope) -> str:
     return _profile_document(conn, scope, "markdown")
 
 
-def load_profile_json(conn: sqlite3.Connection, scope: Scope) -> dict[str, object]:
+def load_profile_json(conn: Connection, scope: Scope) -> dict[str, object]:
     content = _profile_document(conn, scope, "json")
     try:
         parsed: object = json.loads(content)
@@ -110,7 +110,7 @@ def load_profile_json(conn: sqlite3.Connection, scope: Scope) -> dict[str, objec
     return cast("dict[str, object]", parsed)
 
 
-def load_candidate_document(conn: sqlite3.Connection) -> dict[str, object]:
+def load_candidate_document(conn: Connection) -> dict[str, object]:
     content = _document(conn, CANDIDATE_KIND, "json")
     if content is None:
         raise ApplicationProfileError("no candidate document in the profile store")
@@ -148,7 +148,7 @@ def validate_profile_json(data: dict[str, object]) -> list[str]:
     return errors
 
 
-def validate_profile(conn: sqlite3.Connection, scope: Scope) -> list[str]:
+def validate_profile(conn: Connection, scope: Scope) -> list[str]:
     errors: list[str] = []
     try:
         errors.extend(validate_profile_markdown(load_profile_markdown(conn, scope)))

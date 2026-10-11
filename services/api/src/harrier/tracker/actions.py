@@ -14,12 +14,12 @@ bug in one of them rather than a design decision nobody wrote down.
 
 from __future__ import annotations
 
-import sqlite3
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 
 from harrier.capture import CaptureResult, add_captured_job
+from harrier.connection import Connection
 from harrier.scoring.model import fit_score_for
 from harrier.screening.config import load_candidate_config
 from harrier.screening.descriptions import load_cached_description
@@ -75,7 +75,7 @@ class RescoreResult:
 
 
 def change_status(
-    conn: sqlite3.Connection,
+    conn: Connection,
     scope: Scope,
     selector: str,
     verb: str,
@@ -130,7 +130,7 @@ def change_status(
 
 
 def record_company_outcome(
-    conn: sqlite3.Connection,
+    conn: Connection,
     scope: Scope,
     selector: str,
     code: str,
@@ -187,7 +187,7 @@ def record_company_outcome(
 
 
 def add_manually(
-    conn: sqlite3.Connection,
+    conn: Connection,
     scope: Scope,
     *,
     company: str,
@@ -237,7 +237,7 @@ def add_manually(
     return result, None
 
 
-def rescore(conn: sqlite3.Connection, scope: Scope, selector: str) -> RescoreResult:
+def rescore(conn: Connection, scope: Scope, selector: str) -> RescoreResult:
     """Score one job again against the current configuration.
 
     Rescoring uses the description stored at import. It used to pass an empty
@@ -320,7 +320,7 @@ def _checked_at(value: str | None) -> str:
 
 
 def set_eligibility(
-    conn: sqlite3.Connection,
+    conn: Connection,
     scope: Scope,
     selector: str,
     *,
@@ -372,9 +372,7 @@ class ReassessReport:
     by_verdict: Counter[str] = field(default_factory=Counter[str])
 
 
-def reassess_eligibility(
-    conn: sqlite3.Connection, scope: Scope, *, apply: bool = False
-) -> ReassessReport:
+def reassess_eligibility(conn: Connection, scope: Scope, *, apply: bool = False) -> ReassessReport:
     """Run the rule assessor again on the open rows it may read (spec 122).
 
     A row is reassessed when it is not rejected, has a cached description,
@@ -425,9 +423,7 @@ def reassess_eligibility(
     return report
 
 
-def next_up(
-    conn: sqlite3.Connection, scope: Scope, limit: int | None = None
-) -> list[dict[str, str]]:
+def next_up(conn: Connection, scope: Scope, limit: int | None = None) -> list[dict[str, str]]:
     """What to work on now, in the CLI's ordering."""
     return rank_for(
         rules_for(scope.track.kind).queue,
@@ -437,9 +433,7 @@ def next_up(
     )
 
 
-def review_queue(
-    conn: sqlite3.Connection, scope: Scope, limit: int | None = None
-) -> list[dict[str, str]]:
+def review_queue(conn: Connection, scope: Scope, limit: int | None = None) -> list[dict[str, str]]:
     """What still needs a decision, which is a narrower question than `next`."""
     return rank_for(
         rules_for(scope.track.kind).queue,
@@ -450,9 +444,9 @@ def review_queue(
     )
 
 
-def counts(conn: sqlite3.Connection, scope: Scope) -> dict[str, int]:
+def counts(conn: Connection, scope: Scope) -> dict[str, int]:
     return status_counts(list_jobs(conn, scope))
 
 
-def one(conn: sqlite3.Connection, scope: Scope, job_id: int) -> dict[str, str]:
+def one(conn: Connection, scope: Scope, job_id: int) -> dict[str, str]:
     return get_job(conn, scope, job_id)

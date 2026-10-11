@@ -17,7 +17,6 @@ it patches the action and drives both paths through it.
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 from unittest.mock import patch
 
@@ -25,6 +24,7 @@ import pytest
 from conftest import auth
 from fastapi.testclient import TestClient
 
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.tracker.actions import STATUS_BY_VERB, TrackerActionError, change_status, rescore
 from harrier.tracker.store import add_job, get_job
@@ -622,7 +622,7 @@ def test_a_change_over_http_is_visible_to_the_cli(
     refused = client.post(f"/tracker/{job_id}/status", json={"verb": "shortlisted"}, headers=auth())
     assert refused.status_code == 409
     client.post(f"/tracker/{job_id}/status", json={"verb": "shortlist"}, headers=auth())
-    conn: sqlite3.Connection = connect()
+    conn: Connection = connect()
     assert get_job(conn, default_scope(conn), job_id)["status"] == "shortlisted"
     conn.close()
 

@@ -43,6 +43,7 @@ from harrier.academic.search import (
     policy_fingerprint,
     validate_searches,
 )
+from harrier.connection import Connection
 from harrier.db import connect, data_dir
 from harrier.digest import schedule_health_lines
 from harrier.runoutcome import all_last_success, record_success
@@ -152,7 +153,7 @@ def dataset(tmp_path: Path, items: list[dict[str, Any]], name: str = "dataset.js
     return str(path)
 
 
-def scope_for(conn: sqlite3.Connection, slug: str = SLUG) -> Scope:
+def scope_for(conn: Connection, slug: str = SLUG) -> Scope:
     return resolve_scope(conn, slug)
 
 

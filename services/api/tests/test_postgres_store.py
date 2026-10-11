@@ -20,16 +20,18 @@ from urllib.parse import unquote, unquote_plus
 import pytest
 from pg_support import TEST_URL_VARIABLE, admin_url, fresh_database
 
-from harrier.pgstore import (
-    MIGRATION_LOCK_KEY,
+from harrier.connection import (
     StoreConnectionError,
     StoreDriverMissing,
     StoreUrlError,
     StoreVersionError,
+    store_target,
+)
+from harrier.pgstore import (
+    MIGRATION_LOCK_KEY,
     migrate_postgres,
     open_postgres_store,
     postgres_connect,
-    store_target,
 )
 from harrier.tracker.schema import (
     MIGRATIONS,

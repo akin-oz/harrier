@@ -14,6 +14,7 @@ from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from harrier.connection import POSTGRES_NOT_YET, Connection, StoreUrlError, store_target
 from harrier.container import CONTAINER_NAME, running_in
 from harrier.db import (
     EXIT_DATABASE_OWNED,
@@ -30,7 +31,6 @@ from harrier.db import (
 from harrier.delegate import delegate
 from harrier.hostlease import remove_dead
 from harrier.logsetup import configure_logging
-from harrier.pgstore import POSTGRES_NOT_YET, StoreUrlError, store_target
 from harrier.profile import export_to, import_from, list_documents
 from harrier.tracker.export import export_csv
 from harrier.tracker.migrate_legacy import MigrationError, migrate
@@ -80,7 +80,7 @@ def _print_academic_summary(summary: dict[str, object]) -> None:
         print(f"run id: {run_id}")
 
 
-def _cmd_discover_academic(conn: sqlite3.Connection, scope: Scope, args: argparse.Namespace) -> int:
+def _cmd_discover_academic(conn: Connection, scope: Scope, args: argparse.Namespace) -> int:
     """Discovery on an academic track (spec 097): its own search, its own
     source, and none of the industry sources."""
     from harrier.academic.discovery import AcademicDiscoveryError, run_academic_discovery
@@ -1089,7 +1089,7 @@ def _slug(value: str) -> str:
         raise argparse.ArgumentTypeError(str(error)) from error
 
 
-def _scope(conn: sqlite3.Connection, args: argparse.Namespace) -> Scope:
+def _scope(conn: Connection, args: argparse.Namespace) -> Scope:
     """The scope this command works in: the one `--track` resolved before the
     command ran, or the default track (specs 092, 093)."""
     resolved = getattr(args, "track_scope", None)
@@ -1525,7 +1525,7 @@ def _cmd_tracks(args: argparse.Namespace) -> int:
 
 def _cmd_store(args: argparse.Namespace) -> int:
     """Migrate the store, or print its dialect and version (spec 103)."""
-    from harrier.pgstore import StoreError
+    from harrier.connection import StoreError
 
     try:
         target = store_target()
@@ -1604,8 +1604,8 @@ def _peek_sqlite_version(path: Path) -> int:
 
 
 def _store_sqlite(command: str) -> int:
+    from harrier.connection import StoreVersionError
     from harrier.db import schema_version
-    from harrier.pgstore import StoreVersionError
 
     known = _sqlite_target_version()
     before = _peek_sqlite_version(default_db_path())
@@ -1847,7 +1847,7 @@ def _cmd_reconsider(args: argparse.Namespace) -> int:
     return 0
 
 
-def _reconsider_academic(conn: sqlite3.Connection, scope: Scope, args: argparse.Namespace) -> int:
+def _reconsider_academic(conn: Connection, scope: Scope, args: argparse.Namespace) -> int:
     """`reconsider` on an academic track (spec 097): the version comes from
     the track's own search, and only its own seen state is read and cleared.
     A posting the operator rejected is never reopened."""

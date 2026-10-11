@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Annotated, Any
 
@@ -12,6 +11,7 @@ from fastapi.dependencies.utils import get_dependant
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
 
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.tracks import (
     SLUG_MAX_LENGTH,
@@ -24,7 +24,7 @@ from harrier.tracks import (
 from harrier_api.demo import demo_db_path, is_demo_mode
 
 
-def get_conn() -> Iterator[sqlite3.Connection]:
+def get_conn() -> Iterator[Connection]:
     # same_thread=False: FastAPI runs this dependency and the endpoint on
     # different threadpool threads, so sqlite3's same-thread check fires
     # intermittently under concurrent requests even though this connection
@@ -36,7 +36,7 @@ def get_conn() -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
-Conn = Annotated[sqlite3.Connection, Depends(get_conn)]
+Conn = Annotated[Connection, Depends(get_conn)]
 
 
 def get_scope(conn: Conn) -> Scope:
@@ -123,6 +123,9 @@ TRACK_REFUSAL_RESPONSES: dict[int | str, dict[str, Any]] = {
 }
 
 
+CAUSE_JOIN = "; or "
+
+
 def merge_responses(
     *sets: Mapping[int | str, Mapping[str, Any]],
 ) -> dict[int | str, dict[str, Any]]:
@@ -138,10 +141,18 @@ def merge_responses(
             if first is None:
                 merged[status] = dict(entry)
                 continue
-            known = str(first.get("description", ""))
+            models = {id(m): m for m in (first.get("model"), entry.get("model")) if m is not None}
+            if len(models) > 1:
+                # One status has one body; two different models cannot both
+                # describe it (review of PR #234).
+                raise ValueError(f"status {status} is declared with two body models")
+            # Compared as whole causes, so one whose text sits inside
+            # another's is still kept (review of PR #234).
+            causes = [part for part in str(first.get("description", "")).split(CAUSE_JOIN) if part]
             more = str(entry.get("description", ""))
-            joined = known if not more or more in known else f"{known}; or {more}"
-            merged[status] = {**first, **entry, "description": joined}
+            if more and more not in causes:
+                causes.append(more)
+            merged[status] = {**first, **entry, "description": CAUSE_JOIN.join(causes)}
     return merged
 
 
@@ -219,11 +230,21 @@ class DatabaseRoute(APIRoute):
         if depends_on_conn(path, endpoint, kwargs.get("dependencies")):
             declared.update(DATABASE_HELD_RESPONSES)
         if _track_operation(get_dependant(path=path, call=endpoint)) is not None:
-            # Merged per status: a route that already declares a 404 keeps
-            # its wording, and gains the body model if it named none, since
-            # every refusal here is the same `HTTPException` body.
+            # Merged per status. A route that declares its own 404 keeps its
+            # wording (spec 082) and gains the body model if it named none,
+            # since every refusal here is the same `HTTPException` body. A
+            # 409 is joined: the route's own causes and the track refusal are
+            # all answers the route can give, and letting the route's text
+            # replace the track's hid the track refusal on about twenty routes
+            # (review of PR #234).
             for status, entry in TRACK_REFUSAL_RESPONSES.items():
-                declared[status] = {**entry, **own.pop(status, {})}
+                mine = own.pop(status, None)
+                if mine is None:
+                    declared[status] = dict(entry)
+                elif status == 409:
+                    declared[status] = merge_responses({409: mine}, {409: entry})[409]
+                else:
+                    declared[status] = {**entry, **mine}
         if declared:
             kwargs["responses"] = {**declared, **own}
         super().__init__(path, endpoint, **kwargs)

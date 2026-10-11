@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import sqlite3
 from dataclasses import dataclass
 from typing import cast
 
+from harrier.connection import Connection
 from harrier.profile.store import owned_documents, put_documents_and_rekind
 from harrier.resume.content import (
     RESUME_DATA_KIND,
@@ -41,7 +41,7 @@ class SplitOutcome:
     lines: tuple[str, ...]
 
 
-def _names(conn: sqlite3.Connection, kind: str) -> list[str]:
+def _names(conn: Connection, kind: str) -> list[str]:
     rows = conn.execute(
         "SELECT name FROM profile_documents WHERE kind = ? ORDER BY name", (kind,)
     ).fetchall()
@@ -56,7 +56,7 @@ def _dumped(document: dict[str, object]) -> str:
     return json.dumps(document, indent=2, ensure_ascii=False) + "\n"
 
 
-def split_resume(conn: sqlite3.Connection, *, write: bool) -> SplitOutcome:
+def split_resume(conn: Connection, *, write: bool) -> SplitOutcome:
     data_names = _names(conn, RESUME_DATA_KIND)
     has_facts = bool(_names(conn, FACTS_KIND))
     has_framing = bool(_names(conn, FRAMING_KIND))

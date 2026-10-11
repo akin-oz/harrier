@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -32,6 +31,7 @@ from harrier.apply.claims import (
 )
 from harrier.apply.letters import LetterDraft
 from harrier.apply.profile import profile_text
+from harrier.connection import Connection
 from harrier.db import connect
 from harrier.profile.store import put_document
 from harrier.resume.content import load_skill_vocabulary, load_truth_sources
@@ -144,23 +144,23 @@ def answer(
     }
 
 
-def generate(db: sqlite3.Connection, role: str = ROLE) -> LetterDraft:
+def generate(db: Connection, role: str = ROLE) -> LetterDraft:
     return generate_cover_letter(db, COMPANY, role, jd_text=POSTING, scope=DEFAULT_SCOPE)
 
 
-def refusal(db: sqlite3.Connection, role: str = ROLE) -> str:
+def refusal(db: Connection, role: str = ROLE) -> str:
     with pytest.raises(ClaimCheckError) as caught:
         generate(db, role)
     return str(caught.value)
 
 
 @pytest.fixture()
-def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
+def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Connection:
     monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
     return seed(connect())
 
 
-def seed(conn: sqlite3.Connection) -> sqlite3.Connection:
+def seed(conn: Connection) -> Connection:
     """The synthetic profile, truth document and skill vocabulary these tests
     run against. Shared with test_apply_brief.py."""
     put_document(
@@ -209,7 +209,7 @@ def seed(conn: sqlite3.Connection) -> sqlite3.Connection:
 
 
 def test_a_grounded_letter_passes_every_rule(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     stub_letter(monkeypatch, letter_json())
     letter = generate(db)
@@ -217,7 +217,7 @@ def test_a_grounded_letter_passes_every_rule(
 
 
 def test_a_grounded_answer_set_passes_every_rule(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     stub_answers(monkeypatch, [answer(f"{CHECKOUT} {INVOICES}", GROUNDED_CLAIMS)])
     drafts = generate_answer_set(
@@ -235,7 +235,7 @@ def test_a_grounded_answer_set_passes_every_rule(
 
 
 def test_a_banned_phrase_refuses_and_is_not_deleted_mid_word(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`strip_banned_phrases("I leveraged caching")` returned "I d caching".
 
@@ -250,7 +250,7 @@ def test_a_banned_phrase_refuses_and_is_not_deleted_mid_word(
 
 
 def test_an_answer_with_invented_evidence_is_refused(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sentence = "I ran the payments platform team."
     claims = [*GROUNDED_CLAIMS, candidate(sentence, "Ran the payments platform team")]
@@ -260,7 +260,7 @@ def test_an_answer_with_invented_evidence_is_refused(
 
 
 def test_a_banned_phrase_refuses_the_answers(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     stub_answers(monkeypatch, [answer(f"{CHECKOUT} I am thrilled to apply.", GROUNDED_CLAIMS)])
     with pytest.raises(ClaimCheckError, match="banned phrase"):
@@ -268,7 +268,7 @@ def test_a_banned_phrase_refuses_the_answers(
 
 
 def test_a_letter_over_240_words_is_refused_not_trimmed(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     padding = " ".join(["The billing work matters to the people who use it every day."] * 22)
     stub_letter(monkeypatch, letter_json(last=f"{PARAGRAPH_THREE} {padding}"))
@@ -276,14 +276,14 @@ def test_a_letter_over_240_words_is_refused_not_trimmed(
 
 
 def test_a_stub_paragraph_refuses_instead_of_being_dropped(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     stub_letter(monkeypatch, letter_json(last="Thanks for reading."))
     assert "stub paragraph" in refusal(db)
 
 
 def test_a_fourth_paragraph_refuses_instead_of_being_dropped(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     stub_letter(
         monkeypatch,
@@ -296,7 +296,7 @@ def test_a_fourth_paragraph_refuses_instead_of_being_dropped(
 
 
 def test_a_claim_sentence_missing_from_the_letter_is_refused(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     claims = [*GROUNDED_CLAIMS, candidate("I rebuilt the search service.", CHECKOUT_EVIDENCE)]
     stub_letter(monkeypatch, letter_json(claims=claims))
@@ -304,7 +304,7 @@ def test_a_claim_sentence_missing_from_the_letter_is_refused(
 
 
 def test_a_claim_with_invented_evidence_is_refused(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sentence = "I ran the payments platform team."
     claims = [*GROUNDED_CLAIMS, candidate(sentence, "Ran the payments platform team")]
@@ -313,7 +313,7 @@ def test_a_claim_with_invented_evidence_is_refused(
 
 
 def test_evidence_from_a_disclaimer_section_does_not_verify(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sentence = "I led the migration across all services."
     claims = [
@@ -325,7 +325,7 @@ def test_evidence_from_a_disclaimer_section_does_not_verify(
 
 
 def test_evidence_only_in_the_application_profile_is_refused(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The profile is for framing. A story only there is not verified, and
     the refusal says where the text came from (spec 069)."""
@@ -341,7 +341,7 @@ def test_evidence_only_in_the_application_profile_is_refused(
 
 
 def test_employer_evidence_absent_from_the_posting_is_refused(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sentence = "Examplesoft is the market leader in invoicing."
     claims = [*GROUNDED_CLAIMS, employer(sentence, "the market leader in invoicing")]
@@ -350,7 +350,7 @@ def test_employer_evidence_absent_from_the_posting_is_refused(
 
 
 def test_a_first_person_sentence_cited_to_the_employer_is_refused(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Otherwise a posting's requirement could verify the candidate's claim."""
     sentence = "I have shipped to customers every week."
@@ -366,7 +366,7 @@ PROFILE_LINE = "Shipped the mobile app rewrite for a retail client"
 
 
 def test_posting_text_cited_as_candidate_evidence_is_named(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The observed refusal: a posting sentence labelled as the candidate's."""
     sentence = "I build invoicing tools for small firms."
@@ -378,7 +378,7 @@ def test_posting_text_cited_as_candidate_evidence_is_named(
 
 
 def test_evidence_in_neither_document_is_still_unverified(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sentence = "I ran the payments platform team."
     claims = [*GROUNDED_CLAIMS, candidate(sentence, "Ran the payments platform team")]
@@ -389,7 +389,7 @@ def test_evidence_in_neither_document_is_still_unverified(
 
 
 def test_evidence_in_the_truth_and_the_posting_passes(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Truth wins: the posting asking for it does not undo that the
     candidate did it."""
@@ -400,7 +400,7 @@ def test_evidence_in_the_truth_and_the_posting_passes(
 
 
 def test_evidence_in_the_posting_and_the_profile_gets_the_posting_message(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sentence = "I shipped the mobile app rewrite for a retail client."
     claims = [*GROUNDED_CLAIMS, candidate(sentence, PROFILE_LINE)]
@@ -415,7 +415,7 @@ def test_evidence_in_the_posting_and_the_profile_gets_the_posting_message(
 
 
 def test_the_answers_path_names_posting_text_cited_as_candidate_evidence(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sentence = "I build invoicing tools for small firms."
     claims = [*GROUNDED_CLAIMS, candidate(sentence, POSTED)]
@@ -475,14 +475,14 @@ MARKED_TRUTH = "Wrote the `sync-contract` script that bundles the **billing** sc
 MARKED_POSTING = "Examplesoft builds invoicing tools. We ship the **billing** `export` weekly."
 
 
-def with_marked_truth(db: sqlite3.Connection) -> None:
+def with_marked_truth(db: Connection) -> None:
     put_document(
         db, "resume_truth", "truth.md", "markdown", TRUTH + f"\n## Tooling\n\n{MARKED_TRUTH}\n"
     )
 
 
 def test_a_claim_quoting_a_backticked_truth_line_without_backticks_passes(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The refusal that prompted spec 068, rebuilt synthetically."""
     with_marked_truth(db)
@@ -496,7 +496,7 @@ def test_a_claim_quoting_a_backticked_truth_line_without_backticks_passes(
 
 
 def test_employer_evidence_quoted_without_markers_passes(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sentence = "Examplesoft ships the billing export weekly."
     claims = [*GROUNDED_CLAIMS, employer(sentence, "We ship the billing export weekly")]
@@ -506,7 +506,7 @@ def test_employer_evidence_quoted_without_markers_passes(
 
 
 def test_employer_evidence_absent_after_marker_removal_is_still_refused(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sentence = "Examplesoft ships the billing export daily."
     claims = [*GROUNDED_CLAIMS, employer(sentence, "We ship the billing export daily")]
@@ -516,7 +516,7 @@ def test_employer_evidence_absent_after_marker_removal_is_still_refused(
 
 
 def test_a_plain_claim_sentence_matches_output_that_carries_markers(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     claims = [candidate(CHECKOUT, CHECKOUT_EVIDENCE), *GROUNDED_CLAIMS[1:]]
     marked = "I built the **checkout flow** in TypeScript and React."
@@ -525,7 +525,7 @@ def test_a_plain_claim_sentence_matches_output_that_carries_markers(
 
 
 def test_a_marked_claim_sentence_matches_plain_output(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     marked = "I built the **checkout flow** in TypeScript and React."
     claims = [candidate(marked, CHECKOUT_EVIDENCE), *GROUNDED_CLAIMS[1:]]
@@ -537,7 +537,7 @@ def test_a_marked_claim_sentence_matches_plain_output(
 
 
 def test_a_number_absent_from_its_evidence_is_refused(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sentence = "I also cut build times by 35% in the same year."
     stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {sentence}"))
@@ -545,7 +545,7 @@ def test_a_number_absent_from_its_evidence_is_refused(
 
 
 def test_numbers_in_the_company_and_role_are_exempt(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     role = "Senior Engineer 2"
     first = f"The {role} role at Examplesoft is the kind of product work I want to do next."
@@ -554,7 +554,7 @@ def test_numbers_in_the_company_and_role_are_exempt(
 
 
 def test_mixed_tokens_and_slash_pairs_are_not_numbers(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     last = "I am happy to talk about storage on S3, OAuth2 and running a service 24/7 any time."
     stub_letter(monkeypatch, letter_json(last=last))
@@ -562,7 +562,7 @@ def test_mixed_tokens_and_slash_pairs_are_not_numbers(
 
 
 def test_a_total_rewritten_as_a_rate_is_refused(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The truth says 1,200 over a year. The letter says 1,200 a month."""
     sentence = "I processed 1,200 invoices a month with the billing service."
@@ -572,7 +572,7 @@ def test_a_total_rewritten_as_a_rate_is_refused(
 
 
 def test_a_total_rewritten_with_a_slash_suffix_is_refused(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sentence = "I processed 1,200/month invoices with the billing service."
     claims = [candidate(CHECKOUT, CHECKOUT_EVIDENCE), candidate(sentence, INVOICES_EVIDENCE)]
@@ -580,9 +580,7 @@ def test_a_total_rewritten_with_a_slash_suffix_is_refused(
     assert "number changed scope" in refusal(db)
 
 
-def test_a_rate_kept_as_a_rate_passes(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_rate_kept_as_a_rate_passes(db: Connection, monkeypatch: pytest.MonkeyPatch) -> None:
     sentence = "I handled 300 support tickets a week during the launch."
     claims = [
         *GROUNDED_CLAIMS,
@@ -593,7 +591,7 @@ def test_a_rate_kept_as_a_rate_passes(
 
 
 def test_a_percentage_without_its_sign_is_refused(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sentence = "I cut page load time by 40 on the product pages."
     claims = [
@@ -605,7 +603,7 @@ def test_a_percentage_without_its_sign_is_refused(
 
 
 def test_a_rate_is_read_from_the_line_the_evidence_was_quoted_from(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Quoting "300 support tickets" out of "300 support tickets a week"
     must not make the kept rate look like a change of scope."""
@@ -619,7 +617,7 @@ def test_a_rate_is_read_from_the_line_the_evidence_was_quoted_from(
 
 
 def test_unlabelled_synthetic_evidence_is_refused(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sentence = "I built the reporting dashboard."
     claims = [*GROUNDED_CLAIMS, candidate(sentence, "the reporting dashboard")]
@@ -628,7 +626,7 @@ def test_unlabelled_synthetic_evidence_is_refused(
 
 
 def test_labelled_synthetic_evidence_passes(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sentence = "I built a demo of the reporting dashboard on synthetic data."
     claims = [
@@ -640,7 +638,7 @@ def test_labelled_synthetic_evidence_passes(
 
 
 def test_demonstrated_is_not_a_synthetic_marker(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sentence = "I walked the finance team through the reporting dashboard."
     claims = [
@@ -654,16 +652,14 @@ def test_demonstrated_is_not_a_synthetic_marker(
 # --- C8: skills ----------------------------------------------------------------
 
 
-def test_an_unverified_skill_is_refused(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_an_unverified_skill_is_refused(db: Connection, monkeypatch: pytest.MonkeyPatch) -> None:
     last = "I would be glad to talk about the billing work and how it ran on Kubernetes."
     stub_letter(monkeypatch, letter_json(last=last))
     assert "unverified skill" in refusal(db)
 
 
 def test_an_alias_of_a_verified_skill_passes(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     last = "I would be glad to talk about the billing work and the React.js front end."
     stub_letter(monkeypatch, letter_json(last=last))
@@ -671,7 +667,7 @@ def test_an_alias_of_a_verified_skill_passes(
 
 
 def test_a_role_title_term_is_not_a_skill_claim(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     role = "Senior GraphQL Engineer"
     first = f"The {role} role at Examplesoft is the kind of product work I want to do next."
@@ -683,7 +679,7 @@ def test_a_role_title_term_is_not_a_skill_claim(
 
 
 def test_letter_claims_read_contracted_negations(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """C2 and C8 read the truth through the same gate, so a line the old
     phrase list could not see as a denial verified the claim it denies."""
@@ -707,7 +703,7 @@ def test_letter_claims_read_contracted_negations(
 
 
 def test_enforcement_language_without_evidence_is_refused(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sentence = (
         "I built the checkout flow in TypeScript and React, with types enforced at every boundary."
@@ -718,7 +714,7 @@ def test_enforcement_language_without_evidence_is_refused(
 
 
 def test_enforcement_language_with_evidence_passes(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sentence = "I added a lint rule that is enforced in CI for every pull request."
     claims = [
@@ -736,7 +732,7 @@ PLACEHOLDER = "[[TODO: one concrete example of a billing incident]]"
 
 
 def test_a_letter_with_a_placeholder_writes_markdown_and_no_pdf(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    db: Connection, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     stub_letter(monkeypatch, letter_json(last=f"{PARAGRAPH_THREE} {PLACEHOLDER}"))
     letter = generate(db)
@@ -766,7 +762,7 @@ def test_a_letter_with_a_placeholder_writes_markdown_and_no_pdf(
 
 
 def test_a_placeholder_run_removes_the_pdf_and_html_of_an_earlier_run(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    db: Connection, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The paths are per company and role, and the spec 047 artifact endpoint
     serves whatever PDF is there. Without this, a rerun that stops on a
@@ -816,7 +812,7 @@ def test_a_placeholder_run_removes_the_pdf_and_html_of_an_earlier_run(
 
 
 def test_a_bracketed_insert_is_a_placeholder_too(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    db: Connection, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     stub_letter(monkeypatch, letter_json(last=f"{PARAGRAPH_THREE} [Insert a short example here]"))
     letter = generate(db)
@@ -835,7 +831,7 @@ def test_a_bracketed_insert_is_a_placeholder_too(
 
 
 def test_cli_cover_letter_exits_3_and_names_each_placeholder(
-    db: sqlite3.Connection,
+    db: Connection,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -869,7 +865,7 @@ def test_cli_cover_letter_exits_3_and_names_each_placeholder(
 
 
 def test_every_violation_is_listed_in_one_refusal(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     invented = "I ran the payments platform team."
     numbered = "I also cut build times by 35% in the same year."
@@ -884,7 +880,7 @@ def test_every_violation_is_listed_in_one_refusal(
 
 
 def test_a_response_without_claims_fails_to_parse(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     response = json.loads(letter_json())
     del response["claims"]
@@ -894,7 +890,7 @@ def test_a_response_without_claims_fails_to_parse(
 
 
 def test_a_claim_without_evidence_fails_to_parse(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     stub_letter(monkeypatch, letter_json(claims=[{"sentence": CHECKOUT, "about": "candidate"}]))
     with pytest.raises(RuntimeError, match="failed to parse AI response"):
@@ -947,7 +943,7 @@ def passing_answers() -> str:
 
 
 def test_a_refused_letter_is_retried_once_and_the_second_draft_is_kept(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls = stub_sequence(monkeypatch, letters_module, [refused_letter(), letter_json()])
     letter = generate(db)
@@ -956,7 +952,7 @@ def test_a_refused_letter_is_retried_once_and_the_second_draft_is_kept(
 
 
 def test_a_refused_answer_set_is_retried_once_and_the_second_set_is_written(
-    db: sqlite3.Connection,
+    db: Connection,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -986,7 +982,7 @@ def test_a_refused_answer_set_is_retried_once_and_the_second_set_is_written(
 
 
 def test_the_retry_sends_the_refusals_and_the_previous_response(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     first = refused_letter()
     calls = stub_sequence(monkeypatch, letters_module, [first, letter_json()])
@@ -1003,7 +999,7 @@ def test_the_retry_sends_the_refusals_and_the_previous_response(
 
 
 def test_a_second_refusal_fails_with_its_own_violations(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     unclaimed_number = letter_json(f"{CHECKOUT} {INVOICES} {NUMBERED}")
     calls = stub_sequence(monkeypatch, letters_module, [refused_letter(), unclaimed_number])
@@ -1014,7 +1010,7 @@ def test_a_second_refusal_fails_with_its_own_violations(
 
 
 def test_cli_answers_exits_1_after_two_refusals(
-    db: sqlite3.Connection,
+    db: Connection,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -1042,7 +1038,7 @@ def test_cli_answers_exits_1_after_two_refusals(
 
 
 def test_a_passing_first_response_calls_the_model_once(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     letter_calls = stub_sequence(monkeypatch, letters_module, [letter_json(), refused_letter()])
     generate(db)
@@ -1054,9 +1050,7 @@ def test_a_passing_first_response_calls_the_model_once(
     assert len(answer_calls) == 1
 
 
-def test_a_parse_failure_is_not_retried(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_parse_failure_is_not_retried(db: Connection, monkeypatch: pytest.MonkeyPatch) -> None:
     malformed = letter_json(claims=[{"sentence": CHECKOUT, "about": "candidate"}])
     calls = stub_sequence(monkeypatch, letters_module, [malformed, letter_json()])
     with pytest.raises(RuntimeError, match="failed to parse AI response"):
@@ -1064,9 +1058,7 @@ def test_a_parse_failure_is_not_retried(
     assert len(calls) == 1
 
 
-def test_a_placeholder_is_not_retried(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_placeholder_is_not_retried(db: Connection, monkeypatch: pytest.MonkeyPatch) -> None:
     with_placeholder = answers_json(
         answer(f"{CHECKOUT} {PLACEHOLDER}", [candidate(CHECKOUT, CHECKOUT_EVIDENCE)])
     )
@@ -1079,7 +1071,7 @@ def test_a_placeholder_is_not_retried(
 
 
 def test_the_retry_logs_the_first_refusals(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    db: Connection, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     stub_sequence(monkeypatch, answers_module, [refused_answers(), passing_answers()])
     with caplog.at_level(logging.WARNING, logger=answers_module.__name__):
@@ -1098,14 +1090,14 @@ def test_the_retry_logs_the_first_refusals(
 MENTORED = "I mentored 4 engineers on the team."
 
 
-def violations(db: sqlite3.Connection) -> list[str]:
+def violations(db: Connection) -> list[str]:
     with pytest.raises(ClaimCheckError) as caught:
         generate(db)
     return caught.value.violations
 
 
 def test_a_number_refusal_names_its_sentence(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     short = f"I build product features. {MENTORED}"
     stub_letter(monkeypatch, letter_json(short=short))
@@ -1113,7 +1105,7 @@ def test_a_number_refusal_names_its_sentence(
 
 
 def test_a_scope_refusal_names_its_sentence(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sentence = "I processed 1,200 invoices a month with the billing service."
     claims = [candidate(CHECKOUT, CHECKOUT_EVIDENCE), candidate(sentence, INVOICES_EVIDENCE)]
@@ -1122,7 +1114,7 @@ def test_a_scope_refusal_names_its_sentence(
 
 
 def test_the_same_number_in_two_sentences_is_refused_in_each(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     workshops = "I ran 4 workshops for the support staff."
     stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {MENTORED} {workshops}"))
@@ -1133,14 +1125,14 @@ def test_the_same_number_in_two_sentences_is_refused_in_each(
 
 
 def test_a_sentence_in_both_letter_versions_is_refused_once(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {MENTORED}", short=MENTORED))
     assert violations(db) == [f"number without evidence: 4 (in: {MENTORED})"]
 
 
 def test_a_repeated_number_in_one_sentence_names_the_word_before_it(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`40%` and `40` are one value, so each is told apart by the word before
     it. The `3` inside `300` is not the value 3, so `3` keeps the plain form."""
@@ -1156,7 +1148,7 @@ def test_a_repeated_number_in_one_sentence_names_the_word_before_it(
 
 
 def test_a_repeated_number_that_opens_its_sentence_says_first_word(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pages = "40 product pages loaded faster once I cut load time by 40%."
     joined = "12 engineers joined the billing team after the launch."
@@ -1169,7 +1161,7 @@ def test_a_repeated_number_that_opens_its_sentence_says_first_word(
 
 
 def test_a_field_without_end_punctuation_is_its_own_sentence(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The short version and the full version are joined by a blank line. A
     short version with no end punctuation is still quoted alone."""
@@ -1179,7 +1171,7 @@ def test_a_field_without_end_punctuation_is_its_own_sentence(
 
 
 def test_the_retry_receives_the_sentence_of_a_number_refusal(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     first = letter_json(f"{CHECKOUT} {INVOICES} {MENTORED}")
     calls = stub_sequence(monkeypatch, letters_module, [first, letter_json()])
@@ -1200,7 +1192,7 @@ STACK = "Event pipelines (Kafka 3, Django)"
 
 
 def with_versions(
-    db: sqlite3.Connection,
+    db: Connection,
     *lines: str,
     disclaimed: tuple[str, ...] = (),
     verified: tuple[str, ...] = (),
@@ -1233,7 +1225,7 @@ def with_versions(
 
 
 def refused_versions(
-    db: sqlite3.Connection,
+    db: Connection,
     monkeypatch: pytest.MonkeyPatch,
     *sentences: str,
     posting: str = POSTING,
@@ -1254,7 +1246,7 @@ def unclaimed(raw: str, sentence: str) -> str:
 
 
 def test_a_version_the_truth_states_needs_no_claim(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The short version has no end punctuation, so over the joined text the
     `3` reads as a rate from the "Every" that opens the full version. Read on
@@ -1265,7 +1257,7 @@ def test_a_version_the_truth_states_needs_no_claim(
 
 
 def test_a_grounded_version_passes_in_an_answer(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     with_versions(db, PIPELINE)
     medium = f"Every billing change I shipped went through review. {CHECKOUT} {INVOICES}"
@@ -1276,16 +1268,14 @@ def test_a_grounded_version_passes_in_an_answer(
     assert drafts[0].short_answer == STACK
 
 
-def test_an_invented_version_is_refused(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_an_invented_version_is_refused(db: Connection, monkeypatch: pytest.MonkeyPatch) -> None:
     with_versions(db, PIPELINE)
     sentence = "I ran the event pipeline on Kafka 4."
     assert refused_versions(db, monkeypatch, sentence) == [unclaimed("4", sentence)]
 
 
 def test_a_version_inside_a_longer_number_is_not_grounded(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     for line in (
         "Ran the event pipeline on Kafka 30.",
@@ -1297,7 +1287,7 @@ def test_a_version_inside_a_longer_number_is_not_grounded(
 
 
 def test_a_more_precise_version_than_the_truth_is_refused(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     with_versions(db, PIPELINE)
     sentence = "I ran the event pipeline on Kafka 3.6."
@@ -1305,7 +1295,7 @@ def test_a_more_precise_version_than_the_truth_is_refused(
 
 
 def test_a_number_after_a_word_outside_the_vocabulary_still_needs_a_claim(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The spec's "led 3 squads." is also refused because a noun follows the
     number (V1.5). "Of the teams, I led 3." ends the phrase, so only the
@@ -1319,7 +1309,7 @@ def test_a_number_after_a_word_outside_the_vocabulary_still_needs_a_claim(
 
 
 def test_a_grounded_version_does_not_exempt_the_same_number_elsewhere(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     with_versions(db, PIPELINE)
     sentence = "I ran Kafka 3 and led 3 workshops."
@@ -1329,7 +1319,7 @@ def test_a_grounded_version_does_not_exempt_the_same_number_elsewhere(
 
 
 def test_a_version_with_a_rate_is_not_exempt(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     with_versions(db, PIPELINE)
     sentence = "I run Kafka 3, every week."
@@ -1337,7 +1327,7 @@ def test_a_version_with_a_rate_is_not_exempt(
 
 
 def test_a_number_followed_by_a_noun_is_not_exempt(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     with_versions(
         db,
@@ -1356,7 +1346,7 @@ def test_a_number_followed_by_a_noun_is_not_exempt(
 
 
 def test_years_after_a_version_are_not_a_version(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     with_versions(db, PIPELINE)
     ago = "I ran Kafka 3 years ago."
@@ -1370,7 +1360,7 @@ def test_years_after_a_version_are_not_a_version(
 
 
 def test_years_money_and_multipliers_after_a_term_are_not_versions(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     with_versions(
         db,
@@ -1392,7 +1382,7 @@ def test_years_money_and_multipliers_after_a_term_are_not_versions(
 
 
 def test_a_version_is_grounded_only_by_asserting_text(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Spec 087's two polarity examples, read by spec 100's gate, and the
     denied half of a line, which no version is read from."""
@@ -1409,7 +1399,7 @@ def test_a_version_is_grounded_only_by_asserting_text(
 
 
 def test_a_demo_line_does_not_ground_a_version(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     with_versions(db, "Built a demo pipeline on Kafka 3.")
     labelled = "I built a demo pipeline on Kafka 3."
@@ -1418,7 +1408,7 @@ def test_a_demo_line_does_not_ground_a_version(
 
 
 def test_only_supporting_truth_lines_ground_a_version(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     refused = [unclaimed("3", ON_KAFKA)]
 
@@ -1452,14 +1442,14 @@ def test_only_supporting_truth_lines_ground_a_version(
 
 
 def test_a_marked_term_still_names_its_version(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     with_versions(db, PIPELINE)
     assert refused_versions(db, monkeypatch, "I ran the event pipeline on **Kafka** 3.") == []
 
 
 def test_a_placeholder_between_term_and_number_breaks_the_phrase(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     with_versions(db, PIPELINE)
     sentence = "I ran the event pipeline on Kafka [[TODO: cluster]] 3."
@@ -1467,7 +1457,7 @@ def test_a_placeholder_between_term_and_number_breaks_the_phrase(
 
 
 def test_a_word_ending_in_a_term_does_not_name_a_version(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Each truth line holds the same text as the output, so only where the
     term may start decides."""
@@ -1481,7 +1471,7 @@ def test_a_word_ending_in_a_term_does_not_name_a_version(
 
 
 def test_the_term_must_be_spelled_the_same_in_the_truth(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     with_versions(db, "In spring 2 engineers joined.", "Wrote the service in go 1.")
     spring = "I moved the services to Spring 2."
@@ -1491,7 +1481,7 @@ def test_the_term_must_be_spelled_the_same_in_the_truth(
 
 
 def test_the_longest_term_names_the_version(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     with_versions(db, PIPELINE)
     sentence = "I ran the event pipeline on Apache Kafka 3."
@@ -1504,14 +1494,14 @@ IN_CODE = "I led `12` engineers on the billing team."
 
 
 def test_a_number_in_inline_code_needs_a_claim(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {IN_CODE}"))
     assert violations(db) == [f"number without evidence: 12 (in: {IN_CODE})"]
 
 
 def test_a_number_in_underscore_emphasis_needs_a_claim(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sentence = "I led _12_ engineers on the billing team."
     stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {sentence}"))
@@ -1519,7 +1509,7 @@ def test_a_number_in_underscore_emphasis_needs_a_claim(
 
 
 def test_a_claimed_number_in_inline_code_passes(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     with_versions(db, "Led 12 engineers on the billing team.")
     claims = [*GROUNDED_CLAIMS, candidate(IN_CODE, "Led 12 engineers on the billing team")]
@@ -1528,7 +1518,7 @@ def test_a_claimed_number_in_inline_code_passes(
 
 
 def test_a_rate_read_from_markup_keeps_its_scope(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The truth line holds `1,200` as a total in inline code. The claim
     cites it, so the rewrite as a rate is a change of scope, not a number
@@ -1544,7 +1534,7 @@ def test_a_rate_read_from_markup_keeps_its_scope(
 
 
 def test_a_number_in_markup_no_longer_drops_a_grounded_version(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Both readings of the line now find `3` and `2`, so the `3` the truth
     states stays exempt and the invented `2` is refused."""
@@ -1554,7 +1544,7 @@ def test_a_number_in_markup_no_longer_drops_a_grounded_version(
 
 
 def test_the_word_before_a_repeated_number_drops_its_markup(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sentence = "I ran `deploy` 3 times and `rollback` 3 times in the drill."
     stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {sentence}"))
@@ -1565,7 +1555,7 @@ def test_the_word_before_a_repeated_number_drops_its_markup(
 
 
 def test_markup_inside_a_word_does_not_make_a_number(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sentence = "I renamed retry_3 and a`12`b and 1_000 in the billing service."
     stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {sentence}"))

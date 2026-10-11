@@ -9,11 +9,11 @@ regardless of score.
 from __future__ import annotations
 
 import logging
-import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
+from harrier.connection import Connection
 from harrier.scoring.model import fit_score_for
 from harrier.screening.config import load_candidate_config
 from harrier.screening.descriptions import (
@@ -40,7 +40,7 @@ class CaptureResult:
 
 
 def add_captured_job(
-    conn: sqlite3.Connection,
+    conn: Connection,
     scope: Scope,
     *,
     company: str,
@@ -118,7 +118,7 @@ def add_captured_job(
 
 
 def _add_academic(
-    conn: sqlite3.Connection,
+    conn: Connection,
     scope: Scope,
     *,
     company: str,
