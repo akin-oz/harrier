@@ -26,6 +26,7 @@ from harrier.db import connect
 from harrier.tracker import add_job
 from harrier.tracks import (
     NON_DEFAULT_OPERATIONS,
+    WRITE_OPERATIONS,
     archive_track,
     default_scope,
     operation_refusal,
@@ -354,6 +355,12 @@ def test_every_scoped_route_declares_the_track_refusal(two_tracks: Path) -> None
     finally:
         conn.close()
     assert archived.track.archived
+    # Every write is also allowed off the default track, and the default
+    # track cannot be archived, so no operation meets both refusal rules and
+    # the order inside `operation_refusal` cannot be observed. A write only
+    # the default track may run would make that order an answer the
+    # contract has to name; this fails first (review of PR #263).
+    assert WRITE_OPERATIONS <= NON_DEFAULT_OPERATIONS
     paths = create_app().openapi()["paths"]
     claims: list[tuple[str, str, set[str]]] = []
     for method, path, operation, _ in scoped_routes():
@@ -363,8 +370,8 @@ def test_every_scoped_route_declares_the_track_refusal(two_tracks: Path) -> None
             # Any string: an unknown verb is not available, a known one is a write.
             expected = {NOT_AVAILABLE_CAUSE, ARCHIVED_CAUSE}
         else:
-            # An archived track that is not the default meets both rules, the
-            # first that applies answering, as `scope_for` does.
+            # The refusal this archived, non-default track gives, as
+            # `scope_for` gives it.
             refusal = operation_refusal(archived, operation)
             if refusal is None:
                 expected = set()
@@ -410,10 +417,24 @@ def _second_track_job_id() -> int:
     return int(row[0])
 
 
-def _jobs_snapshot() -> list[tuple[Any, ...]]:
+def _database_snapshot() -> dict[str, list[tuple[Any, ...]]]:
+    """Every row of every table, so a write anywhere shows (review of PR #263)."""
     conn = connect()
     try:
-        return [tuple(r) for r in conn.execute("SELECT * FROM jobs ORDER BY id").fetchall()]
+        tables = [
+            str(row[0])
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+                " AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            ).fetchall()
+        ]
+        return {
+            table: sorted(
+                (tuple(r) for r in conn.execute(f'SELECT * FROM "{table}"').fetchall()),
+                key=repr,
+            )
+            for table in tables
+        }
     finally:
         conn.close()
 
@@ -439,6 +460,9 @@ def test_a_read_on_an_archived_track_answers_what_its_contract_says(
         url = path.replace("{selector}", str(job_id)).replace("{kind}", "resume")
         response = client.get(url, params={"track": SLUG}, headers=auth())
         assert str(response.status_code) in responses, (path, response.status_code)
+        # With the job on this track no route's own 404 applies, so a read
+        # answers its data or a refusal, nothing else (review of PR #263).
+        assert response.status_code in (200, 409), (path, response.status_code)
         detail = str(response.json().get("detail", "")) if response.status_code == 409 else ""
         refused = any(text in detail for text in track_details)
         assert refused == bool(_track_causes(responses, "409")), (path, response.status_code)
@@ -455,7 +479,7 @@ def test_an_unknown_track_is_a_404_on_every_scoped_route(
     every scoped route answers 404 naming the slug, as its contract says,
     and changes no row (review of PR #255)."""
     paths = create_app().openapi()["paths"]
-    before = _jobs_snapshot()
+    before = _database_snapshot()
     scoped = scoped_routes()
     assert any(method != "GET" for method, _, _, _ in scoped)
     for method, path, _, _ in scoped:
@@ -474,7 +498,7 @@ def test_an_unknown_track_is_a_404_on_every_scoped_route(
         headers=auth(),
     )
     assert moved.status_code == 404
-    assert _jobs_snapshot() == before
+    assert _database_snapshot() == before
 
 
 def test_the_status_route_checks_its_verb_against_the_track(
