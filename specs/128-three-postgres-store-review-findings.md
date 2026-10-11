@@ -1,8 +1,8 @@
 ---
 spec: 128
 title: Three review findings on the Postgres store
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [035, 090, 103]
 ---
