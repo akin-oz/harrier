@@ -23,10 +23,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
-from conftest import auth
+from conftest import assert_only_provoked_causes_are_declared, assert_refusal_is_declared, auth
 from fastapi.testclient import TestClient
 
 from harrier.db import connect
@@ -350,6 +351,71 @@ def test_an_unparseable_snooze_date_is_refused_in_the_domain_s_words(
 def test_an_unknown_selector_is_refused(client: TestClient, env: Path) -> None:
     response = client.get("/outreach/98765/candidates", headers=auth())
     assert response.status_code == 404
+
+
+SELECTOR_CAUSE = "the selector named no job, or more than one"
+NOT_STAGED_CAUSE = "the candidate was never staged"
+DOMAIN_CAUSE = "the domain refused the change"
+NEVER_STAGED_URL = "https://www.linkedin.com/in/never-staged-example"
+
+# Every operation under /outreach/{selector}/: its method, its path after the
+# selector, and a body that passes the schema, so the selector is what refuses.
+OUTREACH_OPERATIONS: dict[str, tuple[str, str, dict[str, object] | None]] = {
+    "findContacts": ("post", "find-contacts", {}),
+    "listCandidates": ("get", "candidates", None),
+    "approveCandidate": ("post", "candidates/approve", {"linkedin_url": NEVER_STAGED_URL}),
+    "rejectCandidate": ("post", "candidates/reject", {"linkedin_url": NEVER_STAGED_URL}),
+    "setBestContact": ("post", "best-contact", {"linkedin_url": CANDIDATE_URL}),
+    "markOutreachSent": ("post", "sent", {}),
+    "markOutreachReplied": ("post", "replied", {}),
+    "snoozeOutreach": ("post", "snooze", {"until": "2026-12-01"}),
+    "draftOutreach": ("post", "draft", {}),
+}
+
+
+def test_every_outreach_refusal_is_one_its_contract_names(client: TestClient, job_id: int) -> None:
+    """Each outreach route's refusals, provoked, against what its contract
+    declares: every refusal is declared with `ErrorOut` and its cause, and
+    every cause the route declares itself is one of these. One shared set
+    gave five routes a domain 409 and seven a candidate 404 they never send
+    (spec 125). A prospect row is refused any outreach claim by its
+    invariants, which is the domain 409 sent and replied can meet."""
+
+    def send(operation: str, selector: int, body: dict[str, object] | None = None) -> Any:
+        method, action, default = OUTREACH_OPERATIONS[operation]
+        url = f"/outreach/{selector}/{action}"
+        if method == "get":
+            return client.get(url, headers=auth())
+        return client.post(url, json=default if body is None else body, headers=auth())
+
+    no_row = job_id + 1000
+    provoked: dict[str, list[tuple[Any, int, str]]] = {
+        operation: [(send(operation, no_row), 404, SELECTOR_CAUSE)]
+        for operation in OUTREACH_OPERATIONS
+    }
+    provoked["approveCandidate"].append((send("approveCandidate", job_id), 404, NOT_STAGED_CAUSE))
+    provoked["rejectCandidate"].append((send("rejectCandidate", job_id), 404, NOT_STAGED_CAUSE))
+    provoked["setBestContact"].append((send("setBestContact", job_id), 409, DOMAIN_CAUSE))
+    provoked["markOutreachSent"].append((send("markOutreachSent", job_id), 409, DOMAIN_CAUSE))
+    provoked["markOutreachReplied"].append((send("markOutreachReplied", job_id), 409, DOMAIN_CAUSE))
+    provoked["snoozeOutreach"].append(
+        (send("snoozeOutreach", job_id, {"until": "not a date"}), 409, DOMAIN_CAUSE)
+    )
+
+    paths = create_app().openapi()["paths"]
+    declared = {
+        operation["operationId"]: operation["responses"]
+        for path, methods in paths.items()
+        if path.startswith("/outreach/{selector}/")
+        for operation in methods.values()
+    }
+    assert set(declared) == set(OUTREACH_OPERATIONS)
+    for operation, refusals in provoked.items():
+        for response, status, cause in refusals:
+            assert_refusal_is_declared(response, declared[operation], status, cause)
+        assert_only_provoked_causes_are_declared(
+            declared[operation], {(status, cause) for _, status, cause in refusals}
+        )
 
 
 def test_no_staged_candidates_is_an_empty_list_not_an_error(

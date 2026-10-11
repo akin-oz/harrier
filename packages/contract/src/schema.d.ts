@@ -2905,15 +2905,6 @@ export interface operations {
                     "application/json": components["schemas"]["BriefOut"];
                 };
             };
-            /** @description the store refused the brief, in its words */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorOut"];
-                };
-            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -2921,7 +2912,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description no such job, or no brief stored for it; or the track parameter named no track */
+            /** @description the selector named no job, or more than one; or no brief is stored for the job; or the track parameter named no track */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -3004,7 +2995,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description no such job, or no brief stored for it; or the track parameter named no track */
+            /** @description the selector named no job, or more than one; or the track parameter named no track */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -3013,7 +3004,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description the stored brief no longer parses, in the store's words; saving a brief replaces it; or the track may not run this operation */
+            /** @description the track may not run this operation */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -5064,7 +5055,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description no job matched the selector, or the candidate was never staged; or the track parameter named no track */
+            /** @description the selector named no job, or more than one; or the track parameter named no track */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -5132,7 +5123,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description no job matched the selector, or the candidate was never staged; or the track parameter named no track */
+            /** @description the selector named no job, or more than one; or the track parameter named no track */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -5141,7 +5132,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description the domain refused the change; or the track may not run this operation */
+            /** @description the track may not run this operation */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -5204,7 +5195,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description no job matched the selector, or the candidate was never staged; or the track parameter named no track */
+            /** @description the selector named no job, or more than one; or the candidate was never staged; or the track parameter named no track */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -5213,7 +5204,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description the domain refused the change; or the track may not run this operation */
+            /** @description the track may not run this operation */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -5276,7 +5267,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description no job matched the selector, or the candidate was never staged; or the track parameter named no track */
+            /** @description the selector named no job, or more than one; or the candidate was never staged; or the track parameter named no track */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -5285,7 +5276,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description the domain refused the change; or the track may not run this operation */
+            /** @description the track may not run this operation */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -5348,7 +5339,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description no job matched the selector, or the candidate was never staged; or the track parameter named no track */
+            /** @description the selector named no job, or more than one; or the track parameter named no track */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -5357,7 +5348,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description the domain refused the change; or refused: a run of this kind is active with other options, or the request lacks its explicit field; or the track may not run this operation */
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field; or the track may not run this operation */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -5420,7 +5411,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description no job matched the selector, or the candidate was never staged; or the track parameter named no track */
+            /** @description the selector named no job, or more than one; or the track parameter named no track */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -5429,7 +5420,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description the domain refused the change; or refused: a run of this kind is active with other options, or the request lacks its explicit field; or the track may not run this operation */
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field; or the track may not run this operation */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -5492,7 +5483,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description no job matched the selector, or the candidate was never staged; or the track parameter named no track */
+            /** @description the selector named no job, or more than one; or the track parameter named no track */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -5564,7 +5555,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description no job matched the selector, or the candidate was never staged; or the track parameter named no track */
+            /** @description the selector named no job, or more than one; or the track parameter named no track */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -5636,7 +5627,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description no job matched the selector, or the candidate was never staged; or the track parameter named no track */
+            /** @description the selector named no job, or more than one; or the track parameter named no track */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -5763,6 +5754,15 @@ export interface operations {
                     "application/json": components["schemas"]["RunOut"];
                 };
             };
+            /** @description the run id names no run this server holds */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -5801,6 +5801,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description the run id names no run this server holds */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -5830,6 +5839,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunEventOut"];
+                };
+            };
+            /** @description the run id names no run this server holds */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
                 };
             };
             /** @description Validation Error */

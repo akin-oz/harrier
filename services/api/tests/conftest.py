@@ -522,3 +522,61 @@ def _api_token(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[repo
 def auth() -> dict[str, str]:
     """Headers a request from the operator's own browser would carry."""
     return {"X-Harrier-Token": TEST_TOKEN}
+
+
+# --- a refusal and the contract that declares it (spec 125) ---
+
+ERROR_OUT_SCHEMA = {"$ref": "#/components/schemas/ErrorOut"}
+# Statuses a route's own refusals never use: success, the token (spec 035),
+# the schema (FastAPI) and the host lease (spec 075).
+NOT_A_REFUSAL = frozenset({"200", "201", "403", "422", "503"})
+
+
+def own_causes(responses: dict[str, Any], status: str) -> set[str]:
+    """The causes a route declares for a status itself: its description split
+    on the route class's join, less the track causes (spec 094) and the run
+    conflict (`RUN_CONFLICT_RESPONSES`), which are declared by mechanism and
+    proved where they are defined."""
+    from harrier_api.deps import (
+        ARCHIVED_CAUSE,
+        CAUSE_JOIN,
+        NOT_AVAILABLE_CAUSE,
+        UNKNOWN_TRACK_CAUSE,
+    )
+    from harrier_api.runmodels import RUN_CONFLICT_RESPONSES
+
+    shared = {
+        UNKNOWN_TRACK_CAUSE,
+        NOT_AVAILABLE_CAUSE,
+        ARCHIVED_CAUSE,
+        str(RUN_CONFLICT_RESPONSES[409]["description"]),
+    }
+    described = str(responses.get(status, {}).get("description", ""))
+    return {cause for cause in described.split(CAUSE_JOIN) if cause and cause not in shared}
+
+
+def assert_refusal_is_declared(
+    response: Any, responses: dict[str, Any], status: int, cause: str
+) -> None:
+    """The refusal has the status and the `{"detail": str}` body, and the
+    contract declares that status with `ErrorOut` and names the cause."""
+    assert response.status_code == status, response.text
+    body = response.json()
+    assert set(body) == {"detail"}, body
+    assert isinstance(body["detail"], str) and body["detail"].strip(), body
+    entry = responses.get(str(status), {})
+    schema = entry.get("content", {}).get("application/json", {}).get("schema")
+    assert schema == ERROR_OUT_SCHEMA, f"a {status} its contract does not declare with ErrorOut"
+    assert cause in own_causes(responses, str(status)), (status, cause, entry)
+
+
+def assert_only_provoked_causes_are_declared(
+    responses: dict[str, Any], provoked: set[tuple[int, str]]
+) -> None:
+    """Every cause a route declares itself is one a refusal provoked, and the
+    other way round: a declared cause nothing sends fails here."""
+    for status in responses.keys() - NOT_A_REFUSAL:
+        expected = {cause for code, cause in provoked if str(code) == status}
+        assert own_causes(responses, status) == expected, status
+    for code, _ in provoked:
+        assert str(code) in responses, code

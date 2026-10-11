@@ -16,7 +16,7 @@ themselves. No route in this file reaches a send path, and a test asserts it.
 from __future__ import annotations
 
 import json
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -26,7 +26,7 @@ from harrier.tracker.selector import SelectorError
 from harrier.tracker.store import TrackerError
 from harrier.tracks import Scope
 from harrier.tracks import Scope as TrackScope
-from harrier_api.deps import Conn, DatabaseRoute, merge_responses, scope_for
+from harrier_api.deps import CAUSE_JOIN, Conn, DatabaseRoute, ErrorOut, merge_responses, scope_for
 from harrier_api.localauth import TOKEN_RESPONSES, require_token
 from harrier_api.runmodels import RUN_CONFLICT_RESPONSES, Manager, RunOut, run_out
 from harrier_api.runs import RunParams, write_run_input
@@ -103,11 +103,27 @@ class OutreachRowOut(BaseModel):
     best_contact_linkedin: str
 
 
-OUTREACH_ERRORS: dict[int | str, dict[str, str]] = {
-    404: {"description": "no job matched the selector, or the candidate was never staged"},
-    409: {"description": "the domain refused the change"},
+# Each route declares only what it sends (spec 125): every route here can
+# fail to resolve its selector, only approve and reject can miss a staged
+# candidate, and only the four outreach writes are refused by the domain.
+SELECTOR_CAUSE = "the selector named no job, or more than one"
+
+JOB_ERRORS: dict[int | str, dict[str, Any]] = {
+    404: {"model": ErrorOut, "description": SELECTOR_CAUSE},
     **TOKEN_RESPONSES,
 }
+
+CANDIDATE_ERRORS: dict[int | str, dict[str, Any]] = {
+    404: {
+        "model": ErrorOut,
+        "description": CAUSE_JOIN.join((SELECTOR_CAUSE, "the candidate was never staged")),
+    },
+    **TOKEN_RESPONSES,
+}
+
+OUTREACH_WRITE_ERRORS = merge_responses(
+    JOB_ERRORS, {409: {"model": ErrorOut, "description": "the domain refused the change"}}
+)
 
 
 def _job_row(conn: Connection, scope: Scope, selector: str) -> dict[str, str]:
@@ -138,7 +154,7 @@ def _row_out(row: dict[str, str]) -> OutreachRowOut:
     "/outreach/{selector}/find-contacts",
     operation_id="findContacts",
     dependencies=[Depends(require_token)],
-    responses=merge_responses(OUTREACH_ERRORS, RUN_CONFLICT_RESPONSES),
+    responses=merge_responses(JOB_ERRORS, RUN_CONFLICT_RESPONSES),
 )
 async def find_contacts(
     selector: str,
@@ -166,7 +182,7 @@ async def find_contacts(
     "/outreach/{selector}/candidates",
     operation_id="listCandidates",
     dependencies=[Depends(require_token)],
-    responses=OUTREACH_ERRORS,
+    responses=JOB_ERRORS,
 )
 def list_candidates(
     selector: str, conn: Conn, scope: Annotated[TrackScope, Depends(scope_for("contacts list"))]
@@ -196,7 +212,7 @@ def list_candidates(
     "/outreach/{selector}/candidates/approve",
     operation_id="approveCandidate",
     dependencies=[Depends(require_token)],
-    responses=OUTREACH_ERRORS,
+    responses=CANDIDATE_ERRORS,
 )
 def approve(
     selector: str,
@@ -241,7 +257,7 @@ def approve(
     "/outreach/{selector}/candidates/reject",
     operation_id="rejectCandidate",
     dependencies=[Depends(require_token)],
-    responses=OUTREACH_ERRORS,
+    responses=CANDIDATE_ERRORS,
 )
 def reject(
     selector: str,
@@ -274,7 +290,7 @@ def reject(
     "/outreach/{selector}/best-contact",
     operation_id="setBestContact",
     dependencies=[Depends(require_token)],
-    responses=OUTREACH_ERRORS,
+    responses=OUTREACH_WRITE_ERRORS,
 )
 def set_best_contact(
     selector: str,
@@ -350,7 +366,7 @@ def sync_outreach(
     "/outreach/{selector}/sent",
     operation_id="markOutreachSent",
     dependencies=[Depends(require_token)],
-    responses=OUTREACH_ERRORS,
+    responses=OUTREACH_WRITE_ERRORS,
 )
 def mark_sent(
     selector: str,
@@ -376,7 +392,7 @@ def mark_sent(
     "/outreach/{selector}/replied",
     operation_id="markOutreachReplied",
     dependencies=[Depends(require_token)],
-    responses=OUTREACH_ERRORS,
+    responses=OUTREACH_WRITE_ERRORS,
 )
 def mark_replied(
     selector: str,
@@ -399,7 +415,7 @@ def mark_replied(
     "/outreach/{selector}/snooze",
     operation_id="snoozeOutreach",
     dependencies=[Depends(require_token)],
-    responses=OUTREACH_ERRORS,
+    responses=OUTREACH_WRITE_ERRORS,
 )
 def snooze(
     selector: str,
@@ -424,7 +440,7 @@ def snooze(
     "/outreach/{selector}/draft",
     operation_id="draftOutreach",
     dependencies=[Depends(require_token)],
-    responses=merge_responses(OUTREACH_ERRORS, RUN_CONFLICT_RESPONSES),
+    responses=merge_responses(JOB_ERRORS, RUN_CONFLICT_RESPONSES),
 )
 async def draft_outreach(
     selector: str,

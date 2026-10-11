@@ -3169,16 +3169,6 @@
             },
             "description": "Successful Response"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorOut"
-                }
-              }
-            },
-            "description": "the store refused the brief, in its words"
-          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -3190,7 +3180,7 @@
                 }
               }
             },
-            "description": "no such job, or no brief stored for it; or the track parameter named no track"
+            "description": "the selector named no job, or more than one; or no brief is stored for the job; or the track parameter named no track"
           },
           "409": {
             "content": {
@@ -3302,7 +3292,7 @@
                 }
               }
             },
-            "description": "no such job, or no brief stored for it; or the track parameter named no track"
+            "description": "the selector named no job, or more than one; or the track parameter named no track"
           },
           "409": {
             "content": {
@@ -3312,7 +3302,7 @@
                 }
               }
             },
-            "description": "the stored brief no longer parses, in the store's words; saving a brief replaces it; or the track may not run this operation"
+            "description": "the track may not run this operation"
           },
           "422": {
             "content": {
@@ -5912,7 +5902,7 @@
                 }
               }
             },
-            "description": "no job matched the selector, or the candidate was never staged; or the track parameter named no track"
+            "description": "the selector named no job, or more than one; or the track parameter named no track"
           },
           "409": {
             "content": {
@@ -6008,7 +5998,7 @@
                 }
               }
             },
-            "description": "no job matched the selector, or the candidate was never staged; or the track parameter named no track"
+            "description": "the selector named no job, or more than one; or the track parameter named no track"
           },
           "409": {
             "content": {
@@ -6018,7 +6008,7 @@
                 }
               }
             },
-            "description": "the domain refused the change; or the track may not run this operation"
+            "description": "the track may not run this operation"
           },
           "422": {
             "content": {
@@ -6110,7 +6100,7 @@
                 }
               }
             },
-            "description": "no job matched the selector, or the candidate was never staged; or the track parameter named no track"
+            "description": "the selector named no job, or more than one; or the candidate was never staged; or the track parameter named no track"
           },
           "409": {
             "content": {
@@ -6120,7 +6110,7 @@
                 }
               }
             },
-            "description": "the domain refused the change; or the track may not run this operation"
+            "description": "the track may not run this operation"
           },
           "422": {
             "content": {
@@ -6211,7 +6201,7 @@
                 }
               }
             },
-            "description": "no job matched the selector, or the candidate was never staged; or the track parameter named no track"
+            "description": "the selector named no job, or more than one; or the candidate was never staged; or the track parameter named no track"
           },
           "409": {
             "content": {
@@ -6221,7 +6211,7 @@
                 }
               }
             },
-            "description": "the domain refused the change; or the track may not run this operation"
+            "description": "the track may not run this operation"
           },
           "422": {
             "content": {
@@ -6313,7 +6303,7 @@
                 }
               }
             },
-            "description": "no job matched the selector, or the candidate was never staged; or the track parameter named no track"
+            "description": "the selector named no job, or more than one; or the track parameter named no track"
           },
           "409": {
             "content": {
@@ -6323,7 +6313,7 @@
                 }
               }
             },
-            "description": "the domain refused the change; or refused: a run of this kind is active with other options, or the request lacks its explicit field; or the track may not run this operation"
+            "description": "refused: a run of this kind is active with other options, or the request lacks its explicit field; or the track may not run this operation"
           },
           "422": {
             "content": {
@@ -6415,7 +6405,7 @@
                 }
               }
             },
-            "description": "no job matched the selector, or the candidate was never staged; or the track parameter named no track"
+            "description": "the selector named no job, or more than one; or the track parameter named no track"
           },
           "409": {
             "content": {
@@ -6425,7 +6415,7 @@
                 }
               }
             },
-            "description": "the domain refused the change; or refused: a run of this kind is active with other options, or the request lacks its explicit field; or the track may not run this operation"
+            "description": "refused: a run of this kind is active with other options, or the request lacks its explicit field; or the track may not run this operation"
           },
           "422": {
             "content": {
@@ -6516,7 +6506,7 @@
                 }
               }
             },
-            "description": "no job matched the selector, or the candidate was never staged; or the track parameter named no track"
+            "description": "the selector named no job, or more than one; or the track parameter named no track"
           },
           "409": {
             "content": {
@@ -6618,7 +6608,7 @@
                 }
               }
             },
-            "description": "no job matched the selector, or the candidate was never staged; or the track parameter named no track"
+            "description": "the selector named no job, or more than one; or the track parameter named no track"
           },
           "409": {
             "content": {
@@ -6719,7 +6709,7 @@
                 }
               }
             },
-            "description": "no job matched the selector, or the candidate was never staged; or the track parameter named no track"
+            "description": "the selector named no job, or more than one; or the track parameter named no track"
           },
           "409": {
             "content": {
@@ -6851,6 +6841,16 @@
             },
             "description": "Successful Response"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the run id names no run this server holds"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -6893,6 +6893,16 @@
           "403": {
             "description": "missing or wrong local API token"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the run id names no run this server holds"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -6931,6 +6941,16 @@
               }
             },
             "description": "SSE stream; each message's data field is a RunEventOut JSON payload."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the run id names no run this server holds"
           },
           "422": {
             "content": {
