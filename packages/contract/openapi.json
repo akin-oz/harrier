@@ -957,6 +957,306 @@
         "title": "DraftIn",
         "type": "object"
       },
+      "EligibilityEntryOut": {
+        "description": "One recorded assessment, as written (spec 122).",
+        "properties": {
+          "at": {
+            "title": "At",
+            "type": "string"
+          },
+          "checked_at": {
+            "title": "Checked At",
+            "type": "string"
+          },
+          "description_sha256": {
+            "title": "Description Sha256",
+            "type": "string"
+          },
+          "evidence_url": {
+            "title": "Evidence Url",
+            "type": "string"
+          },
+          "excerpt": {
+            "title": "Excerpt",
+            "type": "string"
+          },
+          "field": {
+            "enum": [
+              "",
+              "title",
+              "location",
+              "description",
+              "external"
+            ],
+            "title": "Field",
+            "type": "string"
+          },
+          "matched": {
+            "title": "Matched",
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "rule",
+              "candidate"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "routes": {
+            "items": {
+              "enum": [
+                "employee",
+                "contractor",
+                "eor",
+                "relocation"
+              ],
+              "type": "string"
+            },
+            "title": "Routes",
+            "type": "array"
+          },
+          "verdict": {
+            "enum": [
+              "confirmed",
+              "possible",
+              "unknown",
+              "excluded"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "verdict",
+          "routes",
+          "origin",
+          "evidence_url",
+          "excerpt",
+          "field",
+          "matched",
+          "checked_at",
+          "version",
+          "description_sha256",
+          "at"
+        ],
+        "title": "EligibilityEntryOut",
+        "type": "object"
+      },
+      "EligibilityOut": {
+        "description": "What a row reads about T\u00fcrkiye (spec 122). `verdict` is geography\nonly and `routes` engagement only. `origin` is `none` for a row with no\nassessment, which reads `unknown`. `disagrees` is true when the current\nassessment is the candidate's and the rules' latest differs from it in\nverdict or routes; nothing else follows from it.",
+        "properties": {
+          "checked_at": {
+            "title": "Checked At",
+            "type": "string"
+          },
+          "description_sha256": {
+            "title": "Description Sha256",
+            "type": "string"
+          },
+          "disagrees": {
+            "title": "Disagrees",
+            "type": "boolean"
+          },
+          "evidence_url": {
+            "title": "Evidence Url",
+            "type": "string"
+          },
+          "excerpt": {
+            "title": "Excerpt",
+            "type": "string"
+          },
+          "field": {
+            "enum": [
+              "",
+              "title",
+              "location",
+              "description",
+              "external"
+            ],
+            "title": "Field",
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "rule",
+              "candidate",
+              "none"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "routes": {
+            "items": {
+              "enum": [
+                "employee",
+                "contractor",
+                "eor",
+                "relocation"
+              ],
+              "type": "string"
+            },
+            "title": "Routes",
+            "type": "array"
+          },
+          "verdict": {
+            "enum": [
+              "confirmed",
+              "possible",
+              "unknown",
+              "excluded"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "verdict",
+          "routes",
+          "origin",
+          "evidence_url",
+          "excerpt",
+          "field",
+          "checked_at",
+          "version",
+          "description_sha256",
+          "disagrees"
+        ],
+        "title": "EligibilityOut",
+        "type": "object"
+      },
+      "EligibilityReassessIn": {
+        "description": "Report by default; `apply` writes, as a second, separate request.",
+        "properties": {
+          "apply": {
+            "default": false,
+            "title": "Apply",
+            "type": "boolean"
+          }
+        },
+        "title": "EligibilityReassessIn",
+        "type": "object"
+      },
+      "EligibilityReassessOut": {
+        "description": "Counts only, never an excerpt (spec 122).",
+        "properties": {
+          "applied": {
+            "title": "Applied",
+            "type": "boolean"
+          },
+          "assessed": {
+            "title": "Assessed",
+            "type": "integer"
+          },
+          "by_verdict": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Verdict",
+            "type": "object"
+          },
+          "disagrees": {
+            "title": "Disagrees",
+            "type": "integer"
+          },
+          "examined": {
+            "title": "Examined",
+            "type": "integer"
+          },
+          "no_description": {
+            "title": "No Description",
+            "type": "integer"
+          },
+          "rejected_skipped": {
+            "title": "Rejected Skipped",
+            "type": "integer"
+          },
+          "unchanged": {
+            "title": "Unchanged",
+            "type": "integer"
+          },
+          "under_candidate": {
+            "title": "Under Candidate",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "applied",
+          "examined",
+          "assessed",
+          "unchanged",
+          "under_candidate",
+          "disagrees",
+          "rejected_skipped",
+          "no_description",
+          "by_verdict"
+        ],
+        "title": "EligibilityReassessOut",
+        "type": "object"
+      },
+      "EligibilitySetIn": {
+        "description": "The candidate's own assessment. `confirmed` and `excluded` need the\nURL the evidence was read at and the words that decide it. `checked_at`\nis a date or a UTC time; now when omitted.",
+        "properties": {
+          "checked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At"
+          },
+          "evidence_url": {
+            "default": "",
+            "title": "Evidence Url",
+            "type": "string"
+          },
+          "excerpt": {
+            "default": "",
+            "title": "Excerpt",
+            "type": "string"
+          },
+          "routes": {
+            "default": [],
+            "items": {
+              "enum": [
+                "employee",
+                "contractor",
+                "eor",
+                "relocation"
+              ],
+              "type": "string"
+            },
+            "title": "Routes",
+            "type": "array"
+          },
+          "verdict": {
+            "enum": [
+              "confirmed",
+              "possible",
+              "unknown",
+              "excluded"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "verdict"
+        ],
+        "title": "EligibilitySetIn",
+        "type": "object"
+      },
       "ErrorOut": {
         "description": "The body of a refusal: the message the domain wrote, verbatim.",
         "properties": {
@@ -1433,6 +1733,9 @@
             "title": "Deadline Passed",
             "type": "boolean"
           },
+          "eligibility": {
+            "$ref": "#/components/schemas/EligibilityOut"
+          },
           "external_key": {
             "title": "External Key",
             "type": "string"
@@ -1567,7 +1870,8 @@
           "updated_at",
           "track",
           "deadline",
-          "deadline_passed"
+          "deadline_passed",
+          "eligibility"
         ],
         "title": "JobOut",
         "type": "object"
@@ -4530,6 +4834,101 @@
         "summary": "Run Discover"
       }
     },
+    "/ops/eligibility-reassess": {
+      "post": {
+        "description": "`eligibility reassess`: the same function the CLI calls. The rules\nrun again on open rows with a stored description; nothing is written\nwithout `apply`.",
+        "operationId": "reassessEligibility",
+        "parameters": [
+          {
+            "description": "The search track to work in; the default track when omitted.",
+            "in": "query",
+            "name": "track",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9-]{0,31}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The search track to work in; the default track when omitted.",
+              "title": "Track"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EligibilityReassessIn",
+                "default": {
+                  "apply": false
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EligibilityReassessOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track parameter named no track"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track may not run this operation, or it is archived"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
+          }
+        },
+        "summary": "Reassess Job Eligibility"
+      }
+    },
     "/ops/evaluate-prospects": {
       "post": {
         "description": "`evaluate-prospects` as a run: it calls a model per prospect.",
@@ -7042,6 +7441,199 @@
           }
         },
         "summary": "List Queue"
+      }
+    },
+    "/tracker/{selector}/eligibility": {
+      "get": {
+        "description": "`eligibility show`: a job's assessments, newest first.",
+        "operationId": "listJobEligibility",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The search track to work in; the default track when omitted.",
+            "in": "query",
+            "name": "track",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9-]{0,31}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The search track to work in; the default track when omitted.",
+              "title": "Track"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/EligibilityEntryOut"
+                  },
+                  "title": "Response Listjobeligibility",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the selector named no job, or more than one"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track may not run this operation, or it is archived"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
+          }
+        },
+        "summary": "List Job Eligibility"
+      },
+      "post": {
+        "description": "`eligibility set`: the same function the CLI calls. It stays the row's\ncurrent assessment until the candidate records another.",
+        "operationId": "setJobEligibility",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The search track to work in; the default track when omitted.",
+            "in": "query",
+            "name": "track",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9-]{0,31}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The search track to work in; the default track when omitted.",
+              "title": "Track"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EligibilitySetIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EligibilityOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "missing or wrong local API token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the selector named no job, or more than one"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the tracker refused the change; or the track may not run this operation, or it is archived"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075)."
+          }
+        },
+        "summary": "Set Job Eligibility"
       }
     },
     "/tracker/{selector}/events": {

@@ -191,9 +191,9 @@ def _run_source(
 
     persisted = 0
     if not dry_run:
-        for row in result.new_tracker_rows:
+        for row, eligibility in zip(result.new_tracker_rows, result.new_eligibility, strict=True):
             try:
-                add_job(conn, row, scope=scope)
+                add_job(conn, row, scope=scope, eligibility=eligibility)
                 persisted += 1
             except DuplicateJobError:
                 # The screen already deduped; a race with a concurrent add is

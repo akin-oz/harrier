@@ -20,6 +20,7 @@ from harrier.screening.descriptions import (
     enrich_job_description_for_scoring,
     save_description_cache,
 )
+from harrier.screening.eligibility import assess_eligibility
 from harrier.screening.normalized import make_normalized_job, normalize
 from harrier.screening.pipeline import build_tracker_row
 from harrier.tracker import DuplicateJobError, add_job
@@ -99,7 +100,9 @@ def add_captured_job(
         row["deadline"] = deadline.strip()
 
     try:
-        add_job(conn, row, scope=scope)
+        # Judged from whatever text was given; with no description that is
+        # usually `unknown` (spec 122).
+        add_job(conn, row, scope=scope, eligibility=assess_eligibility(job))
     except DuplicateJobError:
         return CaptureResult(status="duplicate", message=f"Already in tracker: {company}: {title}")
 

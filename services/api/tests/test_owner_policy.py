@@ -46,6 +46,7 @@ from harrier.tracker import schema
 from harrier.tracker.schema import (
     GLOBAL_ID_TABLES,
     MIGRATION_10_NEEDS_AUTH,
+    MIGRATION_10_OWNED_TABLES,
     MIGRATION_13_TENANT_HAS_A_ROLE,
     MIGRATION_14_TENANT_IS_A_SUPERUSER,
     MIGRATIONS,
@@ -85,6 +86,7 @@ EXPECTED_GRANTS: dict[str, frozenset[str]] = {
     ),
     "job_runs": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),
     "job_events": frozenset({"SELECT"}),
+    "job_eligibility": frozenset({"SELECT"}),
     "tracks": frozenset({"SELECT", "INSERT", "UPDATE"}),
     "schema_version": frozenset({"SELECT"}),
 }
@@ -98,6 +100,7 @@ EXPECTED_COLUMN_GRANTS: dict[str, frozenset[str]] = {
         frozenset({"INSERT", "UPDATE"}),
     ),
     "job_events": frozenset({"INSERT"}),
+    "job_eligibility": frozenset({"INSERT"}),
 }
 
 # Roles that must hold nothing on any harrier table, column or sequence.
@@ -126,10 +129,20 @@ DEFAULT_ACL_KINDS = {
     "n": "schemas",
 }
 
+# The tables that name a job of their owner, filled in by `values_for`, and
+# that the tenant role may only read and insert: both are append-only.
+JOB_HISTORY_TABLES = frozenset({"job_events", "job_eligibility"})
+
 # The columns each owned table requires, with synthetic values. A job
-# event also names a job of its owner, filled in by `values_for`.
+# event or assessment also names a job of its owner, filled in by
+# `values_for`.
 REQUIRED: dict[str, dict[str, object]] = {
     "job_events": {"kind": "created", "actor": "system", "to_status": "prospect"},
+    "job_eligibility": {
+        "verdict": "unknown",
+        "checked_at": "2026-10-11T00:00:00Z",
+        "origin": "rule",
+    },
     "jobs": {},
     "contacts": {},
     "profile_documents": {"kind": "truth", "name": "synthetic"},
@@ -161,7 +174,7 @@ def store(store_url: str) -> Iterator[PgConnection]:
 
 def values_for(table: str, job_id: int | None = None) -> dict[str, object]:
     values = dict(REQUIRED[table])
-    if table == "job_events":
+    if table in JOB_HISTORY_TABLES:
         values["job_id"] = job_id
     return values
 
@@ -303,7 +316,7 @@ def test_migration_10_needs_supabase_auth(
         assert owner_columns == (0,)
 
 
-@pytest.mark.parametrize("table", OWNED_TABLES)
+@pytest.mark.parametrize("table", MIGRATION_10_OWNED_TABLES)
 def test_migration_10_refuses_ownerless_rows(table: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """A store at version 9 holding a row nobody owns stays at version 9.
     The seeded track 1 alone is not such a row: every other test migrates
@@ -1046,7 +1059,10 @@ def test_owner_a_reads_nothing_of_owner_b(store: PgConnection) -> None:
     before = snapshot(store)
     # Refused by a missing grant before the policy is reached; every other
     # update and delete runs and finds nothing of B's.
-    not_granted = {("job_events", "UPDATE"), ("job_events", "DELETE"), ("tracks", "DELETE")}
+    not_granted = {
+        *((table, verb) for table in JOB_HISTORY_TABLES for verb in ("UPDATE", "DELETE")),
+        ("tracks", "DELETE"),
+    }
 
     with as_owner(store, a):
         for table in OWNED_TABLES:
@@ -1091,11 +1107,11 @@ def test_owner_a_cannot_write_as_owner_b(store: PgConnection) -> None:
 
             error = refusal(store, f"UPDATE {table} SET owner_id = %s", (b,))
             assert error.sqlstate == INSUFFICIENT_PRIVILEGE, table
-            # job_events has no UPDATE grant, so the update is refused
-            # before the policy is asked.
+            # job_events and job_eligibility have no UPDATE grant, so the
+            # update is refused before the policy is asked.
             assert error.diag.message_primary == (
-                "permission denied for table job_events"
-                if table == "job_events"
+                f"permission denied for table {table}"
+                if table in JOB_HISTORY_TABLES
                 else f'new row violates row-level security policy for table "{table}"'
             )
 
@@ -1619,6 +1635,7 @@ def test_a_bypassrls_role_sees_every_owner(store: PgConnection) -> None:
     ("statement", "message"),
     [
         ("TRUNCATE job_events", "job_events is append-only"),
+        ("TRUNCATE job_eligibility", "job_eligibility is append-only"),
         ("TRUNCATE tracks CASCADE", "tracks are archived, never deleted"),
     ],
 )

@@ -14,14 +14,16 @@ bug in one of them rather than a design decision nobody wrote down.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import date
+from collections import Counter
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime
 
 from harrier.capture import CaptureResult, add_captured_job
 from harrier.connection import Connection
 from harrier.scoring.model import fit_score_for
 from harrier.screening.config import load_candidate_config
 from harrier.screening.descriptions import load_cached_description
+from harrier.screening.eligibility import assess_eligibility
 from harrier.screening.normalized import make_normalized_job
 from harrier.tracker.queue import UNDECIDED_STATUSES, rank_for, status_counts
 from harrier.tracker.reasons import (
@@ -37,9 +39,13 @@ from harrier.tracker.reasons import (
 from harrier.tracker.score import score_fields, stored_score
 from harrier.tracker.selector import resolve_selector
 from harrier.tracker.store import (
+    EligibilityAssessment,
+    EligibilityView,
     company_has_responded,
+    eligibility_views,
     get_job,
     list_jobs,
+    record_eligibility,
     set_status,
     update_fields,
 )
@@ -273,6 +279,148 @@ def rescore(conn: Connection, scope: Scope, selector: str) -> RescoreResult:
         conn, scope, int(job["id"]), score_fields(fit.score, fit.reasons, fit.version)
     )
     return RescoreResult(job=updated, previous=previous, current=fit.score)
+
+
+# --- eligibility (spec 122) ----------------------------------------------------
+
+
+def _refuse_academic(scope: Scope, operation: str) -> None:
+    """Eligibility is the industry kind's: an academic track's region scope
+    is its search entry's `countries` (spec 097)."""
+    if rules_for(scope.track.kind).screening == "academic":
+        raise TrackerActionError(f"{operation} is not available on track {scope.track.slug}")
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC).replace(microsecond=0)
+
+
+def _checked_at(value: str | None) -> str:
+    """`value` as a UTC instant: a date is its midnight, an instant is kept,
+    nothing is now. A time after now is refused."""
+    now = _utc_now()
+    if value is None or not value.strip():
+        return now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    text = value.strip()
+    try:
+        if len(text) == 10:
+            when = datetime.combine(date.fromisoformat(text), datetime.min.time(), UTC)
+        else:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                raise ValueError(text)
+            when = parsed.astimezone(UTC)
+    except ValueError as error:
+        raise TrackerActionError(
+            f"checked_at must be a date or a UTC time like 2026-10-11T09:30:00Z, got {text!r}"
+        ) from error
+    if when > now:
+        raise TrackerActionError(f"checked_at {text} is in the future")
+    return when.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def set_eligibility(
+    conn: Connection,
+    scope: Scope,
+    selector: str,
+    *,
+    verdict: str,
+    routes: tuple[str, ...] = (),
+    evidence_url: str = "",
+    excerpt: str = "",
+    checked_at: str | None = None,
+) -> EligibilityView:
+    """The candidate's own assessment of one job (spec 122). It stays the
+    row's current one until the candidate records another; a later rule
+    assessment is recorded beside it and never replaces it.
+
+    It changes no status, rejection reason, next action or event.
+    """
+    _refuse_academic(scope, "eligibility set")
+    job = resolve_selector(conn, scope, selector)
+    url = evidence_url.strip()
+    if not url:
+        field_name = ""
+    elif url == job["url"].strip():
+        field_name = "description"
+    else:
+        field_name = "external"
+    assessment = EligibilityAssessment(
+        verdict=verdict,
+        routes=tuple(dict.fromkeys(routes)),
+        evidence_url=url,
+        excerpt=" ".join(excerpt.split()),
+        field=field_name,
+        checked_at=_checked_at(checked_at),
+        origin="candidate",
+    )
+    return record_eligibility(conn, scope, int(job["id"]), assessment)
+
+
+@dataclass
+class ReassessReport:
+    """What `eligibility reassess` found, as counts. Never excerpts."""
+
+    applied: bool
+    examined: int = 0
+    assessed: int = 0
+    unchanged: int = 0
+    under_candidate: int = 0
+    disagrees: int = 0
+    rejected_skipped: int = 0
+    no_description: int = 0
+    by_verdict: Counter[str] = field(default_factory=Counter[str])
+
+
+def reassess_eligibility(conn: Connection, scope: Scope, *, apply: bool = False) -> ReassessReport:
+    """Run the rule assessor again on the open rows it may read (spec 122).
+
+    A row is reassessed when it is not rejected, has a cached description,
+    and has no rule assessment or one made under another version or on
+    another description. A row with a candidate assessment is reassessed
+    like any other; the candidate's stays current. Without `apply` nothing
+    is written.
+    """
+    _refuse_academic(scope, "eligibility reassess")
+    report = ReassessReport(applied=apply)
+    views = eligibility_views(conn, scope)
+    for job in list_jobs(conn, scope):
+        report.examined += 1
+        if job["status"] == "rejected":
+            report.rejected_skipped += 1
+            continue
+        description = load_cached_description(job["url"])
+        if not description:
+            report.no_description += 1
+            continue
+        assessment = assess_eligibility(
+            make_normalized_job(
+                source=job["source"] or "manual",
+                company=job["company"],
+                title=job["title"],
+                location=job["location"],
+                url=job["url"],
+                description=description,
+            )
+        )
+        view = views.get(int(job["id"]), EligibilityView(None, None))
+        latest = view.latest_rule
+        if latest is not None and (latest.version, latest.description_sha256) == (
+            assessment.version,
+            assessment.description_sha256,
+        ):
+            report.unchanged += 1
+            continue
+        report.assessed += 1
+        report.by_verdict[assessment.verdict] += 1
+        current = view.current
+        if current is not None and current.origin == "candidate":
+            report.under_candidate += 1
+            if (current.verdict, current.routes) != (assessment.verdict, assessment.routes):
+                report.disagrees += 1
+        if apply:
+            record_eligibility(conn, scope, int(job["id"]), assessment)
+    return report
 
 
 def next_up(conn: Connection, scope: Scope, limit: int | None = None) -> list[dict[str, str]]:

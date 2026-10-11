@@ -64,6 +64,16 @@ STATUSES: tuple[str, ...] = (
     "rejected",
 )
 
+# Whether a posting can engage someone based in Türkiye, and how (spec 122).
+# The verdict is geography only; the routes are engagement only. Neither is
+# a status: the lifecycle above is unchanged.
+ELIGIBILITY_VERDICTS: tuple[str, ...] = ("confirmed", "possible", "unknown", "excluded")
+ELIGIBILITY_ROUTES: tuple[str, ...] = ("employee", "contractor", "eor", "relocation")
+# Where an excerpt came from; `external` is a page other than the posting.
+ELIGIBILITY_FIELDS: tuple[str, ...] = ("title", "location", "description", "external")
+ELIGIBILITY_ORIGINS: tuple[str, ...] = ("rule", "candidate")
+ELIGIBILITY_EXCERPT_LIMIT = 300
+
 # The industry kind's next actions (old repo: scripts/jobs.py
 # NEXT_ACTION_DEFAULTS). One definition, in `harrier.tracks.KIND_RULES`, so a
 # kind's defaults and this name cannot drift (spec 093).
@@ -115,6 +125,29 @@ _ORIGINAL_NOTE_KEYS: tuple[str, ...] = (
 )
 _PROMOTED_COLUMNS = ", ".join(f"{name} TEXT NOT NULL DEFAULT ''" for name in _ORIGINAL_NOTE_KEYS)
 _CONTACT_COLUMNS = ", ".join(f"{name} TEXT NOT NULL DEFAULT ''" for name in CONTACT_FIELDS)
+
+
+def _quoted_list(values: tuple[str, ...]) -> str:
+    return ", ".join(f"'{value}'" for value in values)
+
+
+# `job_eligibility`'s columns between `job_id` and `at`, valid in both
+# dialects, so migration 15 declares them once (spec 122). Routes are a
+# `|`-joined subset of ELIGIBILITY_ROUTES; the write path holds that, since
+# neither dialect checks a set in a column cheaply.
+_ELIGIBILITY_COLUMNS = f"""
+    verdict TEXT NOT NULL CHECK (verdict IN ({_quoted_list(ELIGIBILITY_VERDICTS)})),
+    routes TEXT NOT NULL DEFAULT '',
+    evidence_url TEXT NOT NULL DEFAULT '',
+    excerpt TEXT NOT NULL DEFAULT '' CHECK (length(excerpt) <= {ELIGIBILITY_EXCERPT_LIMIT}),
+    field TEXT NOT NULL DEFAULT ''
+        CHECK (field = '' OR field IN ({_quoted_list(ELIGIBILITY_FIELDS)})),
+    matched TEXT NOT NULL DEFAULT '',
+    checked_at TEXT NOT NULL,
+    origin TEXT NOT NULL CHECK (origin IN ({_quoted_list(ELIGIBILITY_ORIGINS)})),
+    version TEXT NOT NULL DEFAULT '',
+    description_sha256 TEXT NOT NULL DEFAULT ''
+"""
 
 MIGRATIONS: list[tuple[int, list[str]]] = [
     (
@@ -457,6 +490,33 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
     # Postgres only (spec 105, second post-merge review): corrections to
     # migration 13. Empty on purpose, and declared so.
     (14, []),
+    (
+        15,
+        [
+            # Whether a posting can engage someone based in Türkiye, with the
+            # evidence (spec 122). One row per assessment, never per job: the
+            # current one is read, not stored, so a rule cannot overwrite the
+            # candidate's. Written only by the tracker write path.
+            f"""
+            CREATE TABLE job_eligibility (
+                id INTEGER PRIMARY KEY,
+                job_id INTEGER NOT NULL REFERENCES jobs(id),
+                {_ELIGIBILITY_COLUMNS},
+                at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            )
+            """,
+            "CREATE INDEX idx_job_eligibility_job ON job_eligibility(job_id, at)",
+            # Append-only in the database, as job_events is (spec 079).
+            """
+            CREATE TRIGGER job_eligibility_append_only_update BEFORE UPDATE ON job_eligibility
+            BEGIN SELECT RAISE(ABORT, 'job_eligibility is append-only'); END
+            """,
+            """
+            CREATE TRIGGER job_eligibility_append_only_delete BEFORE DELETE ON job_eligibility
+            BEGIN SELECT RAISE(ABORT, 'job_eligibility is append-only'); END
+            """,
+        ],
+    ),
 ]
 
 # --- Postgres (spec 103, ADR-013) ---
@@ -618,10 +678,14 @@ POSTGRES_BASELINE: list[str] = [
 # store to them, and `tests/test_dialect_parity.py` reads them to tell a
 # deliberate difference from drift.
 
-# Every table with an owner. The order is the order migration 10 looks for
-# ownerless rows: a table before the table it references, so a refusal names
-# the table that holds the row rather than its parent.
-OWNED_TABLES: tuple[str, ...] = (
+# The tables migration 10 gave an owner. Migration 10 is history and must
+# describe the tables as they were then, so it reads this list, not the live
+# one below: a table a later migration creates does not exist at version 10
+# (the reason `_ORIGINAL_NOTE_KEYS` exists, in another form). The order is
+# the order migration 10 looks for ownerless rows: a table before the table
+# it references, so a refusal names the table that holds the row rather
+# than its parent.
+MIGRATION_10_OWNED_TABLES: tuple[str, ...] = (
     "job_events",
     "jobs",
     "contacts",
@@ -630,6 +694,10 @@ OWNED_TABLES: tuple[str, ...] = (
     "job_runs",
     "tracks",
 )
+
+# Every table with an owner: migration 10's, and each table a later
+# migration created owned (spec 122's `job_eligibility`, migration 15).
+OWNED_TABLES: tuple[str, ...] = ("job_eligibility", *MIGRATION_10_OWNED_TABLES)
 
 # Every other table, with the reason it has no owner.
 UNOWNED_TABLES: dict[str, str] = {
@@ -735,15 +803,17 @@ _FIRST_TRACK = "1, 'job', 'industry', 'Job search'"
 # The owned tables whose id comes from one global identity sequence (spec
 # 105, Honest limitations). tracks loses its own when its id stops being an
 # identity. Since migration 13 the tenant role may not write their id, so
-# one owner cannot learn or take another's ids.
-GLOBAL_ID_TABLES: tuple[str, ...] = (
+# one owner cannot learn or take another's ids. Migrations 10 and 13 read
+# their own copy, for the reason `MIGRATION_10_OWNED_TABLES` gives.
+MIGRATION_10_GLOBAL_ID_TABLES: tuple[str, ...] = (
     "jobs",
     "contacts",
     "profile_documents",
     "user_config",
     "job_events",
 )
-_GLOBAL_ID_SEQUENCES = ", ".join(f"{table}_id_seq" for table in GLOBAL_ID_TABLES)
+GLOBAL_ID_TABLES: tuple[str, ...] = (*MIGRATION_10_GLOBAL_ID_TABLES, "job_eligibility")
+_GLOBAL_ID_SEQUENCES = ", ".join(f"{table}_id_seq" for table in MIGRATION_10_GLOBAL_ID_TABLES)
 
 
 def _sql_text(value: str) -> str:
@@ -800,7 +870,7 @@ def _refuse_ownerless_rows() -> str:
         f"THEN RAISE EXCEPTION "
         f"{_sql_text(f'migration 10 found rows in {table} with no owner; it cannot choose one')};"
         " END IF;"
-        for table in OWNED_TABLES
+        for table in MIGRATION_10_OWNED_TABLES
     )
     return f"DO $$\nBEGIN\n{checks}\nEND\n$$"
 
@@ -821,7 +891,7 @@ POSTGRES_OWNERS: list[str] = [
     *(
         f"ALTER TABLE {table} ADD COLUMN owner_id uuid NOT NULL DEFAULT auth.uid() "
         "REFERENCES auth.users (id)"
-        for table in OWNED_TABLES
+        for table in MIGRATION_10_OWNED_TABLES
     ),
     # The two references are rebuilt to carry the owner, so a row can only
     # name a row of its own owner. Dropped first: each depends on the key it
@@ -919,7 +989,7 @@ POSTGRES_OWNERS: list[str] = [
     # subjects the table owner, but not a superuser or a BYPASSRLS role.
     *(
         statement
-        for table in OWNED_TABLES
+        for table in MIGRATION_10_OWNED_TABLES
         for statement in (
             f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY",
             f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY",
@@ -938,7 +1008,10 @@ POSTGRES_OWNERS: list[str] = [
     # is all that limits it, and it gets none here. A trigger fires without
     # EXECUTE on its function, so revoking it takes nothing from a write.
     # No grant includes TRUNCATE.
-    (f"REVOKE ALL ON {', '.join(OWNED_TABLES)}, {', '.join(UNOWNED_TABLES)} FROM {_EVERY_GRANTEE}"),
+    (
+        f"REVOKE ALL ON {', '.join(MIGRATION_10_OWNED_TABLES)}, {', '.join(UNOWNED_TABLES)} "
+        f"FROM {_EVERY_GRANTEE}"
+    ),
     f"REVOKE ALL ON SEQUENCE {_GLOBAL_ID_SEQUENCES} FROM {_EVERY_GRANTEE}",
     (
         "REVOKE ALL ON FUNCTION harrier_refuse(), harrier_number_track(), harrier_new_owner() "
@@ -1053,12 +1126,12 @@ POSTGRES_OWNER_CORRECTIONS: list[str] = [
     # would learn another owner's ids from the duplicate refusal, and could
     # take the id another owner's next insert is due. The tenant role
     # writes every column but id instead of the whole table.
-    f"REVOKE INSERT, UPDATE ON {', '.join(GLOBAL_ID_TABLES)} FROM {TENANT_ROLE}",
+    f"REVOKE INSERT, UPDATE ON {', '.join(MIGRATION_10_GLOBAL_ID_TABLES)} FROM {TENANT_ROLE}",
     *(
         tenant_writes_all_but_id(
             table, ("INSERT",) if table == "job_events" else ("INSERT", "UPDATE")
         )
-        for table in GLOBAL_ID_TABLES
+        for table in MIGRATION_10_GLOBAL_ID_TABLES
     ),
     # Numbering a track. The trigger runs before the policy's check, so for
     # a row naming another owner it took that owner's lock: an owner could
@@ -1183,6 +1256,46 @@ POSTGRES_OWNER_CORRECTIONS_2: list[str] = [
     "ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC",
 ]
 
+# Spec 122: SQLite's migration 15, created owned and policed as migration 10
+# left every personal table (spec 105). The owner goes last, as migration 10's
+# ADD COLUMN put it on every other table, so the stores keep one column order.
+POSTGRES_JOB_ELIGIBILITY: list[str] = [
+    f"""
+    CREATE TABLE job_eligibility (
+        {_PG_ID},
+        job_id bigint NOT NULL,
+        {_ELIGIBILITY_COLUMNS.replace("TEXT", "text")},
+        at text NOT NULL DEFAULT {_PG_NOW_ISO},
+        owner_id uuid NOT NULL DEFAULT auth.uid() REFERENCES auth.users (id),
+        FOREIGN KEY (owner_id, job_id) REFERENCES jobs (owner_id, id)
+    )
+    """,
+    "CREATE INDEX idx_job_eligibility_job ON job_eligibility(job_id, at)",
+    "CREATE INDEX idx_job_eligibility_owner ON job_eligibility(owner_id)",
+    """
+    CREATE TRIGGER job_eligibility_append_only_update BEFORE UPDATE ON job_eligibility
+    FOR EACH ROW EXECUTE FUNCTION harrier_refuse('job_eligibility is append-only')
+    """,
+    """
+    CREATE TRIGGER job_eligibility_append_only_delete BEFORE DELETE ON job_eligibility
+    FOR EACH ROW EXECUTE FUNCTION harrier_refuse('job_eligibility is append-only')
+    """,
+    """
+    CREATE TRIGGER job_eligibility_append_only_truncate BEFORE TRUNCATE ON job_eligibility
+    FOR EACH STATEMENT EXECUTE FUNCTION harrier_refuse('job_eligibility is append-only')
+    """,
+    "ALTER TABLE job_eligibility ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE job_eligibility FORCE ROW LEVEL SECURITY",
+    f"CREATE POLICY owner_only ON job_eligibility AS PERMISSIVE FOR ALL TO {TENANT_ROLE} "
+    f"USING ({_OWNER_IS_SESSION}) WITH CHECK ({_OWNER_IS_SESSION})",
+    # Stated, never inherited: the tenant role reads, and inserts every
+    # column but the global id, as on job_events (migration 13).
+    f"REVOKE ALL ON job_eligibility FROM {_EVERY_GRANTEE}",
+    f"REVOKE ALL ON SEQUENCE job_eligibility_id_seq FROM {_EVERY_GRANTEE}",
+    f"GRANT SELECT ON job_eligibility TO {TENANT_ROLE}",
+    tenant_writes_all_but_id("job_eligibility", ("INSERT",)),
+]
+
 POSTGRES_MIGRATIONS: list[tuple[int, list[str]]] = [
     (POSTGRES_BASELINE_VERSION, POSTGRES_BASELINE),
     (10, POSTGRES_OWNERS),
@@ -1197,6 +1310,7 @@ POSTGRES_MIGRATIONS: list[tuple[int, list[str]]] = [
     ),
     (13, POSTGRES_OWNER_CORRECTIONS),
     (14, POSTGRES_OWNER_CORRECTIONS_2),
+    (15, POSTGRES_JOB_ELIGIBILITY),
 ]
 
 
