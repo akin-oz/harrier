@@ -42,7 +42,7 @@ from harrier.connection import Connection
 from harrier.demo import http_fixtures_dir
 from harrier.screening.http import USER_AGENT, fixture_body
 from harrier.sources.ashby import extract_ashby_board
-from harrier.sources.feeds import IMPORTER_KEYS, route_ats_feeds
+from harrier.sources.feeds import IMPORTER_KEYS, collapse_feeds, route_ats_feeds
 from harrier.sources.greenhouse import extract_greenhouse_token
 from harrier.sources.lever import extract_lever_api_base, extract_lever_company
 from harrier.userconfig import FEEDS, load_feed_urls, set_config
@@ -300,6 +300,9 @@ def check_feeds(
     them is about the boards.
     """
     run_probe = probe if probe is not None else probe_board
+    # Each board once (spec 124): a duplicate is neither probed twice nor
+    # reported as an unsupported host, and a prune writes the collapsed list.
+    urls = collapse_feeds(urls).kept
     grouped = route_ats_feeds(urls)
     # Importer keys only. `route_ats_feeds` now also returns the entries that
     # route nowhere, under UNROUTED, and probing those as though they were a

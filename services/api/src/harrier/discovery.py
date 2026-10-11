@@ -40,7 +40,7 @@ from harrier.sources.apify_linkedin import (
 )
 from harrier.sources.ashby import fetch_ashby_jobs
 from harrier.sources.batch_exports import load_wellfound_exports, load_wttj_exports
-from harrier.sources.feeds import UNROUTED
+from harrier.sources.feeds import DUPLICATE, UNROUTED
 from harrier.sources.greenhouse import fetch_greenhouse_jobs
 from harrier.sources.lever import fetch_lever_jobs
 from harrier.sources.remoteok import fetch_remoteok_jobs
@@ -267,6 +267,22 @@ def run_discovery(
             }
         )
 
+    # An entry naming a board already listed is fetched once, under its
+    # first spelling. Only a file watchlist can hold one: a stored list is
+    # collapsed when it is saved and when it is read (spec 124). It is not a
+    # source and not a failure, so it is recorded beside the source
+    # summaries, never among them: an unsupported host is a fault, a skipped
+    # repeat is not, and a summary with errors reads as a failed source in
+    # the Telegram line (data-integrity review of PR #270).
+    duplicates = feeds.get(DUPLICATE, [])
+    if duplicates:
+        logger.warning(
+            "%d watchlist entr%s name a board already listed and were skipped: %s",
+            len(duplicates),
+            "y" if len(duplicates) == 1 else "ies",
+            ", ".join(duplicates),
+        )
+
     for source_name, fetcher in ats_fetchers.items():
         if not _source_enabled(source_name, options.only_sources):
             continue
@@ -457,6 +473,8 @@ def run_discovery(
         # from a complete one (spec 029).
         "skipped_sources": skipped_sources,
         "source_summaries": summaries,
+        # Watchlist entries skipped as naming a board already listed (spec 124).
+        "duplicate_feeds": duplicates,
     }
     outcome = classify_run(aggregate)
     aggregate["outcome"] = {

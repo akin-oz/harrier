@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import cast
 
 from harrier.connection import Connection
-from harrier.sources.feeds import FEEDS_PATH, read_line_config
+from harrier.sources.feeds import FEEDS_PATH, collapse_feeds, read_line_config
 from harrier.userconfig.accessors import (
     DISCOVERY_PATH,
     HOLDS_PATH,
@@ -114,10 +114,17 @@ def import_config_files(conn: Connection) -> ConfigImport:
             result.skipped.append(kind)
             result.report.append(f"{kind}: no file to import, skipped")
             continue
+        dropped: list[str] = []
+        if kind == FEEDS:
+            # Each board once (spec 124). The report names what went, and the
+            # count is what was stored.
+            collapsed = collapse_feeds(cast("list[str]", values))
+            values, dropped = collapsed.kept, collapsed.lines()
         set_config(conn, kind, values)
         entry = ImportedKind(kind=kind, count=len(values), unit=ENTRIES)
         result.imported.append(entry)
         result.report.append(entry.line())
+        result.report.extend(dropped)
     settings = settings_from_file(DISCOVERY_PATH)
     if settings:
         set_config(conn, DISCOVERY, settings)

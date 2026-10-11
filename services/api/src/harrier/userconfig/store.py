@@ -159,7 +159,16 @@ def _validate(kind: str, value: object, *, on_read: bool = False) -> object:
     for item in items:
         if not isinstance(item, str):
             raise ConfigError(f"{kind} entries must be strings, got {type(item).__name__}")
-    return [item.strip() for item in cast("list[str]", items) if item.strip()]
+    trimmed = [item.strip() for item in cast("list[str]", items) if item.strip()]
+    if kind == FEEDS:
+        # Each board once, on write and on read, so a list stored before
+        # spec 124 reads collapsed with no migration. Idempotent, like the
+        # trimming above. Imported here: the routing module sits above this
+        # store.
+        from harrier.sources.feeds import collapse_feeds
+
+        return collapse_feeds(trimmed).kept
+    return trimmed
 
 
 def set_config(conn: Connection, kind: str, value: object) -> None:

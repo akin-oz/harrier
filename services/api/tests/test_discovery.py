@@ -737,3 +737,49 @@ def _feeds_with_an_unroutable_entry(*_: object, **__: object) -> dict[str, list[
         "lever": [],
         "unrouted": ["https://jobs.workable.com/example"],
     }
+
+
+# --- each board once (spec 124) ------------------------------------------------
+
+
+def test_a_duplicate_board_is_fetched_once(
+    discovery_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file watchlist naming one Greenhouse board under two hosts is
+    fetched once, and the run names the entry it skipped."""
+
+    def duplicated_feeds(conn: object = None, *, scope: str = "default") -> dict[str, list[str]]:
+        from harrier.sources.feeds import route_ats_feeds
+
+        return route_ats_feeds(
+            [
+                "https://boards.greenhouse.io/exampleco",
+                "https://job-boards.greenhouse.io/exampleco",
+            ]
+        )
+
+    fetched: list[str] = []
+
+    def fetch(url: str) -> list[NormalizedJob]:
+        fetched.append(url)
+        return [_job("greenhouse", 1)]
+
+    monkeypatch.setattr(discovery_module, "load_ats_feeds", duplicated_feeds)
+    monkeypatch.setattr(discovery_module, "fetch_greenhouse_jobs", fetch)
+    conn = connect()
+    aggregate = run_discovery(
+        conn,
+        default_scope(conn),
+        DiscoveryOptions(dry_run=True, notify=False, only_sources=frozenset({"greenhouse"})),
+    )
+    assert fetched == ["https://boards.greenhouse.io/exampleco"]
+    # Recorded beside the source summaries, not among them: a skipped repeat
+    # is not a source and not a failure, so the run's outcome, which the
+    # Telegram line reads, stays clean (data-integrity review of PR #270).
+    assert aggregate["duplicate_feeds"] == ["https://job-boards.greenhouse.io/exampleco"]
+    summaries = aggregate["source_summaries"]
+    assert isinstance(summaries, list)
+    assert [item.get("source") for item in summaries] == ["greenhouse"]
+    outcome = cast("dict[str, Any]", aggregate["outcome"])
+    assert outcome["failed"] == []
+    assert outcome["attempted"] == ["greenhouse"]

@@ -625,3 +625,21 @@ def test_a_spent_budget_reports_the_board_unreachable_not_dead() -> None:
     """A redirect loop says nothing about whether the board exists."""
     result = probe_with(TimeoutError("probe budget spent following redirects"))
     assert (result.verdict, result.status) == (UNREACHABLE, TIMEOUT)
+
+
+def test_a_duplicated_board_is_probed_once() -> None:
+    """One board under two Greenhouse hosts is probed once and reported
+    once, and the second entry is not reported as an unsupported host
+    (spec 124)."""
+    probed: list[str] = []
+
+    def probe(url: str, source: str) -> BoardHealth:
+        probed.append(url)
+        return BoardHealth(url, source, LIVE, "200")
+
+    report = check_feeds(
+        ["https://boards.greenhouse.io/acme", "https://job-boards.greenhouse.io/acme"],
+        probe=probe,
+    )
+    assert probed == ["https://boards.greenhouse.io/acme"]
+    assert [item.url for item in report.results] == ["https://boards.greenhouse.io/acme"]
