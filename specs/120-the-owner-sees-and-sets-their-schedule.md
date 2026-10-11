@@ -1,8 +1,8 @@
 ---
 spec: 120
 title: The owner sees and sets their schedule
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [108, 114]
 ---
