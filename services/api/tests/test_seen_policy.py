@@ -457,18 +457,22 @@ def test_a_rejected_row_is_protected_under_the_key_discovery_records(
     assert set(load_seen("greenhouse")) == {job["job_key"]}
 
 
-def test_a_board_cut_short_in_notes_is_still_matched(db: Connection, cfg: dict[str, Any]) -> None:
+@pytest.mark.parametrize("company", ["Smith; Jones LLP", "Smith ;Jones LLP"])
+def test_a_board_cut_short_in_notes_is_still_matched(
+    db: Connection, cfg: dict[str, Any], company: str
+) -> None:
     """LinkedIn takes the board from the company name, and notes end a value
-    at `;`, so the stored label reads `apify_linkedin:smith`. The company
-    column is whole, so the key is still rebuilt."""
+    at `;` and drop the space before it, so the stored label reads
+    `apify_linkedin:smith`. The company column is whole, so the key is still
+    rebuilt."""
     job = make_normalized_job(
         source="apify_linkedin",
-        company="Smith; Jones LLP",
+        company=company,
         title="Senior Frontend Engineer",
         location="Remote, Europe",
         url="https://www.linkedin.com/jobs/view/4001",
         external_id="4001",
-        board_key="Smith; Jones LLP",
+        board_key=company,
     )
     job_id = add_job(db, build_tracker_row(job, 80, []), scope=default_scope(db))
     set_status(db, default_scope(db), job_id, "rejected")
