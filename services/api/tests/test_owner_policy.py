@@ -6,8 +6,9 @@ gives every owner a track 1. These tests prove it on plain Postgres with the
 shim from `tests/pg_support.py` standing in for Supabase's auth objects.
 
 Policed statements run as the tenant role through `as_owner`, never as the
-superuser the tests connect as: a superuser bypasses row security whatever
-FORCE says, so a test run as one would prove nothing about the policy.
+migrating role the tests connect as (`harrier_migrator`, spec 115): it has
+BYPASSRLS, which skips row security whatever FORCE says, so a test run as
+it would prove nothing about the policy.
 Owners are random UUIDs; no personal data is involved.
 
 The SQLite test runs everywhere. The Postgres tests need a server and skip
@@ -25,10 +26,12 @@ from collections.abc import Generator, Iterator
 from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import pytest
 from pg_support import (
+    MIGRATOR_ROLE,
     SHIM_ROLES,
     SHIM_STATEMENTS,
     as_owner,
@@ -37,11 +40,13 @@ from pg_support import (
     fresh_database,
     install_shim,
     new_owner,
+    non_superuser_migrator_problems,
+    superuser_url,
 )
 
 from harrier.connection import URL_VARIABLE, StoreMigrationRefused
 from harrier.db import connect, schema_version
-from harrier.pgstore import migrate_postgres
+from harrier.pgstore import migrate_postgres, postgres_version, target_version
 from harrier.tracker import schema
 from harrier.tracker.schema import (
     GLOBAL_ID_TABLES,
@@ -165,10 +170,23 @@ def store_url() -> Iterator[str]:
 
 @pytest.fixture
 def store(store_url: str) -> Iterator[PgConnection]:
-    """A superuser connection to `store_url`, in autocommit."""
+    """A connection to `store_url` as the role that migrated it, in
+    autocommit: `harrier_migrator`, not a superuser, which bypasses row
+    security as Supabase's postgres does (spec 115)."""
     import psycopg
 
     with psycopg.connect(store_url, autocommit=True) as conn:
+        yield conn
+
+
+@pytest.fixture
+def superuser(store_url: str) -> Iterator[PgConnection]:
+    """The test server's superuser on `store_url`'s database, in autocommit,
+    for the tests that give the tenant role SUPERUSER, which only a
+    superuser may."""
+    import psycopg
+
+    with psycopg.connect(superuser_url(store_url), autocommit=True) as conn:
         yield conn
 
 
@@ -220,7 +238,7 @@ def refusal(conn: PgConnection, statement: str, params: tuple[object, ...] = ())
 
 
 def snapshot(conn: PgConnection) -> dict[str, list[tuple[Any, ...]]]:
-    """Every owned table's rows, as the superuser sees them."""
+    """Every owned table's rows, as the migrating role sees them."""
     return {
         table: sorted(
             conn.execute(f"SELECT * FROM {table}".encode()).fetchall(), key=lambda row: repr(row)
@@ -529,14 +547,16 @@ def test_migration_13_resets_the_tenant_roles_attributes(monkeypatch: pytest.Mon
     someone made first keeps whatever it has. Migration 13 sets it back.
     The role belongs to the whole server: the bad attributes live inside a
     transaction that is rolled back, so no other database or test sees
-    them, and the real role is checked unchanged afterwards."""
+    them, and the real role is checked unchanged afterwards. Run as the
+    superuser: only one may give a role SUPERUSER, and migration 13's single
+    ALTER names it."""
     import psycopg
 
     none = (False,) * len(TENANT_ATTRIBUTES)
     every = " ".join(attribute for _, attribute in TENANT_ATTRIBUTES)
     with fresh_database() as url:
         migrate_to(url, 11, monkeypatch)
-        with psycopg.connect(url, autocommit=True) as conn:
+        with psycopg.connect(superuser_url(url), autocommit=True) as conn:
             assert tenant_attributes(conn) == none
             with conn.transaction(force_rollback=True):
                 conn.execute(f"ALTER ROLE {TENANT_ROLE} {every}".encode())
@@ -590,22 +610,22 @@ def test_migration_14_starts_with_the_role_reset() -> None:
     ids=[attribute for _, attribute in TENANT_ATTRIBUTES],
 )
 def test_migration_14_resets_each_wrong_attribute(
-    store: PgConnection, column: str, attribute: str
+    superuser: PgConnection, column: str, attribute: str
 ) -> None:
-    """One attribute wrong at a time, reset by the role the tests migrate
-    with. The role belongs to the whole server: the change lives in a
-    transaction that is rolled back."""
+    """One attribute wrong at a time, reset by a superuser migrator. The
+    role belongs to the whole server: the change lives in a transaction that
+    is rolled back."""
     none = (False,) * len(TENANT_ATTRIBUTES)
-    assert tenant_attributes(store) == none
-    with store.transaction(force_rollback=True):
-        store.execute(f"ALTER ROLE {TENANT_ROLE} {attribute}".encode())
-        wrong = tenant_attributes(store)
+    assert tenant_attributes(superuser) == none
+    with superuser.transaction(force_rollback=True):
+        superuser.execute(f"ALTER ROLE {TENANT_ROLE} {attribute}".encode())
+        wrong = tenant_attributes(superuser)
         assert [name for (name, _), has in zip(TENANT_ATTRIBUTES, wrong, strict=True) if has] == [
             column
         ]
-        store.execute(TENANT_ROLE_RESET.encode())
-        assert tenant_attributes(store) == none
-    assert tenant_attributes(store) == none
+        superuser.execute(TENANT_ROLE_RESET.encode())
+        assert tenant_attributes(superuser) == none
+    assert tenant_attributes(superuser) == none
 
 
 @contextmanager
@@ -635,33 +655,69 @@ def as_supabase_like_migrator(conn: PgConnection, wrong: str) -> Generator[None]
     ids=[attribute for column, attribute in TENANT_ATTRIBUTES if column != "rolsuper"],
 )
 def test_migration_14_resets_the_role_as_a_migrator_that_is_not_a_superuser(
-    store: PgConnection, column: str, attribute: str
+    superuser: PgConnection, column: str, attribute: str
 ) -> None:
     """Migration 13 reset the role with one ALTER naming every attribute,
     SUPERUSER among them, which a migrating role that is not a superuser may
     not name: Postgres refused it whenever any attribute was wrong (spec
     105, second post-merge review). Migration 14 alters one attribute at a
-    time."""
+    time. The superuser sets the wrong attribute and makes the migrator."""
     none = (False,) * len(TENANT_ATTRIBUTES)
-    with as_supabase_like_migrator(store, attribute):
-        store.execute(TENANT_ROLE_RESET.encode())
-        assert tenant_attributes(store) == none, column
-    assert tenant_attributes(store) == none
+    with as_supabase_like_migrator(superuser, attribute):
+        superuser.execute(TENANT_ROLE_RESET.encode())
+        assert tenant_attributes(superuser) == none, column
+    assert tenant_attributes(superuser) == none
 
 
 def test_migration_14_refuses_a_superuser_tenant_role_it_cannot_reset(
-    store: PgConnection,
+    superuser: PgConnection,
 ) -> None:
     """Only a superuser may alter a superuser. A migrating role that is not
     one is refused with a message naming the attribute, not Postgres's
     permission error."""
     import psycopg
 
-    with as_supabase_like_migrator(store, "SUPERUSER"):
-        with pytest.raises(psycopg.errors.RaiseException) as raised, store.transaction():
-            store.execute(TENANT_ROLE_RESET.encode())
+    with as_supabase_like_migrator(superuser, "SUPERUSER"):
+        with pytest.raises(psycopg.errors.RaiseException) as raised, superuser.transaction():
+            superuser.execute(TENANT_ROLE_RESET.encode())
         assert raised.value.diag.message_primary == MIGRATION_14_TENANT_IS_A_SUPERUSER
-    assert tenant_attributes(store) == (False,) * len(TENANT_ATTRIBUTES)
+    assert tenant_attributes(superuser) == (False,) * len(TENANT_ATTRIBUTES)
+
+
+# --- the migrating role (spec 115) ---
+
+
+def test_ci_migrates_as_a_non_superuser(store_url: str, store: PgConnection) -> None:
+    """Every Postgres test's store is migrated by `harrier_migrator`, shaped
+    like Supabase's postgres as spec 115's staging run found it, so a
+    migration that needs a superuser fails here as it would on Supabase.
+    `fresh_database` hands every test its URL; the store fixture migrated
+    through it."""
+    assert urlsplit(store_url).username == MIGRATOR_ROLE
+    role = store.execute(
+        "SELECT current_user, rolsuper, rolbypassrls, rolcreaterole FROM pg_roles "
+        "WHERE rolname = current_user"
+    ).fetchone()
+    assert role == (MIGRATOR_ROLE, False, True, True)
+    owners = store.execute(
+        "SELECT DISTINCT pg_get_userbyid(relowner) FROM pg_class "
+        "WHERE relnamespace = 'public'::regnamespace AND relkind = 'r'"
+    ).fetchall()
+    assert owners == [(MIGRATOR_ROLE,)]
+    assert postgres_version(store) == target_version()
+
+
+def test_the_store_migrates_to_the_target_as_a_non_superuser_migrator(
+    store: PgConnection,
+) -> None:
+    """Spec 115's A11 in CI form: migrations 13 and 14, the tenant role's
+    reset and the default privilege revokes among them, apply as the
+    non-superuser migrator, which then holds no default privilege in public
+    or global for anon, authenticated or service_role, and a function it
+    creates is executable by none of them nor by PUBLIC."""
+    current = store.execute("SELECT current_user").fetchone()
+    assert current == (MIGRATOR_ROLE,)
+    assert non_superuser_migrator_problems(store) == []
 
 
 # --- the catalog ---
@@ -929,8 +985,8 @@ def catalog_problems(conn: PgConnection) -> list[str]:
 
 def test_every_table_is_owned_or_declared(store: PgConnection) -> None:
     assert catalog_problems(store) == []
-    # FORCE is set on every owned table, though the superuser running this
-    # bypasses it (spec 105, Honest limitations).
+    # FORCE is set on every owned table, though the migrating role running
+    # this bypasses it (spec 105, Honest limitations).
     forced = store.execute(
         "SELECT relname, relforcerowsecurity FROM pg_class "
         "WHERE relnamespace = 'public'::regnamespace AND relkind = 'r'"
@@ -973,7 +1029,13 @@ def test_every_table_is_owned_or_declared(store: PgConnection) -> None:
             "CREATE UNIQUE INDEX global_url ON jobs (url)",
             "jobs: unique index global_url does not lead with owner_id",
         ),
-        ("ALTER TABLE contacts OWNER TO authenticated", "contacts: owned by authenticated"),
+        # A new owner needs CREATE on the schema unless a superuser makes
+        # the change, and the tests migrate as a role that is not one.
+        (
+            "GRANT CREATE ON SCHEMA public TO authenticated; "
+            "ALTER TABLE contacts OWNER TO authenticated",
+            "contacts: owned by authenticated",
+        ),
         ("ALTER ROLE harrier_tenant INHERIT", "harrier_tenant: has INHERIT"),
         ("GRANT authenticated TO harrier_tenant", "harrier_tenant: a member of authenticated"),
         ("GRANT CREATE ON SCHEMA public TO anon", "public: anon may CREATE"),
@@ -1240,18 +1302,22 @@ def test_an_insert_without_an_owner_is_refused(store: PgConnection) -> None:
             assert error.diag.message_primary == f"permission denied for table {table}"
 
         # As service_role given the privilege a later spec might grant, and
-        # as the superuser: both bypass the policy, and NOT NULL refuses.
+        # as the role the store connects as (the migrating role, or
+        # Supabase's postgres in staging mode, which bypass the policy
+        # without being superusers): NOT NULL refuses both. The message
+        # names the role, so a record of the run says which was refused.
         with store.transaction(force_rollback=True):
             # SELECT and UPDATE too: numbering a track reads the owner's
             # highest id and locks the owner's track 1 (migration 14).
             store.execute(f"GRANT SELECT, INSERT, UPDATE ON {table} TO service_role".encode())
             store.execute("SET LOCAL ROLE service_role")
             error = refusal(store, statement, params)
-            assert error.sqlstate == NOT_NULL, table
+            assert error.sqlstate == NOT_NULL, (table, "service_role")
             assert error.diag.column_name == "owner_id"
+        connected = store.execute("SELECT current_user").fetchone()
         error = refusal(store, statement, params)
-        assert error.sqlstate == NOT_NULL, table
-        assert error.diag.column_name == "owner_id"
+        assert error.sqlstate == NOT_NULL, (table, connected)
+        assert error.diag.column_name == "owner_id", connected
 
     assert snapshot(store) == before
 
@@ -1611,7 +1677,9 @@ def test_an_owner_files_a_job_with_the_defaults(store: PgConnection) -> None:
 
 def test_a_bypassrls_role_sees_every_owner(store: PgConnection) -> None:
     """Row security does not bind a BYPASSRLS role, FORCE or not. This is
-    why a request must never run as one (spec 104)."""
+    why a request must never run as one (spec 104). It sees both owners;
+    on a shared project (staging mode, spec 115) it also sees the owners of
+    earlier runs, so the check is that both are among those it sees."""
     a, b = new_owner(store), new_owner(store)
     fill(store, a)
     fill(store, b)
@@ -1625,7 +1693,7 @@ def test_a_bypassrls_role_sees_every_owner(store: PgConnection) -> None:
         ).fetchone()
         assert bypass == (True,)
         for table in OWNED_TABLES:
-            assert owners_seen(store, table) == {UUID(a), UUID(b)}, table
+            assert owners_seen(store, table) >= {UUID(a), UUID(b)}, table
 
 
 # --- truncate ---
@@ -1643,8 +1711,8 @@ def test_truncate_cannot_empty_events_or_tracks(
     store: PgConnection, statement: str, message: str
 ) -> None:
     """The refusal triggers on these tables are row triggers, which TRUNCATE
-    skips, so each also has a statement trigger. It refuses the superuser
-    this test runs as, which no grant can."""
+    skips, so each also has a statement trigger. It refuses the table's
+    owner, the role this test runs as, which no grant can."""
     owner = new_owner(store)
     fill(store, owner)
     before = snapshot(store)

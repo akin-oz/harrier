@@ -225,8 +225,26 @@ request until spec 104, and the domain does not run on Postgres until spec
 112, so no owner can reach their rows through harrier. A role with
 `BYPASSRLS`, such as Supabase's `service_role`, sees every owner's rows
 (`services/api/tests/test_owner_policy.py::test_a_bypassrls_role_sees_every_owner`); keeping requests off such
-a role is spec 104's. The shim is not Supabase, and a run of these tests
-against a real project is spec 110's.
+a role is spec 104's.
+
+The shim is not Supabase, so the isolation tests also ran on a real
+project: a Supabase staging project on Postgres 17.6, migrated by
+`harrier store migrate` as Supabase's own `postgres` role, on 2026-10-11
+(spec 115). `services/api/tests/test_supabase_project.py` holds one test
+per assumption spec 105 rests on and runs the isolation tests of
+`test_owner_policy.py` in staging mode, against the project instead of a
+fresh shimmed database. It skips without the project's URLs, in CI too, so
+it is a recorded check and not a gate. The run refuted one assumption: the
+migrating role cannot give `harrier_tenant` usage on schema `auth`, so a
+tenant statement that names `auth.uid()`, such as the trigger that numbers
+a new track, is refused there. Spec 115's "Amendment (staging findings)"
+records every result and the spec that owns each fix. What the run found
+is kept in CI: every Postgres test now migrates and connects as
+`harrier_migrator`, a role that is not a superuser and holds in the shim
+what `postgres` holds on the project
+(`services/api/tests/test_owner_policy.py::test_ci_migrates_as_a_non_superuser`),
+except the one grant the refuted assumption needs, which the shim keeps
+until spec 105's fix lands.
 
 No other hosted component exists yet. Specs 103 to 112 sequence the build:
 the Postgres store (103, approved), API authentication (104), row-level

@@ -1,10 +1,10 @@
 """A throwaway Postgres database per test (spec 103).
 
 The Postgres tests need a server. `HARRIER_TEST_POSTGRES_URL` names one
-whose user may create databases; each test gets its own database, dropped
-afterwards. Locally, without the URL, the tests skip and pytest's summary
-says so. In CI (`CI=true`) a missing URL or an unreachable server fails the
-run: a gate that skips in CI has not run (spec 039).
+whose user may create databases and roles; each test gets its own database,
+dropped afterwards. Locally, without the URL, the tests skip and pytest's
+summary says so. In CI (`CI=true`) a missing URL or an unreachable server
+fails the run: a gate that skips in CI has not run (spec 039).
 
 To run them locally:
 
@@ -21,6 +21,18 @@ of them.
 `as_owner` is how a test acts as one owner: the same role (harrier_tenant,
 which migration 10 creates) and claims a request's transaction will carry
 (ADR-013 decision 3, spec 104).
+
+Every store is migrated, and every test connects, as `harrier_migrator`, a
+role shaped like Supabase's `postgres` as spec 115's staging run found it:
+not a superuser, holding in the shim the auth privileges `postgres` holds on
+a real project. A migration that needs a privilege `postgres` lacks then
+fails here as it would on Supabase. The server's superuser only creates and
+drops each database and installs the shim (spec 115).
+
+Staging mode (spec 115) points the isolation tests at a real Supabase
+project instead (`tests/test_supabase_project.py`): `supabase_urls` names
+the project or skips, and `open_staging` refuses a project anyone has signed
+in to before it writes anything.
 """
 
 from __future__ import annotations
@@ -35,6 +47,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import pytest
 
+from harrier.pgstore import postgres_version, target_version
 from harrier.tracker.schema import TENANT_ROLE
 
 if TYPE_CHECKING:
@@ -43,6 +56,18 @@ if TYPE_CHECKING:
     PgConnection = psycopg.Connection[Any]
 
 TEST_URL_VARIABLE = "HARRIER_TEST_POSTGRES_URL"
+
+# The role every Postgres test migrates and connects as (spec 115). Its
+# attributes are the ones spec 115's staging run found Supabase's postgres
+# has (A4): not a superuser; CREATEROLE, CREATEDB, REPLICATION, BYPASSRLS.
+# The password is a throwaway for a role on a test server, like CI's
+# postgres:postgres, not a credential.
+MIGRATOR_ROLE = "harrier_migrator"
+MIGRATOR_PASSWORD = "harrier_migrator"
+MIGRATOR_ATTRIBUTES = "LOGIN NOSUPERUSER INHERIT CREATEROLE CREATEDB REPLICATION BYPASSRLS"
+# Supabase's postgres is a member of these with the admin option, INHERIT
+# and SET (spec 115's staging run). Tests SET ROLE to them.
+MIGRATOR_MEMBER_OF: tuple[str, ...] = ("anon", "authenticated", "service_role")
 
 
 def _in_ci() -> bool:
@@ -72,6 +97,23 @@ def _with_database(url: str, name: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, f"/{name}", parts.query, parts.fragment))
 
 
+def _with_user(url: str, user: str, password: str) -> str:
+    parts = urlsplit(url)
+    host = parts.hostname or "localhost"
+    if ":" in host:
+        host = f"[{host}]"
+    port = f":{parts.port}" if parts.port else ""
+    netloc = f"{user}:{password}@{host}{port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+def superuser_url(url: str) -> str:
+    """The test server's superuser, on the database `url` names: for the few
+    steps the migrating role may not take, such as installing the shim or
+    giving a role SUPERUSER."""
+    return _with_database(admin_url(), urlsplit(url).path.lstrip("/") or "postgres")
+
+
 # --- the Supabase shim (spec 105) ---
 
 # As Supabase documents them: anon and authenticated never bypass row
@@ -89,6 +131,7 @@ SHIM_STATEMENTS: tuple[str, ...] = (
     # The body Supabase's auth server ships (migration
     # 20220224000811_update_auth_functions): the old single claim first,
     # then the sub of the claims document, as uuid. Null without either.
+    # Spec 115's staging run found the same body on a project (A3).
     """
     CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$
         SELECT coalesce(
@@ -98,15 +141,37 @@ SHIM_STATEMENTS: tuple[str, ...] = (
     $$
     """,
     "GRANT USAGE ON SCHEMA auth TO anon, authenticated, service_role",
+    # What Supabase gives postgres in auth, as spec 115's staging run found
+    # it (2026-10-11): on auth.users INSERT, UPDATE, DELETE, TRUNCATE,
+    # REFERENCES, TRIGGER and MAINTAIN, and SELECT with the grant option
+    # (A1, A8); on auth.uid() nothing beyond PUBLIC's EXECUTE (A2). One
+    # difference: Supabase gives postgres USAGE on auth without the grant
+    # option, so migration 10's grant of it to the tenant role does nothing
+    # there (A2, refuted). The migrator holds the grant option here so the
+    # suite stays green; the spec that fixes A2 removes it, and CI then
+    # proves the fix. Conditional, so a partial shim without auth.users
+    # installs.
+    f"GRANT USAGE ON SCHEMA auth TO {MIGRATOR_ROLE} WITH GRANT OPTION",
+    f"""
+    DO $$
+    BEGIN
+        IF to_regclass('auth.users') IS NOT NULL THEN
+            GRANT INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN
+                ON auth.users TO {MIGRATOR_ROLE};
+            GRANT SELECT ON auth.users TO {MIGRATOR_ROLE} WITH GRANT OPTION;
+        END IF;
+    END
+    $$
+    """,
     # Supabase's default privileges: every table, sequence and function the
-    # migrating role creates in public is granted to its three roles. Run as
-    # the role the tests migrate with, so the baseline's tables arrive with
-    # these grants, as they would on a Supabase project, and a revoke that
-    # migration 10 forgot shows in the catalog test (spec 105, post-merge
-    # review).
+    # migrating role creates in public is granted to its three roles. Set
+    # for the role the tests migrate with, so the baseline's tables arrive
+    # with these grants, as they would on a Supabase project, and a revoke
+    # that migration 10 forgot shows in the catalog test (spec 105,
+    # post-merge review).
     "GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role",
     *(
-        "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
+        f"ALTER DEFAULT PRIVILEGES FOR ROLE {MIGRATOR_ROLE} IN SCHEMA public "
         f"GRANT ALL ON {kind} TO anon, authenticated, service_role"
         for kind in ("TABLES", "SEQUENCES", "FUNCTIONS")
     ),
@@ -114,7 +179,8 @@ SHIM_STATEMENTS: tuple[str, ...] = (
     # revoke in public alone leaves these in place, so the catalog test sees
     # one that migration 14 forgot (spec 105, second post-merge review).
     *(
-        f"ALTER DEFAULT PRIVILEGES GRANT ALL ON {kind} TO anon, authenticated, service_role"
+        f"ALTER DEFAULT PRIVILEGES FOR ROLE {MIGRATOR_ROLE} "
+        f"GRANT ALL ON {kind} TO anon, authenticated, service_role"
         for kind in ("TABLES", "SEQUENCES", "FUNCTIONS")
     ),
 )
@@ -139,18 +205,80 @@ def _create_role(conn: PgConnection, name: str, attributes: str) -> None:
     )
 
 
-def install_shim(url: str, statements: tuple[str, ...] = SHIM_STATEMENTS) -> None:
-    """Give the database at `url` the auth objects migration 10 needs.
+def _grant_to_migrator(conn: PgConnection, role: str, options: str) -> None:
+    """Make the migrator a member of `role` with `options`, when `role`
+    exists and the migrator does not already hold it with the admin option
+    and SET. Another run on the same server may be granting it now. Roles
+    are matched by name, not cast with ::regrole, which fails while `role`
+    is absent (a fresh server has no anon before the first shim)."""
+    conn.execute(
+        f"""
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{role}') AND NOT EXISTS (
+                SELECT 1 FROM pg_auth_members m
+                JOIN pg_roles r ON r.oid = m.roleid
+                JOIN pg_roles u ON u.oid = m.member
+                WHERE r.rolname = '{role}' AND u.rolname = '{MIGRATOR_ROLE}'
+                    AND m.admin_option AND m.set_option
+            ) THEN
+                GRANT {role} TO {MIGRATOR_ROLE} WITH {options};
+            END IF;
+        EXCEPTION WHEN duplicate_object OR unique_violation THEN
+            NULL;
+        END
+        $$
+        """.encode()
+    )
 
-    A test that needs part of the shim passes the statements it wants. The
-    roles are always made: they belong to the whole server, and other
-    databases on it need them.
+
+def ensure_migrator(conn: PgConnection) -> None:
+    """Create `harrier_migrator` unless it exists, and give it the
+    memberships Supabase gives postgres. Run as the superuser.
+
+    The tenant role is made by migration 10, by whichever role migrates
+    first, and outlives each database. Its creator holds the admin option on
+    it, as Supabase's postgres does; a migrator that did not create it is
+    given the same. SET on it lets a test act as the tenant: the migrator
+    gets it from `createrole_self_grant` when it creates the role, or from
+    the grant here. Supabase leaves `createrole_self_grant` empty, so its
+    postgres cannot SET ROLE to the tenant role it created, and staging
+    mode grants that the same way (`open_staging`, spec 115).
+    """
+    conn.execute(
+        f"""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{MIGRATOR_ROLE}') THEN
+                CREATE ROLE {MIGRATOR_ROLE} {MIGRATOR_ATTRIBUTES}
+                    PASSWORD '{MIGRATOR_PASSWORD}';
+                ALTER ROLE {MIGRATOR_ROLE} SET createrole_self_grant = 'set';
+            END IF;
+        EXCEPTION WHEN duplicate_object OR unique_violation THEN
+            NULL;
+        END
+        $$
+        """.encode()
+    )
+    for role in MIGRATOR_MEMBER_OF:
+        _grant_to_migrator(conn, role, "ADMIN OPTION, INHERIT TRUE, SET TRUE")
+    _grant_to_migrator(conn, TENANT_ROLE, "ADMIN OPTION, INHERIT FALSE, SET TRUE")
+
+
+def install_shim(url: str, statements: tuple[str, ...] = SHIM_STATEMENTS) -> None:
+    """Give the database `url` names the auth objects migration 10 needs.
+
+    Installed by the superuser whatever role `url` names, as Supabase's own
+    roles own these on a project. A test that needs part of the shim passes
+    the statements it wants. The roles are always made: they belong to the
+    whole server, and other databases on it need them.
     """
     import psycopg
 
-    with psycopg.connect(url, autocommit=True) as conn:
+    with psycopg.connect(superuser_url(url), autocommit=True) as conn:
         for name, attributes in SHIM_ROLES:
             _create_role(conn, name, attributes)
+        ensure_migrator(conn)
         with conn.transaction():
             for statement in statements:
                 conn.execute(statement.encode())
@@ -187,10 +315,12 @@ def as_role(conn: PgConnection, role: str, owner: str | None = None) -> Generato
 @contextmanager
 def as_owner(conn: PgConnection, owner: str) -> Generator[PgConnection]:
     """A transaction as `owner`, policed: the role is the tenant role, which
-    cannot bypass row security, unlike the superuser the tests connect as."""
+    cannot bypass row security, unlike the migrating role the tests connect
+    as."""
     with as_role(conn, TENANT_ROLE, owner) as policed:
         # The proof that a test is policed at all: were the role switch ever
-        # lost, every isolation test would run as the superuser and pass.
+        # lost, every isolation test would run as the migrating role, which
+        # bypasses row security, and pass.
         role = policed.execute("SELECT current_user").fetchone()
         assert role == (TENANT_ROLE,), f"as_owner runs as {role}, not {TENANT_ROLE}"
         yield policed
@@ -199,11 +329,67 @@ def as_owner(conn: PgConnection, owner: str) -> Generator[PgConnection]:
 def set_session_owner(conn: PgConnection, owner: str) -> None:
     """Claims for the whole session, without changing role.
 
-    The superuser still bypasses the policy; the claims only make each
-    owner_id default to `owner`. The parity test needs that: it compares
-    shapes and defaults, and the catalog test owns the policy (spec 105).
+    The migrating role still bypasses the policy (BYPASSRLS); the claims
+    only make each owner_id default to `owner`. The parity test needs that:
+    it compares shapes and defaults, and the catalog test owns the policy
+    (spec 105).
     """
     conn.execute("SELECT set_config('request.jwt.claims', %s, false)", (claims(owner),))
+
+
+# --- the migrating role (spec 115) ---
+
+# The roles a default privilege or a new function must not reach.
+DATA_API_ROLES: tuple[str, ...] = ("anon", "authenticated", "service_role")
+
+
+def non_superuser_migrator_problems(conn: PgConnection) -> list[str]:
+    """What breaks spec 115's A11 for the role `conn` runs as: the store
+    reached target_version() as a role that is not a superuser, that role
+    holds no default privilege in public or global granting to anon,
+    authenticated or service_role, and a function it creates in public is
+    executable by none of them nor by PUBLIC. The function lives in a
+    transaction that is rolled back."""
+    problems: list[str] = []
+    row = conn.execute(
+        "SELECT current_user, rolsuper FROM pg_roles WHERE rolname = current_user"
+    ).fetchone()
+    assert row is not None
+    role, is_superuser = str(row[0]), bool(row[1])
+    if is_superuser:
+        problems.append(f"{role} is a superuser")
+    found = postgres_version(conn)
+    if found != target_version():
+        problems.append(f"the store is at version {found}, not {target_version()}")
+    for scope, kind, grantee, privilege in conn.execute(
+        "SELECT CASE WHEN d.defaclnamespace = 0 THEN 'global' ELSE 'in public' END, "
+        "d.defaclobjtype, pg_get_userbyid(x.grantee), x.privilege_type "
+        "FROM pg_default_acl d CROSS JOIN LATERAL aclexplode(d.defaclacl) x "
+        "WHERE d.defaclrole = current_user::regrole "
+        "AND d.defaclnamespace IN (0, 'public'::regnamespace) AND x.grantee <> 0 "
+        "AND pg_get_userbyid(x.grantee) = ANY(%s)",
+        (list(DATA_API_ROLES),),
+    ).fetchall():
+        problems.append(f"default privileges ({scope}): {grantee} gets {privilege} on {kind}")
+    name = f"public.harrier_probe_{uuid.uuid4().hex[:12]}()"
+    with conn.transaction(force_rollback=True):
+        conn.execute(f"CREATE FUNCTION {name} RETURNS integer LANGUAGE sql AS 'SELECT 1'".encode())
+        by_public = conn.execute(
+            "SELECT proacl IS NULL OR EXISTS (SELECT 1 FROM aclexplode(proacl) x "
+            "WHERE x.grantee = 0 AND x.privilege_type = 'EXECUTE') "
+            "FROM pg_proc WHERE oid = %s::regprocedure",
+            (name,),
+        ).fetchone()
+        if by_public != (False,):
+            problems.append("a new function in public is executable by PUBLIC")
+        for grantee in DATA_API_ROLES:
+            executable = conn.execute(
+                "SELECT has_function_privilege(%s, %s::regprocedure, 'EXECUTE')",
+                (grantee, name),
+            ).fetchone()
+            if executable != (False,):
+                problems.append(f"a new function in public is executable by {grantee}")
+    return problems
 
 
 # --- databases ---
@@ -211,10 +397,12 @@ def set_session_owner(conn: PgConnection, owner: str) -> None:
 
 @contextmanager
 def fresh_database(*, shim: bool = True) -> Generator[str]:
-    """Create an empty database, yield its URL, then drop it.
+    """Create an empty database, yield its URL as `harrier_migrator`, then
+    drop it.
 
-    With the shim unless `shim=False`, which is a Postgres without
-    Supabase's auth objects.
+    The migrator owns the database, as Supabase's postgres owns a
+    project's, so it may create in public. With the shim unless
+    `shim=False`, which is a Postgres without Supabase's auth objects.
     """
     import psycopg
 
@@ -222,14 +410,15 @@ def fresh_database(*, shim: bool = True) -> Generator[str]:
     name = f"harrier_test_{uuid.uuid4().hex[:12]}"
     try:
         with psycopg.connect(admin, autocommit=True) as conn:
-            conn.execute(f"CREATE DATABASE {name}".encode())
+            ensure_migrator(conn)
+            conn.execute(f"CREATE DATABASE {name} OWNER {MIGRATOR_ROLE}".encode())
     except psycopg.OperationalError as error:
         message = f"cannot reach the Postgres test server: {type(error).__name__}"
         if _in_ci():
             pytest.fail(message, pytrace=False)
         pytest.skip(message)
     try:
-        url = _with_database(admin, name)
+        url = _with_user(_with_database(admin, name), MIGRATOR_ROLE, MIGRATOR_PASSWORD)
         if shim:
             install_shim(url)
         yield url
@@ -243,3 +432,96 @@ def postgres_url() -> Iterator[str]:
     """An empty Postgres database for one test."""
     with fresh_database() as url:
         yield url
+
+
+# --- staging mode: a real Supabase project (spec 115) ---
+
+SUPABASE_URL_VARIABLE = "HARRIER_SUPABASE_TEST_URL"
+SUPABASE_API_URL_VARIABLE = "HARRIER_SUPABASE_API_TEST_URL"
+# The custom login role the project's pooler is checked with (A5, A10).
+PROBE_ROLE = "harrier_api_probe"
+# Supabase's shared pooler: session mode on 5432, transaction mode on 6543.
+SESSION_POOLER_PORT = 5432
+TRANSACTION_POOLER_PORT = 6543
+
+STAGING_HAS_USERS = (
+    "staging mode refuses a project whose auth.users holds a user with an email: "
+    "someone has signed in to it, so it is no test target (spec 115)"
+)
+
+
+class StagingProjectRefused(Exception):
+    """Staging mode will not run against this project. Names no URL."""
+
+
+def supabase_urls() -> tuple[str, str]:
+    """The migrator's URL and the probe role's URL, or skip naming the one
+    that is missing. Skips in CI too: the module needs a real project and
+    its credentials, which CI holds neither of (spec 115)."""
+    found: list[str] = []
+    for variable in (SUPABASE_URL_VARIABLE, SUPABASE_API_URL_VARIABLE):
+        value = os.environ.get(variable, "").strip()
+        if not value:
+            pytest.skip(f"{variable} is not set; the Supabase project checks need a real project")
+        found.append(value)
+    try:
+        import psycopg  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    except ImportError:
+        pytest.skip("psycopg is not installed; run uv sync (the dev group includes postgres)")
+    return found[0], found[1]
+
+
+def with_port(url: str, port: int) -> str:
+    """`url` with its port replaced, its user and password kept."""
+    parts = urlsplit(url)
+    authority, _, _ = parts.netloc.rpartition("@")
+    host = parts.hostname or "localhost"
+    if ":" in host:
+        host = f"[{host}]"
+    netloc = f"{authority}@{host}:{port}" if authority else f"{host}:{port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+def open_staging(conn: PgConnection) -> None:
+    """Make the project `conn` reaches ready for staging mode, or refuse it.
+
+    First, before any write: refuse a project whose auth.users holds a user
+    with an email, since someone has signed in to it, and one not at
+    target_version(). Then let the connecting role SET ROLE to the tenant
+    role: it holds only the admin option on the role it created, because
+    Supabase leaves `createrole_self_grant` empty (spec 115's staging
+    findings). Synthetic owners have no email, so a re-run is not refused.
+    """
+    has_email = conn.execute(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.columns "
+        "WHERE table_schema = 'auth' AND table_name = 'users' AND column_name = 'email')"
+    ).fetchone()
+    if has_email == (True,):
+        used = conn.execute(
+            "SELECT EXISTS (SELECT 1 FROM auth.users WHERE email IS NOT NULL)"
+        ).fetchone()
+        if used != (False,):
+            raise StagingProjectRefused(STAGING_HAS_USERS)
+    found = postgres_version(conn)
+    if found != target_version():
+        raise StagingProjectRefused(
+            f"the project is at version {found}; run harrier store migrate "
+            f"to version {target_version()} first"
+        )
+    conn.execute(
+        f"""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_auth_members
+                WHERE roleid = '{TENANT_ROLE}'::regrole AND member = current_user::regrole
+                    AND set_option
+            ) THEN
+                EXECUTE format(
+                    'GRANT {TENANT_ROLE} TO %I WITH INHERIT FALSE, SET TRUE', current_user
+                );
+            END IF;
+        END
+        $$
+        """.encode()
+    )
