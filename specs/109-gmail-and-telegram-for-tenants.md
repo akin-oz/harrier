@@ -74,7 +74,7 @@ the first hosted release. Telegram is offered: each owner brings a bot.
   installed-app flow with a browser and a loopback server on the operator's
   machine (`services/api/src/harrier_cli/main.py:914-953`). Inside the
   container `secrets/` is read only, so the CLI refreshes the token on the
-  host before it delegates a watch (`main.py:2988-3006`).
+  host before it delegates a watch (`main.py:3012-3030`).
 - Its state is two files in the data directory: `seen_messages.json` and
   `events.jsonl` under `gmail-watch/` (`watch.py:163-172`). Spec 040 made
   the first written atomically and refused when damaged (`watch.py:448-460`)
@@ -699,8 +699,7 @@ The text above says where each changed it.
   `services/api/src/harrier_cli/main.py`,
   `services/api/src/harrier/sources/__init__.py`, `config/schedule.json`,
   `.env.example`. Line numbers are from `main` at `44ac0d7`, except the
-  `harrier_cli/main.py` ones, refreshed to `main` at `524dd8a` on
-  2026-10-11.
+  `harrier_cli/main.py` ones, refreshed to `main` at `a7b9998`.
 
 Vendor facts, each read 2026-10-10:
 

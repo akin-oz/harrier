@@ -366,7 +366,7 @@ synthetic.
   profile read").
 - **The export destination is resolved as today**, relative to the working
   directory (`Path(args.dest)`, default `tracker`, at
-  `services/api/src/harrier_cli/main.py:306` and `:2405`). Run from
+  `services/api/src/harrier_cli/main.py:306` and `:2429`). Run from
   `services/api`, that is an unignored path, and this spec adds a
   slug-named folder under it. Found in review of this spec; anchoring the
   destination to the repository root is a pre-existing defect with its own

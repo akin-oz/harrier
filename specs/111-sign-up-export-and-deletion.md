@@ -21,8 +21,8 @@ ADR-013's Consequences say "a tenant's data can be exported and deleted on
 request; spec 111 owns it".
 
 Line numbers below are from `main` at `44ac0d7` on 2026-10-10, except the
-`harrier_cli/main.py` ones, refreshed to `main` at `524dd8a` on
-2026-10-11, the `schema.py` ones, refreshed to `main` at `5c3d083` after
+`harrier_cli/main.py` ones, refreshed to `main` at `a7b9998`, the
+`schema.py` ones, refreshed to `main` at `5c3d083` after
 migration 16, and the `pgstore.py` one, refreshed by PR #245.
 The stub cited
 older ones (`schema.py:441-445`, `:463`, `:545`, `:549`, `:776`, `:780`); the
@@ -127,7 +127,7 @@ Open decision 1).
    the database role it runs as (decision D2, 2026-10-11): `erase` runs
    as `service_role`; `invite` declares that it opens no database
    connection. The CLI gate
-   (`harrier_cli/main.py:3067-3070` today, restructured by spec 112) gains
+   (`harrier_cli/main.py:3091-3094` today, restructured by spec 112) gains
    the class "operator: each subcommand runs as its declared role",
    written into spec 112 as its Amendment (2026-10-11) with its planned
    test_the_postgres_gate_has_operator_and_run_classes.
@@ -856,7 +856,7 @@ Repository:
 - `services/api/tests/test_owner_policy.py`: `catalog_problems`, its
   definer allowlist and `NO_PRIVILEGE_ROLES`.
 - `services/api/src/harrier_cli/main.py`: `load_project_env` at `:53-60`,
-  the Postgres gate at `:3067-3070`.
+  the Postgres gate at `:3091-3094`.
 - The post-merge reviews of PRs #194 and #207 (architecture 5) and of PR
   #216, 2026-10-10, as routed into the stub.
 

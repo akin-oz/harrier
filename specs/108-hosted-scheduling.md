@@ -21,10 +21,10 @@ executes domain code as the service role.
 
 Today the schedule is a committed file and a renderer. Line numbers are
 from `main` at `44ac0d7` (2026-10-10), except the
-`harrier_cli/main.py` and `harrier_api/app.py` ones, refreshed to `main` at
-`524dd8a` on 2026-10-11, the `schema.py` ones, refreshed to `main` at
-`5c3d083` after migration 16, and the `pgstore.py` one, refreshed by PR
-#245.
+`harrier_api/app.py` ones, refreshed to `main` at `524dd8a` on 2026-10-11,
+the `schema.py` ones, refreshed to `main` at `5c3d083` after migration 16,
+the `harrier_cli/main.py` ones, refreshed to `main` at `a7b9998`, and the
+`pgstore.py` one, refreshed by PR #245.
 
 - **The cadence.** `config/schedule.json` defines four jobs, counted by
   reading the file: `discovery` four times a day (`:6-16`),
@@ -49,7 +49,7 @@ from `main` at `44ac0d7` (2026-10-10), except the
   rule compares that time with twice the longest gap in the job's cadence
   (`schedule.py:452`, `:494-508`, `:555`). launchd's own record, the last
   exit status, is read by `harrier schedule status`, which exits 1 when a
-  job has a problem (`schedule.py:103-120`; `harrier_cli/main.py:2175-2188`).
+  job has a problem (`schedule.py:103-120`; `harrier_cli/main.py:2199-2212`).
 - **Every job of the installation runs.** There is one person, so there
   is no per-person choice of jobs and no per-person timezone.
 
