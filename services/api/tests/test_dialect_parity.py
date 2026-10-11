@@ -617,8 +617,10 @@ ISO_NOW = TimestampShape(
 # How far a default timestamp may sit from the test's own clock reading.
 CLOCK_TOLERANCE = timedelta(minutes=2)
 # Any zone but UTC. A default that follows the session's zone rather than
-# UTC is then hours off, not a match by accident.
+# UTC is then hours off, not a match by accident. Tokyo keeps one offset all
+# year, so a test can check the zone took effect by its offset.
 NOT_UTC = "Asia/Tokyo"
+NOT_UTC_OFFSET_SECONDS = 9 * 3600
 
 
 def timestamp_shape(table: str, column: str) -> TimestampShape | None:
@@ -703,30 +705,53 @@ def process_zone(zone: str) -> Generator[None]:
         time.tzset()
 
 
+def sqlite_local_offset(conn: sqlite3.Connection) -> int:
+    """How far SQLite's local time is ahead of UTC, in seconds. One 'now'
+    serves the whole statement, so the two readings are of one instant."""
+    row = conn.execute(
+        "SELECT strftime('%s', datetime('now', 'localtime')) - strftime('%s', datetime('now'))"
+    ).fetchone()
+    assert row is not None
+    return int(row[0])
+
+
 def test_the_sqlite_side_runs_in_a_zone_that_is_not_utc(tmp_path: Path) -> None:
     """A default that read local time would match UTC on a UTC host. Inside
-    `process_zone` it cannot."""
+    `process_zone` it cannot. The offset is the zone's own, exactly, so the
+    test cannot pass on a host whose zone merely differs from UTC while
+    `process_zone` changes nothing (review of PR #225)."""
     with process_zone(NOT_UTC), sqlite_store(tmp_path) as lite:
-        row = lite.execute("SELECT datetime('now', 'localtime') <> datetime('now')").fetchone()
-        assert row is not None and row[0] == 1
+        assert sqlite_local_offset(lite) == NOT_UTC_OFFSET_SECONDS
+        assert time.localtime().tm_gmtoff == NOT_UTC_OFFSET_SECONDS
+
+
+def structural_problems(lite: sqlite3.Connection, pg: PgConnection) -> list[str]:
+    """Every way the two stores' tables, columns, types and keys differ,
+    past the declared differences. The whole comparison, in one place, so a
+    test can run it on a store it has changed."""
+    lite_tables = sqlite_tables(lite)
+    pg_tables = postgres_tables(pg)
+    if lite_tables != pg_tables:
+        return [
+            f"tables differ. Only in SQLite: {sorted(lite_tables - pg_tables)}. "
+            f"Only in Postgres: {sorted(pg_tables - lite_tables)}"
+        ]
+    lite_shapes = {table: sqlite_shape(lite, table) for table in lite_tables}
+    pg_shapes = {table: postgres_shape(pg, table) for table in pg_tables}
+    problems = stale_declarations(lite_shapes, pg_shapes)
+    for table in sorted(lite_tables):
+        problems += merged_keys(table, pg_shapes[table])
+        problems += compare_shapes(
+            table, lite_shapes[table], declared_view(table, pg_shapes[table])
+        )
+    return problems
 
 
 def test_both_dialects_build_the_same_tracker(tmp_path: Path) -> None:
     with process_zone(NOT_UTC), sqlite_store(tmp_path) as lite, postgres_store() as pg:
+        assert sqlite_local_offset(lite) == NOT_UTC_OFFSET_SECONDS
         lite_tables = sqlite_tables(lite)
-        pg_tables = postgres_tables(pg)
-        assert lite_tables == pg_tables, (
-            f"tables differ. Only in SQLite: {sorted(lite_tables - pg_tables)}. "
-            f"Only in Postgres: {sorted(pg_tables - lite_tables)}"
-        )
-        lite_shapes = {table: sqlite_shape(lite, table) for table in lite_tables}
-        pg_shapes = {table: postgres_shape(pg, table) for table in pg_tables}
-        problems = stale_declarations(lite_shapes, pg_shapes)
-        for table in sorted(lite_tables):
-            problems += merged_keys(table, pg_shapes[table])
-            problems += compare_shapes(
-                table, lite_shapes[table], declared_view(table, pg_shapes[table])
-            )
+        problems = structural_problems(lite, pg)
         assert not problems, "\n".join(problems)
 
         # A Postgres default reads the session's zone unless it converts to
@@ -820,6 +845,22 @@ def test_a_global_key_beside_its_per_owner_form_is_a_difference() -> None:
         pg.columns, pg.types, pg.nullable, pg.primary_key, frozenset({per_owner}), frozenset()
     )
     assert merged_keys("t", alone, keys) == []
+
+
+def test_a_global_key_beside_its_per_owner_form_fails_the_whole_comparison(
+    tmp_path: Path,
+) -> None:
+    """The same case on a real store, through the comparison the parity test
+    runs, so that comparison must call `merged_keys`: a per-owner key and a
+    global key read as one SQLite key, and nothing else reports the global
+    one (review of PR #225)."""
+    with sqlite_store(tmp_path) as lite, postgres_store() as pg:
+        assert structural_problems(lite, pg) == []
+        pg.execute(b"CREATE UNIQUE INDEX global_url ON jobs (url) WHERE url <> ''")
+        assert structural_problems(lite, pg) == [
+            "jobs: Postgres keys ['owner_id', 'url'] and ['url'] where 'url<>''' "
+            "both read as unique ['url'] on SQLite"
+        ]
 
 
 def test_a_narrower_postgres_type_is_a_difference(tmp_path: Path) -> None:
