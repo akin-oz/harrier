@@ -28,6 +28,12 @@ _SECRET_PARAM = re.compile(
     r"(?i)\b(token|api[_-]?key|apikey|access[_-]?token|secret|password|auth)=([^&\s\"']+)"
 )
 _SECRET_PATH = re.compile(r"(?i)/bot(\d+:[A-Za-z0-9_-]+)")
+# The password in a Postgres URL's userinfo, `scheme://user:password@host`,
+# the scheme in any case (spec 128). The password runs from the `:` after
+# the user to the last `@` before the next `/`, `?`, `#` or whitespace, so a
+# raw `@` in it is replaced with it, and a percent-encoded password is
+# replaced as written.
+_POSTGRES_URL_PASSWORD = re.compile(r"(?i)\b(postgres(?:ql)?://[^:/?#@\s]*):[^/?#\s]+@")
 
 
 def scrub_secrets(text: str) -> str:
@@ -39,7 +45,8 @@ def scrub_secrets(text: str) -> str:
     loop expecting TimeoutError, URLError and HTTPError, and its message
     embeds the request path.
     """
-    scrubbed = _SECRET_PARAM.sub(lambda match: f"{match.group(1)}=REDACTED", text)
+    scrubbed = _POSTGRES_URL_PASSWORD.sub(lambda match: f"{match.group(1)}:REDACTED@", text)
+    scrubbed = _SECRET_PARAM.sub(lambda match: f"{match.group(1)}=REDACTED", scrubbed)
     return _SECRET_PATH.sub("/botREDACTED", scrubbed)
 
 

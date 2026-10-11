@@ -130,3 +130,13 @@ type = "forbidden"
 source_modules = ["harrier", "harrier_api", "harrier_cli"]
 forbidden_modules = ["sklearn", "numpy"]
 ignore_imports = ["harrier.scoring.train -> sklearn", "harrier.scoring.train -> numpy"]
+
+[[tool.importlinter.contracts]]
+# The driver has two importers, the seam and the driver module, so no other
+# module reaches psycopg past the seam, at module level or inside a function
+# (spec 128).
+name = "psycopg is reached only through the store seam"
+type = "forbidden"
+source_modules = ["harrier", "harrier_api", "harrier_cli"]
+forbidden_modules = ["psycopg"]
+ignore_imports = ["harrier.pgstore -> psycopg", "harrier.connection -> psycopg"]

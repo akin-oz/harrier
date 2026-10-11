@@ -10,7 +10,9 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+import subprocess
 import sys
+import time
 import uuid
 from collections.abc import Iterator
 from contextlib import closing
@@ -20,7 +22,7 @@ import pytest
 from pg_support import fresh_database
 
 import harrier.logsetup as logsetup
-from harrier.connection import URL_VARIABLE, StoreUrlError, store_target
+from harrier.connection import URL_VARIABLE, StoreServerError, StoreUrlError, store_target
 from harrier.db import default_db_path
 from harrier.tracker import schema
 from harrier.tracker.schema import MIGRATIONS, POSTGRES_MIGRATIONS
@@ -78,6 +80,66 @@ def test_store_migrate_prints_before_and_after_on_postgres(
     assert run(["store", "status"], capsys) == (0, f"postgres {POSTGRES_LATEST}\n", "")
     # The Postgres path never touches the local file.
     assert not default_db_path().exists()
+
+
+def _waiting_on_an_advisory_lock(url: str) -> int:
+    import psycopg
+
+    with psycopg.connect(url, autocommit=True) as conn:
+        row = conn.execute(
+            "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted "
+            "AND database = (SELECT oid FROM pg_database WHERE datname = current_database())"
+        ).fetchone()
+    return int(row[0]) if row is not None else 0
+
+
+def test_concurrent_migrate_runs_report_what_each_found(pg_url: str, tmp_path: Path) -> None:
+    """Two `harrier store migrate` processes started together on an empty
+    store. The runner read its version before it took the migration lock,
+    so both read 0 and both printed `postgres 0 -> <target>`, though the
+    second applied nothing (post-merge review of PRs #194 and #207, data
+    integrity 4). A third session holds the lock until both runs wait on
+    it, so the two have started before either can migrate."""
+    import psycopg
+
+    from harrier.pgstore import MIGRATION_LOCK_KEY
+
+    env = {**os.environ, URL_VARIABLE: pg_url}
+    command = [sys.executable, "-m", "harrier_cli.main", "store", "migrate"]
+    holder = psycopg.connect(pg_url, autocommit=True)
+    try:
+        holder.execute("SELECT pg_advisory_lock(%s)", (MIGRATION_LOCK_KEY,))
+        runs = [
+            subprocess.Popen(
+                command,
+                cwd=tmp_path,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            for _ in range(2)
+        ]
+        deadline = time.monotonic() + 60
+        while _waiting_on_an_advisory_lock(pg_url) < 2:
+            assert time.monotonic() < deadline, "the runs never queued on the lock"
+            assert all(run.poll() is None for run in runs), "a run ended before the lock"
+            time.sleep(0.05)
+        holder.execute("SELECT pg_advisory_unlock(%s)", (MIGRATION_LOCK_KEY,))
+    finally:
+        holder.close()
+    results = [(*run.communicate(timeout=120), run.returncode) for run in runs]
+
+    assert sorted(results) == [
+        (f"postgres 0 -> {POSTGRES_LATEST}\n", "", 0),
+        (f"postgres {POSTGRES_LATEST} -> {POSTGRES_LATEST}\n", "", 0),
+    ]
+    with psycopg.connect(pg_url, autocommit=True) as conn:
+        versions = [
+            int(row[0])
+            for row in conn.execute("SELECT version FROM schema_version ORDER BY version")
+        ]
+    assert versions == [version for version, _ in POSTGRES_MIGRATIONS]
 
 
 def test_a_failed_migration_exits_1_with_the_drivers_message(
@@ -138,6 +200,36 @@ def test_store_status_fails_with_one_line_after_connecting(
         "",
         "error: reading the store's version failed: InsufficientPrivilege\n",
     )
+
+
+def test_a_driver_error_after_connecting_is_neither_chained_nor_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`harrier store` catches `StoreServerError`, not the driver's classes
+    (spec 128). Both functions it calls raise it after their except block,
+    so the driver's error, whose text is not scrubbed, cannot be found as
+    `__cause__` or `__context__`. No server is needed: the failure is
+    injected."""
+    import psycopg
+
+    import harrier.pgstore as pgstore
+
+    def connected(url: str) -> _Connected:
+        return _Connected()
+
+    def refused(conn: object) -> int:
+        raise psycopg.errors.InsufficientPrivilege()
+
+    monkeypatch.setattr(pgstore, "postgres_connect", connected)
+    monkeypatch.setattr(pgstore, "postgres_version", refused)
+    monkeypatch.setattr(pgstore, "apply_postgres_migrations", refused)
+
+    for call in (pgstore.read_postgres_version, pgstore.migrate_postgres):
+        with pytest.raises(StoreServerError) as failed:
+            call(UNREACHABLE_URL)
+        assert str(failed.value) == "InsufficientPrivilege", call
+        assert failed.value.__cause__ is None, call
+        assert failed.value.__context__ is None, call
 
 
 @pytest.mark.parametrize("command", ["status", "migrate"])

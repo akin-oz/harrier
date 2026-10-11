@@ -17,11 +17,13 @@ scrub learns the password from urlsplit, so `harrier.connection`'s
 `store_target` refuses a URL that urlsplit and libpq would read
 differently, or that libpq cannot parse. The driver's error is not
 chained to the one raised, so it cannot be found as `__context__` either.
-Errors from a statement after connecting are the driver's own; `harrier
-store migrate` and `harrier store status` print only the server's primary
-message, which quotes SQL, not the URL, through the same scrub
-(`server_reason`). Spec 035 is the record of a credential leaking through
-an exception string.
+A statement that fails after connecting raises the driver's own error from
+`apply_postgres_migrations` and `postgres_version`. `migrate_postgres` and
+`read_postgres_version`, which `harrier store` calls, turn it into
+`StoreServerError` carrying only the server's primary message, which quotes
+SQL, not the URL, through the same scrub (`server_reason`), so the CLI
+needs no driver import (spec 128). Spec 035 is the record of a credential
+leaking through an exception string.
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ from harrier.connection import (
     StoreConnectionError,
     StoreDriverMissing,
     StoreMigrationRefused,
+    StoreServerError,
     StoreVersionError,
     UrlParts,
     url_parts,
@@ -41,8 +44,10 @@ from harrier.connection import (
 if TYPE_CHECKING:
     import psycopg
 
-# The key of the transaction-scoped advisory lock the migration runner takes
-# before it re-reads the version: the Postgres counterpart of SQLite's
+# The key of the advisory locks the migration runner takes: a session-level
+# one from before it reads the version until its last migration commits
+# (spec 128), and a transaction-level one in each migration's transaction
+# before it re-reads the version, the Postgres counterpart of SQLite's
 # BEGIN IMMEDIATE (spec 090). Any fixed bigint works; this one is the ASCII
 # of "harrier" read as a number, so it is recognisable in pg_locks.
 MIGRATION_LOCK_KEY = 0x68_61_72_72_69_65_72
@@ -164,13 +169,31 @@ def postgres_version(conn: psycopg.Connection[tuple[object, ...]]) -> int:
 def apply_postgres_migrations(conn: psycopg.Connection[tuple[object, ...]]) -> tuple[int, int]:
     """Apply every pending Postgres migration, each whole or not at all.
 
-    Returns the version before and after. Each migration runs in its own
-    transaction, which takes the advisory lock and re-reads the version
-    under it, so two runners started together apply each migration once
-    and the second finds the first's work (spec 090's rule, spec 103).
-    Postgres DDL is transactional, so a statement that fails rolls back the
-    whole migration and leaves no version row.
+    Returns the version before and after. The runner takes a session-level
+    advisory lock before it reads the version before, and holds it until
+    its last migration commits, so a second runner started with it waits,
+    then finds the first's work and reports the version it found under the
+    lock (spec 128). Each migration still runs in its own transaction,
+    which takes the transaction-level lock on the same key and re-reads the
+    version under it (spec 090's rule, spec 103); a session holding an
+    advisory lock is granted it again at either level. Postgres DDL is
+    transactional, so a statement that fails rolls back the whole migration
+    and leaves no version row.
     """
+    conn.execute("SELECT pg_advisory_lock(%s)", (MIGRATION_LOCK_KEY,))
+    try:
+        return _apply_under_the_session_lock(conn)
+    finally:
+        # A connection the server ended has released the lock with its
+        # session, and a statement on it would raise over the error that
+        # ended it.
+        if not conn.closed:
+            conn.execute("SELECT pg_advisory_unlock(%s)", (MIGRATION_LOCK_KEY,))
+
+
+def _apply_under_the_session_lock(
+    conn: psycopg.Connection[tuple[object, ...]],
+) -> tuple[int, int]:
     import psycopg
 
     from harrier.tracker.schema import POSTGRES_MIGRATIONS, POSTGRES_VERSION_TABLE
@@ -205,12 +228,43 @@ def apply_postgres_migrations(conn: psycopg.Connection[tuple[object, ...]]) -> t
 
 
 def migrate_postgres(url: str) -> tuple[int, int]:
-    """`harrier store migrate` on Postgres: connect, migrate, close."""
+    """`harrier store migrate` on Postgres: connect, migrate, close.
+
+    A driver error after connecting becomes `StoreServerError` with
+    `server_reason`'s one line (spec 128).
+    """
     conn = postgres_connect(url)
+    import psycopg
+
     try:
-        return apply_postgres_migrations(conn)
+        try:
+            return apply_postgres_migrations(conn)
+        except psycopg.Error as error:
+            message = server_reason(error, url)
     finally:
         conn.close()
+    # Raised after the except block, as postgres_connect raises, so the
+    # driver's error is not attached as `__context__`.
+    raise StoreServerError(message)
+
+
+def read_postgres_version(url: str) -> int:
+    """`harrier store status` on Postgres: connect, read the version, close.
+
+    A driver error after connecting becomes `StoreServerError` with
+    `server_reason`'s one line, as for `migrate_postgres` (spec 128).
+    """
+    conn = postgres_connect(url)
+    import psycopg
+
+    try:
+        try:
+            return postgres_version(conn)
+        except psycopg.Error as error:
+            message = server_reason(error, url)
+    finally:
+        conn.close()
+    raise StoreServerError(message)
 
 
 def _ahead_message(found: int, known: int) -> str:

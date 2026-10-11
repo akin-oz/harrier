@@ -144,12 +144,12 @@ target, applies nothing and prints `postgres <target> -> <target>`.
 - [ ] No module under `services/api/src` other than `harrier/pgstore.py`
       and `harrier/connection.py` imports `psycopg`, and the three
       `test_store_cli.py` tests named under Behavior pass unchanged.
-- [ ] `scrub_secrets` gives each row of the table above (planned
-      test_scrub_secrets_hides_a_postgres_url_password).
+- [ ] `scrub_secrets` gives each row of the table above
+      (`services/api/tests/test_api_exposure.py::test_scrub_secrets_hides_a_postgres_url_password`).
 - [ ] Two `harrier store migrate` runs started together on an empty
       Postgres store apply each migration once; one reports
       `postgres 0 -> <target>` and the other `postgres <target> -> <target>`
-      (planned test_concurrent_migrate_runs_report_what_each_found).
+      (`services/api/tests/test_store_cli.py::test_concurrent_migrate_runs_report_what_each_found`).
 - [ ] `services/api/tests/test_store_cli.py::test_store_migrate_prints_before_and_after_on_postgres`
       passes unchanged.
 - [ ] `services/api/src/harrier/tracker/schema.py` and
@@ -219,3 +219,37 @@ store` prints what it printed.
   112, 126 and 127.
 - Connection pooling and the pooler's modes: spec 110.
 - A timeout on the migration lock.
+
+## Amendment (2026-10-11): what the implementation settled
+
+Building this spec settled five points it left implicit. Each is stated
+here so the code and the spec agree. None changes what `harrier store`
+prints.
+
+- **The new `pgstore` function is `read_postgres_version(url)`.** It and
+  `migrate_postgres` raise `StoreServerError` after their `except` block.
+  `services/api/tests/test_store_cli.py::test_a_driver_error_after_connecting_is_neither_chained_nor_context`
+  holds both to it, with the driver's error neither `__cause__` nor
+  `__context__`.
+- **Two tests named the driver's class and now name `StoreServerError`.**
+  `services/api/tests/test_migration_runner.py::test_a_failed_migration_leaves_no_partial_schema_on_postgres`
+  expected `psycopg.Error` from `migrate_postgres`, and
+  `services/api/tests/test_owner_policy.py::test_a_failed_migration_leaves_no_trace_of_itself`
+  expected `psycopg.errors.DivisionByZero`. Behavior makes
+  `migrate_postgres` raise `StoreServerError`, so each now asserts that
+  class and the server's message. What each proves about rollback is
+  unchanged.
+- **The scrub is also proved on generated passwords.**
+  `services/api/tests/test_api_exposure.py::test_a_generated_postgres_password_leaves_no_part_behind`
+  makes passwords at run time, one written raw with an `@` and a `:` in it
+  and one percent-encoded from characters a URL cannot carry raw, under
+  both schemes in lower and mixed case. No 8-character window of either
+  form survives.
+- **The session lock is released only on an open connection.** A
+  connection the server ended has released the lock with its session, and
+  an unlock on it would raise over the error that ended it.
+- **Spec 112 cites the two tests as built.** Its acceptance criteria named
+  them as planned, and the citation check fails on a planned test that
+  exists, so `specs/112-the-tracker-domain-runs-on-either-store.md` now
+  cites each by file and says spec 128 built it. No other text there
+  changes.

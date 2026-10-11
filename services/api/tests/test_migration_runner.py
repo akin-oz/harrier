@@ -90,6 +90,7 @@ def test_a_failed_migration_leaves_no_partial_schema_on_postgres(
     them rolls back whole, and the next run starts that migration again."""
     import psycopg
 
+    from harrier.connection import StoreServerError
     from harrier.pgstore import migrate_postgres
 
     real = list(schema.POSTGRES_MIGRATIONS)
@@ -98,8 +99,12 @@ def test_a_failed_migration_leaves_no_partial_schema_on_postgres(
         monkeypatch.setattr(
             schema, "POSTGRES_MIGRATIONS", [*real, (latest + 1, [PROBE_TABLE, NOT_SQL])]
         )
-        with pytest.raises(psycopg.Error):
+        # The server's own message, and the driver's error neither chained
+        # nor attached as context (spec 128).
+        with pytest.raises(StoreServerError) as failed:
             migrate_postgres(url)
+        assert str(failed.value) == 'syntax error at or near "THIS"'
+        assert failed.value.__cause__ is None and failed.value.__context__ is None
 
         with psycopg.connect(url, autocommit=True) as conn:
             probe = conn.execute("SELECT to_regclass('probe')").fetchone()

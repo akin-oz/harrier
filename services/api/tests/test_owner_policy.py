@@ -45,7 +45,7 @@ from pg_support import (
     superuser_url,
 )
 
-from harrier.connection import URL_VARIABLE, StoreMigrationRefused
+from harrier.connection import URL_VARIABLE, StoreMigrationRefused, StoreServerError
 from harrier.db import connect, schema_version
 from harrier.pgstore import migrate_postgres, postgres_version, target_version
 from harrier.tracker import schema
@@ -540,8 +540,10 @@ def test_a_failed_migration_leaves_no_trace_of_itself(
             for number, statements in real
         ]
         monkeypatch.setattr(schema, "POSTGRES_MIGRATIONS", broken)
-        with pytest.raises(psycopg.errors.DivisionByZero):
+        # The driver's DivisionByZero, as `harrier store` reports it (spec 128).
+        with pytest.raises(StoreServerError) as failed:
             migrate_postgres(url)
+        assert str(failed.value) == "division by zero"
         with psycopg.connect(url, autocommit=True) as conn:
             latest = conn.execute("SELECT max(version) FROM schema_version").fetchone()
             after = catalog_fingerprint(conn)
