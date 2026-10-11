@@ -32,8 +32,49 @@ _SECRET_PATH = re.compile(r"(?i)/bot(\d+:[A-Za-z0-9_-]+)")
 # the scheme in any case (spec 128). The password runs from the `:` after
 # the user to the last `@` before the next `/`, `?`, `#` or whitespace, so a
 # raw `@` in it is replaced with it, and a percent-encoded password is
-# replaced as written.
-_POSTGRES_URL_PASSWORD = re.compile(r"(?i)\b(postgres(?:ql)?://[^:/?#@\s]*):[^/?#\s]+@")
+# replaced as written. The scheme may carry a driver, as SQLAlchemy writes
+# `postgresql+psycopg://`, its slashes may be JSON-escaped, and it may
+# follow a word character with no space between (privacy review of PR
+# #281).
+_POSTGRES_URL_PASSWORD = re.compile(
+    r"(?i)(postgres(?:ql)?(?:\+[a-z0-9_]+)?:(?:\\?/){2}[^:/?#@\s]*):[^/?#\s]+@"
+)
+# A parameter name and its `=`, in a query or in libpq's keyword/value form
+# (`password = 'x'`). Atomic, and only where no name character comes
+# before, so a long run of name characters is read once.
+_PARAMETER_NAME = re.compile(r"(?<![\w.-])((?>[\w.-]+))\s*=\s*")
+# Its value: quoted as libpq quotes one, the closing quote optional for a
+# message cut short, or up to the next `&`, quote or whitespace.
+_PARAMETER_VALUE = re.compile(r"'(?:[^'\\\n]|\\.)*'?|[^&\s\"']+")
+
+
+def _is_secret_parameter(name: str) -> bool:
+    """`harrier.connection`'s rule for a connection parameter that carries a
+    secret: its name holds `pass` or `secret` (`password`, `sslpassword`,
+    `oauth_client_secret`), in any case here."""
+    folded = name.lower()
+    return "pass" in folded or "secret" in folded
+
+
+def _scrub_secret_parameters(text: str) -> str:
+    """Replace the value of every parameter named as a secret.
+
+    A scan rather than one substitution: the value is consumed only for a
+    secret name, so a value of another parameter that holds a query of its
+    own is still read for secrets.
+    """
+    kept: list[str] = []
+    at = 0
+    while (found := _PARAMETER_NAME.search(text, at)) is not None:
+        kept.append(text[at : found.end()])
+        at = found.end()
+        if _is_secret_parameter(found.group(1)):
+            value = _PARAMETER_VALUE.match(text, at)
+            if value is not None:
+                kept.append("REDACTED")
+                at = value.end()
+    kept.append(text[at:])
+    return "".join(kept)
 
 
 def scrub_secrets(text: str) -> str:
@@ -46,6 +87,7 @@ def scrub_secrets(text: str) -> str:
     embeds the request path.
     """
     scrubbed = _POSTGRES_URL_PASSWORD.sub(lambda match: f"{match.group(1)}:REDACTED@", text)
+    scrubbed = _scrub_secret_parameters(scrubbed)
     scrubbed = _SECRET_PARAM.sub(lambda match: f"{match.group(1)}=REDACTED", scrubbed)
     return _SECRET_PATH.sub("/botREDACTED", scrubbed)
 

@@ -67,14 +67,17 @@ and 127, and of spec 115's acceptance, and can land first. Line numbers are from
 **psycopg has two importers.** `lint-imports`, which `just check` runs
 (`justfile:75`), fails when any module under the three root packages
 other than `harrier.pgstore` and `harrier.connection` imports `psycopg`,
-at module level or inside a function. The contract:
+or any module imports `psycopg_binary`, with an `import` or `from`
+statement, at module level or inside a function. It reads statements, so
+an import made at run time is not seen (Honest limitations). The
+contract:
 
 | Field | Value |
 |---|---|
 | name | `psycopg is reached only through the store seam` |
 | type | `forbidden` |
 | source_modules | `harrier`, `harrier_api`, `harrier_cli` |
-| forbidden_modules | `psycopg` |
+| forbidden_modules | `psycopg`, `psycopg_binary` |
 | ignore_imports | `harrier.pgstore -> psycopg`, `harrier.connection -> psycopg` |
 
 `include_external_packages` is already true (`pyproject.toml:91`).
@@ -104,11 +107,35 @@ port, database and query.
 | `postgres://harrier:s3cret@db.example.test/tracker` | `postgres://harrier:REDACTED@db.example.test/tracker` |
 | `postgresql://harrier@db.example.test/tracker` | unchanged |
 | `postgresql://db.example.test/tracker?password=s3cret` | `postgresql://db.example.test/tracker?password=REDACTED`, as today |
+| `postgresql://harrier@db.example.test/tracker?sslpassword=s3cret` | `postgresql://harrier@db.example.test/tracker?sslpassword=REDACTED` |
+| `host=db.example.test password = 's3 cret' dbname=tracker` | `host=db.example.test password = REDACTED dbname=tracker` |
+| `postgresql+psycopg://harrier:s3cret@db.example.test/tracker` | `postgresql+psycopg://harrier:REDACTED@db.example.test/tracker` |
+| `postgresql:\/\/harrier:s3cret@db.example.test\/tracker` | `postgresql:\/\/harrier:REDACTED@db.example.test\/tracker` |
+| `DSN_postgresql://harrier:s3cret@db.example.test/tracker` | `DSN_postgresql://harrier:REDACTED@db.example.test/tracker` |
 
 The password runs from the `:` after the user to the last `@` before the
 next `/`, `?`, `#` or whitespace. A password holding a raw `@` is
 replaced whole, at the cost of hiding the part of the host before its own
-`@`; a percent-encoded password is replaced as written.
+`@`; a percent-encoded password is replaced as written. The scheme may
+carry a driver after a `+`, its slashes may be JSON-escaped as `\/`, and
+it may follow a word character with no space between.
+
+The value of every parameter whose name holds `pass` or `secret`, in any
+case, is `REDACTED`: in a query and in libpq's keyword/value form, with
+or without spaces around the `=`, quoted or not, and a quoted value cut
+short before its closing quote to the end of its line. It is the rule
+`harrier.connection` uses for the parameters it scrubs. The value of any
+other parameter is kept, and read for secrets of its own.
+
+**Every URL `store_target` accepts has its password scrubbed whole.**
+`store_target` refuses a URL holding a raw whitespace character of any
+kind, or a raw character of Unicode category C (control, format,
+surrogate, private use, unassigned), with the fixed text that tells the
+user to percent-encode. Before, it refused only a raw tab, CR and LF of
+these, and a password holding a raw no-break space, vertical tab or
+ideographic space was accepted, and left whole by the scrub, which ends a
+password at whitespace. A raw letter or symbol, such as `é` or `€`, is
+still accepted. This tightens spec 103's refusal of raw delimiters.
 
 **`harrier store migrate` reports what it found under the lock.** The
 runner takes a session-level advisory lock on `MIGRATION_LOCK_KEY`
@@ -135,6 +162,10 @@ target, applies nothing and prints `postgres <target> -> <target>`.
 - **A run that hangs while holding the lock.** The second run waits
   without a limit, as it waits on the transaction lock today. No
   `lock_timeout` is set here.
+- **The session ends before the unlock.** psycopg learns of it only on
+  the next statement, so the unlock raises. That error is dropped: the
+  runner's own result or error is what the caller sees, and the lock went
+  with the session.
 
 ## Acceptance criteria
 
@@ -154,6 +185,21 @@ target, applies nothing and prints `postgres <target> -> <target>`.
       passes unchanged.
 - [ ] `services/api/src/harrier/tracker/schema.py` and
       `packages/contract` do not change.
+- [ ] Every character a password could hold raw is refused by
+      `store_target` or masked by `scrub_secrets`
+      (`services/api/tests/test_postgres_store.py::test_every_url_store_target_accepts_has_its_password_scrubbed`).
+- [ ] A parameter named as a secret is masked in a query and in the
+      keyword/value form
+      (`services/api/tests/test_api_exposure.py::test_every_secret_named_parameter_is_scrubbed`),
+      and other parameters are kept
+      (`services/api/tests/test_api_exposure.py::test_scrubbing_leaves_ordinary_parameters_alone`).
+- [ ] The table's driver, JSON and glued rows hold
+      (`services/api/tests/test_api_exposure.py::test_a_postgres_url_in_another_dress_is_scrubbed`).
+- [ ] A session ended before the unlock leaves the runner's result
+      (`services/api/tests/test_postgres_store.py::test_a_session_lost_after_the_last_commit_still_reports_the_migration`)
+      and its refusal
+      (`services/api/tests/test_postgres_store.py::test_a_refusal_is_reported_when_the_session_is_lost_before_the_unlock`)
+      as they were.
 - [ ] `just check` passes, and the CI log of `check-python` shows the
       Postgres tests above passing, not skipped.
 
@@ -163,12 +209,20 @@ target, applies nothing and prints `postgres <target> -> <target>`.
   its session. Behind a transaction-mode pooler it does not. Spec 110
   (Open decision 8) routes migrations through Supabase's session pooler,
   which keeps it.
-- The scrub knows the URL shapes above. A driver message that quotes a
-  password outside a URL, as a bare parameter, is caught only by the
-  `password=` rule that exists today, and by `pgstore`'s own scrub of its
-  connection errors.
+- The scrub knows the shapes above. `store_target` refuses each of these,
+  but a message that carried one would leave the password: a URL
+  percent-encoded inside another URL (`?next=postgresql%3A%2F%2F...`),
+  text cut off before the password's `@`, a raw `/`, `?` or `#` in the
+  password, and a raw `@` in the user. `pgstore`'s own scrub of its
+  connection errors does not depend on these shapes: it learns the
+  password from the URL itself.
+- A secret parameter in a JSON object (`"password": "..."`) is not
+  masked: the rule reads `=`, not `:`.
 - The contract proves which modules import psycopg, not what they do with
-  it.
+  it. It reads `import` and `from` statements only, so it does not see
+  `importlib.import_module("psycopg")`, `__import__`, a module taken from
+  `sys.modules`, or a psycopg name that `harrier.pgstore` re-exports to
+  another module. None of these exists today; review is the guard.
 
 ## Migration
 
@@ -245,11 +299,48 @@ prints.
   and one percent-encoded from characters a URL cannot carry raw, under
   both schemes in lower and mixed case. No 8-character window of either
   form survives.
-- **The session lock is released only on an open connection.** A
-  connection the server ended has released the lock with its session, and
-  an unlock on it would raise over the error that ended it.
+- **The session lock's release.** Built first as an unlock skipped on a
+  closed connection. The privacy review of PR #281 showed `closed` stays
+  false until the next statement, so the release is now best effort (the
+  amendment below).
 - **Spec 112 cites the two tests as built.** Its acceptance criteria named
   them as planned, and the citation check fails on a planned test that
   exists, so `specs/112-the-tracker-domain-runs-on-either-store.md` now
   cites each by file and says spec 128 built it. No other text there
   changes.
+
+## Amendment (2026-10-11): the privacy review of PR #281
+
+A local privacy review of PR #281 found three gaps in what this spec
+built, and two places where the spec claimed more than the code checks.
+Behavior, Failure modes, Acceptance criteria and Honest limitations above
+now say what the code does.
+
+- **Raw whitespace in a password.** `store_target` accepted a password
+  holding a raw no-break space, vertical tab, form feed, U+001C, U+0085,
+  U+2028 or U+3000, and `scrub_secrets` left it whole. `store_target` now
+  refuses raw whitespace and category C
+  (`services/api/src/harrier/connection.py`, `_has_raw_space_or_control`).
+  Two cases of
+  `services/api/tests/test_postgres_store.py::test_a_url_libpq_cannot_parse_never_reaches_the_cli`,
+  a raw space and a raw surrogate, are now refused before libpq reads the
+  URL, so they print the text that names the fix instead of the plain
+  refusal. Both are still refused and quote nothing of the URL.
+- **`sslpassword` and the keyword/value form.** The query rule named
+  `password`, and its `\b` failed inside `sslpassword`. Any parameter
+  whose name holds `pass` or `secret` is now masked
+  (`services/api/src/harrier/sources/__init__.py`,
+  `_scrub_secret_parameters`). The scan reads each name once, so a long
+  run of name characters costs linear time.
+- **The unlock raised over the result.** It is now best effort
+  (`services/api/src/harrier/pgstore.py`, `_release_the_session_lock`).
+- **The contract.** It now names `psycopg_binary` too, and Behavior says it
+  reads statements, not imports made at run time.
+- **Shapes masked cheaply.** The `+driver` scheme, JSON-escaped slashes
+  and a URL glued to the word before it are masked now. The shapes that
+  are not are listed under Honest limitations.
+- **Out of this spec.** The log stream and `HTTPException(detail=...)`
+  sites do not run `scrub_secrets`. Nothing carries the store URL there
+  while only `harrier store` runs on Postgres, so the gap belongs to spec
+  112, which lets domain code run there. It is an acceptance criterion of
+  that spec.

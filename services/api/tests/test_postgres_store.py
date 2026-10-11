@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 import traceback
+import unicodedata
 import uuid
 from typing import Any, LiteralString
 from urllib.parse import quote, unquote, unquote_plus, urlsplit, urlunsplit
@@ -324,6 +325,78 @@ def test_two_first_migrations_apply_once_on_postgres() -> None:
         tables = public_tables(url)
         assert len(tables) == len(set(tables))
         assert {"jobs", "tracks", "job_events", "schema_version"} <= set(tables)
+
+
+def _end_the_session(conn: Any) -> None:
+    """Have the server end a connection's session while the client is idle,
+    and wait until it has gone. psycopg learns of it only on its next
+    statement."""
+    import psycopg
+
+    pid = conn.info.backend_pid
+    with psycopg.connect(admin_url(), autocommit=True) as admin:
+        admin.execute("SELECT pg_terminate_backend(%s)", (pid,))
+        deadline = time.monotonic() + 30
+        while admin.execute("SELECT 1 FROM pg_stat_activity WHERE pid = %s", (pid,)).fetchone():
+            assert time.monotonic() < deadline, "the session never ended"
+            time.sleep(0.05)
+
+
+def test_a_session_lost_after_the_last_commit_still_reports_the_migration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every migration committed, then the server ended the session before
+    the unlock. The unlock raised, and `migrate_postgres` reported a
+    driver error for a store it had fully migrated (privacy review of PR
+    #281, case F). The lock went with the session, so nothing is held."""
+    import harrier.pgstore as pgstore
+
+    real = pgstore._apply_under_the_session_lock  # pyright: ignore[reportPrivateUsage]
+    ended: list[bool] = []
+
+    def then_lost(conn: Any) -> tuple[int, int]:
+        found = real(conn)
+        _end_the_session(conn)
+        # The client has not seen the end yet, so a guard on `closed` would
+        # not have skipped the unlock: the case is live.
+        ended.append(conn.closed)
+        return found
+
+    monkeypatch.setattr(pgstore, "_apply_under_the_session_lock", then_lost)
+    with fresh_database() as url:
+        assert migrate_postgres(url) == (0, LATEST)
+        assert ended == [False]
+        assert recorded_versions(url) == ALL_VERSIONS
+        assert waiting_on_the_migration_lock(url) == 0
+
+
+def test_a_refusal_is_reported_when_the_session_is_lost_before_the_unlock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A migration's precheck refused the store, then the server ended the
+    session before the unlock. The unlock's error replaced the refusal,
+    which `harrier store` then printed as a driver error (privacy review of
+    PR #281, case G). The refusal is what the caller sees."""
+    import harrier.pgstore as pgstore
+    from harrier.connection import StoreMigrationRefused
+    from harrier.tracker import schema
+
+    real = pgstore._apply_under_the_session_lock  # pyright: ignore[reportPrivateUsage]
+
+    def refused_then_lost(conn: Any) -> tuple[int, int]:
+        try:
+            return real(conn)
+        finally:
+            _end_the_session(conn)
+
+    refusal = "DO $$ BEGIN RAISE EXCEPTION 'synthetic refusal'; END $$"
+    monkeypatch.setattr(schema, "POSTGRES_MIGRATIONS", [*POSTGRES_MIGRATIONS, (NEXT, [refusal])])
+    monkeypatch.setattr(pgstore, "_apply_under_the_session_lock", refused_then_lost)
+    with fresh_database() as url:
+        with pytest.raises(StoreMigrationRefused) as refused:
+            migrate_postgres(url)
+        assert str(refused.value) == "synthetic refusal"
+        assert recorded_versions(url) == ALL_VERSIONS
 
 
 # --- opening ---
@@ -701,11 +774,18 @@ def test_a_url_libpq_cannot_parse_never_reaches_the_cli(
     secret = f"synthetic{uuid.uuid4().hex}"
     url = template.format(secret=secret)
 
+    # A raw space or a raw surrogate is refused before libpq reads the URL,
+    # with the text that names the fix (privacy review of PR #281).
+    raw_space_or_control = any(
+        character.isspace() or unicodedata.category(character).startswith("C") for character in url
+    )
+    expected = DELIMITER_REFUSAL if raw_space_or_control else URL_REFUSAL
+
     monkeypatch.setenv("HARRIER_DATABASE_URL", url)
     for command in ("status", "migrate"):
         assert main(["store", command]) == 1
         captured = capsys.readouterr()
-        assert captured.err == f"error: {URL_REFUSAL}\n", command
+        assert captured.err == f"error: {expected}\n", command
         assert leaked(secret, captured.out + captured.err) == [], command
 
 
@@ -830,6 +910,50 @@ def test_a_raw_delimiter_after_the_authority_never_reaches_the_cli(
         captured = capsys.readouterr()
         assert captured.err == f"error: {DELIMITER_REFUSAL}\n", command
         assert leaked(secret, captured.out + captured.err) == [], command
+
+
+# Every character a password could hold raw that the check below has to
+# read: ASCII, Latin, the C1 controls, the general punctuation block and
+# U+3000, then every whitespace character anywhere, and a sample of the rest
+# of category C and of letters outside the basic plane.
+_WHITESPACE = [code for code in range(0x110000) if chr(code).isspace()]
+_SAMPLED = [
+    *(0x200B, 0x2060, 0xFEFF, 0xD800, 0xDFFF, 0xE000, 0xF8FF, 0xFFFE, 0x0378),
+    *(0xF0000, 0x10FFFF, 0x1F600, 0x20000),
+]
+_CANDIDATES = sorted({*range(0x3100), *_WHITESPACE, *_SAMPLED})
+
+
+def test_every_url_store_target_accepts_has_its_password_scrubbed() -> None:
+    """`scrub_secrets` ends a URL's password at whitespace, and store_target
+    refused only a raw tab, CR and LF of it. A password holding a raw
+    no-break space, vertical tab, form feed, U+001C, U+0085, U+2028 or
+    U+3000 was accepted, and every text the scrub guards carried it whole
+    (privacy review of PR #281). Each character is put raw inside a
+    password between two generated halves: store_target refuses it with
+    the text that names the fix, or the scrub masks both halves."""
+    from harrier.sources import scrub_secrets
+
+    first, second = f"synthetic{uuid.uuid4().hex}", f"synthetic{uuid.uuid4().hex}"
+    refused: set[int] = set()
+    leaks: list[str] = []
+    for code in _CANDIDATES:
+        url = f"postgresql://harrier:{first}{chr(code)}{second}@db.example.test:5432/tracker"
+        try:
+            store_target({"HARRIER_DATABASE_URL": url})
+        except StoreUrlError as error:
+            refused.add(code)
+            assert str(error) in (URL_REFUSAL, DELIMITER_REFUSAL), hex(code)
+            continue
+        scrubbed = scrub_secrets(f'connection to "{url}" failed')
+        if first in scrubbed or second in scrubbed:
+            leaks.append(f"U+{code:04X}")
+
+    assert leaks == []
+    named = [0x20, 0x0B, 0x0C, 0x1C, 0x85, 0xA0, 0x2028, 0x3000, 0x200B, 0xFEFF]
+    assert sorted(code for code in named if code not in refused) == []
+    # Letters stay accepted, raw: a password may hold any of them.
+    assert {ord("é"), ord("€"), ord("ü"), 0x1F600, 0x20000}.isdisjoint(refused)
 
 
 def test_a_database_name_that_is_not_printable_is_withheld(
