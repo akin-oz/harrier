@@ -965,8 +965,9 @@ Assumptions for spec 110's staging check, each unconfirmed:
 
 ## Amendment (2026-10-11): the erase covers `job_eligibility`
 
-This section is proposed. It is not approved until Akin approves it, and
-nothing below is built. Line numbers are from `main` at `f26abe0`.
+Akin approved this section in chat on 2026-10-11 ("approve the spec 111
+amendment"); this line records it. Nothing below is built yet. Line
+numbers are from `main` at `f26abe0`.
 
 ### Problem
 
@@ -1160,7 +1161,8 @@ as before.
    no check, and a mixed-owner store fails at its first erase with the
    append-only message.
    Taken 2026-10-11: Akin chose to keep the check, in chat ("keep the
-   owner check"). The rest of this amendment still awaits approval.
+   owner check"). The rest of this amendment was approved later the same
+   day.
 
 ### Proof / origin
 
