@@ -773,14 +773,13 @@ def test_a_duplicate_board_is_fetched_once(
         DiscoveryOptions(dry_run=True, notify=False, only_sources=frozenset({"greenhouse"})),
     )
     assert fetched == ["https://boards.greenhouse.io/exampleco"]
+    # Recorded beside the source summaries, not among them: a skipped repeat
+    # is not a source and not a failure, so the run's outcome, which the
+    # Telegram line reads, stays clean (data-integrity review of PR #270).
+    assert aggregate["duplicate_feeds"] == ["https://job-boards.greenhouse.io/exampleco"]
     summaries = aggregate["source_summaries"]
     assert isinstance(summaries, list)
-    duplicate = [item for item in summaries if item.get("source") == "duplicate"]
-    assert duplicate == [
-        {
-            "source": "duplicate",
-            "fetched_count": 0,
-            "new_prospects": 0,
-            "errors": ["https://job-boards.greenhouse.io/exampleco names a board already listed"],
-        }
-    ]
+    assert [item.get("source") for item in summaries] == ["greenhouse"]
+    outcome = cast("dict[str, Any]", aggregate["outcome"])
+    assert outcome["failed"] == []
+    assert outcome["attempted"] == ["greenhouse"]

@@ -666,4 +666,6 @@ def test_config_import_names_what_it_dropped(
     out = capsys.readouterr().out
     duplicate = "https://job-boards.greenhouse.io/exampleco"
     assert f"dropped {duplicate}: the same board as" in out
+    # The count is what was stored, not what the file held.
+    assert "feeds: 1 entries imported" in out
     assert get_config(db, FEEDS) == ["https://boards.greenhouse.io/exampleco"]

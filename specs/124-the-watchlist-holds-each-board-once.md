@@ -111,10 +111,12 @@ It happens in three places, one function behind all of them:
   per dropped entry, "dropped <url>: the same board as <kept url>", after
   the existing "stored" line. Nothing is printed when nothing was dropped.
 - A discovery run whose routing dropped duplicates logs one warning naming
-  them, and adds a `duplicate` entry to the run summaries with the dropped
-  URLs, the way unrouted entries are reported today (spec 041). This can
-  only happen while the watchlist comes from the file; a stored list is
-  already collapsed.
+  them, and records the dropped URLs under `duplicate_feeds` in the run's
+  aggregate. Not as a source summary: a skipped repeat is not a source and
+  not a failure, and a summary with errors reads as a failed source in the
+  run's outcome and its Telegram line, where an unrouted entry (spec 041)
+  rightly does. This can only happen while the watchlist comes from the
+  file; a stored list is already collapsed.
 - Feed health (spec 025) probes the collapsed list, so it reports each
   board once.
 
@@ -160,12 +162,14 @@ board slug is a declared synthetic one.
       without its row changing
       (`services/api/tests/test_userconfig.py::test_feeds_are_collapsed_on_write_and_on_read`)
 - [x] A discovery run over a file watchlist with a duplicate fetches the
-      board once and reports the dropped URL as `duplicate`
+      board once, records the dropped URL under `duplicate_feeds`, and
+      reports no failed source
       (`services/api/tests/test_discovery.py::test_a_duplicate_board_is_fetched_once`)
 - [x] `harrier config set feeds` names each dropped entry and the entry it
       duplicated; with no duplicates it prints only "stored"
       (`services/api/tests/test_userconfig.py::test_config_set_names_what_it_dropped`);
-      `config import` names it too and stores the collapsed list
+      `config import` names it too, stores the collapsed list and counts what it
+      stored
       (`services/api/tests/test_userconfig.py::test_config_import_names_what_it_dropped`)
 - [x] Feed health reports a duplicated board once
       (`services/api/tests/test_feed_health.py::test_a_duplicated_board_is_probed_once`)
@@ -204,6 +208,14 @@ board slug is a declared synthetic one.
 None. A stored watchlist reads collapsed from the first start after this
 lands, and is stored collapsed on its next save. A file watchlist is
 fetched collapsed and left as written.
+
+## Amendments in the implementing change
+
+1. **Duplicates are recorded beside the source summaries, not among them.**
+   The data-integrity review of PR #270 showed that a `duplicate` source
+   summary with errors made the run's outcome, and its Telegram line, read
+   "ran with failures" over a harmless repeat. They are recorded under
+   `duplicate_feeds` in the aggregate instead.
 
 ## Decided in review (2026-10-11)
 

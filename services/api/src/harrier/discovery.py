@@ -269,7 +269,11 @@ def run_discovery(
 
     # An entry naming a board already listed is fetched once, under its
     # first spelling. Only a file watchlist can hold one: a stored list is
-    # collapsed when it is saved and when it is read (spec 124).
+    # collapsed when it is saved and when it is read (spec 124). It is not a
+    # source and not a failure, so it is recorded beside the source
+    # summaries, never among them: an unsupported host is a fault, a skipped
+    # repeat is not, and a summary with errors reads as a failed source in
+    # the Telegram line (data-integrity review of PR #270).
     duplicates = feeds.get(DUPLICATE, [])
     if duplicates:
         logger.warning(
@@ -277,14 +281,6 @@ def run_discovery(
             len(duplicates),
             "y" if len(duplicates) == 1 else "ies",
             ", ".join(duplicates),
-        )
-        summaries.append(
-            {
-                "source": DUPLICATE,
-                "fetched_count": 0,
-                "new_prospects": 0,
-                "errors": [f"{url} names a board already listed" for url in duplicates],
-            }
         )
 
     for source_name, fetcher in ats_fetchers.items():
@@ -477,6 +473,8 @@ def run_discovery(
         # from a complete one (spec 029).
         "skipped_sources": skipped_sources,
         "source_summaries": summaries,
+        # Watchlist entries skipped as naming a board already listed (spec 124).
+        "duplicate_feeds": duplicates,
     }
     outcome = classify_run(aggregate)
     aggregate["outcome"] = {
