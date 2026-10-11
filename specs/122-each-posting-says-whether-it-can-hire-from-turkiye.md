@@ -1,8 +1,8 @@
 ---
 spec: 122
 title: Each industry posting records whether it can hire someone based in Türkiye, with its evidence
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M9
 depends: [031, 033, 078, 079, 081, 091, 105, 112]
 ---
