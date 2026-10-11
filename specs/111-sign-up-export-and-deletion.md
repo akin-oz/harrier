@@ -1159,6 +1159,8 @@ as before.
    migration when the owned tables have more than one owner. Alternative:
    no check, and a mixed-owner store fails at its first erase with the
    append-only message.
+   Taken 2026-10-11: Akin chose to keep the check, in chat ("keep the
+   owner check"). The rest of this amendment still awaits approval.
 
 ### Proof / origin
 
