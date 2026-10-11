@@ -1,8 +1,8 @@
 ---
 spec: 123
 title: The browser shows and sets a posting's Türkiye eligibility
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M9
 depends: [094, 095, 122]
 ---
