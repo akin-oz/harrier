@@ -269,6 +269,21 @@ def _database_url_stays_pinned(  # pyright: ignore[reportUnusedFunction]
 
 
 @pytest.fixture(autouse=True)
+def _no_built_spa(  # pyright: ignore[reportUnusedFunction]
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`create_app` mounts `apps/web/dist` when it exists, and `just check`
+    builds it, so a test's routes used to depend on whether the web app had
+    been built on that machine: a POST that normalizes to a path no API route
+    holds got 405 from the static mount there and 404 in CI. Every test now
+    sees no built SPA unless it passes `spa_dir` itself, as test_demo.py's
+    SPA tests do (spec 096, review of PR #224)."""
+    import harrier_api.app as app_module
+
+    monkeypatch.setattr(app_module, "spa_dist_dir", lambda: tmp_path / "no-built-spa")
+
+
+@pytest.fixture(autouse=True)
 def _api_token(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[reportUnusedFunction]
     monkeypatch.setenv("HARRIER_API_TOKEN", TEST_TOKEN)
 
