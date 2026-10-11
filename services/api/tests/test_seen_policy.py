@@ -415,30 +415,41 @@ def test_a_job_the_operator_rejected_is_never_resurrected(
     assert len(load_seen("greenhouse")) == 1
 
 
-def _screened_posting(external_id: str) -> NormalizedJob:
+def _screened_posting(
+    external_id: str, url: str = "https://boards.example.com/Northwind/Job-1"
+) -> NormalizedJob:
     """A posting as a source delivers it. The board token differs from the
     company name, as it does on Greenhouse, so the key cannot be rebuilt from
-    the company alone."""
+    the company alone. The url keeps its case because the key hashes it as
+    given, so a lowercased url would rebuild a different key."""
     return make_normalized_job(
         source="greenhouse",
         company="Northwind Labs",
         title="Senior Frontend Engineer",
         location="Remote, Europe",
-        url="https://boards.example.com/northwind/1",
+        url=url,
         external_id=external_id,
         board_key="northwind",
     )
 
 
-@pytest.mark.parametrize("external_id", ["4001", ""], ids=["external-id", "url-only"])
+@pytest.mark.parametrize(
+    ("external_id", "url"),
+    [
+        ("4001", "https://boards.example.com/Northwind/Job-1"),
+        ("", "https://boards.example.com/Northwind/Job-1"),
+        ("", ""),
+    ],
+    ids=["external-id", "url-only", "no-id-no-url"],
+)
 def test_a_rejected_row_is_protected_under_the_key_discovery_records(
-    db: sqlite3.Connection, cfg: dict[str, Any], external_id: str
+    db: sqlite3.Connection, cfg: dict[str, Any], external_id: str, url: str
 ) -> None:
     """Discovery records a hashed `job_key`, not a url. A protection that
     compared the key against urls and company plus title never matched, so a
     stale entry for a row the operator rejected was cleared and counted as
     eligible, and the report said nobody's decision had been left alone."""
-    job = _screened_posting(external_id)
+    job = _screened_posting(external_id, url)
     job_id = add_job(db, build_tracker_row(job, 80, []), scope=default_scope(db))
     set_status(db, default_scope(db), job_id, "rejected")
     save_seen("greenhouse", {job["job_key"]: decision(policy="old-policy")})
