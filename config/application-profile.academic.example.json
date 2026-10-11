@@ -1,11 +1,11 @@
 {
-  "_comment": "Synthetic academic application profile (spec 101), the JSON half. Store YOURS with harrier --track <slug> profile put application_profile --file PATH.json.",
+  "_comment": "Synthetic academic application profile (spec 101), the JSON half, matching config/application-profile.academic.example.md. Store YOURS with harrier --track <slug> profile put application_profile --file PATH.json. It positions the letter and the answers for a selection committee; every fact still comes from the truth documents.",
   "core_positioning": {
     "identity": "Research Software Engineer",
     "strongest_evidence": [
-      "TypeScript-first product delivery",
-      "conversion-critical flow ownership",
-      "frontend quality infrastructure"
+      "reliable tools for data heavy groups",
+      "tests and validation the group can run",
+      "close work with the people who use the software"
     ]
   },
   "ai_tooling_workflow": {
@@ -17,10 +17,6 @@
   },
   "professional_stories": [
     {
-      "id": "funnel_conversion_improvement",
-      "summary": "Improved a signup funnel's completion from about 50% to 75% across roughly 100K annual applications."
-    },
-    {
       "id": "ai_assisted_workflow_automation",
       "summary": "Built an AI-assisted local automation pipeline with truth-source validation for application materials."
     }
@@ -28,13 +24,13 @@
   "engineering_principles": [
     "Evidence over claims",
     "Small reviewable changes",
-    "Quality gates in CI"
+    "Tests the group can run"
   ],
   "safe_framing": {
     "do_not_claim": [
-      "Do not claim React Native experience",
-      "Do not claim Cursor as an actual tool",
-      "Do not claim backend ownership beyond adjacent utilities"
+      "Do not claim publications that are not in the truth sources",
+      "Do not claim teaching or supervision that is not in the truth sources",
+      "Do not claim grants or funding that are not in the truth sources"
     ]
   },
   "question_mapping": {
@@ -44,62 +40,60 @@
       ],
       "guidance": "Name the actual tools and the real local automation example; do not inflate."
     },
-    "Why are you interested in this role/company?": {
+    "Why are you interested in this position?": {
       "best_story_ids": [
-        "funnel_conversion_improvement"
+        "ai_assisted_workflow_automation"
       ],
-      "guidance": "Tie interest to the product signal and verified delivery work."
+      "guidance": "Tie interest to the group's research as the call describes it, in the call's own words, and to verified work only."
     }
   },
   "style_guidance": {
     "voice": [
       "direct",
-      "practical",
-      "understated"
+      "plain",
+      "evidence-first"
     ],
     "selection_guidance": [
-      "Favor proof points that match the JD over the most impressive-sounding ones.",
-      "For frontend roles, prefer user-facing ownership, performance, and design systems."
+      "Write for a selection committee, not a recruiter.",
+      "Favor proof points that match the call's stated needs over the most impressive-sounding ones."
     ]
   },
   "deterministic_answers": {
     "interest": {
-      "short": "I'm interested in this role because it fits my background in TypeScript-first product engineering and user-facing delivery.",
-      "medium": "I'm interested in {company} because {product_signal}. This role fits my background well: TypeScript-first frontend and product engineering, shipping user-facing features end to end, and improving performance and reliability in production.",
+      "short": "I am interested in this position because the group's work needs reliable research software, which is the work I do.",
+      "medium": "I am interested in {company} because {product_signal}. The position fits my background: building reliable, tested tools and working closely with the people who use them.",
       "notes": [
-        "Use JD language where it maps directly to verified experience."
+        "Use the call's language where it maps directly to verified experience."
       ]
     },
     "fit": {
-      "short": "This role fits my background well because my strongest work is TypeScript-first frontend and product engineering.",
-      "medium": "My background is strongest in TypeScript-first frontend and product engineering. I've shipped user-facing work end to end and improved conversion-critical flows in production.",
+      "short": "The position fits my background because my strongest work is reliable, tested software built with its users.",
+      "medium": "My background is strongest in building reliable, tested software and working closely with the people who use it. I would bring that care to the group's tools.",
       "notes": []
     },
     "experience": {
-      "short": "My most relevant experience is shipping TypeScript-first frontend products and improving conversion-critical flows.",
-      "medium": "I've improved a signup funnel's completion from about 50% to 75% across roughly 100K annual applications, built shared UI libraries, and led frontend quality work in production codebases.",
-      "notes": [
-        "Signup funnel completion improved from ~50% to ~75%"
-      ]
+      "short": "My most relevant experience is building tested tools with validation gates.",
+      "medium": "I have built tools with validation gates and tests that others can run, and I keep claims tied to evidence.",
+      "notes": []
     },
     "leaving": {
-      "short": "I'm selective about the next role and looking for a good fit on ownership, engineering quality, and product work.",
-      "medium": "I'm not leaving because of one specific issue. I'm looking for the next role with real ownership, strong engineering standards, and a sensible long-term match on stack and scope.",
+      "short": "I am looking for a position where research software is valued as part of the work.",
+      "medium": "I am not leaving because of one specific issue. I am looking for a group where reliable research software is part of how the work gets done.",
       "notes": []
     },
     "salary": {
-      "short": "My target range is around EUR {salary_target}, depending on scope, level, and total package.",
-      "medium": "My target is around EUR {salary_target} total cash, and I would usually look for at least EUR {salary_min} for the right fit. I am open to discussing the full package based on scope and seniority.",
+      "short": "My target is around EUR {salary_target}, depending on the position's grade and scope.",
+      "medium": "My target is around EUR {salary_target}, and I would usually look for at least EUR {salary_min}. I am open to discussing the grade and the full package.",
       "notes": []
     },
     "availability": {
-      "short": "I can start interview conversations immediately and confirm exact start timing during the process.",
-      "medium": "I can start interview conversations immediately. I prefer to confirm exact notice period and start timing once process details are clear.",
+      "short": "I can start conversations immediately and confirm a start date during the process.",
+      "medium": "I can start conversations immediately. I prefer to confirm notice and a start date once the process is clear.",
       "notes": []
     },
     "generic": {
-      "short": "This role looks close to work I have done well before: TypeScript-first product engineering and end-to-end feature ownership.",
-      "medium": "My background is most relevant where the role needs strong frontend or product-engineering execution, cross-functional delivery, and disciplined quality.",
+      "short": "The position is close to work I have done well: reliable, tested software built with its users.",
+      "medium": "My background is most relevant where the position needs careful software work, close collaboration with researchers, and evidence for every claim.",
       "notes": []
     }
   }

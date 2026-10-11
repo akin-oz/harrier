@@ -175,7 +175,9 @@ continues. It does not refuse: some calls are reviewed on a rolling basis.
   and each command fails naming `profile put resume_framing`.
 - **No application profile on the track.** `cover-letter` and `answers`
   fail naming `profile put application_profile`. `tailor` does not read it
-  and runs.
+  and runs. An answer built without the model (salary, from the candidate
+  document) reads no profile and is still given; only a question sent to
+  the model needs one.
 - **An academic bullet the truth does not support** is selected. The CV is
   refused naming the bullet id; nothing is written to the tracker.
   `profile check` (spec 099) finds these before a run.
@@ -397,3 +399,20 @@ gate. Each is a consequence of behavior the spec already states.
   tests prove the default track's profile is never read by putting a
   different sentence in each track's profile and finding only the track's
   own in every prompt payload.
+
+## Amendment (2026-10-11, review of PR #224)
+
+The PR merged without a review, so the repository's own review agents ran
+afterwards.
+
+- **The academic profile JSON example was the industry one** with a new
+  identity line, so a copy of it would have positioned academic letters
+  with frontend stories. It now matches its markdown sibling: one shared
+  story, academic safe framing, committee style guidance
+  (`services/api/tests/test_academic_applications.py::test_the_academic_examples_store_and_check`).
+- **A salary-only answer set needs no profile,** stated in Failure modes
+  and pinned (`services/api/tests/test_academic_applications.py::test_an_answer_built_without_the_model_needs_no_profile`).
+- **`validate_profile` checks structure but `profile put` does not call
+  it;** `put` holds only what this spec requires (JSON is an object,
+  markdown is not empty). Whether `put` should validate the structure is
+  left to a later spec.
