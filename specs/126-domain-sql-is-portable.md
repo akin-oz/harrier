@@ -1,8 +1,8 @@
 ---
 spec: 126
 title: Domain SQL is portable
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [079, 099, 103, 105, 112, 115, 122]
 ---
