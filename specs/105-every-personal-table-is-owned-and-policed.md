@@ -26,16 +26,16 @@ person, and several of its rules assume it:
 - Five uniqueness rules are global. `idx_jobs_url`,
   `idx_jobs_external_key`, `tracks.slug UNIQUE`, `user_config UNIQUE
   (kind)` and `profile_documents UNIQUE (kind, name)`
-  (`services/api/src/harrier/tracker/schema.py:470-471`, `:436`, `:501`,
-  `:492`) would refuse owner B's row because owner A has one like it.
+  (`services/api/src/harrier/tracker/schema.py:603-604`, `:569`, `:634`,
+  `:625`) would refuse owner B's row because owner A has one like it.
   Two people may track the same posting URL. Worse, the refusal itself
   tells B that someone else has that URL: Postgres checks unique and
   foreign key constraints without row security, and its manual warns of
   exactly this covert channel.
-- `job_runs` has `job` as its primary key (`schema.py:505-508`), so two
+- `job_runs` has `job` as its primary key (`schema.py:638-641`), so two
   owners' scheduled runs would overwrite one success time.
-- The baseline seeds track `id = 1` with no owner (`schema.py:443`), and
-  `jobs.track_id` defaults to 1 (`schema.py:464`). The domain treats
+- The baseline seeds track `id = 1` with no owner (`schema.py:576`), and
+  `jobs.track_id` defaults to 1 (`schema.py:597`). The domain treats
   id 1 as "the default track" (`DEFAULT_TRACK_ID`,
   `services/api/src/harrier/tracks.py:36`) in six places
   (`tracks.py:204`, `:333`, `:344`,
@@ -43,14 +43,16 @@ person, and several of its rules assume it:
   `services/api/src/harrier_api/tracks_routes.py:82`). With one global id 1, only
   one owner could have a default track.
 - `jobs.track_id REFERENCES tracks(id)` and `job_events.job_id REFERENCES
-  jobs(id)` (`schema.py:464`, `:513`) are checked without row security.
+  jobs(id)` (`schema.py:597`, `:646`) are checked without row security.
   Owner A could file a job under owner B's track, or an event against B's
   job, and the foreign key would accept it.
 
 Two rules of the repo shape how this lands:
 
 - Spec 103 requires every migration after the baseline to declare both
-  dialects, and `undeclared_dialects` (`schema.py:544-564`) fails a version
+  dialects, and `undeclared_dialects` (`schema.py:1317-1354`; since this spec it accepts
+  an empty list for a version declared in `SINGLE_DIALECT_MIGRATIONS`,
+  noted 2026-10-11) fails a version
   with an empty list. ADR-012 point 3 says nothing in the local schema
   names a tenant. An owner column is hosted only, so the SQLite side of
   this migration must be empty on purpose, and the repo has no way to say
@@ -123,7 +125,7 @@ Two rules of the repo shape how this lands:
 | `user_config` | yes | watchlist, searches, hold list |
 | `job_events` | yes | every decision with its reason |
 | `tracks` | yes | an owner's searches |
-| `job_runs` | yes | per-owner scheduled run state; its content is not personal (`schema.py:203-205`), but each owner's runs succeed separately |
+| `job_runs` | yes | per-owner scheduled run state; its content is not personal (`schema.py:238-240`), but each owner's runs succeed separately |
 | `schema_version` | no | migration bookkeeping |
 
 Every owned table gets, on Postgres only:
@@ -174,7 +176,7 @@ An owner's track 1 is created by the database when the owner is created:
   function `harrier_new_owner()` with `search_path = ''`, inserts
   `(owner_id, id, slug, kind, label) = (NEW.id, 1, 'job', 'industry',
   'Job search')`. These are the values migration 8 seeds locally
-  (`schema.py:333-334`). Supabase documents this trigger pattern for
+  (`schema.py:368-369`). Supabase documents this trigger pattern for
   per-user rows and warns that a failing trigger blocks sign-up.
 - Migration 10 inserts the same row for every user already in
   `auth.users`.

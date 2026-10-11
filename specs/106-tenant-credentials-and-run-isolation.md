@@ -20,8 +20,9 @@ tenant's keys. ADR-013 decision 8 stores credentials per owner and gives
 each run only its owner's. Akin chose bring-your-own LLM keys (spec 102,
 open decision 3).
 
-Line numbers below are from `main` at `44ac0d7` (2026-10-10). Counts say how
-they were taken.
+Line numbers below are from `main` at `44ac0d7` (2026-10-10), except the
+`schema.py`, `harrier_cli/main.py` and `harrier_api/app.py` ones, refreshed
+to `main` at `524dd8a` on 2026-10-11. Counts say how they were taken.
 
 The post-merge review of PRs #194 and #207 (2026-10-10) added five
 problems this spec owns:
@@ -76,7 +77,7 @@ spec 104's 501 is lifted:
   target is a track slug for reconsideration
   (`services/api/src/harrier_api/ops_routes.py:137`), a date for the
   digest (`ops_routes.py:217`), and empty for discovery started from
-  `POST /runs` (`services/api/src/harrier_api/app.py:855`). Slugs are per
+  `POST /runs` (`services/api/src/harrier_api/app.py:1111`). Slugs are per
   owner since spec 105, so owner B asking for a reconsideration of track
   `job` while owner A's runs would be handed A's run, with A's run id. And
   every discovery on the machine would share one lock.
@@ -90,9 +91,9 @@ spec 104's 501 is lifted:
   A's track 1 and owner B's track 1 would share seen-state and saved
   datasets.
 - **A run reads `.env`.** `main` calls `load_project_env()` first
-  (`services/api/src/harrier_cli/main.py:2900-2901`), which copies every
+  (`services/api/src/harrier_cli/main.py:3054-3055`), which copies every
   key of `.env` in the working directory that the environment lacks
-  (`main.py:51-57`). An allowlist that leaves a name out would then be
+  (`main.py:53-59`). An allowlist that leaves a name out would then be
   filled from a file. The image excludes `.env` (`.dockerignore:5-6`), so
   this is a guard against a file that should not be there, not a known
   leak.
@@ -235,16 +236,16 @@ them.
 | Kind | Hosted | Needs | Why |
 |---|---|---|---|
 | `discovery` | runs | none up front | results are tracker rows; each source reports its own missing token (`sources/apify_linkedin.py:315`) |
-| `demo` | runs | none | `demo-run` exercises the run machinery and touches no data (`harrier_cli/main.py:2096-2097`); spec 110's staging check uses it |
+| `demo` | runs | none | `demo-run` exercises the run machinery and touches no data (`harrier_cli/main.py:2202-2203`); spec 110's staging check uses it |
 | `digest` | runs | `telegram`, unless `--dry-run` | it sends through `send_telegram_message` (`harrier/digest.py:22`, `:341`) |
-| `check-feeds` | runs | none | reads the owner's boards from the store (`harrier_cli/main.py:1612-1628`) |
+| `check-feeds` | runs | none | reads the owner's boards from the store (`harrier_cli/main.py:1718-1734`) |
 | `reconsider` | runs | none | results are tracker rows |
 | `events-backfill` | runs | none | results are event rows |
 | `evaluate-prospects` | runs | `ai` | calls `evaluate_offer` (`harrier/offers/batch.py:91`); results are tracker rows |
 | `tailor` | 501 until spec 107 | | the result is a file (`resume/tailor.py:51`) |
 | `cover-letter` | 501 until spec 107 | | a file (`apply/letters.py:197`) |
 | `answers` | 501 until spec 107 | | a file (`apply/answers.py:169`) |
-| `evaluate` | 501 until spec 107 | | a report file (`offers/evaluate.py:107`; `harrier_cli/main.py:605`) |
+| `evaluate` | 501 until spec 107 | | a report file (`offers/evaluate.py:107`; `harrier_cli/main.py:631`) |
 | `outreach-draft` | 501 until spec 107 | | a draft file (`outreach/drafts.py:122`) |
 | `find-contacts` | 501 until spec 107 | | candidates are staged in a file (`outreach/discovery.py:45`), which approval reads |
 | `backfill-posters` | 501 until spec 107 | | stages posters into the same candidates file (`outreach/backfill.py:1-8`, `:62-77`) |
@@ -347,7 +348,7 @@ it is taken, the binding is specified by what it guarantees, not by how.
 
 The run-outcome key `discovery:<track id>` (`academic/discovery.py:71`)
 does not change. It is stored in `job_runs`, whose Postgres primary key is
-`(owner_id, job)` since spec 105 (`schema.py:777`), and read under the
+`(owner_id, job)` since spec 105 (`schema.py:917`), and read under the
 owner's policy (`runoutcome.py:138-161`). Owner A's `discovery:1` and owner
 B's `discovery:1` are two rows. Writing the owner into the key would make
 domain SQL name a tenant, which ADR-013 decision 2 forbids. The keys that

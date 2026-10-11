@@ -97,7 +97,7 @@ Nothing inside the domain resolves it again, and nothing reads a global.
 ### Dedupe stays global for url and external_key
 
 The unique indexes on `jobs.url` and `jobs.external_key`
-(`services/api/src/harrier/tracker/schema.py:133-137`) are global, so a url
+(`services/api/src/harrier/tracker/schema.py:166-170`) are global, so a url
 stored in one track is a duplicate in every other: one posting lives in
 exactly one track. Two reads are therefore cross-track by name:
 
@@ -337,7 +337,7 @@ container-up` so the image carries the scoped readers.
   line 156, `list_jobs` at 163, `set_status` at 219, `update_fields` at
   332, `list_events` at 445, `backfill_events` at 522).
 - The dedupe reads and their indexes: `store.py:77-96`,
-  `schema.py:133-137`, `discovery.py:176`,
+  `schema.py:166-170`, `discovery.py:176`,
   `screening/pipeline.py:64` (`build_tracker_indexes`).
 - The mail watch's event file: `services/api/src/harrier/mail/watch.py`
   (`append_event`, `tracker_rows` at line 578).

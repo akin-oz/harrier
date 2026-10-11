@@ -24,8 +24,9 @@ every path built from one, such as academic discovery's run and incoming
 directories (`services/api/src/harrier/academic/discovery.py:153`, `:172`),
 must sit under the owner's prefix hosted.
 
-Line numbers below are from `main` at commit `44ac0d7` (2026-10-10).
-Counts say how they were taken.
+Line numbers below are from `main` at commit `44ac0d7` (2026-10-10),
+except the `harrier_cli/main.py` and `harrier_api/app.py` ones, refreshed
+to `main` at `524dd8a` on 2026-10-11. Counts say how they were taken.
 
 ### Every file the domain writes today
 
@@ -53,7 +54,7 @@ key family: the path relative to `data_dir()`.
 
 | Family | Writer | Read by | Write kind today |
 |---|---|---|---|
-| `resumes/<slug>.{md,html,pdf,metadata.json,evaluation.md}` | `resume/tailor.py:51-76`, `:135-176` | `artifacts.py:85-144`, `harrier_api/app.py:665-725` | plain write; the PDF through `render_validated_pdf` (`resume/pdf.py:87-111`) |
+| `resumes/<slug>.{md,html,pdf,metadata.json,evaluation.md}` | `resume/tailor.py:51-76`, `:135-176` | `artifacts.py:85-144`, `harrier_api/app.py:921-981` | plain write; the PDF through `render_validated_pdf` (`resume/pdf.py:87-111`) |
 | `cover-letters/<slug>.{md,html,pdf}` | `apply/letters.py:197-215`, `:573-599` | the same artifact routes | plain write; PDF as above |
 | `answers/<slug>.md` | `apply/answers.py:169-170`, `:695-699` | the artifact routes | plain write |
 | `reports/<slug>.md` | `offers/evaluate.py:107-117`, `:227-229` | the artifact routes | plain write |
@@ -91,7 +92,7 @@ another spec:
 | `harrier_api/localauth.py:64-95` (local API token) | hosted mode has no token file (spec 104) |
 | `harrier/llm/providers.py:46-54` (LLM debug log, opt-in by `*_DEBUG`, `llm/config.py:161-167`) | hosted log rules are spec 110's |
 | `harrier/logsetup.py:52-53` (log file) | hosted log rules are spec 110's |
-| `harrier/mail/watch.py:645`, `harrier_cli/main.py:925` (Gmail OAuth token) | a credential: specs 106 and 109 |
+| `harrier/mail/watch.py:645`, `harrier_cli/main.py:950` (Gmail OAuth token) | a credential: specs 106 and 109 |
 | `harrier/mail/run.py:153-162` (copy of the old system's seen state) | local only |
 | `harrier/tracker/export.py:85-104`, `harrier/profile/store.py:156-158`, `:196-212` (CSV and profile exports to a chosen directory) | local CLI; a hosted export is spec 111's |
 | `harrier/backup.py`, `harrier/cutover.py`, `harrier/hostlease.py:91-98`, `harrier/schedule.py:369-371`, `harrier/reviewfollowup.py:404-503`, `harrier/parity/checklist.py:173-174`, `harrier_api/export_openapi.py:19-20`, `harrier_api/demo.py:64-68`, `harrier/db.py` | the local machine, development tools, or the SQLite store itself |
@@ -259,7 +260,7 @@ in its canonical lowercase form, and `<name>` is:
 
 The name a person sees does not change. `ArtifactOut.filename` and the
 download's `Content-Disposition` use the key's last segment, as they use
-the path's name today (`harrier_api/app.py:689`, `:724`).
+the path's name today (`harrier_api/app.py:945`, `:980`).
 
 Track-qualified keys are safe hosted. `tracks` has the primary key
 `(owner_id, id)` on Postgres (spec 105), so a track id is unique inside
@@ -313,7 +314,7 @@ one owner's prefix, and two owners' track 2 are two prefixes.
 | description cache (`screening/descriptions.py:88-112`) | empty | empty, logged; a decision is never refused for it (spec 079 amendment, `services/api/tests/test_job_events.py::test_a_damaged_description_file_does_not_block_a_decision`) |
 | LinkedIn verdict cache, staged candidates, outreach targets | empty | empty, as on `OSError` today |
 | active model (`scoring/model.py:284-313`) | rules score (`MODEL_MISSING`) | rules score (`MODEL_INVALID`) |
-| artifact routes (`harrier_api/app.py:665-725`) | listed as absent; read answers 404 as today | 503 when unavailable; 500 when denied |
+| artifact routes (`harrier_api/app.py:921-981`) | listed as absent; read answers 404 as today | 503 when unavailable; 500 when denied |
 
 `read_json_mapping` (`atomicio.py:84-100`) turns any `OSError` into
 `DamagedStateError`, so the first row needs no new code beyond reading
@@ -353,7 +354,7 @@ only the calls change.
 locally with `FileResponse(local_path)`, as today, and hosted with the
 object's bytes, the same media type (`artifacts.py:55-65`) and the same
 `Content-Disposition` file name. A 404 for an absent artifact keeps its
-text (`harrier_api/app.py:716-720`).
+text (`harrier_api/app.py:972-976`).
 
 ### The storage migration (Postgres only)
 
