@@ -11,7 +11,12 @@ from pathlib import Path
 
 
 def read_env_file(path: Path) -> dict[str, str]:
-    """Each `KEY=value` line of `path`, quotes stripped. Empty when absent."""
+    """Each `KEY=value` line of `path`, quotes stripped. Empty when absent.
+
+    The first line for a key wins, as it did when the CLI's loader read the
+    file itself: that loader never overwrote a key it had already set
+    (review of PR #218).
+    """
     if not path.is_file():
         return {}
     values: dict[str, str] = {}
@@ -21,6 +26,6 @@ def read_env_file(path: Path) -> dict[str, str]:
             continue
         key, value = line.split("=", 1)
         key = key.strip()
-        if key:
+        if key and key not in values:
             values[key] = value.strip().strip('"').strip("'")
     return values

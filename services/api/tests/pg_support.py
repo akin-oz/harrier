@@ -15,10 +15,11 @@ To run them locally:
 
 Every fresh database gets a shim of Supabase's auth objects before anything
 migrates it (spec 105): the roles anon, authenticated and service_role, a
-schema auth with a table auth.users, and auth.uid(). Migration 10 needs them
-and creates none of them. `as_owner` is how a test acts as one owner: the
-same role (harrier_tenant, which migration 10 creates) and claims a
-request's transaction will carry (ADR-013 decision 3, spec 104).
+schema auth with a table auth.users, auth.uid(), and Supabase's default
+privileges on public. Migration 10 needs them and creates none of them.
+`as_owner` is how a test acts as one owner: the same role (harrier_tenant,
+which migration 10 creates) and claims a request's transaction will carry
+(ADR-013 decision 3, spec 104).
 """
 
 from __future__ import annotations
@@ -96,6 +97,18 @@ SHIM_STATEMENTS: tuple[str, ...] = (
     $$
     """,
     "GRANT USAGE ON SCHEMA auth TO anon, authenticated, service_role",
+    # Supabase's default privileges: every table, sequence and function the
+    # migrating role creates in public is granted to its three roles. Run as
+    # the role the tests migrate with, so the baseline's tables arrive with
+    # these grants, as they would on a Supabase project, and a revoke that
+    # migration 10 forgot shows in the catalog test (spec 105, post-merge
+    # review).
+    "GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role",
+    *(
+        "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
+        f"GRANT ALL ON {kind} TO anon, authenticated, service_role"
+        for kind in ("TABLES", "SEQUENCES", "FUNCTIONS")
+    ),
 )
 
 
@@ -118,15 +131,20 @@ def _create_role(conn: PgConnection, name: str, attributes: str) -> None:
     )
 
 
-def install_shim(url: str) -> None:
-    """Give the database at `url` the auth objects migration 10 needs."""
+def install_shim(url: str, statements: tuple[str, ...] = SHIM_STATEMENTS) -> None:
+    """Give the database at `url` the auth objects migration 10 needs.
+
+    A test that needs part of the shim passes the statements it wants. The
+    roles are always made: they belong to the whole server, and other
+    databases on it need them.
+    """
     import psycopg
 
     with psycopg.connect(url, autocommit=True) as conn:
         for name, attributes in SHIM_ROLES:
             _create_role(conn, name, attributes)
         with conn.transaction():
-            for statement in SHIM_STATEMENTS:
+            for statement in statements:
                 conn.execute(statement.encode())
 
 
@@ -163,6 +181,10 @@ def as_owner(conn: PgConnection, owner: str) -> Generator[PgConnection]:
     """A transaction as `owner`, policed: the role is the tenant role, which
     cannot bypass row security, unlike the superuser the tests connect as."""
     with as_role(conn, TENANT_ROLE, owner) as policed:
+        # The proof that a test is policed at all: were the role switch ever
+        # lost, every isolation test would run as the superuser and pass.
+        role = policed.execute("SELECT current_user").fetchone()
+        assert role == (TENANT_ROLE,), f"as_owner runs as {role}, not {TENANT_ROLE}"
         yield policed
 
 

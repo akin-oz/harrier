@@ -11,14 +11,15 @@ that cannot run DDL (ADR-013 decision 3), and a deploy migrates once rather
 than every machine on its first request. `harrier store migrate` is the one
 path that applies migrations.
 
-A URL carries a password. A connection error is built from the host, port
-and database name, never from the URL, and the driver's own message is
-scrubbed of the password, in both its encoded and decoded forms, before it
-is quoted. The driver's error is not chained to the one raised, so it
-cannot be found as `__context__` either. Errors from a migration's
-statements are the driver's own; `harrier store migrate` prints only the
-server's primary message, which quotes SQL, not the URL. Spec 035 is the
-record of a credential leaking through an exception string.
+A URL carries a password, in its authority or as a `password` query
+parameter. A connection error is built from the host, port and database
+name, never from the URL, and the driver's own message is scrubbed of the
+password, in its written and decoded forms, before it is quoted. The
+driver's error is not chained to the one raised, so it cannot be found as
+`__context__` either. Errors from a migration's statements are the
+driver's own; `harrier store migrate` prints only the server's primary
+message, which quotes SQL, not the URL. Spec 035 is the record of a
+credential leaking through an exception string.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 if TYPE_CHECKING:
     import psycopg
@@ -98,7 +99,7 @@ class _Where:
     host: str
     port: str
     database: str
-    # Both forms: libpq quotes the URL as written, still percent-encoded,
+    # Every form: libpq quotes the URL as written, still percent-encoded,
     # when it refuses it, and the decoded form when it quotes a parameter.
     passwords: tuple[str, ...]
 
@@ -127,28 +128,47 @@ def store_target(environ: Mapping[str, str] | None = None) -> StoreTarget:
     raw = raw.strip()
     if not raw:
         return StoreTarget("sqlite")
-    # The scheme exactly as libpq accepts it, and a host and port that parse:
+    # Only `postgresql://`, in lower case, and a host and port that parse:
     # anything else failed later as a traceback or an unrelated driver
-    # message (post-merge data integrity review of PR #207).
+    # message (post-merge data integrity review of PR #207). libpq refuses
+    # the scheme in another case. It also accepts `postgres://`, which is
+    # refused here on purpose: spec 103 names one scheme.
     refused = StoreUrlError(f"{URL_VARIABLE} must be empty or a postgresql:// URL")
     if not raw.startswith(f"{POSTGRES_SCHEME}://"):
         raise refused
     try:
         _where(raw)
+        parses = True
     except ValueError:
-        raise refused from None
+        parses = False
+    # Raised after the except block, not inside it, so the ValueError is not
+    # chained as `__context__`. Its text can quote the password: a raw `/` in
+    # the password ends the authority, so the password before it is read as
+    # the port (review of PR #218).
+    if not parses:
+        raise refused
     return StoreTarget("postgres", raw)
 
 
 def _where(url: str) -> _Where:
     parts = urlsplit(url)
+    written = [parts.password or ""]
+    # libpq also takes the password from `?password=`, and quotes that
+    # parameter as written when it refuses it (review of PR #218).
+    for pair in parts.query.split("&"):
+        name, _, value = pair.partition("=")
+        if unquote(name) == "password":
+            written.append(value)
+    decoded = [
+        value
+        for name, value in parse_qsl(parts.query, keep_blank_values=True)
+        if name == "password"
+    ]
     return _Where(
         host=parts.hostname or "localhost",
         port=str(parts.port or 5432),
         database=parts.path.lstrip("/") or "postgres",
-        passwords=tuple(
-            form for form in (parts.password or "", unquote(parts.password or "")) if form
-        ),
+        passwords=tuple(form for form in (*written, *map(unquote, written), *decoded) if form),
     )
 
 

@@ -6,19 +6,22 @@ holds them together. It opens a fresh store of each and checks that they
 have the same tables, and for each table:
 
 - the same columns in the same order;
-- the same type affinity for each column: SQLite's affinity for the
-  declared type against Postgres's data type, where text is TEXT and
-  integer or bigint is INTEGER;
+- the same type for each column, in the types the schema uses: a TEXT
+  column is `text` with no length, an INTEGER column that holds a row id
+  is `bigint`, and any other INTEGER column is `integer`. A narrower or
+  wider Postgres type is a difference;
 - the same nullability, but for the one difference named in
   `KNOWN_NULLABILITY_DIFFERENCES`;
 - the same primary key, and the same unique constraints with the same
-  partial predicates;
+  partial predicates, with no two Postgres keys that read as one SQLite
+  key;
 - the same foreign keys, with the same actions, but for the one named in
   `KNOWN_FOREIGN_KEY_DIFFERENCES`, which SQLite holds as two triggers;
 - for a row inserted with only its required columns, equal defaults, and
   each default timestamp in SQLite's shape and within two minutes of the
-  current UTC time. The Postgres session is set to a zone that is not UTC
-  first, so a default that follows the session's zone is caught.
+  current UTC time. The Postgres session and the test process are set to
+  a zone that is not UTC first, so a default that follows the local zone
+  is caught on either side, even on a host that runs in UTC.
 
 Then it runs every probe against both, and each must be refused, or
 accepted, in both. The probes are the spec's table, one accepted insert
@@ -51,8 +54,10 @@ locally without one (`tests/pg_support.py`).
 
 from __future__ import annotations
 
+import os
 import re
 import sqlite3
+import time
 from collections.abc import Generator
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
@@ -87,7 +92,8 @@ class Shape:
     """What one table looks like, in terms both dialects can state."""
 
     columns: tuple[str, ...]
-    # Each column's type affinity: TEXT, INTEGER, REAL, BLOB or NUMERIC.
+    # Each column's type as Postgres spells it, with its length if it has
+    # one. For SQLite, the type its column must have on Postgres.
     types: dict[str, str]
     nullable: dict[str, bool]
     primary_key: tuple[str, ...]
@@ -148,21 +154,26 @@ def sqlite_affinity(declared: str) -> str:
     return "NUMERIC"
 
 
-# Postgres data types by the SQLite affinity that stores the same values. A
-# type missing here keeps its own name, which no SQLite affinity equals, so
-# a timestamptz or a boolean column is a difference rather than a match.
-POSTGRES_AFFINITY: dict[str, str] = {
-    "text": "TEXT",
-    "character varying": "TEXT",
-    "character": "TEXT",
-    "smallint": "INTEGER",
-    "integer": "INTEGER",
-    "bigint": "INTEGER",
-    "real": "REAL",
-    "double precision": "REAL",
-    "bytea": "BLOB",
-    "numeric": "NUMERIC",
-}
+def expected_postgres_type(declared: str, holds_row_id: bool) -> str:
+    """The Postgres type a SQLite column must have.
+
+    Only the types the schema uses. Mapping every type of the same affinity
+    let `varchar(4)` pass for `text` and `integer` for a `bigint` id (review
+    of PR #218). Any other affinity keeps its SQLite name, which no Postgres
+    type is spelled as, so it is a difference rather than a match.
+    """
+    affinity = sqlite_affinity(declared)
+    if affinity == "TEXT":
+        return "text"
+    if affinity == "INTEGER":
+        return "bigint" if holds_row_id else "integer"
+    return affinity
+
+
+def postgres_type(data_type: str, length: object) -> str:
+    """A Postgres column's type, with its length when it has one, so a
+    `character varying(4)` can never read as `text`."""
+    return data_type if length is None else f"{data_type}({length})"
 
 
 def sqlite_tables(conn: sqlite3.Connection) -> set[str]:
@@ -204,7 +215,19 @@ def sqlite_shape(conn: sqlite3.Connection, table: str) -> Shape:
             assert match is not None, f"{table}: partial index {name} has no WHERE clause"
             predicate = _predicate(match.group(1))
         unique.add((index_columns, predicate))
-    types = {str(row["name"]): sqlite_affinity(str(row["type"])) for row in info}
+    # A row id: the table's own `id`, or a column that references one, by a
+    # foreign key or by the triggers that stand in for one.
+    references = sqlite_foreign_keys(conn, table) | {
+        key for known_table, key in KNOWN_FOREIGN_KEY_DIFFERENCES if known_table == table
+    }
+    row_ids = {"id"} if rowid_alias == "id" else set[str]()
+    row_ids |= {
+        columns[0] for columns, _, parent_columns, *_ in references if parent_columns == ("id",)
+    }
+    types = {
+        str(row["name"]): expected_postgres_type(str(row["type"]), row["name"] in row_ids)
+        for row in info
+    }
     return Shape(
         columns,
         types,
@@ -311,13 +334,14 @@ def postgres_foreign_keys(conn: PgConnection, table: str) -> frozenset[ForeignKe
 
 def postgres_shape(conn: PgConnection, table: str) -> Shape:
     info = conn.execute(
-        "SELECT column_name, is_nullable, data_type FROM information_schema.columns "
+        "SELECT column_name, is_nullable, data_type, character_maximum_length "
+        "FROM information_schema.columns "
         "WHERE table_schema = 'public' AND table_name = %s ORDER BY ordinal_position",
         (table,),
     ).fetchall()
     columns = tuple(str(row[0]) for row in info)
     nullable = {str(row[0]): row[1] == "YES" for row in info}
-    types = {str(row[0]): POSTGRES_AFFINITY.get(str(row[2]), str(row[2])) for row in info}
+    types = {str(row[0]): postgres_type(str(row[2]), row[3]) for row in info}
     primary_key: tuple[str, ...] = ()
     unique: set[tuple[tuple[str, ...], str]] = set()
     for is_primary, names, predicate in conn.execute(_PG_INDEXES, (table,)).fetchall():
@@ -393,8 +417,8 @@ def compare_shapes(table: str, lite: Shape, pg: Shape) -> list[str]:
             continue
         if lite.types[column] != pg.types[column]:
             problems.append(
-                f"{table}.{column}: type affinity is {lite.types[column]} in SQLite, "
-                f"{pg.types[column]} in Postgres"
+                f"{table}.{column}: SQLite's column needs {lite.types[column]} on Postgres, "
+                f"which has {pg.types[column]}"
             )
         found = (lite.nullable[column], pg.nullable[column])
         expected = KNOWN_NULLABILITY_DIFFERENCES.get((table, column))
@@ -477,6 +501,29 @@ def declared_view(
             local for key in pg.foreign_keys if (local := local_form(key)) is not None
         ),
     )
+
+
+def merged_keys(table: str, pg: Shape, owner_keys: OwnerKeys = OWNER_SCOPED_KEYS) -> list[str]:
+    """Every pair of Postgres unique keys that read as one key on SQLite.
+
+    `declared_view` collects keys into a set, so a global key left beside a
+    per-owner key whose SQLite form it equals was merged away, and the
+    extra key was never reported (review of PR #216). Each such pair is a
+    difference.
+    """
+    problems: list[str] = []
+    seen: dict[tuple[tuple[str, ...], str], tuple[str, ...]] = {}
+    for columns, predicate in sorted(pg.unique):
+        local = owner_keys.get((table, columns), columns)
+        if local is None:
+            continue
+        first = seen.setdefault((local, predicate), columns)
+        if first != columns:
+            problems.append(
+                f"{table}: Postgres keys {list(first)} and {list(columns)} where "
+                f"'{predicate}' both read as unique {list(local)} on SQLite"
+            )
+    return problems
 
 
 def stale_declarations(
@@ -635,8 +682,37 @@ def compare_rows(
     return problems
 
 
+@contextmanager
+def process_zone(zone: str) -> Generator[None]:
+    """Run in `zone` as the process's local time, then restore the zone.
+
+    SQLite's 'localtime' reads the C library's zone, which `time.tzset`
+    reloads from TZ. Without this the SQLite half of the UTC check could not
+    fail on a host that runs in UTC (review of PR #218).
+    """
+    before = os.environ.get("TZ")
+    os.environ["TZ"] = zone
+    time.tzset()
+    try:
+        yield
+    finally:
+        if before is None:
+            del os.environ["TZ"]
+        else:
+            os.environ["TZ"] = before
+        time.tzset()
+
+
+def test_the_sqlite_side_runs_in_a_zone_that_is_not_utc(tmp_path: Path) -> None:
+    """A default that read local time would match UTC on a UTC host. Inside
+    `process_zone` it cannot."""
+    with process_zone(NOT_UTC), sqlite_store(tmp_path) as lite:
+        row = lite.execute("SELECT datetime('now', 'localtime') <> datetime('now')").fetchone()
+        assert row is not None and row[0] == 1
+
+
 def test_both_dialects_build_the_same_tracker(tmp_path: Path) -> None:
-    with sqlite_store(tmp_path) as lite, postgres_store() as pg:
+    with process_zone(NOT_UTC), sqlite_store(tmp_path) as lite, postgres_store() as pg:
         lite_tables = sqlite_tables(lite)
         pg_tables = postgres_tables(pg)
         assert lite_tables == pg_tables, (
@@ -647,14 +723,15 @@ def test_both_dialects_build_the_same_tracker(tmp_path: Path) -> None:
         pg_shapes = {table: postgres_shape(pg, table) for table in pg_tables}
         problems = stale_declarations(lite_shapes, pg_shapes)
         for table in sorted(lite_tables):
+            problems += merged_keys(table, pg_shapes[table])
             problems += compare_shapes(
                 table, lite_shapes[table], declared_view(table, pg_shapes[table])
             )
         assert not problems, "\n".join(problems)
 
-        # SQLite's datetime('now') is UTC by definition and has no session
-        # zone to set. A Postgres default reads the session's zone unless it
-        # converts to UTC itself, which is what this checks.
+        # A Postgres default reads the session's zone unless it converts to
+        # UTC itself. A SQLite default reads the process's zone only if it
+        # asks for 'localtime', which the process zone set above exposes.
         pg.execute(f"SET TIME ZONE '{NOT_UTC}'".encode())
         now = datetime.now(UTC)
         lite_rows = sqlite_rows(lite)
@@ -682,7 +759,7 @@ def test_a_declaration_naming_nothing_fails() -> None:
     lite = {
         "t": Shape(
             ("id", "slug"),
-            {"id": "INTEGER", "slug": "TEXT"},
+            {"id": "bigint", "slug": "text"},
             {"id": False, "slug": False},
             ("id",),
             frozenset(),
@@ -692,7 +769,7 @@ def test_a_declaration_naming_nothing_fails() -> None:
     pg = {
         "t": Shape(
             ("id", "slug", "owner_id"),
-            {"id": "INTEGER", "slug": "TEXT", "owner_id": "uuid"},
+            {"id": "bigint", "slug": "text", "owner_id": "uuid"},
             {"id": False, "slug": False, "owner_id": False},
             ("owner_id", "id"),
             frozenset({(("owner_id", "slug"), "")}),
@@ -716,6 +793,50 @@ def test_a_declaration_naming_nothing_fails() -> None:
     ]
     assert stale_declarations(lite, pg, (*columns, ("t", "tenant")), keys) == [
         "HOSTED_ONLY_COLUMNS names t.tenant, not in Postgres"
+    ]
+
+
+def test_a_global_key_beside_its_per_owner_form_is_a_difference() -> None:
+    """A global unique url left beside the per-owner one read as the same
+    SQLite key, and the set in `declared_view` merged the two (review of PR
+    #216). Shapes built by hand, so no server is needed."""
+    per_owner = (("owner_id", "url"), "url<>''")
+    global_key = (("url",), "url<>''")
+    pg = Shape(
+        ("id", "url", "owner_id"),
+        {"id": "bigint", "url": "text", "owner_id": "uuid"},
+        {"id": False, "url": False, "owner_id": False},
+        ("id",),
+        frozenset({per_owner, global_key}),
+        frozenset(),
+    )
+    keys: OwnerKeys = {("t", ("owner_id", "url")): ("url",)}
+
+    assert merged_keys("t", pg, keys) == [
+        "t: Postgres keys ['owner_id', 'url'] and ['url'] where 'url<>''' "
+        "both read as unique ['url'] on SQLite"
+    ]
+    alone = Shape(
+        pg.columns, pg.types, pg.nullable, pg.primary_key, frozenset({per_owner}), frozenset()
+    )
+    assert merged_keys("t", alone, keys) == []
+
+
+def test_a_narrower_postgres_type_is_a_difference(tmp_path: Path) -> None:
+    """Every type of one affinity used to match, so a `varchar(4)` text
+    column and an `integer` id passed (review of PR #218)."""
+    problems: list[str] = []
+    with sqlite_store(tmp_path) as lite, postgres_store() as pg:
+        pg.execute(b"ALTER TABLE tracks ALTER COLUMN archived_at TYPE varchar(4)")
+        pg.execute(b"ALTER TABLE contacts ALTER COLUMN id TYPE integer")
+        for table in ("tracks", "contacts"):
+            problems += compare_shapes(
+                table, sqlite_shape(lite, table), declared_view(table, postgres_shape(pg, table))
+            )
+    assert problems == [
+        "tracks.archived_at: SQLite's column needs text on Postgres, "
+        "which has character varying(4)",
+        "contacts.id: SQLite's column needs bigint on Postgres, which has integer",
     ]
 
 

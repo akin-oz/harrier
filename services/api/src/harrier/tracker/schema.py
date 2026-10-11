@@ -450,6 +450,10 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
             """,
         ],
     ),
+    # Postgres only (spec 105, post-merge review): role, grant and trigger
+    # corrections to migration 10. Empty on purpose, and declared so in
+    # SINGLE_DIALECT_MIGRATIONS.
+    (13, []),
 ]
 
 # --- Postgres (spec 103, ADR-013) ---
@@ -665,6 +669,11 @@ SINGLE_DIALECT_MIGRATIONS: dict[int, tuple[Dialect, str]] = {
         "owner_id and row-level policy (spec 105); "
         "the local schema names no tenant (ADR-012 point 3)",
     ),
+    13: (
+        "postgres",
+        "corrections to migration 10's roles, grants and track numbering "
+        "(spec 105, post-merge review); the local schema has none of them",
+    ),
 }
 
 MIGRATION_10_NEEDS_AUTH = (
@@ -679,36 +688,56 @@ MIGRATION_10_NEEDS_AUTH = (
 # stays the one write path (ADR-003), whatever schemas the project exposes.
 TENANT_ROLE = "harrier_tenant"
 
+# A role that harrier_tenant is a member of could be SET ROLE to, whatever
+# NOINHERIT says, so migration 12 refuses one rather than revoke a grant
+# someone made on purpose (spec 105, post-merge review).
+MIGRATION_12_TENANT_HAS_A_ROLE = (
+    f"migration 13 found {TENANT_ROLE} a member of another role; "
+    "the tenant role must be a member of none"
+)
+
 # Every role a revoke names. Supabase creates anon, authenticated and
 # service_role; the tests create them in a shim (tests/pg_support.py).
 _EVERY_GRANTEE = f"PUBLIC, anon, authenticated, service_role, {TENANT_ROLE}"
 _OWNER_IS_SESSION = "owner_id = (SELECT auth.uid())"
 # Migration 8's seed (MIGRATIONS above): every owner's first track.
 _FIRST_TRACK = "1, 'job', 'industry', 'Job search'"
-# The identity sequences that stay global (spec 105, Honest limitations).
-# tracks loses its own when its id stops being an identity.
-_GLOBAL_ID_SEQUENCES = ", ".join(
-    f"{table}_id_seq"
-    for table in ("jobs", "contacts", "profile_documents", "user_config", "job_events")
+# The owned tables whose id comes from one global identity sequence (spec
+# 105, Honest limitations). tracks loses its own when its id stops being an
+# identity. Since migration 12 the tenant role may not write their id, so
+# one owner cannot learn or take another's ids.
+GLOBAL_ID_TABLES: tuple[str, ...] = (
+    "jobs",
+    "contacts",
+    "profile_documents",
+    "user_config",
+    "job_events",
 )
+_GLOBAL_ID_SEQUENCES = ", ".join(f"{table}_id_seq" for table in GLOBAL_ID_TABLES)
 
 
 def _sql_text(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
-def _refuse_without_auth() -> str:
-    # anon and service_role are checked too, because the revokes below name
-    # them and would fail on a store without them.
-    roles = " OR ".join(
-        f"NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{role}')"
-        for role in ("authenticated", "anon", "service_role")
+# The Supabase roles migration 10 needs. anon and service_role are checked
+# too, because its revokes name them and would fail on a store without them.
+SUPABASE_ROLES: tuple[str, ...] = ("authenticated", "anon", "service_role")
+
+
+def auth_precheck(roles: tuple[str, ...] = SUPABASE_ROLES) -> str:
+    """Migration 10's first statement: raise MIGRATION_10_NEEDS_AUTH unless
+    auth.users, auth.uid() and every role in `roles` exist. The roles are a
+    parameter so a test can name one that does not exist: roles belong to
+    the whole server, so a test cannot drop a real one."""
+    checks = " OR ".join(
+        f"NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{role}')" for role in roles
     )
     return f"""
     DO $$
     BEGIN
         IF to_regclass('auth.users') IS NULL OR to_regprocedure('auth.uid()') IS NULL
-            OR {roles}
+            OR {checks}
         THEN
             RAISE EXCEPTION {_sql_text(MIGRATION_10_NEEDS_AUTH)};
         END IF;
@@ -749,7 +778,7 @@ def _refuse_ownerless_rows() -> str:
 POSTGRES_OWNERS: list[str] = [
     # Both prechecks raise, which rolls the whole migration back and leaves
     # the store at version 9. No owner is ever guessed.
-    _refuse_without_auth(),
+    auth_precheck(),
     _refuse_ownerless_rows(),
     _create_tenant_role(),
     # The baseline's seeded track has no owner. Each owner gets their own
@@ -927,6 +956,108 @@ POSTGRES_TRACK_OWNED_DOCUMENTS: list[str] = [
     "CREATE INDEX idx_profile_documents_owner ON profile_documents(owner_id)",
 ]
 
+
+def _tenant_writes_all_but_id(table: str, privileges: tuple[str, ...]) -> str:
+    # The columns are read from the catalog when the migration runs, so the
+    # list is the table's at version 11. A later migration that adds a
+    # column to one of these tables grants it too; the catalog test names a
+    # column without its grant.
+    grants = "\n".join(
+        f"EXECUTE format('GRANT {privilege} (%s) ON public.{table} TO {TENANT_ROLE}', writable);"
+        for privilege in privileges
+    )
+    return f"""
+    DO $$
+    DECLARE
+        writable text;
+    BEGIN
+        SELECT string_agg(quote_ident(attname), ', ' ORDER BY attnum) INTO writable
+        FROM pg_catalog.pg_attribute
+        WHERE attrelid = 'public.{table}'::regclass AND attnum > 0 AND NOT attisdropped
+            AND attname <> 'id';
+        {grants}
+    END
+    $$
+    """
+
+
+# Spec 105's post-merge review. Migration 10 is merged history, so each
+# correction lands here.
+POSTGRES_OWNER_CORRECTIONS: list[str] = [
+    # The tenant role. Migration 10 creates it only when absent, so a role
+    # made before, or altered since, kept whatever attributes it had. The
+    # ALTER runs only when one is wrong: a migrating role that is not a
+    # superuser, like Supabase's postgres, may not name SUPERUSER at all.
+    # A membership is refused rather than revoked, since someone granted it.
+    f"""
+    DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM pg_catalog.pg_auth_members
+            WHERE member = '{TENANT_ROLE}'::regrole
+        ) THEN
+            RAISE EXCEPTION {_sql_text(MIGRATION_12_TENANT_HAS_A_ROLE)};
+        END IF;
+        IF EXISTS (
+            SELECT 1 FROM pg_catalog.pg_roles
+            WHERE rolname = '{TENANT_ROLE}' AND (
+                rolcanlogin OR rolinherit OR rolbypassrls OR rolsuper
+                OR rolcreatedb OR rolcreaterole OR rolreplication
+            )
+        ) THEN
+            ALTER ROLE {TENANT_ROLE}
+                NOLOGIN NOINHERIT NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+        END IF;
+    END
+    $$
+    """,
+    # Ids. These tables number every owner's rows from one sequence, and a
+    # unique key checks every owner's rows. An owner who could write an id
+    # would learn another owner's ids from the duplicate refusal, and could
+    # take the id another owner's next insert is due. The tenant role
+    # writes every column but id instead of the whole table.
+    f"REVOKE INSERT, UPDATE ON {', '.join(GLOBAL_ID_TABLES)} FROM {TENANT_ROLE}",
+    *(
+        _tenant_writes_all_but_id(
+            table, ("INSERT",) if table == "job_events" else ("INSERT", "UPDATE")
+        )
+        for table in GLOBAL_ID_TABLES
+    ),
+    # Numbering a track. The trigger runs before the policy's check, so for
+    # a row naming another owner it took that owner's lock: an owner could
+    # wait on another's open insert, and so learn of it. Such a row is now
+    # left unnumbered and unlocked, and the policy refuses it at once. A
+    # session without claims (an operator, spec 108) numbers as before.
+    """
+    CREATE OR REPLACE FUNCTION harrier_number_track() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.id IS NULL THEN
+            IF auth.uid() IS NOT NULL AND NEW.owner_id IS DISTINCT FROM auth.uid() THEN
+                RETURN NEW;
+            END IF;
+            PERFORM pg_catalog.pg_advisory_xact_lock(
+                pg_catalog.hashtext('harrier.tracks'),
+                pg_catalog.hashtext(NEW.owner_id::text)
+            );
+            SELECT coalesce(max(id), 0) + 1 INTO NEW.id
+            FROM public.tracks WHERE owner_id = NEW.owner_id;
+        END IF;
+        RETURN NEW;
+    END
+    $$
+    """,
+    # Supabase grants every table, sequence and function its migrating role
+    # creates in public to anon, authenticated and service_role by default.
+    # Migration 10 revoked those grants on what existed; this stops them on
+    # anything a later migration creates. A schema-level revoke only reaches
+    # the migrating role's own defaults.
+    *(
+        f"ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON {kind} "
+        "FROM anon, authenticated, service_role"
+        for kind in ("TABLES", "SEQUENCES", "FUNCTIONS")
+    ),
+]
+
 POSTGRES_MIGRATIONS: list[tuple[int, list[str]]] = [
     (POSTGRES_BASELINE_VERSION, POSTGRES_BASELINE),
     (10, POSTGRES_OWNERS),
@@ -939,6 +1070,7 @@ POSTGRES_MIGRATIONS: list[tuple[int, list[str]]] = [
             "WHERE kind = 'application_profile' AND track_id IS NULL",
         ],
     ),
+    (13, POSTGRES_OWNER_CORRECTIONS),
 ]
 
 

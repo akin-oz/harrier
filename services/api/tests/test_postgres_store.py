@@ -15,7 +15,7 @@ import time
 import traceback
 import uuid
 from typing import Any, LiteralString
-from urllib.parse import unquote
+from urllib.parse import unquote, unquote_plus
 
 import pytest
 from pg_support import TEST_URL_VARIABLE, admin_url, fresh_database
@@ -225,8 +225,11 @@ def test_a_hosted_only_migration_leaves_sqlite_empty_on_purpose() -> None:
     assert dialect == "postgres" and reason.strip()
     assert dict(MIGRATIONS)[10] == []
     assert dict(POSTGRES_MIGRATIONS)[10]
+    # Without the declaration, every Postgres-only version is reported.
     assert undeclared_dialects(MIGRATIONS, POSTGRES_MIGRATIONS, single_dialect={}) == [
-        "migration 10 declares no sqlite statements"
+        f"migration {version} declares no sqlite statements"
+        for version, (only, _) in sorted(SINGLE_DIALECT_MIGRATIONS.items())
+        if only == "postgres"
     ]
 
 
@@ -413,17 +416,64 @@ def test_a_store_target_never_shows_its_password() -> None:
 
 
 @pytest.mark.parametrize(
-    "url",
+    "template",
     [
         "postgresql://harrier@127.0.0.1:notaport/harrier",
         "postgresql://harrier@[::1/harrier",
         "PostgreSQL://harrier@127.0.0.1/harrier",
+        # A raw `/` in the password ends the authority there, so the rest of
+        # the password is read as the port, and the parse error quotes it.
+        "postgresql://harrier:{secret}/x@127.0.0.1/harrier",
     ],
+    ids=["a-bad-port", "a-bad-host", "a-scheme-in-another-case", "a-slash-in-the-password"],
 )
-def test_a_malformed_url_is_refused_like_any_other(url: str) -> None:
+def test_a_malformed_url_is_refused_like_any_other(template: str) -> None:
     """A bad port or host raised a bare ValueError traceback, and a scheme in
     another case passed here and failed in libpq with an unrelated message
-    (post-merge data integrity review of PR #207)."""
+    (post-merge data integrity review of PR #207). The refusal was raised
+    inside the `except ValueError` block, so that error stayed attached as
+    `__context__`, quoting the password (review of PR #218)."""
+    secret = f"synthetic{uuid.uuid4().hex}"
+    url = template.format(secret=secret)
     with pytest.raises(StoreUrlError) as refused:
         store_target({"HARRIER_DATABASE_URL": url})
-    assert str(refused.value) == "HARRIER_DATABASE_URL must be empty or a postgresql:// URL"
+
+    error = refused.value
+    assert str(error) == "HARRIER_DATABASE_URL must be empty or a postgresql:// URL"
+    assert error.__context__ is None
+    assert error.__cause__ is None
+    for text in (str(error), "".join(traceback.format_exception(error))):
+        assert secret not in text
+
+
+def test_a_password_in_the_query_string_never_reaches_the_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """libpq takes a password from `?password=` as well as from the authority,
+    and quotes the parameter as written when it refuses it. Only the
+    authority's password was scrubbed (review of PR #218). The `+` makes the
+    written, the percent-decoded and the form-decoded spellings differ."""
+    import psycopg
+
+    secret = f"synthetic{uuid.uuid4().hex}"
+    written = f"{secret}+tail%zz"
+    url = f"postgresql://harrier@127.0.0.1:1/harrier?sslmode=disable&password={written}"
+    # The driver's own error quotes the password, so the scrub has work to do.
+    with pytest.raises(psycopg.Error) as raw:
+        psycopg.connect(url, connect_timeout=2)
+    assert written in str(raw.value)
+    caplog.set_level(logging.DEBUG)
+
+    with pytest.raises(StoreConnectionError) as refused:
+        postgres_connect(url)
+
+    error = refused.value
+    assert error.__context__ is None
+    places = {
+        "message": str(error),
+        "traceback": "".join(traceback.format_exception(error)),
+        "log": caplog.text,
+    }
+    for form in (written, unquote(written), unquote_plus(written), secret):
+        for place, text in places.items():
+            assert form not in text, f"the password reached the {place}"
