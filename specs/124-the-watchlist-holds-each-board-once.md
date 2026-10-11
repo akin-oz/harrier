@@ -1,8 +1,8 @@
 ---
 spec: 124
 title: The board watchlist holds each board once
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M9
 depends: [008, 023, 025, 041]
 ---
