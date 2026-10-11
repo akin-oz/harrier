@@ -541,6 +541,17 @@ PR 2 (behavior):
       (`services/api/tests/test_store_cli.py::test_concurrent_migrate_runs_report_what_each_found`,
       built under spec 128).
       (post-merge review of PRs #194 and #207, 2026-10-10)
+- [ ] No log record and no HTTP error detail carries the store URL's
+      password. Domain code on a Postgres store can raise a driver error
+      that quotes the URL, and two sinks do not run `scrub_secrets`: the
+      log stream, whose `IdentityRedactionFilter`
+      (`services/api/src/harrier/logredact.py`) redacts identity values
+      only, and the API routes that answer `HTTPException(detail=str(error))`
+      (in `services/api/src/harrier_api/`). With a password generated at
+      run time in `HARRIER_DATABASE_URL`, an error raised through each sink
+      leaves no 8-character window of it
+      (planned test_no_log_or_http_error_carries_the_store_password).
+      (privacy review of PR #281, 2026-10-11; recorded here from spec 128)
 - [ ] `services/api/src/harrier/tracker/schema.py` and
       `packages/contract` do not change.
 - [ ] `docs/architecture.md` describes the domain on either store and no
