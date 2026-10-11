@@ -41,6 +41,7 @@ from harrier.tracker.selector import resolve_selector
 from harrier.tracker.store import (
     EligibilityAssessment,
     EligibilityView,
+    RejectedRowError,
     company_has_responded,
     eligibility_views,
     get_job,
@@ -411,6 +412,16 @@ def reassess_eligibility(conn: Connection, scope: Scope, *, apply: bool = False)
         ):
             report.unchanged += 1
             continue
+        if apply:
+            try:
+                record_eligibility(conn, scope, int(job["id"]), assessment)
+            except RejectedRowError:
+                # Rejected after the rows were read: a skip, as if it had
+                # been rejected before. It stopped the run partway, with the
+                # earlier rows written and the report lost (post-merge review
+                # of PR #242).
+                report.rejected_skipped += 1
+                continue
         report.assessed += 1
         report.by_verdict[assessment.verdict] += 1
         current = view.current
@@ -418,8 +429,6 @@ def reassess_eligibility(conn: Connection, scope: Scope, *, apply: bool = False)
             report.under_candidate += 1
             if (current.verdict, current.routes) != (assessment.verdict, assessment.routes):
                 report.disagrees += 1
-        if apply:
-            record_eligibility(conn, scope, int(job["id"]), assessment)
     return report
 
 

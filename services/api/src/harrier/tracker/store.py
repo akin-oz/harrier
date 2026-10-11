@@ -154,6 +154,10 @@ def add_job(
     status = values["status"] or "prospect"
     if status not in STATUSES:
         raise UnknownStatusError(f"unknown status {status!r}; legal: {', '.join(STATUSES)}")
+    # The rule `record_eligibility` holds, on the first write too (post-merge
+    # review of PR #242).
+    if eligibility is not None and eligibility.origin == "rule" and status == "rejected":
+        raise RejectedRowError("a row added as rejected is not assessed by rule")
     if not values["next_action"]:
         values["next_action"] = rules_for(scope.track.kind).next_action[status]
     deadline = str(fields.get("deadline", "") or "").strip()
@@ -715,6 +719,11 @@ class EligibilityError(TrackerError):
     """An assessment the write path refuses. The message is the operator's."""
 
 
+class RejectedRowError(EligibilityError):
+    """A rule assessment for a rejected row: a rejection is not revisited by
+    rule, on any path (spec 122)."""
+
+
 @dataclass(frozen=True)
 class EligibilityAssessment:
     """One answer to: can this posting engage someone based in Türkiye, and how.
@@ -841,7 +850,7 @@ def record_eligibility(
     with _write_lock(conn):
         job = get_job(conn, scope, job_id)
         if assessment.origin == "rule" and job["status"] == "rejected":
-            raise EligibilityError(
+            raise RejectedRowError(
                 f"job {job_id} is rejected; a rejected row is not assessed by rule"
             )
         with conn.transaction():

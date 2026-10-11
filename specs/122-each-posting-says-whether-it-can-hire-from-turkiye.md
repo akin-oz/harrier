@@ -11,8 +11,8 @@ depends: [031, 033, 078, 079, 081, 091, 105, 112]
 
 ## Problem
 
-The candidate is based in Türkiye and works remotely, preferably on a
-contract through an EU or Turkish legal entity. Whether an employer can
+The candidate works remotely from outside the EU and may contract through
+a legal entity. Whether an employer can
 engage someone in Türkiye is a different question from whether the role
 fits them technically. The tracker has no place to hold the answer, so
 the answer either goes missing or lands inside the technical score.
@@ -347,8 +347,12 @@ so a human rejection is never revisited.
   invalid input; exit 1 on a selector that names no row.
 - `harrier eligibility reassess [--apply]`: prints the report. Exit 0.
 
-All three take `--track` as every tracker verb does (spec 092) and refuse
-an academic track with exit 2.
+All three run on the default track only, as every verb outside
+`NON_DEFAULT_OPERATIONS` does (specs 093, 094): any other track refuses
+them, with exit 2 on the command line and a 409 over HTTP. Today every
+other track is academic, because a second industry track is refused
+(`harrier.tracks.kind_refusal`). The day one is allowed, these three join
+`NON_DEFAULT_OPERATIONS` (post-merge review of PR #242).
 
 ### API
 
@@ -364,7 +368,8 @@ an academic track with exit 2.
 - `POST /tracker/{selector}/eligibility`: body `verdict`, `routes`,
   `evidence_url`, `excerpt`, `checked_at` (optional). 200 with the new
   current assessment; 409 with the CLI's sentence for a missing or
-  invalid input, and on an academic track; 404 for an unknown selector.
+  invalid input, and on any track but the default; 404 for an unknown
+  selector.
   POST and 409, as every tracker write that names a job: spec 082's
   refusal table provokes each route's 404 and 409.
 - `POST /ops/eligibility-reassess` with `apply`: the report, running the
@@ -513,6 +518,12 @@ Reassess and backfill
       current version and description, and reports every skip by reason (`test_reassess_touches_only_what_it_may`)
 - [x] A rejected row is never assessed by `reassess`
       (`test_reassess_never_touches_a_rejected_row`)
+- [x] A row rejected after `reassess` read its rows is counted
+      `rejected_skipped` and the run goes on
+      (`test_a_row_rejected_during_reassess_is_skipped_not_fatal`)
+- [x] `add_job` refuses a rule assessment for a row it would store as
+      rejected, and stores neither; the candidate's own is kept
+      (`test_a_rejected_row_is_not_added_with_a_rule_assessment`)
 
 Store, contract, privacy
 
@@ -525,8 +536,8 @@ Store, contract, privacy
       (`services/api/tests/test_owner_policy.py::test_owner_a_reads_nothing_of_owner_b`,
       `services/api/tests/test_owner_policy.py::test_owner_a_cannot_write_as_owner_b`,
       `services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared`)
-- [x] The API serves what the store holds, and its literals are the
-      schema's tuples (`test_the_api_reads_what_the_store_holds`,
+- [x] The API serves what the store holds, and its literals, `origin`
+      included, are the schema's tuples (`test_the_api_reads_what_the_store_holds`,
       `test_the_contract_names_the_schema_values`)
 - [x] The CLI and the API call the same functions
       (`test_the_cli_and_the_api_call_the_same_eligibility_functions`)

@@ -618,6 +618,61 @@ def test_reassess_touches_only_what_it_may(conn: Connection, scope: Scope) -> No
     assert (again.assessed, again.unchanged) == (0, 1)
 
 
+def test_a_row_rejected_during_reassess_is_skipped_not_fatal(
+    conn: Connection, scope: Scope, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rejection that lands after `reassess` read its rows is a skip. It
+    stopped the run partway, with the rows before it written and the report
+    lost (post-merge review of PR #242)."""
+    import harrier.tracker.actions as actions_module
+    from harrier.tracker.store import list_jobs
+
+    first = new_row(conn, scope, number=1, location="Türkiye (Remote)", description="React.")
+    second = new_row(conn, scope, number=2, location="Türkiye (Remote)", description="React.")
+    third = new_row(conn, scope, number=3, location="Türkiye (Remote)", description="React.")
+    read_before_the_rejection = list_jobs(conn, scope)
+    change_status(conn, scope, str(second), "reject", reason="not a fit")
+
+    def stale_rows(*args: object) -> list[dict[str, str]]:
+        return read_before_the_rejection
+
+    monkeypatch.setattr(actions_module, "list_jobs", stale_rows)
+
+    report = reassess_eligibility(conn, scope, apply=True)
+
+    assert (report.assessed, report.rejected_skipped) == (2, 1)
+    assert dict(report.by_verdict) == {CONFIRMED: 2}
+    assert eligibility_history(conn, scope, second) == []
+    for job_id in (first, third):
+        assert [entry.verdict for entry in eligibility_history(conn, scope, job_id)] == [CONFIRMED]
+
+
+def test_a_rejected_row_is_not_added_with_a_rule_assessment(conn: Connection, scope: Scope) -> None:
+    """The rule holds on the first write too: `add_job` refuses a rule
+    assessment for a row it would store as rejected, and stores neither
+    (post-merge review of PR #242)."""
+    fields = {
+        "company": "Acme Widgets",
+        "title": "Senior Frontend Engineer",
+        "url": "https://jobs.example.com/acme/7",
+        "status": "rejected",
+    }
+    with pytest.raises(EligibilityError, match="rejected"):
+        add_job(
+            conn,
+            fields,
+            scope=scope,
+            eligibility=assess_eligibility(posting(url="https://jobs.example.com/acme/7")),
+        )
+    assert conn.execute("SELECT count(*) FROM jobs").fetchone()[0] == 0
+    # The candidate's own verdict on a rejected row is theirs to record.
+    candidate = EligibilityAssessment(
+        verdict=UNKNOWN, origin="candidate", checked_at="2026-10-11T00:00:00Z"
+    )
+    job_id = add_job(conn, fields, scope=scope, eligibility=candidate)
+    assert [entry.origin for entry in eligibility_history(conn, scope, job_id)] == ["candidate"]
+
+
 def test_reassess_never_touches_a_rejected_row(conn: Connection, scope: Scope) -> None:
     rejected = new_row(conn, scope, description="You must be based in the UK.")
     change_status(conn, scope, str(rejected), "reject", reason="not a fit")
@@ -722,6 +777,12 @@ def test_the_contract_names_the_schema_values() -> None:
     assert get_args(app_module.EligibilityVerdict) == schema.ELIGIBILITY_VERDICTS
     assert get_args(app_module.EligibilityRoute) == schema.ELIGIBILITY_ROUTES
     assert get_args(app_module.EligibilityField) == ("", *schema.ELIGIBILITY_FIELDS)
+    # `origin` too: a stored assessment's, and a row's, which adds `none`
+    # for a row with no assessment (post-merge review of PR #242).
+    entry_origin = app_module.EligibilityEntryOut.model_fields["origin"].annotation
+    row_origin = app_module.EligibilityOut.model_fields["origin"].annotation
+    assert get_args(entry_origin) == schema.ELIGIBILITY_ORIGINS
+    assert get_args(row_origin) == (*schema.ELIGIBILITY_ORIGINS, "none")
 
 
 def test_excerpts_are_not_logged(
