@@ -1069,3 +1069,36 @@ of each login role's memberships on the deployed project.
       `WITH SET FALSE` is refused too; and a login role that is a member of
       `harrier_tenant` alone starts
       (planned test_hosted_start_refuses_a_login_role_that_can_set_role_past_the_policy).
+
+## Amendment (2026-10-12): the store password in logs and HTTP errors
+
+Akin placed this criterion here in chat on 2026-10-12. Spec 128's privacy
+review (PR #281) found it, and spec 112 carried it until its pull request
+for the seam (PR #288) showed it could not be built there: the sinks are
+reached only once the API serves a Postgres store, which this spec makes
+happen.
+
+Domain code on a Postgres store can raise a driver error whose text quotes
+the store URL. The seam's own store errors carry the server's primary
+message or the driver error's class, never the client's text, so their
+message quotes no URL (spec 112, "Amendment (2026-10-12): what the seam's
+pull request settled"). The driver's error stays chained as `__cause__`,
+and two sinks in the API process do not run `scrub_secrets`:
+
+- **The log stream.** `IdentityRedactionFilter`
+  (`services/api/src/harrier/logredact.py`) redacts identity values only,
+  and a logged traceback prints the chained driver error.
+- **HTTP error detail.** The routes in `services/api/src/harrier_api/`
+  that answer `HTTPException(detail=str(error))`.
+
+Both sinks pass their text through `scrub_secrets` before it leaves the
+process. The log filter is shared with the CLI, so a command spec 127
+lets run on Postgres is covered by the same change.
+
+### Acceptance criteria (the store password in logs and HTTP errors)
+
+- [ ] With a password generated at run time in `HARRIER_DATABASE_URL`, an
+      error raised through each sink (a log record with the chained driver
+      error, and an `HTTPException` detail built from the error) leaves no
+      8-character window of the password
+      (planned test_no_log_or_http_error_carries_the_store_password).
