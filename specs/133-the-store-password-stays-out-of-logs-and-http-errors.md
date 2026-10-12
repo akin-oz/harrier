@@ -161,11 +161,14 @@ found three ways past them, each closed above:
       scrub is answered byte for byte as before
       (`services/api/tests/test_store_password_scrub.py::test_a_detail_with_nothing_to_scrub_is_unchanged`).
 - [ ] With a password generated at run time in `HARRIER_DATABASE_URL`, a
-      200 body whose `error` field quotes the store URL masks its password:
-      `ConfigOut.error` from a stored row and from a config file, and
-      `ScheduleOut.error`, each driven through its route
+      200 body whose `error` field quotes the store URL, or the password
+      alone as the URL writes it, masks the password: `ConfigOut.error`
+      from a stored row and from a config file, and `ScheduleOut.error`,
+      each driven through its route
       (`services/api/tests/test_store_password_scrub.py::test_an_error_field_in_a_200_body_has_the_store_password_masked`,
-      one case per field).
+      one case per field and shape). With nothing to mask, each field
+      reads exactly as the parser wrote it
+      (`services/api/tests/test_store_password_scrub.py::test_an_error_field_with_nothing_to_mask_is_unchanged`).
 - [ ] Each new behavior has a test that fails when the code it proves is
       removed, and the pull request records each mutation and its result.
 - [ ] `uv run ruff check`, `uv run pyright` and `uv run lint-imports`
@@ -187,12 +190,22 @@ found three ways past them, each closed above:
 - A handler someone adds later without going through `configure_logging`
   is not filtered. The three places that install the filter are named in
   Scope; a fourth is a new change.
-- A password holding both quote characters is not masked where a message
-  quotes it alone with `!r`, because `repr` escapes one of them and the
+- A decoded password is not masked where a message quotes it alone with
+  `!r` and it holds a character `repr` escapes: a backslash, a control or
+  other non-printable character, or either quote when it holds both. The
   escaped text is none of the forms `UrlParts.passwords` lists. The
-  configuration and schedule refusals quote values that way. A URL keeps
-  its password percent-encoded, which `repr` leaves alone, so a quoted URL
-  is masked (Amendment (2026-10-12): exception text in a 200 body).
+  configuration and schedule refusals quote values that way, and the
+  schedule loader quotes any value holding a backslash. A URL keeps its
+  password percent-encoded, which `repr` leaves alone, so a quoted URL and
+  the password as the URL writes it are masked (Amendment (2026-10-12):
+  exception text in a 200 body; review of PR #298).
+- A value the operator stored is returned as data, unmasked, wherever a
+  route returns it: `ConfigOut.value`, the import report
+  (`ConfigImportOut.report`, which names a dropped feed and the one kept),
+  and a schedule record's `last_success_at` and `summary`. Masking `value`
+  would make a PUT round trip store `REDACTED`, and masking the other two
+  would hide what `ConfigOut.value` shows anyway. This spec covers error
+  text, not the operator's own values (review of PR #298).
 - uvicorn's handlers are filtered after uvicorn configures them, when the
   app is built. A record uvicorn logs before the app is imported, such as
   a failure to import it, is not filtered. The hosted start refusals are
@@ -387,18 +400,19 @@ response finds no third. Every other `str(error)` there is an
 catch only the parser's own error, and a driver error raised by the read
 around them reaches the app's 500 path, which this spec already scrubs.
 What reaches them is the parser's message, and it quotes the value it
-refused with `!r`: a stored or file hold entry, a hold date, a schedule
-label or job name. A value an operator pasted the store URL into is
-quoted whole, and `scrub_secrets` alone does not mask a password outside
-the URL shapes it knows.
+refused, mostly with `!r`: a stored or file hold entry, a hold date, a
+schedule label. A schedule job's name is quoted plain, and a JSON decode
+error quotes only the decoder's position. A value an operator pasted the
+store URL into is quoted whole. `scrub_secrets` masks a URL's password,
+but not the password alone outside the URL shapes it knows, which only
+the configured URL's forms mask.
 
 **Behavior.** Each route passes the text through `scrub_outbound` when it
 builds the field, as `run_conflict` does for `ErrorOut`. The field keeps
 its type, its nullability and its position in the contract; only text
-`scrub_outbound` masks changes. A refusal with nothing to mask reads as
-before, which `services/api/tests/test_userconfig.py::test_one_broken_kind_does_not_hide_the_others`
-and `services/api/tests/test_ui_operations.py::test_an_unreadable_schedule_is_reported_in_the_loader_s_words`
-still prove.
+`scrub_outbound` masks changes. A refusal with nothing to mask reads
+exactly as before
+(`services/api/tests/test_store_password_scrub.py::test_an_error_field_with_nothing_to_mask_is_unchanged`).
 
 **Why here, not in the specs that own the fields.** Spec 073 owns
 `ConfigOut.error` and specs 050 and 120 own `ScheduleOut.error`. Each of
@@ -413,15 +427,20 @@ scrub, but it would hide a privacy rule inside a response model that
 otherwise only declares a shape.
 
 **Proof.** `services/api/tests/test_store_password_scrub.py::test_an_error_field_in_a_200_body_has_the_store_password_masked`
-plants the store URL, with a password made at run time, where each route
-reads it: a stored `company_holds` row with an unknown key, a holds CSV
-whose date is the URL, and a schedule definition whose label prefix is the
-URL. It drives each route as a client does and finds no 8-character window
-of either form of the password in the field or the body. Removing the
-scrub at any one of the three sites fails that site's case and no other.
+plants a value where each route reads it: a stored `company_holds` row
+with an unknown key, a holds CSV whose date is the value, and a schedule
+job named by the value with no command. The value is the store URL, with a
+password made at run time, or that password alone as the URL writes it.
+It drives each route as a client does and finds no 8-character window of
+either form of the password in the field or the body. Removing the scrub
+at one site fails that site's two cases and no other; scrubbing with
+`scrub_secrets` alone, or leaving `HARRIER_DATABASE_URL` unset, fails
+every case of the password alone.
 
-**Limitation found.** Building this showed that a password holding both
-quote characters, quoted alone with `!r`, is not masked, because `repr`
-escapes one of them (Honest limitations). It is recorded, not fixed here:
-masking an escaped form changes `scrub_outbound` for every sink, not only
-these fields.
+**Limitations found.** Building this, and the local review of PR #298,
+showed two (Honest limitations). A decoded password quoted alone with
+`!r` is not masked when `repr` escapes one of its characters: recorded,
+not fixed here, because masking an escaped form changes `scrub_outbound`
+for every sink. A value the operator stored is returned as data in other
+fields: recorded, because this spec covers error text and `value` cannot
+be masked without breaking a round trip.
