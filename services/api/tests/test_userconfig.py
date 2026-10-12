@@ -195,11 +195,11 @@ def test_accessors_work_without_a_connection(db: Connection) -> None:
 
 
 def test_stored_json_that_is_not_a_list_is_reported(db: Connection) -> None:
-    db.execute(
-        "INSERT INTO user_config (kind, value) VALUES (?, ?)",
-        (FEEDS, json.dumps({"unexpected": True})),
-    )
-    db.commit()
+    with db.transaction():
+        db.execute(
+            "INSERT INTO user_config (kind, value) VALUES (?, ?)",
+            (FEEDS, json.dumps({"unexpected": True})),
+        )
     # One validator, so the read path reports exactly what the write path
     # would have refused.
     with pytest.raises(ConfigError, match="must be a JSON list"):
@@ -319,11 +319,11 @@ def test_import_keeps_hold_dates_including_expired_ones(
 def test_a_hold_list_stored_before_expiry_existed_still_holds_everyone(
     db: Connection,
 ) -> None:
-    db.execute(
-        "INSERT INTO user_config (kind, value) VALUES (?, ?)",
-        (COMPANY_HOLDS, json.dumps(["Example Co", "Other Co"])),
-    )
-    db.commit()
+    with db.transaction():
+        db.execute(
+            "INSERT INTO user_config (kind, value) VALUES (?, ?)",
+            (COMPANY_HOLDS, json.dumps(["Example Co", "Other Co"])),
+        )
     assert get_config(db, COMPANY_HOLDS) == ["Example Co", "Other Co"]
     assert load_hold_companies(db, today=date(2999, 1, 1)) == {"example co", "other co"}
 
@@ -364,7 +364,6 @@ def test_import_with_no_files_reports_rather_than_claiming_success(db: Connectio
 
 def test_unset_reports_whether_anything_was_removed(db: Connection) -> None:
     set_config(db, FEEDS, EXAMPLE_FEEDS)
-    db.commit()
     assert main(["config", "unset", "feeds"]) == 0
     assert main(["config", "unset", "feeds"]) == 1
 
@@ -429,11 +428,11 @@ def test_a_corrupted_row_is_refused_rather_than_coerced(client: TestClient, db: 
     """A row can appear without going through set_config: a hand-edited
     database, a restored backup, a future migration. The read path was
     coercing [7] into ["7"] (review finding on PR #20)."""
-    db.execute(
-        "INSERT INTO user_config (kind, value) VALUES (?, ?)",
-        (FEEDS, json.dumps([7])),
-    )
-    db.commit()
+    with db.transaction():
+        db.execute(
+            "INSERT INTO user_config (kind, value) VALUES (?, ?)",
+            (FEEDS, json.dumps([7])),
+        )
     with pytest.raises(ConfigError, match="entries must be strings"):
         load_feed_urls(db)
 
@@ -471,8 +470,8 @@ def test_the_api_shows_stored_holds_as_written_and_file_holds_as_active(
 def store_raw(db: Connection, kind: str, raw: str) -> None:
     """A row written around set_config: a hand-edited database, a restored
     backup, a future migration."""
-    db.execute("INSERT INTO user_config (kind, value) VALUES (?, ?)", (kind, raw))
-    db.commit()
+    with db.transaction():
+        db.execute("INSERT INTO user_config (kind, value) VALUES (?, ?)", (kind, raw))
 
 
 def test_one_broken_kind_does_not_hide_the_others(client: TestClient, db: Connection) -> None:

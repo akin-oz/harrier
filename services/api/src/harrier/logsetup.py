@@ -33,6 +33,7 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
+from harrier.connection import StoreDatabaseError
 from harrier.db import DatabaseOwnedByContainer, DatabaseOwnershipError, connect, data_dir
 
 LOG_DIR_NAME = "logs"
@@ -134,10 +135,13 @@ def _load_identity_values() -> set[str] | None:
     # closing(), not the connection as its own context manager: that one
     # commits but does not close, and an unclosed connection lives until gc
     # and checkpoints the WAL whenever that happens (spec 076).
+    # A read through the connection fails as StoreDatabaseError (spec 112);
+    # opening the file still raises the driver's own classes, since
+    # `harrier.db` works on the SQLite file itself.
     try:
         with closing(connect()) as conn:
             return identity_values(conn)
-    except (sqlite3.Error, OSError):
+    except (StoreDatabaseError, sqlite3.Error, OSError):
         return None
 
 

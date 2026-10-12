@@ -81,11 +81,12 @@ def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def two_tracks(data_dir: Path) -> Iterator[Path]:
     conn = connect()
     try:
-        conn.execute(
-            "INSERT INTO tracks (id, slug, kind, label) VALUES (2, ?, 'academic', 'Second search')",
-            (SLUG,),
-        )
-        conn.commit()
+        with conn.transaction():
+            conn.execute(
+                "INSERT INTO tracks (id, slug, kind, label) "
+                "VALUES (2, ?, 'academic', 'Second search')",
+                (SLUG,),
+            )
         first, second = default_scope(conn), resolve_scope(conn, SLUG)
         for row in JOBS_FIRST:
             add_job(conn, row, scope=first)

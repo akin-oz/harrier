@@ -10,14 +10,13 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
-import sqlite3
 from collections import Counter
-from collections.abc import Generator, Mapping
-from contextlib import contextmanager, nullcontext
+from collections.abc import Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-from harrier.connection import Connection, Row
+from harrier.connection import Connection, Row, StoreIntegrityError
 from harrier.logredact import refresh_installed
 from harrier.tracker.invariants import all_breaches
 from harrier.tracker.reasons import (
@@ -200,7 +199,7 @@ def add_job(
                 f"VALUES ({placeholders}, ?, ?)",
                 row_values,
             )
-        except sqlite3.IntegrityError as error:
+        except StoreIntegrityError as error:
             # A concurrent writer can insert between find_duplicate and this
             # INSERT; the unique indexes are the authority, so map their
             # refusal to the same domain error the pre-check raises.
@@ -306,28 +305,18 @@ def all_tracks_dedupe_rows(conn: Connection) -> list[dict[str, str]]:
     return [_job_row_to_dict(row) for row in rows]
 
 
-@contextmanager
-def _write_lock(conn: Connection) -> Generator[None, None, None]:
-    """The write lock, taken before reading what a write depends on.
-
-    A writer that read a row, decided, and only then opened its transaction
-    let a second writer read the same row in between. On a job with no events
-    both wrote its reconstructed history, permanently under the append-only
-    trigger, and the later live event recorded a status the row no longer had
-    (spec 079 amendment). BEGIN IMMEDIATE takes the lock at once, so a second
-    writer waits for the first and reads what it wrote. A caller already
-    inside a transaction keeps the lock it holds.
-    """
-    if conn.in_transaction:
-        yield
-        return
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        yield
-    except BaseException:
-        conn.rollback()
-        raise
-    conn.commit()
+# The write lock is `conn.transaction(immediate=True)`, taken before reading
+# what a write depends on (spec 079 amendment, spec 112). A writer that read a
+# row, decided, and only then opened its transaction let a second writer read
+# the same row in between. On a job with no events both wrote its
+# reconstructed history, permanently under the append-only trigger, and the
+# later live event recorded a status the row no longer had. On SQLite the
+# outermost such transaction begins with BEGIN IMMEDIATE, so a second writer
+# waits for the first and reads what it wrote; one opened inside another is a
+# savepoint, and the caller keeps the lock it holds. On Postgres it locks
+# nothing until spec 126 adds the per-job row lock. Each locked writer ends
+# its block with its inner transaction, so the commit at the lock's exit runs
+# no statement at another time than before.
 
 
 def company_has_responded(conn: Connection, scope: Scope, job_id: int) -> bool:
@@ -376,7 +365,7 @@ def set_status(
     if status not in STATUSES:
         raise UnknownStatusError(f"unknown status {status!r}; legal: {', '.join(STATUSES)}")
     _refuse_archived(conn, scope)
-    with _write_lock(conn):
+    with conn.transaction(immediate=True):
         job = get_job(conn, scope, job_id)
         check_transition(job["status"], status)
         try:
@@ -492,7 +481,7 @@ def update_fields(
     _refuse_archived(conn, scope)
     # Read under the write lock, so the invariants are checked against the
     # row this write lands on (spec 079 amendment).
-    with _write_lock(conn):
+    with conn.transaction(immediate=True):
         current = get_job(conn, scope, job_id)
         # Only a breach this write introduces. Refusing every write to a row that
         # already breaks a rule would make rows written before these rules
@@ -682,7 +671,7 @@ def backfill_events(
     """
     # Selected under the write lock, so a live first move cannot write the
     # same history in between (spec 079 amendment). A dry run writes nothing.
-    with nullcontext() if dry_run else _write_lock(conn):
+    with nullcontext() if dry_run else conn.transaction(immediate=True):
         rows = conn.execute(
             "SELECT * FROM jobs WHERE track_id = ? "
             "AND id NOT IN (SELECT job_id FROM job_events) ORDER BY id",
@@ -847,7 +836,7 @@ def record_eligibility(
     """
     _check_assessment(assessment)
     _refuse_archived(conn, scope)
-    with _write_lock(conn):
+    with conn.transaction(immediate=True):
         job = get_job(conn, scope, job_id)
         if assessment.origin == "rule" and job["status"] == "rejected":
             raise RejectedRowError(

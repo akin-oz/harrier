@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from harrier.connection import Connection
+from harrier.connection import Connection, StoreDatabaseError
 from harrier.db import connect
 from harrier.logredact import REDACTION, IdentityRedactionFilter, identity_values
 from harrier.logsetup import configure_logging
@@ -41,15 +41,15 @@ def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Connection:
     conn = connect()
     import json
 
-    conn.execute(
-        "INSERT INTO profile_documents (kind, name, format, content) VALUES (?, ?, ?, ?)",
-        ("resume_data", "bundle", "json", json.dumps({"candidate": CANDIDATE})),
-    )
-    conn.execute(
-        "INSERT INTO contacts (person_name, person_email) VALUES (?, ?)",
-        ("Jordan Sample", "jordan@example.com"),
-    )
-    conn.commit()
+    with conn.transaction():
+        conn.execute(
+            "INSERT INTO profile_documents (kind, name, format, content) VALUES (?, ?, ?, ?)",
+            ("resume_data", "bundle", "json", json.dumps({"candidate": CANDIDATE})),
+        )
+        conn.execute(
+            "INSERT INTO contacts (person_name, person_email) VALUES (?, ?)",
+            ("Jordan Sample", "jordan@example.com"),
+        )
     return conn
 
 
@@ -90,12 +90,12 @@ def test_redaction_reads_identity_from_either_shape(db: Connection) -> None:
     import json
 
     # The copy the split keeps can hold a value the facts have since replaced.
-    for kind, name in (("resume_facts", "Ada Ex"), ("resume_data_presplit", "Old Ex")):
-        db.execute(
-            "INSERT INTO profile_documents (kind, name, format, content) VALUES (?, ?, ?, ?)",
-            (kind, f"{kind}.json", "json", json.dumps({"candidate": {"name": name}})),
-        )
-    db.commit()
+    with db.transaction():
+        for kind, name in (("resume_facts", "Ada Ex"), ("resume_data_presplit", "Old Ex")):
+            db.execute(
+                "INSERT INTO profile_documents (kind, name, format, content) VALUES (?, ?, ?, ?)",
+                (kind, f"{kind}.json", "json", json.dumps({"candidate": {"name": name}})),
+            )
     assert {"Ada Ex", "Old Ex", CANDIDATE["name"]} <= identity_values(db)
 
 
@@ -130,9 +130,11 @@ def test_a_single_character_value_is_still_ignored(tmp_path: Path) -> None:
     """One character is not identifying and matches as its own word constantly:
     an initial, a column left as `a`."""
     conn = Connection(sqlite3.connect(tmp_path / "short.db"))
-    conn.execute("CREATE TABLE contacts (person_name TEXT, person_email TEXT, linkedin_url TEXT)")
-    conn.execute("INSERT INTO contacts VALUES ('J', '', '')")
-    conn.commit()
+    with conn.transaction():
+        conn.execute(
+            "CREATE TABLE contacts (person_name TEXT, person_email TEXT, linkedin_url TEXT)"
+        )
+        conn.execute("INSERT INTO contacts VALUES ('J', '', '')")
     assert identity_values(conn) == set()
 
 
@@ -282,7 +284,7 @@ def test_configure_logging_closes_its_connection_when_identity_values_fails(
     import harrier.logredact
 
     def broken(_conn: Connection) -> set[str]:
-        raise sqlite3.OperationalError("unreadable")
+        raise StoreDatabaseError("unreadable")
 
     monkeypatch.setattr(harrier.logredact, "identity_values", broken)
     # configure_logging replaces the root handlers, caplog's included, so the

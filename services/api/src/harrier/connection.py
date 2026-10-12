@@ -1,14 +1,19 @@
 """The connection the domain speaks through, and the store a process opens.
 
 Every domain function takes a `Connection`, harrier's own type, never a
-driver's (spec 112). It wraps a SQLite connection today; the Postgres store
-comes behind the same type in spec 112's second pull request.
+driver's (spec 112). It wraps a SQLite connection or a psycopg one, and
+speaks both: `?` placeholders on both, one set of store errors for the
+driver's, and transactions that nest as savepoints. A Postgres connection
+opened for an owner acts as that owner in every transaction, under the row
+policy (spec 105): the seam sets the role and the claims, and domain SQL
+names no tenant (ADR-013 decision 2).
 
 A `with` block over the connection itself is not offered. On a sqlite3
 connection it commits or rolls back and leaves the connection open (spec
 076); on a psycopg connection the same block closes it. `Connection` has no
 `__enter__`, so pyright refuses one, and a transaction is written
-`with conn.transaction():`.
+`with conn.transaction():`. Nor does it offer `commit()` or `rollback()`:
+a transaction ends where its block does.
 
 `HARRIER_DATABASE_URL` chooses the store. Unset or empty, the local SQLite
 store opens exactly as before (`harrier.db`). A `postgresql://` URL names
@@ -23,16 +28,21 @@ because they belong to no one driver (spec 112, post-merge review of PRs
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import sqlite3
 import unicodedata
-from collections.abc import Generator, Iterator, Mapping, Sequence
+import uuid
+from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol, SupportsIndex, overload
 from urllib.parse import parse_qsl, unquote, urlsplit
+
+if TYPE_CHECKING:
+    import psycopg
 
 URL_VARIABLE = "HARRIER_DATABASE_URL"
 POSTGRES_SCHEME = "postgresql"
@@ -105,6 +115,39 @@ class StoreMigrationRefused(StoreError):
     """
 
 
+class StoreLibraryTooOld(StoreError):
+    """The SQLite library is older than harrier needs (spec 112)."""
+
+
+class StoreDatabaseError(StoreError):
+    """A statement through a `Connection` failed (spec 112).
+
+    The same class for the same failure on both stores, with the driver's
+    error as `__cause__`. On Postgres the message is the server's primary
+    message, never its `DETAIL`, which quotes the row; an error without one,
+    such as a lost connection, is named by its class.
+    """
+
+
+IntegrityKind = Literal["unique", "check", "foreign_key", "not_null", "refused"]
+
+
+class StoreIntegrityError(StoreDatabaseError):
+    """The store refused a row: a key, a check, a reference, a missing value,
+    or a trigger's refusal (`kind="refused"`, whose message is the
+    trigger's text on both stores)."""
+
+    def __init__(self, kind: IntegrityKind, message: str) -> None:
+        super().__init__(message)
+        self.kind: IntegrityKind = kind
+        self.message = message
+
+
+class StoreBusyError(StoreDatabaseError):
+    """A writer waited past the connection's `busy_timeout_ms` for a lock
+    another connection held."""
+
+
 class Row(Protocol):
     """A result row (spec 112).
 
@@ -138,50 +181,590 @@ class Cursor(Protocol):
     def __iter__(self) -> Iterator[Any]: ...
 
 
+Dialect = Literal["sqlite", "postgres"]
+
+# The refusal both stores give a job naming a track that does not exist.
+# SQLite raises it from a trigger (`tracker/schema.py`, migration 4);
+# Postgres from the composite foreign key migration 10 adds, which Postgres
+# names after its table and columns. The seam maps that key to the
+# trigger's text (spec 112, Store errors).
+UNKNOWN_TRACK = "unknown track"
+UNKNOWN_TRACK_CONSTRAINT = "jobs_owner_id_track_id_fkey"
+
+# Spec 106's text, "The run's database session".
+IDENTITY_DID_NOT_HOLD = "the run's database identity did not hold"
+OWNER_NEEDS_POSTGRES = "an owner applies only to a Postgres store"
+NOT_AN_OWNER_ID = "the owner is not an owner id"
+NOT_SQLITE = "this connection is not SQLite"
+OLDEST_SQLITE = (3, 35, 0)
+
+_SQLITE_KINDS: dict[int, IntegrityKind] = {
+    sqlite3.SQLITE_CONSTRAINT_UNIQUE: "unique",
+    sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY: "unique",
+    sqlite3.SQLITE_CONSTRAINT_CHECK: "check",
+    sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY: "foreign_key",
+    sqlite3.SQLITE_CONSTRAINT_NOTNULL: "not_null",
+    # RAISE(ABORT, ...) in a trigger.
+    sqlite3.SQLITE_CONSTRAINT_TRIGGER: "refused",
+}
+
+_POSTGRES_KINDS: dict[str, IntegrityKind] = {
+    "23505": "unique",
+    "23514": "check",
+    "23503": "foreign_key",
+    "23502": "not_null",
+    # RAISE EXCEPTION, which harrier_refuse() uses for every refusal trigger.
+    "P0001": "refused",
+}
+_POSTGRES_LOCK_NOT_AVAILABLE = "55P03"
+
+
+def store_error_from_sqlite(error: sqlite3.Error) -> StoreDatabaseError:
+    """The store error for a sqlite3 error; its text is the driver's own."""
+    message = str(error)
+    # An error the sqlite3 module raises itself, such as a statement on a
+    # closed connection, carries no code from the library.
+    code: int | None = getattr(error, "sqlite_errorcode", None)
+    if code is None:
+        return StoreDatabaseError(message)
+    if isinstance(error, sqlite3.IntegrityError) and code in _SQLITE_KINDS:
+        return StoreIntegrityError(_SQLITE_KINDS[code], message)
+    # The low byte is the primary code: SQLITE_BUSY and its extended forms.
+    if code & 0xFF == sqlite3.SQLITE_BUSY:
+        return StoreBusyError(message)
+    return StoreDatabaseError(message)
+
+
+def store_error_from_postgres(error: psycopg.Error) -> StoreDatabaseError:
+    """The store error for a psycopg error.
+
+    Its text is the server's primary message: the `DETAIL` quotes the row's
+    values, and `str()` of a psycopg error includes it. An error the server
+    did not send, such as a lost connection, is named by its class, since
+    the client's text is not the server's and nothing promises what it
+    quotes.
+    """
+    diag = error.diag
+    message = diag.message_primary or type(error).__name__
+    state = error.sqlstate or ""
+    if state == "23503" and diag.constraint_name == UNKNOWN_TRACK_CONSTRAINT:
+        return StoreIntegrityError("refused", UNKNOWN_TRACK)
+    if state in _POSTGRES_KINDS:
+        return StoreIntegrityError(_POSTGRES_KINDS[state], message)
+    if state == _POSTGRES_LOCK_NOT_AVAILABLE:
+        return StoreBusyError(message)
+    return StoreDatabaseError(message)
+
+
+def to_psycopg(sql: str) -> str:
+    """Domain SQL, written with `?`, as psycopg takes it.
+
+    A `?` outside a single-quoted literal becomes `%s`. Every `%` is
+    doubled, inside a literal too: psycopg reads `%` wherever it stands
+    once parameters are passed, and undoubles `%%`, so the server receives
+    each literal as written. A `?` inside a literal is left alone. Only
+    single quotes are known (spec 112, Honest limitations).
+    """
+    out: list[str] = []
+    quoted = False
+    for character in sql:
+        if character == "'":
+            quoted = not quoted
+            out.append(character)
+        elif character == "%":
+            out.append("%%")
+        elif character == "?" and not quoted:
+            out.append("%s")
+        else:
+            out.append(character)
+    return "".join(out)
+
+
+class PostgresRow(tuple[Any, ...]):
+    """A Postgres row that reads as `sqlite3.Row` does (spec 112, Row).
+
+    A tuple of the values, so it reads by position, iterates over its
+    values and compares equal to the tuple of them; and by column name,
+    with `keys()`, so `dict(row)` works. psycopg's `dict_row` was not
+    chosen: `tuple(row)` would yield the column names (Options weighed).
+    """
+
+    _names: tuple[str, ...]
+
+    def __new__(cls, values: Sequence[Any], names: tuple[str, ...]) -> PostgresRow:
+        row = super().__new__(cls, values)
+        row._names = names
+        return row
+
+    @overload
+    def __getitem__(self, key: SupportsIndex, /) -> Any: ...
+
+    @overload
+    def __getitem__(self, key: slice, /) -> tuple[Any, ...]: ...
+
+    @overload
+    def __getitem__(self, key: str, /) -> Any: ...
+
+    def __getitem__(self, key: SupportsIndex | slice | str, /) -> Any:
+        if not isinstance(key, str):
+            return super().__getitem__(key)
+        # Exact first, then without case, as sqlite3.Row reads a name.
+        if key in self._names:
+            return super().__getitem__(self._names.index(key))
+        folded = key.casefold()
+        for index, name in enumerate(self._names):
+            if name.casefold() == folded:
+                return super().__getitem__(index)
+        raise IndexError("No item with that key")
+
+    def keys(self) -> list[str]:
+        return list(self._names)
+
+
+def _postgres_row_factory(cursor: Any) -> Callable[[Sequence[Any]], PostgresRow]:
+    names = tuple(str(column.name) for column in cursor.description or ())
+
+    def make(values: Sequence[Any]) -> PostgresRow:
+        return PostgresRow(values, names)
+
+    return make
+
+
+Translate = Callable[[Exception], StoreDatabaseError | None]
+
+
+def _raise_translated(error: Exception, translate: Translate) -> None:
+    """Raise the store error for a driver error, chained to it; return when
+    the error is not the driver's, so the caller re-raises it as it was."""
+    mapped = translate(error)
+    if mapped is not None:
+        raise mapped from error
+
+
+class _StoreCursor:
+    """A driver cursor whose reads raise store errors (spec 112)."""
+
+    def __init__(self, cursor: Any, translate: Translate) -> None:
+        self._cursor = cursor
+        self._translate = translate
+
+    @property
+    def rowcount(self) -> int:
+        return int(self._cursor.rowcount)
+
+    @property
+    def lastrowid(self) -> int | None:
+        # psycopg has none; spec 126 moves the two inserts that read it to
+        # RETURNING id.
+        value = getattr(self._cursor, "lastrowid", None)
+        return int(value) if value is not None else None
+
+    def fetchone(self) -> Any:
+        try:
+            return self._cursor.fetchone()
+        except Exception as error:
+            _raise_translated(error, self._translate)
+            raise
+
+    def fetchall(self) -> list[Any]:
+        try:
+            return list(self._cursor.fetchall())
+        except Exception as error:
+            _raise_translated(error, self._translate)
+            raise
+
+    def __iter__(self) -> Iterator[Any]:
+        rows = iter(self._cursor)
+        while True:
+            try:
+                row = next(rows)
+            except StopIteration:
+                return
+            except Exception as error:
+                _raise_translated(error, self._translate)
+                raise
+            yield row
+
+
+class _Backend(Protocol):
+    """What `Connection` asks of a driver. Every call may raise the
+    driver's errors; `Connection` translates them."""
+
+    dialect: Dialect
+
+    def run(self, sql: str, params: Sequence[object] | Mapping[str, object]) -> Any: ...
+
+    def control(self, sql: str) -> None: ...
+
+    def driver_in_transaction(self) -> bool: ...
+
+    def begin(self, *, immediate: bool) -> None: ...
+
+    def ensure_begun(self) -> None: ...
+
+    def commit(self) -> None: ...
+
+    def rollback(self) -> None: ...
+
+    def translate(self, error: Exception) -> StoreDatabaseError | None: ...
+
+    def get_busy_timeout_ms(self) -> int: ...
+
+    def set_busy_timeout_ms(self, value: int) -> None: ...
+
+    def close(self) -> None: ...
+
+
+class _SqliteBackend:
+    dialect: Dialect = "sqlite"
+
+    def __init__(self, driver: sqlite3.Connection) -> None:
+        self.driver = driver
+
+    def run(self, sql: str, params: Sequence[object] | Mapping[str, object]) -> Any:
+        return self.driver.execute(sql, params)
+
+    def control(self, sql: str) -> None:
+        self.driver.execute(sql)
+
+    def driver_in_transaction(self) -> bool:
+        return self.driver.in_transaction
+
+    def begin(self, *, immediate: bool) -> None:
+        # A deferred transaction begins where the sqlite3 module begins one,
+        # before the first write, exactly as `with conn:` did (spec 076). An
+        # explicit BEGIN here would hold a read snapshot from the block's
+        # first read, and a write after another connection's commit would
+        # then fail at once with SQLITE_BUSY_SNAPSHOT instead of waiting.
+        if immediate:
+            self.driver.execute("BEGIN IMMEDIATE")
+
+    def ensure_begun(self) -> None:
+        # A savepoint opened with no transaction begins one, and releasing it
+        # would commit: the outer block would lose its atomicity.
+        if not self.driver.in_transaction:
+            self.driver.execute("BEGIN")
+
+    def commit(self) -> None:
+        self.driver.commit()
+
+    def rollback(self) -> None:
+        self.driver.rollback()
+
+    def translate(self, error: Exception) -> StoreDatabaseError | None:
+        return store_error_from_sqlite(error) if isinstance(error, sqlite3.Error) else None
+
+    def get_busy_timeout_ms(self) -> int:
+        return int(self.driver.execute("PRAGMA busy_timeout").fetchone()[0])
+
+    def set_busy_timeout_ms(self, value: int) -> None:
+        self.driver.execute(f"PRAGMA busy_timeout={value}")
+
+    def close(self) -> None:
+        self.driver.close()
+
+
+class _PostgresBackend:
+    dialect: Dialect = "postgres"
+
+    def __init__(
+        self,
+        driver: psycopg.Connection[Any],
+        claims: Mapping[str, object] | None,
+        busy_timeout_ms: int,
+    ) -> None:
+        self.driver = driver
+        self.claims = claims
+        self.busy_timeout_ms = busy_timeout_ms
+
+    def run(self, sql: str, params: Sequence[object] | Mapping[str, object]) -> Any:
+        cursor = self.driver.cursor(row_factory=_postgres_row_factory)
+        # Parameters are always passed, an empty sequence included, so
+        # psycopg always reads the doubled `%` of to_psycopg as one.
+        cursor.execute(to_psycopg(sql).encode(), params)
+        return cursor
+
+    def control(self, sql: str) -> None:
+        self.driver.execute(sql.encode())
+
+    def driver_in_transaction(self) -> bool:
+        from psycopg.pq import TransactionStatus
+
+        return self.driver.info.transaction_status != TransactionStatus.IDLE
+
+    def begin(self, *, immediate: bool) -> None:
+        # `immediate` locks nothing here until spec 126 adds the per-job row
+        # lock. SET LOCAL ends with the transaction, so nothing carries over
+        # to another client behind a transaction-mode pooler. 0 on Postgres
+        # means no limit, so "do not wait" is sent as 1 ms.
+        self.driver.execute(b"BEGIN")
+        self.driver.execute(f"SET LOCAL lock_timeout = '{max(self.busy_timeout_ms, 1)}ms'".encode())
+        if self.claims is not None:
+            assume_identity(self.driver, self.claims)
+
+    def ensure_begun(self) -> None:
+        # The outermost transaction always begins with BEGIN.
+        return
+
+    def commit(self) -> None:
+        self.driver.execute(b"COMMIT")
+
+    def rollback(self) -> None:
+        self.driver.execute(b"ROLLBACK")
+
+    def translate(self, error: Exception) -> StoreDatabaseError | None:
+        import psycopg
+
+        return store_error_from_postgres(error) if isinstance(error, psycopg.Error) else None
+
+    def get_busy_timeout_ms(self) -> int:
+        return self.busy_timeout_ms
+
+    def set_busy_timeout_ms(self, value: int) -> None:
+        self.busy_timeout_ms = value
+
+    def close(self) -> None:
+        self.driver.close()
+
+
+def owner_claims(owner: str) -> dict[str, str]:
+    """The claims a connection opened for `owner` sets (spec 106, "The run's
+    database session"). Raises StoreError unless `owner` is a UUID."""
+    try:
+        sub = str(uuid.UUID(owner))
+    except (ValueError, TypeError, AttributeError):
+        raise StoreError(NOT_AN_OWNER_ID) from None
+    return {"sub": sub, "role": "authenticated", "aud": "authenticated"}
+
+
+def assume_identity(driver: psycopg.Connection[Any], claims: Mapping[str, object]) -> None:
+    """Act as the owner `claims` names, for the rest of the open transaction.
+
+    The three steps spec 112 gives every outermost transaction of an owner's
+    connection (Amendment (2026-10-11): split, owner and nesting, decision
+    2): `SET LOCAL ROLE harrier_tenant`, the claims set local with
+    `set_config(..., true)`, and a read-back of both. Spec 104's request
+    transaction passes the request's verified claims to this same function.
+
+    Raises StoreDatabaseError with spec 106's text when the read-back
+    differs from what was set, as it does when the transaction was split or
+    never opened and `SET LOCAL` did nothing, or when a step is refused. The
+    caller rolls back, and runs no other statement.
+    """
+    import psycopg
+
+    from harrier.tracker.schema import TENANT_ROLE
+
+    sub = str(claims.get("sub", ""))
+    try:
+        driver.execute(f"SET LOCAL ROLE {TENANT_ROLE}".encode())
+        driver.execute(
+            b"SELECT set_config('request.jwt.claims', %s, true)", (json.dumps(dict(claims)),)
+        )
+        row = driver.execute(
+            b"SELECT current_user::text, "
+            b"current_setting('request.jwt.claims', true)::jsonb ->> 'sub'"
+        ).fetchone()
+    except psycopg.Error as error:
+        raise StoreDatabaseError(IDENTITY_DID_NOT_HOLD) from error
+    if row is None or tuple(row) != (TENANT_ROLE, sub):
+        raise StoreDatabaseError(IDENTITY_DID_NOT_HOLD)
+
+
 class Connection:
     """A store connection the domain owns (spec 112).
 
-    Over SQLite each method is the sqlite3 connection's own, so a statement,
-    a commit and an error behave exactly as they did when the domain held
-    the sqlite3 connection itself.
+    Over SQLite each statement is the sqlite3 connection's own, and an error
+    keeps its text; over Postgres the `?` placeholders are rewritten
+    (`to_psycopg`) and each row reads as `sqlite3.Row` does. On both, a
+    driver error reaches the caller as `StoreDatabaseError` or one of its
+    subclasses, with the driver's error as `__cause__`.
     """
 
+    _backend: _Backend
+    _depth: int
+
     def __init__(self, driver: sqlite3.Connection) -> None:
-        self._driver = driver
+        self._backend = _SqliteBackend(driver)
+        self._depth = 0
+
+    @classmethod
+    def postgres(
+        cls, driver: psycopg.Connection[Any], *, claims: Mapping[str, object] | None = None
+    ) -> Connection:
+        """A `Connection` over a psycopg connection in autocommit mode.
+
+        With `claims`, every outermost transaction acts as their owner
+        (`assume_identity`). Without, statements run as the login role,
+        with no claims: `harrier_owner_id()` is null, and an insert into an
+        owned table is refused.
+        """
+        from harrier.db import BUSY_TIMEOUT_MS
+
+        conn = cls.__new__(cls)
+        conn._backend = _PostgresBackend(driver, claims, BUSY_TIMEOUT_MS)
+        conn._depth = 0
+        return conn
+
+    @property
+    def dialect(self) -> Dialect:
+        return self._backend.dialect
+
+    @property
+    def busy_timeout_ms(self) -> int:
+        """How long a writer waits for another connection's lock. `0` means
+        do not wait, on both stores. On SQLite it is `PRAGMA busy_timeout`;
+        on Postgres the `lock_timeout` of every later transaction."""
+        return self._guard(self._backend.get_busy_timeout_ms)
+
+    @busy_timeout_ms.setter
+    def busy_timeout_ms(self, value: int) -> None:
+        if isinstance(value, bool) or value < 0:
+            raise ValueError(f"busy_timeout_ms must be a whole number of 0 or more, not {value!r}")
+        self._guard(lambda: self._backend.set_busy_timeout_ms(value))
+
+    def _guard[T](self, call: Callable[[], T]) -> T:
+        try:
+            return call()
+        except Exception as error:
+            _raise_translated(error, self._backend.translate)
+            raise
 
     def execute(self, sql: str, params: Sequence[object] | Mapping[str, object] = ()) -> Cursor:
-        return self._driver.execute(sql, params)
+        """Run one statement written with `?` placeholders.
+
+        On Postgres a statement outside `transaction()` runs in a
+        transaction of its own, which begins as every transaction does, so
+        none runs without the lock timeout and the owner's identity.
+        """
+        if self._backend.dialect == "postgres" and self._depth == 0:
+            with self.transaction():
+                return self._run(sql, params)
+        return self._run(sql, params)
+
+    def _run(self, sql: str, params: Sequence[object] | Mapping[str, object]) -> Cursor:
+        cursor = self._guard(lambda: self._backend.run(sql, params))
+        return _StoreCursor(cursor, self._backend.translate)
 
     @contextmanager
-    def transaction(self) -> Generator[None, None, None]:
+    def transaction(self, *, immediate: bool = False) -> Generator[None, None, None]:
         """Commit on success and roll back on any exception.
 
-        Over SQLite this is the `with` block over the sqlite3 connection that
-        the domain wrote before (spec 076): the connection stays open either
-        way.
+        The outermost block is the transaction. On SQLite it is what `with
+        conn:` was on the sqlite3 connection (spec 076), and `immediate`
+        begins it with `BEGIN IMMEDIATE`, the write lock taken before
+        anything is read (spec 079). On Postgres it begins with `SET LOCAL
+        lock_timeout`, then, on an owner's connection, the owner's identity.
+
+        A block opened inside another is a SAVEPOINT, on both stores: its
+        work is kept when it exits normally and undone when it raises, and
+        the exception goes on. An outer block that catches it goes on
+        without the inner work, and on Postgres stays usable. Nothing
+        commits before the outermost block exits.
         """
-        with self._driver:
+        if self._depth == 0:
+            with self._outermost(immediate=immediate):
+                yield
+            return
+        name = f"harrier_savepoint_{self._depth}"
+        self._guard(self._backend.ensure_begun)
+        self._guard(lambda: self._backend.control(f"SAVEPOINT {name}"))
+        self._depth += 1
+        try:
             yield
+        except BaseException:
+            self._depth -= 1
+            if self._backend.driver_in_transaction():
+                self._quietly(f"ROLLBACK TO SAVEPOINT {name}")
+                self._quietly(f"RELEASE SAVEPOINT {name}")
+            raise
+        self._depth -= 1
+        self._guard(lambda: self._backend.control(f"RELEASE SAVEPOINT {name}"))
+
+    @contextmanager
+    def _outermost(self, *, immediate: bool) -> Generator[None, None, None]:
+        # A SQLite connection the sqlite3 module already put in a transaction,
+        # with a write made outside any block, is taken as it is: the block
+        # commits it, as `with conn:` did.
+        if not self._backend.driver_in_transaction():
+            try:
+                self._guard(lambda: self._backend.begin(immediate=immediate))
+            except BaseException:
+                self._quietly_roll_back()
+                raise
+        self._depth = 1
+        try:
+            yield
+        except BaseException:
+            self._depth = 0
+            self._quietly_roll_back()
+            raise
+        self._depth = 0
+        try:
+            self._guard(self._backend.commit)
+        except BaseException:
+            self._quietly_roll_back()
+            raise
+
+    def _quietly(self, sql: str) -> None:
+        """A statement that ends a failed block. It runs while another error
+        is on its way out, which is the one the caller must see; a
+        connection too broken to run it is lost with its transaction."""
+        try:
+            self._backend.control(sql)
+        except Exception as error:
+            if self._backend.translate(error) is None:
+                raise
+
+    def _quietly_roll_back(self) -> None:
+        try:
+            if self._backend.driver_in_transaction():
+                self._backend.rollback()
+        except Exception as error:
+            if self._backend.translate(error) is None:
+                raise
 
     @property
     def in_transaction(self) -> bool:
-        return self._driver.in_transaction
-
-    def commit(self) -> None:
-        self._driver.commit()
-
-    def rollback(self) -> None:
-        self._driver.rollback()
+        """True inside `transaction()`, on both stores; on SQLite also after
+        a write outside one, which the sqlite3 module began a transaction
+        for."""
+        return self._depth > 0 or self._backend.driver_in_transaction()
 
     def close(self) -> None:
-        self._driver.close()
+        self._guard(self._backend.close)
 
     @property
     def sqlite_driver(self) -> sqlite3.Connection:
         """The sqlite3 connection underneath, for code whose subject is SQLite
         itself: pragmas, autocommit, statement tracing (spec 112, Scope 3).
-        Domain code never needs it."""
-        return self._driver
+        Domain code never needs it. Raises StoreError on Postgres."""
+        if isinstance(self._backend, _SqliteBackend):
+            return self._backend.driver
+        raise StoreError(NOT_SQLITE)
+
+
+def open_store(environ: Mapping[str, str] | None = None, *, owner: str | None = None) -> Connection:
+    """Open the store `HARRIER_DATABASE_URL` names (spec 112).
+
+    SQLite: `harrier.db.connect()`, unchanged; an owner is refused there.
+    Postgres: `harrier.pgstore.open_postgres_store`, with spec 103's version
+    check, which takes no host lease, asks the Docker engine nothing and
+    writes nothing under `data/` (ADR-011 concerns the SQLite file). With
+    `owner`, every transaction acts as that owner. Both refusals of an owner
+    come before anything opens.
+    """
+    target = store_target(environ)
+    if not target.is_postgres:
+        if owner is not None:
+            raise StoreError(OWNER_NEEDS_POSTGRES)
+        from harrier.db import connect
+
+        return connect()
+    claims = owner_claims(owner) if owner is not None else None
+    from harrier.pgstore import open_postgres_store
+
+    return Connection.postgres(open_postgres_store(target.url), claims=claims)
 
 
 @dataclass(frozen=True)

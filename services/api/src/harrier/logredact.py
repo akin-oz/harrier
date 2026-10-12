@@ -28,11 +28,10 @@ from __future__ import annotations
 
 import logging
 import re
-import sqlite3
 import traceback
 from typing import cast
 
-from harrier.connection import Connection
+from harrier.connection import Connection, StoreDatabaseError
 
 # A one-character value is not identifying and matches everywhere. Everything
 # longer is redacted, but a short value only where it stands as its own word:
@@ -102,7 +101,7 @@ def identity_values(conn: Connection) -> set[str]:
     for load in (_candidate_identity_values, _contact_identity_values):
         try:
             values |= load(conn)
-        except sqlite3.Error:
+        except StoreDatabaseError:
             continue
     return {value for value in values if len(value) >= MIN_REDACTABLE_LENGTH}
 
@@ -203,7 +202,7 @@ def refresh_installed(conn: Connection) -> None:
         return
     try:
         values = identity_values(conn)
-    except sqlite3.Error:
+    except StoreDatabaseError:
         return
     for installed in _INSTALLED:
         installed.refresh(values)

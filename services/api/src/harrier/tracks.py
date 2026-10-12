@@ -19,13 +19,12 @@ renames a track or changes its kind.
 from __future__ import annotations
 
 import re
-import sqlite3
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Literal
 
 from harrier import voices
-from harrier.connection import Connection, Row
+from harrier.connection import Connection, Row, StoreIntegrityError
 
 TrackKind = Literal["industry", "academic"]
 
@@ -397,7 +396,7 @@ def add_track(conn: Connection, slug: str, kind: str, label: str) -> Track:
             conn.execute(
                 "INSERT INTO tracks (slug, kind, label) VALUES (?, ?, ?)", (slug, kind, label)
             )
-    except sqlite3.IntegrityError as error:
+    except StoreIntegrityError as error:
         raise DuplicateTrackError(f"a track with slug {slug!r} already exists") from error
     return resolve_scope(conn, slug).track
 

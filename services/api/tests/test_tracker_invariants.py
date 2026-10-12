@@ -167,8 +167,8 @@ def test_a_row_that_already_breaks_a_rule_can_still_be_repaired(
     rows written before these rules unrepairable, which is the opposite of
     what the spec asks for."""
     set_status(db, default_scope(db), 1, "applied")
-    db.execute("UPDATE jobs SET applied_date = '' WHERE id = 1")
-    db.commit()
+    with db.transaction():
+        db.execute("UPDATE jobs SET applied_date = '' WHERE id = 1")
     assert invariant_breach(get_job(db, default_scope(db), 1)) != ""
 
     # A write that does not touch the breach is allowed through.
@@ -183,8 +183,8 @@ def test_check_reports_pre_existing_rows_and_changes_nothing(
     db: Connection, capsys: pytest.CaptureFixture[str]
 ) -> None:
     set_status(db, default_scope(db), 1, "applied")
-    db.execute("UPDATE jobs SET applied_date = '' WHERE id = 1")
-    db.commit()
+    with db.transaction():
+        db.execute("UPDATE jobs SET applied_date = '' WHERE id = 1")
     before = dict(get_job(db, default_scope(db), 1))
 
     assert main(["check"]) == 1
@@ -379,8 +379,8 @@ def test_a_second_breach_cannot_ride_in_behind_the_first(db: Connection) -> None
     breach looked like nothing new and was written (review finding on PR #44).
     """
     set_status(db, default_scope(db), 1, "applied")
-    db.execute("UPDATE jobs SET applied_date = '' WHERE id = 1")
-    db.commit()
+    with db.transaction():
+        db.execute("UPDATE jobs SET applied_date = '' WHERE id = 1")
     assert len(all_breaches(get_job(db, default_scope(db), 1))) == 1
 
     with pytest.raises(TrackerError, match="must not carry a rejection reason"):
@@ -392,8 +392,8 @@ def test_the_pre_existing_breach_still_does_not_block_repair(db: Connection) -> 
     """The other half of the same rule: refusing a new breach must not refuse
     a write that leaves the old one alone."""
     set_status(db, default_scope(db), 1, "applied")
-    db.execute("UPDATE jobs SET applied_date = '' WHERE id = 1")
-    db.commit()
+    with db.transaction():
+        db.execute("UPDATE jobs SET applied_date = '' WHERE id = 1")
     update_fields(db, default_scope(db), 1, {"next_action": "chase the recruiter"})
     assert get_job(db, default_scope(db), 1)["next_action"] == "chase the recruiter"
 
@@ -435,8 +435,8 @@ def test_check_reports_every_breach_on_a_row(db: Connection) -> None:
     """A row with two problems that reported one would send the operator
     round the loop again for the second."""
     set_status(db, default_scope(db), 1, "applied")
-    db.execute("UPDATE jobs SET applied_date = '', rejection_reason = 'stale' WHERE id = 1")
-    db.commit()
+    with db.transaction():
+        db.execute("UPDATE jobs SET applied_date = '', rejection_reason = 'stale' WHERE id = 1")
     reported = [why for _, why in check_rows([get_job(db, default_scope(db), 1)])]
     assert len(reported) == 2
 
@@ -462,8 +462,8 @@ def test_the_link_report_says_when_it_wrote(
         },
     )
     # A breach so the command reaches its summary line.
-    db.execute("UPDATE jobs SET status = 'applied', applied_date = '' WHERE id = 1")
-    db.commit()
+    with db.transaction():
+        db.execute("UPDATE jobs SET status = 'applied', applied_date = '' WHERE id = 1")
 
     assert main(["check", "--link-contacts"]) == 1
     assert "1 contact link(s) were written" in capsys.readouterr().err

@@ -481,9 +481,10 @@ PR 2 (behavior):
       waits on SQLite (planned
       test_a_decision_on_one_job_does_not_wait_for_another).
 - [ ] A row reads by position, by name, as values and as a dict on both
-      (planned test_a_row_reads_by_position_by_name_and_as_a_dict).
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_row_reads_by_position_by_name_and_as_a_dict`).
 - [ ] A `?` statement binds on both, including one whose literal holds a
-      `%` (planned test_question_marks_bind_on_both_stores).
+      `%`
+      (`services/api/tests/test_seam_on_both_stores.py::test_question_marks_bind_on_both_stores`).
 - [ ] A nested `transaction()` joins the outer one, and an exception in
       either rolls both back (planned
       test_a_nested_transaction_joins_the_outer_one).
@@ -498,26 +499,27 @@ PR 2 (behavior):
 - [ ] `add_job` and `add_contact` return the inserted id on both (planned
       test_an_insert_returns_its_id_on_both_stores).
 - [ ] A SQLite library below 3.35 is refused with the text under Failure
-      modes (planned test_an_old_sqlite_library_is_refused).
+      modes
+      (`services/api/tests/test_seam_on_both_stores.py::test_an_old_sqlite_library_is_refused`).
 - [ ] Every refused probe of spec 103's parity table raises the same class,
-      kind and message on both, `unknown track` included (planned
-      test_every_parity_probe_raises_one_error_on_both_stores).
+      kind and message on both, `unknown track` included
+      (`services/api/tests/test_seam_on_both_stores.py::test_every_parity_probe_raises_one_error_on_both_stores`).
 - [ ] A duplicate track slug is `DuplicateTrackError`, and a unique-index
       race in `add_job` is `DuplicateJobError`, on both (planned
       test_a_duplicate_is_refused_alike_on_both_stores).
-- [ ] A Postgres integrity error's message holds no `DETAIL` text (planned
-      test_a_postgres_refusal_never_quotes_the_row).
+- [ ] A Postgres integrity error's message holds no `DETAIL` text
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_postgres_refusal_never_quotes_the_row`).
 - [ ] A writer held past a short timeout gets `StoreBusyError` on both, and
-      a Postgres `busy_timeout_ms` of 0 does not wait forever (planned
-      test_a_stuck_writer_reports_busy_on_both_stores).
+      a Postgres `busy_timeout_ms` of 0 does not wait forever
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_stuck_writer_reports_busy_on_both_stores`).
 - [ ] Opening a Postgres store writes no lease and makes no engine query
-      (planned test_opening_a_postgres_store_takes_no_lease).
+      (`services/api/tests/test_seam_on_both_stores.py::test_opening_a_postgres_store_takes_no_lease`).
 - [ ] `cutover` and `migrate_legacy.migrate` refuse a Postgres connection
       with the texts under Behavior (planned
       test_local_only_work_refuses_a_postgres_connection).
 - [ ] The identity loaders in `logredact.py` return what they can when a
-      store read fails, on both (planned
-      test_identity_reads_survive_a_store_error_on_both_stores).
+      store read fails, on both
+      (`services/api/tests/test_seam_on_both_stores.py::test_identity_reads_survive_a_store_error_on_both_stores`).
 - [ ] Every top-level command has one refusal class, and the two texts
       and the API's text are as under Behavior (planned
       test_every_command_has_a_postgres_refusal_class). Spec 103's
@@ -1173,60 +1175,64 @@ Failure modes above hold for what this spec keeps. In addition:
 PR 2, as narrowed:
 
 - [ ] A row reads by position, by name, as values and as a dict on both
-      (planned test_a_row_reads_by_position_by_name_and_as_a_dict).
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_row_reads_by_position_by_name_and_as_a_dict`).
 - [ ] A `?` statement binds on both, including one whose literal holds a
-      `%` (planned test_question_marks_bind_on_both_stores).
+      `%`
+      (`services/api/tests/test_seam_on_both_stores.py::test_question_marks_bind_on_both_stores`).
 - [ ] On both stores, a nested `transaction()` whose error the outer
       block catches leaves the outer block's own writes committed and the
       inner block's undone; on Postgres a statement after the caught
       error runs; an error leaving the outer block rolls back both
-      (planned test_a_nested_transaction_is_a_savepoint_on_both_stores).
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_nested_transaction_is_a_savepoint_on_both_stores`).
       This replaces planned test_a_nested_transaction_joins_the_outer_one.
 - [ ] On a connection opened with an owner, a statement inside
       `transaction()` and one outside it both run as `harrier_tenant` with
       the owner's `sub`; an insert into an owned table that names no
       `owner_id` stores the owner's id; and with a second owner's row in
-      the store, a read returns only the first owner's (planned
-      test_an_owner_connection_sets_its_identity_in_every_transaction).
+      the store, a read returns only the first owner's
+      (`services/api/tests/test_seam_on_both_stores.py::test_an_owner_connection_sets_its_identity_in_every_transaction`).
 - [ ] When the read-back differs from what the seam set, the transaction
       rolls back with the identity error and the statement that followed
-      never runs (planned test_a_lost_owner_identity_runs_no_statement).
+      never runs
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_lost_owner_identity_runs_no_statement`).
 - [ ] An owner beside SQLite, and an owner that is not a UUID, are
-      refused with the texts above and open nothing (planned
-      test_an_owner_needs_a_postgres_store).
+      refused with the texts above and open nothing
+      (`services/api/tests/test_seam_on_both_stores.py::test_an_owner_needs_a_postgres_store`).
 - [ ] `dialect` names each store, and `busy_timeout_ms` sets SQLite's
       busy timeout and Postgres's `lock_timeout`, 0 sending 1 ms on
-      Postgres (planned test_a_connection_names_its_dialect_and_its_wait).
+      Postgres
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_connection_names_its_dialect_and_its_wait`).
 - [ ] `Connection` has no `commit` or `rollback`, and `in_transaction` is
-      true inside `transaction()` and false outside it, on both (planned
-      test_a_connection_offers_no_commit_or_rollback).
+      true inside `transaction()` and false outside it, on both
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_connection_offers_no_commit_or_rollback`).
 - [ ] The three lock tests pass on SQLite unchanged apart from catching
       `StoreBusyError`:
       `services/api/tests/test_job_events.py::test_a_first_move_holds_the_lock_from_read_to_write`,
       `services/api/tests/test_job_events.py::test_backfill_holds_the_lock_from_read_to_write`,
       `services/api/tests/test_job_events.py::test_a_field_update_holds_the_lock_from_read_to_write`.
 - [ ] A SQLite library below 3.35 is refused with the text under Failure
-      modes (planned test_an_old_sqlite_library_is_refused).
+      modes
+      (`services/api/tests/test_seam_on_both_stores.py::test_an_old_sqlite_library_is_refused`).
 - [ ] Every refused probe of spec 103's parity table, run through a
       `Connection` as an owner on Postgres, raises the same class, kind
-      and message on both, `unknown track` included (planned
-      test_every_parity_probe_raises_one_error_on_both_stores).
-- [ ] A Postgres integrity error's message holds no `DETAIL` text (planned
-      test_a_postgres_refusal_never_quotes_the_row).
+      and message on both, `unknown track` included
+      (`services/api/tests/test_seam_on_both_stores.py::test_every_parity_probe_raises_one_error_on_both_stores`).
+- [ ] A Postgres integrity error's message holds no `DETAIL` text
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_postgres_refusal_never_quotes_the_row`).
 - [ ] A writer held past a short timeout gets `StoreBusyError` on both, and
-      a Postgres `busy_timeout_ms` of 0 does not wait forever (planned
-      test_a_stuck_writer_reports_busy_on_both_stores).
+      a Postgres `busy_timeout_ms` of 0 does not wait forever
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_stuck_writer_reports_busy_on_both_stores`).
 - [ ] Opening a Postgres store writes no lease and makes no engine query
-      (planned test_opening_a_postgres_store_takes_no_lease).
+      (`services/api/tests/test_seam_on_both_stores.py::test_opening_a_postgres_store_takes_no_lease`).
 - [ ] On SQLite, the unique-index race in `add_job` is still
       `DuplicateJobError`
       (`services/api/tests/test_tracker_store.py::test_unique_index_race_maps_to_duplicate_error`),
-      and a duplicate track slug is `DuplicateTrackError` (planned
-      test_a_duplicate_slug_is_a_duplicate_track_error). Spec 126 proves
+      and a duplicate track slug is `DuplicateTrackError`
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_duplicate_slug_is_a_duplicate_track_error`). Spec 126 proves
       both on Postgres.
 - [ ] The identity loaders in `logredact.py` return what they can when a
-      store read fails, on both (planned
-      test_identity_reads_survive_a_store_error_on_both_stores).
+      store read fails, on both
+      (`services/api/tests/test_seam_on_both_stores.py::test_identity_reads_survive_a_store_error_on_both_stores`).
 - [ ] The PR lists every test file that changed from a `sqlite3` error
       class to a store class, and every caller of the four locked writers
       that wraps one in its own transaction (none is expected).
@@ -1278,3 +1284,168 @@ and texts to spec 127; the import-linter contract (both items),
   approved specs: this spec's `depends` gains 115.
 - `services/api/tests/pg_support.py`, `as_role` and `as_owner`: the
   pattern decision 2 moves into the seam.
+
+## Amendment (2026-10-12): what the seam's pull request settled
+
+Building PR 2 as the amendment of 2026-10-11 narrowed it settled points
+that amendment left open, and showed four places where this spec said
+more than the stores do. Each is stated here so the code and the spec
+agree. No local command or route prints anything new, except the one line
+under "The SQLite library check" below.
+
+### Where the spec was wrong
+
+- **A `%` inside a literal is doubled too.** Behavior says a `%` outside a
+  literal is doubled. Once parameters are passed, psycopg reads a `%`
+  wherever it stands, inside a literal too, and undoubles `%%` there as
+  well, so a literal's single `%` failed as a placeholder it cannot read
+  (run against Postgres 17, 2026-10-12). The seam always passes
+  parameters, an empty sequence included, and doubles every `%`. The
+  server receives each literal as written, which is what Failure modes
+  promises (`to_psycopg` in `services/api/src/harrier/connection.py`;
+  `services/api/tests/test_seam_on_both_stores.py::test_question_marks_bind_on_both_stores`).
+- **As an owner, six probes are refused by a privilege, not a trigger.**
+  The criterion runs every refused probe of spec 103's parity table as an
+  owner. `harrier_tenant` holds no `DELETE` on `tracks` and no `UPDATE`
+  or `DELETE` on `job_events` or `job_eligibility` (spec 105), and
+  Postgres checks a privilege before any trigger fires. So as the owner
+  the probes `job-events-update`, `job-events-delete`,
+  `job-events-update-to-status`, `track-delete`,
+  `eligibility-update-verdict` and `eligibility-delete` raise
+  `StoreDatabaseError`, `permission denied for table <table>`, and no
+  trigger text can be compared. The test asserts exactly that, then runs
+  those six as the migrating role with the owner's claims, where the
+  trigger refuses, and holds them to SQLite's class, kind and message.
+  Every other refused probe runs as the owner
+  (`services/api/tests/test_seam_on_both_stores.py::test_every_parity_probe_raises_one_error_on_both_stores`).
+- **"The same message" is the trigger's.** For `kind="unique"`,
+  `"check"`, `"foreign_key"` and `"not_null"` each driver names the
+  constraint its own way: SQLite `UNIQUE constraint failed: jobs.url`,
+  Postgres `duplicate key value violates unique constraint
+  "idx_jobs_url"`. The message is each driver's own text, so a local
+  error reads as it did. The test compares class and kind for every
+  refused probe, and the message wherever it is a trigger's
+  (`kind="refused"`) or the probe declares one, `unknown track` included.
+  All of them matched on Postgres 17 on 2026-10-12.
+- **Under the row policy Postgres sends no `DETAIL`.** As an owner, a
+  refusal's `DETAIL` is withheld by the server, so a test run as the
+  owner could not see a leak. The test that proves the seam never quotes
+  it runs as the migrating role on a table of its own, where the server
+  sends one, and asserts that the `DETAIL` quoted the row and the store
+  error does not
+  (`services/api/tests/test_seam_on_both_stores.py::test_a_postgres_refusal_never_quotes_the_row`).
+
+### What the implementation settled
+
+- **Names.** `Connection.postgres(driver, *, claims=None)` wraps a psycopg
+  connection in autocommit mode. `assume_identity(driver, claims)` is the
+  one function decision 2 names. `owner_claims(owner)` builds spec 106's
+  claims and refuses an owner that `uuid.UUID` cannot read; the claims
+  carry its canonical spelling. `open_store` lives in
+  `harrier.connection`. `_write_lock` is gone, and its four users write
+  `conn.transaction(immediate=True)`.
+- **A deferred SQLite transaction begins where the sqlite3 module begins
+  one,** before the first write, as `with conn:` did. An explicit `BEGIN`
+  at the start of the block would hold a read snapshot from its first
+  read, and a write after another connection's commit would then fail at
+  once with `SQLITE_BUSY_SNAPSHOT` instead of waiting. A savepoint opened
+  in a block that has not begun yet begins it first, since a savepoint
+  that began the transaction would commit when released
+  (`services/api/tests/test_seam_on_both_stores.py::test_a_nested_transaction_is_a_savepoint_on_both_stores`).
+  `in_transaction` is true from the first line of a block, on both
+  stores
+  (`services/api/tests/test_seam_on_both_stores.py::test_a_connection_offers_no_commit_or_rollback`).
+  A write on SQLite outside any block still opens the sqlite3 module's
+  own transaction, and the next outermost block commits it, as `with
+  conn:` did.
+- **The read-back.** A step the server refuses, such as `SET LOCAL ROLE`
+  for a login role that is not a member of `harrier_tenant`, or the
+  read-back's own cast of an empty claims setting to `jsonb`, raises the
+  same identity error, with the server's as its cause. It reads
+  `current_user` and the claims' `sub`, as decision 2 says; spec 104's
+  step 3 also reads `harrier_owner_id()` and adds that read itself.
+- **How the lost identity is shown.** The test makes the read-back
+  differ two ways: a connection whose `BEGIN` never reaches the server,
+  as behind a pooler that splits a transaction, so `SET LOCAL` changes
+  nothing; and one that sets another owner's claims. Either way the
+  caller's insert, inside `transaction()` and outside it, never runs
+  (`services/api/tests/test_seam_on_both_stores.py::test_a_lost_owner_identity_runs_no_statement`).
+- **Errors.** A driver error raised while fetching rows is mapped too
+  (`services/api/tests/test_seam_on_both_stores.py::test_a_failed_fetch_is_a_store_error`),
+  and so is one at commit or at close, which no test provokes. A SQLite
+  primary key violation is
+  `kind="unique"`. A sqlite3 error that carries no code from the
+  library, such as a statement on a closed connection, is
+  `StoreDatabaseError`, as is an integrity error of any code the table
+  does not name. A Postgres error the server did not send, such as a lost
+  connection, is named by its class, never by the client's text.
+- **A failed block ends quietly.** When rolling back a failed block fails
+  too, the caller sees the block's own error.
+- **`busy_timeout_ms`** refuses a negative value with `ValueError`.
+- **`runoutcome.record_success`** writes in a `transaction()`, and the
+  write is seen from another connection
+  (`services/api/tests/test_run_outcome.py::test_a_recorded_success_is_committed`).
+
+### The SQLite library check
+
+`harrier.db.connect` raises `StoreLibraryTooOld`, a `StoreError`, before
+it takes a lease or creates the file. Failure modes says the CLI prints
+it and exits 1. Every command's first open is logging setup's, which
+catches the driver's classes, `OSError` and `StoreDatabaseError` only, so
+the refusal reached the CLI as a traceback. `harrier_cli.main.main` now
+catches `StoreLibraryTooOld`, and nothing else new, and prints `error:
+<text>` with exit 1
+(`services/api/tests/test_seam_on_both_stores.py::test_an_old_sqlite_library_is_refused`).
+
+### What the pull request lists
+
+- **Test files that caught or raised a `sqlite3` error class through a
+  `Connection` and now name a store class:** `test_cli_connections.py`,
+  `test_concurrent_writers.py`, `test_eligibility.py`,
+  `test_job_events.py` (the three lock tests among them),
+  `test_logging.py` (a stand-in for `identity_values` now raises what the
+  real one can), `test_resume_documents.py`, `test_track_framing.py` and
+  `test_tracks_cli.py`, all under `services/api/tests`. Tests whose
+  subject is SQLite itself keep the driver's classes:
+  `test_migration_runner.py`, `test_tracks.py`, `test_dialect_parity.py`,
+  and the migration case of `test_track_framing.py`.
+- **Test files whose `commit()` or `rollback()` became `transaction()`:**
+  `test_academic_discovery.py`, `test_api_tracks.py`, `test_backup.py`,
+  `test_concurrent_writers.py` (its subprocess writer too),
+  `test_database_ownership.py`, `test_eligibility.py`,
+  `test_job_events.py`, `test_logging.py`, `test_resume_documents.py`,
+  `test_scoring_model.py`, `test_track_framing.py`,
+  `test_track_isolation.py`, `test_tracker_invariants.py`,
+  `test_tracks.py`, `test_ui_operations.py` and `test_userconfig.py`.
+  `test_backup.py` now leaves its write outside any block, so nothing
+  commits it, and closes the connection, which discards it.
+- **Callers of the four locked writers that wrap one in their own
+  transaction:** none. No `transaction()` block under
+  `services/api/src` calls `set_status`, `update_fields`,
+  `backfill_events` or `record_eligibility`.
+
+### The store password in logs and HTTP errors
+
+The criterion recorded from spec 128 (planned
+test_no_log_or_http_error_carries_the_store_password) sits in PR 2's
+first list, which the amendment of 2026-10-11 replaced, and neither the
+narrowed list nor "Where each item went" carries it. This pull request
+does not build it. Its two sinks are reached only once an error raised on
+a Postgres store reaches a log record or a route: the API serves Postgres
+only under spec 104, and a command other than `harrier store` runs there
+only under spec 127. The seam narrows the gap. A store error raised
+through a Postgres `Connection` carries the server's primary message or
+the driver error's class, never the client's text, so its own message
+quotes no URL. The driver's error stays chained as `__cause__`, as
+Behavior requires, and a logged traceback prints it. Akin places the
+criterion; spec 104 (HTTP detail) and spec 127 (the log stream of a
+command run on Postgres) are the candidates.
+
+### Honest limitations (amendment of 2026-10-12)
+
+- The parity test creates and migrates a Postgres database per refused
+  probe, and two for each of the six above, because the probes name job
+  1 and ids are numbered across owners. Spec 126's template database
+  would make that cheaper.
+- `check-python`'s duration in CI was not measured here; the pull
+  request records it.

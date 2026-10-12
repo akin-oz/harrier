@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 from test_screening import candidate_cfg
 
 import harrier.discovery as discovery_module
-from harrier.connection import Connection
+from harrier.connection import Connection, StoreIntegrityError
 from harrier.db import connect
 from harrier.discovery import DiscoveryOptions, run_discovery
 from harrier.scoring.features import FEATURE_ORDER
@@ -414,11 +414,11 @@ def test_discovery_assesses_in_the_row_transaction(
 
 
 def test_the_academic_kind_is_not_assessed(conn: Connection) -> None:
-    conn.execute(
-        "INSERT INTO tracks (id, slug, kind, label) VALUES (2, ?, 'academic', 'PhD search')",
-        (ACADEMIC,),
-    )
-    conn.commit()
+    with conn.transaction():
+        conn.execute(
+            "INSERT INTO tracks (id, slug, kind, label) VALUES (2, ?, 'academic', 'PhD search')",
+            (ACADEMIC,),
+        )
     academic = resolve_scope(conn, ACADEMIC)
     result, row = add_manually(
         conn,
@@ -552,7 +552,7 @@ def test_eligibility_history_is_append_only(conn: Connection, scope: Scope) -> N
         "UPDATE job_eligibility SET verdict = 'excluded'",
         "DELETE FROM job_eligibility",
     ):
-        with pytest.raises(sqlite3.DatabaseError, match="job_eligibility is append-only"):
+        with pytest.raises(StoreIntegrityError, match="job_eligibility is append-only"):
             conn.execute(statement)
 
 

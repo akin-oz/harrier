@@ -110,12 +110,12 @@ def make_database(path: Path, rows: int = 3) -> None:
     conn = connect(path)
     db.release_host_lease()
     try:
-        for index in range(rows):
-            conn.execute(
-                "INSERT INTO jobs (company, title, url, status) VALUES (?, ?, ?, 'prospect')",
-                (f"Example Co {index}", "Engineer", f"https://example.test/{index}"),
-            )
-        conn.commit()
+        with conn.transaction():
+            for index in range(rows):
+                conn.execute(
+                    "INSERT INTO jobs (company, title, url, status) VALUES (?, ?, ?, 'prospect')",
+                    (f"Example Co {index}", "Engineer", f"https://example.test/{index}"),
+                )
     finally:
         conn.close()
 

@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 
 import harrier.capture as capture_module
 import harrier_cli.main as cli_module
-from harrier.connection import Connection
+from harrier.connection import Connection, StoreIntegrityError
 from harrier.db import connect
 from harrier.tracker import TrackerError, add_job, list_jobs, set_status, update_fields
 from harrier.tracker.queue import rank_by_deadline
@@ -393,7 +393,7 @@ def test_a_malformed_deadline_is_refused(academic: Path) -> None:
         # refuses a shape that is not a date at all.
         with pytest.raises(TrackerError, match="deadline"):
             add_job(conn, {"company": "A", "title": "B", "deadline": "2027-02-30"}, scope=second)
-        with pytest.raises(sqlite3.IntegrityError):
+        with pytest.raises(StoreIntegrityError):
             conn.execute(
                 "INSERT INTO jobs (company, title, deadline) VALUES ('A', 'B', '2027/01/01')"
             )

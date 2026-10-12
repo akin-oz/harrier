@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 
 from harrier import container, hostlease
-from harrier.connection import Connection
+from harrier.connection import OLDEST_SQLITE, Connection, StoreLibraryTooOld
 from harrier.demo import demo_data_dir, is_demo_mode
 from harrier.paths import repo_root
 
@@ -233,6 +233,7 @@ def connect(db_path: Path | None = None, *, same_thread: bool = True) -> Connect
     (harrier_api/deps.py, proven by test_api_jobs.py::
     test_concurrent_requests_do_not_trip_the_sqlite_thread_check).
     """
+    refuse_an_old_sqlite_library()
     path = db_path if db_path is not None else default_db_path()
     check_database_ownership(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -264,6 +265,20 @@ def connect(db_path: Path | None = None, *, same_thread: bool = True) -> Connect
         conn.close()
         raise
     return Connection(conn)
+
+
+def refuse_an_old_sqlite_library() -> None:
+    """Raise StoreLibraryTooOld for a SQLite library older than 3.35.
+
+    3.35 is the first with `INSERT ... RETURNING`, which spec 126 reads new
+    ids from on both stores (spec 112). Checked before anything opens, so a
+    refused open takes no host lease.
+    """
+    if sqlite3.sqlite_version_info < OLDEST_SQLITE:
+        oldest = ".".join(str(part) for part in OLDEST_SQLITE[:2])
+        raise StoreLibraryTooOld(
+            f"the SQLite library is {sqlite3.sqlite_version}; harrier needs {oldest} or newer"
+        )
 
 
 def _set_journal_mode_wal(conn: sqlite3.Connection) -> None:

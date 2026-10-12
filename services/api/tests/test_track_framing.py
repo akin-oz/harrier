@@ -22,7 +22,7 @@ from resume_support import (
     store_example,
 )
 
-from harrier.connection import Connection
+from harrier.connection import Connection, StoreIntegrityError
 from harrier.db import connect
 from harrier.profile.store import (
     ProfileDocumentError,
@@ -200,16 +200,21 @@ def test_migration_11_is_whole_or_nothing(data_dir: Path, monkeypatch: pytest.Mo
         raw.close()
 
 
+class Abandoned(Exception):
+    """Raised to leave a transaction() block, so it rolls back."""
+
+
 def test_profile_documents_unique_per_owner(academic: Connection) -> None:
     track_id = resolve_scope(academic, SLUG).track.id
     insert = "INSERT INTO profile_documents (kind, name, track_id) VALUES (?, ?, ?)"
-    academic.execute(insert, ("note", "same.md", None))
-    academic.execute(insert, ("note", "same.md", track_id))
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(Abandoned), academic.transaction():
         academic.execute(insert, ("note", "same.md", None))
-    with pytest.raises(sqlite3.IntegrityError):
         academic.execute(insert, ("note", "same.md", track_id))
-    academic.rollback()
+        with pytest.raises(StoreIntegrityError):
+            academic.execute(insert, ("note", "same.md", None))
+        with pytest.raises(StoreIntegrityError):
+            academic.execute(insert, ("note", "same.md", track_id))
+        raise Abandoned
 
 
 def test_only_the_framing_is_owned(academic: Connection) -> None:
@@ -291,8 +296,8 @@ def test_profile_put_validates_before_it_writes(
     refused(facts_key, "candidate.email belongs in resume_facts")
     refused([1, 2], "is not a JSON object")
 
-    academic.execute("DELETE FROM profile_documents WHERE kind = 'resume_facts'")
-    academic.commit()
+    with academic.transaction():
+        academic.execute("DELETE FROM profile_documents WHERE kind = 'resume_facts'")
     refused(academic_framing(), "no resume_facts document; run harrier profile split-resume first")
 
     # A different, valid framing: an archived track writes nothing, so the

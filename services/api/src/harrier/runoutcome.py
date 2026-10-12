@@ -143,14 +143,14 @@ def record_success(conn: Connection, job: str, *, at: str | None = None) -> None
     reports is the age of the last time this job *worked*, and touching it on
     failure would make a job that has been broken for a month look fresh.
     """
-    conn.execute(
-        """
-        INSERT INTO job_runs (job, last_success_at) VALUES (?, ?)
-        ON CONFLICT(job) DO UPDATE SET last_success_at = excluded.last_success_at
-        """,
-        (job, at or now_iso()),
-    )
-    conn.commit()
+    with conn.transaction():
+        conn.execute(
+            """
+            INSERT INTO job_runs (job, last_success_at) VALUES (?, ?)
+            ON CONFLICT(job) DO UPDATE SET last_success_at = excluded.last_success_at
+            """,
+            (job, at or now_iso()),
+        )
 
 
 def last_success(conn: Connection, job: str) -> str | None:
