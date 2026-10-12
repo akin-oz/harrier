@@ -30,7 +30,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from urllib.parse import quote
 
@@ -67,6 +67,9 @@ class StorePassword:
     decoded: str
     encoded: str
     url: str
+    # The password alone as the driver's message quotes it; empty for in
+    # plain double quotes.
+    quoted: str = ""
 
     def leaks(self, text: str) -> list[str]:
         """Every 8-character window of either form found in `text`."""
@@ -136,8 +139,9 @@ def _driver_error(password: StorePassword) -> OperationalError:
     # The decoded form alone, and the form as written alone, as libpq quotes
     # a URL it refuses still percent-encoded (`UrlParts`), outside the URL
     # shape `scrub_secrets` knows.
+    alone = password.quoted or f'"{password.decoded}"'
     return OperationalError(
-        f'connection to "{password.url}" failed: password "{password.decoded}" was refused'
+        f'connection to "{password.url}" failed: password {alone} was refused'
         f" (as written: {password.encoded})"
     )
 
@@ -376,6 +380,40 @@ def test_no_log_or_http_error_carries_the_store_password(
 
     assert "REDACTED" in out
     assert store_password.leaks(out) == []
+
+
+# A message that quotes the password alone with `!r` or as JSON escapes the
+# fixture's quotes, so the text it writes is none of the forms the URL
+# lists (spec 133, Amendment (2026-10-12): a password quoted by `repr` or
+# `json.dumps`).
+QUOTINGS: dict[str, Callable[[str], str]] = {
+    "repr": repr,
+    "repr in a dict": lambda password: repr({"until": password}),
+    "json.dumps": lambda password: json.dumps({"until": password}),
+}
+
+
+@pytest.mark.parametrize("quoting", list(QUOTINGS))
+@pytest.mark.parametrize("sink", list(SINKS))
+def test_a_password_quoted_by_repr_or_json_is_masked_at_every_sink(
+    sink: str,
+    quoting: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    store_password: StorePassword,
+    uvicorn_streams: tuple[io.StringIO, io.StringIO],
+) -> None:
+    """The fixture's password holds both quote kinds, so `repr` writes its
+    `'` as `\\'` and `json.dumps` its `"` as `\\"`. No 8-character window
+    of it leaves the process through the sink."""
+    quoted = QUOTINGS[quoting](store_password.decoded)
+    assert store_password.decoded not in quoted, "the quoting escaped nothing"
+    password = replace(store_password, quoted=quoted)
+
+    out = SINKS[sink](monkeypatch, capsys, password, uvicorn_streams)
+
+    assert "REDACTED" in out
+    assert password.leaks(out) == []
 
 
 # --- the filter needs no identity values ---
