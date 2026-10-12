@@ -1,8 +1,8 @@
 ---
 spec: 134
 title: Each hosted request runs as its user, and the hosted API serves
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [103, 104, 105, 110, 112, 115, 132, 133]
 ---
