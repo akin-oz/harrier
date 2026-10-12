@@ -74,13 +74,15 @@ function stubApi(options: {
           token: request.headers.get("X-Harrier-Token"),
         });
       };
+      // `undefined` answers with no body at all, as a proxy or a crash might.
       const reply = (code: number, body: unknown): Promise<Response> =>
-        record().then(
-          () =>
-            new Response(JSON.stringify(body), {
-              status: code,
-              headers: { "Content-Type": "application/json" },
-            }),
+        record().then(() =>
+          body === undefined
+            ? new Response(null, { status: code, headers: { "Content-Length": "0" } })
+            : new Response(JSON.stringify(body), {
+                status: code,
+                headers: { "Content-Type": "application/json" },
+              }),
         );
 
       if (url.pathname === "/api/session") return reply(200, { token: "test-token" });
@@ -206,7 +208,7 @@ test("a refused approval is shown in the words the API used", async () => {
   await user.click(await screen.findByRole("button", { name: "Approve" }));
 
   const alert = await screen.findByRole("alert");
-  expect(alert.textContent).toContain("candidate not found in the staged artifact");
+  expect(alert.textContent).toBe("candidate not found in the staged artifact");
 });
 
 // --- refusals in the API's words --------------------------------------------
@@ -231,14 +233,16 @@ const HELD: DatabaseHeldOut = {
   hold: { subcommand: "backup", since: "2000-01-01T00:00:00Z" },
 };
 
-// Every call site but Approve, which has its own test above, and a 422, which
-// only a malformed request from this page produces. Each message is invented,
-// so seeing it proves the page showed the body it was given.
+// Every call site, a 422, which only a malformed request from this page
+// produces, and two refusals that carry no words, which show the call's own
+// fallback. Each message is invented, so seeing it proves the page showed the
+// body it was given.
 const REFUSALS: {
   call: string;
   ending: string;
   code: number;
-  body: ErrorOut | DatabaseHeldOut | HTTPValidationError;
+  // `undefined` is a refusal with no body.
+  body: ErrorOut | DatabaseHeldOut | HTTPValidationError | undefined;
   shown: string;
   act: (user: User) => Promise<void>;
 }[] = [
@@ -248,6 +252,14 @@ const REFUSALS: {
     code: 503,
     body: HELD,
     shown: HELD.detail,
+    act: async () => {},
+  },
+  {
+    call: "the due queue, with no body",
+    ending: "/outreach/due",
+    code: 503,
+    body: undefined,
+    shown: "could not load the due queue",
     act: async () => {},
   },
   {
@@ -300,6 +312,26 @@ const REFUSALS: {
     act: (user) => clickInDueRow(user, "Snooze"),
   },
   {
+    // A 422 that names no field leaves only the call's fallback.
+    call: "Snooze, refused by the schema with no field named",
+    ending: "/snooze",
+    code: 422,
+    body: { detail: [] },
+    shown: "could not snooze",
+    act: (user) => clickInDueRow(user, "Snooze"),
+  },
+  {
+    call: "Approve",
+    ending: "/candidates/approve",
+    code: 404,
+    body: { detail: "candidate not found in the staged artifact" },
+    shown: "candidate not found in the staged artifact",
+    act: async (user) => {
+      await openJob(user);
+      await user.click(await screen.findByRole("button", { name: "Approve" }));
+    },
+  },
+  {
     call: "Reject",
     ending: "/candidates/reject",
     code: 404,
@@ -324,10 +356,12 @@ const REFUSALS: {
   },
 ];
 
-// One test per call site, so one failing does not hide the rest. A loop over
-// `test` rather than `test.each`, so the spec citation check can read the name.
-for (const { call, ending, code, body, shown, act } of REFUSALS) {
-  test(`each outreach call shows its refusal in the API's words: ${call}`, async () => {
+// One test per row, so one call site failing does not hide the rest. The
+// spec citation check reads only fixed `test("...")` names, so spec 129 names
+// these cases in prose rather than citing one.
+test.each(REFUSALS)(
+  "each outreach call shows its refusal in the API's words: $call",
+  async ({ ending, code, body, shown, act }) => {
     const calls = stubApi({
       due: [dueRow()],
       candidates: [candidate()],
@@ -342,13 +376,13 @@ for (const { call, ending, code, body, shown, act } of REFUSALS) {
       expect(screen.queryAllByRole("alert").map((alert) => alert.textContent)).toContain(shown);
     });
     if (ending === "/snooze") {
-      // The date the operator gave is the one sent.
-      expect(calls.find((call) => call.url.endsWith("/snooze"))?.body).toEqual({
-        until: "2026-12-01",
-      });
+      // The date the operator gave is the one sent, for the row it was given on.
+      const snoozed = calls.find((call) => call.url.endsWith("/snooze"));
+      expect(snoozed?.url).toBe("/api/outreach/12/snooze");
+      expect(snoozed?.body).toEqual({ until: "2026-12-01" });
     }
-  });
-}
+  },
+);
 
 // The JSON body a response declares, or `never` when it declares none.
 type Declared<Answer> = Answer extends { content: { "application/json": infer Body } }
