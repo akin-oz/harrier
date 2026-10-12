@@ -262,9 +262,10 @@ A11 names (decision D8).
       marked confirmed or refuted, the date and the Postgres version, and
       `docs/architecture.md` says the isolation tests ran on a real
       project and names the module.
-- [ ] The Fly checks F1 to F4 are recorded as "Hosting budget
+- [x] The Fly checks F1 to F4 are recorded as "Hosting budget
       (2026-10-11)" states, each confirmed or refuted with its date
-      (criteria under that section).
+      (criteria under that section; the record is Amendment (staging
+      findings), "The Fly checks (2026-10-12)").
 - [ ] No refuted assumption is left without a spec that owns its fix.
 - [ ] `uv run ruff check` and `uv run pyright` pass on the service.
 - [ ] `just check` passes.
@@ -458,17 +459,23 @@ step 4 as the only path. A refuted F3 reopens spec 108's Open decision
 
 ### Acceptance criteria (hosting budget)
 
-- [ ] The pull request records F1 to F4, each confirmed or refuted with
+- [x] The pull request records F1 to F4, each confirmed or refuted with
       the date, the commands and the observed values, and no token,
-      organization id or private hostname.
-- [ ] F1's record gives the beat interval used, the time from the last
-      beat to the stop, and the cold start time on the next request.
-- [ ] F4 shows its projection's arithmetic from the published rates and
-      the billed usage, and states whether production fits under 5 USD.
-- [ ] The probe app is deleted after the run, and the pull request shows
-      it.
-- [ ] "Amendment (staging findings)" marks F1 to F4 as it marks A1 to
-      A11.
+      organization id or private hostname (Amendment (staging findings),
+      "The Fly checks (2026-10-12)": its table, "F3" and "F4").
+- [x] F1's record gives the beat interval used, the time from the last
+      beat to the stop, and the cold start time on the next request
+      (Amendment (staging findings), "The Fly checks (2026-10-12)", row
+      F1: 30 s, 126 s, 3.38 s).
+- [x] F4 shows its projection's arithmetic from the published rates and
+      the billed usage, and states whether production fits under 5 USD
+      (Amendment (staging findings), "The Fly checks (2026-10-12)", "F4":
+      1.93 USD a month, under 5 USD; billed $0.00).
+- [x] The probe app is deleted after the run, and the pull request shows
+      it (Amendment (staging findings), "The Fly checks (2026-10-12)",
+      "The probe deleted").
+- [x] "Amendment (staging findings)" marks F1 to F4 as it marks A1 to
+      A11 (its subsection "The Fly checks (2026-10-12)", the table).
 
 ### Honest limitations (hosting budget)
 
@@ -688,7 +695,184 @@ probe role and its sessions are gone. Nothing Supabase owns was changed.
 ### Hosting budget
 
 F1 to F4 were not run: they need a paid Fly app, which Akin has not
-approved. They stay unchecked, and so do their criteria.
+approved. They stay unchecked, and so do their criteria. Superseded
+2026-10-12: Akin approved the probe app in chat on 2026-10-11, and "The
+Fly checks (2026-10-12)" below marks F1 to F4.
+
+### The Fly checks (2026-10-12)
+
+The probe ran from 2026-10-11T17:19Z to 2026-10-12T14:22Z on a Fly app
+named `harrier-probe`, in `ams`, whose public hostname is
+`harrier-probe.fly.dev`. No harrier code ran on it. The organization,
+every token and every other hostname stayed in the operator's shell and
+appear nowhere below. F1 to F4 are marked here as A1 to A11 are above.
+F5 was not run, as the table under "The Fly assumptions" says: it is
+spec 110's first staging deploy.
+
+**Who ran what.** This differs from "Who runs what" under "Hosting
+budget (2026-10-11)", which says Akin creates the app and the agent
+creates none. Akin instructed Claude in chat on 2026-10-11 ("you may run
+fly launch"), and Claude created the app. It used `fly apps create
+harrier-probe` and `fly deploy`, run from a scratch directory outside
+the repository, rather than `fly launch`, so no file entered the
+repository.
+
+**The probe app.** One machine, `1853147c0517e8`: shared-cpu-1x, 256MB,
+`auto_stop_machines = "stop"`, `auto_start_machines = true`,
+`min_machines_running = 0`, `kill_signal = "SIGTERM"`,
+`kill_timeout = 30`. A shared IPv4 address and a dedicated IPv6 one; no
+volume. The probe process held a small HTTP server, a client that sent
+`GET` to `harrier-probe.fly.dev` from the machine itself, and a marker
+file on the root file system. Production plans 1GB (spec 110). Memory is
+F5's question, not these.
+
+**Where the values come from.** Times are from the app's log stream
+(`fly logs`: the probe's own lines and Fly's runner lines) and the
+machine's event list (`fly machine status`). The raw log captured on
+2026-10-11 was lost when the session's scratch directory was cleared, so
+the F1 and F2 values and F3's first start come from the session
+transcript. F3's log from 2026-10-12T02:19Z on was saved, and the later
+F3 times come from it and from the machine's events. The ticks between
+2026-10-11T17:19Z and 2026-10-12T02:19Z are unobserved: their log was
+lost with the scratch directory, and Fly's log buffer, which holds about
+8 hours, no longer had them.
+
+| | Result | Evidence |
+|---|---|---|
+| F1 | confirmed | **Beats.** From 2026-10-11T17:19:16Z the probe sent `GET` to `harrier-probe.fly.dev` every 30 s for 600 s, with no other traffic. The machine stayed started throughout. The last beat request was at 17:28:47Z; the proxy stopped the machine at 17:30:53Z, 126 s after it. The next request started the machine cold in 3.38 s (a warm request took 0.22 s). **One held request.** One request held open for 600 s, 17:32:15Z to 17:42:15Z, with no other traffic: the machine stayed started for the whole hold and was stopped at 17:43:35Z, 80 s after the request ended. Both variants kept the machine up. The beat interval used was 30 s. |
+| F2 | confirmed | At the stop after the beats the probe received SIGTERM at 17:30:53Z and a second SIGTERM at 17:31:23Z, 30 s later (`kill_timeout = 30`); the machine exited at 17:31:28Z with `requested_stop=true`. After the held request: SIGTERM at 17:43:35Z, the second at 17:44:05Z, exit at 17:44:10Z. A marker written to the root file system before the first stop was absent after the next start (`mark_absent`, 17:31:52Z). |
+| F3 | confirmed, with one condition | "F3" below. The condition: after `fly machine update --skip-start` the machine fires no tick until it is started once. |
+| F4 | confirmed | "F4" below. Projection 1.93 USD a month, under 5 USD; billed 0.00 USD for 2026-10-01 to 2026-10-12. |
+| F5 | not run here | Spec 110's first staging deploy, as the table under "The Fly assumptions" says. |
+
+#### F3
+
+Machine `e82e965b5d6298`, in the probe app, with no service, made with
+`fly machine run python:3.13-alpine --schedule hourly --restart no` and a
+tick command that prints its start, sleeps 20 s and exits 0.
+
+- **The schedule.** Its first run was at creation, 2026-10-11T17:19Z.
+  Every observed scheduled start, 2026-10-12 02:19:01Z to 09:19:01Z each
+  hour, then 13:19:01Z and 14:19:01Z, came at :19:01: a fixed offset,
+  with a spread of 0 s across them. Each tick ran about 22 s and exited
+  0, and Fly logged `machine restart policy set to 'no', not
+  restarting`. The machine stayed stopped until its next start. Each
+  start took 1.41 s to 1.60 s (Fly's `Machine started in` line).
+- **An update with `--skip-start`.** At 2026-10-12T10:07Z:
+  `fly machine update e82e965b5d6298 --image python:3.12-alpine --skip-start --command <a 70 minute tick>`.
+  The machine's config kept `"schedule": "hourly"` and restart policy
+  `no`. No tick started at 10:19 or 11:19, nor at any shifted time: the
+  machine's events show the launch and the update only.
+- **Started once by hand.** At 11:21:14Z, `fly machine start
+  e82e965b5d6298` started it, although Fly's page says a scheduled
+  Machine cannot be started by command (Proof / origin (hosting
+  budget)). The 70 minute tick ran 11:21:15Z to 12:31:15Z and exited 0.
+  Nothing started at the 12:19 slot while it ran, and nothing started
+  when it ended: the events show one start and one exit. At 13:19:01Z
+  the schedule fired again on its original offset (source `flyd`).
+- **A plain update.** At 13:28:38Z, while the 13:19 tick (still the 70
+  minute command) ran:
+  `fly machine update e82e965b5d6298 --image python:3.13-alpine --command <a 20 s tick>`,
+  without `--skip-start`. The update stopped the running tick (SIGINT
+  at 13:28:42Z, SIGTERM at 13:28:43Z) and left the machine stopped, its
+  schedule `hourly`. At 14:19:01Z the schedule fired (source `flyd`);
+  the tick ran 20 s and exited 0.
+
+Verdict: confirmed, with one condition. The machine fires hourly at a
+fixed offset, stays stopped between ticks, is not started a second time
+while a tick runs (the 12:19 slot was skipped, not queued), and keeps its
+schedule through a plain `fly machine update` to another image tag. The
+condition: after an update with `--skip-start` it fires no tick until it
+is started once, and then resumes on its offset. **Owner: spec 108**,
+"Amendment (2026-10-12): the scheduler machine after an update".
+
+What this record does not show:
+
+- The machine was observed for about 21 hours, from creation to the
+  app's deletion, not the full day the table asks, and the ticks before
+  02:19Z were not seen.
+- The one overlap, at 12:19, fell inside the tick started by hand after
+  the `--skip-start` update. It shows no second start while a tick runs.
+  On its own it does not separate that from the update's effect, since
+  the schedule's return was first seen at 13:19.
+
+#### F4
+
+**The projection.** The expected usage is Akin's, stated in chat on
+2026-10-11 ("use these"). Rates are spec 110's for a shared-cpu-1x 1GB
+machine in `ams`: about 0.0097 USD a machine hour, and a root file
+system at $0.15/GB a month, 0.60 USD a GB for four stopped machines.
+
+| Line | Usage a month | Arithmetic | USD a month |
+|---|---|---|---|
+| API | 75 h | 3 sessions a day × (45 min + 5 min idle before the stop) × 30 days = 150 min a day × 30 | |
+| Runs | 13.5 h | 27 min a day × 30 = 810 min | |
+| Scheduler | 12 h | 720 ticks × about 1 min | |
+| Staging | about 4 h | Akin's figure | |
+| Machine time | 104.5 h | 104.5 × 0.0097 = 1.014 | 1.01 |
+| Root file systems | 1.5 GB a machine, assumed | 1.5 × 0.60 | 0.90 |
+| Shared IPv4 | | free | 0.00 |
+| Egress | | estimate | 0.02 |
+| Total | | 1.01 + 0.90 + 0.00 + 0.02 | 1.93 |
+
+Production, with staging's machine time, fits under 5 USD by 3.07 USD
+(5 minus 1.93). The image size is assumed, not measured (spec 110,
+Honest limitations (hosting budget)). The 5 minutes of idle before a stop
+is Akin's figure; F1 saw the stop 80 s to 126 s after the last request.
+
+**The billed usage.** Fly's Cost Explorer for 2026-10-01 to 2026-10-12,
+read by Akin on 2026-10-12: the organization's total $0.00 and
+`harrier-probe` $0.00. Every line item was $0.00: Machines Shared CPU 1x
+(ams), Bandwidth Egress (ams), Bandwidth Egress (fra), and Bandwidth
+Cross-region private network (fra). No root file system, IPv4 or volume
+line appeared. $0.00 is rounding, not a free tier: Fly has no free tier
+for a new organization (spec 110). The usage behind it is small. The app
+machine was started about 45 minutes in all (F1, F2 and the cold
+starts), and the tick machine about 22 s per hourly start, all at 256MB.
+At spec 110's 1GB rate, an upper bound for 256MB, that is
+0.75 × 0.0097 = 0.007 USD for the app machine and under 0.002 USD for the
+short ticks. F3's two long ticks on 2026-10-12 (11:21:15Z to 12:31:15Z,
+and 13:19:01Z to the update at 13:28:43Z, about 80 minutes together) add
+at most 1.33 × 0.0097 = 0.013 USD at that rate; the record does not say
+whether Akin's reading came after them. The 256MB rate is lower than
+1GB's and is not quoted in spec 110.
+
+The egress lines include `fra`: the probe's requests to its own public
+hostname left through Fly's edge in Frankfurt. Spec 106's keepalive beats
+take the same path, so they are billed egress too.
+
+The second half of F4: nothing was billed beyond machine time and
+egress, and both rounded to $0.00. No root file system line appeared, so
+the bill neither shows nor rules out that charge at the probe's size;
+spec 110's monthly cost check reads it once production runs.
+
+#### The probe deleted
+
+At 2026-10-12T14:22:56Z, `fly apps destroy harrier-probe --yes` printed
+`Destroyed app harrier-probe`, and `fly apps list` then printed
+`No apps found`.
+
+#### What the results change
+
+- **F1.** Spec 106's Open decision 9 stands as taken: a beat to the
+  app's own public hostname keeps the machine up. On the probe, 30 s was
+  shorter than the stop seen (126 s after the last beat). Spec 106's
+  constant is its own to set.
+- **F2.** Spec 106's "A run cut off by a stop" step 3 stands: the API
+  receives the app's kill signal and has `kill_timeout` seconds before
+  the second signal.
+- **F3.** Spec 108's amendment of 2026-10-12, named above.
+- **F4.** No line goes back to Akin.
+- The cold start of 3.38 s is the probe image's. The hosted image carries
+  Chromium and is larger; its cold start is for spec 110's first staging
+  deploy to see.
+
+#### Acceptance status (Fly checks)
+
+Met: every criterion under "Acceptance criteria (hosting budget)", each
+ticked with the place its evidence is, and the criterion in "Acceptance
+criteria" that points to them. F5 is spec 110's. Nothing else in this
+spec's acceptance changes.
 
 ### Acceptance status
 

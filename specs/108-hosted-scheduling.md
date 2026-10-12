@@ -1238,3 +1238,103 @@ Spec 115's F3, recorded confirmed or refuted there:
   1.038461538, shown as $6.95; a stopped Machine billed only for its root file
   system at $0.15/GB a month. Read 2026-10-11.
   https://docs.fly.io/about/pricing
+
+## Amendment (2026-10-12): the scheduler machine after an update
+
+Spec 115's F3 ran a scheduled probe machine from 2026-10-11 to
+2026-10-12 (spec 115, Amendment (staging findings), "The Fly checks
+(2026-10-12)"). It confirmed the four items under "Assumptions for spec
+115" with one condition, and it answered the question "Timing" left
+open. This section turns both into behavior. Where the text above
+disagrees, this section holds. It adds scope to an approved spec, so it
+gates nothing until Akin agrees to it.
+
+### What F3 showed
+
+- A plain `fly machine update` to another image tag keeps the schedule:
+  the next start came on the machine's hourly offset.
+- `fly machine update --skip-start` keeps `"schedule": "hourly"` in the
+  machine's config, but the machine fires no tick until it is started
+  once. On the probe, the 10:19 and 11:19 starts did not happen. One
+  `fly machine start` started it, although Fly's page says a scheduled
+  Machine cannot be started by command (Proof / origin (hosting
+  budget)), and after that tick the schedule resumed on its original
+  offset.
+- An update made while a tick runs stops that tick: SIGINT, then SIGTERM
+  a second later.
+- A start that falls while a tick still runs is skipped, not queued. The
+  probe's 70 minute tick, 11:21:15Z to 12:31:15Z, covered the 12:19
+  start; nothing started then or when the tick ended, and the next start
+  was 13:19.
+
+### The deploy
+
+Each deploy moves the scheduler machine to the API's image digest with
+`fly machine update` (spec 110, Amendment (2026-10-11), "The
+scheduler"). From this amendment:
+
+- **The update never passes `--skip-start`.** A deploy that must pass it
+  runs `fly machine start` on the same machine right after the update,
+  and that start runs one tick.
+- **An update stops a running tick.** Its runs are terminated with it and
+  their rows stay `running`. The next start marks them `interrupted`
+  before it lists, as "What one start does" already says. Nothing new is
+  needed for this; it is stated so a deploy is known to cost the tick in
+  flight.
+- **A check after the update.** The production deploy job, after its
+  last step, reads the scheduler machine's events (`fly machine status`)
+  until one is a `start` from source `flyd` later than the update, for at
+  most 70 minutes: the next hourly start is at most 60 minutes away,
+  plus a margin. It then prints `scheduler ticked after the update` and
+  exits 0. When no such start appears in that time, it exits 1 naming
+  the machine id, and the operator starts the machine by hand. Staging's
+  scheduler machine has no schedule (Staging), so the check runs on
+  production only.
+
+### Timing, answered
+
+"Timing" said Fly's behavior for a start that falls while a tick runs
+was not stated. It is skipped, not queued. A tick that runs past the next
+hourly start therefore drops that start, and a slot that came due in the
+dropped hour is listed by the start after it. With no catch-up, only the
+latest slot of each job is started then (The slot). Such a slot starts
+up to about two hours after its time instead of one.
+`HARRIER_SCHEDULED_RUN_TIMEOUT_SECONDS` bounds how long a tick can run,
+and so how often this happens.
+
+### Changes to approved specs (this amendment)
+
+- **Spec 110:** its deploy carries the update rule and the check above,
+  under its Amendment (2026-10-11), "The scheduler", and its planned
+  test_the_deploy_workflow_migrates_before_it_deploys. Not written into
+  spec 110 here; Akin approves it with this amendment.
+
+### Acceptance criteria (the scheduler machine after an update)
+
+- [ ] The deploy's `fly machine update` of the scheduler machine carries
+      no `--skip-start`, or is followed by `fly machine start` of the
+      same machine before the next step (spec 110's planned
+      test_the_deploy_workflow_migrates_before_it_deploys, extended).
+- [ ] The check after the update passes on an event list holding a
+      `start` from `flyd` later than the update, and exits 1 naming the
+      machine id on one holding only the update, or a start from before
+      it, once 70 minutes have passed, against a fake event list and a
+      fake clock (planned test_the_scheduler_ticks_after_a_deploy).
+- [ ] The first production deploy that updates the scheduler machine
+      records the check's output in its pull request, with no token,
+      organization id or private hostname.
+
+### Honest limitations (the scheduler machine after an update)
+
+- F3 watched one probe machine for about 21 hours. The one overlap, at
+  12:19, fell inside the tick started by hand after the `--skip-start`
+  update, so on its own it does not separate "skipped while a tick runs"
+  from that update's effect.
+- `fly machine start` on a scheduled machine worked on the probe against
+  what Fly's page says. The deploy relies on it only on the
+  `--skip-start` path; if Fly enforces its page, the plain update is the
+  path left.
+- The check holds the production deploy job open for up to 70 minutes.
+- A plain update of a machine with no schedule, staging's, was not
+  probed. Whether it starts that machine is for spec 110's first staging
+  deploy to see.
