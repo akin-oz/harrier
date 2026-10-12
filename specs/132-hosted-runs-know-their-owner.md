@@ -1,8 +1,8 @@
 ---
 spec: 132
 title: Hosted runs know their owner
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [006, 035, 047, 104]
 ---
