@@ -3,7 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import { useRunStream } from "../../features/runs/useRunStream";
 import type { EventSourceFactory, RunOut } from "../../features/runs/useRunStream";
 import { api } from "../../shared/api/client";
-import { RunOutput, TOKEN_REFUSED } from "./RunOutput";
+import { RunOutput, TOKEN_REFUSED, refusalMessage } from "./RunOutput";
 
 /**
  * The learned score's export (`harrier scoring export`, spec 077), as a run
@@ -15,7 +15,8 @@ export function ScoringSection({ createEventSource }: { createEventSource: Event
   const stream = useRunStream(createEventSource);
   const start = useMutation({
     mutationFn: async (): Promise<RunOut> => {
-      const { data } = await api.POST("/ops/scoring/export");
+      const { data, error } = await api.POST("/ops/scoring/export");
+      if (error !== undefined) throw new Error(refusalMessage(error, "the export was refused"));
       if (data === undefined) throw new Error(TOKEN_REFUSED);
       return data;
     },

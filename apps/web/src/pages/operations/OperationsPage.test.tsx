@@ -686,6 +686,31 @@ test("a run refused for another run's options is shown in the server's words", a
   expect(await screen.findByText(/already active \(run ev1\) with other options/)).toBeTruthy();
 });
 
+test("a hosted refusal to start a run is shown in the API's words", async () => {
+  // Spec 132: hosted, every route that starts a run answers 501 with a body.
+  // These three read only the run before, so the refusal read as the local
+  // token's.
+  const detail = "runs are not available on the hosted API until spec 106";
+  stubApi({
+    refuse: {
+      "/api/ops/feeds": { status: 501, detail },
+      "/api/ops/events/backfill": { status: 501, detail },
+      "/api/ops/scoring/export": { status: 501, detail },
+    },
+  });
+  const user = userEvent.setup();
+  renderPage();
+
+  await user.click(await screen.findByRole("button", { name: "Check feeds" }));
+  await user.click(screen.getByRole("button", { name: "Count what a backfill would write" }));
+  await user.click(screen.getByRole("button", { name: "Write the feature export" }));
+  await waitFor(() => {
+    const alerts = screen.getAllByRole("alert").map((alert) => alert.textContent);
+    expect(alerts.filter((text) => text === detail)).toHaveLength(3);
+  });
+  expect(screen.queryByText(/local API token was not accepted/)).toBeNull();
+});
+
 // --- Türkiye eligibility (spec 123) ---------------------------------------------
 
 test("reassess reports before it writes", async () => {

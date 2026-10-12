@@ -287,6 +287,20 @@ the points below, so the code and the spec agree.
   `own_causes` in `services/api/tests/conftest.py` sets the 501's cause
   beside the 409's, as one declared by mechanism, so a route's own causes
   are still checked without it.
+- **The web app changes too.** The Scope said every changed file sits
+  under `services/api/` and `packages/contract/`. The contract review of
+  PR #300 found three run starts on the Operations page that read only the
+  run and took any other answer for the local token's refusal: the feed
+  check (`apps/web/src/pages/operations/FeedsSection.tsx`), the decision
+  history backfill (`HistorySection.tsx`) and the feature export
+  (`ScoringSection.tsx`), in the same directory. Hosted, the operator
+  would have read "the local API token was not accepted" instead of the
+  501's words; the same gap already hid their 409. Each now reads the
+  refusal body through `refusalMessage`, as every other run start does,
+  and `apps/web/src/shared/api/refusal.ts` names the 501 among the
+  refusals it reads. The files are public: none matches a never-in-git
+  pattern in `config/data-classification.json`, and public is the
+  complement of those.
 
 ### What the build settled
 
@@ -332,6 +346,10 @@ the points below, so the code and the spec agree.
 - [ ] Hosted, the backups list marks an archive only from the caller's
       verification runs
       (`services/api/tests/test_run_owner.py::test_a_backup_verification_is_its_owners`).
+- [ ] A refusal to start a run, the hosted 501 among them, reaches the
+      operator in the API's words on the feed check, the decision history
+      backfill and the feature export
+      (`OperationsPage.test.tsx::a hosted refusal to start a run is shown in the API's words`).
 
 ### Honest limitations (as built)
 
