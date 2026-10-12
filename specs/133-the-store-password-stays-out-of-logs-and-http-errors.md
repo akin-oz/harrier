@@ -56,7 +56,9 @@ change.
    (`services/api/src/harrier/logsetup.py`) installs it on every root
    handler it creates, whether or not the identity values load, and the
    API also installs it on the handlers of uvicorn's `uvicorn` and
-   `uvicorn.access` loggers.
+   `uvicorn.access` loggers. The CLI installs it on logging's last-resort
+   handler, which `harrier store` and `harrier doctor` write through
+   (Amendment (2026-10-12): the privacy review of PR #296).
 2. **One place for HTTP error detail.** An exception handler for
    Starlette's `HTTPException`, registered in `create_app`
    (`services/api/src/harrier_api/app.py`), passes a string `detail`
@@ -168,10 +170,14 @@ found three ways past them, each closed above:
   scrubbed. Open decision 1 closes that for the store URL's own password.
 - Only the API process and the CLI are covered. A run subprocess writes
   its own output, which the run manager scrubs at `RunManager._append`
-  (spec 035), unchanged here.
+  (spec 035), with `scrub_outbound` since the privacy review of PR #296.
+  Text a run writes to its own files, such as a discovery summary's
+  source errors (`services/api/src/harrier/discovery.py`), is scrubbed
+  where it is written, with `scrub_secrets` alone. Those carry a job
+  source's errors, not the store's.
 - A handler someone adds later without going through `configure_logging`
-  is not filtered. The two places that install handlers are named in
-  Scope; a third is a new change.
+  is not filtered. The three places that install the filter are named in
+  Scope; a fourth is a new change.
 - uvicorn's handlers are filtered after uvicorn configures them, when the
   app is built. A record uvicorn logs before the app is imported, such as
   a failure to import it, is not filtered. The hosted start refusals are
@@ -227,7 +233,8 @@ None. Log lines and refusal bodies change only where they held a secret.
 ## Out of scope
 
 - Identity values in hosted logs, which are per owner: a later spec.
-- The run subprocess's output: scrubbed by the run manager (spec 035).
+- The run subprocess's own files: scrubbed where they are written (Honest
+  limitations).
 - Any change to what a refusal says beyond the scrubbed text.
 - The hosted start refusals' texts: spec 104 (configuration) and spec 134
   (the login role and the store version).
@@ -238,10 +245,11 @@ Building this spec settled the open decision and four points the text left
 implicit or got wrong. Each is stated here so the code and the spec agree.
 
 - **Open decision 1: the recommended answer.** Both sinks pass text through
-  `harrier.logredact.scrub_outbound`, which runs `scrub_secrets` and then
-  replaces every form `UrlParts.passwords` lists for the configured URL
-  with `REDACTED`, the union of their spans at once, the rule
-  `harrier.pgstore._scrub` follows. The URL is read when the text is
+  `harrier.logredact.scrub_outbound`, which replaces every form
+  `UrlParts.passwords` lists for the configured URL with `REDACTED`, the
+  union of their spans at once, the rule `harrier.pgstore._scrub` follows,
+  and then runs `scrub_secrets` (in that order since the privacy review of
+  PR #296, below). The URL is read when the text is
   scrubbed, as `store_target` reads it: the process environment, then
   `.env` in the working directory. Reading it then rather than when
   logging is configured is what lets the scrub follow a URL set after the
@@ -301,3 +309,43 @@ exception's text with status 200, `ConfigOut.error`
 is an `HTTPException` nor an exception handler's body, and each carries a
 configuration parse error, not a store error. Scrubbing them would change
 a model's field outside this spec's two sinks.
+
+## Amendment (2026-10-12): the privacy review of PR #296
+
+A local privacy review of PR #296 found two leaks in what this spec built,
+both reproduced before the fix, and two places the spec's own wording
+covered that the code did not. Scope and Honest limitations above now say
+what the code does.
+
+- **The scrub order left a password's head.** `scrub_outbound` ran
+  `scrub_secrets` first. A password holding a `name=value` shape, such as
+  one with `Passphrase=` in it, had its tail rewritten as a parameter's
+  value, and the password's forms no longer matched what was left, so the
+  head leaked through the log and the HTTP detail. The forms are now
+  masked first, on the text as written. The password every test here
+  generates holds `pass=`, `token=` and `secret=`, and `&`, `?`, `%`, both
+  quotes and a space, percent-encoded in a URL `store_target` accepts, so
+  every case of
+  `services/api/tests/test_store_password_scrub.py::test_no_log_or_http_error_carries_the_store_password`
+  fails with the old order.
+- **A log call whose arguments did not fit its format printed them raw.**
+  The filter returned early when the message failed to render, and
+  logging's error report then wrote the record's arguments to stderr,
+  the URL among them. Such a record now keeps its format string, scrubbed,
+  followed by `(arguments withheld: they do not fit the format)`, and no
+  arguments (`services/api/tests/test_store_password_scrub.py::test_a_log_call_whose_arguments_do_not_fit_leaks_nothing`).
+  `IdentityRedactionFilter` has the same early return. It is not changed:
+  on every handler it is installed on, this filter runs first and leaves a
+  record that renders, so the early return is no longer reached with
+  arguments in it.
+- **`harrier store` and `harrier doctor` wrote through an unfiltered
+  handler.** Both skip `configure_logging`, so their warnings, the
+  driver's own included, went to logging's last-resort handler. The CLI
+  now installs the filter there before any command runs
+  (`harrier.logsetup.scrub_last_resort`;
+  `services/api/tests/test_store_password_scrub.py::test_a_command_that_skips_logging_setup_still_scrubs_its_warnings`).
+- **A run's output was scrubbed with `scrub_secrets` alone.** The run
+  manager's scrub of every event (`harrier_api.runs.scrub_event_data`) now
+  uses `scrub_outbound`, so a password a run prints outside a URL is masked
+  once runs open a Postgres store (spec 127)
+  (`services/api/tests/test_store_password_scrub.py::test_a_run_event_has_the_store_password_masked`).

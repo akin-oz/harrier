@@ -35,13 +35,15 @@ from urllib.parse import quote
 
 import pytest
 import uvicorn
+import uvicorn.config
 import uvicorn.logging
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from harrier.connection import StoreDatabaseError
-from harrier.db import DatabaseOwnedByContainer, default_db_path
-from harrier.logsetup import configure_logging, log_path
+from harrier.connection import StoreDatabaseError, store_target
+from harrier.db import DatabaseOwnedByContainer, connect, default_db_path
+from harrier.logredact import IdentityRedactionFilter
+from harrier.logsetup import UVICORN_LOGGERS, configure_logging, log_path
 from harrier_api.app import create_app
 from harrier_api.runs import RunConflictError
 
@@ -100,11 +102,19 @@ def _root_logging_restored(monkeypatch: pytest.MonkeyPatch) -> Generator[None]: 
 @pytest.fixture()
 def store_password(monkeypatch: pytest.MonkeyPatch) -> StorePassword:
     # Plain runs around characters a URL cannot carry raw, so the URL holds
-    # it percent-encoded and a driver can quote either form.
+    # it percent-encoded and a driver can quote either form. The middle
+    # holds the shapes `scrub_secrets` reads as a parameter (`pass=`,
+    # `token=`, `secret=`), so a scrub that reads them before masking the
+    # password splits it and leaves its head (privacy review of PR #296).
     plain = string.ascii_letters + string.digits
-    decoded = f"{_synthetic(plain, 16)}@:/{_synthetic(plain, 16)}"
+    decoded = (
+        f"{_synthetic(plain, 16)}pass={_synthetic(plain, 8)}&token={_synthetic(plain, 8)}"
+        f"?secret={_synthetic(plain, 8)}%'\" @:/{_synthetic(plain, 16)}"
+    )
     encoded = quote(decoded, safe="")
     url = f"postgresql://harrier:{encoded}@db.example.test:5432/tracker?sslmode=require"
+    # A URL the process would open, not one only this test can build.
+    assert store_target({URL_VARIABLE: url}).is_postgres
     return StorePassword(decoded=decoded, encoded=encoded, url=url)
 
 
@@ -121,8 +131,12 @@ class OperationalError(Exception):
 
 
 def _driver_error(password: StorePassword) -> OperationalError:
+    # The decoded form alone, and the form as written alone, as libpq quotes
+    # a URL it refuses still percent-encoded (`UrlParts`), outside the URL
+    # shape `scrub_secrets` knows.
     return OperationalError(
         f'connection to "{password.url}" failed: password "{password.decoded}" was refused'
+        f" (as written: {password.encoded})"
     )
 
 
@@ -147,6 +161,14 @@ def uvicorn_streams(monkeypatch: pytest.MonkeyPatch) -> tuple[io.StringIO, io.St
     builds them, writing to buffers. Built by hand rather than with
     `dictConfig`, which closes every handler in the process. Restored after
     the test by monkeypatch."""
+    # The loggers uvicorn gives handlers, read from uvicorn itself, so an
+    # upgrade that moved one fails here rather than in production.
+    with_handlers = tuple(
+        name
+        for name, config in uvicorn.config.LOGGING_CONFIG["loggers"].items()
+        if config.get("handlers")
+    )
+    assert with_handlers == UVICORN_LOGGERS
     errors, access = io.StringIO(), io.StringIO()
     default = logging.StreamHandler(errors)
     default.setFormatter(
@@ -190,6 +212,7 @@ def _serving(app: FastAPI) -> Generator[str]:
     finally:
         server.should_exit = True
         thread.join(15)
+        assert not thread.is_alive(), "uvicorn did not stop"
 
 
 def _get(url: str) -> tuple[int, str]:
@@ -289,7 +312,8 @@ def _through_an_http_exception(
     assert response.status_code == 409
     detail = response.json()["detail"]
     assert detail.startswith('connection to "postgresql://harrier:REDACTED@db.example.test')
-    return response.text
+    # The detail as decoded, since JSON escapes the password's quote.
+    return response.json()["detail"] + response.text
 
 
 class _ConflictQuotingTheStore(RunConflictError):
@@ -314,7 +338,8 @@ def _through_run_conflict(
     response = TestClient(app).get("/spec-133/conflict")
     assert response.status_code == 409
     assert response.json()["detail"].startswith('connection to "postgresql://harrier:REDACTED@')
-    return response.text
+    # The detail as decoded, since JSON escapes the password's quote.
+    return response.json()["detail"] + response.text
 
 
 Sink = Callable[
@@ -354,9 +379,10 @@ def test_no_log_or_http_error_carries_the_store_password(
 # --- the filter needs no identity values ---
 
 
-def _no_identity_values(monkeypatch: pytest.MonkeyPatch) -> str:
-    # A fresh store: the identity filter is installed and holds nothing.
-    return ""
+def _no_identity_values(monkeypatch: pytest.MonkeyPatch) -> str | None:
+    # A fresh store: the identity filter is installed and holds nothing, so
+    # the warning that it is unavailable must not appear.
+    return None
 
 
 def _an_unreadable_database(monkeypatch: pytest.MonkeyPatch) -> str:
@@ -380,7 +406,7 @@ def _ownership_refused(monkeypatch: pytest.MonkeyPatch) -> str:
     ids=["no identity values", "database unreadable", "ownership refused"],
 )
 def test_the_scrub_filter_needs_no_identity_values(
-    arrange: Callable[[pytest.MonkeyPatch], str],
+    arrange: Callable[[pytest.MonkeyPatch], str | None],
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     store_password: StorePassword,
@@ -388,6 +414,16 @@ def test_the_scrub_filter_needs_no_identity_values(
     """The identity filter does nothing without values and is not installed
     when they cannot be loaded. The scrub is installed on every path."""
     warning = arrange(monkeypatch)
+    if warning is None:
+        configure_logging(force=True)
+        identity = [
+            found
+            for handler in logging.getLogger().handlers
+            for found in handler.filters
+            if isinstance(found, IdentityRedactionFilter)
+        ]
+        assert identity, "the identity filter was not installed"
+        assert "identity redaction is unavailable" not in capsys.readouterr().err
     configure_logging(force=True)
     _point_at_postgres(monkeypatch, store_password)
 
@@ -399,8 +435,35 @@ def test_the_scrub_filter_needs_no_identity_values(
         )
 
     written = capsys.readouterr().err
-    assert warning in written
+    if warning is not None:
+        assert warning in written
     assert "OperationalError" in written
+    assert store_password.leaks(written) == []
+
+
+def test_the_scrub_runs_before_the_identity_filter(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    store_password: StorePassword,
+) -> None:
+    """A contact value that is part of the password: redacted first, it
+    splits the password, and the parts on either side no longer match a
+    form. The scrub sees the record first (Behavior)."""
+    conn = connect()
+    with conn.transaction():
+        conn.execute(
+            "INSERT INTO contacts (person_name) VALUES (?)", (store_password.decoded[4:14],)
+        )
+    conn.close()
+    configure_logging(force=True)
+    _point_at_postgres(monkeypatch, store_password)
+
+    logging.getLogger("harrier.tests.store_password").error(
+        "the driver said: %s", _driver_error(store_password)
+    )
+
+    written = capsys.readouterr().err
+    assert "the driver said: connection to" in written
     assert store_password.leaks(written) == []
 
 
@@ -579,8 +642,105 @@ def test_a_record_that_cannot_be_scrubbed_is_withheld(
         raise RuntimeError("the scrub failed")
 
     monkeypatch.setattr("harrier.logredact.scrub_outbound", broken)
-    logging.getLogger("harrier.tests.store_password").error("opening %s", store_password.url)
+    logger = logging.getLogger("harrier.tests.store_password")
+    logger.error("opening %s", store_password.url)
+    # A record with the chained driver error, and one with stack text: what
+    # is withheld includes both.
+    try:
+        raise RuntimeError("the request failed") from _store_error(store_password)
+    except RuntimeError:
+        logger.exception("reading the tracker failed")
+    logger.handle(
+        logger.makeRecord(
+            logger.name,
+            logging.ERROR,
+            __file__,
+            0,
+            "a record with stack text",
+            (),
+            None,
+            sinfo=f"Stack (most recent call last):\n  connect({store_password.url!r})",
+        )
+    )
 
     written = capsys.readouterr().err
-    assert "log record withheld: it could not be scrubbed" in written
+    assert written.count("log record withheld: it could not be scrubbed") == 3
+    assert "OperationalError" not in written
+    assert "Stack (most recent call last)" not in written
     assert store_password.leaks(written) == []
+
+
+def test_a_log_call_whose_arguments_do_not_fit_leaks_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    store_password: StorePassword,
+) -> None:
+    """A format string that does not fit its arguments fails to render, and
+    logging's error report printed the raw arguments to stderr (privacy
+    review of PR #296). The arguments are withheld and the record renders."""
+    configure_logging(force=True)
+    _point_at_postgres(monkeypatch, store_password)
+
+    logging.getLogger("harrier.tests.store_password").error("opening %s on %s", store_password.url)
+
+    written = capsys.readouterr().err
+    assert "--- Logging error ---" not in written
+    assert "opening %s on %s (arguments withheld: they do not fit the format)" in written
+    assert store_password.leaks(written) == []
+
+
+def test_a_command_that_skips_logging_setup_still_scrubs_its_warnings(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    store_password: StorePassword,
+) -> None:
+    """`harrier store` and `harrier doctor` never call `configure_logging`,
+    so a warning, the driver's own included, goes to logging's last-resort
+    handler. The CLI scrubs that handler before any command runs."""
+    from harrier_cli.main import main
+
+    last_resort = logging.lastResort
+    assert last_resort is not None
+    monkeypatch.setattr(last_resort, "filters", [])
+    # A process in which nothing configured the root, as `harrier store` is.
+    monkeypatch.setattr(logging.getLogger(), "handlers", [])
+    with pytest.raises(SystemExit):
+        main(["store", "--help"])
+    capsys.readouterr()
+    _point_at_postgres(monkeypatch, store_password)
+
+    # The shape psycopg logs when a rollback fails (psycopg/connection.py).
+    logging.getLogger("psycopg").warning(
+        "error ignored in rollback on %s: %s",
+        "<psycopg.Connection>",
+        _driver_error(store_password),
+    )
+
+    written = capsys.readouterr().err
+    assert "error ignored in rollback" in written
+    assert store_password.leaks(written) == []
+
+
+def test_a_run_event_has_the_store_password_masked(
+    monkeypatch: pytest.MonkeyPatch, store_password: StorePassword
+) -> None:
+    """A run's output reaches the event stream through the run manager's
+    scrub, which masks the password a run prints outside a URL too."""
+    import asyncio
+
+    from harrier_api.runs import Run, RunManager
+
+    manager = RunManager()
+    run = Run(id="r1", kind="demo", command=["true"])
+    _point_at_postgres(monkeypatch, store_password)
+
+    async def append() -> None:
+        await manager._append(  # pyright: ignore[reportPrivateUsage]
+            run, "log_line", {"line": str(_driver_error(store_password))}
+        )
+
+    asyncio.run(append())
+
+    stored = str(run.events[-1].data["line"])
+    assert stored.startswith('connection to "postgresql://harrier:REDACTED@db.example.test')
+    assert store_password.leaks(stored) == []

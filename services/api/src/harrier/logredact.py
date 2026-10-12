@@ -294,13 +294,20 @@ def _mask(text: str, forms: tuple[str, ...]) -> str:
 
 
 def scrub_outbound(text: str) -> str:
-    """Text as it may leave the process: `scrub_secrets`, then every form
-    of the configured store URL's password (spec 133)."""
+    """Text as it may leave the process: every form of the configured store
+    URL's password, then `scrub_secrets` (spec 133).
+
+    The forms first, on the text as written. `scrub_secrets` replaces only
+    the value after a `name=`, so run first on a password that holds such a
+    shape (`...Passphrase=2026...`) it rewrote the password's tail, and the
+    forms no longer matched what was left: the head leaked (privacy review
+    of PR #296).
+    """
     # Here, not at module import: `harrier.sources` reaches the tracker,
     # whose write path imports this module.
     from harrier.sources import scrub_secrets
 
-    return _mask(scrub_secrets(text), store_password_forms())
+    return scrub_secrets(_mask(text, store_password_forms()))
 
 
 class SecretScrubFilter(logging.Filter):
@@ -345,8 +352,16 @@ class SecretScrubFilter(logging.Filter):
         try:
             message = record.getMessage()
         except (TypeError, ValueError):
-            # A format string that does not match its arguments renders
-            # nothing; the formatter reports it as it always has.
+            # A format string that does not match its arguments. Left as it
+            # was, the handler's error report printed the raw arguments to
+            # stderr (privacy review of PR #296). The format string is kept,
+            # scrubbed, and the arguments are withheld, so the record renders.
+            record.msg = (
+                f"{scrub_outbound(str(record.msg))} "
+                "(arguments withheld: they do not fit the format)"
+            )
+            record.args = ()
+            record.__dict__.pop("color_message", None)
             return
         scrubbed = scrub_outbound(message)
         if scrubbed == message:

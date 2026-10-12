@@ -137,6 +137,20 @@ def configure_logging(*, force: bool = False) -> None:
     _configured = True
 
 
+def scrub_last_resort() -> None:
+    """Install the secret scrub on logging's last-resort handler.
+
+    A process that never configures logging writes a warning through
+    `logging.lastResort`, unfiltered. `harrier store` and `harrier doctor`
+    skip `configure_logging` on purpose (it would open the database), and
+    `harrier store` is the one command that runs on Postgres, where the
+    driver logs its own warnings (spec 133). The CLI calls this before any
+    command runs.
+    """
+    if logging.lastResort is not None:
+        logging.lastResort.addFilter(SECRET_SCRUB)
+
+
 def scrub_uvicorn_handlers() -> None:
     """Install the secret scrub on every handler of uvicorn's loggers.
 
