@@ -113,13 +113,12 @@ def store(value: dict[str, Any]) -> None:
 
 def store_raw(value: object) -> None:
     """A row written around `config set`, as a restored backup could be."""
-    with closing(connect()) as conn:
+    with closing(connect()) as conn, conn.transaction():
         conn.execute(
             "INSERT INTO user_config (kind, value, updated_at) VALUES (?, ?, datetime('now')) "
             "ON CONFLICT (kind) DO UPDATE SET value = excluded.value",
             (ACADEMIC_SEARCHES, json.dumps(value)),
         )
-        conn.commit()
 
 
 def item(number: int, **fields: Any) -> dict[str, Any]:
@@ -388,10 +387,11 @@ def test_a_profile_keyed_by_a_malformed_slug_is_refused_at_the_write(keys: None)
 
 def test_a_corrupted_profile_row_is_refused_on_read(keys: None) -> None:
     with closing(connect()) as conn:
-        conn.execute(
-            "INSERT INTO user_config (kind, value) VALUES (?, ?)", (ACADEMIC_SEARCHES, "{not json")
-        )
-        conn.commit()
+        with conn.transaction():
+            conn.execute(
+                "INSERT INTO user_config (kind, value) VALUES (?, ?)",
+                (ACADEMIC_SEARCHES, "{not json"),
+            )
         with pytest.raises(ConfigError, match="not valid JSON"):
             get_config(conn, ACADEMIC_SEARCHES)
 
@@ -1655,11 +1655,10 @@ def test_no_item_text_reaches_the_summary_or_telegram(
 def test_an_unreadable_stored_search_is_reported_by_configured_tracks(
     track: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    with closing(connect()) as conn:
+    with closing(connect()) as conn, conn.transaction():
         conn.execute(
             "UPDATE user_config SET value = ? WHERE kind = ?", ("{not json", ACADEMIC_SEARCHES)
         )
-        conn.commit()
     capsys.readouterr()
     assert main(["discover", "--scheduled", "--configured-tracks", "--no-notify"]) == 3
     assert f"{ACADEMIC_SEARCHES}: stored {ACADEMIC_SEARCHES}" in capsys.readouterr().err

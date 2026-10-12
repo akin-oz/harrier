@@ -24,13 +24,13 @@ open at once: the host is refused while the container runs (ADR-011).
 
 from __future__ import annotations
 
-import sqlite3
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
+from harrier.connection import StoreBusyError
 from harrier.db import BUSY_TIMEOUT_MS, connect
 
 WRITER = """
@@ -41,21 +41,25 @@ path, tag, rows = sys.argv[1], sys.argv[2], int(sys.argv[3])
 conn = connect(__import__("pathlib").Path(path))
 try:
     for index in range(rows):
-        conn.execute("INSERT INTO concurrency_probe (writer, n) VALUES (?, ?)", (tag, index))
-        conn.commit()
+        with conn.transaction():
+            conn.execute("INSERT INTO concurrency_probe (writer, n) VALUES (?, ?)", (tag, index))
 finally:
     conn.close()
 """
 
 
+class Abandoned(Exception):
+    """Raised to leave a transaction() block, so it rolls back."""
+
+
 def probe_table(path: Path) -> None:
     conn = connect(path)
     try:
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS concurrency_probe "
-            "(id INTEGER PRIMARY KEY, writer TEXT NOT NULL, n INTEGER NOT NULL)"
-        )
-        conn.commit()
+        with conn.transaction():
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS concurrency_probe "
+                "(id INTEGER PRIMARY KEY, writer TEXT NOT NULL, n INTEGER NOT NULL)"
+            )
     finally:
         conn.close()
 
@@ -118,7 +122,7 @@ def test_a_writer_that_never_gets_its_turn_still_reports(tmp_path: Path) -> None
     """The timeout is a wait, not a promise, and it has to end in an error.
 
     A held exclusive lock outlasting the timeout must surface as
-    `OperationalError` rather than hanging a scheduled run forever. This is why
+    `StoreBusyError` rather than hanging a scheduled run forever. This is why
     the timeout is finite: an infinite one would turn a stuck writer into a job
     that never returns and never reports.
     """
@@ -128,15 +132,16 @@ def test_a_writer_that_never_gets_its_turn_still_reports(tmp_path: Path) -> None
     holder = connect(path)
     blocked = connect(path)
     try:
-        holder.execute("BEGIN EXCLUSIVE")
-        holder.execute("INSERT INTO concurrency_probe (writer, n) VALUES ('holder', 0)")
-        # Shorter than BUSY_TIMEOUT_MS so the test does not sit for the real
-        # wait; the behaviour at expiry is what is being pinned.
-        blocked.execute("PRAGMA busy_timeout=200")
-        with pytest.raises(sqlite3.OperationalError, match="locked"):
-            blocked.execute("INSERT INTO concurrency_probe (writer, n) VALUES ('blocked', 0)")
-            blocked.commit()
+        # The write lock, held to the end and then given up. In WAL mode
+        # BEGIN IMMEDIATE holds off writers as BEGIN EXCLUSIVE does.
+        with pytest.raises(Abandoned), holder.transaction(immediate=True):
+            holder.execute("INSERT INTO concurrency_probe (writer, n) VALUES ('holder', 0)")
+            # Shorter than BUSY_TIMEOUT_MS so the test does not sit for the
+            # real wait; the behaviour at expiry is what is being pinned.
+            blocked.execute("PRAGMA busy_timeout=200")
+            with pytest.raises(StoreBusyError, match="locked"):
+                blocked.execute("INSERT INTO concurrency_probe (writer, n) VALUES ('blocked', 0)")
+            raise Abandoned
     finally:
-        holder.rollback()
         holder.close()
         blocked.close()

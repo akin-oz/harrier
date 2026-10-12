@@ -169,6 +169,17 @@ def test_a_success_is_recorded_and_read_back(db: Connection) -> None:
     assert last_success(db, DISCOVERY_JOB) == "2026-08-01T09:00:00Z"
 
 
+def test_a_recorded_success_is_committed(db: Connection) -> None:
+    """Seen from another connection: the write is committed, not left in
+    an open transaction (spec 112, `commit()` left `Connection`)."""
+    record_success(db, DISCOVERY_JOB, at="2026-08-01T09:00:00Z")
+    other = connect()
+    try:
+        assert last_success(other, DISCOVERY_JOB) == "2026-08-01T09:00:00Z"
+    finally:
+        other.close()
+
+
 def test_a_job_that_has_never_succeeded_has_no_row(db: Connection) -> None:
     assert last_success(db, DISCOVERY_JOB) is None
 

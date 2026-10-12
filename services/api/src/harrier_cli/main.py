@@ -14,7 +14,13 @@ from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from harrier.connection import POSTGRES_NOT_YET, Connection, StoreUrlError, store_target
+from harrier.connection import (
+    POSTGRES_NOT_YET,
+    Connection,
+    StoreLibraryTooOld,
+    StoreUrlError,
+    store_target,
+)
 from harrier.container import CONTAINER_NAME, running_in
 from harrier.db import (
     EXIT_DATABASE_OWNED,
@@ -3115,6 +3121,11 @@ def main(argv: list[str] | None = None) -> int:
             print(_refusal(subcommand_name(args), error), file=sys.stderr)
             return EXIT_DATABASE_OWNED
         return result
+    except StoreLibraryTooOld as error:
+        # Raised by the first open, which may be logging setup's: one line
+        # and exit 1, never a traceback (spec 112, Failure modes).
+        print(f"error: {error}", file=sys.stderr)
+        return 1
     finally:
         # Normal return or exception, the lease goes with the command, not
         # with the interpreter (spec 075).

@@ -19,7 +19,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -28,7 +27,7 @@ import pytest
 from conftest import auth
 from fastapi.testclient import TestClient
 
-from harrier.connection import Connection
+from harrier.connection import Connection, StoreBusyError, StoreIntegrityError
 from harrier.db import connect
 from harrier.screening.descriptions import save_description_cache
 from harrier.tracker import store as tracker_store
@@ -153,24 +152,24 @@ def test_a_status_change_and_its_event_commit_together(conn: Connection) -> None
         "CREATE TEMP TRIGGER refuse_events BEFORE INSERT ON job_events "
         "BEGIN SELECT RAISE(ABORT, 'refused for the test'); END"
     )
-    with pytest.raises(sqlite3.DatabaseError, match="refused for the test"):
+    with pytest.raises(StoreIntegrityError, match="refused for the test"):
         set_status(conn, default_scope(conn), job_id, "shortlisted")
     assert get_job(conn, default_scope(conn), job_id)["status"] == "prospect"
 
     jobs_before = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
-    with pytest.raises(sqlite3.DatabaseError, match="refused for the test"):
+    with pytest.raises(StoreIntegrityError, match="refused for the test"):
         _job(conn, 2)
     assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == jobs_before
 
 
 def test_job_events_is_append_only(conn: Connection) -> None:
     job_id = _job(conn)
-    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+    with pytest.raises(StoreIntegrityError, match="append-only"):
         conn.execute("UPDATE job_events SET actor = 'company'")
-    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+    with pytest.raises(StoreIntegrityError, match="append-only"):
         conn.execute("DELETE FROM job_events")
     # Nor can the history be orphaned by deleting the job it describes.
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(StoreIntegrityError):
         conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
 
 
@@ -208,7 +207,7 @@ def test_a_company_verdict_is_never_a_candidate_decision(
 
     # The database itself refuses the pairing, whatever a caller writes.
     for kind, actor in (("outcome", "candidate"), ("decision", "company")):
-        with pytest.raises(sqlite3.IntegrityError):
+        with pytest.raises(StoreIntegrityError):
             conn.execute(
                 "INSERT INTO job_events (job_id, kind, actor, to_status) VALUES (?, ?, ?, ?)",
                 (applied, kind, actor, "rejected"),
@@ -409,10 +408,10 @@ def _legacy_row(conn: Connection, index: int, **fields: str) -> int:
     }
     columns = ", ".join(values)
     placeholders = ", ".join("?" for _ in values)
-    cursor = conn.execute(
-        f"INSERT INTO jobs ({columns}) VALUES ({placeholders})", list(values.values())
-    )
-    conn.commit()
+    with conn.transaction():
+        cursor = conn.execute(
+            f"INSERT INTO jobs ({columns}) VALUES ({placeholders})", list(values.values())
+        )
     assert cursor.lastrowid is not None
     return int(cursor.lastrowid)
 
@@ -610,7 +609,7 @@ def _race_once(rival: Connection, job_id: int, outcome: list[str]) -> None:
     try:
         set_status(rival, default_scope(rival), job_id, "shortlisted")
         outcome[0] = "interleaved"
-    except sqlite3.OperationalError:
+    except StoreBusyError:
         outcome[0] = "waited"
 
 

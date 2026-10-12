@@ -692,13 +692,13 @@ def _legacy_rejection(company: str) -> int:
     """A row decided before history was recorded, so it has no events."""
     conn = connect()
     try:
-        cursor = conn.execute(
-            "INSERT INTO jobs (company, title, url, source, status, rejection_reason, "
-            "added_at, created_at, updated_at) VALUES (?, ?, ?, 'greenhouse', 'rejected', "
-            "'hybrid', '2026-03-02', '2026-03-02 09:00:00', '2026-03-03 09:00:00')",
-            (company, "Platform Engineer", f"https://boards.example.com/{company}/1"),
-        )
-        conn.commit()
+        with conn.transaction():
+            cursor = conn.execute(
+                "INSERT INTO jobs (company, title, url, source, status, rejection_reason, "
+                "added_at, created_at, updated_at) VALUES (?, ?, ?, 'greenhouse', 'rejected', "
+                "'hybrid', '2026-03-02', '2026-03-02 09:00:00', '2026-03-03 09:00:00')",
+                (company, "Platform Engineer", f"https://boards.example.com/{company}/1"),
+            )
         assert cursor.lastrowid is not None
         return int(cursor.lastrowid)
     finally:

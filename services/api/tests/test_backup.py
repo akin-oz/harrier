@@ -81,14 +81,15 @@ def test_a_backup_taken_during_an_open_write_holds_the_committed_rows(
     """
     writer = connect()
     add_job(writer, a_job(4), scope=default_scope(writer))  # committed by add_job
-    writer.execute("BEGIN")
+    # Outside a transaction() block the sqlite3 module opens a transaction for
+    # the write and nothing commits it; closing the connection discards it.
     writer.execute(
         "INSERT INTO jobs (company, title, url, source, location) VALUES (?,?,?,?,?)",
         ("Uncommitted", "Senior Frontend Engineer", "https://x/9", "greenhouse", "Remote"),
     )
+    assert writer.in_transaction
 
     result = create_backup(tmp_path / "backups")
-    writer.rollback()
     writer.close()
 
     assert result.jobs == 4

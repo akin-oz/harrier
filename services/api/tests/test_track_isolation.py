@@ -76,10 +76,10 @@ def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.fixture()
 def two_tracks(data_dir: Path) -> Iterator[tuple[Connection, Scope, Scope]]:
     conn = connect()
-    conn.execute(
-        "INSERT INTO tracks (id, slug, kind, label) VALUES (2, 'second', 'academic', 'Second')"
-    )
-    conn.commit()
+    with conn.transaction():
+        conn.execute(
+            "INSERT INTO tracks (id, slug, kind, label) VALUES (2, 'second', 'academic', 'Second')"
+        )
     first = default_scope(conn)
     second = resolve_scope(conn, "second")
     for row in FIRST_ROWS:
@@ -234,13 +234,13 @@ def test_backfill_reconstructs_one_track(
 ) -> None:
     conn, first, _ = two_tracks
     # Rows written around the write path, so they have no events.
-    for track_id, company in ((1, "Quiet First"), (2, "Quiet Second")):
-        conn.execute(
-            "INSERT INTO jobs (company, title, url, status, track_id) "
-            "VALUES (?, ?, ?, 'prospect', ?)",
-            (company, "Engineer", f"https://boards.example.com/quiet/{track_id}", track_id),
-        )
-    conn.commit()
+    with conn.transaction():
+        for track_id, company in ((1, "Quiet First"), (2, "Quiet Second")):
+            conn.execute(
+                "INSERT INTO jobs (company, title, url, status, track_id) "
+                "VALUES (?, ?, ?, 'prospect', ?)",
+                (company, "Engineer", f"https://boards.example.com/quiet/{track_id}", track_id),
+            )
     counts = backfill_events(conn, first)
     assert sum(counts.values()) == 1
     eventless = conn.execute(

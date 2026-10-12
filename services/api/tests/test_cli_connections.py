@@ -13,14 +13,13 @@ pass a handler that leaks.
 from __future__ import annotations
 
 import gc
-import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
 import harrier_cli.main as cli
-from harrier.connection import Connection
+from harrier.connection import Connection, StoreDatabaseError
 from harrier.db import connect
 from harrier.tracker.store import add_job
 from harrier.tracks import default_scope
@@ -51,7 +50,7 @@ def opened(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[list[Con
 def assert_all_closed(recorded: list[Connection]) -> None:
     assert recorded, "the command opened no connection, so this proves nothing"
     for conn in recorded:
-        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        with pytest.raises(StoreDatabaseError, match="closed"):
             conn.execute("SELECT 1")
 
 

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import copy
 import json
-import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
@@ -24,7 +23,7 @@ from resume_support import (
 )
 
 import harrier.resume.split as split_module
-from harrier.connection import Connection
+from harrier.connection import Connection, StoreIntegrityError
 from harrier.db import connect
 from harrier.profile.store import ProfileDocumentError, put_document, put_documents_and_rekind
 from harrier.resume.content import (
@@ -126,8 +125,10 @@ def test_load_bundle_refuses_each_mixed_shape(db: Connection) -> None:
     with pytest.raises(ResumeBundleError, match="keep one shape"):
         load_forbidden_phrases(db)
 
-    db.execute("DELETE FROM profile_documents WHERE kind IN ('resume_data', ?)", (FRAMING_KIND,))
-    db.commit()
+    with db.transaction():
+        db.execute(
+            "DELETE FROM profile_documents WHERE kind IN ('resume_data', ?)", (FRAMING_KIND,)
+        )
     with pytest.raises(ResumeBundleError, match="track job has no resume framing"):
         load_bundle(db, default_scope(db))
 
@@ -191,7 +192,7 @@ def test_the_split_write_is_all_or_nothing(db: Connection) -> None:
     put_document(db, "resume_data", "resume-content.json", "json", "{}")
     put_document(db, PRESPLIT_KIND, "resume-content.json", "json", "{}")
     before = documents(db)
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(StoreIntegrityError):
         put_documents_and_rekind(
             db,
             [(FACTS_KIND, "resume-facts.json", "json", "{}", None)],
@@ -212,8 +213,8 @@ def test_a_facts_role_without_a_framing_keeps_the_defaults() -> None:
 def test_letters_read_the_never_claim_list_from_facts(db: Connection) -> None:
     store_documents(db, {"forbidden_phrases": ["world-class expert"]}, {})
     assert load_forbidden_phrases(db) == ("world-class expert",)
-    db.execute("DELETE FROM profile_documents")
-    db.commit()
+    with db.transaction():
+        db.execute("DELETE FROM profile_documents")
     assert load_forbidden_phrases(db) == ()
 
 
@@ -335,13 +336,13 @@ def test_the_split_rolls_back_a_failure_partway(db: Connection) -> None:
     """A failure after the pair is written leaves the store as it was: the
     rename of the original is refused here by a trigger (review of PR #212)."""
     store_old_shape(db, example_bundle_raw())
-    db.execute(
-        "CREATE TRIGGER refuse_the_rename BEFORE UPDATE OF kind ON profile_documents "
-        "BEGIN SELECT RAISE(ABORT, 'refused for the test'); END"
-    )
-    db.commit()
+    with db.transaction():
+        db.execute(
+            "CREATE TRIGGER refuse_the_rename BEFORE UPDATE OF kind ON profile_documents "
+            "BEGIN SELECT RAISE(ABORT, 'refused for the test'); END"
+        )
     before = documents(db)
-    with pytest.raises(sqlite3.DatabaseError, match="refused for the test"):
+    with pytest.raises(StoreIntegrityError, match="refused for the test"):
         split_resume(db, write=True)
     assert documents(db) == before
 

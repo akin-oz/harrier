@@ -204,10 +204,11 @@ def test_the_kind_check_derives_from_the_code_list(tmp_path: Path) -> None:
 def test_the_write_path_stamps_the_scopes_track(tmp_path: Path) -> None:
     conn = connect(tmp_path / "tracker.db")
     try:
-        conn.execute(
-            "INSERT INTO tracks (id, slug, kind, label) VALUES (2, 'second', 'academic', 'Second')"
-        )
-        conn.commit()
+        with conn.transaction():
+            conn.execute(
+                "INSERT INTO tracks (id, slug, kind, label) "
+                "VALUES (2, 'second', 'academic', 'Second')"
+            )
         second = resolve_scope(conn, "second")
         job_id = add_job(conn, SYNTHETIC_ROWS[0], scope=second)
         # Read back through the second track's scope: spec 092 makes a by-id

@@ -525,12 +525,13 @@ def test_labels_come_from_candidate_decisions(conn: Connection) -> None:
     # because its own time is only an upper bound.
     legacy_url = "https://boards.example.com/quillfeather/legacy"
     save_description_cache(legacy_url, f"Legacy posting. {BODY}")
-    conn.execute(
-        "INSERT INTO jobs (company, title, url, status, rejection_reason, added_at) "
-        "VALUES ('Ironbark Systems', 'Product Engineer', ?, 'rejected', 'hybrid', '2026-03-02')",
-        (legacy_url,),
-    )
-    conn.commit()
+    with conn.transaction():
+        conn.execute(
+            "INSERT INTO jobs (company, title, url, status, rejection_reason, added_at) "
+            "VALUES ('Ironbark Systems', 'Product Engineer', ?, 'rejected', 'hybrid', "
+            "'2026-03-02')",
+            (legacy_url,),
+        )
     backfill_events(conn, default_scope(conn))
     legacy = conn.execute("SELECT id FROM jobs WHERE url = ?", (legacy_url,)).fetchone()[0]
     legacy_label = _label(conn, int(legacy))
