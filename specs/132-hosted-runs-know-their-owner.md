@@ -313,16 +313,25 @@ the points below, so the code and the spec agree.
   `services/api/src/harrier_api/hostedauth.py`). `start`,
   `write_run_input` and the owner view all ask it, so the three agree.
   `write_run_input` has no request, which is why the process environment,
-  and not the assembled app, is the source. Spec 104's tests build the
-  hosted app without the variable, and there the run routes still answer
-  as they do locally. `create_app` builds the hosted app only when the
-  variable is set, so no served process is in that state.
+  and not the assembled app, is the source. So that the app and the run
+  manager cannot disagree, `create_hosted_app` refuses with
+  `HostedConfigError` unless the variable is set
+  (`services/api/tests/test_run_owner.py::test_the_hosted_app_needs_hosted_mode`).
+  `create_app` builds the hosted app only when it is set, and the local
+  app only when it is not. Spec 104's tests in
+  `services/api/tests/test_hosted_auth.py` therefore set it before they
+  build the hosted app, and unset it before they build the local one
+  (test-integrity review of PR #300).
 - **The owner is passed in one place.** `Manager`, the dependency every
   run route takes, is now `OwnedRuns` in
   `services/api/src/harrier_api/runmodels.py`: the run manager as the
   request's owner sees it. Its `start` passes the request's `sub`, and its
   `list_runs`, `get`, `cancel` and `stream` apply the owner filter. No
   route passes an owner itself, so a new route cannot pass the wrong one.
+  `stream` refuses a run its owner does not see with `KeyError`, as an
+  unknown id, rather than relying on the route to ask `get` first
+  (test-integrity review of PR #300,
+  `services/api/tests/test_run_owner.py::test_another_owners_run_is_not_found`).
 - **A hosted request without verified claims.** The middleware lets none
   through; this is the second line. Such a view has the empty owner, so it
   sees no run, and it takes `exp` as passed, so a stream it opened ends at
@@ -356,6 +365,6 @@ the points below, so the code and the spec agree.
 - The hosted half of "a run records its owner" is proven up to `start`,
   which refuses. No hosted run exists until spec 106, so no test reads a
   hosted run's journal entry with its owner.
-- A hosted app assembled without `HARRIER_AUTH=supabase` in the process
-  environment, which only a test builds, does not limit runs to their
-  owner.
+- The stream test runs on the wall clock: its token expires at least
+  three seconds after it is minted, and the stream must end within ten.
+  A machine that stalls longer than that fails it.

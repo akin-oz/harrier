@@ -60,14 +60,17 @@ from harrier_api.deps import (
 from harrier_api.hostedauth import (
     BEARER_SCHEME_NAME,
     BEARER_SECURITY_SCHEME,
+    HOSTED_APP_REFUSAL,
     Clock,
     HostedAuthMiddleware,
     HostedConfig,
+    HostedConfigError,
     KeyFetcher,
     SigningKeys,
     TokenVerifier,
     fetch_from,
     hosted_config,
+    hosted_mode,
 )
 from harrier_api.localauth import (
     TOKEN_RESPONSES,
@@ -1554,7 +1557,13 @@ def create_hosted_app(
     104 it never passes on a Postgres URL, so no process serves it until
     spec 134. The tests call it directly, with an injected key fetcher, and
     no test reaches the network.
+
+    It refuses unless the process environment says hosted too: the run
+    manager reads hosted mode from there, so an app built hosted in a local
+    process would serve runs as the local API does (spec 132).
     """
+    if not hosted_mode(os.environ):
+        raise HostedConfigError(HOSTED_APP_REFUSAL)
     manager = run_manager if run_manager is not None else RunManager()
     app = _app_with_routes(manager)
     app.state.hosted = True

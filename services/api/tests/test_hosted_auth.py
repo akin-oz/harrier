@@ -173,6 +173,7 @@ CONFIG = HostedConfig(
 
 
 def build(
+    monkeypatch: pytest.MonkeyPatch,
     *,
     config: HostedConfig = CONFIG,
     failing_at_start: bool = False,
@@ -182,6 +183,9 @@ def build(
     server.publish(KID, key)
     server.failing = failing_at_start
     clock = Clock()
+    # The process is hosted as the app is: `create_hosted_app` refuses
+    # otherwise (spec 132).
+    monkeypatch.setenv("HARRIER_AUTH", "supabase")
     app = create_hosted_app(config, fetch_keys=server, clock=clock)
     entered: list[dict[str, Any]] = []
 
@@ -197,8 +201,8 @@ def build(
 
 
 @pytest.fixture
-def hosted() -> Hosted:
-    return build()
+def hosted(monkeypatch: pytest.MonkeyPatch) -> Hosted:
+    return build(monkeypatch)
 
 
 def assert_refused(response: Any, status: int, reason: str, challenge: str | None) -> None:
@@ -414,7 +418,7 @@ def test_hosted_start_refuses_incomplete_configuration(case: str, tmp_path: Path
 
 
 def test_a_complete_hosted_configuration_still_meets_the_spec_103_gate(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     environ = child_environment(tmp_path, **complete_hosted_environment())
     started = start_api(environ, tmp_path)
@@ -425,7 +429,7 @@ def test_a_complete_hosted_configuration_still_meets_the_spec_103_gate(
     # The same configuration, assembled, serves a request with a valid token.
     config = hosted_config(complete_hosted_environment())
     assert config is not None
-    hosted = build(config=config)
+    hosted = build(monkeypatch, config=config)
     response = hosted.client.get("/runs", headers=bearer(hosted.token()))
     assert response.status_code == 200, response.text
     assert response.json() == []
@@ -631,9 +635,11 @@ def test_unreachable_keys_answer_503_not_401(hosted: Hosted) -> None:
     assert hosted.client.get("/runs", headers=bearer(held)).is_success
 
 
-def test_a_failed_first_fetch_still_starts(caplog: pytest.LogCaptureFixture) -> None:
+def test_a_failed_first_fetch_still_starts(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
     caplog.set_level(logging.WARNING, logger="harrier_api.hostedauth")
-    hosted = build(failing_at_start=True)
+    hosted = build(monkeypatch, failing_at_start=True)
 
     assert "could not be fetched" in caplog.text
     # The exception's own text could quote a response; only its type is
@@ -709,6 +715,7 @@ def test_the_key_set_is_fetched_from_the_project(monkeypatch: pytest.MonkeyPatch
         return Response()
 
     monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    monkeypatch.setenv("HARRIER_AUTH", "supabase")
     client = TestClient(create_hosted_app(config), base_url=f"http://{API_HOST}")
     response = client.get("/runs", headers=bearer(mint(key, claims_for())))
     assert response.status_code == 200, response.text
@@ -900,7 +907,10 @@ def test_the_local_token_is_not_read_hosted(hosted: Hosted) -> None:
     assert response.status_code == 418, response.text
 
 
-def test_the_contract_is_the_same_in_both_modes(hosted: Hosted) -> None:
+def test_the_contract_is_the_same_in_both_modes(
+    hosted: Hosted, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("HARRIER_AUTH")
     local = create_app().openapi()
     assert json.dumps(hosted.app.openapi(), sort_keys=True) == json.dumps(local, sort_keys=True)
 
@@ -914,7 +924,7 @@ def test_hosted_health_reveals_no_store_detail(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr(app_module, "connect", refuse)
     monkeypatch.setattr(app_module, "oldest_hold", refuse)
-    hosted = build(failing_at_start=True)
+    hosted = build(monkeypatch, failing_at_start=True)
 
     response = hosted.client.get("/health")
 
@@ -968,7 +978,7 @@ def test_cors_allows_only_the_configured_origins(hosted: Hosted) -> None:
     assert response.headers["access-control-allow-origin"] == SPA_ORIGIN
 
 
-def test_hosted_trusted_hosts_are_the_configured_names() -> None:
+def test_hosted_trusted_hosts_are_the_configured_names(monkeypatch: pytest.MonkeyPatch) -> None:
     names = (API_HOST, "api-staging.example.test")
     # Read the way a start reads them, from comma-separated variables.
     config = hosted_config(
@@ -981,7 +991,7 @@ def test_hosted_trusted_hosts_are_the_configured_names() -> None:
     assert config is not None
     assert config.allowed_hosts == names
     assert config.cors_origins == (SPA_ORIGIN, "https://app-staging.example.test:8443")
-    hosted = build(config=config)
+    hosted = build(monkeypatch, config=config)
     for name in names:
         for port in ("", ":443"):
             response = hosted.client.get("/health", headers={"Host": name + port})

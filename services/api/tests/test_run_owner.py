@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
+import math
 import sys
 import time
 import uuid
@@ -52,7 +53,8 @@ from harrier.demo import repo_root
 from harrier.tracker.store import add_job
 from harrier.tracks import default_scope
 from harrier_api.app import create_app, create_hosted_app
-from harrier_api.runmodels import TOKEN_EXPIRED_LINE, get_runs
+from harrier_api.hostedauth import HOSTED_APP_REFUSAL, HostedConfigError
+from harrier_api.runmodels import TOKEN_EXPIRED_LINE, OwnedRuns, get_runs
 from harrier_api.runs import (
     RUNS_NOT_HOSTED_DETAIL,
     TERMINAL_STATES,
@@ -165,6 +167,15 @@ def new_owner() -> str:
     return str(uuid.uuid4())
 
 
+def test_the_hosted_app_needs_hosted_mode() -> None:
+    """The run manager reads hosted mode from the process environment and
+    the app from how it was built, so the hosted app is refused in a local
+    process: the two cannot disagree."""
+    with pytest.raises(HostedConfigError) as refused:
+        create_hosted_app(CONFIG, fetch_keys=KeyServer(), clock=Clock())
+    assert str(refused.value) == HOSTED_APP_REFUSAL
+
+
 # --- run routes, hosted ---
 
 
@@ -194,6 +205,20 @@ def test_another_owners_run_is_not_found(hosted: Owners) -> None:
         time.sleep(0.2)
         assert hosted.run(run.id).state == "running"
         assert not hosted.run(run.id).cancel_requested
+
+        # The view holds the rule itself, not only the routes that ask `get`
+        # first: B's stream of A's run is refused as an unknown id is, and
+        # A's is not.
+        def view_of(owner: str) -> OwnedRuns:
+            claims = claims_for(sub=owner)
+            scope = {"type": "http", "app": hosted.app, "state": {"claims": claims}, "headers": []}
+            return get_runs(Request(scope), hosted.manager)
+
+        with pytest.raises(KeyError):
+            view_of(b).stream(run.id)
+        with pytest.raises(KeyError):
+            view_of(a).stream("no-such-run")
+        view_of(a).stream(run.id)
 
         # A's cancel does.
         cancelled = client.post(f"/runs/{run.id}/cancel", headers=hosted.as_owner(a))
@@ -491,14 +516,15 @@ def test_the_event_stream_ends_at_token_expiry(
         assert event_ids(lines) == []
         assert [line for line in lines if line] == [expired_line]
 
-        # A token with two seconds left: the pending events, then nothing
+        # A token with at least three seconds left, so a slow machine still
+        # opens the stream before `exp`: the pending events, then nothing
         # for a while, then the stream ends at `exp` and not at an event.
-        exp = int(time.time()) + 2
+        exp = math.ceil(time.time()) + 3
         lines, took = read_stream(hosted.client, path, hosted.as_owner(owner, exp=exp))
         assert event_ids(lines) == [1, 2]
         assert [line for line in lines if line][-1] == expired_line
         assert time.time() >= exp - 0.01
-        assert took < 8, took
+        assert took < 10, took
         assert hosted.run(run.id).state == "running"
 
         # The browser reconnects with a fresh token and `Last-Event-ID`, and

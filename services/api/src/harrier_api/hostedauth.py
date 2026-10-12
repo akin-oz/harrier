@@ -109,6 +109,15 @@ class HostedConfig:
         return f"{self.issuer}/.well-known/jwks.json"
 
 
+# The hosted app and the run manager read hosted mode from two places: the
+# app from how it was built, the run manager from the process environment,
+# because `write_run_input` has no request. Building the hosted app refuses
+# unless the two agree (spec 132).
+HOSTED_APP_REFUSAL = (
+    f"the hosted app is built only with {AUTH_VARIABLE}={HOSTED_AUTH} in the process environment"
+)
+
+
 def hosted_mode(environ: Mapping[str, str]) -> bool:
     """Whether this process serves hosted: `HARRIER_AUTH=supabase`, nothing
     inferred. Pass the process environment. A process with any other

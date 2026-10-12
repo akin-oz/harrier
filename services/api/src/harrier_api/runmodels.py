@@ -127,7 +127,13 @@ class OwnedRuns:
         """The run's SSE messages after `last_event_id`. Hosted, the stream
         also ends at the token's `exp`, so it does not outlive the authority
         that opened it; the browser reconnects with a fresh token and
-        `Last-Event-ID` and loses nothing."""
+        `Last-Event-ID` and loses nothing.
+
+        A run this owner does not see raises `KeyError`, as an unknown id
+        does, so the stream holds the owner rule itself rather than
+        trusting its caller to ask `get` first."""
+        if self.get(run_id) is None:
+            raise KeyError(run_id)
         return sse_until(self.manager.stream(run_id, last_event_id), self.expires_at)
 
 
