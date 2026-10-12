@@ -1,8 +1,11 @@
-"""Profile document import/export round-trip (spec 004). Synthetic content only."""
+"""Profile document import/export round-trip (spec 004). Synthetic content only.
+
+Every test runs on both stores through the dual-store fixture (spec 126).
+"""
 
 from pathlib import Path
 
-from harrier.db import connect
+from harrier.connection import Connection
 from harrier.profile import export_to, get_document, import_from, list_documents
 
 SYNTHETIC_FILES: dict[str, str] = {
@@ -20,26 +23,24 @@ def _make_old_repo(root: Path) -> None:
         target.write_text(content, encoding="utf-8")
 
 
-def test_import_reports_present_and_missing(tmp_path: Path) -> None:
+def test_import_reports_present_and_missing(store: Connection, tmp_path: Path) -> None:
     old_root = tmp_path / "old"
     _make_old_repo(old_root)
-    conn = connect(tmp_path / "t.db")
-    imported, missing = import_from(conn, old_root)
+    imported, missing = import_from(store, old_root)
 
     assert any(line.startswith("candidate/candidate.json") for line in imported)
     assert any(line.startswith("interview_prep/story-bank.md") for line in imported)
     assert "config/resume-candidate-data.json" in missing  # not present in fixture
-    assert len(list_documents(conn)) == len(SYNTHETIC_FILES)
+    assert len(list_documents(store)) == len(SYNTHETIC_FILES)
 
 
-def test_export_is_byte_identical(tmp_path: Path) -> None:
+def test_export_is_byte_identical(store: Connection, tmp_path: Path) -> None:
     old_root = tmp_path / "old"
     _make_old_repo(old_root)
-    conn = connect(tmp_path / "t.db")
-    import_from(conn, old_root)
+    import_from(store, old_root)
 
     out = tmp_path / "export"
-    written = export_to(conn, out)
+    written = export_to(store, out)
     assert len(written) == len(SYNTHETIC_FILES)
 
     assert (out / "candidate" / "candidate.json").read_text(encoding="utf-8") == SYNTHETIC_FILES[
@@ -50,29 +51,27 @@ def test_export_is_byte_identical(tmp_path: Path) -> None:
     ) == SYNTHETIC_FILES["interview-prep/story-bank.md"]
 
 
-def test_reimport_updates_in_place(tmp_path: Path) -> None:
+def test_reimport_updates_in_place(store: Connection, tmp_path: Path) -> None:
     old_root = tmp_path / "old"
     _make_old_repo(old_root)
-    conn = connect(tmp_path / "t.db")
-    import_from(conn, old_root)
+    import_from(store, old_root)
 
     (old_root / "config/candidate.json").write_text('{"name": "Pat Two"}\n', encoding="utf-8")
-    import_from(conn, old_root)
+    import_from(store, old_root)
 
-    assert get_document(conn, "candidate", "candidate.json") == '{"name": "Pat Two"}\n'
-    assert len(list_documents(conn)) == len(SYNTHETIC_FILES)
+    assert get_document(store, "candidate", "candidate.json") == '{"name": "Pat Two"}\n'
+    assert len(list_documents(store)) == len(SYNTHETIC_FILES)
 
 
-def test_crlf_content_round_trips_byte_identically(tmp_path: Path) -> None:
+def test_crlf_content_round_trips_byte_identically(store: Connection, tmp_path: Path) -> None:
     old_root = tmp_path / "old"
     old_root.joinpath("config").mkdir(parents=True)
     crlf = '{"name": "Pat Placeholder"}\r\n{"line": "two"}\r\n'
     with (old_root / "config/candidate.json").open("w", encoding="utf-8", newline="") as handle:
         handle.write(crlf)
-    conn = connect(tmp_path / "t.db")
-    import_from(conn, old_root)
+    import_from(store, old_root)
 
     out = tmp_path / "export"
-    export_to(conn, out)
+    export_to(store, out)
     exported = out / "candidate" / "candidate.json"
     assert exported.read_bytes() == crlf.encode("utf-8")

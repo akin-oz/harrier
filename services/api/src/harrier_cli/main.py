@@ -36,7 +36,7 @@ from harrier.db import (
 )
 from harrier.delegate import delegate
 from harrier.hostlease import remove_dead
-from harrier.logsetup import configure_logging
+from harrier.logsetup import configure_logging, scrub_last_resort
 from harrier.profile import export_to, import_from, list_documents
 from harrier.tracker.export import export_csv
 from harrier.tracker.migrate_legacy import MigrationError, migrate
@@ -3071,6 +3071,9 @@ def _run_or_hand_over(args: argparse.Namespace, argv: list[str]) -> int | None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Before anything can log: `store` and `doctor` never configure logging,
+    # so their warnings reach the last-resort handler (spec 133).
+    scrub_last_resort()
     load_project_env()
     vector = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()

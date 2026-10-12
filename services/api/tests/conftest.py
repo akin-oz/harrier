@@ -242,6 +242,11 @@ def pytest_configure(config: pytest.Config) -> None:
         f"{DOTENV_FALLBACK}: the test removes HARRIER_DATABASE_URL to read the .env "
         "fallback, from a working directory under its tmp_path",
     )
+    config.addinivalue_line(
+        "markers",
+        f"{SQLITE_ONLY}(reason): a test in a file that runs on both stores which stays "
+        "on SQLite, for the reason given (spec 126)",
+    )
     _read_no_dotenv_outside_the_tests_tmp_paths()
 
 
@@ -595,6 +600,13 @@ def assert_only_provoked_causes_are_declared(
 
 # --- the dual-store fixture (spec 126) ---
 
+# The mark on a test that stays on SQLite in a file whose domain tests run on
+# both stores, with the reason spec 126 gives: it reads SQLite itself, or it
+# drives the CLI or the API, which refuse a Postgres URL until specs 127 and
+# 104. Such a test that takes the dual-store fixture gets its SQLite
+# parameter alone.
+SQLITE_ONLY = "sqlite_only"
+
 
 @pytest.fixture(scope="session")
 def postgres_template() -> Iterator[str]:
@@ -677,6 +689,27 @@ def dual_store(request: pytest.FixtureRequest) -> Iterator[DualStore]:
         finally:
             for conn in found.opened:
                 conn.close()
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
+    """A test marked `sqlite_only` names its reason, and when it takes the
+    dual-store fixture it gets the SQLite parameter alone (spec 126). First,
+    so the fixture's own two parameters give way to this one."""
+    marker = metafunc.definition.get_closest_marker(SQLITE_ONLY)
+    if marker is None:
+        return
+    reason = marker.args[0] if marker.args else ""
+    if not isinstance(reason, str) or not reason.strip():
+        raise pytest.UsageError(
+            f"{metafunc.definition.nodeid} is marked {SQLITE_ONLY} with no reason"
+        )
+    if "dual_store" in metafunc.fixturenames:
+        # A mark, not a direct call: pytest lets a parametrize mark, and
+        # nothing else, take the place of a fixture's own parameters.
+        metafunc.definition.add_marker(
+            pytest.mark.parametrize("dual_store", ["sqlite"], indirect=True)
+        )
 
 
 @pytest.fixture

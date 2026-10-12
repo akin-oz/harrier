@@ -1445,8 +1445,8 @@ catches `StoreLibraryTooOld`, and nothing else new, and prints `error:
 
 ### The store password in logs and HTTP errors
 
-The criterion recorded from spec 128 (planned
-test_no_log_or_http_error_carries_the_store_password) sits in PR 2's
+The criterion recorded from spec 128 (built by spec 133 as
+`services/api/tests/test_store_password_scrub.py::test_no_log_or_http_error_carries_the_store_password`) sits in PR 2's
 first list, which the amendment of 2026-10-11 replaced, and neither the
 narrowed list nor "Where each item went" carries it. This pull request
 does not build it. Its two sinks are reached only once an error raised on

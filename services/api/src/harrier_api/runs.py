@@ -24,7 +24,7 @@ from typing import Literal, cast
 
 from harrier.db import data_dir
 from harrier.discovery import SOURCE_ORDER
-from harrier.sources import scrub_secrets
+from harrier.logredact import scrub_outbound
 from harrier.tracks import InvalidSlugError, validate_slug
 from harrier_api.hostedauth import hosted_mode
 
@@ -511,16 +511,19 @@ def scrub_event_data(data: dict[str, object]) -> dict[str, object]:
     put it straight onto the unauthenticated stream. Scrubbing only what I
     had just changed is the mistake; the property is that nothing reaches the
     stream unscrubbed (review finding on PR #39).
+
+    `scrub_outbound`, not `scrub_secrets` alone, so a run that prints the
+    store password outside a URL has it masked too (spec 133).
     """
     scrubbed: dict[str, object] = {}
     for key, value in data.items():
         if isinstance(value, str):
-            scrubbed[key] = scrub_secrets(value)
+            scrubbed[key] = scrub_outbound(value)
         elif isinstance(value, dict):
             scrubbed[key] = scrub_event_data(cast("dict[str, object]", value))
         elif isinstance(value, list):
             scrubbed[key] = [
-                scrub_secrets(item) if isinstance(item, str) else item
+                scrub_outbound(item) if isinstance(item, str) else item
                 for item in cast("list[object]", value)
             ]
         else:

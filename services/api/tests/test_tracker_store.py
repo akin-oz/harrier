@@ -1,12 +1,12 @@
-"""Write-path behavior pins (spec 004)."""
+"""Write-path behavior pins (spec 004).
 
-from collections.abc import Iterator
-from pathlib import Path
+Every test runs on both stores through the dual-store fixture (spec 126):
+SQLite, and Postgres as one synthetic owner under the row policy.
+"""
 
 import pytest
 
 from harrier.connection import Connection
-from harrier.db import connect
 from harrier.tracker import (
     NEXT_ACTION_DEFAULTS,
     DuplicateJobError,
@@ -21,10 +21,8 @@ from harrier.tracks import default_scope
 
 
 @pytest.fixture()
-def conn(tmp_path: Path) -> Iterator[Connection]:
-    connection = connect(tmp_path / "t.db")
-    yield connection
-    connection.close()
+def conn(store: Connection) -> Connection:
+    return store
 
 
 def _job(**overrides: str) -> dict[str, str]:

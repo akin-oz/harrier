@@ -22,16 +22,22 @@ What this does and does not protect:
   exactly that unredacted (review of PR #49). Refreshing at the write path
   rather than per log record keeps the database off the logging path, where a
   query that failed would log and recurse.
+
+`SecretScrubFilter`, at the end, is the other filter here: it keeps the store
+password and other credential-shaped values out of the log stream (spec 133).
 """
 
 from __future__ import annotations
 
+import functools
 import logging
+import os
 import re
 import traceback
+from pathlib import Path
 from typing import cast
 
-from harrier.connection import Connection, StoreDatabaseError
+from harrier.connection import URL_VARIABLE, Connection, StoreDatabaseError, url_parts
 
 # A one-character value is not identifying and matches everywhere. Everything
 # longer is redacted, but a short value only where it stands as its own word:
@@ -206,3 +212,180 @@ def refresh_installed(conn: Connection) -> None:
         return
     for installed in _INSTALLED:
         installed.refresh(values)
+
+
+# --- the store password and other secrets (spec 133) ---
+
+SECRET_REDACTION = "REDACTED"
+
+
+def _environment_url() -> str:
+    """`HARRIER_DATABASE_URL` as `store_target` reads it: the process
+    environment, then `.env` in the working directory."""
+    if URL_VARIABLE in os.environ:
+        return os.environ[URL_VARIABLE]
+    try:
+        cwd = os.getcwd()
+    except OSError:
+        return ""
+    return _env_file_url(cwd)
+
+
+@functools.lru_cache(maxsize=8)
+def _env_file_url(cwd: str) -> str:
+    # Read once per working directory, so a log record does not read a file.
+    from harrier.envfile import read_env_file
+
+    try:
+        return read_env_file(Path(cwd) / ".env").get(URL_VARIABLE, "")
+    except (OSError, ValueError):
+        return ""
+
+
+@functools.lru_cache(maxsize=8)
+def _password_forms_of(url: str) -> tuple[str, ...]:
+    if not url.strip():
+        return ()
+    try:
+        return url_parts(url.strip()).passwords
+    except Exception:
+        # A URL `store_target` refuses: the process does not open it, and
+        # nothing here may raise on the logging path.
+        return ()
+
+
+def store_password_forms() -> tuple[str, ...]:
+    """Every form of the configured store URL's password (spec 133, open
+    decision 1): as written, percent-decoded, and as libpq reads it.
+
+    A driver can quote the password alone, outside any URL shape
+    `scrub_secrets` knows, and the process knows its own password, so no
+    shape needs guessing. Empty when the store is SQLite.
+    """
+    return _password_forms_of(_environment_url())
+
+
+def _mask(text: str, forms: tuple[str, ...]) -> str:
+    # The union of every occurrence of every form is replaced, so a form
+    # overlapping another leaves no part of either (the rule
+    # `harrier.pgstore._scrub` follows).
+    spans: list[tuple[int, int]] = []
+    for form in forms:
+        start = text.find(form)
+        while start >= 0:
+            spans.append((start, start + len(form)))
+            start = text.find(form, start + 1)
+    if not spans:
+        return text
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    kept: list[str] = []
+    at = 0
+    for start, end in merged:
+        kept.append(text[at:start])
+        kept.append(SECRET_REDACTION)
+        at = end
+    kept.append(text[at:])
+    return "".join(kept)
+
+
+def scrub_outbound(text: str) -> str:
+    """Text as it may leave the process: every form of the configured store
+    URL's password, then `scrub_secrets` (spec 133).
+
+    The forms first, on the text as written. `scrub_secrets` replaces only
+    the value after a `name=`, so run first on a password that holds such a
+    shape (`...Passphrase=2026...`) it rewrote the password's tail, and the
+    forms no longer matched what was left: the head leaked (privacy review
+    of PR #296).
+    """
+    # Here, not at module import: `harrier.sources` reaches the tracker,
+    # whose write path imports this module.
+    from harrier.sources import scrub_secrets
+
+    return scrub_secrets(_mask(text, store_password_forms()))
+
+
+class SecretScrubFilter(logging.Filter):
+    """Passes a record's message, exception text and stack text through
+    `scrub_outbound` (spec 133).
+
+    Separate from `IdentityRedactionFilter`, which does nothing without
+    identity values and is not installed when they cannot be loaded: the two
+    cases where a hosted store's password would pass unscrubbed. This one
+    needs no database, so it is always installed, before the identity filter
+    on the same handler.
+
+    The record is mutated, as the identity filter mutates it, so every
+    handler after the first sees the scrubbed text. The filter never raises:
+    an exception from a filter reaches the code that logged.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            self._scrub_message(record)
+            # Formatted here, as `logging.Formatter.format` would, because
+            # the formatter prints `exc_text` instead of formatting
+            # `exc_info` again once it is set. Chained causes included.
+            if record.exc_info and not record.exc_text:
+                record.exc_text = logging.Formatter().formatException(record.exc_info)
+            if record.exc_text:
+                record.exc_text = scrub_outbound(record.exc_text)
+            if record.stack_info:
+                record.stack_info = scrub_outbound(record.stack_info)
+        except Exception:
+            # Nothing could be checked: drop what could hold the secret
+            # rather than let it through or break the caller.
+            record.msg = "log record withheld: it could not be scrubbed"
+            record.args = ()
+            record.exc_info = None
+            record.exc_text = None
+            record.stack_info = None
+        return True
+
+    @staticmethod
+    def _scrub_message(record: logging.LogRecord) -> None:
+        try:
+            message = record.getMessage()
+        except (TypeError, ValueError):
+            # A format string that does not match its arguments. Left as it
+            # was, the handler's error report printed the raw arguments to
+            # stderr (privacy review of PR #296). The format string is kept,
+            # scrubbed, and the arguments are withheld, so the record renders.
+            record.msg = (
+                f"{scrub_outbound(str(record.msg))} "
+                "(arguments withheld: they do not fit the format)"
+            )
+            record.args = ()
+            record.__dict__.pop("color_message", None)
+            return
+        scrubbed = scrub_outbound(message)
+        if scrubbed == message:
+            return
+        # The arguments one by one first, which keeps a formatter that reads
+        # `record.args` itself working: uvicorn's access formatter unpacks
+        # five of them, and its request line can carry a query secret.
+        if isinstance(record.msg, str) and isinstance(record.args, tuple):
+            args = tuple(
+                scrub_outbound(arg) if isinstance(arg, str) else arg for arg in record.args
+            )
+            fmt = scrub_outbound(record.msg)
+            try:
+                rendered: str | None = fmt % args if args else fmt
+            except (TypeError, ValueError):
+                rendered = None
+            if rendered is not None and scrub_outbound(rendered) == rendered:
+                record.msg = fmt
+                record.args = args
+                return
+        # A secret no argument holds alone, such as one in an exception
+        # passed as an argument: the rendered message, and no argument left
+        # to carry it.
+        record.msg = scrubbed
+        record.args = ()
+        # uvicorn's coloured formatter renders this instead of `msg`.
+        record.__dict__.pop("color_message", None)

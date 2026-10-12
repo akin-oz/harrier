@@ -1126,7 +1126,8 @@ Moved (2026-10-12) to spec 134, every criterion in this group.
 
 **Moved (2026-10-12) to spec 133,**
 `specs/133-the-store-password-stays-out-of-logs-and-http-errors.md`, whole,
-with its criterion (planned test_no_log_or_http_error_carries_the_store_password).
+with its criterion, which spec 133 built
+(`services/api/tests/test_store_password_scrub.py::test_no_log_or_http_error_carries_the_store_password`).
 Akin placed the criterion here in chat on 2026-10-12; spec 128's privacy
 review (PR #281) found it, and spec 112 carried it until its pull request
 for the seam (PR #288). The split moved it the same day (the Amendment
