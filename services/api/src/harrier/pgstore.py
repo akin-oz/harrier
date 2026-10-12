@@ -28,6 +28,7 @@ leaking through an exception string.
 
 from __future__ import annotations
 
+from contextlib import suppress
 from typing import TYPE_CHECKING
 
 from harrier.connection import (
@@ -184,11 +185,23 @@ def apply_postgres_migrations(conn: psycopg.Connection[tuple[object, ...]]) -> t
     try:
         return _apply_under_the_session_lock(conn)
     finally:
-        # A connection the server ended has released the lock with its
-        # session, and a statement on it would raise over the error that
-        # ended it.
-        if not conn.closed:
-            conn.execute("SELECT pg_advisory_unlock(%s)", (MIGRATION_LOCK_KEY,))
+        _release_the_session_lock(conn)
+
+
+def _release_the_session_lock(conn: psycopg.Connection[tuple[object, ...]]) -> None:
+    """Unlock, best effort: never over the runner's own result or error.
+
+    A session the server ended has released the lock with it, and psycopg
+    learns of the end only on the next statement, so `conn.closed` can still
+    be false here. The unlock then raised, and replaced a finished migration
+    or a migration's refusal with the driver's error (privacy review of PR
+    #281). Any session-level lock goes when its session does, so an unlock
+    that fails leaves nothing held past the connection.
+    """
+    import psycopg
+
+    with suppress(psycopg.Error):
+        conn.execute("SELECT pg_advisory_unlock(%s)", (MIGRATION_LOCK_KEY,))
 
 
 def _apply_under_the_session_lock(

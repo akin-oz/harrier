@@ -310,6 +310,27 @@ def test_scrubbing_keeps_the_useful_part() -> None:
             "postgresql://db.example.test/tracker?password=s3cret",
             "postgresql://db.example.test/tracker?password=REDACTED",
         ),
+        # The rows the privacy review of PR #281 added.
+        (
+            "postgresql://harrier@db.example.test/tracker?sslpassword=s3cret",
+            "postgresql://harrier@db.example.test/tracker?sslpassword=REDACTED",
+        ),
+        (
+            "host=db.example.test password = 's3 cret' dbname=tracker",
+            "host=db.example.test password = REDACTED dbname=tracker",
+        ),
+        (
+            "postgresql+psycopg://harrier:s3cret@db.example.test/tracker",
+            "postgresql+psycopg://harrier:REDACTED@db.example.test/tracker",
+        ),
+        (
+            "postgresql:\\/\\/harrier:s3cret@db.example.test\\/tracker",
+            "postgresql:\\/\\/harrier:REDACTED@db.example.test\\/tracker",
+        ),
+        (
+            "DSN_postgresql://harrier:s3cret@db.example.test/tracker",
+            "DSN_postgresql://harrier:REDACTED@db.example.test/tracker",
+        ),
     ],
 )
 def test_scrub_secrets_hides_a_postgres_url_password(text: str, expected: str) -> None:
@@ -357,6 +378,110 @@ def test_a_generated_postgres_password_leaves_no_part_behind(scheme: str) -> Non
         )
         for form in forms:
             assert sorted(window for window in _windows(form) if window in scrubbed) == []
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "password",
+        "PASSWORD",
+        "sslpassword",
+        "SSLPassword",
+        "oauth_client_secret",
+        "db.passphrase",
+        # Percent-encoded names, which libpq decodes (CodeRabbit review of
+        # PR #285): `p`, `W` and `s` encoded.
+        "%70assword",
+        "ssl%70assword",
+        "PASS%57ORD",
+        "oauth_client_%73ecret",
+    ],
+)
+@pytest.mark.parametrize(
+    "template",
+    [
+        "postgresql://u@db.example.test/tracker?{name}={first}",
+        "postgresql://db.example.test/tracker?sslmode=require&{name}={first}&connect_timeout=5",
+        "host=db.example.test {name}='{first} {second}' dbname=tracker",
+        "host=db.example.test {name} = {first} dbname=tracker",
+        "host=db.example.test {name}='{first}\\' {second}' dbname=tracker",
+        # A message cut short inside the quoted value.
+        "connection failed: host=db.example.test {name}='{first} {second}",
+        # Another parameter's value that holds a query of its own.
+        "https://login.example.test/?next=https://db.example.test/?{name}={first}",
+    ],
+    ids=[
+        "query",
+        "query-between-others",
+        "keyword-value-quoted",
+        "keyword-value-spaced",
+        "keyword-value-escaped-quote",
+        "keyword-value-cut-short",
+        "inside-another-value",
+    ],
+)
+def test_every_secret_named_parameter_is_scrubbed(template: str, name: str) -> None:
+    """The query rule named `password`, so `?sslpassword=` kept its value: the
+    `\\b` before `password` fails inside the word (privacy review of PR
+    #281). A parameter whose name holds `pass` or `secret`, the rule
+    `harrier.connection` uses, is masked in a query and in libpq's
+    keyword/value form, quoted or not."""
+    first, second = (
+        _synthetic(string.ascii_letters + string.digits, 24),
+        _synthetic(string.ascii_letters + string.digits, 24),
+    )
+    text = template.format(name=name, first=first, second=second)
+
+    scrubbed = scrub_secrets(text)
+
+    assert "REDACTED" in scrubbed
+    for secret in (first, second):
+        assert sorted(window for window in _windows(secret) if window in scrubbed) == []
+    assert "db.example.test" in scrubbed
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "postgresql+psycopg://harrier:{secret}@db.example.test/tracker",
+            "postgresql+psycopg://harrier:REDACTED@db.example.test/tracker",
+        ),
+        (
+            '{{"url": "postgresql:\\/\\/harrier:{secret}@db.example.test\\/tracker"}}',
+            '{{"url": "postgresql:\\/\\/harrier:REDACTED@db.example.test\\/tracker"}}',
+        ),
+        (
+            "DSN_postgresql://harrier:{secret}@db.example.test/tracker",
+            "DSN_postgresql://harrier:REDACTED@db.example.test/tracker",
+        ),
+        (
+            "postgresql://a:{secret}@h1/dbpostgres://b:{secret}@h2/db",
+            "postgresql://a:REDACTED@h1/dbpostgres://b:REDACTED@h2/db",
+        ),
+    ],
+    ids=[
+        "a-driver-in-the-scheme",
+        "json-escaped-slashes",
+        "after-an-underscore",
+        "glued-to-a-word",
+    ],
+)
+def test_a_postgres_url_in_another_dress_is_scrubbed(text: str, expected: str) -> None:
+    """Shapes store_target refuses but a message may still carry: a
+    SQLAlchemy scheme, JSON-escaped slashes and a URL glued to the word
+    before it (privacy review of PR #281)."""
+    secret = _synthetic(string.ascii_letters + string.digits, 24)
+    assert scrub_secrets(text.format(secret=secret)) == expected.format()
+
+
+def test_scrubbing_leaves_ordinary_parameters_alone() -> None:
+    """Only a secret's name masks its value: the host, mode and name that
+    say which store failed stay."""
+    text = "postgresql://db.example.test/tracker?sslmode=require&application_name=harrier"
+    assert scrub_secrets(text) == text
+    kv = "host=db.example.test port=5432 dbname=tracker user=harrier"
+    assert scrub_secrets(kv) == kv
 
 
 def test_scrubbing_leaves_ordinary_text_alone() -> None:

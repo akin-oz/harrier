@@ -26,6 +26,7 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+import unicodedata
 from collections.abc import Generator, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -243,8 +244,7 @@ def store_target(environ: Mapping[str, str] | None = None) -> StoreTarget:
             raw = read_env_file(Path(".env")).get(URL_VARIABLE, "")
     else:
         raw = environ.get(URL_VARIABLE, "")
-    raw = raw.strip()
-    if not raw:
+    if not raw.strip():
         return StoreTarget("sqlite")
     # Only `postgresql://`, in lower case, and a host and port that parse:
     # anything else failed later as a traceback or an unrelated driver
@@ -252,11 +252,14 @@ def store_target(environ: Mapping[str, str] | None = None) -> StoreTarget:
     # the scheme in another case. It also accepts `postgres://`, which is
     # refused here on purpose: spec 103 names one scheme.
     refused = StoreUrlError(f"{URL_VARIABLE} must be empty or a postgresql:// URL")
-    if not raw.startswith(f"{POSTGRES_SCHEME}://"):
+    # Leading or trailing whitespace is not stripped: it would change the
+    # configured value silently, a password's last character included. It
+    # reaches the raw-character refusal below (CodeRabbit review of PR #285).
+    if not raw.lstrip().startswith(f"{POSTGRES_SCHEME}://"):
         raise refused
     # Before the parse below, so a raw delimiter is refused with the text
     # that names the fix even where the parse would fail too.
-    if not _delimiters_read_one_way(raw):
+    if _has_raw_space_or_control(raw) or not _delimiters_read_one_way(raw):
         raise StoreUrlError(DELIMITER_REFUSAL)
     try:
         url_parts(raw)
@@ -270,6 +273,22 @@ def store_target(environ: Mapping[str, str] | None = None) -> StoreTarget:
     if not parses or not _libpq_parses(raw):
         raise refused
     return StoreTarget("postgres", raw)
+
+
+def _has_raw_space_or_control(url: str) -> bool:
+    """Whether the URL holds a raw whitespace or Unicode category C character.
+
+    `scrub_secrets` ends a URL's password at whitespace, so a password
+    holding a raw space of any kind, such as a no-break space, a vertical
+    tab or an ideographic space, was left whole in text it scrubbed, while
+    this function accepted the URL. Category C (control, format, surrogate,
+    private use and unassigned) is refused with it: none of it belongs raw
+    in a URL. Every URL accepted here is then one whose password
+    `scrub_secrets` masks whole (privacy review of PR #281, spec 128).
+    """
+    return any(
+        character.isspace() or unicodedata.category(character).startswith("C") for character in url
+    )
 
 
 def _delimiters_read_one_way(url: str) -> bool:
