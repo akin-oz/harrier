@@ -28,6 +28,7 @@ because they belong to no one driver (spec 112, post-merge review of PRs
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
@@ -38,7 +39,7 @@ from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Protocol, SupportsIndex, overload
+from typing import TYPE_CHECKING, Any, Literal, Protocol, SupportsIndex, cast, overload
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 if TYPE_CHECKING:
@@ -123,9 +124,12 @@ class StoreDatabaseError(StoreError):
     """A statement through a `Connection` failed (spec 112).
 
     The same class for the same failure on both stores, with the driver's
-    error as `__cause__`. On Postgres the message is the server's primary
-    message, never its `DETAIL`, which quotes the row; an error without one,
-    such as a lost connection, is named by its class.
+    error as `__cause__`. The message carries no row or bound value. On
+    Postgres it is the server's primary message, never its `DETAIL`, which
+    quotes the row, and a data exception's value is withheld from it; an
+    error without one, such as a lost connection, is named by its class. On
+    SQLite it is the library's text, a value it quotes withheld
+    (`withhold_values`).
     """
 
 
@@ -144,8 +148,19 @@ class StoreIntegrityError(StoreDatabaseError):
 
 
 class StoreBusyError(StoreDatabaseError):
-    """A writer waited past the connection's `busy_timeout_ms` for a lock
-    another connection held."""
+    """Another connection held a lock this one needed, and did not let it go
+    within this connection's `busy_timeout_ms`. With `0`, the connection
+    did not wait at all."""
+
+
+class StoreConflictError(StoreDatabaseError):
+    """Another connection's commit replaced what this transaction had read,
+    so the store refused its write at once rather than wait (spec 112).
+
+    SQLite's `SQLITE_BUSY_SNAPSHOT` and Postgres's serialization failure
+    (`40001`). No lock was waited for, and waiting would not help: only
+    running the whole transaction again can succeed.
+    """
 
 
 class Row(Protocol):
@@ -198,6 +213,22 @@ NOT_AN_OWNER_ID = "the owner is not an owner id"
 NOT_SQLITE = "this connection is not SQLite"
 OLDEST_SQLITE = (3, 35, 0)
 
+# The refusals of a transaction the seam cannot begin as asked (spec 112,
+# post-merge review of PR #288). Neither touches the transaction it found.
+WRITE_LOCK_NOT_HELD = (
+    "the write lock was asked for inside a SQLite transaction this connection began without it"
+)
+POSTGRES_NOT_IDLE = "the Postgres connection is not idle, so no transaction can begin on it"
+
+# The refusals of a statement whose placeholders the seam cannot read the
+# same way on both stores (spec 112, post-merge review of PR #288).
+NAMED_PLACEHOLDER = "a statement names no placeholder: write ? and pass a sequence"
+NUMBERED_PLACEHOLDER = "a statement numbers no placeholder: write ? alone"
+JSONB_KEY_OPERATOR = (
+    "a statement may not use ?| or ?& because ? is always a placeholder: "
+    "write jsonb_exists_any or jsonb_exists_all"
+)
+
 _SQLITE_KINDS: dict[int, IntegrityKind] = {
     sqlite3.SQLITE_CONSTRAINT_UNIQUE: "unique",
     sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY: "unique",
@@ -217,19 +248,58 @@ _POSTGRES_KINDS: dict[str, IntegrityKind] = {
     "P0001": "refused",
 }
 _POSTGRES_LOCK_NOT_AVAILABLE = "55P03"
+_POSTGRES_SERIALIZATION_FAILURE = "40001"
+# SQLSTATE class 22, data exception: the server quotes the value it could
+# not take, a bound one included.
+_POSTGRES_DATA_EXCEPTION = "22"
+# SQLITE_BUSY_SNAPSHOT: (5 | (2 << 8)) in sqlite3.h.
+_SQLITE_BUSY_SNAPSHOT: int = getattr(sqlite3, "SQLITE_BUSY_SNAPSHOT", 517)
+
+# The message of an error whose every word was a value.
+VALUE_WITHHELD = "the store refused a value"
+
+# A value as each store quotes one: Postgres in double quotes, or as the
+# hexadecimal bytes of a character it cannot read; SQLite with `%Q`, in
+# single quotes.
+_POSTGRES_QUOTED = re.compile(r'\s*"(?:[^"]|"")*"|\s*\b0x[0-9A-Fa-f]+\b')
+_SQLITE_QUOTED = re.compile(r"\s*'(?:[^']|'')*'")
+
+
+def withhold_values(message: str, quoted: re.Pattern[str]) -> str:
+    """A store's message without the values it quotes (spec 112).
+
+    What follows the first `: ` is dropped, since both stores end a
+    message with the value there (`invalid input syntax for type integer:
+    "..."`, `bad JSON path: '...'`), then every quoted span left
+    (`value "..." is out of range for type integer`). The wording that
+    names the type or the column stays.
+    """
+    head = message.split(": ", 1)[0]
+    return quoted.sub("", head).strip().rstrip(":").strip() or VALUE_WITHHELD
 
 
 def store_error_from_sqlite(error: sqlite3.Error) -> StoreDatabaseError:
-    """The store error for a sqlite3 error; its text is the driver's own."""
+    """The store error for a sqlite3 error.
+
+    Its text is the library's own, but for a value it quotes: an integrity
+    error's text names the schema, and is kept whole; any other quotes a
+    value only through a function such as `json_extract`'s `bad JSON path`,
+    and that value is withheld. An error the sqlite3 module raises itself
+    carries no code from the library and quotes no value.
+    """
     message = str(error)
-    # An error the sqlite3 module raises itself, such as a statement on a
-    # closed connection, carries no code from the library.
     code: int | None = getattr(error, "sqlite_errorcode", None)
     if code is None:
         return StoreDatabaseError(message)
     if isinstance(error, sqlite3.IntegrityError) and code in _SQLITE_KINDS:
         return StoreIntegrityError(_SQLITE_KINDS[code], message)
-    # The low byte is the primary code: SQLITE_BUSY and its extended forms.
+    if isinstance(error, sqlite3.IntegrityError):
+        return StoreDatabaseError(message)
+    message = withhold_values(message, _SQLITE_QUOTED) if "'" in message else message
+    if code == _SQLITE_BUSY_SNAPSHOT:
+        return StoreConflictError(message)
+    # The low byte is the primary code: SQLITE_BUSY and its other extended
+    # forms, each a lock not taken within the busy timeout.
     if code & 0xFF == sqlite3.SQLITE_BUSY:
         return StoreBusyError(message)
     return StoreDatabaseError(message)
@@ -239,45 +309,170 @@ def store_error_from_postgres(error: psycopg.Error) -> StoreDatabaseError:
     """The store error for a psycopg error.
 
     Its text is the server's primary message: the `DETAIL` quotes the row's
-    values, and `str()` of a psycopg error includes it. An error the server
-    did not send, such as a lost connection, is named by its class, since
-    the client's text is not the server's and nothing promises what it
-    quotes.
+    values, and `str()` of a psycopg error includes it. A data exception's
+    primary message quotes the value it refused, a bound one included, so
+    that value is withheld (`withhold_values`). Every other message quotes
+    names only: a table, a column, a constraint, a type. An error the
+    server did not send, such as a lost connection, is named by its class,
+    since the client's text is not the server's and nothing promises what
+    it quotes.
     """
     diag = error.diag
     message = diag.message_primary or type(error).__name__
     state = error.sqlstate or ""
+    if state.startswith(_POSTGRES_DATA_EXCEPTION):
+        message = withhold_values(message, _POSTGRES_QUOTED)
     if state == "23503" and diag.constraint_name == UNKNOWN_TRACK_CONSTRAINT:
         return StoreIntegrityError("refused", UNKNOWN_TRACK)
     if state in _POSTGRES_KINDS:
         return StoreIntegrityError(_POSTGRES_KINDS[state], message)
     if state == _POSTGRES_LOCK_NOT_AVAILABLE:
         return StoreBusyError(message)
+    if state == _POSTGRES_SERIALIZATION_FAILURE:
+        return StoreConflictError(message)
     return StoreDatabaseError(message)
 
 
-def to_psycopg(sql: str) -> str:
-    """Domain SQL, written with `?`, as psycopg takes it.
+# A character that may continue a Postgres identifier, so a `$` or an `E`
+# after one is part of a name, not the start of a quote.
+_IDENTIFIER_CHARACTER = re.compile(r"[A-Za-z0-9_$\x80-\U0010ffff]")
+_DOLLAR_TAG = re.compile(r"\$(?:[A-Za-z_\x80-\U0010ffff][A-Za-z0-9_\x80-\U0010ffff]*)?\$")
 
-    A `?` outside a single-quoted literal becomes `%s`. Every `%` is
-    doubled, inside a literal too: psycopg reads `%` wherever it stands
-    once parameters are passed, and undoubles `%%`, so the server receives
-    each literal as written. A `?` inside a literal is left alone. Only
-    single quotes are known (spec 112, Honest limitations).
+
+@dataclass(frozen=True)
+class Statement:
+    """A statement as the seam reads it: psycopg's text and its count of
+    `?` placeholders."""
+
+    psycopg: str
+    placeholders: int
+
+
+def _quoted_end(sql: str, start: int, quote: str, *, backslash: bool) -> int:
+    """The index after the quote that closes the one at `start`, or the end
+    of the text. A doubled quote is part of the quoted text, and with
+    `backslash`, an E'' string's, so is any escaped character."""
+    index = start + 1
+    while index < len(sql):
+        character = sql[index]
+        if backslash and character == "\\":
+            index += 2
+            continue
+        if character == quote:
+            if sql.startswith(quote * 2, index):
+                index += 2
+                continue
+            return index + 1
+        index += 1
+    return len(sql)
+
+
+def _block_comment_end(sql: str, start: int) -> int:
+    """The index after the `*/` that closes the `/*` at `start`. Postgres
+    nests block comments; SQLite does not, and a nested one is not
+    portable SQL."""
+    depth = 0
+    index = start
+    while index < len(sql):
+        if sql.startswith("/*", index):
+            depth += 1
+            index += 2
+        elif sql.startswith("*/", index):
+            depth -= 1
+            index += 2
+            if depth == 0:
+                return index
+        else:
+            index += 1
+    return len(sql)
+
+
+@functools.lru_cache(maxsize=1024)
+def read_statement(sql: str) -> Statement:
+    """Domain SQL, written with `?`, as psycopg takes it (spec 112).
+
+    A `?` outside a literal, a quoted identifier, a dollar-quoted string
+    and a comment becomes `%s`; inside one it is left alone. Literals are
+    `'...'` with `''` inside, and `E'...'`, whose backslash escapes a
+    quote too. Every `%` is doubled, wherever it stands: psycopg reads `%`
+    anywhere once parameters are passed, and undoubles `%%`, so the server
+    receives each literal and comment as written.
+
+    Raises StoreDatabaseError, before anything runs on either store, for a
+    shape the two stores would read differently: a named placeholder
+    (`:name`), a numbered one (`?1`), and the jsonb operators `?|` and
+    `?&`, which SQLite would read as a placeholder. The jsonb `?` operator
+    alone cannot be told from a placeholder, and is always read as one.
     """
     out: list[str] = []
-    quoted = False
-    for character in sql:
-        if character == "'":
-            quoted = not quoted
-            out.append(character)
-        elif character == "%":
-            out.append("%%")
-        elif character == "?" and not quoted:
+    count = 0
+    index = 0
+    while index < len(sql):
+        character = sql[index]
+        before = sql[index - 1] if index else ""
+        end = index + 1
+        if sql.startswith("--", index):
+            newline = sql.find("\n", index)
+            end = len(sql) if newline < 0 else newline + 1
+        elif sql.startswith("/*", index):
+            end = _block_comment_end(sql, index)
+        elif character == "'":
+            escaped = before in ("E", "e") and not _identifier_before(sql, index - 1)
+            end = _quoted_end(sql, index, "'", backslash=escaped)
+        elif character == '"':
+            end = _quoted_end(sql, index, '"', backslash=False)
+        elif character == "$" and not _identifier_before(sql, index):
+            tag = _DOLLAR_TAG.match(sql, index)
+            if tag is not None:
+                close = sql.find(tag.group(0), tag.end())
+                end = len(sql) if close < 0 else close + len(tag.group(0))
+        elif character == ":":
+            following = sql[index + 1 : index + 2]
+            if following == ":":
+                end = index + 2
+            elif following.isalpha() or following == "_":
+                raise StoreDatabaseError(NAMED_PLACEHOLDER)
+        elif character == "?":
+            following = sql[index + 1 : index + 2]
+            if following in ("|", "&"):
+                raise StoreDatabaseError(JSONB_KEY_OPERATOR)
+            if following.isdigit():
+                raise StoreDatabaseError(NUMBERED_PLACEHOLDER)
             out.append("%s")
-        else:
-            out.append(character)
-    return "".join(out)
+            count += 1
+            index = end
+            continue
+        out.append(sql[index:end].replace("%", "%%"))
+        index = end
+    return Statement("".join(out), count)
+
+
+def _identifier_before(sql: str, index: int) -> bool:
+    """Whether the character before `index` continues an identifier."""
+    return index > 0 and _IDENTIFIER_CHARACTER.match(sql, index - 1) is not None
+
+
+def to_psycopg(sql: str) -> str:
+    """Domain SQL, written with `?`, as psycopg takes it (`read_statement`)."""
+    return read_statement(sql).psycopg
+
+
+def _parameters_match(sql: str, params: object) -> Statement:
+    """The statement, once its parameters are known to fit it. Raises
+    StoreDatabaseError for a mapping, which names its placeholders, and for
+    a count of parameters other than the count of `?`. On Postgres the
+    driver's own refusal of either is a client error, which the seam names
+    only by its class (spec 112, post-merge review of PR #288)."""
+    if isinstance(params, Mapping):
+        raise StoreDatabaseError(NAMED_PLACEHOLDER)
+    statement = read_statement(sql)
+    supplied = len(cast(Sequence[object], params))
+    if supplied != statement.placeholders:
+        raise StoreDatabaseError(
+            f"the statement has {statement.placeholders} placeholders "
+            f"and {supplied} parameters were passed"
+        )
+    return statement
 
 
 class PostgresRow(tuple[Any, ...]):
@@ -319,6 +514,11 @@ class PostgresRow(tuple[Any, ...]):
 
     def keys(self) -> list[str]:
         return list(self._names)
+
+    def __getnewargs__(self) -> tuple[tuple[Any, ...], tuple[str, ...]]:
+        # `copy`, `deepcopy` and `pickle` build the copy through `__new__`,
+        # which needs the names as well as the values.
+        return (tuple(self), self._names)
 
 
 def _postgres_row_factory(cursor: Any) -> Callable[[Sequence[Any]], PostgresRow]:
@@ -392,15 +592,23 @@ class _Backend(Protocol):
 
     dialect: Dialect
 
-    def run(self, sql: str, params: Sequence[object] | Mapping[str, object]) -> Any: ...
+    def run(
+        self, sql: str, statement: Statement, params: Sequence[object], *, in_block: bool
+    ) -> Any: ...
 
     def control(self, sql: str) -> None: ...
 
     def driver_in_transaction(self) -> bool: ...
 
+    def refuse_to_begin(self, *, immediate: bool) -> None: ...
+
     def begin(self, *, immediate: bool) -> None: ...
 
-    def ensure_begun(self) -> None: ...
+    def open_savepoint(self, name: str, *, immediate: bool) -> None: ...
+
+    def forget_savepoint(self, name: str) -> bool: ...
+
+    def end(self) -> None: ...
 
     def commit(self) -> None: ...
 
@@ -415,14 +623,94 @@ class _Backend(Protocol):
     def close(self) -> None: ...
 
 
+def begins_a_transaction(sql: str) -> bool:
+    """Whether the sqlite3 module begins a transaction before `sql`.
+
+    Its own rule, in Python 3.12's `Modules/_sqlite/statement.c`: after
+    whitespace and comments, the statement starts with INSERT, UPDATE,
+    DELETE or REPLACE, in any case. Nothing else begins one, a write that
+    starts with WITH or a CREATE included, so those run in autocommit as
+    they did inside `with conn:` (spec 076). Pinned against the module by
+    `services/api/tests/test_seam_on_both_stores.py::test_the_seam_begins_where_the_sqlite3_module_would`.
+    """
+    index = 0
+    while index < len(sql):
+        if sql[index] in " \t\f\n\r":
+            index += 1
+        elif sql.startswith("--", index):
+            newline = sql.find("\n", index)
+            if newline < 0:
+                return False
+            index = newline + 1
+        elif sql.startswith("/*", index):
+            close = sql.find("*/", index + 2)
+            if close < 0:
+                return False
+            index = close + 2
+        else:
+            break
+    head = sql[index : index + 7].lower()
+    return head.startswith(("insert", "update", "delete", "replace"))
+
+
 class _SqliteBackend:
+    """SQLite under the seam's transactions (spec 112, post-merge review of
+    PR #288).
+
+    A block begins no transaction until it must. Its reads run in
+    autocommit, as they did inside `with conn:` (spec 076), so no block
+    holds a read snapshot that a later write would find stale. The
+    transaction begins with `BEGIN IMMEDIATE`, write lock and all, at the
+    first of two moments: a statement the sqlite3 module would begin a
+    transaction for (`begins_a_transaction`), or a block, at any depth,
+    that asks for `immediate`. The savepoints of the blocks open by then
+    are opened in that same moment, in order, so a savepoint never begins
+    the transaction and its release never commits.
+
+    So every transaction a block begins holds the write lock from its first
+    statement, and a block that asks for it inside one already has it.
+    """
+
     dialect: Dialect = "sqlite"
 
     def __init__(self, driver: sqlite3.Connection) -> None:
         self.driver = driver
+        # The savepoints of open blocks that have not begun yet, outermost
+        # first.
+        self.pending: list[str] = []
+        # Whether the open transaction holds the write lock: true from a
+        # BEGIN IMMEDIATE, and after a write outside any block that the
+        # module began a transaction for and that took the lock.
+        self.write_locked = False
 
-    def run(self, sql: str, params: Sequence[object] | Mapping[str, object]) -> Any:
-        return self.driver.execute(sql, params)
+    def run(
+        self, sql: str, statement: Statement, params: Sequence[object], *, in_block: bool
+    ) -> Any:
+        if self.driver.in_transaction or not begins_a_transaction(sql):
+            return self.driver.execute(sql, params)
+        if in_block:
+            self._begin_writing()
+            return self.driver.execute(sql, params)
+        # Outside any block the module begins the transaction, as it did
+        # before the seam. A write that ran, or that a constraint refused,
+        # took the write lock; one refused for want of the lock did not.
+        try:
+            cursor = self.driver.execute(sql, params)
+        except sqlite3.IntegrityError:
+            self.write_locked = self.driver.in_transaction
+            raise
+        except sqlite3.Error:
+            self.write_locked = False
+            raise
+        self.write_locked = self.driver.in_transaction
+        return cursor
+
+    def _begin_writing(self) -> None:
+        self.driver.execute("BEGIN IMMEDIATE")
+        self.write_locked = True
+        for name in self.pending:
+            self.driver.execute(f"SAVEPOINT {name}")
+        self.pending.clear()
 
     def control(self, sql: str) -> None:
         self.driver.execute(sql)
@@ -430,20 +718,48 @@ class _SqliteBackend:
     def driver_in_transaction(self) -> bool:
         return self.driver.in_transaction
 
-    def begin(self, *, immediate: bool) -> None:
-        # A deferred transaction begins where the sqlite3 module begins one,
-        # before the first write, exactly as `with conn:` did (spec 076). An
-        # explicit BEGIN here would hold a read snapshot from the block's
-        # first read, and a write after another connection's commit would
-        # then fail at once with SQLITE_BUSY_SNAPSHOT instead of waiting.
-        if immediate:
-            self.driver.execute("BEGIN IMMEDIATE")
+    def _refuse_without_the_lock(self, *, immediate: bool) -> None:
+        # A transaction this connection began without the write lock: a
+        # BEGIN its caller ran, or a write outside any block that was
+        # refused the lock. It may hold a snapshot another commit has made
+        # stale, and nothing can take the lock inside it safely.
+        if immediate and self.driver.in_transaction and not self.write_locked:
+            raise StoreDatabaseError(WRITE_LOCK_NOT_HELD)
 
-    def ensure_begun(self) -> None:
-        # A savepoint opened with no transaction begins one, and releasing it
-        # would commit: the outer block would lose its atomicity.
+    def refuse_to_begin(self, *, immediate: bool) -> None:
+        self._refuse_without_the_lock(immediate=immediate)
+
+    def begin(self, *, immediate: bool) -> None:
+        self.pending = []
+        # A transaction the module began for a write outside any block is
+        # taken as it is: the block commits it, as `with conn:` did.
+        if self.driver.in_transaction:
+            return
+        self.write_locked = False
+        if immediate:
+            self._begin_writing()
+
+    def open_savepoint(self, name: str, *, immediate: bool) -> None:
+        self._refuse_without_the_lock(immediate=immediate)
+        if self.driver.in_transaction:
+            self.driver.execute(f"SAVEPOINT {name}")
+            return
+        self.pending.append(name)
+        if immediate:
+            self._begin_writing()
+
+    def forget_savepoint(self, name: str) -> bool:
+        # A block that never began has nothing to release or undo: its reads
+        # ran in autocommit.
+        if name in self.pending:
+            self.pending.remove(name)
+            return True
+        return False
+
+    def end(self) -> None:
+        self.pending = []
         if not self.driver.in_transaction:
-            self.driver.execute("BEGIN")
+            self.write_locked = False
 
     def commit(self) -> None:
         self.driver.commit()
@@ -477,11 +793,13 @@ class _PostgresBackend:
         self.claims = claims
         self.busy_timeout_ms = busy_timeout_ms
 
-    def run(self, sql: str, params: Sequence[object] | Mapping[str, object]) -> Any:
+    def run(
+        self, sql: str, statement: Statement, params: Sequence[object], *, in_block: bool
+    ) -> Any:
         cursor = self.driver.cursor(row_factory=_postgres_row_factory)
         # Parameters are always passed, an empty sequence included, so
-        # psycopg always reads the doubled `%` of to_psycopg as one.
-        cursor.execute(to_psycopg(sql).encode(), params)
+        # psycopg always reads the doubled `%` of read_statement as one.
+        cursor.execute(statement.psycopg.encode(), params)
         return cursor
 
     def control(self, sql: str) -> None:
@@ -491,6 +809,16 @@ class _PostgresBackend:
         from psycopg.pq import TransactionStatus
 
         return self.driver.info.transaction_status != TransactionStatus.IDLE
+
+    def refuse_to_begin(self, *, immediate: bool) -> None:
+        # A driver already in a transaction, one its caller or a pooler
+        # began, or one a failed ROLLBACK left open, is never adopted: its
+        # statements would run as the login role, with no claims and no
+        # lock timeout, and the block would commit them. Nor is it rolled
+        # back, since its work is not the seam's (post-merge review of PR
+        # #288).
+        if self.driver_in_transaction():
+            raise StoreDatabaseError(POSTGRES_NOT_IDLE)
 
     def begin(self, *, immediate: bool) -> None:
         # `immediate` locks nothing here until spec 126 adds the per-job row
@@ -502,8 +830,15 @@ class _PostgresBackend:
         if self.claims is not None:
             assume_identity(self.driver, self.claims)
 
-    def ensure_begun(self) -> None:
-        # The outermost transaction always begins with BEGIN.
+    def open_savepoint(self, name: str, *, immediate: bool) -> None:
+        self.driver.execute(f"SAVEPOINT {name}".encode())
+
+    def forget_savepoint(self, name: str) -> bool:
+        # The outermost transaction always begins with BEGIN, so every
+        # savepoint is opened with its block.
+        return False
+
+    def end(self) -> None:
         return
 
     def commit(self) -> None:
@@ -575,8 +910,9 @@ class Connection:
     """A store connection the domain owns (spec 112).
 
     Over SQLite each statement is the sqlite3 connection's own, and an error
-    keeps its text; over Postgres the `?` placeholders are rewritten
-    (`to_psycopg`) and each row reads as `sqlite3.Row` does. On both, a
+    keeps its text, a value it quotes withheld; over Postgres the `?`
+    placeholders are rewritten (`read_statement`) and each row reads as
+    `sqlite3.Row` does. On both, a
     driver error reaches the caller as `StoreDatabaseError` or one of its
     subclasses, with the driver's error as `__cause__`.
     """
@@ -630,20 +966,27 @@ class Connection:
             _raise_translated(error, self._backend.translate)
             raise
 
-    def execute(self, sql: str, params: Sequence[object] | Mapping[str, object] = ()) -> Cursor:
+    def execute(self, sql: str, params: Sequence[object] = ()) -> Cursor:
         """Run one statement written with `?` placeholders.
+
+        Raises StoreDatabaseError, on both stores and before anything runs,
+        for a statement whose placeholders the two stores would read
+        differently (`read_statement`), for parameters passed as a mapping,
+        and for a count of parameters other than the count of `?`.
 
         On Postgres a statement outside `transaction()` runs in a
         transaction of its own, which begins as every transaction does, so
         none runs without the lock timeout and the owner's identity.
         """
+        statement = _parameters_match(sql, params)
         if self._backend.dialect == "postgres" and self._depth == 0:
             with self.transaction():
-                return self._run(sql, params)
-        return self._run(sql, params)
+                return self._run(sql, statement, params)
+        return self._run(sql, statement, params)
 
-    def _run(self, sql: str, params: Sequence[object] | Mapping[str, object]) -> Cursor:
-        cursor = self._guard(lambda: self._backend.run(sql, params))
+    def _run(self, sql: str, statement: Statement, params: Sequence[object]) -> Cursor:
+        in_block = self._depth > 0
+        cursor = self._guard(lambda: self._backend.run(sql, statement, params, in_block=in_block))
         return _StoreCursor(cursor, self._backend.translate)
 
     @contextmanager
@@ -651,47 +994,55 @@ class Connection:
         """Commit on success and roll back on any exception.
 
         The outermost block is the transaction. On SQLite it is what `with
-        conn:` was on the sqlite3 connection (spec 076), and `immediate`
-        begins it with `BEGIN IMMEDIATE`, the write lock taken before
-        anything is read (spec 079). On Postgres it begins with `SET LOCAL
-        lock_timeout`, then, on an owner's connection, the owner's identity.
+        conn:` was on the sqlite3 connection (spec 076): its reads run in
+        autocommit, and the transaction begins with `BEGIN IMMEDIATE` at
+        its first write. A block that asks for `immediate`, at any depth,
+        begins it then instead, so the write lock is held before anything
+        it reads (spec 079), until the outermost block ends. On Postgres it
+        begins with `SET LOCAL lock_timeout`, then, on an owner's
+        connection, the owner's identity.
 
         A block opened inside another is a SAVEPOINT, on both stores: its
         work is kept when it exits normally and undone when it raises, and
         the exception goes on. An outer block that catches it goes on
         without the inner work, and on Postgres stays usable. Nothing
         commits before the outermost block exits.
+
+        Raises StoreDatabaseError, and touches nothing, when the transaction
+        cannot begin as asked: on Postgres when the driver is already in a
+        transaction the seam did not begin (`POSTGRES_NOT_IDLE`); on SQLite
+        when `immediate` is asked inside a transaction begun without the
+        write lock (`WRITE_LOCK_NOT_HELD`).
         """
         if self._depth == 0:
             with self._outermost(immediate=immediate):
                 yield
             return
         name = f"harrier_savepoint_{self._depth}"
-        self._guard(self._backend.ensure_begun)
-        self._guard(lambda: self._backend.control(f"SAVEPOINT {name}"))
+        self._guard(lambda: self._backend.open_savepoint(name, immediate=immediate))
         self._depth += 1
         try:
             yield
         except BaseException:
             self._depth -= 1
-            if self._backend.driver_in_transaction():
+            if not self._backend.forget_savepoint(name) and self._backend.driver_in_transaction():
                 self._quietly(f"ROLLBACK TO SAVEPOINT {name}")
                 self._quietly(f"RELEASE SAVEPOINT {name}")
             raise
         self._depth -= 1
-        self._guard(lambda: self._backend.control(f"RELEASE SAVEPOINT {name}"))
+        if not self._backend.forget_savepoint(name):
+            self._guard(lambda: self._backend.control(f"RELEASE SAVEPOINT {name}"))
 
     @contextmanager
     def _outermost(self, *, immediate: bool) -> Generator[None, None, None]:
-        # A SQLite connection the sqlite3 module already put in a transaction,
-        # with a write made outside any block, is taken as it is: the block
-        # commits it, as `with conn:` did.
-        if not self._backend.driver_in_transaction():
-            try:
-                self._guard(lambda: self._backend.begin(immediate=immediate))
-            except BaseException:
-                self._quietly_roll_back()
-                raise
+        # Before the try: a transaction the seam may not begin on is left as
+        # it was found, never rolled back.
+        self._guard(lambda: self._backend.refuse_to_begin(immediate=immediate))
+        try:
+            self._guard(lambda: self._backend.begin(immediate=immediate))
+        except BaseException:
+            self._quietly_roll_back()
+            raise
         self._depth = 1
         try:
             yield
@@ -699,12 +1050,16 @@ class Connection:
             self._depth = 0
             self._quietly_roll_back()
             raise
+        finally:
+            self._backend.end()
         self._depth = 0
         try:
             self._guard(self._backend.commit)
         except BaseException:
             self._quietly_roll_back()
             raise
+        finally:
+            self._backend.end()
 
     def _quietly(self, sql: str) -> None:
         """A statement that ends a failed block. It runs while another error
