@@ -285,13 +285,20 @@ On Postgres the rival is the same owner on a second connection.
 | `test_eligibility.py` | 35 |
 
 Counted with `grep -cE '^(async )?def test_'`, so a parametrized test
-counts once. `test_runs.py` (14) moves its `job_runs` tests; its
-migration tests stay SQLite. A test that reads SQLite itself stays
-SQLite only: migration history read through raw `sqlite3.connect`
-(`test_tracks.py`), `PRAGMA table_info` (`test_userconfig.py:73`).
-A test that seeds rows with an explicit `id` changes to read the id the
-store returned, because the tenant role may not write `id`. The PR lists
-every SQLite-only test in these files with its reason.
+counts once. The `job_runs` tests move too: they are in
+`test_run_outcome.py`, not in `test_runs.py`, whose one test of
+`job_runs` is a migration test and stays SQLite (Amendment (2026-10-12):
+what B2 settled). A test that reads SQLite itself stays SQLite only:
+migration history read through raw `sqlite3.connect` (`test_tracks.py`),
+`PRAGMA table_info` (`test_userconfig.py:73`). So does a test that drives
+the CLI or the API, which refuse a Postgres URL until specs 127 and 104.
+Each such test carries `@pytest.mark.sqlite_only(reason)`, registered in
+`services/api/tests/conftest.py`, which gives a test that takes the
+fixture its SQLite parameter alone. A test that opens no store, such as
+one that reads source text or calls a pure function, runs once, as
+today. A test that seeds rows with an explicit `id` changes to read the
+id the store returned, because the tenant role may not write `id`. The
+PR lists every SQLite-only test in these files with its reason.
 
 ## Failure modes
 
@@ -376,9 +383,10 @@ B1 (behavior):
 
 B2 (tests):
 
-- [ ] Every test in the files under Behavior that is not listed as
-      SQLite only runs with both parameters, and the CI log of
-      `check-python` shows the Postgres parameters passing, not skipped.
+- [ ] Every test in the files under Behavior that opens a store and is
+      not marked `sqlite_only` runs with both parameters, and the CI log
+      of `check-python` shows the Postgres parameters passing, not
+      skipped.
 - [ ] No file under `services/api/src` changes in B2.
 - [ ] `just check` passes.
 
@@ -577,3 +585,46 @@ shared one first (Behavior, Text ordering;
 - The race test on SQLite proves one row, not the retry: SQLite cannot
   interleave two writers there.
 
+## Amendment (2026-10-12): what B2 settled
+
+Moving the test files showed two places where the B2 list named a file
+for something it does not hold, and two gaps. Each is corrected above, in
+place, and recorded here.
+
+### Where the list was wrong
+
+- **The `job_runs` tests are in `test_run_outcome.py`.** Spec 112's table
+  named `test_runs.py`'s `job_runs` tests, and this spec copied it.
+  `test_runs.py` tests the API's run manager and its journal, which open
+  no store; its one test of `job_runs`,
+  `services/api/tests/test_runs.py::test_a_database_already_at_the_previous_version_gains_the_job_runs_table`,
+  reads migration history through raw `sqlite3.connect` and stays SQLite.
+  The tests that write and read `job_runs` through the domain
+  (`record_success`, `last_success`, the digest's schedule lines) are in
+  `services/api/tests/test_run_outcome.py`, and they move.
+- **`test_tracker_queries_name_their_track.py` has nothing to move.** Its
+  three tests read the source text of `harrier`; none opens a store.
+
+### The gaps
+
+- **The CLI and the API stay SQLite.** The list gave one reason for a
+  test to stay on SQLite. A test that drives `harrier_cli.main.main` or
+  the API's `TestClient` stays too: both open the local store, and refuse
+  a Postgres URL until specs 127 and 104 (Honest limitations).
+- **The mark.** A SQLite-only test is marked
+  `@pytest.mark.sqlite_only(reason)`. `services/api/tests/conftest.py`
+  registers the mark, refuses one with no reason at collection, and gives
+  a marked test that takes the dual-store fixture its SQLite parameter
+  alone, so the CLI and the API meet the same file the test wrote
+  (`services/api/tests/test_domain_sql_on_both_stores.py::test_a_sqlite_only_test_gets_the_sqlite_parameter_alone`).
+
+### Honest limitations (amendment of 2026-10-12, B2)
+
+- A test split in two keeps its domain half on both stores and its CLI
+  half on SQLite:
+  `services/api/tests/test_eligibility.py::test_the_academic_kind_is_not_assessed`
+  and
+  `services/api/tests/test_eligibility.py::test_the_cli_refuses_eligibility_on_the_academic_kind`.
+- A SQLite-only test that mixes domain calls with the CLI or the API is
+  proved on Postgres only through the tests of the same domain calls
+  that run on both.
