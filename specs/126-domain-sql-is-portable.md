@@ -555,7 +555,10 @@ shared one first (Behavior, Text ordering;
 - **A race on SQLite cannot reach the retry.** The first writer's update
   takes the write lock, so the second writer waits and then updates. The
   race test asserts one row, holding the later writer's value, on both
-  stores; only Postgres reaches the retry, and reverting the retry or the
+  stores, and each writer's updates and inserts in order: on Postgres the
+  refused insert and the retried update; on SQLite that the rival met the
+  held write lock and its update changed the writer's row, with no insert.
+  Only Postgres reaches the retry, and reverting the retry or the
   savepoint fails its Postgres parameters only.
 - **`lastrowid` in tests.** Two test helpers read it
   (`services/api/tests/test_job_events.py` and

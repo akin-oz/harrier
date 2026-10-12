@@ -25,7 +25,13 @@ from pg_support import open_owner_store
 
 from harrier import cutover
 from harrier.apply.profile import load_candidate_document
-from harrier.connection import Connection, Cursor, StoreLocalOnlyError
+from harrier.connection import (
+    Connection,
+    Cursor,
+    StoreBusyError,
+    StoreIntegrityError,
+    StoreLocalOnlyError,
+)
 from harrier.profile import store as profile_store
 from harrier.profile.store import get_document, list_documents, owned_documents, put_document
 from harrier.resume import content as resume_content
@@ -317,55 +323,142 @@ UPSERTS = [
 ]
 
 
+@dataclass(frozen=True)
+class _Step:
+    """One statement of an upsert on its table: an update and the rows it
+    changed, or an insert and whether the store refused it."""
+
+    who: str
+    kind: str
+    changed: int | None = None
+    refused: bool = False
+
+
+def _trace(
+    conn: Connection,
+    who: str,
+    table: str,
+    steps: list[_Step],
+    monkeypatch: pytest.MonkeyPatch,
+    before: Callable[[str], None] = lambda kind: None,
+) -> None:
+    """Record each update and insert `conn` runs on `table`, calling
+    `before` with its kind first."""
+    real = conn.execute
+
+    def execute(sql: str, params: Sequence[object] = ()) -> Cursor:
+        head = sql.lstrip()
+        if head.startswith(f"UPDATE {table} "):
+            before("update")
+            cursor = real(sql, params)
+            steps.append(_Step(who, "update", changed=cursor.rowcount))
+            return cursor
+        if head.startswith(f"INSERT INTO {table} "):
+            before("insert")
+            try:
+                cursor = real(sql, params)
+            except StoreIntegrityError:
+                steps.append(_Step(who, "insert", refused=True))
+                raise
+            steps.append(_Step(who, "insert"))
+            return cursor
+        return real(sql, params)
+
+    monkeypatch.setattr(conn, "execute", execute)
+
+
 @pytest.mark.parametrize("upsert", UPSERTS, ids=[upsert.name for upsert in UPSERTS])
 def test_an_upsert_racing_another_leaves_one_row(
     dual_store: DualStore, monkeypatch: pytest.MonkeyPatch, upsert: Upsert
 ) -> None:
-    """Two writers of one key at once, the second starting after the first's
-    update found no row and before its insert.
+    """Two writers of one key at once: the rival starts after the writer's
+    update found no row and before the writer's insert. One row on both
+    stores, holding the later writer's value, and each store's path is
+    asserted step by step.
 
-    Postgres: nothing blocks the rival, which inserts and commits; the
-    writer's insert meets the unique key, rolls back to its savepoint and
-    updates. The writer wrote last. SQLite: the writer's update took the
-    write lock, so the rival waits, then updates the writer's row. The rival
-    wrote last. One row on both, holding the later writer's value.
+    Postgres: the writer holds no lock on a key it has not inserted, so the
+    rival updates nothing, inserts and commits. The writer's insert is then
+    refused by the unique key, rolls back to its savepoint, and the retried
+    update changes the rival's row. The writer wrote last. This is the
+    store where the retry and the savepoint are reached.
+
+    SQLite cannot reach the retry: the writer's update began BEGIN
+    IMMEDIATE, so the rival is shown to meet the held write lock, waits,
+    and its update then changes the writer's committed row, with no insert.
+    The rival wrote last.
     """
     writer = dual_store.open()
     mine, theirs = upsert.values
-    started = threading.Event()
+    steps: list[_Step] = []
+    updating = threading.Event()
+    lock_held: list[bool] = []
     failures: list[BaseException] = []
 
     def rival_writes() -> None:
-        # Opened on its own thread, as SQLite requires, and closed there.
-        started.set()
+        # Opened on this thread, as SQLite requires, and closed here.
         rival = dual_store.open(keep=False)
         try:
+            if dual_store.dialect == "sqlite":
+                # The writer holds the write lock now: a connection that will
+                # not wait cannot take it.
+                probe = dual_store.open(keep=False)
+                probe.busy_timeout_ms = 0
+                try:
+                    with probe.transaction(immediate=True):
+                        lock_held.append(False)
+                except StoreBusyError:
+                    lock_held.append(True)
+                finally:
+                    probe.close()
+
+            def first_update(kind: str) -> None:
+                if kind == "update":
+                    updating.set()
+
+            _trace(rival, "rival", upsert.table, steps, monkeypatch, first_update)
             upsert.write(rival, theirs)
         except BaseException as error:
             failures.append(error)
         finally:
+            updating.set()
             rival.close()
 
-    rival = threading.Thread(target=rival_writes)
-    real = writer.execute
+    thread = threading.Thread(target=rival_writes)
 
-    def execute(sql: str, params: Sequence[object] = ()) -> Cursor:
-        if not started.is_set() and sql.lstrip().startswith(f"INSERT INTO {upsert.table}"):
-            rival.start()
-            started.wait()
-            if dual_store.dialect == "postgres":
-                rival.join(timeout=10)
-            else:
-                # Long enough to reach the write lock the writer holds.
-                time.sleep(0.2)
-        return real(sql, params)
+    def race_before_the_insert(kind: str) -> None:
+        if kind != "insert" or thread.ident is not None:
+            return
+        thread.start()
+        updating.wait(timeout=10)
+        if dual_store.dialect == "postgres":
+            thread.join(timeout=10)
+        else:
+            # The rival's update is issued and waits on the lock this
+            # connection holds until its commit.
+            time.sleep(0.2)
 
-    monkeypatch.setattr(writer, "execute", execute)
+    _trace(writer, "writer", upsert.table, steps, monkeypatch, race_before_the_insert)
     upsert.write(writer, mine)
-    rival.join(timeout=10)
-    assert started.is_set() and not rival.is_alive()
+    thread.join(timeout=10)
+    assert not thread.is_alive()
     assert failures == []
-    later = mine if dual_store.dialect == "postgres" else theirs
+    if dual_store.dialect == "postgres":
+        assert steps == [
+            _Step("writer", "update", changed=0),
+            _Step("rival", "update", changed=0),
+            _Step("rival", "insert"),
+            _Step("writer", "insert", refused=True),
+            _Step("writer", "update", changed=1),
+        ]
+        later = mine
+    else:
+        assert lock_held == [True]
+        assert steps == [
+            _Step("writer", "update", changed=0),
+            _Step("writer", "insert"),
+            _Step("rival", "update", changed=1),
+        ]
+        later = theirs
     assert upsert.read(dual_store.open()) == [later]
 
 
