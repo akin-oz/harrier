@@ -23,6 +23,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 import uuid
@@ -48,12 +49,14 @@ from harrier_api.app import create_app, create_hosted_app
 from harrier_api.deps import get_conn
 from harrier_api.hostedauth import (
     ALLOWED_HOSTS_REFUSAL,
+    CACHE_SECONDS,
     CORS_ORIGINS_REFUSAL,
     DEMO_REFUSAL,
     GROUP_REFUSAL,
     SUPABASE_URL_REFUSAL,
     HostedAuthMiddleware,
     HostedConfig,
+    SigningKeys,
     hosted_config,
     needs_token,
 )
@@ -647,6 +650,95 @@ def test_a_failed_first_fetch_still_starts(caplog: pytest.LogCaptureFixture) -> 
     hosted.server.failing = False
     hosted.clock.now += 31
     assert hosted.client.get("/runs", headers=bearer(token)).is_success
+
+
+class GatedFetch:
+    """The key endpoint, made slow on demand: once gated, a fetch waits until
+    the test releases it, and says when it has started waiting."""
+
+    def __init__(self, server: KeyServer) -> None:
+        self.server = server
+        self.gated = False
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def __call__(self) -> object:
+        if self.gated:
+            self.entered.set()
+            self.release.wait(timeout=10)
+        return self.server()
+
+
+class Lookup(threading.Thread):
+    """One `key_for` call on its own thread, keeping what it returned."""
+
+    def __init__(self, keys: SigningKeys, kid: str) -> None:
+        super().__init__(daemon=True)
+        self.keys = keys
+        self.kid = kid
+        self.outcome: object = None
+
+    def run(self) -> None:
+        try:
+            self.outcome = self.keys.key_for(self.kid)
+        except Exception as error:
+            self.outcome = error
+
+
+def slow_refresh_setup() -> tuple[SigningKeys, GatedFetch, Clock]:
+    server = KeyServer()
+    server.publish(KID, new_ec_key())
+    fetch = GatedFetch(server)
+    clock = Clock()
+    keys = SigningKeys(fetch, clock)
+    keys.prime()
+    fetch.gated = True
+    clock.now += CACHE_SECONDS
+    return keys, fetch, clock
+
+
+def test_a_slow_refresh_does_not_hold_a_key_the_cache_holds() -> None:
+    # The fetch runs outside the lock: while one thread waits on a slow key
+    # endpoint, a token whose key the stale cache still holds is answered at
+    # once, and no second fetch starts (review of PR #297).
+    keys, fetch, _ = slow_refresh_setup()
+    refresher = Lookup(keys, KID)
+    refresher.start()
+    assert fetch.entered.wait(timeout=5), "the stale cache did not start a refresh"
+
+    reader = Lookup(keys, KID)
+    reader.start()
+    reader.join(timeout=2)
+    held = not reader.is_alive()
+    fetch.release.set()
+    refresher.join(timeout=5)
+    reader.join(timeout=5)
+
+    assert held, "a key the cache holds waited for the slow fetch"
+    assert getattr(reader.outcome, "algorithm_name", None) == "ES256", reader.outcome
+    assert getattr(refresher.outcome, "algorithm_name", None) == "ES256", refresher.outcome
+    assert fetch.server.calls == 2, "more than one thread fetched"
+
+
+def test_an_unknown_key_waits_for_the_refresh_in_flight() -> None:
+    # A token whose key the cache lacks may be signed by the key the fetch in
+    # flight is bringing; answering it 401 at once would sign the person out.
+    keys, fetch, _ = slow_refresh_setup()
+    rotated = new_ec_key()
+    fetch.server.publish("next-key", rotated)
+    refresher = Lookup(keys, KID)
+    refresher.start()
+    assert fetch.entered.wait(timeout=5)
+
+    newcomer = Lookup(keys, "next-key")
+    newcomer.start()
+    time.sleep(0.3)
+    fetch.release.set()
+    newcomer.join(timeout=5)
+    refresher.join(timeout=5)
+
+    assert getattr(newcomer.outcome, "algorithm_name", None) == "ES256", newcomer.outcome
+    assert fetch.server.calls == 2, "the waiting thread fetched again"
 
 
 def test_a_malformed_key_set_keeps_the_last_good_one(hosted: Hosted) -> None:

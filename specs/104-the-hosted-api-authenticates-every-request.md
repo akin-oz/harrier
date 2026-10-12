@@ -1379,6 +1379,18 @@ where it was wrong. Each is stated here so the code and the spec agree.
   of another algorithm verifies nothing, because the header `alg` must be
   ES256 or RS256 and PyJWT refuses an `alg` that differs from the key's
   (`services/api/tests/test_hosted_auth.py::test_an_entry_no_key_reader_can_use_is_skipped`).
+- **A slow fetch holds no request that does not need it.** CodeRabbit's
+  review of PR #297 found the first build fetching under the cache's lock,
+  so one slow fetch held every concurrent token check for up to the
+  fetch's timeout. The fetch now runs outside the lock, by one thread at a
+  time. A token whose key the cache holds is answered from the cache while
+  it runs, within the hour the last good set is trusted
+  (`services/api/tests/test_hosted_auth.py::test_a_slow_refresh_does_not_hold_a_key_the_cache_holds`).
+  A token whose key the cache lacks waits for the fetch in flight, which
+  may be bringing that key, instead of being answered 401 and signing the
+  person out
+  (`services/api/tests/test_hosted_auth.py::test_an_unknown_key_waits_for_the_refresh_in_flight`).
+  The cooldowns and the 503 for unavailable keys are unchanged.
 - **A key cannot be used as another.** PyJWT verifies with the key's own
   algorithm and refuses a header `alg` that differs from it (checked in
   2.15.1, `PyJWS._verify_signature`), so the `hosted` group requires at
