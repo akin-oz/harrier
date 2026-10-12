@@ -33,7 +33,8 @@ The dual-store fixture (`store` in `tests/conftest.py`, spec 126) runs a
 domain test on both stores. Its Postgres side migrates one template per
 session (`migrated_template`), copies it per test (`database_copy`), and
 opens the copy as one synthetic owner, failing the test unless the
-connection runs as `harrier_tenant` (`open_owner_store`).
+connection runs as `harrier_tenant` (`open_owner_store`). `run_as_migrator`
+runs what the tenant role may not on the copy.
 
 Staging mode (spec 115) points the isolation tests at a real Supabase
 project instead (`tests/test_supabase_project.py`): `supabase_urls` names
@@ -491,6 +492,27 @@ def require_tenant(conn: Connection) -> None:
     role = str(row[0]) if row is not None else None
     if role != TENANT_ROLE:
         pytest.fail(f"the store fixture runs as {role}, not {TENANT_ROLE}", pytrace=False)
+
+
+def run_as_migrator(url: str, *statements: str) -> None:
+    """Run `statements` on the copy `url` names as the migrating role, which
+    owns the tables, holds every privilege on them and bypasses the row
+    policy: for what a test needs that the tenant role may not do, such as
+    creating a trigger, or reaching a trigger behind a privilege the tenant
+    lacks. A refusal is raised as the store error the seam maps it to."""
+    from contextlib import closing
+
+    import psycopg
+
+    from harrier.connection import store_error_from_postgres
+    from harrier.pgstore import postgres_connect
+
+    with closing(postgres_connect(url)) as admin:
+        for statement in statements:
+            try:
+                admin.execute(statement.encode())
+            except psycopg.Error as error:
+                raise store_error_from_postgres(error) from error
 
 
 def open_owner_store(url: str, owner: str | None) -> Connection:

@@ -3,24 +3,26 @@
 Every posting here is synthetic, with an invented company. The rule tests
 call the assessor directly; the rest drive the write path, the CLI and the
 API on a temporary database.
+
+The write path's tests run on both stores through the dual-store fixture
+(spec 126). A test that drives the CLI or the API, which refuse a Postgres
+URL until specs 127 and 104, is marked `sqlite_only`.
 """
 
 from __future__ import annotations
 
 import logging
-import sqlite3
-from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from conftest import auth
+from conftest import DualStore, auth
 from fastapi.testclient import TestClient
+from pg_support import run_as_migrator
 from test_screening import candidate_cfg
 
 import harrier.discovery as discovery_module
-from harrier.connection import Connection, StoreIntegrityError
-from harrier.db import connect
+from harrier.connection import Connection, StoreDatabaseError, StoreIntegrityError
 from harrier.discovery import DiscoveryOptions, run_discovery
 from harrier.scoring.features import FEATURE_ORDER
 from harrier.screening import eligibility, rules
@@ -54,7 +56,7 @@ from harrier.tracker.store import (
     list_events,
     record_eligibility,
 )
-from harrier.tracks import Scope, default_scope, resolve_scope
+from harrier.tracks import Scope, add_track, default_scope, resolve_scope
 from harrier_api import app as app_module
 from harrier_api.app import create_app
 from harrier_cli.main import main
@@ -98,12 +100,10 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture
-def conn(env: Path) -> Iterator[Connection]:
-    connection = connect()
-    try:
-        yield connection
-    finally:
-        connection.close()
+def conn(env: Path, store: Connection) -> Connection:
+    """The store, on both stores (spec 126). On SQLite it is the default
+    path under this test's HARRIER_DATA_DIR, which the CLI and the API open."""
+    return store
 
 
 @pytest.fixture
@@ -367,7 +367,7 @@ def _greenhouse_feeds(conn: object = None, *, scope: str = "default") -> dict[st
 
 
 def test_discovery_assesses_in_the_row_transaction(
-    env: Path, monkeypatch: pytest.MonkeyPatch
+    conn: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     found = make_normalized_job(
         source="greenhouse",
@@ -388,37 +388,32 @@ def test_discovery_assesses_in_the_row_transaction(
 
     monkeypatch.setattr(discovery_module, "fetch_greenhouse_jobs", fetch)
     monkeypatch.setattr(discovery_module, "send_telegram_message", send)
-    connection = connect()
-    try:
-        scope = default_scope(connection)
-        run_discovery(connection, scope, DiscoveryOptions(only_sources=frozenset({"greenhouse"})))
-        (job,) = (row for row in connection.execute("SELECT id FROM jobs").fetchall())
-        history = eligibility_history(connection, scope, int(job[0]))
-        assert [(entry.origin, entry.verdict) for entry in history] == [("rule", CONFIRMED)]
+    scope = default_scope(conn)
+    run_discovery(conn, scope, DiscoveryOptions(only_sources=frozenset({"greenhouse"})))
+    (job,) = (row for row in conn.execute("SELECT id FROM jobs").fetchall())
+    history = eligibility_history(conn, scope, int(job[0]))
+    assert [(entry.origin, entry.verdict) for entry in history] == [("rule", CONFIRMED)]
 
-        # A failure writing the assessment leaves no row either.
-        def fail(*args: object) -> None:
-            raise sqlite3.OperationalError("disk full")
+    # A failure writing the assessment leaves no row either. The store error
+    # a failed write raises on either store (spec 112).
+    def fail(*args: object) -> None:
+        raise StoreDatabaseError("disk full")
 
-        monkeypatch.setattr("harrier.tracker.store._insert_assessment", fail)
-        with pytest.raises(sqlite3.OperationalError):
-            add_job(
-                connection,
-                {"company": "Acme Widgets", "title": "Second", "url": "https://x.example/2"},
-                scope=scope,
-                eligibility=assess_eligibility(posting(url="https://x.example/2")),
-            )
-        assert connection.execute("SELECT count(*) FROM jobs").fetchone()[0] == 1
-    finally:
-        connection.close()
-
-
-def test_the_academic_kind_is_not_assessed(conn: Connection) -> None:
-    with conn.transaction():
-        conn.execute(
-            "INSERT INTO tracks (id, slug, kind, label) VALUES (2, ?, 'academic', 'PhD search')",
-            (ACADEMIC,),
+    monkeypatch.setattr("harrier.tracker.store._insert_assessment", fail)
+    with pytest.raises(StoreDatabaseError, match="disk full"):
+        add_job(
+            conn,
+            {"company": "Acme Widgets", "title": "Second", "url": "https://x.example/2"},
+            scope=scope,
+            eligibility=assess_eligibility(posting(url="https://x.example/2")),
         )
+    assert conn.execute("SELECT count(*) FROM jobs").fetchone()[0] == 1
+
+
+def _an_academic_row(conn: Connection) -> tuple[Scope, dict[str, str]]:
+    """A row added by hand to an academic track. The store gives the track
+    its id: the tenant role may not write one (spec 105; spec 126)."""
+    add_track(conn, ACADEMIC, "academic", "PhD search")
     academic = resolve_scope(conn, ACADEMIC)
     result, row = add_manually(
         conn,
@@ -429,9 +424,21 @@ def test_the_academic_kind_is_not_assessed(conn: Connection) -> None:
         url="https://uni.example.edu/phd/1",
     )
     assert result.status == "added" and row is not None
+    return academic, row
+
+
+def test_the_academic_kind_is_not_assessed(conn: Connection) -> None:
+    academic, row = _an_academic_row(conn)
     assert conn.execute("SELECT count(*) FROM job_eligibility").fetchone()[0] == 0
     with pytest.raises(Exception, match="not available on track"):
         set_eligibility(conn, academic, str(row["id"]), verdict=UNKNOWN)
+
+
+@pytest.mark.sqlite_only("drives the CLI, which refuses a Postgres URL until spec 127")
+def test_the_cli_refuses_eligibility_on_the_academic_kind(conn: Connection) -> None:
+    """The command half of `test_the_academic_kind_is_not_assessed`, which
+    runs on both stores without it (spec 126)."""
+    _, row = _an_academic_row(conn)
     assert main(["--track", ACADEMIC, "eligibility", "show", str(row["id"])]) == 2
 
 
@@ -449,6 +456,9 @@ def test_a_manual_add_is_assessed(conn: Connection, scope: Scope) -> None:
     assert view.current is not None and view.current.verdict == CONFIRMED
 
 
+@pytest.mark.sqlite_only(
+    "drives the CLI and the API, which refuse a Postgres URL until specs 127 and 104"
+)
 def test_a_firm_verdict_needs_evidence(conn: Connection, scope: Scope, client: TestClient) -> None:
     job_id = new_row(conn, scope)
     for verdict in (CONFIRMED, EXCLUDED):
@@ -545,15 +555,27 @@ def test_eligibility_is_not_a_status(conn: Connection, scope: Scope) -> None:
     assert list_events(conn, scope, job_id) == events
 
 
-def test_eligibility_history_is_append_only(conn: Connection, scope: Scope) -> None:
+def test_eligibility_history_is_append_only(
+    conn: Connection, scope: Scope, dual_store: DualStore
+) -> None:
     job_id = new_row(conn, scope)
     _candidate_confirms(conn, scope, job_id)
     for statement in (
         "UPDATE job_eligibility SET verdict = 'excluded'",
         "DELETE FROM job_eligibility",
     ):
-        with pytest.raises(StoreIntegrityError, match="job_eligibility is append-only"):
-            conn.execute(statement)
+        if dual_store.dialect == "postgres":
+            # The tenant role holds no UPDATE or DELETE on job_eligibility,
+            # so the owner is refused at the privilege. The append-only
+            # triggers refuse a role that holds it: the migrating role, which
+            # owns the table.
+            with pytest.raises(StoreDatabaseError, match="permission denied"):
+                conn.execute(statement)
+            with pytest.raises(StoreIntegrityError, match="job_eligibility is append-only"):
+                run_as_migrator(dual_store.url, statement)
+        else:
+            with pytest.raises(StoreIntegrityError, match="job_eligibility is append-only"):
+                conn.execute(statement)
 
 
 def test_the_write_path_refuses_what_it_cannot_store(conn: Connection, scope: Scope) -> None:
@@ -589,6 +611,7 @@ def test_the_write_path_refuses_what_it_cannot_store(conn: Connection, scope: Sc
 # --- reassess and backfill -----------------------------------------------------------
 
 
+@pytest.mark.sqlite_only("drives the API, which refuses a Postgres URL until spec 104")
 def test_migration_backfills_nothing(conn: Connection, scope: Scope, client: TestClient) -> None:
     new_row(conn, scope, location="Türkiye (Remote)", description="React.")
     assert conn.execute("SELECT count(*) FROM job_eligibility").fetchone()[0] == 0
@@ -708,6 +731,7 @@ def test_reassess_reads_version_and_description(
 # --- surfaces ------------------------------------------------------------------------
 
 
+@pytest.mark.sqlite_only("drives the API, which refuses a Postgres URL until spec 104")
 def test_the_api_reads_what_the_store_holds(
     conn: Connection, scope: Scope, client: TestClient
 ) -> None:
@@ -744,6 +768,9 @@ def test_the_api_reads_what_the_store_holds(
     assert client.get("/tracker/999999/eligibility").status_code == 404
 
 
+@pytest.mark.sqlite_only(
+    "drives the CLI and the API, which refuse a Postgres URL until specs 127 and 104"
+)
 def test_the_cli_and_the_api_call_the_same_eligibility_functions(
     conn: Connection, scope: Scope, client: TestClient
 ) -> None:

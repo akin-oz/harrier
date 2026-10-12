@@ -3,6 +3,9 @@
 The property under test is the one whose absence caused the outage this
 project was built in reaction to: a scheduled job that stops working must
 say so. Three mechanisms, tested separately because each fails alone.
+
+The tests of the last success, which `job_runs` holds, run on both stores
+through the dual-store fixture (spec 126).
 """
 
 from __future__ import annotations
@@ -11,9 +14,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from conftest import DualStore
 
 from harrier.connection import Connection
-from harrier.db import connect
 from harrier.notify import build_telegram_message
 from harrier.runoutcome import (
     DIGEST_JOB,
@@ -32,10 +35,10 @@ from harrier.tracks import default_scope
 
 
 @pytest.fixture
-def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Connection:
-    monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
+def db(store: Connection, monkeypatch: pytest.MonkeyPatch) -> Connection:
+    """The store, on both stores (spec 126)."""
     monkeypatch.delenv("HARRIER_DEMO", raising=False)
-    return connect()
+    return store
 
 
 def ok_source(name: str) -> dict[str, object]:
@@ -169,11 +172,12 @@ def test_a_success_is_recorded_and_read_back(db: Connection) -> None:
     assert last_success(db, DISCOVERY_JOB) == "2026-08-01T09:00:00Z"
 
 
-def test_a_recorded_success_is_committed(db: Connection) -> None:
+def test_a_recorded_success_is_committed(db: Connection, dual_store: DualStore) -> None:
     """Seen from another connection: the write is committed, not left in
-    an open transaction (spec 112, `commit()` left `Connection`)."""
+    an open transaction (spec 112, `commit()` left `Connection`). On
+    Postgres the other connection is the same owner's."""
     record_success(db, DISCOVERY_JOB, at="2026-08-01T09:00:00Z")
-    other = connect()
+    other = dual_store.open(keep=False)
     try:
         assert last_success(other, DISCOVERY_JOB) == "2026-08-01T09:00:00Z"
     finally:

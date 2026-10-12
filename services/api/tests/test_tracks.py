@@ -1,6 +1,9 @@
 """Every tracker row belongs to a named search track (spec 091, ADR-012).
 
 Every database is built under `tmp_path` with synthetic rows (spec 060).
+The tests that do not read SQLite itself or drive the CLI run on both
+stores through the dual-store fixture (spec 126): SQLite, and Postgres as
+one synthetic owner under the row policy.
 """
 
 from __future__ import annotations
@@ -10,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from harrier.connection import Connection, StoreIntegrityError
 from harrier.db import connect
 from harrier.tracker import TrackerError, add_job, get_job, list_jobs
 from harrier.tracker.schema import MIGRATIONS
@@ -20,6 +24,7 @@ from harrier.tracks import (
     Scope,
     Track,
     UnknownTrackError,
+    add_track,
     default_scope,
     list_tracks,
     resolve_scope,
@@ -116,6 +121,7 @@ def events(path: Path) -> list[tuple[object, ...]]:
 # --- migration 8 --------------------------------------------------------------
 
 
+@pytest.mark.sqlite_only("reads SQLite itself: migration history through raw sqlite3.connect")
 def test_migration_8_keeps_every_row_in_the_default_track(seven: Path) -> None:
     before = events(seven)
     conn = connect(seven)
@@ -135,6 +141,7 @@ def test_migration_8_keeps_every_row_in_the_default_track(seven: Path) -> None:
     assert events(seven) == before
 
 
+@pytest.mark.sqlite_only("reads SQLite itself: migration history through raw sqlite3.connect")
 def test_migration_8_never_touches_job_events(seven: Path) -> None:
     before = events(seven)
     connect(seven).close()
@@ -151,6 +158,7 @@ def test_migration_8_never_touches_job_events(seven: Path) -> None:
         raw.close()
 
 
+@pytest.mark.sqlite_only("reads SQLite itself: the schema's triggers through raw sqlite3.connect")
 def test_an_unknown_track_is_refused_by_the_database(tmp_path: Path) -> None:
     path = tmp_path / "tracker.db"
     connect(path).close()
@@ -179,57 +187,43 @@ def test_an_unknown_track_is_refused_by_the_database(tmp_path: Path) -> None:
         raw.close()
 
 
-def test_the_kind_check_derives_from_the_code_list(tmp_path: Path) -> None:
-    path = tmp_path / "tracker.db"
-    connect(path).close()
-    raw = sqlite3.connect(path)
-    try:
-        for kind in TRACK_KINDS:
-            raw.execute(
+def test_the_kind_check_derives_from_the_code_list(store: Connection) -> None:
+    for kind in TRACK_KINDS:
+        with store.transaction():
+            store.execute(
                 "INSERT INTO tracks (slug, kind, label) VALUES (?, ?, ?)",
                 (f"probe-{kind}", kind, "probe"),
             )
-        with pytest.raises(sqlite3.IntegrityError):
-            raw.execute(
-                "INSERT INTO tracks (slug, kind, label) VALUES (?, ?, ?)",
-                ("probe-other", "freelance", "probe"),
-            )
-    finally:
-        raw.close()
+    with pytest.raises(StoreIntegrityError), store.transaction():
+        store.execute(
+            "INSERT INTO tracks (slug, kind, label) VALUES (?, ?, ?)",
+            ("probe-other", "freelance", "probe"),
+        )
 
 
 # --- the write path -------------------------------------------------------------
 
 
-def test_the_write_path_stamps_the_scopes_track(tmp_path: Path) -> None:
-    conn = connect(tmp_path / "tracker.db")
-    try:
-        with conn.transaction():
-            conn.execute(
-                "INSERT INTO tracks (id, slug, kind, label) "
-                "VALUES (2, 'second', 'academic', 'Second')"
-            )
-        second = resolve_scope(conn, "second")
-        job_id = add_job(conn, SYNTHETIC_ROWS[0], scope=second)
-        # Read back through the second track's scope: spec 092 makes a by-id
-        # read in the wrong scope a not-found, which is its own test.
-        assert get_job(conn, second, job_id)["track_id"] == "2"
-        with pytest.raises(TrackerError, match="track_id"):
-            add_job(conn, {**SYNTHETIC_ROWS[1], "track_id": "1"}, scope=second)
-        assert len(list_jobs(conn, second)) == 1
-        assert list_jobs(conn, default_scope(conn)) == []
-    finally:
-        conn.close()
+def test_the_write_path_stamps_the_scopes_track(store: Connection) -> None:
+    # The store gives the track its id: the tenant role may not write one
+    # (spec 105, migration 13; spec 126).
+    track = add_track(store, "second", "academic", "Second")
+    assert track.id != DEFAULT_TRACK_ID
+    second = resolve_scope(store, "second")
+    job_id = add_job(store, SYNTHETIC_ROWS[0], scope=second)
+    # Read back through the second track's scope: spec 092 makes a by-id
+    # read in the wrong scope a not-found, which is its own test.
+    assert get_job(store, second, job_id)["track_id"] == str(track.id)
+    with pytest.raises(TrackerError, match="track_id"):
+        add_job(store, {**SYNTHETIC_ROWS[1], "track_id": "1"}, scope=second)
+    assert len(list_jobs(store, second)) == 1
+    assert list_jobs(store, default_scope(store)) == []
 
 
-def test_a_duplicate_names_the_track_it_lives_in(tmp_path: Path) -> None:
-    conn = connect(tmp_path / "tracker.db")
-    try:
-        add_job(conn, SYNTHETIC_ROWS[0], scope=default_scope(conn))
-        with pytest.raises(TrackerError, match=r"in track job"):
-            add_job(conn, SYNTHETIC_ROWS[0], scope=default_scope(conn))
-    finally:
-        conn.close()
+def test_a_duplicate_names_the_track_it_lives_in(store: Connection) -> None:
+    add_job(store, SYNTHETIC_ROWS[0], scope=default_scope(store))
+    with pytest.raises(TrackerError, match=r"in track job"):
+        add_job(store, SYNTHETIC_ROWS[0], scope=default_scope(store))
 
 
 # --- the slug rule and the resolver ---------------------------------------------
@@ -239,51 +233,34 @@ def test_a_duplicate_names_the_track_it_lives_in(tmp_path: Path) -> None:
     "slug",
     ["", "a" * 33, "1job", "-job", "Job", "my job", "my.job", "job_search", "jöb", "job\n"],
 )
-def test_a_slug_outside_the_rule_is_refused(tmp_path: Path, slug: str) -> None:
+def test_a_slug_outside_the_rule_is_refused(store: Connection, slug: str) -> None:
     with pytest.raises(InvalidSlugError):
         validate_slug(slug)
-    path = tmp_path / "tracker.db"
-    connect(path).close()
-    raw = sqlite3.connect(path)
-    try:
-        with pytest.raises(sqlite3.IntegrityError):
-            raw.execute(
-                "INSERT INTO tracks (slug, kind, label) VALUES (?, 'academic', 'x')", (slug,)
-            )
-    finally:
-        raw.close()
+    with pytest.raises(StoreIntegrityError), store.transaction():
+        store.execute("INSERT INTO tracks (slug, kind, label) VALUES (?, 'academic', 'x')", (slug,))
 
 
 @pytest.mark.parametrize("slug", ["job", "a", "a" * 32, "track-2027", "second-search-2"])
-def test_a_slug_inside_the_rule_passes_both(tmp_path: Path, slug: str) -> None:
+def test_a_slug_inside_the_rule_passes_both(store: Connection, slug: str) -> None:
     assert validate_slug(slug) == slug
-    path = tmp_path / "tracker.db"
-    connect(path).close()
-    raw = sqlite3.connect(path)
-    try:
-        if slug != "job":
-            raw.execute(
+    if slug != "job":
+        with store.transaction():
+            store.execute(
                 "INSERT INTO tracks (slug, kind, label) VALUES (?, 'academic', 'x')", (slug,)
             )
-    finally:
-        raw.close()
 
 
-def test_resolve_scope_names_an_unknown_slug(tmp_path: Path) -> None:
-    conn = connect(tmp_path / "tracker.db")
-    try:
-        scope = default_scope(conn)
-        assert isinstance(scope, Scope)
-        assert isinstance(scope.track, Track)
-        assert scope.track.id == DEFAULT_TRACK_ID
-        assert resolve_scope(conn, None) == scope
-        assert resolve_scope(conn, "job") == scope
-        with pytest.raises(UnknownTrackError, match="'nope'"):
-            resolve_scope(conn, "nope")
-        with pytest.raises(InvalidSlugError):
-            resolve_scope(conn, "Nope")
-    finally:
-        conn.close()
+def test_resolve_scope_names_an_unknown_slug(store: Connection) -> None:
+    scope = default_scope(store)
+    assert isinstance(scope, Scope)
+    assert isinstance(scope.track, Track)
+    assert scope.track.id == DEFAULT_TRACK_ID
+    assert resolve_scope(store, None) == scope
+    assert resolve_scope(store, "job") == scope
+    with pytest.raises(UnknownTrackError, match="'nope'"):
+        resolve_scope(store, "nope")
+    with pytest.raises(InvalidSlugError):
+        resolve_scope(store, "Nope")
 
 
 def test_a_track_changes_only_through_add_and_archive() -> None:
@@ -312,6 +289,7 @@ def test_a_track_changes_only_through_add_and_archive() -> None:
 # --- the command ----------------------------------------------------------------
 
 
+@pytest.mark.sqlite_only("drives the CLI, which refuses a Postgres URL until spec 127")
 def test_tracks_list_prints_the_default_track(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

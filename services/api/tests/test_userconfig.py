@@ -1,5 +1,9 @@
 """User configuration in the database (spec 023, ADR-009).
 
+The store tests run on both stores through the dual-store fixture (spec
+126). A test that reads SQLite itself, or drives the CLI or the API, which
+refuse a Postgres URL until specs 127 and 104, is marked `sqlite_only`.
+
 Pyright strict cannot resolve starlette's TestClient request and response
 types, so the three unknown-type rules are off for this file, as they are in
 test_api_jobs.py.
@@ -44,13 +48,14 @@ EXAMPLE_FEEDS = ["https://boards.greenhouse.io/exampleco", "https://jobs.ashbyhq
 
 
 @pytest.fixture()
-def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Connection:
-    monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
+def db(store: Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Connection:
+    """The store, on both stores (spec 126). On SQLite it is the default
+    path under this test's HARRIER_DATA_DIR, which the CLI and the API open."""
     monkeypatch.delenv("HARRIER_DEMO", raising=False)
     # No config/ tree in the working directory, so a file fallback that
     # resolves has to be one this test put there on purpose.
     monkeypatch.chdir(tmp_path)
-    return connect()
+    return store
 
 
 # --- the store ---------------------------------------------------------------
@@ -62,6 +67,7 @@ def test_a_stored_value_round_trips(db: Connection) -> None:
     assert load_feed_urls(db) == EXAMPLE_FEEDS
 
 
+@pytest.mark.sqlite_only("reads SQLite itself: PRAGMA table_info")
 def test_the_schema_carries_no_scope_column(db: Connection) -> None:
     """`scope` is gone (spec 041).
 
@@ -281,6 +287,7 @@ def test_a_hold_entry_without_a_company_or_with_an_unknown_key_is_refused(
         set_config(db, COMPANY_HOLDS, [entry])
 
 
+@pytest.mark.sqlite_only("drives the CLI, which refuses a Postgres URL until spec 127")
 def test_a_malformed_csv_date_refuses_the_read_and_the_import(
     db: Connection, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -299,6 +306,7 @@ def test_a_malformed_csv_date_refuses_the_read_and_the_import(
         fresh.close()
 
 
+@pytest.mark.sqlite_only("drives the CLI, which refuses a Postgres URL until spec 127")
 def test_import_keeps_hold_dates_including_expired_ones(
     db: Connection, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -331,6 +339,7 @@ def test_a_hold_list_stored_before_expiry_existed_still_holds_everyone(
 # --- the CLI -----------------------------------------------------------------
 
 
+@pytest.mark.sqlite_only("drives the CLI, which refuses a Postgres URL until spec 127")
 def test_import_round_trips_the_current_files(db: Connection, tmp_path: Path) -> None:
     config = tmp_path / "config"
     config.mkdir()
@@ -358,16 +367,19 @@ def test_import_round_trips_the_current_files(db: Connection, tmp_path: Path) ->
         fresh.close()
 
 
+@pytest.mark.sqlite_only("drives the CLI, which refuses a Postgres URL until spec 127")
 def test_import_with_no_files_reports_rather_than_claiming_success(db: Connection) -> None:
     assert main(["config", "import"]) == 1
 
 
+@pytest.mark.sqlite_only("drives the CLI, which refuses a Postgres URL until spec 127")
 def test_unset_reports_whether_anything_was_removed(db: Connection) -> None:
     set_config(db, FEEDS, EXAMPLE_FEEDS)
     assert main(["config", "unset", "feeds"]) == 0
     assert main(["config", "unset", "feeds"]) == 1
 
 
+@pytest.mark.sqlite_only("drives the CLI, which refuses a Postgres URL until spec 127")
 def test_get_on_an_unstored_kind_exits_non_zero(db: Connection) -> None:
     assert main(["config", "get", "feeds"]) == 1
 
@@ -380,6 +392,7 @@ def client(db: Connection) -> TestClient:
     return TestClient(create_app())
 
 
+@pytest.mark.sqlite_only("drives the API, which refuses a Postgres URL until spec 104")
 def test_the_api_lists_every_kind_with_its_source(client: TestClient) -> None:
     body = client.get("/config", headers=auth()).json()
     assert {entry["kind"] for entry in body} == set(KINDS)
@@ -387,6 +400,7 @@ def test_the_api_lists_every_kind_with_its_source(client: TestClient) -> None:
     assert {entry["source"] for entry in body} == {"file"}
 
 
+@pytest.mark.sqlite_only("drives the API, which refuses a Postgres URL until spec 104")
 def test_putting_a_value_makes_it_the_stored_source(client: TestClient) -> None:
     response = client.put("/config/feeds", json={"value": EXAMPLE_FEEDS}, headers=auth())
     assert response.status_code == 200
@@ -396,6 +410,7 @@ def test_putting_a_value_makes_it_the_stored_source(client: TestClient) -> None:
     assert client.get("/config/feeds", headers=auth()).json()["value"] == EXAMPLE_FEEDS
 
 
+@pytest.mark.sqlite_only("drives the API, which refuses a Postgres URL until spec 104")
 def test_deleting_a_value_restores_the_fallback(client: TestClient) -> None:
     client.put("/config/feeds", json={"value": EXAMPLE_FEEDS}, headers=auth())
     body = client.delete("/config/feeds", headers=auth()).json()
@@ -403,6 +418,7 @@ def test_deleting_a_value_restores_the_fallback(client: TestClient) -> None:
     assert body["value"] == []
 
 
+@pytest.mark.sqlite_only("drives the API, which refuses a Postgres URL until spec 104")
 def test_the_api_refuses_a_bad_shape_with_the_stores_own_message(client: TestClient) -> None:
     # The shape rules live in the store, so the API cannot drift from the CLI.
     response = client.put("/config/feeds", json={"value": {"not": "a list"}}, headers=auth())
@@ -410,6 +426,7 @@ def test_the_api_refuses_a_bad_shape_with_the_stores_own_message(client: TestCli
     assert "must be a JSON list" in response.json()["detail"]
 
 
+@pytest.mark.sqlite_only("drives the API, which refuses a Postgres URL until spec 104")
 def test_a_malformed_body_and_a_bad_value_are_different_failures(client: TestClient) -> None:
     """FastAPI owns 422 for request validation, where detail is a list of
     field errors. Store validation answers 400 with a sentence, so a client
@@ -437,6 +454,7 @@ def test_a_corrupted_row_is_refused_rather_than_coerced(client: TestClient, db: 
         load_feed_urls(db)
 
 
+@pytest.mark.sqlite_only("drives the API, which refuses a Postgres URL until spec 104")
 def test_the_api_refuses_a_malformed_hold_date(client: TestClient) -> None:
     response = client.put(
         "/config/company_holds",
@@ -447,6 +465,7 @@ def test_the_api_refuses_a_malformed_hold_date(client: TestClient) -> None:
     assert "malformed hold_until" in response.json()["detail"]
 
 
+@pytest.mark.sqlite_only("drives the API, which refuses a Postgres URL until spec 104")
 def test_the_api_shows_stored_holds_as_written_and_file_holds_as_active(
     client: TestClient, tmp_path: Path
 ) -> None:
@@ -474,6 +493,7 @@ def store_raw(db: Connection, kind: str, raw: str) -> None:
         db.execute("INSERT INTO user_config (kind, value) VALUES (?, ?)", (kind, raw))
 
 
+@pytest.mark.sqlite_only("drives the API, which refuses a Postgres URL until spec 104")
 def test_one_broken_kind_does_not_hide_the_others(client: TestClient, db: Connection) -> None:
     store_raw(db, FEEDS, json.dumps([7]))
     response = client.get("/config", headers=auth())
@@ -488,6 +508,7 @@ def test_one_broken_kind_does_not_hide_the_others(client: TestClient, db: Connec
     assert all(by_kind[kind]["error"] is None for kind in KINDS if kind != FEEDS)
 
 
+@pytest.mark.sqlite_only("drives the API, which refuses a Postgres URL until spec 104")
 def test_a_broken_stored_kind_is_described_not_raised(client: TestClient, db: Connection) -> None:
     store_raw(db, FEEDS, json.dumps([7]))
     response = client.get("/config/feeds", headers=auth())
@@ -497,6 +518,7 @@ def test_a_broken_stored_kind_is_described_not_raised(client: TestClient, db: Co
     assert "entries must be strings" in body["error"]
 
 
+@pytest.mark.sqlite_only("drives the API, which refuses a Postgres URL until spec 104")
 def test_a_stored_row_that_is_not_json_is_described(client: TestClient, db: Connection) -> None:
     store_raw(db, FEEDS, "not json [")
     body = client.get("/config/feeds", headers=auth()).json()
@@ -504,6 +526,7 @@ def test_a_stored_row_that_is_not_json_is_described(client: TestClient, db: Conn
     assert "not valid JSON" in body["error"]
 
 
+@pytest.mark.sqlite_only("drives the API, which refuses a Postgres URL until spec 104")
 def test_a_broken_stored_row_does_not_fall_back_to_the_file(
     client: TestClient, db: Connection, tmp_path: Path
 ) -> None:
@@ -519,6 +542,7 @@ def test_a_broken_stored_row_does_not_fall_back_to_the_file(
     assert body["error"]
 
 
+@pytest.mark.sqlite_only("drives the API, which refuses a Postgres URL until spec 104")
 def test_a_broken_hold_file_is_described_with_the_company(
     client: TestClient, tmp_path: Path
 ) -> None:
@@ -530,6 +554,7 @@ def test_a_broken_hold_file_is_described_with_the_company(
     assert "Example Co" in body["error"]
 
 
+@pytest.mark.sqlite_only("drives the API, which refuses a Postgres URL until spec 104")
 def test_a_delete_that_succeeds_is_never_reported_as_failed(
     client: TestClient, db: Connection, tmp_path: Path
 ) -> None:
@@ -545,6 +570,7 @@ def test_a_delete_that_succeeds_is_never_reported_as_failed(
     assert "Example Co" in body["error"]
 
 
+@pytest.mark.sqlite_only("drives the API, which refuses a Postgres URL until spec 104")
 def test_two_broken_kinds_each_carry_their_own_error(
     client: TestClient, db: Connection, tmp_path: Path
 ) -> None:
@@ -556,6 +582,7 @@ def test_two_broken_kinds_each_carry_their_own_error(
     assert by_kind[DISCOVERY]["error"] is None
 
 
+@pytest.mark.sqlite_only("drives the API, which refuses a Postgres URL until spec 104")
 def test_a_delete_with_nothing_stored_and_a_broken_file_still_answers(
     client: TestClient, tmp_path: Path
 ) -> None:
@@ -565,6 +592,7 @@ def test_a_delete_with_nothing_stored_and_a_broken_file_still_answers(
     assert "Example Co" in response.json()["error"]
 
 
+@pytest.mark.sqlite_only("drives the API, which refuses a Postgres URL until spec 104")
 def test_put_repairs_a_broken_kind(client: TestClient, db: Connection) -> None:
     store_raw(db, FEEDS, json.dumps([7]))
     response = client.put("/config/feeds", json={"value": EXAMPLE_FEEDS}, headers=auth())
@@ -573,6 +601,7 @@ def test_put_repairs_a_broken_kind(client: TestClient, db: Connection) -> None:
     assert client.get("/config/feeds", headers=auth()).json()["value"] == EXAMPLE_FEEDS
 
 
+@pytest.mark.sqlite_only("drives the API, which refuses a Postgres URL until spec 104")
 def test_a_healthy_kind_has_no_error(client: TestClient) -> None:
     client.put("/config/feeds", json={"value": EXAMPLE_FEEDS}, headers=auth())
     stored = client.get("/config/feeds", headers=auth()).json()
@@ -581,6 +610,7 @@ def test_a_healthy_kind_has_no_error(client: TestClient) -> None:
     assert (from_file["source"], from_file["error"]) == ("file", None)
 
 
+@pytest.mark.sqlite_only("drives the API, which refuses a Postgres URL until spec 104")
 def test_an_unknown_kind_is_a_404_on_every_verb(client: TestClient) -> None:
     assert client.get("/config/nonsense", headers=auth()).status_code == 404
     assert client.put("/config/nonsense", json={"value": []}, headers=auth()).status_code == 404
@@ -633,6 +663,7 @@ def test_feeds_are_collapsed_on_write_and_on_read(db: Connection) -> None:
     assert json.loads(str(stored[0])) == duplicated
 
 
+@pytest.mark.sqlite_only("drives the CLI, which refuses a Postgres URL until spec 127")
 def test_config_set_names_what_it_dropped(
     db: Connection, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -653,6 +684,7 @@ def test_config_set_names_what_it_dropped(
     assert capsys.readouterr().out.splitlines() == ["feeds stored"]
 
 
+@pytest.mark.sqlite_only("drives the CLI, which refuses a Postgres URL until spec 127")
 def test_config_import_names_what_it_dropped(
     db: Connection, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
