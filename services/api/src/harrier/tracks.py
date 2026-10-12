@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from harrier import voices
-from harrier.connection import Connection, Row, StoreIntegrityError
+from harrier.connection import Connection, Row, StoreIntegrityError, store_now
 
 TrackKind = Literal["industry", "academic"]
 
@@ -410,7 +410,7 @@ def archive_track(conn: Connection, slug: str) -> Track:
     if track.archived:
         raise AlreadyArchivedError(f"track {slug!r} is already archived")
     with conn.transaction():
-        conn.execute("UPDATE tracks SET archived_at = datetime('now') WHERE id = ?", (track.id,))
+        conn.execute("UPDATE tracks SET archived_at = ? WHERE id = ?", (store_now(), track.id))
     return resolve_scope(conn, slug).track
 
 

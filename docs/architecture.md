@@ -170,20 +170,41 @@ SQL still names a track and never a tenant; the database applies the owner
 from the session (ADR-012 point 2). The local product described above does
 not change.
 
-A Postgres store can be created; nothing reads or writes tracker rows on it
-yet. `HARRIER_DATABASE_URL` chooses the store: unset or empty, the local
+A Postgres store can be created, and the domain runs on it, but nothing
+outside the tests reads or writes tracker rows there yet.
+`HARRIER_DATABASE_URL` chooses the store: unset or empty, the local
 SQLite store; a `postgresql://` URL, the Postgres store; any other value is
 refused (`services/api/src/harrier/connection.py`,
 `services/api/tests/test_postgres_store.py`). `harrier store migrate`
 applies pending migrations and `harrier store status` prints the dialect
-and version. Until spec 112 they are the only commands that run on
-Postgres: every other command and the API refuse to start while the URL
-names it (`services/api/tests/test_store_cli.py`). Opening a Postgres store
+and version. They are the only commands that run on Postgres: every other
+command refuses to start while the URL names it until spec 127, and the
+API until spec 104 (`services/api/tests/test_store_cli.py`). Opening a Postgres store
 never migrates it. The Postgres baseline, recorded as version 9, sits in
 `services/api/src/harrier/tracker/schema.py` beside the SQLite migrations,
 and `services/api/tests/test_dialect_parity.py` holds the two stores to the
-same tables, defaults and refusals. Spec 112 ports the domain's reads and
-writes to it.
+same tables, defaults and refusals.
+
+The domain runs on either store (specs 112 and 126). Every domain function
+takes harrier's own `Connection`
+(`services/api/src/harrier/connection.py`), which speaks both dialects, and
+each statement is written once. Timestamps come from `store_now()`, bound
+as a parameter. The dedupe folds `A` to `Z` and nothing else
+(`ascii_folded`), and text orders by code point (`by_code_point`). New ids
+come from `RETURNING id`, and no domain insert supplies one. The four
+upserts are an update, an insert in a savepoint, and the update once more
+when another writer inserted the key first (`update_or_insert`); none names
+a tenant. The write lock is the one branch on the dialect in domain code
+(`_write_lock` in `services/api/src/harrier/tracker/store.py`): SQLite
+still locks the whole file, and Postgres locks the job rows a write depends
+on, `FOR UPDATE`, so writers of other jobs do not wait. The cutover and the
+legacy import refuse a Postgres connection with `StoreLocalOnlyError`. The
+`store` fixture in `services/api/tests/conftest.py` runs a test once per
+store, on Postgres as one synthetic owner under the row policy, and fails
+it unless the connection is `harrier_tenant`
+(`services/api/tests/test_domain_sql_on_both_stores.py`, and the lock tests
+in `services/api/tests/test_job_events.py`, such as
+`services/api/tests/test_job_events.py::test_a_decision_on_one_job_does_not_wait_for_another`).
 
 On Postgres every personal row has an owner (spec 105). Migration 10 in
 `schema.py` gives each table in `OWNED_TABLES` an `owner_id` column that
@@ -231,8 +252,9 @@ creates, in `public` and in every schema. No migration creates them, and
 migration 10 refuses a store without the roles and the auth objects.
 
 This polices rows; it does not yet serve anyone. Nothing authenticates a
-request until spec 104, and the domain does not run on Postgres until spec
-112, so no owner can reach their rows through harrier. A role with
+request until spec 104, and the CLI admits a Postgres URL only for
+`harrier store` until spec 127, so no owner can reach their rows through
+harrier. A role with
 `BYPASSRLS`, such as Supabase's `service_role`, sees every owner's rows
 (`services/api/tests/test_owner_policy.py::test_a_bypassrls_role_sees_every_owner`); keeping requests off such
 a role is spec 104's.

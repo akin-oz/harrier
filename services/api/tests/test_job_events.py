@@ -19,12 +19,11 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import auth
+from conftest import DualStore, auth
 from fastapi.testclient import TestClient
 
 from harrier.connection import Connection, StoreBusyError, StoreIntegrityError
@@ -44,11 +43,13 @@ from harrier.tracker.reasons import (
 )
 from harrier.tracker.score import score_fields
 from harrier.tracker.store import (
+    EligibilityAssessment,
     TrackerError,
     add_job,
     backfill_events,
     get_job,
     list_events,
+    record_eligibility,
     set_status,
     update_fields,
 )
@@ -409,11 +410,11 @@ def _legacy_row(conn: Connection, index: int, **fields: str) -> int:
     columns = ", ".join(values)
     placeholders = ", ".join("?" for _ in values)
     with conn.transaction():
-        cursor = conn.execute(
-            f"INSERT INTO jobs ({columns}) VALUES ({placeholders})", list(values.values())
-        )
-    assert cursor.lastrowid is not None
-    return int(cursor.lastrowid)
+        row = conn.execute(
+            f"INSERT INTO jobs ({columns}) VALUES ({placeholders}) RETURNING id",
+            list(values.values()),
+        ).fetchone()
+    return int(row[0])
 
 
 def _shape(conn: Connection, job_id: int) -> list[tuple[str, str, str, str, str, str]]:
@@ -590,15 +591,19 @@ def test_event_writes_log_no_reason_text(
 
 
 # --- review of the fixes (spec 079 amendment) -------------------------------------
+#
+# The lock tests run on both stores (spec 126): `store` is the writer, and
+# the rival is the same store, as the same owner on Postgres, on a second
+# connection. SQLite's lock is the whole file; Postgres locks the job rows a
+# write depends on, `FOR UPDATE`.
 
 
 @pytest.fixture
-def rival(conn: Connection) -> Iterator[Connection]:
-    """A second connection to the same database, one that will not wait."""
-    other = connect()
-    other.execute("PRAGMA busy_timeout=0")
-    yield other
-    other.close()
+def rival(dual_store: DualStore, store: Connection) -> Connection:
+    """A second connection to the same store, one that will not wait."""
+    other = dual_store.open()
+    other.busy_timeout_ms = 0
+    return other
 
 
 def _race_once(rival: Connection, job_id: int, outcome: list[str]) -> None:
@@ -614,13 +619,13 @@ def _race_once(rival: Connection, job_id: int, outcome: list[str]) -> None:
 
 
 def test_a_first_move_holds_the_lock_from_read_to_write(
-    conn: Connection, rival: Connection, monkeypatch: pytest.MonkeyPatch
+    store: Connection, rival: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Two writers on a job with no events both read "no events" and both
     wrote its history, for good under the append-only trigger. The row is now
     read under the write lock, so a rival waits for the move; allowed no wait,
     it is turned away."""
-    job_id = _legacy_row(conn, 1)
+    job_id = _legacy_row(store, 1)
     outcome: list[str] = []
     real = tracker_store._plan_backfill  # pyright: ignore[reportPrivateUsage]
 
@@ -629,21 +634,21 @@ def test_a_first_move_holds_the_lock_from_read_to_write(
         return real(job)
 
     monkeypatch.setattr(tracker_store, "_plan_backfill", racing)
-    set_status(conn, default_scope(conn), job_id, "rejected", rejection_reason="hybrid")
+    set_status(store, default_scope(store), job_id, "rejected", rejection_reason="hybrid")
     assert outcome == ["waited"]
-    assert [event["kind"] for event in list_events(conn, default_scope(conn), job_id)].count(
+    assert [event["kind"] for event in list_events(store, default_scope(store), job_id)].count(
         "created"
     ) == 1
 
 
 def test_a_wrapped_first_move_still_holds_the_lock_from_read_to_write(
-    conn: Connection, rival: Connection, monkeypatch: pytest.MonkeyPatch
+    store: Connection, rival: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The same race, with the move inside a caller's own block that has
     already read, as spec 104's request transaction will wrap it. The lock
     is taken where the move asks for it, not dropped because a block is
     open (post-merge review of PR #288)."""
-    job_id = _legacy_row(conn, 1)
+    job_id = _legacy_row(store, 1)
     outcome: list[str] = []
     real = tracker_store._plan_backfill  # pyright: ignore[reportPrivateUsage]
 
@@ -652,21 +657,21 @@ def test_a_wrapped_first_move_still_holds_the_lock_from_read_to_write(
         return real(job)
 
     monkeypatch.setattr(tracker_store, "_plan_backfill", racing)
-    with conn.transaction():
-        assert list_events(conn, default_scope(conn), job_id) == []
-        set_status(conn, default_scope(conn), job_id, "rejected", rejection_reason="hybrid")
+    with store.transaction():
+        assert list_events(store, default_scope(store), job_id) == []
+        set_status(store, default_scope(store), job_id, "rejected", rejection_reason="hybrid")
     assert outcome == ["waited"]
-    assert [event["kind"] for event in list_events(conn, default_scope(conn), job_id)].count(
+    assert [event["kind"] for event in list_events(store, default_scope(store), job_id)].count(
         "created"
     ) == 1
 
 
 def test_backfill_holds_the_lock_from_read_to_write(
-    conn: Connection, rival: Connection, monkeypatch: pytest.MonkeyPatch
+    store: Connection, rival: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The same race from the other side: a live first move landing while
     backfill plans the same job."""
-    job_id = _legacy_row(conn, 1)
+    job_id = _legacy_row(store, 1)
     outcome: list[str] = []
     real = tracker_store._plan_backfill  # pyright: ignore[reportPrivateUsage]
 
@@ -675,19 +680,19 @@ def test_backfill_holds_the_lock_from_read_to_write(
         return real(job)
 
     monkeypatch.setattr(tracker_store, "_plan_backfill", racing)
-    backfill_events(conn, default_scope(conn))
+    backfill_events(store, default_scope(store))
     assert outcome == ["waited"]
-    assert [event["kind"] for event in list_events(conn, default_scope(conn), job_id)].count(
+    assert [event["kind"] for event in list_events(store, default_scope(store), job_id)].count(
         "created"
     ) == 1
 
 
 def test_a_field_update_holds_the_lock_from_read_to_write(
-    conn: Connection, rival: Connection, monkeypatch: pytest.MonkeyPatch
+    store: Connection, rival: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The invariants a field write is checked against are read under the
     same lock, so they are the row the write lands on."""
-    job_id = _job(conn)
+    job_id = _job(store)
     outcome: list[str] = []
     real = tracker_store.all_breaches
 
@@ -696,8 +701,52 @@ def test_a_field_update_holds_the_lock_from_read_to_write(
         return real(row)
 
     monkeypatch.setattr(tracker_store, "all_breaches", racing)
-    update_fields(conn, default_scope(conn), job_id, {"next_action": "call back"})
+    update_fields(store, default_scope(store), job_id, {"next_action": "call back"})
     assert outcome == ["waited"]
+
+
+def test_an_assessment_holds_the_lock_from_read_to_write(
+    store: Connection, rival: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec 122's writer: the row a rule assessment is refused on is read
+    under the same lock, so a rejection cannot land between the read and the
+    assessment."""
+    job_id = _job(store)
+    outcome: list[str] = []
+    real = tracker_store.get_job
+
+    def racing(conn: Connection, scope: Any, read_id: int) -> dict[str, str]:
+        row = real(conn, scope, read_id)
+        if conn is store:
+            _race_once(rival, job_id, outcome)
+        return row
+
+    monkeypatch.setattr(tracker_store, "get_job", racing)
+    assessment = EligibilityAssessment(verdict="possible", checked_at="2026-10-11T09:30:00Z")
+    record_eligibility(store, default_scope(store), job_id, assessment)
+    assert outcome == ["waited"]
+
+
+def test_a_decision_on_one_job_does_not_wait_for_another(
+    store: Connection,
+    rival: Connection,
+    dual_store: DualStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On Postgres the lock is the job's row, so a decision on another job
+    goes ahead. On SQLite the lock is the whole file, and it waits, as it
+    always has (spec 126, Honest limitations)."""
+    first, second = _job(store, 1), _job(store, 2)
+    outcome: list[str] = []
+    real = tracker_store.classify_move
+
+    def racing(*args: Any, **kwargs: Any) -> Any:
+        _race_once(rival, second, outcome)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(tracker_store, "classify_move", racing)
+    set_status(store, default_scope(store), first, "shortlisted")
+    assert outcome == ["interleaved" if dual_store.dialect == "postgres" else "waited"]
 
 
 def test_a_company_that_has_responded_has_engaged(conn: Connection) -> None:

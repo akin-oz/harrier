@@ -29,6 +29,12 @@ a real project. A migration that needs a privilege `postgres` lacks then
 fails here as it would on Supabase. The server's superuser only creates and
 drops each database and installs the shim (spec 115).
 
+The dual-store fixture (`store` in `tests/conftest.py`, spec 126) runs a
+domain test on both stores. Its Postgres side migrates one template per
+session (`migrated_template`), copies it per test (`database_copy`), and
+opens the copy as one synthetic owner, failing the test unless the
+connection runs as `harrier_tenant` (`open_owner_store`).
+
 Staging mode (spec 115) points the isolation tests at a real Supabase
 project instead (`tests/test_supabase_project.py`): `supabase_urls` names
 the project or skips, and `open_staging` refuses a project anyone has signed
@@ -52,6 +58,8 @@ from harrier.tracker.schema import TENANT_ROLE
 
 if TYPE_CHECKING:
     import psycopg
+
+    from harrier.connection import Connection
 
     PgConnection = psycopg.Connection[Any]
 
@@ -431,6 +439,72 @@ def postgres_url() -> Iterator[str]:
     """An empty Postgres database for one test."""
     with fresh_database() as url:
         yield url
+
+
+# --- the dual-store fixture's Postgres side (spec 126) ---
+
+
+@contextmanager
+def migrated_template() -> Generator[str]:
+    """A database `fresh_database` creates, migrated by
+    `apply_postgres_migrations` as `harrier_migrator`, for the session.
+
+    The migrating connection is closed before this yields, so the first
+    copy finds no other connection to the template; Postgres refuses
+    `CREATE DATABASE ... TEMPLATE` while there is one.
+    """
+    from contextlib import closing
+
+    from harrier.pgstore import apply_postgres_migrations, postgres_connect
+
+    with fresh_database() as url:
+        with closing(postgres_connect(url)) as conn:
+            apply_postgres_migrations(conn)
+        yield url
+
+
+@contextmanager
+def database_copy(template_url: str) -> Generator[str]:
+    """A copy of the template for one test, owned by `harrier_migrator`,
+    yielded as the migrator's URL, then dropped. Created and dropped by the
+    server's superuser, as `fresh_database` does."""
+    import psycopg
+
+    template = urlsplit(template_url).path.lstrip("/")
+    name = f"harrier_test_{uuid.uuid4().hex[:12]}"
+    admin = admin_url()
+    with psycopg.connect(admin, autocommit=True) as conn:
+        conn.execute(f"CREATE DATABASE {name} TEMPLATE {template} OWNER {MIGRATOR_ROLE}".encode())
+    try:
+        yield _with_user(_with_database(admin, name), MIGRATOR_ROLE, MIGRATOR_PASSWORD)
+    finally:
+        with psycopg.connect(admin, autocommit=True) as conn:
+            conn.execute(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)".encode())
+
+
+def require_tenant(conn: Connection) -> None:
+    """Fail the test unless `conn` runs as `harrier_tenant`, read in a
+    transaction. A lost role switch would run the test as the migrating
+    role, which bypasses the row policy, for the reason `as_owner` gives."""
+    with conn.transaction():
+        row = conn.execute("SELECT current_user").fetchone()
+    role = str(row[0]) if row is not None else None
+    if role != TENANT_ROLE:
+        pytest.fail(f"the store fixture runs as {role}, not {TENANT_ROLE}", pytrace=False)
+
+
+def open_owner_store(url: str, owner: str | None) -> Connection:
+    """`open_store` on `url` acting as `owner`, once it is known to run as
+    `harrier_tenant`. Closed again when it is not."""
+    from harrier.connection import URL_VARIABLE, open_store
+
+    conn = open_store({URL_VARIABLE: url}, owner=owner)
+    try:
+        require_tenant(conn)
+    except BaseException:
+        conn.close()
+        raise
+    return conn
 
 
 # --- staging mode: a real Supabase project (spec 115) ---

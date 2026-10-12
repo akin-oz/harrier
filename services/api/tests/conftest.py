@@ -39,16 +39,17 @@ import shutil
 import sys
 import tempfile
 from collections.abc import Callable, Generator, Iterator
-from contextlib import contextmanager
-from dataclasses import dataclass
+from contextlib import closing, contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 from urllib.parse import unquote, urlsplit
 
 import pytest
 from fastapi.testclient import TestClient
 from starlette.types import ASGIApp
 
+from harrier.connection import Connection
 from harrier.paths import repo_root
 
 TEST_TOKEN = "test-token-not-a-secret"
@@ -580,3 +581,96 @@ def assert_only_provoked_causes_are_declared(
         assert own_causes(responses, status) == expected, status
     for code, _ in provoked:
         assert str(code) in responses, code
+
+
+# --- the dual-store fixture (spec 126) ---
+
+
+@pytest.fixture(scope="session")
+def postgres_template() -> Iterator[str]:
+    """One migrated Postgres database for the session, copied per test.
+    Skips locally without a test server and fails in CI (spec 039)."""
+    from pg_support import migrated_template
+
+    with migrated_template() as url:
+        yield url
+
+
+@dataclass
+class DualStore:
+    """One test's store: SQLite under its tmp_path, or a Postgres copy of the
+    template that acts as one synthetic owner under the row policy."""
+
+    dialect: Literal["sqlite", "postgres"]
+    # Postgres: the copy's URL as the migrating role, which bypasses the
+    # policy; for creating owners and reading as the store's operator.
+    url: str = ""
+    owner: str | None = None
+    opened: list[Connection] = field(default_factory=lambda: [])
+
+    def open(self, *, keep: bool = True) -> Connection:
+        """Another connection to the store, as the same owner on Postgres.
+        Closed after the test unless `keep` is false, for a connection a
+        test opens and closes on another thread, as SQLite requires."""
+        conn = self._open(self.owner)
+        return self._keep(conn) if keep else conn
+
+    def open_new_owner(self) -> Connection:
+        """A connection to the same Postgres copy as a second owner, created
+        with `new_owner` through a migrator connection."""
+        assert self.dialect == "postgres", "a second owner is a Postgres notion"
+        from pg_support import new_owner
+
+        from harrier.pgstore import postgres_connect
+
+        with closing(postgres_connect(self.url)) as admin:
+            other = new_owner(admin)
+        return self._keep(self._open(other))
+
+    def _open(self, owner: str | None) -> Connection:
+        if self.dialect == "sqlite":
+            from harrier.db import connect
+
+            # The default path, under the test's HARRIER_DATA_DIR in tmp_path.
+            return connect()
+        from pg_support import open_owner_store
+
+        return open_owner_store(self.url, owner)
+
+    def _keep(self, conn: Connection) -> Connection:
+        self.opened.append(conn)
+        return conn
+
+
+@pytest.fixture(params=["sqlite", "postgres"])
+def dual_store(request: pytest.FixtureRequest) -> Iterator[DualStore]:
+    """The store a domain test runs on, once per parameter (spec 126)."""
+    if request.param == "sqlite":
+        found = DualStore("sqlite")
+        try:
+            yield found
+        finally:
+            for conn in found.opened:
+                conn.close()
+        return
+    from pg_support import database_copy, new_owner
+
+    from harrier.pgstore import postgres_connect
+
+    template = cast(str, request.getfixturevalue("postgres_template"))
+    with database_copy(template) as url:
+        with closing(postgres_connect(url)) as admin:
+            owner = new_owner(admin)
+        found = DualStore("postgres", url, owner)
+        try:
+            yield found
+        finally:
+            for conn in found.opened:
+                conn.close()
+
+
+@pytest.fixture
+def store(dual_store: DualStore) -> Connection:
+    """A migrated `Connection` per test, on SQLite and on Postgres as one
+    synthetic owner that runs as `harrier_tenant` (spec 126)."""
+    return dual_store.open()

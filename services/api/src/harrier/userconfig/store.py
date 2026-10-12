@@ -31,7 +31,7 @@ import re
 from datetime import date
 from typing import cast
 
-from harrier.connection import Connection
+from harrier.connection import Connection, by_code_point, store_now, update_or_insert
 
 FEEDS = "feeds"
 LINKEDIN_SEARCHES = "linkedin_searches"
@@ -173,17 +173,15 @@ def _validate(kind: str, value: object, *, on_read: bool = False) -> object:
 
 def set_config(conn: Connection, kind: str, value: object) -> None:
     stored = _validate(kind, value)
-    with conn.transaction():
-        conn.execute(
-            """
-            INSERT INTO user_config (kind, value, updated_at)
-            VALUES (?, ?, datetime('now'))
-            ON CONFLICT (kind) DO UPDATE SET
-                value = excluded.value,
-                updated_at = datetime('now')
-            """,
-            (kind, json.dumps(stored, ensure_ascii=False)),
-        )
+    text = json.dumps(stored, ensure_ascii=False)
+    now = store_now()
+    update_or_insert(
+        conn,
+        "UPDATE user_config SET value = ?, updated_at = ? WHERE kind = ?",
+        (text, now, kind),
+        "INSERT INTO user_config (kind, value, updated_at) VALUES (?, ?, ?)",
+        (kind, text, now),
+    )
 
 
 def get_config(conn: Connection, kind: str) -> object | None:
@@ -215,7 +213,9 @@ def delete_config(conn: Connection, kind: str) -> bool:
 
 def list_config(conn: Connection) -> list[dict[str, str]]:
     columns = ("kind", "value", "updated_at")
-    rows = conn.execute(f"SELECT {', '.join(columns)} FROM user_config ORDER BY kind").fetchall()
+    rows = conn.execute(
+        f"SELECT {', '.join(columns)} FROM user_config ORDER BY {by_code_point(conn, 'kind')}"
+    ).fetchall()
     return [dict(zip(columns, (str(value) for value in row), strict=True)) for row in rows]
 
 

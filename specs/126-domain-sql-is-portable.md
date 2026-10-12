@@ -137,13 +137,22 @@ The statement is written once, with the fragment in it.
 | company in tracker | company added | duplicate on SQLite | on Postgres |
 |---|---|---|---|
 | `Acme` | `ACME` | yes | yes |
-| `École Exemple` | `ÉCOLE EXEMPLE` | no | no |
-| `École Exemple` | `école exemple` | yes | yes |
+| `École Exemple` | `ÉCOLE EXEMPLE` | yes | yes |
+| `École Exemple` | `école exemple` | no | no |
+
+The `É` is the same character in the first two names, so only ASCII
+letters differ; `É` and `é` are two characters, folded by neither store.
+Corrected by the Amendment (2026-10-12): what B1 settled.
 
 **Text ordering.** Every `ORDER BY` over text in domain SQL orders by code
 point on both stores, through `harrier.connection.by_code_point(conn,
 expression)`: the expression as written on SQLite, whose default is
-binary, and with `COLLATE "C"` on Postgres.
+binary, and with `COLLATE "C"` on Postgres. A NULL orders first on both:
+SQLite's default for an ascending order, which Postgres takes from `NULLS
+FIRST` written after the expression. `list_documents` is the one site
+that orders by a column that can be NULL (`t.slug`, for a shared
+document), so a shared document lists before an owned one of the same
+kind and name on both stores (Amendment (2026-10-12): what B1 settled).
 
 **New ids.** `add_job` and `add_contact` read the new id from `INSERT ...
 RETURNING id`, inside the transaction that inserts, on both stores. Spec
@@ -309,8 +318,8 @@ every SQLite-only test in these files with its reason.
   template before the first copy.
 - **Postgres tests without a server.** Skipped locally, failed in CI
   (`CI=true`).
-- **A domain insert that supplies an `id`.** Refused on Postgres, and the
-  planned test_no_domain_insert_supplies_an_id fails on both.
+- **A domain insert that supplies an `id`.** Refused on Postgres, and
+  `services/api/tests/test_domain_sql_on_both_stores.py::test_no_domain_insert_supplies_an_id` fails on both.
 
 ## Acceptance criteria
 
@@ -318,41 +327,46 @@ B1 (behavior):
 
 - [ ] The four upserts are update-then-insert with one retry, pass on
       both stores, and two writers inserting the same key at once leave
-      one row on both, for each of the four (planned
-      test_an_upsert_racing_another_leaves_one_row).
+      one row on both, for each of the four
+      (`services/api/tests/test_domain_sql_on_both_stores.py::test_an_upsert_racing_another_leaves_one_row`).
 - [ ] A shared document and an owned document of the same kind and name
       are written, rewritten and read back as two rows on both stores; a
       second write of the shared one replaces it rather than failing
-      (planned test_a_shared_and_an_owned_document_upsert_alike_on_both_stores).
+      (`services/api/tests/test_domain_sql_on_both_stores.py::test_a_shared_and_an_owned_document_upsert_alike_on_both_stores`).
 - [ ] `updated_at` written by `set_status`, `update_fields`,
-      `archive_track`, `set_config` and `put_document` matches
-      `^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$` on both (planned
-      test_a_written_timestamp_has_one_shape_on_both_stores).
-- [ ] The three rows of the folding table hold on both (planned
-      test_dedupe_folds_ascii_case_only_on_both_stores).
-- [ ] Text orders by code point on both, and `LIMIT 1` by name picks the
-      same document (planned test_text_orders_by_code_point_on_both_stores).
-- [ ] `add_job` and `add_contact` return the inserted id on both (planned
-      test_an_insert_returns_its_id_on_both_stores).
-- [ ] No domain insert supplies an `id` (planned
-      test_no_domain_insert_supplies_an_id).
+      `set_config` and `put_document`, and `archived_at` written by
+      `archive_track`, matches
+      `^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$` on both
+      (`services/api/tests/test_domain_sql_on_both_stores.py::test_a_written_timestamp_has_one_shape_on_both_stores`).
+- [ ] The three rows of the folding table hold on both
+      (`services/api/tests/test_domain_sql_on_both_stores.py::test_dedupe_folds_ascii_case_only_on_both_stores`).
+- [ ] Text orders by code point on both, a NULL first, and `LIMIT 1` by
+      name picks the same document
+      (`services/api/tests/test_domain_sql_on_both_stores.py::test_text_orders_by_code_point_on_both_stores`).
+- [ ] `add_job` and `add_contact` return the inserted id on both
+      (`services/api/tests/test_domain_sql_on_both_stores.py::test_an_insert_returns_its_id_on_both_stores`).
+- [ ] No domain insert supplies an `id`
+      (`services/api/tests/test_domain_sql_on_both_stores.py::test_no_domain_insert_supplies_an_id`).
 - [ ] A duplicate track slug is `DuplicateTrackError`, and a unique-index
-      race in `add_job` is `DuplicateJobError`, on both (planned
-      test_a_duplicate_is_refused_alike_on_both_stores).
+      race in `add_job` is `DuplicateJobError`, on both
+      (`services/api/tests/test_domain_sql_on_both_stores.py::test_a_duplicate_is_refused_alike_on_both_stores`).
 - [ ] The three lock tests named under Behavior pass on both stores, and
       `record_eligibility` holds the lock from read to write on both
-      (planned test_an_assessment_holds_the_lock_from_read_to_write).
+      (`services/api/tests/test_job_events.py::test_an_assessment_holds_the_lock_from_read_to_write`).
 - [ ] A decision on one job does not wait for another on Postgres and
-      waits on SQLite (planned
-      test_a_decision_on_one_job_does_not_wait_for_another).
+      waits on SQLite
+      (`services/api/tests/test_job_events.py::test_a_decision_on_one_job_does_not_wait_for_another`).
 - [ ] `cutover` and `migrate_legacy.migrate` refuse a Postgres connection
-      with the texts under Behavior (planned
-      test_local_only_work_refuses_a_postgres_connection).
+      with the texts under Behavior
+      (`services/api/tests/test_domain_sql_on_both_stores.py::test_local_only_work_refuses_a_postgres_connection`).
 - [ ] The fixture fails a Postgres test whose connection is not
-      `harrier_tenant` (planned test_the_store_fixture_runs_as_the_tenant).
+      `harrier_tenant`
+      (`services/api/tests/test_domain_sql_on_both_stores.py::test_the_store_fixture_runs_as_the_tenant`).
 - [ ] `grep -n "datetime('now')\|COLLATE NOCASE\|lastrowid\|ON CONFLICT"`
       over `services/api/src/harrier`, outside `tracker/schema.py` and
-      `db.py`, finds nothing; the PR shows the output.
+      `db.py`, finds nothing but the one line of `ascii_folded` in
+      `connection.py` that spells SQLite's fragment; the PR shows the
+      output.
 - [ ] `docs/architecture.md` describes the domain on either store, names
       `harrier/connection.py`, and no longer says "until spec 112".
 - [ ] `services/api/src/harrier/tracker/schema.py` and
@@ -482,3 +496,81 @@ spec.
   - `add_job` maps every integrity refusal to `DuplicateJobError`
     (`tracker/store.py:203-207`), a check or unknown-track refusal
     included. Kept as is here so both stores behave the same.
+
+## Amendment (2026-10-12): what B1 settled
+
+Building B1 showed three places where this spec said something the
+stores do not do, and one gap. Each is corrected above, in place, and
+recorded here.
+
+### Where the spec was wrong
+
+- **The folding table had two answers swapped.** It said `École
+  Exemple` and `ÉCOLE EXEMPLE` are not duplicates and `École Exemple` and
+  `école exemple` are. The `É` is the same character in the first pair,
+  and every other letter is ASCII, so SQLite's `NOCASE` matches them;
+  `É` and `é` are two characters, and it does not match the second pair.
+  Run against SQLite and Postgres 17 on 2026-10-12: `translate` agrees
+  with `NOCASE` on all three rows, and `lower()` on Postgres matches the
+  second pair, which is what the helper exists to prevent. The table now
+  says so (`services/api/tests/test_domain_sql_on_both_stores.py::test_dedupe_folds_ascii_case_only_on_both_stores`).
+- **The grep criterion could not find nothing.** `ascii_folded` is the
+  seam's spelling of SQLite's fragment, so `COLLATE NOCASE` appears in
+  `connection.py` once, on the line that returns it. The criterion now
+  names that line as the one exception.
+- **`archive_track` writes `archived_at`.** The timestamp criterion said
+  `updated_at` for all five writers; `tracks` has no `updated_at`. The
+  criterion now names the column `archive_track` writes.
+
+### The gap: NULL ordering
+
+Text ordering said nothing of NULLs. SQLite orders a NULL first in an
+ascending order and Postgres last. `list_documents` orders by `t.slug`,
+which is NULL for a shared document, so a shared document and an owned
+one of the same kind and name listed in opposite orders on the two
+stores. The site writes `NULLS FIRST`, SQLite's default, so both list the
+shared one first (Behavior, Text ordering;
+`services/api/tests/test_domain_sql_on_both_stores.py::test_text_orders_by_code_point_on_both_stores`).
+
+### What the implementation settled
+
+- **The helpers.** `store_now`, `ascii_folded`, `by_code_point`,
+  `refuse_unless_local` and `update_or_insert` live in
+  `services/api/src/harrier/connection.py` (Open decision 2's
+  recommendation). `update_or_insert` is the four upserts' one shape:
+  each passes its update and its insert, and a second writer's insert
+  that wins the race is retried as an update in a savepoint.
+- **The write lock.** `_write_lock(conn, scope, job_id)` in
+  `services/api/src/harrier/tracker/store.py` replaces the four writers'
+  `transaction(immediate=True)`. A `job_id` of None is backfill's lock,
+  on the track's jobs with no events.
+- **The fixture.** `store` yields the first `Connection`; `dual_store`,
+  which `store` is built on, opens a second one as the same owner, opens
+  one as a second owner, and gives the copy's URL as the migrating role.
+  Its Postgres side lives in `services/api/tests/pg_support.py`
+  (`migrated_template`, `database_copy`, `open_owner_store`). The
+  targeted tests are in a new file,
+  `services/api/tests/test_domain_sql_on_both_stores.py`, and the lock
+  tests stay in `services/api/tests/test_job_events.py`.
+- **A race on SQLite cannot reach the retry.** The first writer's update
+  takes the write lock, so the second writer waits and then updates. The
+  race test asserts one row, holding the later writer's value, on both
+  stores; only Postgres reaches the retry, and reverting the retry or the
+  savepoint fails its Postgres parameters only.
+- **`lastrowid` in tests.** Two test helpers read it
+  (`services/api/tests/test_job_events.py` and
+  `services/api/tests/test_ui_operations.py`); with it gone from the
+  `Cursor` protocol they read `RETURNING id`.
+- **The wrapped first move.** Spec 112's
+  `services/api/tests/test_job_events.py::test_a_wrapped_first_move_still_holds_the_lock_from_read_to_write`
+  shares the rival fixture with the three lock tests, so it runs on both
+  stores too.
+
+### Honest limitations (amendment of 2026-10-12)
+
+- `list_config` orders `user_config.kind` by code point on both stores,
+  and no test can tell: the kinds harrier accepts are lowercase ASCII
+  words that sort alike under either rule.
+- The race test on SQLite proves one row, not the retry: SQLite cannot
+  interleave two writers there.
+
