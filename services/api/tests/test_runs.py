@@ -241,6 +241,9 @@ def test_run_event_payload_is_in_the_contract() -> None:
     assert set(properties) >= {"type", "line", "step", "total", "message", "state", "exit_code"}
 
 
+@pytest.mark.sqlite_only(
+    "reads SQLite itself: migration history through raw sqlite3.connect and sqlite_master"
+)
 def test_a_database_already_at_the_previous_version_gains_the_job_runs_table(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

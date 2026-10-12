@@ -16,10 +16,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.datastructures import Headers
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import PlainTextResponse, Response
@@ -30,7 +32,8 @@ from harrier.connection import POSTGRES_NOT_YET, Connection, store_target
 from harrier.db import DatabaseOwnedByHost, connect, default_db_path, lease_directory
 from harrier.demo import repo_root
 from harrier.hostlease import oldest_hold
-from harrier.logsetup import configure_logging
+from harrier.logredact import scrub_outbound
+from harrier.logsetup import configure_logging, scrub_uvicorn_handlers
 from harrier.tracker import list_jobs
 from harrier.tracker.reasons import CANDIDATE, COMPANY, SYSTEM, codes_for
 from harrier.tracker.selector import SelectorError
@@ -1441,8 +1444,23 @@ def _app_with_routes(manager: RunManager) -> FastAPI:
     @app.exception_handler(RunConflictError)
     async def run_conflict(request: Request, error: RunConflictError) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
         # A run of this kind is active with other options. Every route that
-        # starts a run declares the 409 (`RUN_CONFLICT_RESPONSES`).
-        return JSONResponse(status_code=409, content=ErrorOut(detail=str(error)).model_dump())
+        # starts a run declares the 409 (`RUN_CONFLICT_RESPONSES`). Its
+        # text is scrubbed as an HTTPException's is (spec 133).
+        return JSONResponse(
+            status_code=409, content=ErrorOut(detail=scrub_outbound(str(error))).model_dump()
+        )
+
+    @app.exception_handler(StarletteHTTPException)
+    async def scrubbed_http_error(request: Request, error: StarletteHTTPException) -> Response:  # pyright: ignore[reportUnusedFunction]
+        # One place for every `HTTPException(detail=str(error))`, rather
+        # than each raise site: a string detail leaves the process scrubbed,
+        # with its status and headers. Any other detail is answered as
+        # FastAPI answers it; a 422 has its own handler and never comes here
+        # (spec 133). Typed `str` by Starlette; FastAPI's takes any value.
+        detail = cast(object, error.detail)
+        if isinstance(detail, str):
+            error.detail = scrub_outbound(detail)
+        return await http_exception_handler(request, error)
 
     @app.exception_handler(DatabaseOwnedByHost)
     async def database_held(request: Request, error: DatabaseOwnedByHost) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
@@ -1495,6 +1513,10 @@ def create_app(run_manager: RunManager | None = None, spa_dir: Path | None = Non
     # called it, so the process serving the browser had no configured root
     # logger and no identity redaction (spec 045).
     configure_logging()
+    # uvicorn logs an unhandled exception on its own handler, which the
+    # root's filters never see (spec 133). Before the modes part, so the
+    # hosted app gets it too.
+    scrub_uvicorn_handlers()
     if hosted is not None:
         return create_hosted_app(hosted, run_manager=run_manager)
     if is_demo_mode():
