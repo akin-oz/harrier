@@ -19,13 +19,15 @@ each parity probe, takes a database of its own.
 
 from __future__ import annotations
 
+import copy
 import json
+import pickle
 import re
 import sqlite3
 import time
 import uuid
 from collections.abc import Callable, Iterator
-from contextlib import closing
+from contextlib import ExitStack, closing
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -41,18 +43,25 @@ import harrier.pgstore
 import harrier_cli.main as cli
 from harrier.connection import (
     IDENTITY_DID_NOT_HOLD,
+    JSONB_KEY_OPERATOR,
+    NAMED_PLACEHOLDER,
     NOT_AN_OWNER_ID,
     NOT_SQLITE,
+    NUMBERED_PLACEHOLDER,
     OWNER_NEEDS_POSTGRES,
+    POSTGRES_NOT_IDLE,
     UNKNOWN_TRACK,
     UNKNOWN_TRACK_CONSTRAINT,
     URL_VARIABLE,
+    WRITE_LOCK_NOT_HELD,
     Connection,
     StoreBusyError,
+    StoreConflictError,
     StoreDatabaseError,
     StoreError,
     StoreIntegrityError,
     StoreLibraryTooOld,
+    begins_a_transaction,
     open_store,
     owner_claims,
 )
@@ -151,6 +160,14 @@ def test_a_row_reads_by_position_by_name_and_as_a_dict(store: Store) -> None:
     rows = conn.execute(f"SELECT name FROM {table}").fetchall()
     assert [r["name"] for r in rows] == ["alpha"]
     assert [tuple(r) for r in conn.execute(f"SELECT name FROM {table}")] == [("alpha",)]
+    if store.dialect == "postgres":
+        # A Postgres row copies and pickles with its names (post-merge
+        # review of PR #288). sqlite3.Row does neither, so nothing on SQLite
+        # relies on it.
+        for copied in (copy.copy(row), copy.deepcopy(row), pickle.loads(pickle.dumps(row))):
+            assert copied == row
+            assert dict(copied) == dict(row)
+            assert copied["NAME"] == "alpha"
 
 
 def test_a_failed_fetch_is_a_store_error(tmp_path: Path) -> None:
@@ -654,3 +671,334 @@ def test_identity_reads_survive_a_store_error_on_both_stores(tmp_path: Path) -> 
         with closing(open_store({URL_VARIABLE: url}, owner=owner)) as pg:
             pg.execute(insert, contact)
             assert identity_values(pg) == set(contact)
+
+
+# --- the post-merge review of PR #288 ---
+
+
+def _write_lock_is_free(path: Path) -> bool:
+    """Whether another connection to the SQLite file can take the write lock
+    at once. It takes it and gives it back, and waits for nothing."""
+    with closing(sqlite3.connect(path, isolation_level=None, timeout=0)) as other:
+        try:
+            other.execute("BEGIN IMMEDIATE")
+        except sqlite3.OperationalError as error:
+            assert "locked" in str(error)
+            return False
+        other.execute("ROLLBACK")
+        return True
+
+
+def test_a_block_that_asks_for_the_write_lock_holds_it_at_any_depth(tmp_path: Path) -> None:
+    """A deferred block that has only read, then a block inside it that
+    asks for `immediate`: the write lock is taken there and held until the
+    outermost block ends, as the write lock before the seam was. A caller
+    that wraps a locked writer in its own block keeps spec 079's
+    guarantee."""
+    path = tmp_path / "lock.db"
+    with closing(connect(path)) as conn:
+        table = new_table(conn, "id INTEGER PRIMARY KEY")
+        with conn.transaction():
+            conn.execute(f"SELECT count(*) FROM {table}").fetchone()
+            assert _write_lock_is_free(path)
+            with conn.transaction(immediate=True):
+                assert not _write_lock_is_free(path)
+                conn.execute(f"SELECT count(*) FROM {table}").fetchone()
+            # Held past the inner block, to the end of the outermost.
+            assert not _write_lock_is_free(path)
+        assert _write_lock_is_free(path)
+
+        # Two levels down, under deferred blocks that have not begun either.
+        with conn.transaction(), conn.transaction():
+            with conn.transaction(immediate=True):
+                assert not _write_lock_is_free(path)
+                conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (1,))
+            assert not _write_lock_is_free(path)
+        assert _write_lock_is_free(path)
+        assert ids(conn, table) == [1]
+
+        # A write outside any block took the lock, so a block that asks for
+        # it then is satisfied, and commits the write, as before the seam.
+        conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (2,))
+        with conn.transaction(immediate=True):
+            assert not _write_lock_is_free(path)
+        assert _write_lock_is_free(path)
+        with closing(connect(path)) as reader:
+            assert ids(reader, table) == [1, 2]
+
+
+def test_the_write_lock_is_refused_inside_a_transaction_begun_without_it(
+    tmp_path: Path,
+) -> None:
+    """A transaction begun with a plain BEGIN may hold a read snapshot that
+    another commit has made stale, and the lock cannot be taken inside it
+    safely. Asking for it is refused, at any depth, and the transaction is
+    left as it was found."""
+    path = tmp_path / "foreign.db"
+    with closing(connect(path)) as conn:
+        table = new_table(conn, "id INTEGER PRIMARY KEY")
+        conn.sqlite_driver.execute("BEGIN")
+        conn.execute(f"SELECT count(*) FROM {table}").fetchone()
+        with (
+            pytest.raises(StoreDatabaseError, match=f"^{WRITE_LOCK_NOT_HELD}$"),
+            conn.transaction(immediate=True),
+        ):
+            pytest.fail("the block ran")
+        assert conn.sqlite_driver.in_transaction
+        with conn.transaction():
+            with (
+                pytest.raises(StoreDatabaseError, match=f"^{WRITE_LOCK_NOT_HELD}$"),
+                conn.transaction(immediate=True),
+            ):
+                pytest.fail("the block ran")
+            conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (1,))
+        assert not conn.in_transaction
+        assert ids(conn, table) == [1]
+
+
+def test_a_nested_block_waits_for_the_lock_as_the_outermost_does(tmp_path: Path) -> None:
+    """A block reads, another connection commits, the block writes. At any
+    depth the block began no transaction before its write, so it read no
+    snapshot that the commit made stale, and the write succeeds."""
+    path = tmp_path / "snapshot.db"
+    with closing(connect(path)) as conn, closing(connect(path)) as other:
+        table = new_table(conn, "id INTEGER PRIMARY KEY")
+        next_id = iter(range(1, 100))
+        for depth in (1, 2, 3):
+            with ExitStack() as blocks:
+                for _ in range(depth):
+                    blocks.enter_context(conn.transaction())
+                conn.execute(f"SELECT count(*) FROM {table}").fetchone()
+                with other.transaction():
+                    other.execute(f"INSERT INTO {table} (id) VALUES (?)", (next(next_id),))
+                conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (next(next_id),))
+        assert ids(other, table) == [1, 2, 3, 4, 5, 6]
+
+
+def _stale_snapshot_write(store: Store) -> Callable[[], None]:
+    """A write from a transaction whose snapshot another connection's
+    commit has replaced. SQLite: a BEGIN the seam did not run, then a read.
+    Postgres: REPEATABLE READ, which the seam never asks for, then a read."""
+    conn = store.open()
+    other = store.open()
+    table = new_table(conn, "id INTEGER PRIMARY KEY, body TEXT")
+    with conn.transaction():
+        conn.execute(f"INSERT INTO {table} (id, body) VALUES (?, ?)", (1, "first"))
+
+    def update(on: Connection, body: str) -> None:
+        on.execute(f"UPDATE {table} SET body = ? WHERE id = ?", (body, 1))
+
+    def write() -> None:
+        if store.dialect == "sqlite":
+            conn.sqlite_driver.execute("BEGIN")
+            conn.execute(f"SELECT body FROM {table}").fetchone()
+            with other.transaction():
+                update(other, "other")
+            update(conn, "mine")
+            return
+        with conn.transaction():
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+            conn.execute(f"SELECT body FROM {table}").fetchone()
+            with other.transaction():
+                update(other, "other")
+            update(conn, "mine")
+
+    return write
+
+
+def test_a_stale_snapshot_is_a_conflict_not_a_busy_lock(store: Store) -> None:
+    """No lock was waited for: the store refused the write at once, and
+    waiting longer would not help. StoreBusyError says a lock was not taken
+    within the timeout, so this is StoreConflictError, on both stores."""
+    write = _stale_snapshot_write(store)
+    started = time.monotonic()
+    with pytest.raises(StoreConflictError) as refused:
+        write()
+    assert not isinstance(refused.value, StoreBusyError)
+    # The connection would wait up to BUSY_TIMEOUT_MS for a lock; it did not.
+    assert time.monotonic() - started < BUSY_TIMEOUT_MS / 2000
+
+
+def test_a_postgres_driver_in_a_transaction_is_never_adopted(migrated_postgres: str) -> None:
+    """A driver already in a transaction, from a foreign BEGIN, a pooler or
+    a failed ROLLBACK, would run the seam's statements as the login role,
+    with no claims and no lock timeout, and the block would commit them.
+    The seam refuses it, with an owner or without, and leaves it as it was
+    found."""
+    from psycopg.pq import TransactionStatus
+
+    url = migrated_postgres
+    with closing(raw(url)) as admin:
+        owner = new_owner(admin)
+        probe = f"seam_{uuid.uuid4().hex[:12]}"
+        admin.execute(f"CREATE TABLE {probe} (body text)".encode())
+        admin.execute(f"GRANT INSERT, SELECT ON {probe} TO {TENANT_ROLE}".encode())
+
+    for claims in (owner_claims(owner), None):
+        with closing(raw(url)) as driver:
+            driver.execute(b"BEGIN")
+            conn = Connection.postgres(driver, claims=claims)
+            with pytest.raises(StoreDatabaseError, match=f"^{POSTGRES_NOT_IDLE}$"):
+                conn.execute(f"INSERT INTO {probe} (body) VALUES (?)", ("outside",))
+            with (
+                pytest.raises(StoreDatabaseError, match=f"^{POSTGRES_NOT_IDLE}$"),
+                conn.transaction(),
+            ):
+                conn.execute(f"INSERT INTO {probe} (body) VALUES (?)", ("inside",))
+            # Neither rolled back nor committed: still the caller's.
+            assert driver.info.transaction_status == TransactionStatus.INTRANS
+            driver.execute(b"COMMIT")
+            # Idle again, the seam begins as it always does.
+            conn.execute(f"INSERT INTO {probe} (body) VALUES (?)", ("idle",))
+    with closing(raw(url)) as admin:
+        rows = admin.execute(f"SELECT body FROM {probe}".encode()).fetchall()
+    assert rows == [("idle",), ("idle",)]
+
+
+# Synthetic values a store could quote back. None is a real person's.
+SECRET = "synthetic.person@example.test"
+OUT_OF_RANGE = "98765432109"
+NO_SUCH_DATE = "2031-13-45"
+
+
+def _postgres_value_refusals(conn: Connection, table: str) -> list[tuple[str, StoreDatabaseError]]:
+    """Each SQLSTATE class 22 refusal the test provokes with a bound value,
+    with the wording its message keeps."""
+    cases: list[tuple[str, str, object]] = [
+        ("invalid input syntax for type integer", f"INSERT INTO {table} (n) VALUES (?)", SECRET),
+        ("invalid input syntax for type date", f"INSERT INTO {table} (d) VALUES (?)", SECRET),
+        ("invalid input syntax for type uuid", f"INSERT INTO {table} (u) VALUES (?)", SECRET),
+        ("invalid input syntax for type boolean", f"INSERT INTO {table} (b) VALUES (?)", SECRET),
+        ("invalid input syntax for type numeric", "SELECT CAST(? AS numeric)", SECRET),
+        (
+            "invalid input syntax for type timestamp with time zone",
+            f"INSERT INTO {table} (t) VALUES (?)",
+            SECRET,
+        ),
+        ("value is out of range for type integer", "SELECT CAST(? AS integer)", OUT_OF_RANGE),
+        ("date/time field value out of range", "SELECT CAST(? AS date)", NO_SUCH_DATE),
+        (
+            "value too long for type character varying(5)",
+            f"INSERT INTO {table} (s) VALUES (?)",
+            SECRET,
+        ),
+        ("invalid input syntax for type json", "SELECT CAST(? AS jsonb)", SECRET),
+        ("time zone not recognized", "SELECT now() AT TIME ZONE ?", SECRET),
+        ("malformed array literal", "SELECT CAST(? AS text[])", SECRET),
+        (
+            "invalid byte sequence for encoding",
+            "SELECT convert_from(CAST(? AS bytea), 'UTF8')",
+            b"\xff\xfe",
+        ),
+    ]
+    refused: list[tuple[str, StoreDatabaseError]] = []
+    for wording, statement, value in cases:
+        with pytest.raises(StoreDatabaseError) as error:
+            conn.execute(statement, (value,))
+        refused.append((wording, error.value))
+    return refused
+
+
+def _sqlite_value_refusals(conn: Connection, table: str) -> list[tuple[str, StoreDatabaseError]]:
+    """The SQLite refusals of a bound value, with the wording each keeps."""
+    cases = [
+        ("bad JSON path", "SELECT json_extract('{}', ?)"),
+        ("malformed JSON", "SELECT json_extract(?, '$.a')"),
+        ("cannot store TEXT value in INTEGER column", f"INSERT INTO {table} (n) VALUES (?)"),
+    ]
+    refused: list[tuple[str, StoreDatabaseError]] = []
+    for wording, statement in cases:
+        with pytest.raises(StoreDatabaseError) as error:
+            conn.execute(statement, (SECRET,))
+        refused.append((wording, error.value))
+    return refused
+
+
+def test_no_store_error_quotes_a_bound_value(store: Store) -> None:
+    """A store error's message keeps the wording that names the type and
+    drops the value the store quoted, on both stores. The driver's own
+    error, chained as the cause, did quote it, so the test could see a
+    leak."""
+    conn = store.open()
+    if store.dialect == "postgres":
+        columns = "n integer, d date, u uuid, b boolean, t timestamptz, s varchar(5)"
+        refused = _postgres_value_refusals(conn, new_table(conn, columns))
+    else:
+        table = f"seam_{uuid.uuid4().hex[:12]}"
+        with conn.transaction():
+            conn.execute(f"CREATE TABLE {table} (n INTEGER) STRICT")
+        refused = _sqlite_value_refusals(conn, table)
+    values = (SECRET, OUT_OF_RANGE, NO_SUCH_DATE, "0xff", "xff")
+    quoted_by_the_driver = 0
+    for wording, error in refused:
+        assert str(error).startswith(wording), (wording, str(error))
+        assert not any(value in str(error) for value in values), str(error)
+        quoted_by_the_driver += any(value in str(error.__cause__) for value in values)
+    # SQLite quotes one of its three; Postgres most of its own.
+    assert quoted_by_the_driver >= 1
+
+
+def test_a_statement_reads_alike_on_both_stores(store: Store) -> None:
+    """Comments, quoted identifiers and doubled quotes hold a `?` or an
+    apostrophe that is no placeholder, on both stores, and so do
+    Postgres's own E'' strings and dollar quotes. A shape the two stores
+    would read differently is refused at the seam, on both, before
+    anything runs."""
+    conn = store.open()
+    portable: list[tuple[str, tuple[object, ...], tuple[object, ...]]] = [
+        ("SELECT ? -- it's a why?\n, ?", ("a", "b"), ("a", "b")),
+        ("SELECT ? /* why? it's */, 'it''s ?'", ("a",), ("a", "it's ?")),
+        ('SELECT 1 AS "a?b", 2 AS "it\'s", ?', ("a",), (1, 2, "a")),
+        ("SELECT ? % 3, '50%'", (7,), (1, "50%")),
+    ]
+    if store.dialect == "postgres":
+        portable += [
+            ("SELECT E'it\\'s ?', ?::text", ("a",), ("it's ?", "a")),
+            ("SELECT $$what? it's$$, $tag$?$tag$, ?::text", ("a",), ("what? it's", "?", "a")),
+        ]
+    for statement, params, expected in portable:
+        assert tuple(conn.execute(statement, params).fetchone()) == expected, statement
+
+    table = new_table(conn, "id INTEGER PRIMARY KEY")
+    refusals: list[tuple[str, Any, str]] = [
+        ("SELECT ?| ARRAY['a']", (), JSONB_KEY_OPERATOR),
+        ("SELECT ?& ARRAY['a']", (), JSONB_KEY_OPERATOR),
+        ("SELECT ?1", (1,), NUMBERED_PLACEHOLDER),
+        ("SELECT :name", (1,), NAMED_PLACEHOLDER),
+        ("SELECT ?", {"name": 1}, NAMED_PLACEHOLDER),
+        ("SELECT ?, ?", (1,), "the statement has 2 placeholders and 1 parameters were passed"),
+        ("SELECT ?", (1, 2), "the statement has 1 placeholders and 2 parameters were passed"),
+        (f"INSERT INTO {table} (id) VALUES (?), (:two)", (1,), NAMED_PLACEHOLDER),
+    ]
+    for statement, params, text in refusals:
+        with pytest.raises(StoreDatabaseError, match=f"^{re.escape(text)}$") as refused:
+            conn.execute(statement, params)
+        # Refused by the seam, not by a driver, and nothing was left open.
+        assert refused.value.__cause__ is None, statement
+        assert not conn.in_transaction, statement
+    assert ids(conn, table) == []
+
+
+def test_the_seam_begins_where_the_sqlite3_module_would() -> None:
+    """The seam begins a SQLite block's transaction before each statement
+    the sqlite3 module would begin one for, so the module never begins one
+    under a block whose savepoints are not open. Held to the module's own
+    behavior, so a Python whose rule changes fails here."""
+    corpus = [
+        "INSERT INTO t VALUES (1)",
+        "  \n\tinsert into t values (1)",
+        "\fUPDATE t SET v = 2",
+        "-- a comment\nINSERT INTO t VALUES (1)",
+        "/* a */ -- b\n /* c */DELETE FROM t WHERE v = 9",
+        "REPLACE INTO t VALUES (1)",
+        "Update t SET v = 3",
+        "WITH x AS (SELECT 1) INSERT INTO t SELECT * FROM x",
+        "SELECT 1",
+        "CREATE TABLE u (a)",
+        "PRAGMA user_version",
+    ]
+    for sql in corpus:
+        with closing(sqlite3.connect(":memory:")) as driver:
+            driver.execute("CREATE TABLE t (v)")
+            driver.execute(sql)
+            assert begins_a_transaction(sql) == driver.in_transaction, sql

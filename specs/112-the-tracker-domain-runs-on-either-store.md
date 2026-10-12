@@ -208,7 +208,11 @@ driver's exception as its `__cause__`.
   returns a cursor with `fetchone()`, `fetchall()`, iteration and
   `rowcount`. On Postgres the placeholders are rewritten to `%s` outside
   single-quoted literals, and a `%` outside a literal is doubled, so
-  nothing in domain SQL is read as a psycopg placeholder.
+  nothing in domain SQL is read as a psycopg placeholder. (The post-merge
+  review of PR #288 amended this: comments, quoted identifiers, `E''`
+  strings and dollar quotes are known too, every `%` is doubled, and a
+  shape the stores would read differently is refused. See "Amendment
+  (2026-10-12): the post-merge review of PR #288".)
 - `transaction()` is a context manager. It commits on success and rolls
   back on any exception. Opened inside another transaction, it joins that
   one, and the outermost commits. On SQLite it does what `with conn:` does
@@ -271,6 +275,7 @@ run the update once more. One text for both dialects, naming no tenant.
 | `StoreIntegrityError(kind="not_null")` | `NOT NULL constraint failed` | 23502 |
 | `StoreIntegrityError(kind="refused", message=...)` | a trigger's `RAISE(ABORT, ...)` | P0001 from `harrier_refuse()` |
 | `StoreBusyError` | `SQLITE_BUSY` after the timeout | 55P03 after `lock_timeout` |
+| `StoreConflictError` | `SQLITE_BUSY_SNAPSHOT` | 40001 |
 | `StoreDatabaseError` | any other `sqlite3.Error` | any other `psycopg.Error` |
 
 An unknown track is `kind="refused"`, message `unknown track`, on both:
@@ -279,7 +284,10 @@ trigger's text. After spec 105's migration 10 that key is the composite
 `(owner_id, track_id)` reference to `tracks (owner_id, id)`, so the mapping
 matches it by the constraint spec 105 names, not by the baseline's
 single-column key (note added by spec 105, 2026-10-10). A Postgres error's message is the server's primary
-message, never its `DETAIL`, which quotes the row's values. Every probe in
+message, never its `DETAIL`, which quotes the row's values. No store
+error's message, on either store, carries a row or bound value: a value
+the primary message quotes is withheld too (amended by the post-merge
+review of PR #288). Every probe in
 spec 103's parity table that is refused raises the same class, kind and
 message on both stores.
 
@@ -578,9 +586,12 @@ PR 2 (behavior):
   dedupe folds with Python's `str.lower()` (`screening/normalized.py:37-38`),
   which folds `É` too. The two rules already disagree locally; this spec
   does not reconcile them.
-- The placeholder rewrite is a small tokenizer, not a SQL parser. It knows
-  single-quoted literals only. Domain SQL today has no double-quoted
-  identifiers, comments or dollar quotes holding a `?`.
+- The placeholder rewrite is a small tokenizer, not a SQL parser. As
+  merged in PR #288 it knew single-quoted literals only, so a `?` or an
+  apostrophe in a comment, a double-quoted identifier, a dollar quote or
+  an `E''` string misread the statement on Postgres. The post-merge
+  review of PR #288 taught it those shapes; what it still cannot read is
+  listed under that amendment's Honest limitations.
 - Postgres connection pooling, and how `SET LOCAL` behaves behind
   Supabase's pooler, are spec 110's. `SET LOCAL` was chosen because it
   ends with the transaction.
@@ -1344,6 +1355,9 @@ under "The SQLite library check" below.
   in a block that has not begun yet begins it first, since a savepoint
   that began the transaction would commit when released
   (`services/api/tests/test_seam_on_both_stores.py::test_a_nested_transaction_is_a_savepoint_on_both_stores`).
+  That plain `BEGIN` brought the snapshot failure back for a nested block
+  and dropped `immediate` inside one; the post-merge review of PR #288
+  replaced it, and its amendment below says how a block begins now.
   `in_transaction` is true from the first line of a block, on both
   stores
   (`services/api/tests/test_seam_on_both_stores.py::test_a_connection_offers_no_commit_or_rollback`).
@@ -1445,3 +1459,231 @@ this spec no longer carries it.
   would make that cheaper.
 - `check-python`'s duration in CI was not measured here; the pull
   request records it.
+
+## Amendment (2026-10-12): the post-merge review of PR #288
+
+PR #288 merged without a review. A data-integrity review after the merge
+ran probe scripts against SQLite and Postgres 17 and reported six
+findings. Five change what the seam does, so each is written here first,
+with the test that proves it. All of it lives in
+`services/api/src/harrier/connection.py`.
+
+### Findings and what changed
+
+1. **SQLite dropped `immediate` inside a block.** A deferred block that had
+   read, then `transaction(immediate=True)` inside it, ran the plain `BEGIN`
+   the savepoint path used and no `BEGIN IMMEDIATE`, so a second
+   connection could still take the write lock. Before PR #288,
+   `_write_lock` took `BEGIN IMMEDIATE` there because nothing had been
+   written yet. Spec 079's read-then-write race returned for any caller
+   that wraps `set_status`, `update_fields`, `backfill_events` or
+   `record_eligibility` in its own block, which spec 104's request
+   transaction does.
+2. **A nested SQLite block read a snapshot that a later write found
+   stale.** The plain `BEGIN` before a nested block's savepoint began a
+   read transaction at its first read. After another connection's commit,
+   its write failed at once with `SQLITE_BUSY_SNAPSHOT`, mapped to
+   `StoreBusyError`, though nothing had waited. The outermost block began
+   lazily and did not fail this way.
+3. **Postgres adopted a driver already in a transaction.** The outermost
+   block skipped its first statements when the driver was not idle, so a
+   foreign `BEGIN`, a pooler's open transaction or a failed `ROLLBACK`
+   ran the seam's statements as the login role, with no claims and lock
+   timeout 0, and the block then committed that transaction.
+4. **A Postgres store error quoted a bound value.** The `DETAIL` was
+   dropped, but a data exception's primary message names the value it
+   refused, as in `invalid input syntax for type integer: "..."`.
+   SQLite's `bad JSON path` quotes a bound path the same way.
+5. **The placeholder rewrite knew single quotes only.** A `?` or an
+   apostrophe in a comment, a double-quoted identifier, a dollar quote or
+   an `E''` string misread the statement on Postgres, and the jsonb `?|`
+   and `?&` operators, a named `:a` placeholder and a parameter count that
+   did not fit each failed there as a bare `ProgrammingError`. None of
+   these is in domain SQL today: the review scanned its SQL strings and
+   found no mismatch, and nothing pinned that.
+6. **Two small gaps.** `copy.copy` and `copy.deepcopy` of a Postgres row
+   raised `TypeError`. And the identity read-back runs once per
+   transaction, which Honest limitations did not say.
+
+### Behavior (amendment of the post-merge review of PR #288)
+
+**How a SQLite block begins.** A block, at any depth, begins no
+transaction until it must, and its reads run in autocommit, as they did
+inside `with conn:` (spec 076). The transaction begins with `BEGIN
+IMMEDIATE` at the first of two moments: a statement the sqlite3 module
+would begin a transaction for (after whitespace and comments, one that
+starts with `INSERT`, `UPDATE`, `DELETE` or `REPLACE`, the module's own
+rule in Python 3.12), or a block, at any depth, that asks for
+`immediate`. The savepoints of the blocks open at that moment are opened
+then, in order, so a savepoint never begins a transaction and its release
+never commits. A block that ends before that moment had nothing to undo.
+
+So every transaction a block begins holds the write lock from its first
+statement, and no block holds a read snapshot without it. The reviewer
+offered two ways to keep `immediate` inside a block that had already
+read: refuse it, or upgrade the lock. Neither arises inside the seam's own
+transactions, which never read under a deferred `BEGIN`. Upgrading
+inside a transaction begun without the lock is not safe: a write there
+fails at once if another commit landed after its first read, and SQLite
+offers no statement that takes the lock without writing. So the seam
+refuses.
+
+- `immediate` inside a SQLite transaction this connection began without
+  the write lock (a `BEGIN` its caller ran through `sqlite_driver`, or a
+  write outside any block that was refused the lock) raises
+  `StoreDatabaseError` `the write lock was asked for inside a SQLite
+  transaction this connection began without it`, at any depth, and
+  leaves that transaction as it was.
+- A write outside any block still opens the sqlite3 module's own
+  transaction, and the next outermost block commits it, as `with conn:`
+  did. Such a write took the write lock, so `immediate` there is
+  satisfied.
+- A write that starts with `WITH`, and a `CREATE`, run in autocommit
+  inside a block that has not begun, as they did inside `with conn:`.
+
+**Postgres begins only on an idle driver.** The outermost block, and a
+statement outside any block, raise `StoreDatabaseError` `the Postgres
+connection is not idle, so no transaction can begin on it` when the
+driver is in a transaction the seam did not begin, or is broken, with an
+owner or without. The seam neither adopts that transaction nor rolls it
+back, since its work is not the seam's. No statement then runs without
+the lock timeout and, on an owner's connection, the owner's identity,
+which the amendment of 2026-10-11 promised.
+
+**Store errors say what happened.** A new class, `StoreConflictError`,
+subclasses `StoreDatabaseError`: another connection's commit replaced what
+the transaction had read, and the store refused its write at once.
+SQLite's `SQLITE_BUSY_SNAPSHOT` and Postgres's `40001` map to it. No lock
+was waited for, and only running the whole transaction again can succeed.
+`StoreBusyError` stays a lock another connection held and did not let go
+within `busy_timeout_ms`; with `0` the connection did not wait at all,
+which the busy timeout's own definition already says.
+
+**No store error carries a row or bound value.** This replaces "never its
+`DETAIL`" as the promise, on both stores. On Postgres the message of a
+data exception (SQLSTATE class 22) drops what follows its first `: ` and
+every quoted value or byte sequence left, and keeps the wording that names
+the type or the column: `invalid input syntax for type integer`, `value is
+out of range for type integer`. Every other Postgres message quotes names
+only (a table, a column, a constraint, a type) and is kept whole, so the
+parity table's messages do not change. On SQLite the text is the
+library's, but a value it quotes in single quotes, as `bad JSON path` does
+a bound path, is withheld the same way; an integrity error's text names
+the schema and is kept whole. The driver's own error stays chained as
+`__cause__`, as Behavior requires.
+
+**What the seam reads in a statement.** On both stores, before anything
+runs, the seam reads a statement as Postgres would. A `?` inside a
+single-quoted literal (`''` inside it), an `E''` string (a backslash
+escapes a quote there), a double-quoted identifier, a dollar-quoted
+string, a `--` comment or a `/* */` comment is not a placeholder; any
+other `?` is, and becomes `%s` on Postgres. Every `%` is doubled, wherever
+it stands. The seam raises `StoreDatabaseError`, with the driver never
+reached, for:
+
+- a named placeholder (`:name`), or parameters passed as a mapping:
+  `a statement names no placeholder: write ? and pass a sequence`;
+- a numbered one (`?1`): `a statement numbers no placeholder: write ?
+  alone`;
+- the jsonb `?|` or `?&` operator: `a statement may not use ?| or ?&
+  because ? is always a placeholder: write jsonb_exists_any or
+  jsonb_exists_all`;
+- a count of parameters other than the count of `?`: `the statement has
+  <n> placeholders and <m> parameters were passed`.
+
+`execute` takes a sequence of parameters only, so pyright refuses a
+mapping too. A domain statement of any of these shapes fails on SQLite in
+the local suite, not only on Postgres.
+
+**Postgres rows copy.** A Postgres row survives `copy.copy`,
+`copy.deepcopy` and `pickle` with its names. `sqlite3.Row` does none of
+these, so nothing that runs on SQLite relies on it.
+
+### Failure modes (amendment of the post-merge review of PR #288)
+
+- **`immediate` inside a SQLite transaction begun without the lock.**
+  `StoreDatabaseError` with the text above. Nothing runs, and the
+  transaction is left as it was.
+- **A Postgres driver that is not idle.** `StoreDatabaseError` with the
+  text above, every time, until its owner ends that transaction. Nothing
+  runs, and the transaction is left as it was.
+- **A stale snapshot.** `StoreConflictError`, at once. The seam's own
+  SQLite transactions never meet it; a transaction begun outside the seam,
+  or a Postgres one at `REPEATABLE READ` or stricter, can.
+- **A statement the seam cannot read alike on both stores.**
+  `StoreDatabaseError` with one of the texts above, before anything runs.
+
+### Acceptance criteria (amendment of the post-merge review of PR #288)
+
+- [ ] A deferred SQLite block that has read takes the write lock where a
+      block inside it asks for `immediate`, two levels down too, and
+      holds it until the outermost block ends; a write outside any block
+      satisfies `immediate`
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_block_that_asks_for_the_write_lock_holds_it_at_any_depth`).
+- [ ] A move wrapped in a caller's block that has already read still
+      makes a rival wait
+      (`services/api/tests/test_job_events.py::test_a_wrapped_first_move_still_holds_the_lock_from_read_to_write`).
+- [ ] `immediate` inside a SQLite transaction begun with a plain `BEGIN`
+      is refused at depth 0 and nested, and the transaction is left open
+      (`services/api/tests/test_seam_on_both_stores.py::test_the_write_lock_is_refused_inside_a_transaction_begun_without_it`).
+- [ ] A SQLite block at depths one to three reads, another connection
+      commits, and the block's write succeeds
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_nested_block_waits_for_the_lock_as_the_outermost_does`).
+- [ ] A stale snapshot is `StoreConflictError`, not `StoreBusyError`, at
+      once, on both stores
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_stale_snapshot_is_a_conflict_not_a_busy_lock`).
+- [ ] A Postgres driver in a transaction is refused, with an owner and
+      without, inside `transaction()` and outside it; the transaction is
+      neither committed nor rolled back; once idle the driver works
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_postgres_driver_in_a_transaction_is_never_adopted`).
+- [ ] No store error's message quotes a bound synthetic value, across
+      every class 22 refusal the test provokes on Postgres and the
+      value-quoting refusals on SQLite, and each keeps its wording
+      (`services/api/tests/test_seam_on_both_stores.py::test_no_store_error_quotes_a_bound_value`).
+- [ ] Comments, quoted identifiers, doubled quotes, `E''` strings and
+      dollar quotes bind alike, and each refused shape raises its text on
+      both stores before anything runs
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_statement_reads_alike_on_both_stores`).
+- [ ] The seam's rule for where a SQLite transaction begins matches the
+      sqlite3 module's own
+      (`services/api/tests/test_seam_on_both_stores.py::test_the_seam_begins_where_the_sqlite3_module_would`).
+- [ ] A Postgres row copies, deep copies and pickles with its names
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_row_reads_by_position_by_name_and_as_a_dict`).
+- [ ] Each fix's test fails when the fix is reverted, and the pull request
+      records what each reversion made fail.
+
+### Honest limitations (amendment of the post-merge review of PR #288)
+
+- The identity read-back runs once, at the start of each outermost
+  transaction. SQL run later on an owner's connection can still change
+  the claims with `set_config` or leave the tenant role with `RESET
+  ROLE`, and the seam would not see it. Isolation then rests on the
+  login role holding no `BYPASSRLS` (specs 104 and 110) and on domain SQL
+  being trusted code.
+- The jsonb `?` operator on its own cannot be told from a placeholder and
+  is always read as one: write `jsonb_exists`. A `:` before a letter
+  outside quotes is read as a named placeholder, so an array slice such
+  as `a[lo:hi]` is refused; SQLite has no arrays, so portable SQL has
+  none. SQLite's other named forms (`@name`, `$name`) and its bracket and
+  backtick identifiers are not known, and a `$1` is not refused.
+- A write that starts with `WITH`, and a `CREATE`, inside a SQLite block
+  that has not begun, run in autocommit and are not undone by the block's
+  rollback, as inside `with conn:`. Domain SQL has neither inside a block.
+- The SQLite rule for where a transaction begins is the sqlite3 module's,
+  copied. The test above fails if a Python upgrade changes it.
+- A Postgres message outside SQLSTATE class 22 is kept whole, on the
+  reading that it quotes names, not values. That reading was checked
+  against the messages the parity table and the tests provoke, not
+  against every message Postgres can send.
+- A store error's `__cause__` is the driver's error and still quotes the
+  value, and the `DETAIL` on Postgres. A logged traceback prints it.
+  Where that reaches a log or an HTTP response is spec 104's criterion.
+
+### Proof / origin (amendment of the post-merge review of PR #288)
+
+- The review's probe scripts, run before and after the fix; the pull
+  request records both outputs.
+- `specs/079-decisions-are-recorded-as-events.md`, its amendment: the
+  read-then-write race the write lock closes.
+- `specs/104-the-hosted-api-authenticates-every-request.md`, Behavior:
+  the request transaction that wraps the domain's writers in its own.

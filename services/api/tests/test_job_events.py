@@ -636,6 +636,31 @@ def test_a_first_move_holds_the_lock_from_read_to_write(
     ) == 1
 
 
+def test_a_wrapped_first_move_still_holds_the_lock_from_read_to_write(
+    conn: Connection, rival: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same race, with the move inside a caller's own block that has
+    already read, as spec 104's request transaction will wrap it. The lock
+    is taken where the move asks for it, not dropped because a block is
+    open (post-merge review of PR #288)."""
+    job_id = _legacy_row(conn, 1)
+    outcome: list[str] = []
+    real = tracker_store._plan_backfill  # pyright: ignore[reportPrivateUsage]
+
+    def racing(job: Any) -> Any:
+        _race_once(rival, job_id, outcome)
+        return real(job)
+
+    monkeypatch.setattr(tracker_store, "_plan_backfill", racing)
+    with conn.transaction():
+        assert list_events(conn, default_scope(conn), job_id) == []
+        set_status(conn, default_scope(conn), job_id, "rejected", rejection_reason="hybrid")
+    assert outcome == ["waited"]
+    assert [event["kind"] for event in list_events(conn, default_scope(conn), job_id)].count(
+        "created"
+    ) == 1
+
+
 def test_backfill_holds_the_lock_from_read_to_write(
     conn: Connection, rival: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
