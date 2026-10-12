@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 from fastapi import Depends, HTTPException, Query, params
 from fastapi.dependencies.models import Dependant
@@ -24,6 +24,13 @@ from harrier.tracks import (
     resolve_scope,
 )
 from harrier_api.demo import demo_db_path, is_demo_mode
+from harrier_api.hostedauth import (
+    AUTH_401_DESCRIPTION,
+    BEARER_SCHEME_NAME,
+    KEYS_UNAVAILABLE_DESCRIPTION,
+    AuthRefusalOut,
+    needs_token,
+)
 
 
 def get_conn() -> Iterator[Connection]:
@@ -212,6 +219,36 @@ DATABASE_HELD_RESPONSES: dict[int | str, dict[str, Any]] = {
 }
 
 
+# --- the hosted API's token refusals (spec 104) ---
+
+# Declared on every route the hosted API serves with a token, in both modes,
+# so the document stays one document (ADR-005). The local API never sends
+# either body.
+AUTH_REFUSAL_RESPONSES: dict[int | str, dict[str, Any]] = {
+    401: {"model": AuthRefusalOut, "description": AUTH_401_DESCRIPTION}
+}
+KEYS_UNAVAILABLE_RESPONSES: dict[int | str, dict[str, Any]] = {
+    503: {"model": AuthRefusalOut, "description": KEYS_UNAVAILABLE_DESCRIPTION}
+}
+# A route that opens the database can answer 503 for either cause, so its one
+# 503 declaration admits both bodies.
+EITHER_503_RESPONSES: dict[int | str, dict[str, Any]] = {
+    503: {
+        "model": DatabaseHeldOut | AuthRefusalOut,
+        "description": CAUSE_JOIN.join(
+            (str(DATABASE_HELD_RESPONSES[503]["description"]), KEYS_UNAVAILABLE_DESCRIPTION)
+        ),
+    }
+}
+BEARER_SECURITY: list[dict[str, list[str]]] = [{BEARER_SCHEME_NAME: []}]
+
+
+def _needs_token(path: str, methods: object) -> bool:
+    # APIRoute's own default when a route names no method.
+    named = cast(Sequence[str], methods) if methods else ("GET",)
+    return any(needs_token(method, path) for method in named)
+
+
 def _needs_conn(dependant: Dependant) -> bool:
     if dependant.call is get_conn:
         return True
@@ -232,20 +269,29 @@ def depends_on_conn(
 
 
 class DatabaseRoute(APIRoute):
-    """A route that declares the 503 itself when it depends on `Conn`, and
-    the track refusals when it takes its scope from `scope_for`.
+    """A route that declares the 503 itself when it depends on `Conn`, the
+    track refusals when it takes its scope from `scope_for`, and the hosted
+    token refusals and bearer scheme when the hosted API serves it with a
+    token.
 
     Declared by the route class rather than in each decorator, so a new route
-    that opens the database or names a track cannot forget them, and one that
-    does not never claims them (specs 075, 094). A route's own causes for a
-    status are joined with the track's, never replaced by them or replacing
-    them.
+    that opens the database, names a track or needs a token cannot forget
+    them, and one that does not never claims them (specs 075, 094, 104). A
+    route's own causes for a status are joined with the track's, never
+    replaced by them or replacing them.
     """
 
     def __init__(self, path: str, endpoint: Callable[..., Any], **kwargs: Any) -> None:
         own: dict[int | str, dict[str, Any]] = dict(kwargs.get("responses") or {})
         declared: dict[int | str, dict[str, Any]] = {}
-        if depends_on_conn(path, endpoint, kwargs.get("dependencies")):
+        opens_database = depends_on_conn(path, endpoint, kwargs.get("dependencies"))
+        if _needs_token(path, kwargs.get("methods")):
+            declared.update(AUTH_REFUSAL_RESPONSES)
+            declared.update(EITHER_503_RESPONSES if opens_database else KEYS_UNAVAILABLE_RESPONSES)
+            extra: dict[str, Any] = dict(kwargs.get("openapi_extra") or {})
+            extra["security"] = BEARER_SECURITY
+            kwargs["openapi_extra"] = extra
+        elif opens_database:
             declared.update(DATABASE_HELD_RESPONSES)
         operation = _track_operation(get_dependant(path=path, call=endpoint))
         if operation is not None:

@@ -503,14 +503,14 @@ Local mode:
       `services/api/tests/test_api_exposure.py`, and `just demo` starts as
       before.
 - [ ] The local app installs no CORS middleware and no authentication
-      middleware (planned test_local_mode_has_no_hosted_middleware).
+      middleware (`services/api/tests/test_hosted_auth.py::test_local_mode_has_no_hosted_middleware`).
 
 Start-up:
 
 - [ ] Each refusal under Failure modes from "`HARRIER_AUTH` has another
       value" to "Service credential in the environment" exits 1 with its
       text, and none prints a URL, password or secret value
-      (planned test_hosted_start_refuses_incomplete_configuration,
+      (`services/api/tests/test_hosted_auth.py::test_hosted_start_refuses_incomplete_configuration`,
       parametrized over each case). Narrowed (2026-10-12): the cases
       "Postgres without hosted mode", "Login role too strong" and "Store
       behind or ahead of the code" moved to spec 134; the others stay,
@@ -528,7 +528,7 @@ Start-up:
 - [ ] With `HARRIER_AUTH=supabase` written in a `.env` file in the working
       directory and absent from the process environment, the API starts
       in local mode
-      (planned test_hosted_mode_is_read_from_the_process_environment_only).
+      (`services/api/tests/test_hosted_auth.py::test_hosted_mode_is_read_from_the_process_environment_only`).
       (post-merge review of PRs #194 and #207, 2026-10-10)
 - [ ] `app.py` no longer holds `POSTGRES_NOT_YET`; the API on a Postgres URL
       without hosted mode exits 1 with this spec's text. Moved (2026-10-12) to spec 134.
@@ -537,54 +537,54 @@ Tokens:
 
 - [ ] A request without a token is 401 `missing`, and the pool hands out no
       connection for it
-      (planned test_a_request_without_a_token_is_401_and_takes_no_connection).
+      (`services/api/tests/test_hosted_auth.py::test_a_request_without_a_token_is_401_and_takes_no_connection`).
       Narrowed (2026-10-12): under this spec, "takes no connection" means
       `get_conn` is never entered; spec 134 proves it on the pool.
 - [ ] An expired token is 401 `expired`; one expired by less than 30
-      seconds is accepted (planned test_expiry_honours_the_leeway).
+      seconds is accepted (`services/api/tests/test_hosted_auth.py::test_expiry_honours_the_leeway`).
 - [ ] Tokens with a wrong signature, `alg` `none`, `alg` `HS256`, an
       unknown `kid`, a foreign `iss`, `aud` `anon`, `role` `service_role`,
       and a non-UUID `sub` are each 401 `invalid`
-      (planned test_a_forged_or_foreign_token_is_401_invalid, one case
+      (`services/api/tests/test_hosted_auth.py::test_a_forged_or_foreign_token_is_401_invalid`, one case
       each).
 - [ ] An anonymous user's token is 403 `anonymous`
-      (planned test_an_anonymous_session_is_refused).
+      (`services/api/tests/test_hosted_auth.py::test_an_anonymous_session_is_refused`).
 - [ ] A valid token in a query string, a cookie or `X-Harrier-Token`, with
       no header, is 401 `missing`
-      (planned test_a_token_outside_the_header_is_not_read).
+      (`services/api/tests/test_hosted_auth.py::test_a_token_outside_the_header_is_not_read`).
 - [ ] A token signed by a key added after the cache was filled is accepted
       after exactly one refresh, and a second unknown `kid` within 30
       seconds causes no second fetch
-      (planned test_an_unknown_key_id_refreshes_the_key_set_once).
+      (`services/api/tests/test_hosted_auth.py::test_an_unknown_key_id_refreshes_the_key_set_once`).
 - [ ] With the key endpoint failing, a token whose `kid` the last good set
       holds is accepted within the hour and answered 503
       `keys_unavailable` after it; a token with an unknown `kid` is 503,
-      never 401 (planned test_unreachable_keys_answer_503_not_401).
+      never 401 (`services/api/tests/test_hosted_auth.py::test_unreachable_keys_answer_503_not_401`).
 - [ ] The key tests run against keys generated in the test and served by an
       injected fetcher; no test reaches the network.
 - [ ] No refusal body, and no log record captured during the token tests,
       contains the token or any claim value
-      (planned test_a_token_never_reaches_a_body_or_a_log).
+      (`services/api/tests/test_hosted_auth.py::test_a_token_never_reaches_a_body_or_a_log`).
 
 Routes and contract:
 
 - [ ] Walking every route of the hosted app, each one except `GET /health`
       answers 401 without a token, and the local-only routes and the
       documentation routes answer 404
-      (planned test_every_hosted_route_but_health_needs_a_token).
+      (`services/api/tests/test_hosted_auth.py::test_every_hosted_route_but_health_needs_a_token`).
 - [ ] Every route that can answer 401 hosted declares it with
       `AuthRefusalOut` and the bearer scheme in
       `packages/contract/openapi.json`, and no other route does
-      (planned test_the_contract_declares_every_auth_refusal).
+      (`services/api/tests/test_hosted_auth.py::test_the_contract_declares_every_auth_refusal`).
 - [ ] The OpenAPI document exported from the hosted app equals the one
       exported from the local app
-      (planned test_the_contract_is_the_same_in_both_modes).
+      (`services/api/tests/test_hosted_auth.py::test_the_contract_is_the_same_in_both_modes`).
 - [ ] `just contract` leaves no diff after the regenerated files are
       committed.
 - [ ] Hosted `GET /health` returns 200 with `database: "postgres"` and
       `job_count: null`, opens no connection, and answers 200 while the
       key endpoint is unreachable
-      (planned test_hosted_health_reveals_no_store_detail).
+      (`services/api/tests/test_hosted_auth.py::test_hosted_health_reveals_no_store_detail`).
 
 The request transaction (Postgres tests, run in CI as spec 103 requires).
 Moved (2026-10-12) to spec 134, every criterion in this group:
@@ -626,10 +626,10 @@ Cross-origin and hosts:
       headers; one from any other origin, including a `vercel.app`
       subdomain not listed, gets no CORS headers; a 401 to an allowed
       origin carries CORS headers
-      (planned test_cors_allows_only_the_configured_origins).
+      (`services/api/tests/test_hosted_auth.py::test_cors_allows_only_the_configured_origins`).
 - [ ] Hosted, Host `localhost` and Host `127.0.0.1` are refused and each
       name in `HARRIER_ALLOWED_HOSTS` reaches `GET /health`
-      (planned test_hosted_trusted_hosts_are_the_configured_names).
+      (`services/api/tests/test_hosted_auth.py::test_hosted_trusted_hosts_are_the_configured_names`).
 
 Gates:
 
@@ -1293,9 +1293,107 @@ assumption (its A5).
       `HARRIER_DATABASE_URL`, the API exits 1 with spec 103's text, and the
       hosted app assembled from the same configuration serves a request
       with a valid token
-      (planned test_a_complete_hosted_configuration_still_meets_the_spec_103_gate).
+      (`services/api/tests/test_hosted_auth.py::test_a_complete_hosted_configuration_still_meets_the_spec_103_gate`).
 - [ ] `Refusal` in `apps/web/src/shared/api/refusal.ts` names
       `AuthRefusalOut`, and `pnpm type-check` and `pnpm lint` pass against
       the regenerated contract.
 - [ ] Each new behavior has a test that fails when the code it proves is
       removed, and the pull request records each mutation and its result.
+
+## Amendment (2026-10-12): what building part A settled
+
+Building part A settled points the text left open and showed two places
+where it was wrong. Each is stated here so the code and the spec agree.
+
+### Where the text was wrong
+
+- **More than one file outside `services/api` changes.** The split
+  amendment said `refusal.ts` is the one file outside `services/api` and
+  `packages/contract` this spec changes.
+  `apps/web/src/pages/outreach/OutreachPage.test.tsx` pins, by name, the
+  type `refusalMessage` takes and each outreach route's 503 body. Both
+  widen with this contract, so the test's expected types gain
+  `AuthRefusalOut`. It is a type change only, and it is what makes
+  removing `AuthRefusalOut` from `Refusal` fail `pnpm type-check`.
+- **Some existing tests change.** The Local mode criterion said every
+  existing test passes unchanged. Behavior is unchanged, but four tests
+  that read the contract's shape or the dependency groups change:
+  `services/api/tests/test_host_lease.py::test_every_route_that_opens_the_database_declares_the_503`
+  now holds the hold's body, not the 503 status, to exactly the routes
+  that open the database, because the 503 for unavailable keys shares the
+  status on every route that needs a token; `NOT_A_REFUSAL` in
+  `services/api/tests/conftest.py` gains 401, which the route class
+  declares as it declares the 503; `NOT_IN_THE_LOCAL_IMAGE` in
+  `services/api/tests/test_container.py` gains `hosted`, since the local
+  image installs no hosted group and which image serves hosted is spec
+  110's; and the outreach test above. Spec 109's citation of
+  `services/api/tests/test_hosted_auth.py::test_the_contract_is_the_same_in_both_modes`
+  now cites it as built.
+
+### What the build settled
+
+- **How a start refusal reads.** `create_app` raises `HostedConfigError`,
+  and uvicorn builds the app when it imports `harrier_api.app`, so the
+  process exits 1 and the last line it prints is
+  `harrier_api.hostedauth.HostedConfigError: ` followed by the text under
+  Failure modes without its `error: ` prefix. Spec 103's refusal of a
+  Postgres URL already reads this way (`RuntimeError: ...`). The texts are
+  constants in `services/api/src/harrier_api/hostedauth.py`.
+- **What malformed means.** `HARRIER_SUPABASE_URL` must be exactly
+  `https://host` or `https://host:port`, one trailing slash allowed:
+  credentials, a path, a query or a fragment would make an issuer no
+  token carries. Each entry of `HARRIER_ALLOWED_HOSTS` is a host name with
+  no port and no wildcard, because the trusted-host check compares the
+  text before the Host header's colon (spec 084's lesson). Each origin is
+  exactly `https://host` or `https://host:port`, and any `*` is refused,
+  so `https://*.vercel.app` cannot be configured (Open decision 7). A
+  malformed `HARRIER_DATABASE_URL` keeps its own text, as locally.
+  `SUPABASE_SERVICE_ROLE_KEY` is refused when present, whatever its value.
+- **The key cache is harrier's own.** `SigningKeys` parses each key with
+  PyJWT's `PyJWK`, so Open decision 12's library stands, but it does not
+  use `PyJWKClient`: that client fetches over the network itself, which
+  the tests replace with an injected fetcher, and it has neither the last
+  good set bounded at one hour nor the 401 and 503 split. Two behaviors
+  the text left implicit: after a fetch that does not succeed, the next
+  attempt waits 30 seconds, so an unreachable endpoint does not hold every
+  request; and
+  the 30 second limit on forced refreshes counts forced refreshes only,
+  so the fetch at start does not delay picking up a rotation. A key in
+  the set that is not ES256 or RS256 is ignored.
+- **A key cannot be used as another.** PyJWT verifies with the key's own
+  algorithm and refuses a header `alg` that differs from it (checked in
+  2.15.1, `PyJWS._verify_signature`), so the `hosted` group requires at
+  least that version and the verifier adds no check of its own.
+- **HEAD and the routes not served.** Starlette answers HEAD on every GET
+  route, so `HEAD /capture/add` is not served either. Every method on
+  `/session`, `/capture/add-form` and the documentation paths is 404, with
+  or without a token. Only `GET /health` is public.
+- **The 503 declaration.** Every route that needs a token declares the
+  503: with `AuthRefusalOut` where it opens no database, and with
+  `DatabaseHeldOut` or `AuthRefusalOut` where it does. "Merged into the
+  existing 503 declaration" is read as covering routes without one too,
+  since every authenticated route can answer it.
+- **Middleware order.** Outermost first: CORS, the trusted hosts, the
+  `/api` prefix, authentication. The token is checked on the path the
+  router sees, and every refusal passes the CORS layer on its way out.
+- **A preflight from an origin not listed gets no CORS headers.**
+  Starlette's middleware sends such an origin the allowed methods and
+  headers without `Access-Control-Allow-Origin`. `ExactOriginCORSMiddleware`
+  in `services/api/src/harrier_api/app.py` answers it 400 with none.
+- **The claims reach the request.** The middleware stores the verified
+  payload as the request's `claims` state, for spec 134's `get_conn`.
+  `services/api/tests/test_hosted_auth.py::test_a_request_without_a_token_is_401_and_takes_no_connection`
+  proves a route sees exactly what was signed.
+
+### Honest limitations (part A, as built)
+
+- **The 403 for an anonymous session is not in the contract.** Refusals
+  give it `AuthRefusalOut`, and the contract text declares only the 401
+  and the 503. Several routes already declare a 403 for spec 035's local
+  token with no body, so declaring this one is a decision about two
+  bodies behind one status. It is recorded here for spec 114, which reads
+  the refusals in the browser, rather than settled silently.
+- **A start refusal prints a traceback,** whose last line is the text. It
+  prints no configured value: each case is run as a process and its whole
+  output checked
+  (`services/api/tests/test_hosted_auth.py::test_hosted_start_refuses_incomplete_configuration`).

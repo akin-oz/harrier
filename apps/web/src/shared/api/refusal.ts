@@ -1,14 +1,16 @@
 import type { components } from "@harrier/contract";
 
 // What a route answers when it refuses, as the contract declares it: the
-// domain's words on a 400, 404 or 409, the hold on a 503, and the field
-// errors on a 422. Named from the generated types, so a body the contract
-// changes fails the type check here rather than reaching the operator as the
-// fallback (spec 082's pattern).
+// domain's words on a 400, 404 or 409, the hold on a 503, the field errors
+// on a 422, and the hosted API's token refusal on a 401 or 503 (spec 104).
+// Named from the generated types, so a body the contract changes fails the
+// type check here rather than reaching the operator as the fallback (spec
+// 082's pattern).
 export type Refusal =
   | components["schemas"]["ErrorOut"]
   | components["schemas"]["DatabaseHeldOut"]
-  | components["schemas"]["HTTPValidationError"];
+  | components["schemas"]["HTTPValidationError"]
+  | components["schemas"]["AuthRefusalOut"];
 
 /**
  * A refusal in the words the API used. A 422 names each field it refused and

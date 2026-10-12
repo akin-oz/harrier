@@ -7,6 +7,7 @@ Routes speak Pydantic models only; the web app speaks generated types only.
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date
@@ -18,7 +19,10 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.datastructures import Headers
+from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.responses import PlainTextResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from harrier.apply.brief import Brief
@@ -52,6 +56,18 @@ from harrier_api.deps import (
     merge_responses,
     require_operation,
     scope_for,
+)
+from harrier_api.hostedauth import (
+    BEARER_SCHEME_NAME,
+    BEARER_SECURITY_SCHEME,
+    Clock,
+    HostedAuthMiddleware,
+    HostedConfig,
+    KeyFetcher,
+    SigningKeys,
+    TokenVerifier,
+    fetch_from,
+    hosted_config,
 )
 from harrier_api.localauth import (
     TOKEN_RESPONSES,
@@ -255,14 +271,30 @@ router = APIRouter(route_class=DatabaseRoute)
 
 
 @router.get("/health", operation_id="getHealth")
-def health() -> HealthOut:
+def health(request: Request) -> HealthOut:
     """Always 200 while the process runs, so the compose healthcheck never
     marks the container unhealthy because a host run holds the database.
 
     It looks for a host lease before it opens anything, and with one present
     it does not open the database at all; that is why it takes no `Conn`
     (spec 075). Its own lease, when it runs on the host, is not a hold.
+
+    Hosted, it is the one public route, and it opens nothing: counting jobs
+    without an identity would fail under the row policy or, on a role that
+    bypasses it, count every owner's rows, and where the store lives is no
+    caller's business (spec 104).
     """
+    if getattr(request.app.state, "hosted", False):
+        return HealthOut(
+            name="harrier",
+            version=API_VERSION,
+            demo=False,
+            database="postgres",
+            job_count=None,
+            database_hold=None,
+            revision=build_revision(),
+            built_at=build_timestamp(),
+        )
     hold = None if is_demo_mode() else oldest_hold(lease_directory(), ignore_pid=os.getpid())
     job_count: int | None = None
     if hold is None:
@@ -1384,19 +1416,9 @@ class ApiPrefixMiddleware:
         await self.app(scope, receive, send)
 
 
-def create_app(run_manager: RunManager | None = None, spa_dir: Path | None = None) -> FastAPI:
-    # Before anything opens SQLite. A bad HARRIER_DATABASE_URL raises
-    # StoreUrlError, and a Postgres one refuses with the CLI's text: nothing
-    # serves requests from Postgres until spec 112 (spec 103).
-    if store_target().is_postgres:
-        raise RuntimeError(POSTGRES_NOT_YET)
-    # logsetup said it was called by the CLI and by the API. Only the CLI ever
-    # called it, so the process serving the browser had no configured root
-    # logger and no identity redaction (spec 045).
-    configure_logging()
-    if is_demo_mode():
-        seed_demo_db()
-    manager = run_manager if run_manager is not None else RunManager()
+def _app_with_routes(manager: RunManager) -> FastAPI:
+    """The routes, their refusals and the contract, the same in both modes:
+    the hosted API serves one document with the local one (ADR-005)."""
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
@@ -1443,6 +1465,42 @@ def create_app(run_manager: RunManager | None = None, spa_dir: Path | None = Non
     app.include_router(ops_router)
     app.include_router(tracks_router)
     app.include_router(settings_router)
+
+    # The route class applies the bearer scheme to each route that needs a
+    # token; the document names the scheme once (spec 104).
+    build_openapi = app.openapi
+
+    def openapi() -> dict[str, Any]:
+        schema = build_openapi()
+        schemes = schema.setdefault("components", {}).setdefault("securitySchemes", {})
+        schemes[BEARER_SCHEME_NAME] = dict(BEARER_SECURITY_SCHEME)
+        return schema
+
+    app.openapi = openapi
+    return app
+
+
+def create_app(run_manager: RunManager | None = None, spa_dir: Path | None = None) -> FastAPI:
+    # Hosted mode first, from the process environment only: a refused
+    # configuration names the variable and stops the start (spec 104).
+    hosted = hosted_config(os.environ)
+    # Before anything opens SQLite. A bad HARRIER_DATABASE_URL raises
+    # StoreUrlError, and a Postgres one refuses with the CLI's text. Nothing
+    # serves requests from Postgres until spec 134 lifts this, so a complete
+    # hosted configuration, which names Postgres, stops here too (spec 103;
+    # spec 104, the split amendment of 2026-10-12, decision 2).
+    if store_target().is_postgres:
+        raise RuntimeError(POSTGRES_NOT_YET)
+    # logsetup said it was called by the CLI and by the API. Only the CLI ever
+    # called it, so the process serving the browser had no configured root
+    # logger and no identity redaction (spec 045).
+    configure_logging()
+    if hosted is not None:
+        return create_hosted_app(hosted, run_manager=run_manager)
+    if is_demo_mode():
+        seed_demo_db()
+    manager = run_manager if run_manager is not None else RunManager()
+    app = _app_with_routes(manager)
     app.add_middleware(ApiPrefixMiddleware)
     # Closes DNS rebinding, which is what made every other protection here
     # bypassable: a page the operator visits resolves its own hostname to
@@ -1456,6 +1514,67 @@ def create_app(run_manager: RunManager | None = None, spa_dir: Path | None = Non
         # index.html for the app shell. Absent before `pnpm build`, which is
         # why `just demo` builds first and `just dev` does not need this.
         app.mount("/", StaticFiles(directory=dist, html=True), name="web")
+    return app
+
+
+class ExactOriginCORSMiddleware(CORSMiddleware):
+    """Starlette's CORS, except that a preflight from an origin not on the
+    list gets no CORS headers at all. Starlette still sends such an origin
+    the allowed methods and headers; the browser withholds the response
+    either way, but the policy is no stranger's business (spec 104,
+    Cross-origin requests)."""
+
+    def preflight_response(self, request_headers: Headers) -> Response:
+        if not self.is_allowed_origin(origin=request_headers["origin"]):
+            return PlainTextResponse("Disallowed CORS origin", status_code=400)
+        return super().preflight_response(request_headers)
+
+
+CORS_METHODS = ("GET", "POST", "PUT", "DELETE")
+CORS_HEADERS = ("Authorization", "Content-Type", "Last-Event-ID")
+
+
+def create_hosted_app(
+    config: HostedConfig,
+    *,
+    run_manager: RunManager | None = None,
+    fetch_keys: KeyFetcher | None = None,
+    clock: Clock = time.time,
+) -> FastAPI:
+    """The hosted app: the same routes behind the token, the configured
+    hosts and the configured origins (spec 104).
+
+    `create_app` calls this only after the spec 103 gate, which under spec
+    104 it never passes on a Postgres URL, so no process serves it until
+    spec 134. The tests call it directly, with an injected key fetcher, and
+    no test reaches the network.
+    """
+    manager = run_manager if run_manager is not None else RunManager()
+    app = _app_with_routes(manager)
+    app.state.hosted = True
+    keys = SigningKeys(
+        fetch_keys if fetch_keys is not None else fetch_from(config.jwks_url),
+        clock,
+        source=config.jwks_url,
+    )
+    # Once at start. A failure is logged and the API starts anyway: `GET
+    # /health` stays 200 and authenticated routes answer 503 until a fetch
+    # succeeds, so the platform does not restart a healthy process during a
+    # Supabase outage.
+    keys.prime()
+    # Innermost first. The token is checked on the path without its /api
+    # prefix and inside the host check, and every answer, a 401 included,
+    # passes the CORS layer on its way out, so the SPA can read it.
+    app.add_middleware(HostedAuthMiddleware, verifier=TokenVerifier(config, keys))
+    app.add_middleware(ApiPrefixMiddleware)
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(config.allowed_hosts))
+    app.add_middleware(
+        ExactOriginCORSMiddleware,
+        allow_origins=list(config.cors_origins),
+        allow_methods=list(CORS_METHODS),
+        allow_headers=list(CORS_HEADERS),
+        allow_credentials=False,
+    )
     return app
 
 

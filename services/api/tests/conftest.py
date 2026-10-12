@@ -529,8 +529,10 @@ def auth() -> dict[str, str]:
 
 ERROR_OUT_SCHEMA = {"$ref": "#/components/schemas/ErrorOut"}
 # Statuses a route's own refusals never use: success, the token (spec 035),
-# the schema (FastAPI) and the host lease (spec 075).
-NOT_A_REFUSAL = frozenset({"200", "201", "403", "422", "503"})
+# the schema (FastAPI), the host lease (spec 075) and the hosted bearer
+# token (spec 104). The last is declared by the route class and proved by
+# tests/test_hosted_auth.py::test_the_contract_declares_every_auth_refusal.
+NOT_A_REFUSAL = frozenset({"200", "201", "401", "403", "422", "503"})
 
 
 def own_causes(responses: dict[str, Any], status: str) -> set[str]:
