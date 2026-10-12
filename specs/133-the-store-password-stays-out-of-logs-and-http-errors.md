@@ -1,8 +1,8 @@
 ---
 spec: 133
 title: The store password stays out of logs and HTTP errors
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [045, 104, 112, 128]
 ---
