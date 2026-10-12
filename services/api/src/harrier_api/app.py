@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 import time
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import date
 from enum import StrEnum
@@ -83,8 +83,8 @@ from harrier_api.runs import (
     RunConflictError,
     RunManager,
     RunParams,
+    RunsNotHosted,
     RunState,
-    format_sse,
     write_run_input,
 )
 from harrier_api.settings_routes import settings_router
@@ -1209,12 +1209,10 @@ async def stream_run_events(run_id: str, request: Request, manager: Manager) -> 
     except ValueError:
         last_event_id = 0
 
-    async def event_stream() -> AsyncIterator[str]:
-        async for event in manager.stream(run_id, last_event_id):
-            yield format_sse(event)
-
+    # Hosted, the stream also ends when the token that opened it expires
+    # (spec 132); `Manager` carries the request's `exp`.
     return StreamingResponse(
-        event_stream(),
+        manager.stream(run_id, last_event_id),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -1443,6 +1441,14 @@ def _app_with_routes(manager: RunManager) -> FastAPI:
         # A run of this kind is active with other options. Every route that
         # starts a run declares the 409 (`RUN_CONFLICT_RESPONSES`).
         return JSONResponse(status_code=409, content=ErrorOut(detail=str(error)).model_dump())
+
+    @app.exception_handler(RunsNotHosted)
+    async def runs_not_hosted(request: Request, error: RunsNotHosted) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
+        # Hosted, no run starts until spec 106. Raised by `start`, and by
+        # `write_run_input` on the routes that write an input file before
+        # they call it. Every route that starts a run declares the 501
+        # (`RUN_CONFLICT_RESPONSES`, spec 132).
+        return JSONResponse(status_code=501, content=ErrorOut(detail=str(error)).model_dump())
 
     @app.exception_handler(DatabaseOwnedByHost)
     async def database_held(request: Request, error: DatabaseOwnedByHost) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]

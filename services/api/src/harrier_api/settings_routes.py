@@ -32,8 +32,8 @@ from harrier.runoutcome import age_in_days
 from harrier.userconfig import ConfigError
 from harrier_api.deps import Conn, DatabaseRoute
 from harrier_api.localauth import TOKEN_RESPONSES, require_token
-from harrier_api.runmodels import RUN_CONFLICT_RESPONSES, Manager, RunOut, run_out
-from harrier_api.runs import TERMINAL_STATES, RunManager, RunParams, backup_hidden_directories
+from harrier_api.runmodels import RUN_CONFLICT_RESPONSES, Manager, OwnedRuns, RunOut, run_out
+from harrier_api.runs import TERMINAL_STATES, RunParams, backup_hidden_directories
 
 settings_router = APIRouter(route_class=DatabaseRoute)
 
@@ -396,8 +396,9 @@ BACKUP_ERRORS: dict[int | str, dict[str, Any]] = {
 }
 
 
-def _verification(manager: RunManager, name: str) -> Literal["passed", "failed", "running"] | None:
-    """The latest verification of this archive the run registry knows of."""
+def _verification(manager: OwnedRuns, name: str) -> Literal["passed", "failed", "running"] | None:
+    """The latest verification of this archive the run registry knows of,
+    among the runs this request's owner sees (spec 132)."""
     for run in manager.list_runs():
         if run.kind != VERIFY_KIND or run.target != name:
             continue

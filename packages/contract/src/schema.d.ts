@@ -2763,6 +2763,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
             /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
@@ -3168,6 +3177,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
             /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
@@ -3249,6 +3267,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
             /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
@@ -3328,6 +3355,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
                 };
             };
             /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
@@ -4031,6 +4067,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
             /** @description the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
@@ -4096,6 +4141,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
                 };
             };
             /** @description the hosted API cannot fetch its signing keys (spec 104) */
@@ -4331,6 +4385,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
             /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
@@ -4417,6 +4480,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
                 };
             };
             /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
@@ -4577,6 +4649,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
             /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
@@ -4654,6 +4735,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
                 };
             };
             /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
@@ -4851,6 +4941,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
+            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
             /** @description the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
@@ -4916,6 +5015,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
                 };
             };
             /** @description the hosted API cannot fetch its signing keys (spec 104) */
@@ -5042,6 +5150,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
             /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
@@ -5155,6 +5272,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
             /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
@@ -5220,6 +5346,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
                 };
             };
             /** @description the hosted API cannot fetch its signing keys (spec 104) */
@@ -5818,6 +5953,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
             /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
@@ -5897,6 +6041,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
                 };
             };
             /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
@@ -6247,6 +6400,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
             /** @description the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
@@ -6565,6 +6727,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
                 };
             };
             /** @description the hosted API cannot fetch its signing keys (spec 104) */

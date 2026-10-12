@@ -109,6 +109,14 @@ class HostedConfig:
         return f"{self.issuer}/.well-known/jwks.json"
 
 
+def hosted_mode(environ: Mapping[str, str]) -> bool:
+    """Whether this process serves hosted: `HARRIER_AUTH=supabase`, nothing
+    inferred. Pass the process environment. A process with any other
+    non-empty value never serves, because `hosted_config` refuses it at
+    start. The run manager reads this where it has no request (spec 132)."""
+    return environ.get(AUTH_VARIABLE, "") == HOSTED_AUTH
+
+
 def hosted_config(environ: Mapping[str, str]) -> HostedConfig | None:
     """The hosted configuration, or None in local mode.
 

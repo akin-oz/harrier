@@ -26,6 +26,7 @@ from harrier.db import data_dir
 from harrier.discovery import SOURCE_ORDER
 from harrier.sources import scrub_secrets
 from harrier.tracks import InvalidSlugError, validate_slug
+from harrier_api.hostedauth import hosted_mode
 
 PROTOCOL_PREFIX = "::harrier::"
 # `interrupted` is not a failure. A run whose process disappeared, which is
@@ -303,6 +304,30 @@ def run_inputs_dir() -> Path:
     return data_dir() / "runs" / "inputs"
 
 
+RUNS_NOT_HOSTED_DETAIL = "runs are not available on the hosted API until spec 106"
+
+
+class RunsNotHosted(Exception):
+    """A run may not start on the hosted API (spec 132).
+
+    A run's process inherits the server's environment, so hosted it would
+    spend the operator's keys on a tenant's behalf and open the store as the
+    API's login role. Spec 106 gives a run its owner's credentials and
+    database identity; until then every hosted start is refused, and a run
+    with no owner stays refused after it (ADR-013 decision 4). The API
+    answers 501 in these words.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(RUNS_NOT_HOSTED_DETAIL)
+
+
+def runs_hosted() -> bool:
+    """Whether this process serves hosted, read when it is asked: spec 104's
+    `HARRIER_AUTH=supabase` in the process environment."""
+    return hosted_mode(os.environ)
+
+
 def write_run_input(text: str | bytes, suffix: str = ".txt") -> Path:
     """Put the operator's free text on disk so it never reaches argv.
 
@@ -318,7 +343,14 @@ def write_run_input(text: str | bytes, suffix: str = ".txt") -> Path:
     path to it either (review finding on PR #51).
 
     It is removed when the run that consumes it ends (spec 047).
+
+    Hosted it refuses before the directory or a file exists: six routes
+    (the four apply routes, discovery's uploads and the outreach draft)
+    write their input before they call `RunManager.start`, so a refusal
+    there alone would leave this file behind (spec 132).
     """
+    if runs_hosted():
+        raise RunsNotHosted
     directory = run_inputs_dir()
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     # mkdir's mode is ignored when the directory already exists, and this one
@@ -543,6 +575,9 @@ class Run:
     # attempt joins only when it asks for the same thing (review of PR #208).
     signature: tuple[str, ...] = ()
     hidden: tuple[HiddenDirectory, ...] = ()
+    # Who started it: the verified `sub` of the request hosted, empty
+    # locally. Hosted, a run with an empty owner is no one's (spec 132).
+    owner: str = ""
 
 
 class RunManager:
@@ -602,8 +637,15 @@ class RunManager:
 
     # -- lifecycle ----------------------------------------------------------
 
-    async def start(self, kind: str, params: RunParams | None = None) -> Run:
+    async def start(self, kind: str, params: RunParams | None = None, *, owner: str = "") -> Run:
         """Start a run, return the active run it repeats, or refuse.
+
+        `owner` is the caller's: the request's verified `sub` hosted, empty
+        locally (spec 132). Hosted, every start is refused with
+        `RunsNotHosted` before a journal entry, a registered run or a
+        process exists; `write_run_input` refused first, so the attempt has
+        no file. A run with an empty owner is among them, and is what stays
+        refused when spec 106 lifts the rest (ADR-013 decision 4).
 
         The lock is per (kind, target) rather than per kind, so two jobs
         tailor at once while one job tailored twice joins the run already in
@@ -615,6 +657,8 @@ class RunManager:
         `RunConflictError` rather than being folded into a run that ignores
         them (review of PR #208).
         """
+        if runs_hosted():
+            raise RunsNotHosted
         # A kind that acts on everything locks on the empty target, which is
         # the one-at-a-time behaviour discovery always had. Kinds never
         # collide with each other because the lock is on the pair.
@@ -647,6 +691,7 @@ class RunManager:
             input_paths=files,
             signature=signature,
             hidden=() if params is None else params.hidden,
+            owner=owner,
         )
         self._runs[run.id] = run
         self._journal(run)
@@ -808,6 +853,8 @@ class RunManager:
             # one stopped mid-run knows which inputs were this run's. File
             # names this process chose, never their content (spec 095).
             "inputs": [str(path) for path in run.input_paths],
+            # Who started it, so a restart keeps it theirs (spec 132).
+            "owner": run.owner,
         }
         with self._journal_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record) + "\n")
@@ -871,6 +918,9 @@ class RunManager:
                 ended_at=(str(record["ended_at"]) if record.get("ended_at") else None),
                 exit_code=(int(str(exit_code_raw)) if exit_code_raw is not None else None),
                 target=str(record.get("target") or ""),
+                # An entry written before spec 132 has no owner: empty, which
+                # hosted is no one's.
+                owner=str(record.get("owner") or ""),
             )
         self._interrupted_inputs = [path for paths in held.values() for path in paths]
 

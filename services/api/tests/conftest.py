@@ -558,6 +558,9 @@ def own_causes(responses: dict[str, Any], status: str) -> set[str]:
         NOT_AVAILABLE_CAUSE,
         ARCHIVED_CAUSE,
         str(RUN_CONFLICT_RESPONSES[409]["description"]),
+        # The hosted refusal to start a run (spec 132), proved by
+        # tests/test_run_owner.py::test_the_contract_declares_the_hosted_run_refusal.
+        str(RUN_CONFLICT_RESPONSES[501]["description"]),
     }
     described = str(responses.get(status, {}).get("description", ""))
     return {cause for cause in described.split(CAUSE_JOIN) if cause and cause not in shared}
