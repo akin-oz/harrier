@@ -24,6 +24,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from harrier.discovery import APIFY_MAX_COUNT, SOURCE_ORDER
+from harrier.logredact import scrub_outbound
 from harrier.tracks import DEFAULT_TRACK_ID
 from harrier.tracks import Scope as TrackScope
 from harrier_api.deps import (
@@ -273,9 +274,11 @@ def get_schedule(conn: Conn) -> ScheduleOut:
     try:
         health = job_health(conn, config_path=repo_root() / SCHEDULE_CONFIG_PATH)
     except ScheduleConfigError as error:
+        # A 200 body, so the HTTPException handler never sees it, and the
+        # text quotes the definition's values (spec 133).
         return ScheduleOut(
             jobs=[],
-            error=str(error),
+            error=scrub_outbound(str(error)),
             installed_state=INSTALLED_STATE,
             host_command=SCHEDULE_HOST_COMMAND,
         )
