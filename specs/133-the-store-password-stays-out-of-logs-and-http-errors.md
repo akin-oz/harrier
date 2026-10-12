@@ -146,15 +146,15 @@ found three ways past them, each closed above:
       driver error, through a root handler and through uvicorn's
       `uvicorn.error` logger; an `HTTPException` detail built from the
       error; and the `run_conflict` handler's body
-      (planned test_no_log_or_http_error_carries_the_store_password,
+      (`services/api/tests/test_store_password_scrub.py::test_no_log_or_http_error_carries_the_store_password`,
       one case per sink).
 - [ ] With no identity values to load, and with the database unreadable,
       a root handler's record is still scrubbed
-      (planned test_the_scrub_filter_needs_no_identity_values).
+      (`services/api/tests/test_store_password_scrub.py::test_the_scrub_filter_needs_no_identity_values`).
 - [ ] An `HTTPException` with a non-string `detail`, and a 422, are
       answered exactly as before, and a string `detail` with nothing to
       scrub is answered byte for byte as before
-      (planned test_a_detail_with_nothing_to_scrub_is_unchanged).
+      (`services/api/tests/test_store_password_scrub.py::test_a_detail_with_nothing_to_scrub_is_unchanged`).
 - [ ] Each new behavior has a test that fails when the code it proves is
       removed, and the pull request records each mutation and its result.
 - [ ] `uv run ruff check`, `uv run pyright` and `uv run lint-imports`
@@ -231,3 +231,73 @@ None. Log lines and refusal bodies change only where they held a secret.
 - Any change to what a refusal says beyond the scrubbed text.
 - The hosted start refusals' texts: spec 104 (configuration) and spec 134
   (the login role and the store version).
+
+## Amendment (2026-10-12): what the implementation settled
+
+Building this spec settled the open decision and four points the text left
+implicit or got wrong. Each is stated here so the code and the spec agree.
+
+- **Open decision 1: the recommended answer.** Both sinks pass text through
+  `harrier.logredact.scrub_outbound`, which runs `scrub_secrets` and then
+  replaces every form `UrlParts.passwords` lists for the configured URL
+  with `REDACTED`, the union of their spans at once, the rule
+  `harrier.pgstore._scrub` follows. The URL is read when the text is
+  scrubbed, as `store_target` reads it: the process environment, then
+  `.env` in the working directory. Reading it then rather than when
+  logging is configured is what lets the scrub follow a URL set after the
+  app is built, and it keeps the filter free of state. Proved by every case
+  of `services/api/tests/test_store_password_scrub.py::test_no_log_or_http_error_carries_the_store_password`,
+  whose driver error quotes the password alone as well as in the URL, and
+  by `services/api/tests/test_store_password_scrub.py::test_a_password_set_only_in_dotenv_is_scrubbed_as_well`.
+- **A record's arguments are scrubbed one by one when that is enough.**
+  Behavior said the rendered message is written into `record.msg` with no
+  arguments left. uvicorn's access formatter unpacks the record's five
+  arguments itself (`uvicorn/logging.py`, `AccessFormatter`), and its
+  request line carries the query, so a record flattened that way was lost
+  as a logging error. The filter now scrubs each string argument and the
+  format string, and keeps them when the message they render holds nothing
+  left to scrub. Otherwise, as when the secret is in an exception passed as
+  an argument, the message is flattened as Behavior says, and uvicorn's
+  `color_message` is dropped with the arguments, since its coloured
+  formatter renders that instead of `msg`
+  (`services/api/tests/test_store_password_scrub.py::test_an_access_line_with_a_secret_in_its_query_keeps_its_shape`,
+  `services/api/tests/test_store_password_scrub.py::test_a_coloured_record_scrubbed_whole_is_still_rendered`).
+- **A record the filter cannot scrub is withheld.** An exception raised in
+  a filter reaches the code that logged. If the scrub itself fails, the
+  record's message becomes `log record withheld: it could not be scrubbed`
+  and its exception and stack text are dropped
+  (`services/api/tests/test_store_password_scrub.py::test_a_record_that_cannot_be_scrubbed_is_withheld`).
+- **Every root handler scrubs on its own.** Through a logger, the first
+  handler's filter scrubs the record for the rest, so a test through the
+  logger could not see a handler installed without the filter. Each root
+  handler is also driven alone
+  (`services/api/tests/test_store_password_scrub.py::test_every_root_handler_scrubs_a_record_on_its_own`).
+- **Where uvicorn's handlers are filtered.** `create_app` calls
+  `harrier.logsetup.scrub_uvicorn_handlers`, which installs the same filter
+  instance on the handlers of `uvicorn` and `uvicorn.access`, so building
+  the app twice installs it once. The uvicorn case of the first criterion
+  runs a real uvicorn server on the h11 protocol, whose handlers are built
+  as uvicorn's default configuration builds them.
+- **Specs 104 and 112 cite the criterion's test as built.** Each named it
+  as planned, and the citation check fails on a planned test that exists,
+  so `specs/104-the-hosted-api-authenticates-every-request.md` (the moved
+  amendment) and `specs/112-the-tracker-domain-runs-on-either-store.md`
+  ("The store password in logs and HTTP errors") now cite it by file and
+  say spec 133 built it. No other text there changes.
+
+Two further limitations, added to those above:
+
+- Every form of the configured password is masked wherever it appears. A
+  very short password would mask unrelated text that holds it. Nothing
+  guards against that.
+- `.env` is read once per working directory for the scrub, so a `.env`
+  edited while the process runs is not seen by it until the process
+  restarts. An exported `HARRIER_DATABASE_URL` is read each time.
+
+Out of this spec, and left as it is: two response bodies carry an
+exception's text with status 200, `ConfigOut.error`
+(`services/api/src/harrier_api/app.py`, `_config_out`) and
+`ScheduleOut.error` (`services/api/src/harrier_api/ops_routes.py`). Neither
+is an `HTTPException` nor an exception handler's body, and each carries a
+configuration parse error, not a store error. Scrubbing them would change
+a model's field outside this spec's two sinks.

@@ -21,7 +21,8 @@ serving the browser had none of this. `create_app` calls it now, and
 fails if the call is removed again.
 
 Handlers also carry the identity redaction filter (`harrier.logredact`), which
-the privacy plan claimed existed and which did not.
+the privacy plan claimed existed and which did not, and before it the secret
+scrub, which keeps the store password out of the log (spec 133).
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from pathlib import Path
 
 from harrier.connection import StoreDatabaseError
 from harrier.db import DatabaseOwnedByContainer, DatabaseOwnershipError, connect, data_dir
+from harrier.logredact import SecretScrubFilter
 
 LOG_DIR_NAME = "logs"
 LOG_FILE_NAME = "harrier.log"
@@ -48,6 +50,15 @@ BACKUP_COUNT = 3
 FORMAT = "%(asctime)s %(levelname)-7s %(name)s: %(message)s"
 
 _configured = False
+
+# One instance, holding no state, so installing it twice on a handler is a
+# no-op: `create_app` runs more than once in a process under test.
+SECRET_SCRUB = SecretScrubFilter()
+
+# uvicorn's own loggers, which do not propagate to the root, so a filter on
+# the root handlers never sees their records. `uvicorn.error` propagates to
+# `uvicorn` (uvicorn/config.py, LOGGING_CONFIG).
+UVICORN_LOGGERS = ("uvicorn", "uvicorn.access")
 
 
 def log_path() -> Path:
@@ -78,6 +89,9 @@ def configure_logging(*, force: bool = False) -> None:
     formatter = logging.Formatter(FORMAT)
     stream = logging.StreamHandler()
     stream.setFormatter(formatter)
+    # Before anything else is installed, and on every path below, the two
+    # that install no identity filter included (spec 133).
+    stream.addFilter(SECRET_SCRUB)
     root.addHandler(stream)
 
     # The redaction values come from the database, so they are loaded before
@@ -113,6 +127,7 @@ def configure_logging(*, force: bool = False) -> None:
             path, maxBytes=MAX_BYTES, backupCount=BACKUP_COUNT, encoding="utf-8"
         )
         rotating.setFormatter(formatter)
+        rotating.addFilter(SECRET_SCRUB)
         root.addHandler(rotating)
     except OSError:
         root.warning("file logging is unavailable; logging to stderr only")
@@ -120,6 +135,18 @@ def configure_logging(*, force: bool = False) -> None:
     _install_identity_redaction(root, values)
 
     _configured = True
+
+
+def scrub_uvicorn_handlers() -> None:
+    """Install the secret scrub on every handler of uvicorn's loggers.
+
+    Called by the API when the app is built, which uvicorn does after it
+    configures its logging, so its handlers exist by then (spec 133). An
+    unhandled exception is logged by uvicorn, not by the app.
+    """
+    for name in UVICORN_LOGGERS:
+        for handler in logging.getLogger(name).handlers:
+            handler.addFilter(SECRET_SCRUB)
 
 
 def _load_identity_values() -> set[str] | None:
