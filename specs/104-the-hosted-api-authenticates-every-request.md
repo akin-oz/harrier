@@ -1302,7 +1302,7 @@ assumption (its A5).
 
 ## Amendment (2026-10-12): what building part A settled
 
-Building part A settled points the text left open and showed two places
+Building part A settled points the text left open and showed three places
 where it was wrong. Each is stated here so the code and the spec agree.
 
 ### Where the text was wrong
@@ -1314,7 +1314,20 @@ where it was wrong. Each is stated here so the code and the spec agree.
   type `refusalMessage` takes and each outreach route's 503 body. Both
   widen with this contract, so the test's expected types gain
   `AuthRefusalOut`. It is a type change only, and it is what makes
-  removing `AuthRefusalOut` from `Refusal` fail `pnpm type-check`.
+  removing `AuthRefusalOut` from `Refusal` fail `pnpm type-check`. It also
+  pins the 401 body of one outreach route. The contract review of PR #297
+  found `apps/web/src/features/tracker/JobActions.tsx` holding its own copy
+  of `Refusal` without `AuthRefusalOut`, which compiled only because the
+  shapes fit. It now imports the shared type, and
+  `apps/web/src/pages/tracker/TrackerPage.test.tsx` pins the widened
+  parameter of its reader.
+- **The API does read a `.env` file.** Configuration says the API reads
+  no `.env` file itself. `store_target`, which `create_app` calls, reads
+  `HARRIER_DATABASE_URL` from `.env` when the process environment lacks it
+  (`services/api/src/harrier/connection.py`, review of PR #207). The
+  conclusion stands for hosted mode: `HARRIER_AUTH` and the hosted
+  variables are read from the process environment only
+  (`services/api/tests/test_hosted_auth.py::test_hosted_mode_is_read_from_the_process_environment_only`).
 - **Some existing tests change.** The Local mode criterion said every
   existing test passes unchanged. Behavior is unchanged, but four tests
   that read the contract's shape or the dependency groups change:
@@ -1358,8 +1371,13 @@ where it was wrong. Each is stated here so the code and the spec agree.
   attempt waits 30 seconds, so an unreachable endpoint does not hold every
   request; and
   the 30 second limit on forced refreshes counts forced refreshes only,
-  so the fetch at start does not delay picking up a rotation. A key in
-  the set that is not ES256 or RS256 is ignored.
+  so the fetch at start does not delay picking up a rotation. A key set
+  that is not a JSON object with a `keys` list is a failed fetch
+  (`services/api/tests/test_hosted_auth.py::test_a_malformed_key_set_keeps_the_last_good_one`).
+  An entry no key reader can use is skipped, not a failed fetch, and a key
+  of another algorithm verifies nothing, because the header `alg` must be
+  ES256 or RS256 and PyJWT refuses an `alg` that differs from the key's
+  (`services/api/tests/test_hosted_auth.py::test_an_entry_no_key_reader_can_use_is_skipped`).
 - **A key cannot be used as another.** PyJWT verifies with the key's own
   algorithm and refuses a header `alg` that differs from it (checked in
   2.15.1, `PyJWS._verify_signature`), so the `hosted` group requires at
@@ -1384,15 +1402,51 @@ where it was wrong. Each is stated here so the code and the spec agree.
   payload as the request's `claims` state, for spec 134's `get_conn`.
   `services/api/tests/test_hosted_auth.py::test_a_request_without_a_token_is_401_and_takes_no_connection`
   proves a route sees exactly what was signed.
+- **The local token is not read hosted.** The table under "What carries
+  over from spec 035" says so, and the first build did not do it: every
+  route with `require_token` still refused a hosted request without
+  `X-Harrier-Token` (contract review of PR #297). `require_token` now
+  returns at once when the app is hosted, so it reads no header and no
+  token file.
+  `services/api/tests/test_hosted_auth.py::test_the_local_token_is_not_read_hosted`
+  sends a valid bearer token, and no local token, to every route that
+  needs one locally.
+- **No websocket is served hosted.** A browser cannot send an
+  `Authorization` header on a websocket handshake, so the middleware
+  closes every websocket with code 1008. No route takes one today; a route
+  added later cannot skip the token this way
+  (`services/api/tests/test_hosted_auth.py::test_a_websocket_is_refused_hosted`).
+- **The test suite runs in local mode whatever the shell says.**
+  `services/api/tests/conftest.py` removes `HARRIER_AUTH` from the
+  environment at import and before each test, as it pins
+  `HARRIER_DATABASE_URL`, because importing the API builds the app
+  (review of PR #297).
+- **A refused request's path is logged escaped.** The path is
+  percent-decoded, so a control character in it is written as its escape,
+  and a request cannot forge a record line (privacy review of PR #297,
+  `services/api/tests/test_hosted_auth.py::test_a_refusal_log_line_cannot_be_forged`).
 
 ### Honest limitations (part A, as built)
 
-- **The 403 for an anonymous session is not in the contract.** Refusals
-  give it `AuthRefusalOut`, and the contract text declares only the 401
-  and the 503. Several routes already declare a 403 for spec 035's local
-  token with no body, so declaring this one is a decision about two
-  bodies behind one status. It is recorded here for spec 114, which reads
-  the refusals in the browser, rather than settled silently.
+- **The 403 for an anonymous session is not in the contract.** Hosted, a
+  token with `is_anonymous` true is refused 403 with `AuthRefusalOut` on
+  every route that needs a token. Meanwhile the contract declares a 403
+  only on the routes that need spec 035's local token, described as that
+  token's refusal and with no body, and no 403 on the other routes. The
+  contract review of PR #297 asked for the body to be declared, and it
+  was tried: declaring a 403 body on the routes that share the status
+  with the local token makes the generated client's `data` defined, and
+  `pnpm lint` then fails every web call site that treats an absent body
+  as the local token's refusal, in at least sixteen files. Rewriting those
+  guards is the browser's refusal handling, so spec 114 owns this: it
+  reads the 403 `anonymous` refusal (its table of refusals) and declares
+  the body when it changes those call sites.
+- **The shared document lists routes the hosted API never serves.**
+  `GET /session`, `GET /capture/add` and `POST /capture/add-form` are in
+  the one OpenAPI document, which is the same in both modes, and hosted
+  each answers 404 `{"detail": "Not Found"}`, declared nowhere. The SPA
+  calls `GET /session` today, but no SPA is served hosted before spec 114,
+  and spec 114's hosted client never requests it. Spec 114 owns this.
 - **A start refusal prints a traceback,** whose last line is the text. It
   prints no configured value: each case is run as a process and its whole
   output checked

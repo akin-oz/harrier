@@ -475,6 +475,11 @@ test("an outreach refusal is read through the contract's types", () => {
   expectTypeOf<Declared<operations["findContacts"]["responses"][503]>>().toEqualTypeOf<
     DatabaseHeldOut | AuthRefusalOut
   >();
+
+  // Hosted, a missing, invalid or expired token is a 401 (spec 104).
+  expectTypeOf<
+    Declared<operations["listOutreachDue"]["responses"][401]>
+  >().toEqualTypeOf<AuthRefusalOut>();
 });
 
 test("no candidates reads as none found rather than an empty table", async () => {

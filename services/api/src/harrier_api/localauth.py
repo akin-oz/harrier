@@ -109,7 +109,13 @@ def require_token(request: Request) -> None:
     Reads the header, or a form field for the capture confirmation page,
     which is a real form submission rather than a fetch and cannot set
     headers.
+
+    Hosted, every request has already passed the bearer token check, which
+    serves this token's purpose, and the local token is not read at all
+    (spec 104, What carries over from spec 035).
     """
+    if getattr(request.app.state, "hosted", False):
+        return
     presented = request.headers.get(TOKEN_HEADER, "")
     if not presented:
         presented = getattr(request.state, "form_token", "") or ""

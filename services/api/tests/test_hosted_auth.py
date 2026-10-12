@@ -24,6 +24,7 @@ import re
 import subprocess
 import sys
 import time
+import urllib.request
 import uuid
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
@@ -33,10 +34,12 @@ from typing import Any
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from jwt.algorithms import ECAlgorithm, RSAAlgorithm
+from starlette.middleware.cors import SAFELISTED_HEADERS
+from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from harrier.connection import POSTGRES_NOT_YET, Connection
 from harrier.demo import repo_root
@@ -52,7 +55,10 @@ from harrier_api.hostedauth import (
     HostedAuthMiddleware,
     HostedConfig,
     hosted_config,
+    needs_token,
 )
+from harrier_api.localauth import TOKEN_HEADER, require_token
+from harrier_api.runmodels import get_manager
 
 SUPABASE_URL = "https://project-ref.supabase.co"
 ISSUER = f"{SUPABASE_URL}/auth/v1"
@@ -61,8 +67,10 @@ SPA_ORIGIN = "https://app.example.test"
 KID = "current-key"
 CONTRACT = repo_root() / "packages" / "contract" / "openapi.json"
 
-# The spec's own texts, written out rather than imported, so a changed
-# constant fails here (spec 104, Failure modes).
+# The two texts spec 104 writes out under Failure modes, written out here
+# too, so a changed constant fails. The other refusals' texts are the code's
+# constants, and the spec asks only that each names its variable, which
+# each start case checks.
 AUTH_VALUE_TEXT = "HARRIER_AUTH must be empty or supabase"
 NEEDS_POSTGRES_TEXT = "HARRIER_AUTH=supabase needs HARRIER_DATABASE_URL to name a Postgres store"
 
@@ -85,6 +93,10 @@ class KeyServer:
     published: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     calls: int = 0
     failing: bool = False
+    # Served instead of the key set when set: a malformed answer.
+    document: object = None
+    # Entries served beside the keys, which no key reader can use.
+    extra: list[object] = field(default_factory=list[object])
 
     def publish(self, kid: str, key: ec.EllipticCurvePrivateKey | rsa.RSAPrivateKey) -> None:
         if isinstance(key, ec.EllipticCurvePrivateKey):
@@ -96,8 +108,14 @@ class KeyServer:
     def __call__(self) -> object:
         self.calls += 1
         if self.failing:
-            raise OSError("the key endpoint is unreachable")
-        return {"keys": list(self.published.values())}
+            raise OSError(f"the key endpoint is unreachable {UNREACHABLE_SENTINEL}")
+        if self.document is not None:
+            return self.document
+        return {"keys": [*self.published.values(), *self.extra]}
+
+
+# In the fetch error's own text, which the log must not carry.
+UNREACHABLE_SENTINEL = f"sentinel-{uuid.uuid4().hex}"
 
 
 def new_ec_key() -> ec.EllipticCurvePrivateKey:
@@ -618,7 +636,10 @@ def test_a_failed_first_fetch_still_starts(caplog: pytest.LogCaptureFixture) -> 
     hosted = build(failing_at_start=True)
 
     assert "could not be fetched" in caplog.text
-    assert "?" not in caplog.text
+    # The exception's own text could quote a response; only its type is
+    # logged.
+    assert UNREACHABLE_SENTINEL not in caplog.text
+    assert "OSError" in caplog.text
     assert hosted.client.get("/health").status_code == 200
     token = hosted.token()
     assert_refused(hosted.client.get("/runs", headers=bearer(token)), 503, "keys_unavailable", None)
@@ -626,6 +647,92 @@ def test_a_failed_first_fetch_still_starts(caplog: pytest.LogCaptureFixture) -> 
     hosted.server.failing = False
     hosted.clock.now += 31
     assert hosted.client.get("/runs", headers=bearer(token)).is_success
+
+
+def test_a_malformed_key_set_keeps_the_last_good_one(hosted: Hosted) -> None:
+    # A key set that is not one is a failed fetch: the last good set keeps
+    # verifying, and an unknown kid is 503, never 401.
+    held = hosted.token()
+    stranger = mint(new_ec_key(), claims_for(), kid="another-unknown-key")
+    for document in ({}, {"keys": "not a list"}, ["not", "an", "object"]):
+        hosted.server.document = document
+        hosted.clock.now += 400
+        assert hosted.client.get("/runs", headers=bearer(held)).is_success, document
+        assert_refused(
+            hosted.client.get("/runs", headers=bearer(stranger)), 503, "keys_unavailable", None
+        )
+
+
+def test_an_entry_no_key_reader_can_use_is_skipped(hosted: Hosted) -> None:
+    rotated = new_ec_key()
+    hosted.server.publish("next-key", rotated)
+    hosted.server.extra = [
+        {"kty": "oct", "kid": "shared-secret", "k": "c3ludGhldGlj"},
+        {"kty": "no-such-type", "kid": "unreadable"},
+        {"kty": "EC"},
+        "not an object",
+    ]
+    # The new key is picked up although the set holds entries beside it
+    # that no reader can use.
+    token = mint(rotated, claims_for(), kid="next-key")
+    assert hosted.client.get("/runs", headers=bearer(token)).is_success
+    # A symmetric key in the set verifies nothing.
+    naming_it = mint(hosted.key, claims_for(), kid="shared-secret")
+    assert_refused(hosted.client.get("/runs", headers=bearer(naming_it)), 401, "invalid", INVALID)
+
+
+def test_the_key_set_is_fetched_from_the_project(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = hosted_config(
+        {**complete_hosted_environment(), "HARRIER_SUPABASE_URL": f"{SUPABASE_URL}/"}
+    )
+    assert config is not None
+    assert config.issuer == ISSUER
+    assert config.jwks_url == f"{ISSUER}/.well-known/jwks.json"
+
+    server = KeyServer()
+    key = new_ec_key()
+    server.publish(KID, key)
+    opened: list[tuple[str, float | None]] = []
+
+    class Response:
+        def __enter__(self) -> Response:
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps(server()).encode()
+
+    def urlopen(url: str, timeout: float | None = None) -> Response:
+        opened.append((url, timeout))
+        return Response()
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    client = TestClient(create_hosted_app(config), base_url=f"http://{API_HOST}")
+    response = client.get("/runs", headers=bearer(mint(key, claims_for())))
+    assert response.status_code == 200, response.text
+    assert [url for url, _ in opened] == [config.jwks_url]
+    assert all(timeout is not None and timeout > 0 for _, timeout in opened)
+
+
+def test_a_websocket_is_refused_hosted(hosted: Hosted) -> None:
+    # No route takes a websocket today. One added later cannot skip the
+    # token: a browser cannot send the header on the handshake.
+    async def opened(websocket: WebSocket) -> None:
+        await websocket.accept()
+        await websocket.send_text("open")
+        await websocket.close()
+
+    hosted.app.add_api_websocket_route("/socket", opened)
+    # The Host the trusted-host check admits, so the refusal is this one.
+    headers = {**bearer(hosted.token()), "Host": API_HOST}
+    with (
+        pytest.raises(WebSocketDisconnect) as closed,
+        hosted.client.websocket_connect("/socket", headers=headers) as socket,
+    ):
+        socket.receive_text()
+    assert closed.value.code == 1008
 
 
 def test_a_token_never_reaches_a_body_or_a_log(
@@ -667,6 +774,17 @@ def test_a_token_never_reaches_a_body_or_a_log(
     assert "refused GET /jobs: invalid" in refusals
     assert "refused GET /tracks: anonymous" in refusals
     assert "refused GET /runs: keys_unavailable" in refusals
+
+
+def test_a_refusal_log_line_cannot_be_forged(
+    hosted: Hosted, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The path reaches the log percent-decoded, so an encoded newline would
+    # have written a second, forged record line.
+    caplog.set_level(logging.INFO, logger="harrier_api.hostedauth")
+    hosted.client.get("/x%0Arefused GET /admin: forged")
+    refusals = [r.getMessage() for r in caplog.records if r.getMessage().startswith("refused")]
+    assert refusals == ["refused GET /x\\nrefused GET /admin: forged: missing"]
 
 
 # --- routes and contract ---
@@ -746,6 +864,42 @@ def test_the_contract_declares_every_auth_refusal(hosted: Hosted) -> None:
         assert declared == answers_401
 
 
+def dependency_calls(dependant: Any) -> list[object]:
+    calls: list[object] = [dependant.call]
+    for child in dependant.dependencies:
+        calls.extend(dependency_calls(child))
+    return calls
+
+
+def test_the_local_token_is_not_read_hosted(hosted: Hosted) -> None:
+    """Spec 035's token is not read hosted: the bearer token serves its
+    purpose. Every route that needs the local token locally is reached with a
+    valid bearer token and no `X-Harrier-Token`. The store and the run
+    manager answer 418 when reached, so no route does real work here."""
+
+    def reached() -> object:
+        raise HTTPException(status_code=418, detail="reached")
+
+    hosted.app.dependency_overrides[get_conn] = reached
+    hosted.app.dependency_overrides[get_manager] = reached
+    token = bearer(hosted.token())
+    walked: list[tuple[str, str]] = []
+    for route in api_routes(hosted.app.routes):
+        if require_token not in dependency_calls(route.dependant):
+            continue
+        for method in route.methods or ():
+            assert needs_token(method, route.path), (method, route.path)
+            response = hosted.client.request(method, concrete(route.path), headers=token)
+            walked.append((method, route.path))
+            assert response.status_code != 403, (method, route.path, response.text)
+    assert len(walked) > 40, "the walk is not finding the routes that need the local token"
+    # A wrong local token is not read either.
+    response = hosted.client.post(
+        "/runs/x/cancel", headers={**token, TOKEN_HEADER: "not-the-token"}
+    )
+    assert response.status_code == 418, response.text
+
+
 def test_the_contract_is_the_same_in_both_modes(hosted: Hosted) -> None:
     local = create_app().openapi()
     assert json.dumps(hosted.app.openapi(), sort_keys=True) == json.dumps(local, sort_keys=True)
@@ -789,8 +943,16 @@ def test_cors_allows_only_the_configured_origins(hosted: Hosted) -> None:
     headers = {
         h.strip().lower() for h in allowed.headers["access-control-allow-headers"].split(",")
     }
-    assert {"authorization", "content-type", "last-event-id"} <= headers
+    # Exactly the three, beside the headers CORS always admits.
+    safelisted = {header.lower() for header in SAFELISTED_HEADERS}
+    assert headers == safelisted | {"authorization", "content-type", "last-event-id"}
     assert "access-control-allow-credentials" not in allowed.headers
+
+    # CORS is outermost: even the trusted-host refusal of a foreign Host
+    # reaches an allowed origin's page readable.
+    foreign = hosted.client.get("/runs", headers={"Origin": SPA_ORIGIN, "Host": "evil.test"})
+    assert foreign.status_code == 400
+    assert foreign.headers["access-control-allow-origin"] == SPA_ORIGIN
 
     for stranger in ("https://someone-else.vercel.app", "https://app.example.test.evil.test"):
         refused = hosted.client.options("/runs", headers={"Origin": stranger, **preflight})
@@ -808,7 +970,18 @@ def test_cors_allows_only_the_configured_origins(hosted: Hosted) -> None:
 
 def test_hosted_trusted_hosts_are_the_configured_names() -> None:
     names = (API_HOST, "api-staging.example.test")
-    hosted = build(config=HostedConfig(SUPABASE_URL, names, (SPA_ORIGIN,)))
+    # Read the way a start reads them, from comma-separated variables.
+    config = hosted_config(
+        {
+            **complete_hosted_environment(),
+            "HARRIER_ALLOWED_HOSTS": f" {names[0]} , {names[1]} ",
+            "HARRIER_CORS_ORIGINS": f"{SPA_ORIGIN},https://app-staging.example.test:8443",
+        }
+    )
+    assert config is not None
+    assert config.allowed_hosts == names
+    assert config.cors_origins == (SPA_ORIGIN, "https://app-staging.example.test:8443")
+    hosted = build(config=config)
     for name in names:
         for port in ("", ":443"):
             response = hosted.client.get("/health", headers={"Host": name + port})

@@ -299,8 +299,13 @@ answers a refusal with `AuthRefusalOut`: 401, 403 for an anonymous
 session, or 503 while the keys cannot be fetched. It trusts only the
 configured host names and sends CORS headers only to the configured
 origins. The contract declares the 401 and the bearer scheme on every
-route that needs the token, in both modes, so there is one document
+route that needs the token
+(`services/api/tests/test_hosted_auth.py::test_the_contract_declares_every_auth_refusal`),
+in both modes, so there is one document
 (`services/api/tests/test_hosted_auth.py::test_the_contract_is_the_same_in_both_modes`).
+Hosted, spec 035's local token is not read: the bearer token serves its
+purpose
+(`services/api/tests/test_hosted_auth.py::test_the_local_token_is_not_read_hosted`).
 The hosted API does not serve yet. `create_app` still refuses a Postgres
 URL with spec 103's text, so the hosted app is assembled only in the tests
 until spec 134 lifts that gate
@@ -311,8 +316,7 @@ the Postgres store (103, approved), API authentication (104), row-level
 policy (105, approved), tenant credentials and run isolation (106),
 artifacts in Storage (107), hosted scheduling (108), Gmail and Telegram for
 tenants (109), the deploy pipeline (110), sign-up, export and deletion
-(111), and the domain on either store (112). Specs 104 and 106 to 112 stay
-`approved: no` until refined.
+(111), and the domain on either store (112).
 
 ## Honest limitations
 

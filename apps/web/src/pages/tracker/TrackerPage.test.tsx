@@ -1127,13 +1127,15 @@ test("a tracker refusal is read through the contract's types", () => {
   // Checked by `pnpm type-check`, which compiles this file; when the test
   // runs, `expectTypeOf` does nothing. A reader that took `unknown` again,
   // or a tracker write whose 404 or 409 lost its declared body, does not
-  // compile.
+  // compile. It takes the shared `Refusal`, the hosted token refusal
+  // included (spec 104).
   expectTypeOf(refusalMessage)
     .parameter(0)
     .toEqualTypeOf<
       | ErrorOut
       | components["schemas"]["DatabaseHeldOut"]
       | components["schemas"]["HTTPValidationError"]
+      | components["schemas"]["AuthRefusalOut"]
     >();
   expectTypeOf<
     Declared<operations["changeJobStatus"]["responses"][404]>

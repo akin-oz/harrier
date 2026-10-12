@@ -359,14 +359,14 @@ def _parse_key_set(document: object) -> dict[str, PyJWK]:
         kid = data.get("kid")
         if not isinstance(kid, str) or not kid:
             continue
+        # An entry PyJWT cannot read is skipped, not a failed fetch. A key of
+        # another algorithm can verify nothing: the header `alg` must be
+        # ES256 or RS256, and PyJWT refuses an `alg` that differs from the
+        # key's own.
         try:
-            key = PyJWK(data)
+            keys[kid] = PyJWK(data)
         except PyJWTError:
             continue
-        # A symmetric or otherwise unsupported key in the set is never
-        # usable: only the two asymmetric algorithms verify.
-        if key.algorithm_name in ALGORITHMS:
-            keys[kid] = key
     return keys
 
 
@@ -533,6 +533,12 @@ class HostedAuthMiddleware:
         self.verifier = verifier
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "websocket":
+            # A browser cannot send an `Authorization` header on a websocket
+            # handshake, so none is served hosted: a route added later
+            # cannot skip the token this way.
+            await send({"type": "websocket.close", "code": 1008})
+            return
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
@@ -550,7 +556,10 @@ class HostedAuthMiddleware:
         try:
             claims = await run_in_threadpool(self.verifier.verify, authorization)
         except TokenRefused as refused:
-            logger.info("refused %s %s: %s", method, path, refused.reason)
+            # The path is percent-decoded, so a control character in it is
+            # escaped rather than written into the record as a new line.
+            shown = path.encode("unicode_escape").decode("ascii")
+            logger.info("refused %s %s: %s", method, shown, refused.reason)
             await refusal_response(refused.reason)(scope, receive, send)
             return
         state = cast(dict[str, Any], scope.get("state") or {})

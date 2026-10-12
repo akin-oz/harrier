@@ -108,6 +108,10 @@ os.environ["HARRIER_DATA_DIR"] = str(SESSION_DATA_DIR)
 # empty value wins over `.env` (spec 011), so a hosted URL there never reaches
 # a test, which sets its own when it wants Postgres (spec 060, spec 103).
 os.environ["HARRIER_DATABASE_URL"] = ""
+# Local mode, whatever the operator's shell names: importing the API builds
+# the app, which reads hosted mode from the process environment (spec 104).
+# The hosted tests build their own configuration.
+os.environ.pop("HARRIER_AUTH", None)
 atexit.register(shutil.rmtree, SESSION_DATA_DIR.parent, ignore_errors=True)
 
 GUARD_PROBE_EVENT = "harrier.tests.operator_data_guard_probe"
@@ -220,6 +224,7 @@ def _data_dir(  # pyright: ignore[reportUnusedFunction]
     """
     monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("HARRIER_DATABASE_URL", "")
+    monkeypatch.delenv("HARRIER_AUTH", raising=False)
 
 
 # --- the store URL pin (spec 103) ---
