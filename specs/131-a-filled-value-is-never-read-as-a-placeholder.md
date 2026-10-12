@@ -1,8 +1,8 @@
 ---
 spec: 131
 title: A filled template value is never read as a placeholder
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M9
 depends: [013, 014, 062, 130]
 ---
