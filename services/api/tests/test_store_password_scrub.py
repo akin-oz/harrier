@@ -789,72 +789,126 @@ def test_a_run_event_has_the_store_password_masked(
 # --- an error field in a 200 body -------------------------------------------
 
 
-def _a_stored_hold_quoting_it(root: Path, url: str) -> str:
+def _a_stored_hold_quoting(root: Path, value: str) -> str:
     """A stored row written around `set_config`, as a restored backup or a
-    hand-edited database writes one, with an unknown key whose value is the
-    URL. `ConfigError` quotes the entry."""
+    hand-edited database writes one, with an unknown key holding `value`.
+    `ConfigError` quotes the entry with `!r`."""
     conn = connect()
     try:
         with conn.transaction():
             conn.execute(
                 "INSERT INTO user_config (kind, value) VALUES (?, ?)",
-                ("company_holds", json.dumps([{"company": "Example Co", "until": url}])),
+                ("company_holds", json.dumps([{"company": "Example Co", "until": value}])),
             )
     finally:
         conn.close()
     return "/config/company_holds"
 
 
-def _a_hold_file_quoting_it(root: Path, url: str) -> str:
-    """The holds CSV the file fallback reads, with the URL as a hold date."""
+def _a_hold_file_quoting(root: Path, value: str) -> str:
+    """The holds CSV the file fallback reads, with `value` as a hold date,
+    which `ConfigError` quotes with `!r`."""
     (root / "config").mkdir(exist_ok=True)
     (root / "config" / "companies-hold.csv").write_text(
-        f"company,reason,hold_until,notes\nExample Co,cooldown,{url},\n", encoding="utf-8"
+        f"company,reason,hold_until,notes\nExample Co,cooldown,{value},\n", encoding="utf-8"
     )
     return "/config/company_holds"
 
 
-def _a_schedule_quoting_it(root: Path, url: str) -> str:
-    """The schedule definition, with the URL as its label prefix, which the
-    loader refuses for its path separator and quotes."""
+def _a_schedule_quoting(root: Path, value: str) -> str:
+    """The schedule definition, with `value` as a job's name and no command.
+    A name holding a path separator is refused and quoted with `!r`; any
+    other is quoted plain in the missing command's refusal."""
     (root / "config").mkdir(exist_ok=True)
     (root / "config" / "schedule.json").write_text(
-        json.dumps({"label_prefix": url, "jobs": []}), encoding="utf-8"
+        json.dumps({"jobs": [{"name": value}]}), encoding="utf-8"
     )
     return "/ops/schedule"
 
 
 ERROR_FIELDS: dict[str, Callable[[Path, str], str]] = {
-    "ConfigOut.error from a stored row": _a_stored_hold_quoting_it,
-    "ConfigOut.error from a config file": _a_hold_file_quoting_it,
-    "ScheduleOut.error": _a_schedule_quoting_it,
+    "ConfigOut.error from a stored row": _a_stored_hold_quoting,
+    "ConfigOut.error from a config file": _a_hold_file_quoting,
+    "ScheduleOut.error": _a_schedule_quoting,
 }
 
 
+def _error_field(
+    monkeypatch: pytest.MonkeyPatch,
+    root: Path,
+    plant: Callable[[Path, str], str],
+    value: str,
+    password: StorePassword,
+) -> tuple[str, str]:
+    """`value` planted where the route reads it, and the route driven as a
+    client drives it, with the store URL configured: the field and the body."""
+    monkeypatch.setenv("HARRIER_DATA_DIR", str(root / "data"))
+    monkeypatch.delenv("HARRIER_DEMO", raising=False)
+    monkeypatch.chdir(root)
+    monkeypatch.setattr("harrier.paths.repo_root", lambda: root)
+    client = TestClient(create_app())
+    path = plant(root, value)
+    _point_at_postgres(monkeypatch, password)
+    response = client.get(path, headers=auth())
+    assert response.status_code == 200
+    return response.json()["error"], response.text
+
+
+@pytest.mark.parametrize("shape", ["the URL", "the password alone"])
 @pytest.mark.parametrize("plant", list(ERROR_FIELDS.values()), ids=list(ERROR_FIELDS))
 def test_an_error_field_in_a_200_body_has_the_store_password_masked(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     store_password: StorePassword,
     plant: Callable[[Path, str], str],
+    shape: str,
 ) -> None:
     """A refusal described in a 200 body never reaches the `HTTPException`
     handler, so each route scrubs its own `error` field (spec 133, Amendment
-    (2026-10-12): exception text in a 200 body). The value is planted where
-    the route reads it and the route is driven as a client drives it."""
-    monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.delenv("HARRIER_DEMO", raising=False)
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("harrier.paths.repo_root", lambda: tmp_path)
-    client = TestClient(create_app())
-    path = plant(tmp_path, store_password.url)
-    _point_at_postgres(monkeypatch, store_password)
+    (2026-10-12): exception text in a 200 body).
 
-    response = client.get(path, headers=auth())
+    The password alone, as written in the URL, is a shape `scrub_secrets`
+    does not know: only the configured URL's forms mask it, so that case
+    fails if a route scrubs with `scrub_secrets` alone or the scrub does not
+    read `HARRIER_DATABASE_URL`."""
+    value = store_password.url if shape == "the URL" else store_password.encoded
+    error, body = _error_field(monkeypatch, tmp_path, plant, value, store_password)
 
-    assert response.status_code == 200
-    error = response.json()["error"]
     # The value was quoted and masked, not dropped.
-    assert "postgresql://harrier:REDACTED@db.example.test" in error
+    if shape == "the URL":
+        assert "postgresql://harrier:REDACTED@db.example.test" in error
+    else:
+        assert "REDACTED" in error
     # The field as decoded, and the body as sent, since JSON escapes.
-    assert store_password.leaks(error + response.text) == []
+    assert store_password.leaks(error + body) == []
+
+
+NOTHING_TO_MASK: dict[str, tuple[Callable[[Path, str], str], str, str]] = {
+    "ConfigOut.error from a stored row": (
+        _a_stored_hold_quoting,
+        "soon",
+        "company_holds entry {'company': 'Example Co', 'until': 'soon'} has unknown keys"
+        " ['until']; expected only ['company', 'hold_until']",
+    ),
+    "ConfigOut.error from a config file": (
+        _a_hold_file_quoting,
+        "soon",
+        "config/companies-hold.csv: hold for 'Example Co' has a malformed hold_until 'soon';"
+        " expected YYYY-MM-DD",
+    ),
+    "ScheduleOut.error": (_a_schedule_quoting, "nightly", "jobs[0] (nightly): missing command"),
+}
+
+
+@pytest.mark.parametrize("case", list(NOTHING_TO_MASK.values()), ids=list(NOTHING_TO_MASK))
+def test_an_error_field_with_nothing_to_mask_is_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    store_password: StorePassword,
+    case: tuple[Callable[[Path, str], str], str, str],
+) -> None:
+    """The scrub runs with the store URL configured and changes nothing it
+    does not mask: each field reads as the parser wrote it."""
+    plant, value, expected = case
+    error, _body = _error_field(monkeypatch, tmp_path, plant, value, store_password)
+    assert error == expected
