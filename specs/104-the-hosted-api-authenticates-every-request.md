@@ -53,6 +53,14 @@ check bolted on:
 
 ## Scope
 
+**Narrowed (2026-10-12).** This spec now covers part A: hosted mode and
+the bearer token, with no database. It keeps items 1, 3, 4, 9, 10 and 12,
+the header-only half of item 8, and item 11 for `pyjwt[crypto]` only.
+Item 2 (the gate), items 5 and 6, and `psycopg-pool` moved to spec 134;
+item 7 and the expiry half of item 8 to spec 132. The spec 103 gate stays
+closed under this spec. The "Amendment (2026-10-12): split into hosted mode, run ownership, store password and the request transaction", at the end of this file, says
+what this spec delivers now and where each item went.
+
 This spec is the server side of hosted authentication. The browser's half
 (signing in, sending the token, streaming without `EventSource`) is spec
 114; Open decision 8 records why.
@@ -227,6 +235,9 @@ is no one's business. The `HealthOut` shape does not change.
 
 ### The request transaction
 
+**Moved (2026-10-12) to spec 134.** The text below stands as the record
+of what was approved; spec 134 governs it.
+
 For a request that passed the middleware, `get_conn` hosted:
 
 1. Takes a connection from the pool. The pool connects as the login role
@@ -269,6 +280,8 @@ uses it.
 
 ### The store version
 
+**Moved (2026-10-12) to spec 134.** The text below stands as the record.
+
 At start, hosted, the API reads the store's version once, inside the
 transaction that runs the login-role checks below, as `harrier_tenant`
 (the login role holds no grant of its own; spec 105 grants `SELECT` on
@@ -285,6 +298,10 @@ version serves": an image newer than the store does not serve.
 (post-merge review of PRs #194 and #207, 2026-10-10)
 
 ### The login role
+
+**Moved (2026-10-12) to spec 134,** except the paragraph on a service
+credential in the environment, which stays in this spec: it reads only
+the process environment. The rest of the text below stands as the record.
 
 The API connects as a dedicated login role, called `harrier_api` in the
 documents, that is `NOINHERIT`, a member of `harrier_tenant` and of
@@ -312,6 +329,10 @@ creates it in each throwaway database.
 
 ### Runs
 
+**Moved (2026-10-12) to spec 132,** which also closes a gap in it: three
+routes write a run's input file before `start` refuses. The text below
+stands as the record.
+
 `Run` gains `owner: str`, empty locally and the request's `sub` hosted.
 It is written to the journal with the other fields. Hosted:
 
@@ -332,6 +353,10 @@ Locally nothing changes: the owner is empty, every run is listed, and
 `start` behaves as today.
 
 ### The event stream
+
+**Narrowed (2026-10-12).** The token is read only from the
+`Authorization` header: this spec, through the middleware. The stream
+ending at the token's `exp`: spec 132.
 
 `GET /runs/{run_id}/events` hosted takes the token in the header like any
 route. The stream ends, with a final SSE comment line, when the token that
@@ -383,6 +408,15 @@ own, so a cross-site page cannot make a request carrying it, which is the
 same property.
 
 ## Failure modes
+
+**Narrowed (2026-10-12).** "Postgres without hosted mode", "Login role
+too strong", "Store behind or ahead of the code", "Pooler or connection
+drops `SET LOCAL`", "A route reaches `get_conn` without claims" and "A
+request's transaction runs as the table owner or as `service_role`" moved
+to spec 134. "Another owner's run id" and "Starting a run hosted" moved
+to spec 132. Under this spec a complete hosted configuration on a
+Postgres URL is still refused with spec 103's text (the "Amendment (2026-10-12): split into hosted mode, run ownership, store password and the request transaction",
+decision 2).
 
 - **`HARRIER_AUTH` has another value.** Start refused: `error:
   HARRIER_AUTH must be empty or supabase`, exit 1.
@@ -477,30 +511,35 @@ Start-up:
       value" to "Service credential in the environment" exits 1 with its
       text, and none prints a URL, password or secret value
       (planned test_hosted_start_refuses_incomplete_configuration,
-      parametrized over each case).
+      parametrized over each case). Narrowed (2026-10-12): the cases
+      "Postgres without hosted mode", "Login role too strong" and "Store
+      behind or ahead of the code" moved to spec 134; the others stay,
+      and the service credential case reads only the environment.
 - [ ] A login role that is a superuser, has `BYPASSRLS`, is a member of
       `service_role`, cannot `SET ROLE harrier_tenant`, or owns a table in
       `public` is refused at start, one case each
-      (planned test_hosted_start_refuses_a_login_role_that_can_bypass_policy).
+      (planned test_hosted_start_refuses_a_login_role_that_can_bypass_policy). Moved (2026-10-12) to spec 134.
 - [ ] A store one version behind `target_version()`, and one ahead, are
       each refused at start with `check_postgres_version`'s text, exit 1;
       a store at the target version starts, and a request after start
       runs no statement against `schema_version`
       (planned test_hosted_start_checks_the_store_version_once).
-      (post-merge review of PRs #194 and #207, 2026-10-10)
+      (post-merge review of PRs #194 and #207, 2026-10-10) Moved (2026-10-12) to spec 134.
 - [ ] With `HARRIER_AUTH=supabase` written in a `.env` file in the working
       directory and absent from the process environment, the API starts
       in local mode
       (planned test_hosted_mode_is_read_from_the_process_environment_only).
       (post-merge review of PRs #194 and #207, 2026-10-10)
 - [ ] `app.py` no longer holds `POSTGRES_NOT_YET`; the API on a Postgres URL
-      without hosted mode exits 1 with this spec's text.
+      without hosted mode exits 1 with this spec's text. Moved (2026-10-12) to spec 134.
 
 Tokens:
 
 - [ ] A request without a token is 401 `missing`, and the pool hands out no
       connection for it
       (planned test_a_request_without_a_token_is_401_and_takes_no_connection).
+      Narrowed (2026-10-12): under this spec, "takes no connection" means
+      `get_conn` is never entered; spec 134 proves it on the pool.
 - [ ] An expired token is 401 `expired`; one expired by less than 30
       seconds is accepted (planned test_expiry_honours_the_leeway).
 - [ ] Tokens with a wrong signature, `alg` `none`, `alg` `HS256`, an
@@ -547,7 +586,8 @@ Routes and contract:
       key endpoint is unreachable
       (planned test_hosted_health_reveals_no_store_detail).
 
-The request transaction (Postgres tests, run in CI as spec 103 requires):
+The request transaction (Postgres tests, run in CI as spec 103 requires).
+Moved (2026-10-12) to spec 134, every criterion in this group:
 
 - [ ] Inside a request, `current_user` is `harrier_tenant`, `auth.uid()` is
       the token's `sub`, and `auth.jwt()` is its payload
@@ -567,7 +607,8 @@ The request transaction (Postgres tests, run in CI as spec 103 requires):
 - [ ] A route that raises rolls its writes back; a 4xx response rolls back
       (planned test_a_refused_request_commits_nothing).
 
-Runs and stream:
+Runs and stream. Moved (2026-10-12) to spec 132, every criterion in this
+group:
 
 - [ ] Hosted, owner B's `GET /runs` omits owner A's run, and B's get,
       cancel and stream of it answer 404
@@ -609,7 +650,7 @@ Gates:
   and `auth.jwt()` that read `request.jwt.claims`, and migration 10
   creates `harrier_tenant`. That is Supabase's documented behavior as far
   as it is documented; the exact function body is not in the guides
-  (Proof / origin). Spec 110's first slice, which lands before spec 112,
+  (Proof / origin). Spec 115, which lands before spec 112,
   compares `\sf auth.uid` with the shim on a real Supabase staging project.
 - A revoked signing key is still trusted for up to 5 minutes, or up to an
   hour while the key endpoint is unreachable. A deleted or signed-out user's
@@ -794,11 +835,10 @@ it is used:
 
 - `auth.uid()` reads `sub` from `request.jwt.claims`. The guides describe
   the result, not the body; setting the whole claims object is also what
-  PostgREST does. Checked with `\sf auth.uid` on staging, in spec 110's
-  first slice.
+  PostgREST does. Checked with `\sf auth.uid` on staging, in spec 115.
 - Supabase's connection pooler accepts a custom login role such as
-  `harrier_api`. Not stated in the guides read for this spec; spec 110's
-  first slice checks it, and the direct connection is the fallback.
+  `harrier_api`. Not stated in the guides read for this spec; spec 115
+  checks it, and the direct connection is the fallback.
 - New Supabase projects sign with an asymmetric key by default. Not found
   in the docs; the spec does not depend on it, because the API refuses
   `HS256` and spec 110 makes the current key asymmetric.
@@ -851,6 +891,9 @@ here, each with its own criterion:
   secrets, never from a `.env` file (Configuration).
 
 ## Amendment (2026-10-11): request-role timeouts
+
+**Moved (2026-10-12) to spec 134.** The text below stands as the record
+of what was agreed; spec 134 governs it.
 
 A post-merge review of PR #231 found that spec 105's Honest limitations
 name "a statement and transaction timeout on the request role (spec 104)"
@@ -914,6 +957,8 @@ table; the risk is SQL injected into a request, or a bug.
 
 ### Acceptance criteria (request-role timeouts)
 
+Moved (2026-10-12) to spec 134, every criterion in this group.
+
 - [ ] Inside a request, `current_setting('lock_timeout')`,
       `current_setting('statement_timeout')` and
       `current_setting('idle_in_transaction_session_timeout')` are each the
@@ -932,6 +977,11 @@ table; the risk is SQL injected into a request, or a bug.
 - [ ] The change that sets the values says, for each, why that value.
 
 ## Amendment (2026-10-11): migration 16's follow-ups
+
+**Moved (2026-10-12) to spec 134.** The text below stands as the record
+of what was agreed; spec 134 governs it, with the owner read-back in
+`assume_identity` for runs as well as requests (the Amendment
+(2026-10-12): split, decision 3).
 
 Spec 105's amendment "owner identity without schema auth" added migration
 16 (PR #260). Its "Specs this touches, and follow-ups" names two changes
@@ -1049,6 +1099,8 @@ of each login role's memberships on the deployed project.
 
 ### Acceptance criteria (migration 16's follow-ups)
 
+Moved (2026-10-12) to spec 134, every criterion in this group.
+
 - [ ] Inside a request, `current_user` is `harrier_tenant`,
       `public.harrier_owner_id()` is the token's `sub`, and
       `current_setting('request.jwt.claims', true)::jsonb` equals its
@@ -1072,33 +1124,178 @@ of each login role's memberships on the deployed project.
 
 ## Amendment (2026-10-12): the store password in logs and HTTP errors
 
-Akin placed this criterion here in chat on 2026-10-12. Spec 128's privacy
+**Moved (2026-10-12) to spec 133,**
+`specs/133-the-store-password-stays-out-of-logs-and-http-errors.md`, whole,
+with its criterion (planned test_no_log_or_http_error_carries_the_store_password).
+Akin placed the criterion here in chat on 2026-10-12; spec 128's privacy
 review (PR #281) found it, and spec 112 carried it until its pull request
-for the seam (PR #288) showed it could not be built there: the sinks are
-reached only once the API serves a Postgres store, which this spec makes
-happen.
+for the seam (PR #288). The split moved it the same day (the Amendment
+(2026-10-12): split, below, decision 1). Spec 133 also closes three ways
+past the two sinks that the split's analysis found. This heading stays so
+that the citations of it in spec 112 still resolve.
 
-Domain code on a Postgres store can raise a driver error whose text quotes
-the store URL. The seam's own store errors carry the server's primary
-message or the driver error's class, never the client's text, so their
-message quotes no URL (spec 112, "Amendment (2026-10-12): what the seam's
-pull request settled"). The driver's error stays chained as `__cause__`,
-and two sinks in the API process do not run `scrub_secrets`:
+## Amendment (2026-10-12): split into hosted mode, run ownership, store password and the request transaction
 
-- **The log stream.** `IdentityRedactionFilter`
-  (`services/api/src/harrier/logredact.py`) redacts identity values only,
-  and a logged traceback prints the chained driver error.
-- **HTTP error detail.** The routes in `services/api/src/harrier_api/`
-  that answer `HTTPException(detail=str(error))`.
+An agent preparing this spec's implementation on 2026-10-12 judged it too
+large for one reviewable change. The spec names 33 distinct planned tests,
+several of them parametrized (the forged token test alone has eight
+cases). Reading the code put the change at about 30 files: a new module
+for the token, the pool and the request transaction, the start checks,
+run ownership, every `HTTPException(detail=str(error))` site, the
+contract, and a web type. That count is from reading, not from building.
+Spec 112's second pull request was split at about 45 files and 22 planned
+tests (spec 112, "Amendment (2026-10-11): split, owner and nesting"). The
+rule for that case is to split the spec, not the branch (CLAUDE.md,
+change-boundary).
 
-Both sinks pass their text through `scrub_secrets` before it leaves the
-process. The log filter is shared with the CLI, so a command spec 127
-lets run on Postgres is covered by the same change.
+### Decisions (Akin, in chat, 2026-10-12)
 
-### Acceptance criteria (the store password in logs and HTTP errors)
+1. **Split the spec as proposed.** Part A, hosted mode and the bearer
+   token with no database, is this spec; it keeps its file and title, so
+   the citations other specs make of it hold. Part B, hosted runs know
+   their owner, is `specs/132-hosted-runs-know-their-owner.md`. Part C,
+   the store password stays out of logs and HTTP errors, is
+   `specs/133-the-store-password-stays-out-of-logs-and-http-errors.md`.
+   Part D, the request transaction and the start checks, is
+   `specs/134-each-hosted-request-runs-as-its-user.md`. The order is A,
+   then B, then D; C lands any time before D. D lifts the spec 103 gate,
+   so it opens only on an API that limits runs to their owner and keeps
+   the store password out of its logs and errors.
+2. **A is testable but not deployable.** Under this spec the spec 103
+   refusal text stays: a Postgres URL is refused at start, complete hosted
+   configuration or not, until spec 134 replaces the refusal.
+3. **The owner read-back is in `assume_identity`.** The check that
+   `public.harrier_owner_id()` equals the token's `sub` runs in every
+   owner transaction, requests and spec 106's runs alike, in
+   `assume_identity` (`services/api/src/harrier/connection.py`). Spec 134
+   states it, and names the change it makes to spec 106.
 
-- [ ] With a password generated at run time in `HARRIER_DATABASE_URL`, an
-      error raised through each sink (a log record with the chained driver
-      error, and an `HTTPException` detail built from the error) leaves no
-      8-character window of the password
-      (planned test_no_log_or_http_error_carries_the_store_password).
+### What this spec delivers now
+
+- **Scope items 1, 3, 4, 9, 10 and 12, the header-only half of item 8,
+  and item 11 for `pyjwt[crypto]` only.** The `hosted` group holds
+  `pyjwt[crypto]` and includes `postgres`; spec 134 adds `psycopg-pool`.
+- **Behavior:** Configuration, The token, Keys, Refusals, What the hosted
+  API serves, Cross-origin requests, What carries over from spec 035, and
+  from The login role the refusal of a service credential in the
+  environment.
+- **Start.** `create_app` reads hosted mode from the process environment
+  and refuses, with the texts under Failure modes: `HARRIER_AUTH` with
+  another value; hosted mode on SQLite; a hosted variable missing or
+  malformed; demo mode hosted; the `hosted` group not installed; and a
+  service credential in the environment. Then, on a Postgres URL, it
+  refuses with spec 103's text as it does today (`POSTGRES_NOT_YET`,
+  `services/api/src/harrier/connection.py`), whatever the hosted
+  configuration (decision 2).
+- **The hosted app, assembled.** The authentication middleware, CORS, the
+  trusted hosts, the routes served hosted, hosted `GET /health` and the
+  key fetch at start are put together by one function that `create_app`
+  calls only after the gate, which under this spec it never passes on a
+  Postgres URL. This spec's tests call that function directly, with an
+  injected key fetcher, and with `get_conn` replaced by a stand-in that
+  records whether it was entered. No test reaches the network or a
+  database.
+- **Runs until spec 132.** The assembled hosted app serves the run routes
+  as the local app does. Nothing deploys it in that state, because spec
+  134 lands after spec 132.
+- **The web type.** Declaring the 401 with `AuthRefusalOut` on every route
+  widens each route's generated error type. `Refusal` in
+  `apps/web/src/shared/api/refusal.ts` names the bodies a refusal can
+  have (`ErrorOut`, `DatabaseHeldOut`, `HTTPValidationError`), so it gains
+  `components["schemas"]["AuthRefusalOut"]`. That is a type change only:
+  `refusalMessage` reads `detail` as a string, which `AuthRefusalOut`
+  carries. It is the one file outside `services/api` and
+  `packages/contract` this spec changes; signing in and sending the token
+  stay spec 114's.
+- **Documents.** `docs/architecture.md`'s hosted section names hosted
+  mode, its variables and this spec, and says the hosted API does not
+  serve until spec 134. `.env.example` gains the four hosted variables,
+  commented out, with placeholder values.
+
+### Where each item went
+
+| Item of this spec | Now in |
+|---|---|
+| Scope 1, hosted mode is explicit | this spec |
+| Scope 2, the spec 103 gate lifts | spec 134 |
+| Scope 3, `hostedauth.py` | this spec |
+| Scope 4, every request but health needs a token | this spec |
+| Scope 5, each request runs as its user | spec 134 |
+| Scope 6, the login role and the store version at start | spec 134 |
+| Scope 7, runs know their owner | spec 132 |
+| Scope 8, the event stream: the token only in the header | this spec |
+| Scope 8, the event stream ends at `exp` | spec 132 |
+| Scope 9, spec 035's guards | this spec |
+| Scope 10, the contract: 401, the bearer scheme, `AuthRefusalOut`, the 503 for keys | this spec |
+| Scope 10, the contract: the 501 for runs | spec 132 |
+| Scope 11, `pyjwt[crypto]` and the `hosted` group | this spec |
+| Scope 11, `psycopg-pool` | spec 134 |
+| Scope 12, documents | this spec for hosted mode; spec 134 for the login role and serving |
+| Behavior: Configuration; The token; Keys; Refusals; What the hosted API serves; Cross-origin requests; What carries over from spec 035 | this spec |
+| Behavior: The request transaction; The store version | spec 134 |
+| Behavior: The login role, all but the service credential check | spec 134 |
+| Behavior: The login role, a service credential in the environment | this spec |
+| Behavior: Runs | spec 132 |
+| Behavior: The event stream, ending at `exp` | spec 132 |
+| Failure modes: the configuration refusals, the token refusals, a token in the query string, a foreign Host header, an origin not allowed, a service credential | this spec |
+| Failure modes: Postgres without hosted mode; login role too strong; store behind or ahead; pooler drops `SET LOCAL`; `get_conn` without claims; a request as the table owner or `service_role` | spec 134 |
+| Failure modes: another owner's run id; starting a run hosted | spec 132 |
+| Criteria: Local mode; Tokens; Routes and contract; Cross-origin and hosts; Gates | this spec |
+| Criteria: Start-up, the configuration refusals and the `.env` file | this spec |
+| Criteria: Start-up, the login role, the store version, `POSTGRES_NOT_YET` | spec 134 |
+| Criteria: The request transaction | spec 134 |
+| Criteria: Runs and stream | spec 132 |
+| Amendment (2026-10-11): request-role timeouts | spec 134 |
+| Amendment (2026-10-11): migration 16's follow-ups | spec 134 |
+| Amendment (2026-10-12): the store password in logs and HTTP errors | spec 133 |
+| Open decisions 3 (the request transaction), 9 (testing against Supabase's shape) and 10 (deleted users) | spec 134 holds what they decided |
+| Open decision 5 (runs) | spec 132 holds what it decided |
+
+Other specs cite this one for things that moved: specs 105, 106, 107,
+108, 109, 110, 111, 112, 114, 115, 116, 119, 126 and 127, the
+architecture document and ADR-013. Their text is not edited here. Read
+"spec 104" in them as follows: the request transaction, the owner
+read-back, the request-role timeouts, the login role checks and the store
+version at start are spec 134's; a run's owner, the 501 for starting a
+run and the stream ending at `exp` are spec 132's; the store password in
+logs and HTTP errors is spec 133's. Hosted mode, `HARRIER_AUTH`, the
+token, the refusals, CORS, the trusted hosts and the contract's 401 stay
+here.
+
+### Spec 115's wording, applied
+
+Spec 115 asked this spec, under its "Changes to approved specs", to name
+the staging run "spec 115" where it said "spec 110's first slice". This
+amendment applies it: in Honest limitations (the CI Postgres item) and in
+the assumptions under Proof / origin (`\sf auth.uid`, and the pooler
+accepting a custom login role). Spec 115 has since confirmed the pooler
+assumption (its A5).
+
+### Honest limitations (amendment of 2026-10-12)
+
+- **Testable, not deployable (decision 2).** Under this spec alone hosted
+  mode cannot start: it needs a Postgres URL, and the gate still refuses
+  one with spec 103's text. Every behavior here is proven through the
+  assembled app in tests, not against a running hosted process. The first
+  hosted process that serves is spec 134's.
+- Until spec 132 lands, the assembled hosted app would list every run to
+  every token and start runs on the operator's keys. No hosted process
+  runs it, because the gate is closed until spec 134, which lands after
+  spec 132.
+- "Takes no connection" is proven at `get_conn` here, and at the pool in
+  spec 134.
+- What one spec described, four now carry. A reader of this file alone
+  does not see the request transaction; the table above is the map.
+
+### Acceptance criteria (amendment of 2026-10-12)
+
+- [ ] With a complete hosted configuration and a Postgres
+      `HARRIER_DATABASE_URL`, the API exits 1 with spec 103's text, and the
+      hosted app assembled from the same configuration serves a request
+      with a valid token
+      (planned test_a_complete_hosted_configuration_still_meets_the_spec_103_gate).
+- [ ] `Refusal` in `apps/web/src/shared/api/refusal.ts` names
+      `AuthRefusalOut`, and `pnpm type-check` and `pnpm lint` pass against
+      the regenerated contract.
+- [ ] Each new behavior has a test that fails when the code it proves is
+      removed, and the pull request records each mutation and its result.

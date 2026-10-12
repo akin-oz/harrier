@@ -39,7 +39,8 @@ Body sections: Problem, Scope, Acceptance criteria (checkboxes), Proof / origin
 - **M7** open-source readiness: 044, 045, 046
 - **M9** search tracks: 090 onward
 - **M10** hosted multi-tenant deployment (ADR-013): 102 through 112,
-  114 through 120, and 126 through 128 (split from 112 on 2026-10-11)
+  114 through 120, 126 through 128 (split from 112 on 2026-10-11), and
+  132 through 134 (split from 104 on 2026-10-12)
 
 Stubs sequence the backlog; they do not define final scope. Refine a stub into a
 real spec before asking for approval, and expect the scope to narrow or split at
