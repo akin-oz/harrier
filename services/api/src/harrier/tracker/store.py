@@ -11,12 +11,18 @@ import hashlib
 import logging
 import re
 from collections import Counter
-from collections.abc import Mapping
-from contextlib import nullcontext
+from collections.abc import Generator, Mapping
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-from harrier.connection import Connection, Row, StoreIntegrityError
+from harrier.connection import (
+    Connection,
+    Row,
+    StoreIntegrityError,
+    ascii_folded,
+    store_now,
+)
 from harrier.logredact import refresh_installed
 from harrier.tracker.invariants import all_breaches
 from harrier.tracker.reasons import (
@@ -105,15 +111,16 @@ def find_duplicate(
         if row is not None:
             return _job_row_to_dict(row)
     if company and title:
+        # A to Z folded and nothing else, on both stores (spec 126).
+        same_company_and_title = (
+            f"SELECT * FROM jobs WHERE {ascii_folded(conn, 'company')} = {ascii_folded(conn, '?')}"
+            f" AND {ascii_folded(conn, 'title')} = {ascii_folded(conn, '?')}"
+        )
         if deadline is None:
-            row = conn.execute(
-                "SELECT * FROM jobs WHERE company = ? COLLATE NOCASE AND title = ? COLLATE NOCASE",
-                (company, title),
-            ).fetchone()
+            row = conn.execute(same_company_and_title, (company, title)).fetchone()
         else:
             row = conn.execute(
-                "SELECT * FROM jobs WHERE company = ? COLLATE NOCASE AND title = ? COLLATE NOCASE"
-                " AND (? = '' OR deadline = '' OR deadline = ?)",
+                f"{same_company_and_title} AND (? = '' OR deadline = '' OR deadline = ?)",
                 (company, title, deadline, deadline),
             ).fetchone()
         if row is not None:
@@ -194,24 +201,25 @@ def add_job(
     description_sha256 = _description_sha256(values["url"])
     with conn.transaction():
         try:
-            cursor = conn.execute(
+            # The new id comes from the store, read in the transaction that
+            # inserts, on both stores (spec 126).
+            inserted = conn.execute(
                 f"INSERT INTO jobs ({', '.join(columns)}, track_id, deadline) "
-                f"VALUES ({placeholders}, ?, ?)",
+                f"VALUES ({placeholders}, ?, ?) RETURNING id",
                 row_values,
-            )
+            ).fetchone()
         except StoreIntegrityError as error:
             # A concurrent writer can insert between find_duplicate and this
             # INSERT; the unique indexes are the authority, so map their
             # refusal to the same domain error the pre-check raises.
             raise DuplicateJobError(f"duplicate detected by unique index: {error}") from error
-        row_id = cursor.lastrowid
-        assert row_id is not None
+        row_id = int(inserted[0])
         # The row and its first event commit together (spec 079). A row a
         # person added by hand was created by the candidate; one discovery
         # found was created by the system.
         _append_event(
             conn,
-            job_id=int(row_id),
+            job_id=row_id,
             kind=CREATED,
             actor=CANDIDATE if promoted["manual_added"].strip() else SYSTEM,
             to_status=status,
@@ -220,8 +228,8 @@ def add_job(
             description_sha256=description_sha256,
         )
         if eligibility is not None:
-            _insert_assessment(conn, int(row_id), eligibility)
-    return int(row_id)
+            _insert_assessment(conn, row_id, eligibility)
+    return row_id
 
 
 def _refuse_archived(conn: Connection, scope: Scope) -> None:
@@ -305,18 +313,51 @@ def all_tracks_dedupe_rows(conn: Connection) -> list[dict[str, str]]:
     return [_job_row_to_dict(row) for row in rows]
 
 
-# The write lock is `conn.transaction(immediate=True)`, taken before reading
-# what a write depends on (spec 079 amendment, spec 112). A writer that read a
-# row, decided, and only then opened its transaction let a second writer read
-# the same row in between. On a job with no events both wrote its
-# reconstructed history, permanently under the append-only trigger, and the
-# later live event recorded a status the row no longer had. On SQLite the
-# outermost such transaction begins with BEGIN IMMEDIATE, so a second writer
-# waits for the first and reads what it wrote; one opened inside another is a
-# savepoint, and the caller keeps the lock it holds. On Postgres it locks
-# nothing until spec 126 adds the per-job row lock. Each locked writer ends
-# its block with its inner transaction, so the commit at the lock's exit runs
-# no statement at another time than before.
+# The write lock is taken before reading what a write depends on (spec 079
+# amendment, spec 126). A writer that read a row, decided, and only then
+# opened its transaction let a second writer read the same row in between.
+# On a job with no events both wrote its reconstructed history, permanently
+# under the append-only trigger, and the later live event recorded a status
+# the row no longer had. Each locked writer ends its block with its inner
+# transaction, so the commit at the lock's exit runs no statement at another
+# time than before.
+
+
+@contextmanager
+def _write_lock(conn: Connection, scope: Scope, job_id: int | None) -> Generator[None]:
+    """A transaction in which every read of a job happens after every
+    earlier writer of that job has committed (spec 126, The write lock).
+
+    `job_id` names the job; None names the track's jobs that have no
+    events, which is what a backfill plans from.
+
+    SQLite: `transaction(immediate=True)`, so the outermost block begins with
+    BEGIN IMMEDIATE and every writer of the file waits; one opened inside
+    another is a savepoint, and the caller keeps the lock it holds (spec 112).
+
+    Postgres: the job rows are locked first, `FOR UPDATE`, and every read the
+    write depends on is a later statement, which at read committed sees every
+    transaction committed before it began. Writers of other jobs do not wait.
+    A job that does not exist, or is another track's or another owner's,
+    locks nothing, and the read that follows raises JobNotFoundError. This is
+    the one place in domain code that reads the dialect.
+    """
+    with conn.transaction(immediate=True):
+        if conn.dialect == "postgres":
+            if job_id is None:
+                # In id order, so two backfills cannot deadlock. The caller
+                # reads which of them still have no events in a new statement.
+                conn.execute(
+                    "SELECT id FROM jobs WHERE track_id = ? "
+                    "AND id NOT IN (SELECT job_id FROM job_events) ORDER BY id FOR UPDATE",
+                    (scope.track.id,),
+                ).fetchall()
+            else:
+                conn.execute(
+                    "SELECT id FROM jobs WHERE id = ? AND track_id = ? FOR UPDATE",
+                    (job_id, scope.track.id),
+                ).fetchall()
+        yield
 
 
 def company_has_responded(conn: Connection, scope: Scope, job_id: int) -> bool:
@@ -365,7 +406,7 @@ def set_status(
     if status not in STATUSES:
         raise UnknownStatusError(f"unknown status {status!r}; legal: {', '.join(STATUSES)}")
     _refuse_archived(conn, scope)
-    with conn.transaction(immediate=True):
+    with _write_lock(conn, scope, job_id):
         job = get_job(conn, scope, job_id)
         check_transition(job["status"], status)
         try:
@@ -434,9 +475,8 @@ def set_status(
                     backfilled=True,
                 )
             conn.execute(
-                f"UPDATE jobs SET {assignments}, updated_at = datetime('now') "
-                "WHERE id = ? AND track_id = ?",
-                [*updates.values(), job_id, scope.track.id],
+                f"UPDATE jobs SET {assignments}, updated_at = ? WHERE id = ? AND track_id = ?",
+                [*updates.values(), store_now(), job_id, scope.track.id],
             )
             # What the candidate was looking at when they decided: the score and
             # version from before this write, which a later rescore overwrites on
@@ -481,7 +521,7 @@ def update_fields(
     _refuse_archived(conn, scope)
     # Read under the write lock, so the invariants are checked against the
     # row this write lands on (spec 079 amendment).
-    with conn.transaction(immediate=True):
+    with _write_lock(conn, scope, job_id):
         current = get_job(conn, scope, job_id)
         # Only a breach this write introduces. Refusing every write to a row that
         # already breaks a rule would make rows written before these rules
@@ -495,9 +535,8 @@ def update_fields(
         assignments = ", ".join(f"{name} = ?" for name in fields)
         with conn.transaction():
             conn.execute(
-                f"UPDATE jobs SET {assignments}, updated_at = datetime('now') "
-                "WHERE id = ? AND track_id = ?",
-                [*[str(v) for v in fields.values()], job_id, scope.track.id],
+                f"UPDATE jobs SET {assignments}, updated_at = ? WHERE id = ? AND track_id = ?",
+                [*[str(v) for v in fields.values()], store_now(), job_id, scope.track.id],
             )
     return get_job(conn, scope, job_id)
 
@@ -603,8 +642,9 @@ _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def _as_event_time(value: str) -> str:
-    """A stored timestamp in the event's format. SQLite's `datetime('now')`
-    writes `YYYY-MM-DD HH:MM:SS` in UTC; a bare date is taken as its midnight."""
+    """A stored timestamp in the event's format. `store_now()` and the column
+    defaults write `YYYY-MM-DD HH:MM:SS` in UTC; a bare date is taken as its
+    midnight."""
     text = (value or "").strip()
     if _ISO_DATE.match(text):
         return f"{text}T00:00:00Z"
@@ -671,7 +711,7 @@ def backfill_events(
     """
     # Selected under the write lock, so a live first move cannot write the
     # same history in between (spec 079 amendment). A dry run writes nothing.
-    with nullcontext() if dry_run else conn.transaction(immediate=True):
+    with nullcontext() if dry_run else _write_lock(conn, scope, None):
         rows = conn.execute(
             "SELECT * FROM jobs WHERE track_id = ? "
             "AND id NOT IN (SELECT job_id FROM job_events) ORDER BY id",
@@ -836,7 +876,7 @@ def record_eligibility(
     """
     _check_assessment(assessment)
     _refuse_archived(conn, scope)
-    with conn.transaction(immediate=True):
+    with _write_lock(conn, scope, job_id):
         job = get_job(conn, scope, job_id)
         if assessment.origin == "rule" and job["status"] == "rejected":
             raise RejectedRowError(
@@ -905,17 +945,17 @@ def add_contact(conn: Connection, fields: Mapping[str, str]) -> int:
     values = [str(fields.get(name, "") or "") for name in CONTACT_FIELDS]
     placeholders = ", ".join("?" for _ in CONTACT_FIELDS)
     with conn.transaction():
-        cursor = conn.execute(
-            f"INSERT INTO contacts ({', '.join(CONTACT_FIELDS)}) VALUES ({placeholders})",
+        inserted = conn.execute(
+            f"INSERT INTO contacts ({', '.join(CONTACT_FIELDS)}) VALUES ({placeholders}) "
+            "RETURNING id",
             values,
-        )
-    row_id = cursor.lastrowid
-    assert row_id is not None
+        ).fetchone()
+    row_id = int(inserted[0])
     # A contact is identity data the moment it exists, and this process may run
     # for days. Refreshing here rather than per log record keeps the database
     # off the logging path (spec 045, review of PR #49).
     refresh_installed(conn)
-    return int(row_id)
+    return row_id
 
 
 def list_contacts(conn: Connection) -> list[dict[str, str]]:

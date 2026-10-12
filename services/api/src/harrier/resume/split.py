@@ -14,7 +14,7 @@ import json
 from dataclasses import dataclass
 from typing import cast
 
-from harrier.connection import Connection
+from harrier.connection import Connection, by_code_point
 from harrier.profile.store import owned_documents, put_documents_and_rekind
 from harrier.resume.content import (
     RESUME_DATA_KIND,
@@ -43,7 +43,8 @@ class SplitOutcome:
 
 def _names(conn: Connection, kind: str) -> list[str]:
     rows = conn.execute(
-        "SELECT name FROM profile_documents WHERE kind = ? ORDER BY name", (kind,)
+        f"SELECT name FROM profile_documents WHERE kind = ? ORDER BY {by_code_point(conn, 'name')}",
+        (kind,),
     ).fetchall()
     return [str(row[0]) for row in rows]
 

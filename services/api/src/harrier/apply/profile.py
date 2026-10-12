@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from typing import cast
 
-from harrier.connection import Connection
+from harrier.connection import Connection, by_code_point
 from harrier.tracks import Scope
 
 APPLICATION_PROFILE_KIND = "application_profile"
@@ -46,7 +46,8 @@ def _document(conn: Connection, kind: str, fmt: str) -> str | None:
     """A shared document. The candidate document is shared by every track."""
     row = conn.execute(
         "SELECT content FROM profile_documents "
-        "WHERE kind = ? AND format = ? AND track_id IS NULL ORDER BY name LIMIT 1",
+        "WHERE kind = ? AND format = ? AND track_id IS NULL "
+        f"ORDER BY {by_code_point(conn, 'name')} LIMIT 1",
         (kind, fmt),
     ).fetchone()
     return str(row[0]) if row is not None else None
@@ -57,7 +58,7 @@ def _profile_documents(conn: Connection, scope: Scope) -> list[tuple[str, str]]:
     content) by name. Never another track's: there is no fallback (spec 101)."""
     rows = conn.execute(
         "SELECT format, content FROM profile_documents "
-        "WHERE kind = ? AND track_id = ? ORDER BY name",
+        f"WHERE kind = ? AND track_id = ? ORDER BY {by_code_point(conn, 'name')}",
         (APPLICATION_PROFILE_KIND, scope.track.id),
     ).fetchall()
     return [(str(row[0]), str(row[1])) for row in rows]

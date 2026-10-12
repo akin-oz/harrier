@@ -13,13 +13,19 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from harrier.connection import Connection
+from harrier.connection import Connection, refuse_unless_local
 from harrier.tracker.schema import CONTACT_FIELDS, NOTE_KEYS, STATUSES, TRACKER_FIELDS
 from harrier.tracker.store import TrackerError, expand_notes, extract_note_value
 
 
 class MigrationError(TrackerError):
     pass
+
+
+LOCAL_ONLY = (
+    "harrier migrate-legacy is local only: it imports the old system's CSVs "
+    "into the local tracker file"
+)
 
 
 @dataclass
@@ -95,6 +101,9 @@ def migrate(
     *,
     replace: bool = False,
 ) -> MigrationReport:
+    # Spec 126: the import writes the old system's rows into the local
+    # tracker file, never a hosted owner's store.
+    refuse_unless_local(conn, LOCAL_ONLY)
     existing = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()
     existing_count = int(existing[0])
     if existing_count > 0 and not replace:

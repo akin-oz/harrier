@@ -32,7 +32,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import cast
 
-from harrier.connection import Connection
+from harrier.connection import Connection, refuse_unless_local
 from harrier.db import data_dir
 from harrier.parity import checklist_status, parse_matrix
 from harrier.parity.checklist import CHECKLIST_PATH
@@ -53,6 +53,12 @@ LaunchctlFn = Callable[[list[str]], tuple[int, str, str]]
 
 class CutoverError(RuntimeError):
     pass
+
+
+# Spec 126: the cutover writes the old system's rows into the local tracker
+# file, so given a Postgres connection it would write them into a hosted
+# owner's store. Each entry point refuses one before any statement runs.
+LOCAL_ONLY = "harrier cutover is local only: it moves the old system onto the local tracker file"
 
 
 @dataclass(frozen=True)
@@ -110,6 +116,7 @@ def old_jobs_check(labels: tuple[str, ...], launchctl: LaunchctlFn) -> Check:
 def tracker_check(conn: Connection) -> Check:
     """Migrated data has to be present, or go-live points the schedule at an
     empty tracker and the first run rediscovers a year of postings."""
+    refuse_unless_local(conn, LOCAL_ONLY)
     jobs = int(conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0])
     if jobs == 0:
         return Check("tracker migrated", False, "no jobs in the database")
@@ -150,6 +157,7 @@ def preflight(
     labels: tuple[str, ...] = OLD_LABELS,
     launchctl: LaunchctlFn | None = None,
 ) -> Preflight:
+    refuse_unless_local(conn, LOCAL_ONLY)
     runner = launchctl if launchctl is not None else default_launchctl
     return Preflight(
         checks=[
@@ -295,6 +303,7 @@ def snapshot(old_root: Path, destination: Path, *, execute: bool, result: Cutove
 
 
 def verify(conn: Connection, *, result: CutoverResult) -> None:
+    refuse_unless_local(conn, LOCAL_ONLY)
     jobs = int(conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0])
     contacts = int(conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0])
     documents = int(conn.execute("SELECT COUNT(*) FROM profile_documents").fetchone()[0])
@@ -442,6 +451,7 @@ def run_cutover(
 ) -> CutoverResult:
     """Phases 3 and 4, in order. Refuses to execute unless preflight passes
     and the operator has attested to what a machine cannot check."""
+    refuse_unless_local(conn, LOCAL_ONLY)
     runner = launchctl if launchctl is not None else default_launchctl
     result = CutoverResult(executed=execute)
 

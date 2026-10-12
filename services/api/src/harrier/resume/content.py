@@ -14,7 +14,7 @@ import re
 from dataclasses import dataclass, field
 from typing import cast
 
-from harrier.connection import Connection
+from harrier.connection import Connection, by_code_point
 from harrier.profile.store import owned_documents
 from harrier.resume import heading as heading_module
 from harrier.resume.dashes import dash_marks, describe
@@ -798,7 +798,7 @@ def _document_by_kind(conn: Connection, kind: str) -> str | None:
     (spec 099)."""
     row = conn.execute(
         "SELECT content FROM profile_documents WHERE kind = ? AND track_id IS NULL "
-        "ORDER BY name LIMIT 1",
+        f"ORDER BY {by_code_point(conn, 'name')} LIMIT 1",
         (kind,),
     ).fetchone()
     return str(row[0]) if row is not None else None

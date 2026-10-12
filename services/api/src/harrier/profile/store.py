@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
-from harrier.connection import Connection
+from harrier.connection import Connection, by_code_point, store_now, update_or_insert
 from harrier.tracks import DEFAULT_TRACK_ID, refuse_archived_track
 
 # Old-repo-relative path -> (kind, format). Read-only sources.
@@ -37,24 +37,26 @@ class ProfileDocumentError(ValueError):
     pass
 
 
-# One upsert per owner, each naming the partial index it can conflict on
-# (migration 11): NULL is shared, and SQLite treats NULLs as distinct.
-_UPSERT_SHARED = """
-    INSERT INTO profile_documents (kind, name, format, content, updated_at)
-    VALUES (?, ?, ?, ?, datetime('now'))
-    ON CONFLICT (kind, name) WHERE track_id IS NULL DO UPDATE SET
-        format = excluded.format,
-        content = excluded.content,
-        updated_at = datetime('now')
-"""
-_UPSERT_OWNED = """
-    INSERT INTO profile_documents (track_id, kind, name, format, content, updated_at)
-    VALUES (?, ?, ?, ?, ?, datetime('now'))
-    ON CONFLICT (track_id, kind, name) WHERE track_id IS NOT NULL DO UPDATE SET
-        format = excluded.format,
-        content = excluded.content,
-        updated_at = datetime('now')
-"""
+# One update and one insert per owner (spec 126, Upserts), each update
+# matching exactly the rows of one partial index of migration 11: NULL is
+# shared, and SQLite treats NULLs as distinct. The shared update writes
+# `track_id IS NULL` in its text: `track_id = ?` with a None would match no
+# row on either store, and a rewrite of a shared document would then fail.
+_UPDATE_SHARED = (
+    "UPDATE profile_documents SET format = ?, content = ?, updated_at = ? "
+    "WHERE kind = ? AND name = ? AND track_id IS NULL"
+)
+_INSERT_SHARED = (
+    "INSERT INTO profile_documents (kind, name, format, content, updated_at) VALUES (?, ?, ?, ?, ?)"
+)
+_UPDATE_OWNED = (
+    "UPDATE profile_documents SET format = ?, content = ?, updated_at = ? "
+    "WHERE track_id = ? AND kind = ? AND name = ?"
+)
+_INSERT_OWNED = (
+    "INSERT INTO profile_documents (track_id, kind, name, format, content, updated_at) "
+    "VALUES (?, ?, ?, ?, ?, ?)"
+)
 
 
 def _upsert(
@@ -64,10 +66,23 @@ def _upsert(
         raise ProfileDocumentError(f"{kind} is owned by a track; it cannot be shared")
     if kind not in TRACK_OWNED_KINDS and track_id is not None:
         raise ProfileDocumentError(f"{kind} is shared by every track; it cannot be owned")
+    now = store_now()
     if track_id is None:
-        conn.execute(_UPSERT_SHARED, (kind, name, fmt, content))
+        update_or_insert(
+            conn,
+            _UPDATE_SHARED,
+            (fmt, content, now, kind, name),
+            _INSERT_SHARED,
+            (kind, name, fmt, content, now),
+        )
     else:
-        conn.execute(_UPSERT_OWNED, (track_id, kind, name, fmt, content))
+        update_or_insert(
+            conn,
+            _UPDATE_OWNED,
+            (fmt, content, now, track_id, kind, name),
+            _INSERT_OWNED,
+            (track_id, kind, name, fmt, content, now),
+        )
         # Checked after the write, inside its transaction, so the archive
         # state read is the one the write commits against; a refusal rolls
         # the write back (review of PR #227).
@@ -126,18 +141,22 @@ def get_document(conn: Connection, kind: str, name: str) -> str | None:
 def owned_documents(conn: Connection, kind: str, track_id: int) -> list[tuple[str, str]]:
     """Every `(name, content)` of this kind that the track owns, by name."""
     rows = conn.execute(
-        "SELECT name, content FROM profile_documents WHERE kind = ? AND track_id = ? ORDER BY name",
+        "SELECT name, content FROM profile_documents WHERE kind = ? AND track_id = ? "
+        f"ORDER BY {by_code_point(conn, 'name')}",
         (kind, track_id),
     ).fetchall()
     return [(str(row[0]), str(row[1])) for row in rows]
 
 
 def list_documents(conn: Connection) -> list[dict[str, str]]:
-    """Every document, with its owner: `shared`, or `track <slug>`."""
+    """Every document, with its owner: `shared`, or `track <slug>`. By code
+    point, a shared document before an owned one of the same kind and name
+    (spec 126): NULLs first is SQLite's default and not Postgres's."""
+    order = ", ".join(by_code_point(conn, column) for column in ("p.kind", "p.name", "t.slug"))
     rows = conn.execute(
         "SELECT p.kind, p.name, p.format, p.updated_at, t.slug "
         "FROM profile_documents p LEFT JOIN tracks t ON t.id = p.track_id "
-        "ORDER BY p.kind, p.name, t.slug"
+        f"ORDER BY {order} NULLS FIRST"
     ).fetchall()
     return [
         {

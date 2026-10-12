@@ -346,8 +346,9 @@ The three lock tests run on both:
 Their rival opens with `busy_timeout_ms = 0` and records `waited` when it
 gets `StoreBusyError`. A new test proves the Postgres lock is per job: a
 decision on one job, held mid-write, does not make a decision on another
-job wait on Postgres, and does on SQLite (planned
-test_a_decision_on_one_job_does_not_wait_for_another).
+job wait on Postgres, and does on SQLite
+(`services/api/tests/test_job_events.py::test_a_decision_on_one_job_does_not_wait_for_another`, built under
+spec 126).
 
 **Local-only work on a Postgres connection.** `cutover` and
 `migrate_legacy.migrate` raise `StoreLocalOnlyError`: `harrier cutover is
@@ -480,14 +481,17 @@ PR 2 (behavior):
 
 - [ ] The three upserts are update-then-insert with one retry, pass on
       both stores, and two writers inserting the same key at once leave
-      one row on both (planned test_an_upsert_racing_another_leaves_one_row).
+      one row on both
+      (`services/api/tests/test_domain_sql_on_both_stores.py::test_an_upsert_racing_another_leaves_one_row`,
+      built under spec 126).
 - [ ] Every test in the seven files under Behavior that is not listed as
       SQLite-only runs with both parameters, and the CI log of
       `check-python` shows the Postgres parameters passing, not skipped.
 - [ ] The three lock tests named under Behavior pass on both stores.
 - [ ] A decision on one job does not wait for another on Postgres and
-      waits on SQLite (planned
-      test_a_decision_on_one_job_does_not_wait_for_another).
+      waits on SQLite
+      (`services/api/tests/test_job_events.py::test_a_decision_on_one_job_does_not_wait_for_another`,
+      built under spec 126).
 - [ ] A row reads by position, by name, as values and as a dict on both
       (`services/api/tests/test_seam_on_both_stores.py::test_a_row_reads_by_position_by_name_and_as_a_dict`).
 - [ ] A `?` statement binds on both, including one whose literal holds a
@@ -498,14 +502,20 @@ PR 2 (behavior):
       test_a_nested_transaction_joins_the_outer_one).
 - [ ] `updated_at` written by `set_status`, `update_fields`,
       `archive_track`, `set_config` and `put_document` matches
-      `^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$` on both (planned
-      test_a_written_timestamp_has_one_shape_on_both_stores).
-- [ ] The three rows of the folding table hold on both (planned
-      test_dedupe_folds_ascii_case_only_on_both_stores).
+      `^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$` on both
+      (`services/api/tests/test_domain_sql_on_both_stores.py::test_a_written_timestamp_has_one_shape_on_both_stores`,
+      built under spec 126).
+- [ ] The three rows of the folding table hold on both
+      (`services/api/tests/test_domain_sql_on_both_stores.py::test_dedupe_folds_ascii_case_only_on_both_stores`,
+      built under spec 126, whose amendment of 2026-10-12 corrects two
+      rows of the table).
 - [ ] Text orders by code point on both, and `LIMIT 1` by name picks the
-      same document (planned test_text_orders_by_code_point_on_both_stores).
-- [ ] `add_job` and `add_contact` return the inserted id on both (planned
-      test_an_insert_returns_its_id_on_both_stores).
+      same document
+      (`services/api/tests/test_domain_sql_on_both_stores.py::test_text_orders_by_code_point_on_both_stores`,
+      built under spec 126).
+- [ ] `add_job` and `add_contact` return the inserted id on both
+      (`services/api/tests/test_domain_sql_on_both_stores.py::test_an_insert_returns_its_id_on_both_stores`,
+      built under spec 126).
 - [ ] A SQLite library below 3.35 is refused with the text under Failure
       modes
       (`services/api/tests/test_seam_on_both_stores.py::test_an_old_sqlite_library_is_refused`).
@@ -513,8 +523,9 @@ PR 2 (behavior):
       kind and message on both, `unknown track` included
       (`services/api/tests/test_seam_on_both_stores.py::test_every_parity_probe_raises_one_error_on_both_stores`).
 - [ ] A duplicate track slug is `DuplicateTrackError`, and a unique-index
-      race in `add_job` is `DuplicateJobError`, on both (planned
-      test_a_duplicate_is_refused_alike_on_both_stores).
+      race in `add_job` is `DuplicateJobError`, on both
+      (`services/api/tests/test_domain_sql_on_both_stores.py::test_a_duplicate_is_refused_alike_on_both_stores`,
+      built under spec 126).
 - [ ] A Postgres integrity error's message holds no `DETAIL` text
       (`services/api/tests/test_seam_on_both_stores.py::test_a_postgres_refusal_never_quotes_the_row`).
 - [ ] A writer held past a short timeout gets `StoreBusyError` on both, and
@@ -523,8 +534,9 @@ PR 2 (behavior):
 - [ ] Opening a Postgres store writes no lease and makes no engine query
       (`services/api/tests/test_seam_on_both_stores.py::test_opening_a_postgres_store_takes_no_lease`).
 - [ ] `cutover` and `migrate_legacy.migrate` refuse a Postgres connection
-      with the texts under Behavior (planned
-      test_local_only_work_refuses_a_postgres_connection).
+      with the texts under Behavior
+      (`services/api/tests/test_domain_sql_on_both_stores.py::test_local_only_work_refuses_a_postgres_connection`,
+      built under spec 126).
 - [ ] The identity loaders in `logredact.py` return what they can when a
       store read fails, on both
       (`services/api/tests/test_seam_on_both_stores.py::test_identity_reads_survive_a_store_error_on_both_stores`).
@@ -561,8 +573,9 @@ PR 2 (behavior):
 - [ ] `just check` passes.
 - [ ] No domain insert supplies an `id`; every new id comes from the store.
       An explicit id would refuse on another owner's row with the primary
-      key's message and so reveal that the id is taken (planned
-      test_no_domain_insert_supplies_an_id). Spec 105's follow-up makes an
+      key's message and so reveal that the id is taken
+      (`services/api/tests/test_domain_sql_on_both_stores.py::test_no_domain_insert_supplies_an_id`,
+      built under spec 126). Spec 105's follow-up makes an
       explicit id a refusal on Postgres (post-merge review of PR #216,
       2026-10-10).
 

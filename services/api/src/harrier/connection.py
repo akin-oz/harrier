@@ -38,6 +38,7 @@ import uuid
 from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol, SupportsIndex, cast, overload
 from urllib.parse import parse_qsl, unquote, urlsplit
@@ -120,6 +121,11 @@ class StoreLibraryTooOld(StoreError):
     """The SQLite library is older than harrier needs (spec 112)."""
 
 
+class StoreLocalOnlyError(StoreError):
+    """Work that moves the old system onto the local tracker file was given
+    a Postgres connection (spec 126). Raised before any statement runs."""
+
+
 class StoreDatabaseError(StoreError):
     """A statement through a `Connection` failed (spec 112).
 
@@ -185,9 +191,6 @@ class Cursor(Protocol):
 
     @property
     def rowcount(self) -> int: ...
-
-    @property
-    def lastrowid(self) -> int | None: ...
 
     def fetchone(self) -> Any: ...
 
@@ -552,13 +555,6 @@ class _StoreCursor:
     def rowcount(self) -> int:
         return int(self._cursor.rowcount)
 
-    @property
-    def lastrowid(self) -> int | None:
-        # psycopg has none; spec 126 moves the two inserts that read it to
-        # RETURNING id.
-        value = getattr(self._cursor, "lastrowid", None)
-        return int(value) if value is not None else None
-
     def fetchone(self) -> Any:
         try:
             return self._cursor.fetchone()
@@ -821,8 +817,9 @@ class _PostgresBackend:
             raise StoreDatabaseError(POSTGRES_NOT_IDLE)
 
     def begin(self, *, immediate: bool) -> None:
-        # `immediate` locks nothing here until spec 126 adds the per-job row
-        # lock. SET LOCAL ends with the transaction, so nothing carries over
+        # `immediate` locks nothing here: the domain's write lock locks the
+        # job rows a write depends on instead (`harrier.tracker.store`,
+        # spec 126). SET LOCAL ends with the transaction, so nothing carries over
         # to another client behind a transaction-mode pooler. 0 on Postgres
         # means no limit, so "do not wait" is sent as 1 ms.
         self.driver.execute(b"BEGIN")
@@ -1097,6 +1094,83 @@ class Connection:
         if isinstance(self._backend, _SqliteBackend):
             return self._backend.driver
         raise StoreError(NOT_SQLITE)
+
+
+# --- portable domain SQL (spec 126) ---
+#
+# The fragments one statement text needs to mean the same on both stores.
+# Domain SQL writes each statement once and asks these for the part the
+# dialects spell differently, so no domain module reads the dialect, but
+# for the write lock in `harrier.tracker.store`.
+
+_ASCII_UPPER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+_ASCII_LOWER = "abcdefghijklmnopqrstuvwxyz"
+
+
+def store_now() -> str:
+    """The current UTC time as `YYYY-MM-DD HH:MM:SS`, the text SQLite's own
+    clock wrote before spec 126. Every timestamp the domain writes is this,
+    bound as a parameter; a column's default stays the database's clock in
+    the same format (spec 103)."""
+    return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def ascii_folded(conn: Connection, expression: str) -> str:
+    """`expression` compared with `A` to `Z` folded to `a` to `z`, and no
+    other character folded, on both stores (spec 126). SQLite's `NOCASE`
+    collation folds exactly those; Postgres has no such collation, and its
+    `lower()` follows the database's locale, so it folds `É` too."""
+    if conn.dialect == "postgres":
+        return f"translate({expression}, '{_ASCII_UPPER}', '{_ASCII_LOWER}')"
+    return f"{expression} COLLATE NOCASE"
+
+
+def by_code_point(conn: Connection, expression: str) -> str:
+    """`expression` ordered by code point on both stores (spec 126). SQLite
+    orders text by its bytes, which for UTF-8 is code point order; Postgres
+    by the database's collation unless told `C`."""
+    if conn.dialect == "postgres":
+        return f'{expression} COLLATE "C"'
+    return expression
+
+
+def refuse_unless_local(conn: Connection, refusal: str) -> None:
+    """Raise StoreLocalOnlyError with `refusal` unless `conn` is the local
+    SQLite store. Called first, so no statement has run (spec 126)."""
+    if conn.dialect != "sqlite":
+        raise StoreLocalOnlyError(refusal)
+
+
+def update_or_insert(
+    conn: Connection,
+    update: str,
+    update_params: Sequence[object],
+    insert: str,
+    insert_params: Sequence[object],
+) -> None:
+    """Write one keyed row the same way on both stores (spec 126, Upserts).
+
+    In one `transaction()`: run `update`; when it changed no row, run
+    `insert` in a nested `transaction()`, a savepoint; when that insert is
+    refused by a unique key (another writer inserted the key first), the
+    savepoint rolls back and `update` runs once more. Raises the integrity
+    error when the second update changes no row either.
+
+    `update`'s `WHERE` names the key and nothing else, and neither text
+    names a tenant: on Postgres the update sees only the owner's rows and
+    the insert meets the owner's own unique index (ADR-013 decision 2).
+    The savepoint is what lets the retry run on Postgres, where an error
+    aborts the rest of a transaction unless it rolled back to one.
+    """
+    with conn.transaction():
+        if conn.execute(update, update_params).rowcount:
+            return
+        try:
+            with conn.transaction():
+                conn.execute(insert, insert_params)
+        except StoreIntegrityError as error:
+            if error.kind != "unique" or not conn.execute(update, update_params).rowcount:
+                raise
 
 
 def open_store(environ: Mapping[str, str] | None = None, *, owner: str | None = None) -> Connection:

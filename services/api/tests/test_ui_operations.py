@@ -693,14 +693,14 @@ def _legacy_rejection(company: str) -> int:
     conn = connect()
     try:
         with conn.transaction():
-            cursor = conn.execute(
+            row = conn.execute(
                 "INSERT INTO jobs (company, title, url, source, status, rejection_reason, "
                 "added_at, created_at, updated_at) VALUES (?, ?, ?, 'greenhouse', 'rejected', "
-                "'hybrid', '2026-03-02', '2026-03-02 09:00:00', '2026-03-03 09:00:00')",
+                "'hybrid', '2026-03-02', '2026-03-02 09:00:00', '2026-03-03 09:00:00') "
+                "RETURNING id",
                 (company, "Platform Engineer", f"https://boards.example.com/{company}/1"),
-            )
-        assert cursor.lastrowid is not None
-        return int(cursor.lastrowid)
+            ).fetchone()
+        return int(row[0])
     finally:
         conn.close()
 

@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from harrier.connection import Connection
+from harrier.connection import Connection, update_or_insert
 
 # Exit codes. 0 and 1 are the shell's; 2 is already taken by the CLI for
 # usage errors, so a failed run is 3 and cannot be confused with a bad flag.
@@ -143,14 +143,14 @@ def record_success(conn: Connection, job: str, *, at: str | None = None) -> None
     reports is the age of the last time this job *worked*, and touching it on
     failure would make a job that has been broken for a month look fresh.
     """
-    with conn.transaction():
-        conn.execute(
-            """
-            INSERT INTO job_runs (job, last_success_at) VALUES (?, ?)
-            ON CONFLICT(job) DO UPDATE SET last_success_at = excluded.last_success_at
-            """,
-            (job, at or now_iso()),
-        )
+    moment = at or now_iso()
+    update_or_insert(
+        conn,
+        "UPDATE job_runs SET last_success_at = ? WHERE job = ?",
+        (moment, job),
+        "INSERT INTO job_runs (job, last_success_at) VALUES (?, ?)",
+        (job, moment),
+    )
 
 
 def last_success(conn: Connection, job: str) -> str | None:
