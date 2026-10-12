@@ -5,7 +5,9 @@ project was built in reaction to: a scheduled job that stops working must
 say so. Three mechanisms, tested separately because each fails alone.
 
 The tests of the last success, which `job_runs` holds, run on both stores
-through the dual-store fixture (spec 126).
+through the dual-store fixture (spec 126). The command's exit-status tests
+drive the CLI, which refuses a Postgres URL until spec 127, and are marked
+`sqlite_only`.
 """
 
 from __future__ import annotations
@@ -335,6 +337,7 @@ def run_discover(monkeypatch: pytest.MonkeyPatch, aggregate_value: dict[str, obj
     return main(["discover", "--dry-run", "--no-notify"])
 
 
+@pytest.mark.sqlite_only("drives the CLI, which refuses a Postgres URL until spec 127")
 def test_the_command_exits_non_zero_when_every_source_failed(
     db: Connection, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -345,6 +348,7 @@ def test_the_command_exits_non_zero_when_every_source_failed(
     assert "discovery failed" in capsys.readouterr().err
 
 
+@pytest.mark.sqlite_only("drives the CLI, which refuses a Postgres URL until spec 127")
 def test_the_command_exits_zero_on_a_partial_failure(
     db: Connection, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -354,12 +358,14 @@ def test_the_command_exits_zero_on_a_partial_failure(
     assert "failed: lever" in capsys.readouterr().err
 
 
+@pytest.mark.sqlite_only("drives the CLI, which refuses a Postgres URL until spec 127")
 def test_the_command_exits_non_zero_when_nothing_was_attempted(
     db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     assert run_discover(monkeypatch, aggregate([])) == EXIT_RUN_FAILED
 
 
+@pytest.mark.sqlite_only("drives the CLI, which refuses a Postgres URL until spec 127")
 def test_the_command_exits_zero_on_a_healthy_run(
     db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
