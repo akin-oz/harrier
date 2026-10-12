@@ -7,6 +7,10 @@ the history that replaces that, and above all the one rule the history exists
 for: a company's verdict is never recorded as the candidate's decision.
 
 Every row here is synthetic: invented companies, invented postings.
+
+The tests run on both stores through the dual-store fixture (spec 126). A
+test that drives the CLI or the API, which refuse a Postgres URL until specs
+127 and 104, is marked `sqlite_only`.
 """
 
 # Pyright strict cannot resolve starlette's TestClient request and response
@@ -25,9 +29,9 @@ from typing import Any
 import pytest
 from conftest import DualStore, auth
 from fastapi.testclient import TestClient
+from pg_support import run_as_migrator
 
-from harrier.connection import Connection, StoreBusyError, StoreIntegrityError
-from harrier.db import connect
+from harrier.connection import Connection, StoreBusyError, StoreDatabaseError, StoreIntegrityError
 from harrier.screening.descriptions import save_description_cache
 from harrier.tracker import store as tracker_store
 from harrier.tracker.actions import TrackerActionError, change_status, record_company_outcome
@@ -59,10 +63,11 @@ from harrier_cli.main import main
 
 
 @pytest.fixture
-def conn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Connection:
-    monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
+def conn(store: Connection, monkeypatch: pytest.MonkeyPatch) -> Connection:
+    """The store, on both stores (spec 126). On SQLite it is the default
+    path under this test's HARRIER_DATA_DIR, which the CLI and the API open."""
     monkeypatch.delenv("HARRIER_DEMO", raising=False)
-    return connect()
+    return store
 
 
 def _job(conn: Connection, index: int = 1, **fields: str) -> int:
@@ -145,14 +150,28 @@ def test_a_damaged_description_file_does_not_block_a_decision(
     assert list_events(conn, default_scope(conn), job_id)[-1]["description_sha256"] == ""
 
 
-def test_a_status_change_and_its_event_commit_together(conn: Connection) -> None:
+def test_a_status_change_and_its_event_commit_together(
+    conn: Connection, dual_store: DualStore
+) -> None:
     """Both or neither. A trigger makes the event insert fail; the status
-    change it belonged to must not survive it, and neither may a new row."""
+    change it belonged to must not survive it, and neither may a new row.
+
+    On Postgres the trigger is the migrating role's, in this test's copy:
+    the tenant role may create none, and a trigger fires for every role."""
     job_id = _job(conn)
-    conn.execute(
-        "CREATE TEMP TRIGGER refuse_events BEFORE INSERT ON job_events "
-        "BEGIN SELECT RAISE(ABORT, 'refused for the test'); END"
-    )
+    if dual_store.dialect == "sqlite":
+        conn.execute(
+            "CREATE TEMP TRIGGER refuse_events BEFORE INSERT ON job_events "
+            "BEGIN SELECT RAISE(ABORT, 'refused for the test'); END"
+        )
+    else:
+        run_as_migrator(
+            dual_store.url,
+            "CREATE FUNCTION refuse_for_the_test() RETURNS trigger LANGUAGE plpgsql AS $$ "
+            "BEGIN RAISE EXCEPTION 'refused for the test'; END $$",
+            "CREATE TRIGGER refuse_events BEFORE INSERT ON job_events "
+            "FOR EACH ROW EXECUTE FUNCTION refuse_for_the_test()",
+        )
     with pytest.raises(StoreIntegrityError, match="refused for the test"):
         set_status(conn, default_scope(conn), job_id, "shortlisted")
     assert get_job(conn, default_scope(conn), job_id)["status"] == "prospect"
@@ -163,12 +182,23 @@ def test_a_status_change_and_its_event_commit_together(conn: Connection) -> None
     assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == jobs_before
 
 
-def test_job_events_is_append_only(conn: Connection) -> None:
+def test_job_events_is_append_only(conn: Connection, dual_store: DualStore) -> None:
     job_id = _job(conn)
-    with pytest.raises(StoreIntegrityError, match="append-only"):
-        conn.execute("UPDATE job_events SET actor = 'company'")
-    with pytest.raises(StoreIntegrityError, match="append-only"):
-        conn.execute("DELETE FROM job_events")
+    rewrites = ("UPDATE job_events SET actor = 'company'", "DELETE FROM job_events")
+    if dual_store.dialect == "postgres":
+        # The tenant role holds SELECT and INSERT on job_events and nothing
+        # else (spec 105, migration 10's grants), so the owner is refused at
+        # the privilege. The append-only triggers refuse a role that holds
+        # it: the migrating role, which owns the table.
+        for statement in rewrites:
+            with pytest.raises(StoreDatabaseError, match="permission denied"):
+                conn.execute(statement)
+            with pytest.raises(StoreIntegrityError, match="append-only"):
+                run_as_migrator(dual_store.url, statement)
+    else:
+        for statement in rewrites:
+            with pytest.raises(StoreIntegrityError, match="append-only"):
+                conn.execute(statement)
     # Nor can the history be orphaned by deleting the job it describes.
     with pytest.raises(StoreIntegrityError):
         conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
@@ -177,6 +207,7 @@ def test_job_events_is_append_only(conn: Connection) -> None:
 # --- a company's verdict is never the candidate's decision ---------------------
 
 
+@pytest.mark.sqlite_only("drives the CLI, which refuses a Postgres URL until spec 127")
 def test_a_company_verdict_is_never_a_candidate_decision(
     conn: Connection, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -220,6 +251,9 @@ def test_a_company_verdict_is_never_a_candidate_decision(
             assert row["actor"] == "company"
 
 
+@pytest.mark.sqlite_only(
+    "drives the CLI and the API, which refuse a Postgres URL until specs 127 and 104"
+)
 def test_the_interviewing_verb_is_a_company_outcome(conn: Connection) -> None:
     """From the command line and from the browser alike: an interview is
     something the company did, so the old verb cannot file it as the
@@ -245,6 +279,7 @@ def test_the_interviewing_verb_is_a_company_outcome(conn: Connection) -> None:
         assert get_job(conn, default_scope(conn), job_id)["status"] == "interviewing"
 
 
+@pytest.mark.sqlite_only("drives the CLI, which refuses a Postgres URL until spec 127")
 def test_a_company_cannot_reject_an_application_never_sent(
     conn: Connection, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -506,6 +541,7 @@ def test_backfill_reconstructs_what_the_row_still_holds(conn: Connection) -> Non
     assert list_events(conn, default_scope(conn), skipped)[-1]["reason_text"] == "hybrid"
 
 
+@pytest.mark.sqlite_only("drives the CLI, which refuses a Postgres URL until spec 127")
 def test_a_legacy_row_decided_live_keeps_its_history(conn: Connection) -> None:
     """Backfill skips a job with any event, so a pre-079 row's first live move
     used to cost it everything before that move, for good under the
@@ -537,6 +573,7 @@ def test_backfill_is_idempotent(conn: Connection) -> None:
     assert [e["backfilled"] for e in list_events(conn, default_scope(conn), live)] == ["0"]
 
 
+@pytest.mark.sqlite_only("drives the CLI, which refuses a Postgres URL until spec 127")
 def test_the_event_commands_run(conn: Connection, capsys: pytest.CaptureFixture[str]) -> None:
     legacy = _legacy_row(conn, 1, status="rejected", rejection_reason="missing stack")
     assert main(["events", "backfill", "--dry-run"]) == 0

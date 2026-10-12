@@ -554,3 +554,59 @@ def test_the_store_fixture_runs_as_the_tenant(dual_store: DualStore) -> None:
     # Opened with no owner, the connection runs as the migrating role.
     with pytest.raises(pytest.fail.Exception, match=f"not {TENANT_ROLE}"):
         open_owner_store(dual_store.url, None)
+
+
+MARKED_TESTS = """
+import pytest
+
+
+@pytest.mark.sqlite_only("drives the CLI")
+def test_marked(dual_store):
+    assert dual_store.dialect == "sqlite"
+
+
+@pytest.mark.sqlite_only("reads SQLite itself")
+def test_marked_without_the_fixture():
+    pass
+
+
+def test_unmarked(dual_store):
+    pass
+"""
+
+UNEXPLAINED_TEST = """
+import pytest
+
+
+@pytest.mark.sqlite_only("")
+def test_unexplained(dual_store):
+    pass
+"""
+
+
+def test_a_sqlite_only_test_gets_the_sqlite_parameter_alone(pytester: pytest.Pytester) -> None:
+    """The mark B2 puts on a test that stays on SQLite (spec 126, Amendment
+    (2026-10-12): what B2 settled). A marked test that takes the fixture is
+    collected once, on SQLite; an unmarked one twice; and a mark with no
+    reason stops the collection."""
+    pytester.makeconftest(Path(__file__).with_name("conftest.py").read_text(encoding="utf-8"))
+    pytester.makepyfile(test_marked=MARKED_TESTS)
+
+    collected = pytester.runpytest_subprocess("-p", "no:cacheprovider", "--collect-only", "-q")
+
+    assert collected.ret == pytest.ExitCode.OK
+    ids = {line.strip() for line in collected.outlines if "::" in line}
+    assert ids == {
+        "test_marked.py::test_marked[sqlite]",
+        "test_marked.py::test_marked_without_the_fixture",
+        "test_marked.py::test_unmarked[sqlite]",
+        "test_marked.py::test_unmarked[postgres]",
+    }
+
+    pytester.makepyfile(test_marked=UNEXPLAINED_TEST)
+    refused = pytester.runpytest_subprocess("-p", "no:cacheprovider", "--collect-only", "-q")
+
+    # Raised while the module is collected, so pytest reports a collection
+    # error and runs nothing.
+    assert refused.ret == pytest.ExitCode.INTERRUPTED
+    refused.stdout.fnmatch_lines(["*test_unexplained is marked sqlite_only with no reason*"])
