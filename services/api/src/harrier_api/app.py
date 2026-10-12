@@ -1260,8 +1260,14 @@ def _config_out(conn: Connection, kind: str) -> ConfigOut:
         try:
             stored = get_config(conn, kind)
         except ConfigError as error:
+            # A 200 body, so the HTTPException handler never sees it, and the
+            # text quotes the stored value (spec 133).
             return ConfigOut(
-                kind=kind, value=None, source="store", updated_at=rows[kind], error=str(error)
+                kind=kind,
+                value=None,
+                source="store",
+                updated_at=rows[kind],
+                error=scrub_outbound(str(error)),
             )
         if stored is not None:
             return ConfigOut(
@@ -1270,7 +1276,13 @@ def _config_out(conn: Connection, kind: str) -> ConfigOut:
     try:
         value = _file_value(kind)
     except ConfigError as error:
-        return ConfigOut(kind=kind, value=None, source="file", updated_at=None, error=str(error))
+        return ConfigOut(
+            kind=kind,
+            value=None,
+            source="file",
+            updated_at=None,
+            error=scrub_outbound(str(error)),
+        )
     return ConfigOut(kind=kind, value=value, source="file", updated_at=None, error=None)
 
 

@@ -65,8 +65,11 @@ change.
    through `scrub_secrets` before the body is written. The app's handlers
    that build `ErrorOut(detail=str(error))` (`run_conflict` today) do the
    same. The raise sites are not edited one by one.
-3. **Nothing else.** No route, model, status or contract changes. The body
-   of every refusal keeps its shape; only text that `scrub_secrets` matches
+3. **An exception's text in a 200 body.** `ConfigOut.error` and
+   `ScheduleOut.error` pass through `scrub_outbound` where each route
+   builds them (Amendment (2026-10-12): exception text in a 200 body).
+4. **Nothing else.** No route, model, status or contract changes. The body
+   of every refusal keeps its shape; only text that `scrub_outbound` masks
    changes.
 
 Every file this spec changes sits under `services/api/src/` and
@@ -157,6 +160,12 @@ found three ways past them, each closed above:
       answered exactly as before, and a string `detail` with nothing to
       scrub is answered byte for byte as before
       (`services/api/tests/test_store_password_scrub.py::test_a_detail_with_nothing_to_scrub_is_unchanged`).
+- [ ] With a password generated at run time in `HARRIER_DATABASE_URL`, a
+      200 body whose `error` field quotes the store URL masks its password:
+      `ConfigOut.error` from a stored row and from a config file, and
+      `ScheduleOut.error`, each driven through its route
+      (`services/api/tests/test_store_password_scrub.py::test_an_error_field_in_a_200_body_has_the_store_password_masked`,
+      one case per field).
 - [ ] Each new behavior has a test that fails when the code it proves is
       removed, and the pull request records each mutation and its result.
 - [ ] `uv run ruff check`, `uv run pyright` and `uv run lint-imports`
@@ -178,6 +187,12 @@ found three ways past them, each closed above:
 - A handler someone adds later without going through `configure_logging`
   is not filtered. The three places that install the filter are named in
   Scope; a fourth is a new change.
+- A password holding both quote characters is not masked where a message
+  quotes it alone with `!r`, because `repr` escapes one of them and the
+  escaped text is none of the forms `UrlParts.passwords` lists. The
+  configuration and schedule refusals quote values that way. A URL keeps
+  its password percent-encoded, which `repr` leaves alone, so a quoted URL
+  is masked (Amendment (2026-10-12): exception text in a 200 body).
 - uvicorn's handlers are filtered after uvicorn configures them, when the
   app is built. A record uvicorn logs before the app is imported, such as
   a failure to import it, is not filtered. The hosted start refusals are
@@ -308,7 +323,8 @@ exception's text with status 200, `ConfigOut.error`
 `ScheduleOut.error` (`services/api/src/harrier_api/ops_routes.py`). Neither
 is an `HTTPException` nor an exception handler's body, and each carries a
 configuration parse error, not a store error. Scrubbing them would change
-a model's field outside this spec's two sinks.
+a model's field outside this spec's two sinks. (Superseded by
+Amendment (2026-10-12): exception text in a 200 body.)
 
 ## Amendment (2026-10-12): the privacy review of PR #296
 
@@ -349,3 +365,63 @@ what the code does.
   uses `scrub_outbound`, so a password a run prints outside a URL is masked
   once runs open a Postgres store (spec 127)
   (`services/api/tests/test_store_password_scrub.py::test_a_run_event_has_the_store_password_masked`).
+
+## Amendment (2026-10-12): exception text in a 200 body
+
+Akin asked in chat on 2026-10-12 for the two fields the first amendment
+left out to be covered here. The property this spec owns is that the store
+password does not leave the process. Two fields carry an exception's text
+out of it in a 200 body, which neither sink sees:
+
+- `ConfigOut.error` (`services/api/src/harrier_api/app.py`, `_config_out`),
+  from a `ConfigError` on a stored row or on the file fallback (spec 073).
+- `ScheduleOut.error` (`services/api/src/harrier_api/ops_routes.py`,
+  `get_schedule`), from a `ScheduleConfigError` (specs 050 and 120).
+
+A search of `services/api/src/harrier_api` for an exception's text in a
+response finds no third. Every other `str(error)` there is an
+`HTTPException` detail, a run event that `RunManager._append` scrubs, or a
+`ValueError` re-raised inside `RunParams`.
+
+**What reaches these fields.** Not a driver error. Both `except` clauses
+catch only the parser's own error, and a driver error raised by the read
+around them reaches the app's 500 path, which this spec already scrubs.
+What reaches them is the parser's message, and it quotes the value it
+refused with `!r`: a stored or file hold entry, a hold date, a schedule
+label or job name. A value an operator pasted the store URL into is
+quoted whole, and `scrub_secrets` alone does not mask a password outside
+the URL shapes it knows.
+
+**Behavior.** Each route passes the text through `scrub_outbound` when it
+builds the field, as `run_conflict` does for `ErrorOut`. The field keeps
+its type, its nullability and its position in the contract; only text
+`scrub_outbound` masks changes. A refusal with nothing to mask reads as
+before, which `services/api/tests/test_userconfig.py::test_one_broken_kind_does_not_hide_the_others`
+and `services/api/tests/test_ui_operations.py::test_an_unreadable_schedule_is_reported_in_the_loader_s_words`
+still prove.
+
+**Why here, not in the specs that own the fields.** Spec 073 owns
+`ConfigOut.error` and specs 050 and 120 own `ScheduleOut.error`. Each of
+them settles what the field says; none settles what must never leave the
+process, and splitting this across them would put one rule in three
+places. The change is the same call this spec already makes at its other
+sinks.
+
+**Why the routes, not one place.** Each field is built at one site, in a
+200 path no handler intercepts. A validator on the models would also
+scrub, but it would hide a privacy rule inside a response model that
+otherwise only declares a shape.
+
+**Proof.** `services/api/tests/test_store_password_scrub.py::test_an_error_field_in_a_200_body_has_the_store_password_masked`
+plants the store URL, with a password made at run time, where each route
+reads it: a stored `company_holds` row with an unknown key, a holds CSV
+whose date is the URL, and a schedule definition whose label prefix is the
+URL. It drives each route as a client does and finds no 8-character window
+of either form of the password in the field or the body. Removing the
+scrub at any one of the three sites fails that site's case and no other.
+
+**Limitation found.** Building this showed that a password holding both
+quote characters, quoted alone with `!r`, is not masked, because `repr`
+escapes one of them (Honest limitations). It is recorded, not fixed here:
+masking an escaped form changes `scrub_outbound` for every sink, not only
+these fields.

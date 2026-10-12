@@ -20,6 +20,7 @@ three unknown-type rules are off for this file only, as in test_api_jobs.py.
 from __future__ import annotations
 
 import io
+import json
 import logging
 import secrets
 import string
@@ -37,6 +38,7 @@ import pytest
 import uvicorn
 import uvicorn.config
 import uvicorn.logging
+from conftest import auth
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
@@ -744,3 +746,77 @@ def test_a_run_event_has_the_store_password_masked(
     stored = str(run.events[-1].data["line"])
     assert stored.startswith('connection to "postgresql://harrier:REDACTED@db.example.test')
     assert store_password.leaks(stored) == []
+
+
+# --- an error field in a 200 body -------------------------------------------
+
+
+def _a_stored_hold_quoting_it(root: Path, url: str) -> str:
+    """A stored row written around `set_config`, as a restored backup or a
+    hand-edited database writes one, with an unknown key whose value is the
+    URL. `ConfigError` quotes the entry."""
+    conn = connect()
+    try:
+        with conn.transaction():
+            conn.execute(
+                "INSERT INTO user_config (kind, value) VALUES (?, ?)",
+                ("company_holds", json.dumps([{"company": "Example Co", "until": url}])),
+            )
+    finally:
+        conn.close()
+    return "/config/company_holds"
+
+
+def _a_hold_file_quoting_it(root: Path, url: str) -> str:
+    """The holds CSV the file fallback reads, with the URL as a hold date."""
+    (root / "config").mkdir(exist_ok=True)
+    (root / "config" / "companies-hold.csv").write_text(
+        f"company,reason,hold_until,notes\nExample Co,cooldown,{url},\n", encoding="utf-8"
+    )
+    return "/config/company_holds"
+
+
+def _a_schedule_quoting_it(root: Path, url: str) -> str:
+    """The schedule definition, with the URL as its label prefix, which the
+    loader refuses for its path separator and quotes."""
+    (root / "config").mkdir(exist_ok=True)
+    (root / "config" / "schedule.json").write_text(
+        json.dumps({"label_prefix": url, "jobs": []}), encoding="utf-8"
+    )
+    return "/ops/schedule"
+
+
+ERROR_FIELDS: dict[str, Callable[[Path, str], str]] = {
+    "ConfigOut.error from a stored row": _a_stored_hold_quoting_it,
+    "ConfigOut.error from a config file": _a_hold_file_quoting_it,
+    "ScheduleOut.error": _a_schedule_quoting_it,
+}
+
+
+@pytest.mark.parametrize("plant", list(ERROR_FIELDS.values()), ids=list(ERROR_FIELDS))
+def test_an_error_field_in_a_200_body_has_the_store_password_masked(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    store_password: StorePassword,
+    plant: Callable[[Path, str], str],
+) -> None:
+    """A refusal described in a 200 body never reaches the `HTTPException`
+    handler, so each route scrubs its own `error` field (spec 133, Amendment
+    (2026-10-12): exception text in a 200 body). The value is planted where
+    the route reads it and the route is driven as a client drives it."""
+    monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("HARRIER_DEMO", raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("harrier.paths.repo_root", lambda: tmp_path)
+    client = TestClient(create_app())
+    path = plant(tmp_path, store_password.url)
+    _point_at_postgres(monkeypatch, store_password)
+
+    response = client.get(path, headers=auth())
+
+    assert response.status_code == 200
+    error = response.json()["error"]
+    # The value was quoted and masked, not dropped.
+    assert "postgresql://harrier:REDACTED@db.example.test" in error
+    # The field as decoded, and the body as sent, since JSON escapes.
+    assert store_password.leaks(error + response.text) == []
