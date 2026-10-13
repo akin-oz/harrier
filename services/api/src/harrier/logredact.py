@@ -36,7 +36,7 @@ import logging
 import os
 import re
 import traceback
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from types import TracebackType
 from typing import cast
@@ -108,6 +108,19 @@ def _contact_identity_values(conn: Connection) -> set[str]:
     return values
 
 
+def _read(conn: Connection, load: Callable[[Connection], set[str]]) -> set[str]:
+    """One loader's values. On Postgres in a block of its own: inside a
+    caller's block that is a savepoint, so a read that fails rolls back to
+    it and the caller's transaction stays usable, where a failed statement
+    would otherwise leave the whole of it given up (spec 045, amendment of
+    2026-10-13). SQLite keeps no failed state after a refused read, and a
+    block there would adopt and end a write left open outside any block."""
+    if conn.dialect != "postgres":
+        return load(conn)
+    with conn.transaction():
+        return load(conn)
+
+
 def identity_values(conn: Connection) -> set[str]:
     """Every literal that names the candidate or a contact.
 
@@ -117,7 +130,7 @@ def identity_values(conn: Connection) -> set[str]:
     values: set[str] = set()
     for load in (_candidate_identity_values, _contact_identity_values):
         try:
-            values |= load(conn)
+            values |= _read(conn, load)
         except StoreDatabaseError:
             continue
     return {value for value in values if len(value) >= MIN_REDACTABLE_LENGTH}
