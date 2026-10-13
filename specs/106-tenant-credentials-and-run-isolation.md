@@ -567,23 +567,30 @@ Decision 8's note naming the key's location is spec 116's.
       load it (planned test_a_hosted_run_reads_no_env_file).
 - [ ] On a run `Connection`, every transaction, including one opened by a
       bare statement, runs as `harrier_tenant` with the owner's `sub`, and
-      a probe placed before the identity statements never runs (planned
-      test_a_run_connection_sets_its_identity_in_every_transaction).
+      a probe placed before the identity statements never runs
+      (`services/api/tests/test_seam_on_both_stores.py::test_an_owner_connection_sets_its_identity_in_every_transaction`
+      and
+      `services/api/tests/test_seam_on_both_stores.py::test_a_lost_owner_identity_runs_no_statement`;
+      re-cited by the Amendment (2026-10-13)).
 - [ ] A run connection whose identity read-back differs raises the
-      identity error and runs no domain statement (planned
-      test_a_lost_run_identity_stops_the_transaction).
+      identity error and runs no domain statement
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_lost_owner_identity_runs_no_statement`;
+      re-cited by the Amendment (2026-10-13)).
 - [ ] A run as owner A reads none of owner B's rows in any owned table
       (planned test_a_run_reads_only_its_owners_rows).
 - [ ] Two owners each record `discovery:1` and both rows exist with their
       own success time (planned
       test_a_run_outcome_key_is_per_owner_without_naming_one).
-- [ ] Every command and subcommand on a Postgres URL is in exactly one of
-      the classes in the table under Behavior (spec 112's Amendment of
-      2026-10-11); the run class refuses without
-      `HARRIER_RUN_OWNER` with its text; `HARRIER_RUN_OWNER` that is not a
-      UUID, or beside SQLite, is refused (planned
-      test_a_run_command_needs_an_owner_on_postgres, and spec 112's
-      planned test_the_postgres_gate_has_operator_and_run_classes).
+- [ ] On a Postgres URL, each run class verb without `HARRIER_RUN_OWNER`
+      is refused with the run class text, exit 1, and opens nothing; with
+      it, the verb runs and opens its store with `open_store(owner=...)`;
+      with it set, a command outside the run class is refused and no
+      `.env` is read; `HARRIER_RUN_OWNER` that is not a UUID, or beside
+      SQLite, is refused (planned
+      test_a_run_command_needs_an_owner_on_postgres). Restated by the
+      Amendment (2026-10-13): the walk that puts every command in one
+      class, and spec 127's planned
+      test_the_postgres_gate_has_operator_and_run_classes, are spec 127's.
 - [ ] In a hosted run, `codex-cli` and `claude-cli` are refused, and `auto`
       never selects a CLI provider even with both binaries present
       (planned test_hosted_runs_offer_only_the_api_providers).
@@ -1099,3 +1106,106 @@ unchanged and `run_records` is not read.
   "off"` and `auto_start_machines = true`; nothing on open connections
   or background work. Read 2026-10-11.
   https://docs.fly.io/launch/autostop-autostart
+
+## Amendment (2026-10-13): the run class, one spec, and what blocks the build
+
+Akin took two decisions in chat on 2026-10-13, after an implementing
+agent reported that spec 106 could not be built as it stood. This
+amendment records them and the open item they leave. Nothing else in
+this spec changes.
+
+### Decisions (Akin, in chat, 2026-10-13)
+
+1. **The run class is this spec's.** Spec 112's Amendment (2026-10-11):
+   split, owner and nesting, decision 4, moved every gate class to spec
+   127, and spec 127 depends on this spec. So this spec's runs could not
+   start on a Postgres store until spec 127 landed, and spec 127 could not
+   land until this spec did. Akin broke the cycle by moving the run class
+   here. This spec builds, in `services/api/src/harrier_cli/main.py`:
+   - the class "run command, owner required", with the verbs in the table
+     under Behavior, "The CLI on a Postgres URL": `discover`, `demo-run`,
+     `digest`, `config check-feeds`, `reconsider`, `events backfill`,
+     `evaluate-prospects`;
+   - `HARRIER_RUN_OWNER` as that section states: no `.env` is read, the
+     value must be a UUID, the store must be Postgres, and the store is
+     opened with `open_store(owner=...)`;
+   - the run class's refusal text, `error: harrier <command> runs on a
+     Postgres store only as a hosted run, which the API starts for one
+     owner (spec 106)`, exit 1, before anything opens.
+
+   Spec 127 keeps the full class table, the operator group and its role
+   declarations, the local-only and everything-else texts, the parser
+   walk, and the removal of `POSTGRES_NOT_YET`. Until spec 127 lands, a
+   command outside the store and run classes keeps spec 112's one
+   refusal, `POSTGRES_NOT_YET` (`services/api/src/harrier/connection.py:55-57`,
+   checked at `services/api/src/harrier_cli/main.py:3090`, on `main` at
+   `874ea47`). That includes a command outside the run class run with
+   `HARRIER_RUN_OWNER` set: "spec 112's text for its class" under
+   Behavior reads as that text until spec 127 gives each class its own.
+
+   Where Scope item 5, Behavior ("The CLI on a Postgres URL") and
+   "Changes to approved specs" say the run class is written into spec
+   112's Amendment (2026-10-11), read this decision: it is built here,
+   and spec 127 records the move.
+2. **Spec 106 stays whole.** The agent proposed splitting this spec into
+   three: the child's binding, the stop record and keep-awake beats, and
+   credentials with the hosted kinds offered. Akin chose to keep one spec,
+   built in one change. The acceptance criteria are not reassigned.
+
+### Acceptance criteria changed by this amendment
+
+- **The run class criterion** is restated in place under Acceptance
+  criteria. It tests the run class and `HARRIER_RUN_OWNER` only. The walk
+  that puts every command in exactly one class, and the operator class,
+  are spec 127's (planned test_every_command_has_a_postgres_refusal_class
+  and planned test_the_postgres_gate_has_operator_and_run_classes).
+- **Two criteria are re-cited to tests that exist.** Spec 112's seam built
+  the owner connection with its own tests, so this spec's two planned
+  names would have duplicated them:
+  - the identity in every transaction:
+    `services/api/tests/test_seam_on_both_stores.py::test_an_owner_connection_sets_its_identity_in_every_transaction`
+    runs a bare statement, a transaction and a savepoint on an owner's
+    connection and reads `harrier_tenant` and the owner's `sub` in each;
+    `services/api/tests/test_seam_on_both_stores.py::test_a_lost_owner_identity_runs_no_statement`
+    shows a probe insert never lands when the identity statements do not
+    hold;
+  - a lost identity:
+    `services/api/tests/test_seam_on_both_stores.py::test_a_lost_owner_identity_runs_no_statement`,
+    with a connection whose `BEGIN` never reaches the server and one that
+    sets another owner's claims, inside and outside `transaction()`.
+
+  The planned names they replace are not built.
+
+### Open before this spec is built
+
+Keeping the spec whole keeps one criterion that cannot be built today:
+"In a hosted run, `files()` is bound to the run's owner before any domain
+code runs" (planned test_a_hosted_run_binds_its_owners_storage). It needs
+two things that do not exist:
+
+- **Spec 107's seam.** `harrier.filestore`, with `files()`, `bind_files()`
+  and the hosted file store, is spec 107's, and none of it exists on
+  `main` at `874ea47`: there is no `services/api/src/harrier/filestore`
+  module, and `grep -rn "bind_files\|FileStoreUnbound" services/api/src`
+  finds nothing. This spec's `depends` does not name 107.
+- **Open decision 8, the run's Storage token.** No answer is recorded.
+  Behavior, "The run's Storage identity", states the guarantee only.
+
+**Akin must answer Open decision 8, and say how this criterion meets spec
+107, before this spec is built.** This amendment does not decide either.
+
+The other dependency still unbuilt is spec 116, the credential store,
+which this spec's `depends` names. Akin started it on 2026-10-13, in
+parallel, on branch `feat-116-credential-store`.
+
+### Proof / origin (amendment of 2026-10-13)
+
+- The implementing agent's dependency and size report of 2026-10-13, and
+  Akin's decisions in chat the same day, relayed by the coordinator.
+- `specs/112-the-tracker-domain-runs-on-either-store.md`, Amendment
+  (2026-10-11): split, owner and nesting, decision 4, and its note of
+  2026-10-13.
+- `specs/127-the-cli-and-api-gates-name-their-classes.md`, Scope item 1
+  and its Amendment (2026-10-13).
+- `specs/107-artifacts-and-run-state-in-storage.md`, "Which store a call
+  uses", "Binding a run".
