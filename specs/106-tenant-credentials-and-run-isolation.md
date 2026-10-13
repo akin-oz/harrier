@@ -604,10 +604,9 @@ Decision 8's note naming the key's location is spec 116's.
       structured event and its summary produces events and a summary
       holding `REDACTED` and not the chat id (decision D7; planned
       test_a_telegram_chat_id_never_reaches_the_event_stream).
-- [ ] In a hosted run, `files()` is bound to the run's owner before any
-      domain code runs, writes only under that owner's prefix, and never
-      returns spec 107's local store (decision D3; planned
-      test_a_hosted_run_binds_its_owners_storage).
+- Moved to spec 107 by the Amendment (2026-10-13), decision 3: the
+  criterion that binds a hosted run's `files()` to its owner, and its
+  planned test. This spec is built without Storage.
 - [ ] Hosted start refuses a missing or non-Postgres
       `HARRIER_RUN_DATABASE_URL`, one whose role fails a login-role check,
       and one naming the API's own role (planned
@@ -830,6 +829,7 @@ The text above says where each changed it.
    Alternative: block this spec on it, which keeps every hosted run kind at
    501 until then.
 8. **The token a run uses for Storage.** Added 2026-10-11, when decision
+   Taken 2026-10-13 (Akin, in chat): moved to spec 107, to be decided when spec 107 is built (Amendment (2026-10-13), decision 3).
    D3 placed a run's Storage identity in this spec. Spec 107 names the two
    ways it found: forward and refresh the owner's own session, which a
    scheduled run (spec 108) does not have; or a signing key harrier holds,
@@ -1109,9 +1109,9 @@ unchanged and `run_records` is not read.
 
 ## Amendment (2026-10-13): the run class, one spec, and what blocks the build
 
-Akin took two decisions in chat on 2026-10-13, after an implementing
+Akin took three decisions in chat on 2026-10-13, after an implementing
 agent reported that spec 106 could not be built as it stood. This
-amendment records them and the open item they leave. Nothing else in
+amendment records them and the dependency that remains. Nothing else in
 this spec changes.
 
 ### Decisions (Akin, in chat, 2026-10-13)
@@ -1150,7 +1150,18 @@ this spec changes.
 2. **Spec 106 stays whole.** The agent proposed splitting this spec into
    three: the child's binding, the stop record and keep-awake beats, and
    credentials with the hosted kinds offered. Akin chose to keep one spec,
-   built in one change. The acceptance criteria are not reassigned.
+   built in one change. The acceptance criteria are not reassigned,
+   except by decision 3.
+3. **Open decision 8 moves to spec 107.** Taken later the same day, once
+   this amendment had named it as the open item before the build. This
+   spec is built without Storage. The criterion that binds a hosted run's
+   `files()` to its owner, with planned
+   test_a_hosted_run_binds_its_owners_storage, and the choice of the
+   run's Storage token both move to spec 107, to be decided when spec 107
+   is built (spec 107, Amendment (2026-10-13)). Where Scope item 12,
+   Behavior ("The run's Storage identity"), Honest limitations ("The
+   run's Storage token is not chosen yet") and decision D3 place a run's
+   Storage identity in this spec, read this decision: it is spec 107's.
 
 ### Acceptance criteria changed by this amendment
 
@@ -1176,25 +1187,24 @@ this spec changes.
 
   The planned names they replace are not built.
 
-### Open before this spec is built
+### What blocked the build, and what still does
 
-Keeping the spec whole keeps one criterion that cannot be built today:
+Keeping the spec whole kept one criterion that could not be built:
 "In a hosted run, `files()` is bound to the run's owner before any domain
-code runs" (planned test_a_hosted_run_binds_its_owners_storage). It needs
-two things that do not exist:
+code runs". It needed two things that do not exist:
 
 - **Spec 107's seam.** `harrier.filestore`, with `files()`, `bind_files()`
   and the hosted file store, is spec 107's, and none of it exists on
   `main` at `874ea47`: there is no `services/api/src/harrier/filestore`
   module, and `grep -rn "bind_files\|FileStoreUnbound" services/api/src`
   finds nothing. This spec's `depends` does not name 107.
-- **Open decision 8, the run's Storage token.** No answer is recorded.
+- **Open decision 8, the run's Storage token.** No answer was recorded.
   Behavior, "The run's Storage identity", states the guarantee only.
 
-**Akin must answer Open decision 8, and say how this criterion meets spec
-107, before this spec is built.** This amendment does not decide either.
+Decision 3 answers this: the criterion and the open decision are spec
+107's, and this spec no longer waits on either.
 
-The other dependency still unbuilt is spec 116, the credential store,
+The one dependency still unbuilt is spec 116, the credential store,
 which this spec's `depends` names. Akin started it on 2026-10-13, in
 parallel, on branch `feat-116-credential-store`.
 
