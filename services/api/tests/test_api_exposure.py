@@ -545,6 +545,24 @@ def test_every_event_is_scrubbed_at_the_choke_point(env: Path) -> None:
     assert run.events[-1].data["step"] == 2
 
 
+def test_every_string_an_event_carries_is_scrubbed(env: Path) -> None:
+    """The choke point reaches a key, a dict inside a list, a list inside a
+    list, and the event's type, not only the values of the top level and
+    of nested dicts (privacy review of PR #316)."""
+    import asyncio
+
+    from harrier_api.runs import Run, RunManager
+
+    url = "https://api.apify.com/v2/x?token=SECRETVALUE"
+    manager = RunManager()
+    run = Run(id="r1", kind="demo", command=["true"])
+    data: dict[str, object] = {url: 1, "items": [{"msg": url}, [url]], "step": 2}
+    asyncio.run(_collect(manager, run, f"progress {url}", data))
+    event = run.events[-1]
+    assert "SECRETVALUE" not in repr((event.type, event.data))
+    assert event.data["step"] == 2
+
+
 def test_every_exception_sink_in_discovery_is_scrubbed(env: Path) -> None:
     """Also broadened. The first version matched only lines containing
     `"errors": [`, so it passed while two logger.warning calls handed the raw

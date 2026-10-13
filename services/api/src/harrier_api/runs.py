@@ -617,21 +617,25 @@ def scrub_event_data(data: dict[str, object]) -> dict[str, object]:
 
     `scrub_outbound`, not `scrub_secrets` alone, so a run that prints the
     store password outside a URL has it masked too (spec 133).
+
+    Every string at any depth, keys included: a dict inside a list and a
+    key were passed through as the child wrote them (privacy review of PR
+    #316). The event's type is scrubbed by the caller.
     """
-    scrubbed: dict[str, object] = {}
-    for key, value in data.items():
-        if isinstance(value, str):
-            scrubbed[key] = scrub_outbound(value)
-        elif isinstance(value, dict):
-            scrubbed[key] = scrub_event_data(cast("dict[str, object]", value))
-        elif isinstance(value, list):
-            scrubbed[key] = [
-                scrub_outbound(item) if isinstance(item, str) else item
-                for item in cast("list[object]", value)
-            ]
-        else:
-            scrubbed[key] = value
-    return scrubbed
+    return cast("dict[str, object]", _scrubbed(data))
+
+
+def _scrubbed(value: object) -> object:
+    if isinstance(value, str):
+        return scrub_outbound(value)
+    if isinstance(value, dict):
+        return {
+            scrub_outbound(str(key)): _scrubbed(item)
+            for key, item in cast("dict[object, object]", value).items()
+        }
+    if isinstance(value, list):
+        return [_scrubbed(item) for item in cast("list[object]", value)]
+    return value
 
 
 def redacted_text(text: str, values: frozenset[str]) -> str:
@@ -1090,6 +1094,7 @@ class RunManager:
             data = redact_values(data, run.secrets)
             event_type = redacted_text(event_type, run.secrets)
         scrubbed = scrub_event_data(data)
+        event_type = scrub_outbound(event_type)
         for directory in run.hidden:
             scrubbed = hide_directory(scrubbed, directory)
         async with self._condition:
