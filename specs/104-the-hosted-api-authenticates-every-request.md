@@ -617,7 +617,7 @@ group:
       (`services/api/tests/test_run_owner.py::test_another_owners_run_is_not_found`).
 - [ ] Hosted, every run route answers 501 with the spec 106 text, and no
       input file is written and no process spawned
-      (`services/api/tests/test_run_owner.py::test_starting_a_run_hosted_is_refused_until_spec_106`).
+      (`services/api/tests/test_run_owner.py::test_a_kind_not_offered_hosted_answers_501_naming_its_spec`).
 - [ ] The event stream ends when its token's `exp` passes, and a reconnect
       with a new token and `Last-Event-ID` receives the remaining events
       (`services/api/tests/test_run_owner.py::test_the_event_stream_ends_at_token_expiry`).
@@ -1468,3 +1468,22 @@ where it was wrong. Each is stated here so the code and the spec agree.
   prints no configured value: each case is run as a process and its whole
   output checked
   (`services/api/tests/test_hosted_auth.py::test_hosted_start_refuses_incomplete_configuration`).
+
+## Note (2026-10-13): spec 106 lifts the hosted run refusal
+
+Spec 106 is built, and its "Changes to approved specs" lines for this spec
+are written here. Hosted, `RunManager.start` no longer refuses every run:
+each kind answers as spec 106's `HOSTED_RUN_KINDS` says, and a kind it
+refuses answers 501 with a detail naming the spec that will offer it, or
+saying it is local only. The criterion under "Runs and stream" that every
+run route answers 501 with the spec 106 text is re-cited to the test that
+replaced the one it named, which now covers the refused kinds
+(`services/api/tests/test_run_owner.py::test_a_kind_not_offered_hosted_answers_501_naming_its_spec`).
+Hosted start also requires `HARRIER_RUN_DATABASE_URL`, checked with this
+spec's login role checks, and refuses one naming the API's own role
+(`services/api/tests/test_hosted_runs_on_postgres.py::test_hosted_start_checks_the_run_login_role`).
+Hosted `GET /runs` and `GET /runs/{run_id}` read a run that is not live on
+this machine from `run_records` under the owner's policy, so they show an
+interrupted run instead of answering 404 for it
+(`services/api/tests/test_hosted_runs_on_postgres.py::test_a_run_cut_off_by_a_stop_reads_interrupted`).
+Nothing else in this spec changes.
