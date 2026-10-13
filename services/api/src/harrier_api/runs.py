@@ -314,6 +314,9 @@ def run_inputs_dir() -> Path:
 
 # --- which kinds run hosted (spec 106) ---
 
+GMAIL_NOT_HOSTED_DETAIL = "Gmail watch is not offered on the hosted service (spec 109)"
+GMAIL_WATCH_KIND = "gmail-watch"
+
 
 @dataclass(frozen=True)
 class HostedAnswer:
@@ -371,9 +374,9 @@ HOSTED_RUN_KINDS: dict[str, HostedAnswer] = {
             "scoring-export",
         )
     },
-    "gmail-watch": HostedAnswer(
-        runs=False, refusal="gmail-watch runs are not offered on the hosted service (spec 109)"
-    ),
+    # Spec 109's refusal and text (spec 106, Amendment (2026-10-13,
+    # implementation), item 9): `start` raises `GmailNotHosted` first.
+    "gmail-watch": HostedAnswer(runs=False, refusal=GMAIL_NOT_HOSTED_DETAIL),
     "backup": _local_only("backup"),
     "verify-backup": _local_only("verify-backup"),
 }
@@ -393,6 +396,21 @@ class RunsNotHosted(Exception):
 
     def __init__(self, detail: str) -> None:
         super().__init__(detail)
+
+
+class GmailNotHosted(RunsNotHosted):
+    """Gmail watch does not run on the hosted API (spec 109).
+
+    A hosted watch would fetch restricted Gmail data on a server and keep
+    what it derived in the store, which Google allows only after a security
+    assessment. Refused before anything is written or spawned, and before
+    the owner and spec 106's table are read, so it holds whatever that
+    table offers. A `RunsNotHosted`, so the API answers 501 in these words
+    through that refusal's handler.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(GMAIL_NOT_HOSTED_DETAIL)
 
 
 class RunCredentialRefused(Exception):
@@ -840,9 +858,16 @@ class RunManager:
         same bytes. A request with other options while one runs raises
         `RunConflictError` rather than being folded into a run that ignores
         them (review of PR #208).
+
+        Hosted, a `gmail-watch` is refused with `GmailNotHosted` first,
+        before the owner and the table are read (spec 109).
         """
         if runs_hosted():
             try:
+                # Gmail first, before the owner and the table, so spec
+                # 109's refusal and text hold whatever else is lifted.
+                if kind == GMAIL_WATCH_KIND:
+                    raise GmailNotHosted
                 if not owner:
                     raise RunsNotHosted(NO_OWNER_DETAIL)
                 refuse_unless_hosted(kind)

@@ -63,6 +63,7 @@ from harrier_api.runmodels import (
     get_runs,
 )
 from harrier_api.runs import (
+    GMAIL_NOT_HOSTED_DETAIL,
     TERMINAL_STATES,
     Run,
     RunManager,
@@ -307,6 +308,9 @@ class StartCase:
     send: dict[str, Any]
     # Whether the route writes an input file before it calls `start`.
     writes_input: bool = False
+    # The refusal the route answers itself before it calls `start`, if any:
+    # the mail watch is refused hosted for good (spec 109).
+    own_refusal: str = ""
 
 
 # Every route that can start a run, with a request each would accept, so
@@ -343,7 +347,9 @@ START_CASES: tuple[StartCase, ...] = (
         "POST", "/outreach/{job}/draft", "outreach-draft", {"json": {"tone": "direct"}}, True
     ),
     StartCase("POST", "/outreach/backfill-posters", "backfill-posters", {"json": {}}),
-    StartCase("POST", "/mail/watch", "gmail-watch", {"json": {}}),
+    StartCase(
+        "POST", "/mail/watch", "gmail-watch", {"json": {}}, own_refusal=GMAIL_NOT_HOSTED_DETAIL
+    ),
     StartCase("POST", "/ops/feeds", "check-feeds", {}),
     StartCase("POST", "/ops/feeds/prune", "check-feeds", {"json": {"confirm": True}}),
     StartCase("POST", "/ops/reconsider", "reconsider", {"json": {}}),
@@ -378,7 +384,9 @@ SPEC_REFUSALS: dict[str, str] = {
             "scoring-export",
         )
     },
-    "gmail-watch": "gmail-watch runs are not offered on the hosted service (spec 109)",
+    # Spec 109's text, which its own refusal answers (spec 106, Amendment
+    # (2026-10-13, implementation), item 9).
+    "gmail-watch": GMAIL_NOT_HOSTED_DETAIL,
     "backup": "backup runs are local only",
     "verify-backup": "verify-backup runs are local only",
 }
@@ -451,9 +459,10 @@ def test_a_kind_not_offered_hosted_answers_501_naming_its_spec(
         )
         assert response.status_code == 501, response.text
         assert response.json() == {"detail": SPEC_REFUSALS[case.kind]}
-    # A route that writes its input is refused there, before `start`; every
-    # other route reached `start` with the caller as the run's owner.
-    assert given == ([] if case.writes_input else [caller])
+    # A route that writes its input, or refuses on its own, is refused
+    # there, before `start`; every other route reached `start` with the
+    # caller as the run's owner.
+    assert given == ([] if case.writes_input or case.own_refusal else [caller])
     # Nothing exists that the run would have left: no input file, not even
     # the directory, no journal entry, no run and no process.
     assert not run_inputs_dir().exists(), sorted(run_inputs_dir().iterdir())
@@ -514,18 +523,23 @@ def test_the_contract_declares_the_hosted_run_refusal() -> None:
     built = create_app(run_manager=_RunManager(kind_commands={})).openapi()
     committed = json.loads(CONTRACT.read_text(encoding="utf-8"))
     for document in (committed, built):
-        declared: set[tuple[str, str]] = set()
+        declared: dict[str, set[tuple[str, str]]] = {}
         for path, operations in document["paths"].items():
             for method, operation in operations.items():
                 refusal = operation["responses"].get("501")
                 if refusal is None:
                     continue
-                declared.add((method, path))
                 assert refusal["content"]["application/json"]["schema"] == error_out
-                assert refusal["description"] == RUN_NOT_HOSTED_DESCRIPTION, (method, path)
-        # Exactly the routes that start a run: whether a kind is offered is
-        # the table's, so every one of them declares it.
-        assert declared == START_ROUTES
+                declared.setdefault(refusal["description"], set()).add((method, path))
+        # Every route that starts a run declares spec 106's 501: whether a
+        # kind is offered is the table's. The mail routes declare spec 109's
+        # own, the read among them, proved by
+        # tests/test_tenant_notifications.py::test_hosted_mail_routes_answer_501.
+        own = {(case.method.lower(), case.path) for case in START_CASES if case.own_refusal}
+        assert declared == {
+            RUN_NOT_HOSTED_DESCRIPTION: START_ROUTES - own,
+            f"hosted only: {GMAIL_NOT_HOSTED_DETAIL}": own | {("get", "/mail/events")},
+        }
 
 
 # --- locally ---

@@ -197,10 +197,15 @@ as a parameter. The dedupe folds `A` to `Z` and nothing else
 come from `RETURNING id`, and no domain insert supplies one. The four
 upserts are an update, an insert in a savepoint, and the update once more
 when another writer inserted the key first (`update_or_insert`); none names
-a tenant. The write lock is the one branch on the dialect in domain code
-(`_write_lock` in `services/api/src/harrier/tracker/store.py`): SQLite
+a tenant. Domain code branches on the dialect in three places. The write
+lock (`_write_lock` in `services/api/src/harrier/tracker/store.py`): SQLite
 still locks the whole file, and Postgres locks the job rows a write depends
-on, `FOR UPDATE`, so writers of other jobs do not wait. The cutover and the
+on, `FOR UPDATE`, so writers of other jobs do not wait. The configuration
+kinds a store holds (`kinds_for` in
+`services/api/src/harrier/userconfig/store.py`, spec 108). And the digest,
+which on Postgres reads no mail file and names no mail watch, because
+Gmail is not offered there (`mail_offered` in
+`services/api/src/harrier/digest.py`, spec 109). The cutover and the
 legacy import refuse a Postgres connection with `StoreLocalOnlyError`. The
 `store` fixture in `services/api/tests/conftest.py` runs a test once per
 store, on Postgres as one synthetic owner under the row policy, and fails
@@ -437,6 +442,28 @@ operating system user on one machine, so a hostile run can claim any owner
 in the database and can likely read its siblings' environments. The
 environment allowlist keeps secrets out of logs and child tools; it is not
 a sandbox. Hosted harrier treats its own code and dependencies as trusted.
+
+Gmail watch is local only (spec 109). A hosted watch would store and
+transmit restricted Gmail data on servers, which Google allows only after
+a security assessment. Hosted, `GET /mail/events` and `POST /mail/watch`
+answer 501 and read nothing
+(`services/api/tests/test_tenant_notifications.py::test_hosted_mail_routes_answer_501`),
+the run manager refuses a `gmail-watch` before it spawns, also once spec
+106 lets hosted runs start
+(`services/api/tests/test_tenant_notifications.py::test_a_hosted_gmail_watch_run_is_refused_before_it_spawns`),
+and a digest on a Postgres store opens no mail file, says Gmail watch is
+not offered and leaves `mail-watch` out of its health lines
+(`services/api/tests/test_tenant_notifications.py::test_a_postgres_digest_reads_no_mail_file_and_says_why`).
+Each tenant connecting their own Google client is spec 118. Telegram
+settings are per owner: the hosted API refuses to start while its
+environment holds `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` or any `GMAIL_`
+variable, naming it and never its value
+(`services/api/tests/test_tenant_notifications.py::test_hosted_start_refuses_operator_notification_settings`).
+The routes that store each owner's bot token and chat id wait for spec
+116's credential store, and a run receives them through spec 106's run
+environment. A failed Telegram send logs the scrubbed reason, never the
+token
+(`services/api/tests/test_tenant_notifications.py::test_a_telegram_failure_log_never_holds_the_token`).
 
 No other hosted component exists yet. Specs 103 to 112 sequence the build:
 the Postgres store (103, approved), API authentication (104), row-level

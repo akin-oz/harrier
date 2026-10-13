@@ -5361,6 +5361,16 @@
             },
             "description": "Validation Error"
           },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "hosted only: Gmail watch is not offered on the hosted service (spec 109)"
+          },
           "503": {
             "content": {
               "application/json": {
@@ -5446,7 +5456,7 @@
                 }
               }
             },
-            "description": "hosted only: this kind of run is not offered on the hosted API; the detail names the spec that will offer it, or says it is local only"
+            "description": "hosted only: Gmail watch is not offered on the hosted service (spec 109)"
           },
           "503": {
             "content": {

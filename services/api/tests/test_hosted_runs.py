@@ -226,7 +226,9 @@ def test_every_run_kind_declares_its_hosted_answer() -> None:
     kinds = set(KIND_COMMANDS) | set(PARAMETERIZED_KINDS)
     assert set(HOSTED_RUN_KINDS) == kinds
     for kind, answer in HOSTED_RUN_KINDS.items():
-        assert answer.runs or kind in answer.refusal, kind
+        # Gmail watch answers in spec 109's words, which name the watch.
+        named = "Gmail watch" if kind == "gmail-watch" else kind
+        assert answer.runs or named in answer.refusal, kind
         assert answer.runs != bool(answer.refusal), kind
     verbs = {
         kind: (PARAMETERIZED_KINDS[kind].verb if kind in PARAMETERIZED_KINDS else "")
@@ -513,6 +515,34 @@ def test_the_child_environment_holds_only_the_allowlist_and_its_owners_values(
     assert got == expected
     assert digest(sentinel) not in child["env"].values()
     assert os.path.realpath(child["cwd"]) == run_dir
+
+
+def test_a_hosted_run_carries_only_its_owners_telegram_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec 109's criterion, moved to spec 106: owner A's run holds A's
+    Telegram settings, owner B's run with none holds neither, and no run
+    holds a `GMAIL_` variable or the operator's Telegram settings, though
+    the server's environment holds them."""
+    hosted = hosted_manager(tmp_path, monkeypatch)
+    operator = synthetic_secret("operator")
+    for name in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "GMAIL_TOKEN_FILE", "GMAIL_LABEL"):
+        monkeypatch.setenv(name, operator)
+    a, b = new_owner(), new_owner()
+    bot, chat = synthetic_secret("bot"), str(uuid.uuid4().int)[:12]
+    key = credentials_key()
+    hosted.records.credentials[a] = [
+        stored(key, a, "telegram", {"bot_token": bot, "chat_id": chat})
+    ]
+
+    theirs = printed(run_to_end(hosted.manager, a))["env"]
+    assert theirs["TELEGRAM_BOT_TOKEN"] == digest(bot)
+    assert theirs["TELEGRAM_CHAT_ID"] == digest(chat)
+    none = printed(run_to_end(hosted.manager, b))["env"]
+    assert "TELEGRAM_BOT_TOKEN" not in none and "TELEGRAM_CHAT_ID" not in none
+    for held in (theirs, none):
+        assert not [name for name in held if name.startswith("GMAIL_")]
+        assert digest(operator) not in held.values()
 
 
 def test_the_credentials_key_never_reaches_a_run(

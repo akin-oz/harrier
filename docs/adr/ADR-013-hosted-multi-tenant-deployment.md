@@ -213,6 +213,10 @@ Postgres hosted), and a JWT boundary the local product never had. Chosen.
   external users can grant them
   (https://developers.google.com/workspace/gmail/api/auth/scopes, read
   2026-10-10). Hosted Gmail watch may not be available at first; spec 109
-  decides.
+  decides. **Decided (spec 109).** Gmail watch is not offered in the first
+  hosted release: a hosted watch stores and transmits restricted data on
+  servers. The hosted API answers 501 on the mail routes, the run manager
+  refuses a hosted `gmail-watch`, and the hosted digest says Gmail is not
+  offered. Each tenant connecting their own Google client is spec 118.
 - Running LinkedIn and academic searches through Apify on tenants' behalf
   depends on each tenant's own Apify account and the terms they accept.
