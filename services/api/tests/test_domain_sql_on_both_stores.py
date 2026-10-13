@@ -39,7 +39,7 @@ from harrier.resume import split as resume_split
 from harrier.runoutcome import record_success
 from harrier.tracker import migrate_legacy
 from harrier.tracker import store as tracker_store
-from harrier.tracker.schema import OWNED_TABLES, TENANT_ROLE
+from harrier.tracker.schema import HOSTED_ONLY_TABLES, OWNED_TABLES, TENANT_ROLE
 from harrier.tracker.store import (
     DuplicateJobError,
     EligibilityAssessment,
@@ -234,7 +234,9 @@ def test_no_domain_insert_supplies_an_id(
         if match is not None:
             names = {name.strip().lower() for name in match.group(2).split(",")}
             columns.setdefault(match.group(1).lower(), set()).update(names)
-    assert set(columns) == set(OWNED_TABLES)
+    # A hosted-only table has no writer that runs on SQLite: schedule_state
+    # is written by spec 108's scheduler, on Postgres alone.
+    assert set(columns) == set(OWNED_TABLES) - set(HOSTED_ONLY_TABLES)
     assert {table: "id" in names for table, names in columns.items()} == {
         table: False for table in columns
     }

@@ -681,11 +681,11 @@ The store (PR 1)
       passes).
 - [ ] Migration 10's statements are identical before and after this
       change, compared as text
-      (planned test_migration_10_statements_do_not_change).
+      (`services/api/tests/test_owner_policy.py::test_migration_10_statements_do_not_change`).
 - [ ] `HOSTED_ONLY_TABLES` declares `schedule_state`;
       `services/api/tests/test_dialect_parity.py::test_both_dialects_build_the_same_tracker`
       passes, and fails when a declared table does not exist on Postgres
-      (planned test_a_hosted_only_table_naming_nothing_fails).
+      (`services/api/tests/test_dialect_parity.py::test_a_hosted_only_table_naming_nothing_fails`).
 - [ ] The catalog test passes with `schedule_state` owned and policed,
       its grants as under Behavior, and `harrier_schedule_inputs` as the
       second declared definer function
@@ -699,11 +699,11 @@ The store (PR 1)
       the schedule and state of two owners and no column of any other
       kind or table; as `harrier_tenant`, `anon`, `authenticated` and
       `service_role`, calling it is refused
-      (planned test_only_the_reader_lists_schedules).
+      (`services/api/tests/test_hosted_schedule.py::test_only_the_reader_lists_schedules`).
 - [ ] The `schedule` kind is accepted on a Postgres connection with a
       valid value, refused naming the field for each case under Behavior,
       and is an unknown kind on SQLite with today's message
-      (planned test_the_schedule_kind_is_hosted_only).
+      (`services/api/tests/test_hosted_schedule.py::test_the_schedule_kind_is_hosted_only`).
 - [ ] `just contract` shows no diff.
 
 The process and the report (PR 2)
@@ -1338,3 +1338,115 @@ and so how often this happens.
 - A plain update of a machine with no schedule, staging's, was not
   probed. Whether it starts that machine is for spec 110's first staging
   deploy to see.
+
+## Amendment (2026-10-13): what building the store settled
+
+Building PR 1, the store (Scope items 1 to 4), found three places where
+the text above was silent or wrong, and settled what it left open. Each is
+stated here so the code and the spec agree. Where the text above
+disagrees, this section holds. PR 2 is not built: spec 106's run binding,
+which it starts runs through, is not on `main`.
+
+### The migration's version
+
+Migration 17, the next free version on `main` at `4b5c48d`
+(`services/api/src/harrier/tracker/schema.py`, `POSTGRES_SCHEDULE_STATE`).
+`MIGRATIONS` holds 17 with no statements and `SINGLE_DIALECT_MIGRATIONS`
+declares it Postgres only. Specs 106 and 116 each add a Postgres-only
+migration too; whichever lands after this one takes the next number.
+
+### Where the text was wrong
+
+- **The owner is read through `harrier_owner_id()`, not `auth.uid()`.**
+  The DDL under "The store" gives `owner_id` the default `auth.uid()`, and
+  the policy "that every owned table has". Since migration 16 (spec 105,
+  amendment of 2026-10-11) every owned table defaults `owner_id` to
+  `public.harrier_owner_id()` and its `owner_only` policy compares with
+  it, because Supabase's `postgres` cannot grant the tenant role anything
+  in schema `auth`. `schedule_state` does the same. With `auth.uid()` the
+  catalog test names the default as depending on it, and a tenant insert
+  would be refused on Supabase
+  (`services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared`).
+- **`HOSTED_ONLY_COLUMNS` covers the tables both stores have.** It was
+  built from every owned table, so `schedule_state` would have been
+  declared twice: as a hosted-only table and as a table with a hosted-only
+  column, which the parity test reads as a stale column declaration.
+  It now leaves out the tables `HOSTED_ONLY_TABLES` declares.
+- **`HOSTED_JOBS` lands with the store.** Scope item 5 puts the hosted
+  job set in `services/api/src/harrier/hostedschedule.py`, a PR 2 module,
+  but the `schedule` kind (item 4, PR 1) refuses a job outside it. PR 1
+  creates the module holding `HOSTED_JOBS` alone; PR 2 adds the rest.
+
+### Where the text was silent
+
+- **Both fields are required.** "The owner's choice" lists the refusals
+  but not a missing field. A schedule without a timezone has no slot, and
+  one without `jobs` is not a choice, so each is refused naming the field:
+  `schedule.timezone is required`, `schedule.jobs is required`. A
+  `timezone` that is not text, and a `jobs` that is not a list, are
+  refused the same way.
+- **A refusal names the field and never the value.** Each message names
+  `schedule`, `schedule.timezone` or `schedule.jobs`, and quotes nothing
+  the owner wrote but an unknown field's name. The scheduler may then log
+  a refusal as it is, which "A tick" asks of it.
+- **A key naming a directory of the tz database**, such as `Europe`, is
+  refused as a zone `zoneinfo` cannot load.
+- **The routes.** `GET /config` lists `schedule` hosted, after the local
+  kinds, and `GET`, `PUT` and `DELETE /config/schedule` answer it; on
+  SQLite each answers 404 as for any unknown kind. A kind with no row
+  reads as today's other store-only kinds read: `source` `file`, `value`
+  null. `harrier.userconfig.kinds_for` gives the kinds a connection holds,
+  and the routes read it (`services/api/src/harrier_api/app.py`).
+- **The schedule reader's catalog rules.** The catalog test also holds
+  `harrier_schedule_reader` to the attributes the migration creates it
+  with (no `SUPERUSER`, `BYPASSRLS`, `LOGIN` or `INHERIT`), to no
+  membership, to no privilege on any table, column or sequence in
+  `public`, and to `EXECUTE` on `harrier_schedule_inputs()` and on no
+  other function there.
+
+### Tests the criteria did not name
+
+- `services/api/tests/test_hosted_schedule.py::test_the_routes_serve_the_kind_hosted`:
+  the hosted app serves the kind through the request's connection, and a
+  refused value is a 400 naming the field.
+- `services/api/tests/test_hosted_schedule.py::test_the_local_routes_do_not_know_the_kind`:
+  the local API answers 404 for the kind and lists the local kinds only.
+- `services/api/tests/test_hosted_schedule.py::test_the_hosted_jobs_are_committed_jobs`:
+  each hosted job is a job `config/schedule.json` names, and the set is
+  Open decision 3's.
+- `services/api/tests/test_owner_policy.py::test_a_failed_migration_leaves_no_trace_of_itself`
+  runs for migration 17 too.
+
+### Existing tests that change
+
+- `services/api/tests/test_owner_policy.py`: the owned-table tests take
+  `schedule_state` with synthetic values; it has no `DELETE` grant, so
+  owner A's delete of B's rows is refused before the policy, as on
+  `tracks`; `test_track_two_needs_migration_16_on_the_faithful_shim`
+  expects `target_version()` rather than 16 after a full migration; and
+  an undeclared function executable by `PUBLIC` is now also named as
+  executable by the reader.
+- `services/api/tests/test_dialect_parity.py`: the owner defaults it
+  reads are every owned table's, a hosted-only table's among them.
+- `services/api/tests/test_domain_sql_on_both_stores.py::test_no_domain_insert_supplies_an_id`
+  leaves out hosted-only tables: `schedule_state`'s writer is PR 2's
+  scheduler, which runs on Postgres alone.
+
+### Mutations
+
+Each new behavior was removed or changed in the code, and the test that
+proves it was run: twenty mutations, each failing its test. The list,
+each with its result, is in the pull request.
+
+### Honest limitations (the store)
+
+- **The reader role is created only when absent,** as the text says and
+  as migration 10 did for the tenant role. A `harrier_schedule_reader`
+  made earlier with other attributes keeps them; the catalog test names
+  each, but nothing corrects it on a live store. Migrations 13 and 14
+  added that correction for the tenant role after review.
+- **Staging is not checked here.** Spec 110's first two staging checks
+  under Honest limitations (that Supabase's `postgres` owns the function
+  with `BYPASSRLS`, and may create and grant the role) still stand.
+- The line numbers cited above are not refreshed by this change; decision
+  D9 leaves that to the change that implements the process.
