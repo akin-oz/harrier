@@ -42,6 +42,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from harrier.connection import URL_VARIABLE, store_target
 from harrier.demo import DEMO_ENV
+from harrier.llm.config import DEBUG_VARIABLES, debug_value_on
 
 if TYPE_CHECKING:
     from jwt import PyJWK
@@ -158,6 +159,7 @@ def hosted_config(environ: Mapping[str, str]) -> HostedConfig | None:
         cors_origins=_cors_origins(environ.get(CORS_ORIGINS_VARIABLE, "")),
     )
     _refuse_a_service_credential(environ)
+    _refuse_prompt_logging(environ)
     return config
 
 
@@ -237,6 +239,20 @@ def _service_credential_refusal(name: str) -> str:
         f"the environment holds a service credential in {name}; "
         "the hosted API refuses to start with one"
     )
+
+
+def prompt_logging_refusal(name: str) -> str:
+    return f"prompt logging ({name}) is local only; unset it for the hosted API"
+
+
+def _refuse_prompt_logging(environ: Mapping[str, str]) -> None:
+    """Prompt logging writes every prompt and output under the data
+    directory: hosted, tenants' application content on a shared machine's
+    disk. The first variable that is on is named, never its value (spec
+    135, Amendment (2026-10-13): prompt logging and query strings)."""
+    for name in DEBUG_VARIABLES:
+        if debug_value_on(environ.get(name, "")):
+            raise HostedConfigError(prompt_logging_refusal(name))
 
 
 # --- routes: what the hosted API serves, and what needs a token ---
