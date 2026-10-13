@@ -24,6 +24,8 @@ import json
 import pickle
 import re
 import sqlite3
+import subprocess
+import sys
 import time
 import uuid
 from collections.abc import Callable, Iterator
@@ -382,29 +384,50 @@ def test_an_adopted_sqlite_transaction_can_be_given_up(tmp_path: Path) -> None:
         opened.close()
 
 
+# SQLite's heap limit holds for the whole process, and PRAGMA can only lower
+# it, so the out of memory case runs in a child that takes the limit with it.
+OUT_OF_MEMORY_CHILD = """
+import sys
+from contextlib import closing
+from pathlib import Path
+
+from harrier.connection import StoreDatabaseError
+from harrier.db import connect
+
+path = Path(sys.argv[1])
+with closing(connect(path)) as conn, closing(connect(path)) as other:
+    with conn.transaction():
+        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+        conn.execute("CREATE TABLE f (b BLOB)")
+    try:
+        with conn.transaction():
+            conn.execute("INSERT INTO t (id) VALUES (?)", (1,))
+            conn.execute("PRAGMA hard_heap_limit = 8000000")
+            try:
+                conn.execute(
+                    "INSERT INTO f (b) VALUES (zeroblob(?) || randomblob(?))", (20000000, 10)
+                )
+            except MemoryError:
+                print("memory error")
+    except StoreDatabaseError as error:
+        print(error)
+    else:
+        print("committed")
+    print([int(row[0]) for row in other.execute("SELECT id FROM t")])
+"""
+
+
 def test_an_out_of_memory_failure_gives_up_the_sqlite_transaction(tmp_path: Path) -> None:
     """SQLite's out of memory rolls the transaction back and reaches Python
     as MemoryError, not a sqlite3.Error (review of PR #304)."""
-    path = tmp_path / "seam.db"
-    with closing(connect(path)) as conn, closing(connect(path)) as other:
-        table = new_table(conn, "id INTEGER PRIMARY KEY")
-        filler = new_table(conn, "b BLOB")
-        try:
-            with pytest.raises(StoreDatabaseError) as at_exit, conn.transaction():
-                conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (1,))
-                # The limit holds for the whole process, so it is lifted below
-                # whatever happens.
-                conn.execute("PRAGMA hard_heap_limit = 8000000")
-                with pytest.raises(MemoryError):
-                    conn.execute(
-                        f"INSERT INTO {filler} (b) VALUES (zeroblob(?) || randomblob(?))",
-                        (20_000_000, 10),
-                    )
-                conn.execute("PRAGMA hard_heap_limit = 0")
-        finally:
-            conn.sqlite_driver.execute("PRAGMA hard_heap_limit = 0")
-        assert str(at_exit.value) == TRANSACTION_GIVEN_UP
-        assert ids(other, table) == []
+    child = subprocess.run(
+        [sys.executable, "-c", OUT_OF_MEMORY_CHILD, str(tmp_path / "seam.db")],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert child.returncode == 0, child.stderr
+    assert child.stdout.splitlines() == ["memory error", TRANSACTION_GIVEN_UP, "[]"]
 
 
 def test_a_closed_sqlite_connection_still_raises_a_store_error(tmp_path: Path) -> None:
