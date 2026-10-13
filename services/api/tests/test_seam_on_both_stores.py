@@ -52,6 +52,7 @@ from harrier.connection import (
     NUMBERED_PLACEHOLDER,
     OWNER_NEEDS_POSTGRES,
     POSTGRES_NOT_IDLE,
+    TRANSACTION_CONTROL,
     TRANSACTION_GIVEN_UP,
     UNKNOWN_TRACK,
     UNKNOWN_TRACK_CONSTRAINT,
@@ -442,17 +443,21 @@ def test_a_closed_sqlite_connection_still_raises_a_store_error(tmp_path: Path) -
         conn.execute(f"SELECT id FROM {table}")
 
 
-def test_a_commit_inside_a_block_is_not_the_store_giving_up(store: Store) -> None:
+def test_a_commit_inside_a_block_is_not_the_store_giving_up(tmp_path: Path) -> None:
     """Only a failed statement gives a transaction up. A COMMIT the caller
-    ran also ends it, and its work was kept (review of PR #304)."""
-    conn = store.open()
-    table = new_table(conn, "id INTEGER PRIMARY KEY")
+    ran also ends it, and its work was kept (review of PR #304). The seam
+    refuses a COMMIT through `execute()`, so on SQLite it runs through
+    `sqlite_driver`, which the seam does not see; Postgres has no such way
+    in (spec 112, amendment of 2026-10-13: transaction control)."""
+    path = tmp_path / "seam.db"
+    with closing(connect(path)) as conn, closing(connect(path)) as other:
+        table = new_table(conn, "id INTEGER PRIMARY KEY")
 
-    with conn.transaction():
-        conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (1,))
-        conn.execute("COMMIT")
-        conn.execute(f"SELECT id FROM {table}").fetchall()
-    assert 1 in ids(store.open(), table)
+        with conn.transaction():
+            conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (1,))
+            conn.sqlite_driver.execute("COMMIT")
+            conn.execute(f"SELECT id FROM {table}").fetchall()
+        assert ids(other, table) == [1]
 
 
 def test_a_sqlite_block_that_only_read_has_nothing_to_give_up(tmp_path: Path) -> None:
@@ -1255,3 +1260,229 @@ def test_the_seam_begins_where_the_sqlite3_module_would() -> None:
             driver.execute("CREATE TABLE t (v)")
             driver.execute(sql)
             assert begins_a_transaction(sql) == driver.in_transaction, sql
+
+
+# --- transaction control (amendment of 2026-10-13: transaction control) ---
+
+
+CONTROL_STATEMENTS = [
+    "BEGIN",
+    "START TRANSACTION",
+    "COMMIT",
+    "END",
+    "ROLLBACK",
+    "ROLLBACK TO SAVEPOINT harrier_savepoint_1",
+    "ABORT",
+    "SAVEPOINT s",
+    "RELEASE s",
+    "PREPARE TRANSACTION 'x'",
+    "COMMIT PREPARED 'x'",
+]
+
+
+def _refused(conn: Connection, sql: str, params: Any = ()) -> None:
+    """`sql` is refused as transaction control: the class itself, the fixed
+    text, and no driver error under it, so no driver ran it."""
+    with pytest.raises(StoreDatabaseError) as refused:
+        conn.execute(sql, params)
+    assert type(refused.value) is StoreDatabaseError, sql
+    assert str(refused.value) == TRANSACTION_CONTROL, sql
+    assert refused.value.__cause__ is None, sql
+
+
+def _the_blocks_transaction(store: Store, conn: Connection) -> object:
+    """What shows the open transaction is still the one the block began. On
+    SQLite the driver is in it. On Postgres the lock timeout the seam set:
+    a statement after a COMMIT or a ROLLBACK runs in autocommit, and reads
+    the login default."""
+    if store.dialect == "sqlite":
+        return conn.sqlite_driver.in_transaction
+    return conn.execute("SELECT current_setting('lock_timeout')").fetchone()[0]
+
+
+def test_transaction_control_through_execute_is_refused(store: Store) -> None:
+    conn = store.open()
+    other = store.open()
+    table = new_table(conn, "id INTEGER PRIMARY KEY")
+    insert = f"INSERT INTO {table} (id) VALUES (?)"
+
+    for sql in CONTROL_STATEMENTS:
+        with pytest.raises(Abandoned), conn.transaction():
+            conn.execute(insert, (1,))
+            before = _the_blocks_transaction(store, conn)
+            _refused(conn, sql)
+            # Nothing ran: no ROLLBACK took row 1, and the transaction is
+            # the block's.
+            assert ids(conn, table) == [1], sql
+            assert _the_blocks_transaction(store, conn) == before, sql
+            raise Abandoned
+        # No COMMIT kept row 1: the block's rollback took it.
+        assert ids(other, table) == [], sql
+        assert not conn.in_transaction, sql
+
+    # Read before the placeholders, whose own refusals would name them.
+    with pytest.raises(Abandoned), conn.transaction():
+        for params in ({"name": 1}, (1,)):
+            _refused(conn, "COMMIT", params)
+        _refused(conn, "SAVEPOINT :name", (1,))
+        raise Abandoned
+
+
+def test_a_refused_control_statement_gives_nothing_up(store: Store) -> None:
+    conn = store.open()
+    other = store.open()
+    table = new_table(conn, "id INTEGER PRIMARY KEY")
+    insert = f"INSERT INTO {table} (id) VALUES (?)"
+
+    with conn.transaction():
+        conn.execute(insert, (1,))
+        _refused(conn, "COMMIT")
+        conn.execute(insert, (2,))
+    assert ids(other, table) == [1, 2]
+
+    with conn.transaction():
+        conn.execute(insert, (3,))
+        with conn.transaction():
+            conn.execute(insert, (4,))
+            _refused(conn, "ROLLBACK")
+        conn.execute(insert, (5,))
+    assert ids(other, table) == [1, 2, 3, 4, 5]
+
+    # In a block the store already gave up on, the refusal is checked
+    # first, and the block's exit still says the store gave up.
+    fail = a_failure_that_gives_up(store, conn, table)
+    with pytest.raises(StoreDatabaseError) as at_exit, conn.transaction():
+        conn.execute(insert, (6,))
+        with pytest.raises(StoreDatabaseError):
+            fail()
+        _refused(conn, "COMMIT")
+    assert str(at_exit.value) == TRANSACTION_GIVEN_UP
+    assert ids(other, table) == [1, 2, 3, 4, 5]
+
+
+def test_transaction_control_outside_a_block_is_refused(
+    store: Store, request: pytest.FixtureRequest
+) -> None:
+    if store.dialect == "sqlite":
+        conn = store.open()
+        table = new_table(conn, "id INTEGER PRIMARY KEY")
+        _refused(conn, "BEGIN")
+        # No transaction was left open without the write lock.
+        assert not conn.in_transaction
+        with conn.transaction(immediate=True):
+            conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (1,))
+        assert ids(store.open(), table) == [1]
+        return
+
+    url = cast(str, request.getfixturevalue("migrated_postgres"))
+    driver = postgres_connect(url)
+    try:
+        conn = Connection.postgres(
+            cast(Any, _SplitTransactions(driver)), claims=owner_claims(str(uuid.uuid4()))
+        )
+        # Any statement the seam begins a transaction for fails here.
+        with pytest.raises(StoreDatabaseError, match=re.escape(IDENTITY_DID_NOT_HOLD)):
+            conn.execute("SELECT 1")
+        # Refused before the seam began a transaction for it.
+        _refused(conn, "COMMIT")
+        assert not conn.in_transaction
+    finally:
+        driver.close()
+
+
+def test_the_seam_reads_a_first_word_as_either_store_would(store: Store) -> None:
+    conn = store.open()
+    table = new_table(conn, "id INTEGER PRIMARY KEY")
+    refused = [
+        "\vCOMMIT",
+        ";COMMIT",
+        "-- a comment\nCOMMIT",
+        # Postgres ends a line comment at a carriage return; SQLite does not.
+        "-- a comment\rCOMMIT",
+        "/* x */ rollback",
+        # Postgres nests block comments, so COMMIT is outside this one.
+        "/* /* */ */ COMMIT",
+        # SQLite ends one at the first */, so COMMIT is outside this one.
+        "/* /* */ COMMIT",
+        # A SELECT on Postgres, a COMMIT on SQLite's reading: refused.
+        "/* /* */ COMMIT */ SELECT 1",
+        "Begin Immediate",
+    ]
+    for sql in refused:
+        _refused(conn, sql)
+        assert not conn.in_transaction, sql
+
+    runs = [
+        "SELECT 'COMMIT'",
+        "WITH c AS (SELECT 'COMMIT' AS x) SELECT x FROM c",
+        "-- COMMIT\nSELECT 1",
+        'SELECT 1 AS "commit"',
+    ]
+    if store.dialect == "postgres":
+        runs += [
+            f"PREPARE seam_{uuid.uuid4().hex[:12]} AS SELECT 1",
+            "DO $$ BEGIN NULL; END $$",
+            "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+        ]
+    else:
+        runs.append(f"CREATE TEMP TRIGGER seam_trigger AFTER INSERT ON {table} BEGIN SELECT 1; END")
+    for sql in runs:
+        conn.execute(sql)
+        assert not conn.in_transaction, sql
+
+    # A word is read whole: COMMITTED is not COMMIT, so the store reads it.
+    with pytest.raises(StoreDatabaseError) as unknown:
+        conn.execute("COMMITTED")
+    assert str(unknown.value) != TRANSACTION_CONTROL
+    assert unknown.value.__cause__ is not None
+
+
+SECOND_STATEMENT = {
+    "postgres": "cannot insert multiple commands into a prepared statement",
+    "sqlite": "You can only execute one statement at a time.",
+}
+
+
+def test_a_second_statement_in_one_call_runs_nothing(store: Store) -> None:
+    conn = store.open()
+    other = store.open()
+    table = new_table(conn, "id INTEGER PRIMARY KEY")
+    insert = f"INSERT INTO {table} (id) VALUES (?)"
+    two = f"INSERT INTO {table} (id) VALUES (1); COMMIT"
+
+    with pytest.raises(StoreDatabaseError) as outside:
+        conn.execute(two)
+    # The store's refusal, not the seam's.
+    assert str(outside.value) == SECOND_STATEMENT[store.dialect]
+    assert outside.value.__cause__ is not None
+    assert not conn.in_transaction
+    assert ids(other, table) == []
+
+    if store.dialect == "postgres":
+        # The server's refusal fails the transaction, as any failure does.
+        with pytest.raises(StoreDatabaseError) as at_exit, conn.transaction():
+            conn.execute(insert, (2,))
+            with pytest.raises(StoreDatabaseError) as inside:
+                conn.execute(two)
+            assert str(inside.value) == SECOND_STATEMENT["postgres"]
+        assert str(at_exit.value) == TRANSACTION_GIVEN_UP
+        assert ids(other, table) == []
+        # One statement still runs with a trailing `;` or comment, and a
+        # BEGIN ATOMIC body is one statement.
+        assert tuple(conn.execute("SELECT 1;").fetchone()) == (1,)
+        assert tuple(conn.execute("SELECT 1; -- done").fetchone()) == (1,)
+        conn.execute(
+            "CREATE FUNCTION pg_temp.seam_atomic() RETURNS integer LANGUAGE sql "
+            "BEGIN ATOMIC SELECT 1; SELECT 2; END"
+        )
+        assert tuple(conn.execute("SELECT pg_temp.seam_atomic()").fetchone()) == (2,)
+        return
+
+    # On SQLite the module's refusal leaves the transaction usable.
+    with conn.transaction():
+        conn.execute(insert, (2,))
+        with pytest.raises(StoreDatabaseError) as inside:
+            conn.execute(two)
+        assert str(inside.value) == SECOND_STATEMENT["sqlite"]
+        conn.execute(insert, (3,))
+    assert ids(other, table) == [2, 3]
