@@ -46,6 +46,7 @@ from harrier.connection import (
     Connection,
     StoreDatabaseError,
     driver_error_text,
+    in_a_hosted_run,
     is_driver_error,
     url_parts,
 )
@@ -233,8 +234,9 @@ SECRET_REDACTION = "REDACTED"
 def _environment_url() -> str:
     """`HARRIER_DATABASE_URL` as `store_target` reads it: the process
     environment, then `.env` in the working directory."""
-    if URL_VARIABLE in os.environ:
-        return os.environ[URL_VARIABLE]
+    if URL_VARIABLE in os.environ or in_a_hosted_run():
+        # A hosted run reads no `.env` (spec 106).
+        return os.environ.get(URL_VARIABLE, "")
     try:
         cwd = os.getcwd()
     except OSError:

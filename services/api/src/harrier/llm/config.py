@@ -2,6 +2,9 @@
 
 Stated change from the old client: no .env reading here. The CLI's
 load_project_env owns environment loading; the domain reads os.environ.
+
+In a hosted run (`HARRIER_RUN_OWNER` set) only the API providers are
+offered, and `auto` resolves among them by which key is set (spec 106).
 """
 
 from __future__ import annotations
@@ -10,6 +13,8 @@ import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+
+from harrier.connection import in_a_hosted_run
 
 DEFAULT_TIMEOUT_SECONDS = 300
 DEFAULT_PROVIDER = "auto"
@@ -34,6 +39,13 @@ PROVIDER_DEBUG_ENV = {
 DEBUG_VARIABLES = (DEBUG_ENV, *PROVIDER_DEBUG_ENV.values())
 
 PROVIDERS = ("codex-cli", "claude-cli", "openai-api", "anthropic-api")
+
+# The providers a hosted run may use, and its refusals (spec 106, Providers
+# in a hosted run). ADR-013 decision 8 makes the CLI providers local only.
+CLI_PROVIDERS = ("codex-cli", "claude-cli")
+HOSTED_PROVIDERS = ("openai-api", "anthropic-api")
+CLI_PROVIDERS_LOCAL_ONLY = "the CLI providers are local only (ADR-013 decision 8)"
+NO_HOSTED_AI_CREDENTIAL = "no AI credential is set for this account"
 
 CODEX_FALLBACK_LOCATIONS = (
     "~/.local/bin/codex",
@@ -135,7 +147,20 @@ def resolve_auto_providers() -> list[str]:
     """Configured providers in fallback order for AI_PROVIDER=auto.
 
     codex-cli is the last resort when nothing is configured, matching the
-    old client."""
+    old client. In a hosted run, only the API providers whose key is set,
+    and no binary is looked for; with neither key, LLMClientError (spec
+    106)."""
+    if in_a_hosted_run():
+        hosted = [
+            name
+            for name, variable in zip(
+                HOSTED_PROVIDERS, ("OPENAI_API_KEY", "ANTHROPIC_API_KEY"), strict=True
+            )
+            if os.getenv(variable, "").strip()
+        ]
+        if not hosted:
+            raise LLMClientError(NO_HOSTED_AI_CREDENTIAL)
+        return hosted
     providers: list[str] = []
     if find_binary("codex", "CODEX_CLI_PATH", CODEX_FALLBACK_LOCATIONS):
         providers.append("codex-cli")
@@ -150,6 +175,8 @@ def resolve_auto_providers() -> list[str]:
 
 def load_config(*, provider: str | None = None, model: str | None = None) -> LLMConfig:
     selected_provider = normalize_provider(provider or os.getenv(PROVIDER_ENV))
+    if in_a_hosted_run() and selected_provider in CLI_PROVIDERS:
+        raise LLMClientError(CLI_PROVIDERS_LOCAL_ONLY)
     if selected_provider == "auto":
         selected_provider = resolve_auto_providers()[0]
     selected_model = (

@@ -50,6 +50,19 @@ if TYPE_CHECKING:
 URL_VARIABLE = "HARRIER_DATABASE_URL"
 POSTGRES_SCHEME = "postgresql"
 
+# The owner a hosted run acts as, set by the API that starts it (spec 106).
+# Its presence is what makes a process a hosted run: no `.env` is read,
+# the store is Postgres, and every transaction runs as that owner.
+RUN_OWNER_VARIABLE = "HARRIER_RUN_OWNER"
+
+
+def in_a_hosted_run(environ: Mapping[str, str] | None = None) -> bool:
+    """Whether this process is a hosted run: `HARRIER_RUN_OWNER` is in its
+    environment, whatever its value (spec 106). Read from the process
+    environment unless `environ` is given."""
+    return RUN_OWNER_VARIABLE in (os.environ if environ is None else environ)
+
+
 # What every command but `harrier store`, and the API, answer while the
 # domain still speaks only SQLite. One text, so the CLI and the API cannot
 # drift apart (spec 103).
@@ -1268,8 +1281,10 @@ def open_store(environ: Mapping[str, str] | None = None, *, owner: str | None = 
     Postgres: `harrier.pgstore.open_postgres_store`, with spec 103's version
     check, which takes no host lease, asks the Docker engine nothing and
     writes nothing under `data/` (ADR-011 concerns the SQLite file). With
-    `owner`, every transaction acts as that owner. Both refusals of an owner
-    come before anything opens.
+    `owner`, every transaction acts as that owner, the version check's
+    included, so a login role with no grant of its own, a hosted run's,
+    opens it (spec 106). Both refusals of an owner come before anything
+    opens.
     """
     target = store_target(environ)
     if not target.is_postgres:
@@ -1278,10 +1293,38 @@ def open_store(environ: Mapping[str, str] | None = None, *, owner: str | None = 
         from harrier.db import connect
 
         return connect()
-    claims = owner_claims(owner) if owner is not None else None
-    from harrier.pgstore import open_postgres_store
+    if owner is None:
+        from harrier.pgstore import open_postgres_store
 
-    return Connection.postgres(open_postgres_store(target.url), claims=claims)
+        return Connection.postgres(open_postgres_store(target.url))
+    return _open_owner_store(target.url, owner_claims(owner))
+
+
+def _open_owner_store(url: str, claims: Mapping[str, object]) -> Connection:
+    """The store as `claims`' owner, its version read inside an owner
+    transaction (spec 106). A hosted run's login role holds no grant of its
+    own, so the version is read as `harrier_tenant`, which may read
+    `schema_version` (spec 105), the way the hosted API's start check reads
+    it (spec 134)."""
+    from harrier.pgstore import check_no_skipped_versions, check_postgres_version, postgres_connect
+
+    conn = Connection.postgres(postgres_connect(url), claims=claims)
+    try:
+        with conn.transaction():
+            found = conn.execute(
+                "SELECT to_regclass('public.schema_version') IS NOT NULL"
+            ).fetchone()
+            versions: set[int] = set()
+            if found is not None and found[0]:
+                versions = {
+                    int(row[0]) for row in conn.execute("SELECT version FROM public.schema_version")
+                }
+            check_postgres_version(max(versions, default=0))
+            check_no_skipped_versions(versions)
+    except BaseException:
+        conn.close()
+        raise
+    return conn
 
 
 @dataclass(frozen=True)
@@ -1330,14 +1373,17 @@ def store_target(environ: Mapping[str, str] | None = None) -> StoreTarget:
     """The store `HARRIER_DATABASE_URL` names. Raises StoreUrlError.
 
     Read from the process environment and, when it is not set there, from
-    `.env` in the working directory, the CLI's rule (spec 011). The CLI loads
+    `.env` in the working directory, the CLI's rule (spec 011), except in a
+    hosted run, which reads no `.env` (spec 106). The CLI loads
     `.env` and the API does not, so without this a URL set only in `.env`
     made the CLI refuse while the API served SQLite (review of PR #207).
     An exported value, even an empty one, wins over the file.
     """
     if environ is None:
-        if URL_VARIABLE in os.environ:
-            raw = os.environ[URL_VARIABLE]
+        if URL_VARIABLE in os.environ or in_a_hosted_run():
+            # A hosted run reads no `.env`, so a file in its working
+            # directory cannot name its store (spec 106).
+            raw = os.environ.get(URL_VARIABLE, "")
         else:
             from harrier.envfile import read_env_file
 
