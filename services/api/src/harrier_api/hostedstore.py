@@ -23,14 +23,16 @@ returned without raising would commit and a failed commit would follow a
 
 from __future__ import annotations
 
+import functools
 import logging
-from collections.abc import Iterator, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import AbstractContextManager, suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
+import anyio
+import anyio.to_thread
 from fastapi import HTTPException, Request
-from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -271,10 +273,12 @@ class RequestTransaction:
         return conn
 
     def end(self, *, commit: bool) -> bool:
-        """Commit or roll back, and refuse the `Connection` every later
-        statement. False when a commit was asked for and the store did not
-        keep the work: the commit raised, or a statement had failed in the
-        transaction, where `COMMIT` rolls back without an error."""
+        """Commit or roll back, refuse the `Connection` every later
+        statement, and return the connection to the pool, so a body still
+        being sent holds none. False when a commit was asked for and the
+        store did not keep the work: the commit raised, or a statement had
+        failed in the transaction, where `COMMIT` rolls back without an
+        error."""
         block, lease = self.block, self.lease
         if block is None or lease is None:
             return True
@@ -290,16 +294,20 @@ class RequestTransaction:
             return not commit
         finally:
             lease.end()
+            self._release()
 
     def finish(self) -> None:
         """Roll back whatever is still open, and return the connection."""
         try:
             self.end(commit=False)
         finally:
-            driver, pool = self.driver, self.pool
-            self.driver = None
-            if driver is not None and pool is not None:
-                pool.release(driver)
+            self._release()
+
+    def _release(self) -> None:
+        driver, pool = self.driver, self.pool
+        self.driver = None
+        if driver is not None and pool is not None:
+            pool.release(driver)
 
 
 def _shown(path: str) -> str:
@@ -308,13 +316,19 @@ def _shown(path: str) -> str:
     return path.encode("unicode_escape").decode("ascii")
 
 
-def hosted_conn(request: Request) -> Iterator[Connection]:
+async def hosted_conn(request: Request) -> AsyncIterator[Connection]:
     """`get_conn` on the hosted app (spec 134, The request transaction).
 
     Refuses with 500, and takes nothing from the pool, when the request
     carries no verified claims or did not pass the transaction middleware.
     Answers 500 with the generic detail when the read-back differs, and
     logs which value differed with the method and path, nothing else.
+
+    The lease and the transaction's start run on a thread outside the shared
+    limit (`_on_its_own_thread`): a request waiting for a connection would
+    otherwise hold one of the shared worker threads, and the request that
+    holds the connection needs one to answer and give it back (data
+    integrity review of PR #301).
     """
     state = cast(dict[str, Any], request.scope.get("state") or {})
     claims = state.get("claims")
@@ -330,7 +344,9 @@ def hosted_conn(request: Request) -> Iterator[Connection]:
         raise HTTPException(status_code=500, detail=COULD_NOT_RUN_AS_USER)
     conn: Connection | None = None
     try:
-        conn = transaction.begin(store.pool, cast(dict[str, object], claims))
+        conn = await _on_its_own_thread(
+            functools.partial(transaction.begin, store.pool, cast(dict[str, object], claims))
+        )
     except IdentityDidNotHold as error:
         logger.warning(
             "%s %s could not run as its user: %s differed", method, path, ", ".join(error.differed)
@@ -372,7 +388,7 @@ class RequestTransactionMiddleware:
                 return
             if message["type"] == "http.response.start" and transaction.is_open:
                 commit = int(message["status"]) < 400
-                if not await run_in_threadpool(transaction.end, commit=commit):
+                if not await _on_its_own_thread(functools.partial(transaction.end, commit=commit)):
                     replaced = True
                     logger.warning(
                         "%s %s: the store did not keep the request's work",
@@ -389,4 +405,13 @@ class RequestTransactionMiddleware:
         try:
             await self.app(scope, receive, ending)
         finally:
-            await run_in_threadpool(transaction.finish)
+            await _on_its_own_thread(transaction.finish)
+
+
+async def _on_its_own_thread[T](call: Callable[[], T]) -> T:
+    """Run a step of the request transaction, its lease and start or its
+    end, on a worker thread outside the shared limit, so waiting for a
+    connection never holds a thread a route needs (data integrity review
+    of PR #301). Ends are as many as the open transactions, at most
+    `POOL_MAX_SIZE`; waits for a lease last at most `POOL_WAIT_SECONDS`."""
+    return await anyio.to_thread.run_sync(call, limiter=anyio.CapacityLimiter(1))

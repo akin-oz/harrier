@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from anyio import to_thread
 from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -310,7 +311,19 @@ def add_probe_routes(app: FastAPI) -> Probes:
     app.add_api_route("/probe/idle", idle, methods=["GET"])
     app.add_api_route("/probe/track", track, methods=["POST"])
     app.add_api_route("/probe/together", together, methods=["GET"])
+
+    def slow_body(conn: Conn, seconds: float) -> StreamingResponse:
+        conn.execute("SELECT 1")
+
+        def body() -> Iterator[bytes]:
+            # After the headers, so after the transaction ended.
+            time.sleep(seconds)
+            yield b"done"
+
+        return StreamingResponse(body(), media_type="text/plain")
+
     app.add_api_route("/probe/stream", stream, methods=["GET"])
+    app.add_api_route("/probe/slow-body", slow_body, methods=["GET"])
     return probes
 
 
@@ -624,6 +637,79 @@ def test_an_exhausted_pool_answers_500(server: Server, monkeypatch: pytest.Monke
         assert hosted.probes.entered == []
         # Once the connection is free again, the next request is served.
         assert hosted.client().get("/probe/identity", headers=headers).status_code == 200
+
+
+def test_the_connection_returns_before_the_body_is_sent(
+    server: Server, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A slow body, a download to a slow client, holds no connection: it
+    goes back to the pool when the transaction ends (data integrity review
+    of this change)."""
+    create_probes(server)
+    one_connection(monkeypatch)
+    with serving(monkeypatch, server.login_role().url) as hosted:
+        headers = hosted.headers(server.owner())
+
+        def download() -> None:
+            hosted.client().get("/probe/slow-body", params={"seconds": 3}, headers=headers)
+
+        slow = threading.Thread(target=download)
+        slow.start()
+        time.sleep(0.5)
+        started = time.monotonic()
+        response = hosted.client().get("/probe/identity", headers=headers)
+        waited = time.monotonic() - started
+        slow.join(timeout=30)
+    assert response.status_code == 200, response.text
+    # Not the rest of the three-second body.
+    assert waited < 2.0
+
+
+def test_a_request_ends_while_others_wait_for_a_connection(
+    server: Server, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Requests waiting for a connection hold worker threads; the request
+    that holds the connection still ends at once, on a thread of its own,
+    rather than when a waiter gives up (data integrity review of this
+    change)."""
+    create_probes(server)
+    one_connection(monkeypatch)
+    monkeypatch.setattr(hostedstore, "POOL_WAIT_SECONDS", 4.0)
+    answers: dict[str, tuple[int, float]] = {}
+    with (
+        serving(monkeypatch, server.login_role().url) as hosted,
+        hosted.client(raise_server_exceptions=False) as client,
+    ):
+        headers = hosted.headers(server.owner())
+        portal = client.portal
+        assert portal is not None
+
+        def three_threads() -> None:
+            to_thread.current_default_thread_limiter().total_tokens = 3
+
+        # One event loop for every request below, with three worker threads.
+        portal.call(three_threads)
+
+        def ask(name: str, path: str, params: dict[str, Any]) -> None:
+            started = time.monotonic()
+            response = client.get(path, params=params, headers=headers)
+            answers[name] = (response.status_code, time.monotonic() - started)
+
+        holder = threading.Thread(target=ask, args=("holder", "/probe/idle", {"seconds": 0.5}))
+        holder.start()
+        time.sleep(0.2)
+        waiters = [
+            threading.Thread(target=ask, args=(f"waiter {n}", "/probe/identity", {}))
+            for n in range(3)
+        ]
+        for thread in [*waiters, holder]:
+            if thread is not holder:
+                thread.start()
+        for thread in [holder, *waiters]:
+            thread.join(timeout=30)
+    assert sorted(answers) == ["holder", "waiter 0", "waiter 1", "waiter 2"], answers
+    assert {status for status, _ in answers.values()} == {200}, answers
+    assert answers["holder"][1] < 2.5, answers
 
 
 def test_a_refused_token_takes_nothing_from_the_pool(server: Server, hosted: Hosted) -> None:

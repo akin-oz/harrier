@@ -1596,7 +1596,7 @@ def create_hosted_app(
     run_manager: RunManager | None = None,
     fetch_keys: KeyFetcher | None = None,
     clock: Clock = time.time,
-    database_url: str | None = None,
+    database_url: str | None,
 ) -> FastAPI:
     """The hosted app: the same routes behind the token, the configured
     hosts and the configured origins (spec 104), each request running as
@@ -1606,10 +1606,12 @@ def create_hosted_app(
     runs the start checks (`open_request_store`), which raise to refuse the
     start; then `get_conn` is the request transaction, ended by
     `RequestTransactionMiddleware` inside the token check. `create_app`
-    always passes it. Without it, which only spec 104's and spec 132's
-    tests do, routes open the local SQLite store as the local app does and
-    no Postgres store is reached; the tests inject the key fetcher, and
-    none reaches the network.
+    always passes it. `None`, which only spec 104's and spec 132's tests
+    pass, leaves routes on the local SQLite store as the local app does,
+    with no request transaction and no row policy; it has no default, so a
+    caller cannot get that app by leaving the URL out (data integrity
+    review of PR #301). The tests inject the key fetcher, and none reaches
+    the network.
 
     It refuses unless the process environment says hosted too: the run
     manager reads hosted mode from there, so an app built hosted in a local

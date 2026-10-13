@@ -685,12 +685,18 @@ times are not known yet.
   refusals read.
 - **A login role, isolation or unreachable store** raises
   `HostedStartRefused` (`services/api/src/harrier_api/hostedstore.py`).
-  The login role's text lists every problem and never the login role's own
-  name, which is part of the URL. A store the pool cannot connect to, for
+  The login role's text lists every problem, and names the roles a
+  membership reaches, not the login role itself. A store the pool cannot connect to, for
   any reason, reads `the hosted API cannot run its start checks: it could
   not connect to the store`, with nothing chained
   (`services/api/tests/test_hosted_start.py::test_an_unreachable_store_refuses_the_start`).
-  A check statement the store refuses names the check.
+  A check statement the store refuses names the check and the store's
+  primary message, with nothing chained
+  (`services/api/tests/test_hosted_start.py::test_a_check_the_store_refuses_names_the_check`).
+  The pool's own warning for a connection it cannot make goes to the log
+  with the driver's text: the host, the port and, for a refused password,
+  the user, as spec 103's connection errors print them; the password is
+  masked by spec 133's scrub.
 - **The store version** raises `StoreVersionError` with
   `check_postgres_version`'s text, unwrapped.
 
@@ -756,6 +762,27 @@ discard is proved by
 `services/api/tests/test_hosted_requests.py::test_a_connection_left_in_a_transaction_is_not_reused`.
 The full list, each with its result, is in the pull request.
 
+### From the local reviews of PR #301
+
+- **The connection goes back when the transaction ends,** not when the
+  body has been sent, so a download to a slow client holds no connection
+  (data integrity review;
+  `services/api/tests/test_hosted_requests.py::test_the_connection_returns_before_the_body_is_sent`).
+- **Waiting for a connection holds no shared worker thread.** The hosted
+  `get_conn` is asynchronous, and the lease, the transaction's start and
+  its end run on threads outside the limit FastAPI's routes share.
+  Requests waiting for a connection held those threads, so the request
+  that held the connection could not answer and give it back until a
+  waiter gave up (data integrity review;
+  `services/api/tests/test_hosted_requests.py::test_a_request_ends_while_others_wait_for_a_connection`).
+- **`create_hosted_app`'s `database_url` has no default.** `None`, which
+  only spec 104's and spec 132's tests pass, leaves routes on the local
+  SQLite store with no request transaction; a caller cannot get that app
+  by leaving the URL out (data integrity review).
+- **A check statement the store refuses** is covered by its own test
+  (privacy review), and the pool's own connection warnings are described
+  under How a refusal reads.
+
 ### Honest limitations (as built)
 
 - **The pool discards a broken connection when it comes back, not before
@@ -763,6 +790,15 @@ The full list, each with its result, is in the pull request.
   pool fails the next request that takes it, with 500, and is then
   discarded. Checking each connection on the way out costs a round trip
   per request and is not done.
+- **The idle timeout is not a deadline on a route's own waits.** The 96
+  seconds `POST /capture/add` can spend fetching a posting is three
+  attempts of a 30 second timeout, and that timeout bounds each read from
+  the socket, not the whole fetch. A server that answers slowly enough
+  keeps the transaction idle past 120 seconds; the server then ends the
+  connection and the request answers 500, keeping nothing. While it
+  fetches, each capture holds a connection, so as many concurrent
+  captures as the pool holds take every connection for that long (data
+  integrity review).
 - **The probe routes the tests add are the tests' own.** Every criterion
   that reads the transaction from inside a request does so through a route
   added to the built app in the test, which declares `Conn` as every route

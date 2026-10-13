@@ -190,7 +190,7 @@ def build(
     # The process is hosted as the app is: `create_hosted_app` refuses
     # otherwise (spec 132).
     monkeypatch.setenv("HARRIER_AUTH", "supabase")
-    app = create_hosted_app(config, fetch_keys=server, clock=clock)
+    app = create_hosted_app(config, fetch_keys=server, clock=clock, database_url=None)
     entered: list[dict[str, Any]] = []
 
     def spy(request: Request) -> Iterator[Connection]:
@@ -791,7 +791,7 @@ def test_the_key_set_is_fetched_from_the_project(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr(urllib.request, "urlopen", urlopen)
     monkeypatch.setenv("HARRIER_AUTH", "supabase")
-    client = TestClient(create_hosted_app(config), base_url=f"http://{API_HOST}")
+    client = TestClient(create_hosted_app(config, database_url=None), base_url=f"http://{API_HOST}")
     response = client.get("/runs", headers=bearer(mint(key, claims_for())))
     assert response.status_code == 200, response.text
     assert [url for url, _ in opened] == [config.jwks_url]

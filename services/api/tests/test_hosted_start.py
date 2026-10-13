@@ -65,6 +65,7 @@ from harrier_api.hostedauth import POSTGRES_NEEDS_HOSTED_REFUSAL
 from harrier_api.hostedstore import (
     START_UNREACHABLE,
     HostedStartRefused,
+    check_failed,
     isolation_refusal,
     login_role_refusal,
 )
@@ -294,6 +295,21 @@ def test_a_store_defaulting_to_another_isolation_is_refused(
     server.sql(f"ALTER ROLE {login.name} SET default_transaction_isolation = 'repeatable read'")
     refused = refused_start(server, monkeypatch, login)
     assert str(refused) == isolation_refusal("repeatable read")
+
+
+def test_a_check_the_store_refuses_names_the_check(
+    server: Server, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A check statement the store refuses is a refusal naming the check,
+    with the store's primary message and nothing chained (privacy review
+    of this change)."""
+    login = server.login_role()
+    server.migrator(f"REVOKE SELECT ON schema_version FROM {TENANT_ROLE}")
+    refused = refused_start(server, monkeypatch, login)
+    assert str(refused) == check_failed(
+        "store version", "permission denied for table schema_version"
+    )
+    assert refused.__cause__ is None and refused.__context__ is None
 
 
 # --- the store version, once ---
