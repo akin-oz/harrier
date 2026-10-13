@@ -44,6 +44,23 @@ ACADEMIC_SEARCHES = "academic_searches"
 
 KINDS = (FEEDS, LINKEDIN_SEARCHES, DISCOVERY, COMPANY_HOLDS, ACADEMIC_SEARCHES)
 
+# The owner's choice of scheduled jobs and timezone (spec 108). A kind only
+# on the hosted store: locally launchd keeps the schedule, so on SQLite it
+# stays an unknown kind. Store only, with no file fallback (ADR-009,
+# decision 2). harrier.tracker.schema's harrier_schedule_inputs() reads
+# this kind by the same name.
+SCHEDULE = "schedule"
+HOSTED_KINDS = (SCHEDULE,)
+SCHEDULE_FIELDS = ("jobs", "timezone")
+
+
+def kinds_for(conn: Connection) -> tuple[str, ...]:
+    """The kinds `conn`'s store holds: every kind, and on Postgres the
+    hosted ones too (spec 108)."""
+    if conn.dialect == "postgres":
+        return (*KINDS, *HOSTED_KINDS)
+    return KINDS
+
 
 class ConfigError(ValueError):
     """A configuration value is not the shape its kind requires."""
@@ -123,18 +140,79 @@ def _validate_holds(items: list[object]) -> list[HoldEntry]:
     return entries
 
 
-def _validate(kind: str, value: object, *, on_read: bool = False) -> object:
+def _validate_schedule(value: object) -> dict[str, object]:
+    """The `schedule` kind (spec 108): an object with exactly `timezone`, a
+    zone `zoneinfo` loads, and `jobs`, distinct hosted job names. Empty
+    `jobs` pauses the owner's schedule. Each refusal names the field and
+    quotes nothing the owner wrote, not even an unknown field's name, and
+    chains no exception that holds a value, so the scheduler may log a
+    refusal as it is, traceback included."""
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    # Imported here, as the academic search module is: the hosted job set
+    # sits beside the scheduler, above this store.
+    from harrier.hostedschedule import HOSTED_JOBS
+
+    if not isinstance(value, dict):
+        raise ConfigError(f"{SCHEDULE} must be a JSON object, got {type(value).__name__}")
+    fields = cast("dict[object, object]", value)
+    unknown = sum(1 for key in fields if key not in SCHEDULE_FIELDS)
+    if unknown:
+        # Counted, never named: a key is text the owner wrote.
+        raise ConfigError(
+            f"{SCHEDULE} has {unknown} unknown field{'s' if unknown > 1 else ''}; "
+            f"expected only {list(SCHEDULE_FIELDS)}"
+        )
+    for name in SCHEDULE_FIELDS:
+        if name not in fields:
+            raise ConfigError(f"{SCHEDULE}.{name} is required")
+    timezone = fields["timezone"]
+    loads = isinstance(timezone, str)
+    if loads:
+        try:
+            ZoneInfo(cast("str", timezone))
+        except (ZoneInfoNotFoundError, ValueError, OSError):
+            # OSError: a key that names a directory of the tz database.
+            loads = False
+    if not loads:
+        # Raised outside the except block, so neither __cause__ nor
+        # __context__ carries zoneinfo's error, whose text holds the value.
+        raise ConfigError(f"{SCHEDULE}.timezone is not a zone this server can load")
+    jobs = fields["jobs"]
+    if not isinstance(jobs, list):
+        raise ConfigError(f"{SCHEDULE}.jobs must be a JSON list, got {type(jobs).__name__}")
+    chosen: list[str] = []
+    for job in cast("list[object]", jobs):
+        if not isinstance(job, str) or job not in HOSTED_JOBS:
+            raise ConfigError(
+                f"{SCHEDULE}.jobs has an entry that is not a hosted job; "
+                f"expected entries from {list(HOSTED_JOBS)}"
+            )
+        if job in chosen:
+            raise ConfigError(f"{SCHEDULE}.jobs repeats an entry")
+        chosen.append(job)
+    return {"timezone": timezone, "jobs": chosen}
+
+
+def _validate(
+    kind: str, value: object, *, on_read: bool = False, kinds: tuple[str, ...] = KINDS
+) -> object:
     """Reject a value that its readers would later mishandle, and normalize
     what survives. Used on both the write and the read path: a bad value
     stored once would otherwise surface as a confusing failure inside
     discovery, far from whoever set it, and a row can appear without going
     through set_config at all.
 
+    `kinds` is what the store holds (`kinds_for`), so a hosted kind is an
+    unknown kind on SQLite.
+
     Normalization (trimming, dropping blanks) is idempotent, so applying it
     twice on a value that was written through set_config changes nothing.
     """
-    if kind not in KINDS:
-        raise ConfigError(f"unknown configuration kind {kind!r}; expected one of {KINDS}")
+    if kind not in kinds:
+        raise ConfigError(f"unknown configuration kind {kind!r}; expected one of {kinds}")
+    if kind == SCHEDULE:
+        return _validate_schedule(value)
     if kind == ACADEMIC_SEARCHES:
         # Imported here: the search module reads the source's constants and
         # the slug rule, and this store sits below both.
@@ -172,7 +250,7 @@ def _validate(kind: str, value: object, *, on_read: bool = False) -> object:
 
 
 def set_config(conn: Connection, kind: str, value: object) -> None:
-    stored = _validate(kind, value)
+    stored = _validate(kind, value, kinds=kinds_for(conn))
     text = json.dumps(stored, ensure_ascii=False)
     now = store_now()
     update_or_insert(
@@ -202,7 +280,7 @@ def get_config(conn: Connection, kind: str) -> object | None:
     # database, a restored backup, or a future migration can all put a bad
     # value here, and the read path was coercing rather than refusing, so
     # a stored [7] reached discovery as ["7"] (review finding on PR #20).
-    return _validate(kind, parsed, on_read=True)
+    return _validate(kind, parsed, on_read=True, kinds=kinds_for(conn))
 
 
 def delete_config(conn: Connection, kind: str) -> bool:

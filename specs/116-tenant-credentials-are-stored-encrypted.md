@@ -43,22 +43,23 @@ Line numbers are from `main` at `44ac0d7` (2026-10-10), except the
 
 ## Scope
 
-1. **A new Postgres-only migration (its version is the next free one
-   when implemented).** `POSTGRES_MIGRATIONS` in
+1. **A new Postgres-only migration, version 18 (Amendment
+   (2026-10-13)).** `POSTGRES_MIGRATIONS` in
    `services/api/src/harrier/tracker/schema.py` gains it, with the
    `credentials` table, its policy and its grants (Behavior). `MIGRATIONS`
    gains the same version with no statements, declared Postgres only in
-   `SINGLE_DIALECT_MIGRATIONS` (`schema.py:750`) with its reason.
-   `OWNED_TABLES` (`schema.py:703`) gains `credentials`. Migration 10
+   `SINGLE_DIALECT_MIGRATIONS` (`schema.py:762`) with its reason.
+   `OWNED_TABLES` (`schema.py:707`) gains `credentials`. Migration 10
    reads its own frozen list, `MIGRATION_10_OWNED_TABLES`
-   (`schema.py:691-699`), not `OWNED_TABLES`, so its statements do not
+   (`schema.py:694-702`), not `OWNED_TABLES`, so its statements do not
    change. (Spec 122 added that list with migration 15; noted 2026-10-11.
    This text said spec 116 or spec 108, whichever landed first, would add
    it.) A guarded path, approved under this spec.
 2. **A declared hosted-only table.** `schema.py` gains
    `HOSTED_ONLY_TABLES: dict[str, str]`, table to reason. The parity test
-   (`services/api/tests/test_dialect_parity.py:642` compares the two
-   stores' table sets) removes declared tables from the Postgres side and
+   (`structural_problems` in `services/api/tests/test_dialect_parity.py`
+   compares the two stores' table sets) removes declared tables from the
+   Postgres side and
    fails when a declared table is missing from Postgres or present in
    SQLite. Spec 108 declares `schedule_state` the same way; whichever spec
    lands first adds the declaration.
@@ -113,7 +114,11 @@ Gmail follow-on of spec 109 adds it; the `CHECK` below refuses it.
 Each field is stripped of surrounding whitespace. A field is refused when
 it is empty (except `model`), longer than 4096 bytes in UTF-8, or holds a
 control character, NUL or newline included, because the value becomes an
-environment variable. 4096 is a chosen bound, not a measured one.
+environment variable. 4096 is a chosen bound, not a measured one. A field
+holding a lone surrogate, text UTF-8 cannot encode, is refused as `must be
+text that UTF-8 can encode` (Amendment (2026-10-13, local review of PR
+#310)). A field the kind does not take is refused under the name `fields`,
+`may only be <the kind's fields>`, and its own name is not repeated.
 
 ### Storage
 
@@ -121,7 +126,7 @@ The new migration, Postgres only:
 
 ```sql
 CREATE TABLE credentials (
-    owner_id uuid NOT NULL DEFAULT auth.uid() REFERENCES auth.users (id),
+    owner_id uuid NOT NULL DEFAULT public.harrier_owner_id() REFERENCES auth.users (id),
     kind text NOT NULL CHECK (kind IN ('ai', 'apify', 'hunter', 'telegram')),
     key_id text NOT NULL,
     nonce bytea NOT NULL,
@@ -131,8 +136,11 @@ CREATE TABLE credentials (
 );
 ```
 
-It gets spec 105's shape whole: row security enabled and forced, the one
-`owner_only` policy `FOR ALL TO harrier_tenant`, `REVOKE ALL` from
+It gets spec 105's shape whole, as migration 16 left it: `owner_id`
+defaults to `public.harrier_owner_id()`, never `auth.uid()` (Amendment
+(2026-10-13)), row security enabled and forced, the one
+`owner_only` policy `FOR ALL TO harrier_tenant`, comparing `owner_id`
+with `harrier_owner_id()`, `REVOKE ALL` from
 `PUBLIC`, `anon`, `authenticated` and `service_role`, and `GRANT SELECT,
 INSERT, UPDATE, DELETE` to `harrier_tenant`. The primary key leads with
 `owner_id`, which is the owner index the catalog test asks for.
@@ -177,18 +185,34 @@ not of that form, or does not decode to 32 bytes, naming the variable and
 never its value: `error: HARRIER_CREDENTIALS_KEY must be <key id>:<base64
 of 32 bytes>`, exit 1. Locally it is ignored.
 
+The form, as built (Amendment (2026-10-13)): the key id is 1 to 64
+characters of letters, digits, `.`, `_` and `-`, starting with a letter or
+digit, because it is stored on each row and may be logged (spec 106); the
+part after the first `:` is standard base64 with its padding, read
+strictly, and decodes to exactly 32 bytes. Nothing around the value is
+stripped. The key's text form, in `repr` and `str`, names the key id only.
+
 ### Routes
 
 Hosted, under spec 104's bearer token and request transaction:
 
 | Route | Body | Answer |
 |---|---|---|
-| `GET /credentials` | none | 200 `CredentialsOut`: one item per kind in the table above, `{kind, set, updated_at}`; `updated_at` null when unset |
+| `GET /credentials` | none | 200 `CredentialsOut` `{credentials: [...]}`: one item per kind in the table above, in its order, `{kind, set, updated_at}`; `updated_at` null when unset |
 | `PUT /credentials/{kind}` | `AiCredentialIn`, `ApifyCredentialIn` or `HunterCredentialIn` by kind | 200 `CredentialStatusOut` `{kind, set: true, updated_at}` |
 | `DELETE /credentials/{kind}` | none | 200 `CredentialStatusOut` with `set: false`; also when nothing was stored |
 
 `PUT /credentials/telegram` answers 404: spec 109's route writes that
 kind, after it has checked the bot. An unknown kind answers 404.
+
+In the contract the `PUT` is three routes, `PUT /credentials/ai`,
+`/apify` and `/hunter`, each with its own body, so the generated client
+names each body. A fourth, `PUT /credentials/{kind}`, takes no body,
+opens nothing, and answers 404 for every other kind: `the telegram
+credential is set by its own route (spec 109)` for `telegram`, `no
+credential kind has that name` otherwise. Without it a `PUT` to a path
+that only `DELETE /credentials/{kind}` matches would answer 405. Its
+declared status is 404 alone (Amendment (2026-10-13)).
 
 No answer, error detail or log record carries a submitted value. FastAPI's
 default 422 body echoes the submitted input; on these routes the 422 body
@@ -222,6 +246,12 @@ Only the API process decrypts, at run start (spec 106)."
 - **Another owner's credential.** Unreachable by policy: reads see zero
   rows, writes store the session's owner only (spec 105).
 - **A credentials route on the local API.** 404 with the local text.
+- **A store that passed a declared migration without applying it.** A
+  Postgres migration with statements, numbered below the store's highest
+  recorded version and not recorded itself, is never applied by the
+  runner. `harrier store migrate`, the store's opener and the hosted start
+  refuse such a store naming the version, and nothing is applied out of
+  order (Amendment (2026-10-13, local review of PR #310)).
 - **The migration on a store without spec 105's auth objects.** Refused as
   migration 10 is; the store stays at its previous version.
 - **A credentials table on SQLite, or a declared table missing on
@@ -236,44 +266,57 @@ Only the API process decrypts, at run start (spec 106)."
       (`services/api/tests/test_postgres_store.py::test_every_new_migration_declares_both_dialects`
       passes); `OWNED_TABLES` holds `credentials`.
 - [ ] Migration 10's statements are identical before and after this
-      change, compared as text (spec 108's planned
-      test_migration_10_statements_do_not_change, added by whichever of
-      the two specs lands first).
+      change, compared as text
+      (`services/api/tests/test_owner_policy.py::test_migration_10_statements_do_not_change`,
+      added by spec 108's store change; this spec extends it to
+      `credentials`).
 - [ ] `services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared`
       passes with `credentials` included, and fails when the policy is
       dropped from it (recorded in the pull request).
 - [ ] The parity test passes with `HOSTED_ONLY_TABLES`, and fails when the
       declaration names a table absent from Postgres or one present in
-      SQLite (planned test_a_hosted_only_table_is_declared_for_parity).
-- [ ] A fresh SQLite store has no `credentials` table.
+      SQLite
+      (`services/api/tests/test_dialect_parity.py::test_a_hosted_only_table_is_declared_for_parity`).
+- [ ] A fresh SQLite store has no `credentials` table
+      (`services/api/tests/test_credentials.py::test_a_fresh_sqlite_store_has_no_credentials_table`).
 - [ ] Owner A's credential round-trips for A; as B, A's row is not read
-      and A's kind reads unset (planned
-      test_a_credential_round_trips_for_its_owner_only).
+      and A's kind reads unset
+      (`services/api/tests/test_credentials.py::test_a_credential_round_trips_for_its_owner_only`).
 - [ ] A ciphertext copied into another owner's row, or under another
-      kind, raises the cannot-be-read error (planned
-      test_a_ciphertext_moved_to_another_owner_or_kind_does_not_decrypt).
+      kind, raises the cannot-be-read error
+      (`services/api/tests/test_credentials.py::test_a_ciphertext_moved_to_another_owner_or_kind_does_not_decrypt`).
 - [ ] After a write, no column of `credentials` contains the submitted
-      value or its base64 (planned
-      test_the_database_never_holds_a_credential_in_plain_text).
+      value or its base64
+      (`services/api/tests/test_credentials.py::test_the_database_never_holds_a_credential_in_plain_text`).
 - [ ] The `telegram` kind declares both `bot_token` and `chat_id` as
       secret fields, and after a write no column of `credentials` holds
-      either value (decision D7; planned
-      test_the_telegram_chat_id_is_a_secret_field).
+      either value (decision D7;
+      `services/api/tests/test_credentials.py::test_the_telegram_chat_id_is_a_secret_field`).
 - [ ] `GET`, `PUT` and `DELETE /credentials` answer as the routes table,
       no body carries a value, and `GET` never selects `ciphertext`
-      (planned test_credential_routes_never_return_a_value).
+      (`services/api/tests/test_credentials.py::test_credential_routes_never_return_a_value`).
 - [ ] A 422 on a credentials route, and every log record captured during
-      the credentials tests, contain no submitted value (planned
-      test_a_refused_credential_body_does_not_echo_the_value).
+      the credentials tests, contain no submitted value
+      (`services/api/tests/test_credentials.py::test_a_refused_credential_body_does_not_echo_the_value`).
 - [ ] `PUT /credentials/telegram`, `PUT /credentials/gmail` and an unknown
-      kind answer 404 (planned test_only_the_declared_kinds_are_set_here).
+      kind answer 404
+      (`services/api/tests/test_credentials.py::test_only_the_declared_kinds_are_set_here`).
 - [ ] Locally every credentials route answers 404 with the local text
-      (planned test_credential_routes_are_not_served_locally).
+      (`services/api/tests/test_credentials.py::test_credential_routes_are_not_served_locally`).
 - [ ] Hosted start without `HARRIER_CREDENTIALS_KEY`, or with a malformed
-      one, exits 1 naming it and printing no value (planned
-      test_hosted_start_needs_a_well_formed_credentials_key).
+      one, exits 1 naming it and printing no value
+      (`services/api/tests/test_credentials.py::test_hosted_start_needs_a_well_formed_credentials_key`).
 - [ ] `services/api/src/harrier/credentials.py` reads no environment
       variable (`grep -n environ` and `grep -n getenv` find nothing).
+- [ ] The field rule refuses each case in the domain, with no request
+      model in front of it, quotes no value and no unknown field name, and
+      writes no row
+      (`services/api/tests/test_credentials.py::test_a_refused_credential_writes_nothing_and_quotes_nothing`).
+- [ ] A Postgres store that passed a declared migration without applying
+      it is refused by `harrier store migrate`, the store's opener and the
+      hosted start, naming the version; a version declared with no
+      statements is not counted
+      (`services/api/tests/test_credentials.py::test_a_store_that_skipped_a_declared_migration_is_refused`).
 - [ ] `just contract` leaves no diff after the regenerated files are
       committed.
 - [ ] ADR-013 decision 8 carries the "Amended (spec 116)" note under
@@ -298,8 +341,9 @@ Only the API process decrypts, at run start (spec 106)."
   found by the first run that uses it. Spec 109 checks Telegram's.
 - **One AI credential per owner.** An owner with both providers' keys
   chooses one.
-- **The migration's version is not fixed here.** It is the next free
-  version when implemented.
+- **The migration's version is 18, not 17.** Spec 108's branch holds 17
+  (Amendment (2026-10-13)). Spec 108 merged first (PR #309), so 18 applies
+  after 17 and the numbering has no gap.
 - The line numbers cited here are refreshed by the change that implements
   this spec, not before (decision D9, 2026-10-11).
 
@@ -424,3 +468,115 @@ they stand as written.
 - Key rotation and re-encryption.
 - Checking a credential against its vendor when it is set.
 - The Fly secret's provisioning: spec 110.
+
+## Amendment (2026-10-13): what the implementation found
+
+Written in the change that builds this spec. Each point is a place where
+the text above was wrong or silent; the text above now says what was
+built, and this section says why.
+
+1. **The owner is `harrier_owner_id()`, not `auth.uid()`.** The SQL above
+   said `DEFAULT auth.uid()`, written before migration 16. Since then
+   every owned table's `owner_id` defaults to `public.harrier_owner_id()`
+   and its policy compares with it, the tenant role holds nothing in
+   schema `auth`, and the catalog test fails on anything in `public` that
+   reaches `auth.uid()` (spec 105, amendment of 2026-10-11). The table is
+   built that way
+   (`services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared`).
+2. **The version is 18.** `main` stood at 16, and spec 108's branch
+   (`feat-108-scheduler`) holds 17 for `schedule_state`. The runners apply
+   only versions above a store's own, so a store migrated to 18 before 17
+   exists would never apply 17. No hosted store serves yet (spec 110).
+   Spec 108 merged first (PR #309). The amendment below (local review of PR
+   #310) makes a store that skipped a declared migration refused rather
+   than trusting that order.
+   Two tests read the latest version as a fixed or consecutive number and
+   now read it from the declarations:
+   `services/api/tests/test_hosted_start.py::test_hosted_start_checks_the_store_version_once`
+   takes the previous declared version as one behind, and
+   `services/api/tests/test_owner_policy.py::test_track_two_needs_migration_16_on_the_faithful_shim`
+   expects `target_version()` after a full migration rather than 16.
+3. **The `PUT` is three routes and a refusal.** Routes, above. A
+   `DELETE /credentials/{kind}` alone would make `PUT
+   /credentials/telegram` a 405.
+4. **The key's form is stated.** The key id is plain text because it is
+   stored and may be logged; the base64 is read strictly. Behavior, above.
+   The key is a field of the hosted configuration
+   (`harrier_api.hostedauth.HostedConfig`), kept out of its `repr`, and
+   every hosted test environment gives it a key made at run time:
+   `complete_hosted_environment` and `CONFIG` in
+   `services/api/tests/test_hosted_auth.py`, `hosted_environment` in
+   `services/api/tests/test_hosted_requests.py`, and
+   `start_as_a_process` in `services/api/tests/test_hosted_start.py`.
+5. **The declared 422s.** FastAPI declares a 422 on every route with a
+   parameter. `DELETE /credentials/{kind}` and `PUT /credentials/{kind}`
+   have only a string path parameter, so they never send one; their 422
+   names `CredentialRefusalOut`, the body the credentials routes' handler
+   would send, so the contract declares no body these routes cannot send.
+6. **Tests that cover every owned table now cover this one.**
+   `REQUIRED` and `EXPECTED_GRANTS` in
+   `services/api/tests/test_owner_policy.py` gain `credentials`, so the
+   isolation tests write and read it as two owners.
+   `services/api/tests/test_domain_sql_on_both_stores.py::test_no_domain_insert_supplies_an_id`
+   writes a credential on Postgres and expects no credentials insert on
+   SQLite. The parity test's check that every `owner_id` defaults to
+   `harrier_owner_id()` includes the hosted-only tables
+   (`services/api/tests/test_dialect_parity.py::test_both_dialects_build_the_same_tracker`).
+7. **What spec 106 reads.** `stored_credentials(conn)` returns the
+   session owner's ciphertexts; `decrypt(key, owner, stored)` returns the
+   fields or raises `CredentialUnreadable`, whose text is spec 106's 409,
+   `your <kind> credential cannot be read; set it again`, with the kind
+   and key id for its log. `KIND_FIELDS` names each kind's secret fields
+   for spec 106's scrub (`services/api/src/harrier/credentials.py`).
+
+## Amendment (2026-10-13, local review of PR #310)
+
+The local privacy, data integrity, contract and test integrity reviews
+of PR #310 found the gaps below. Each fix carries a test that fails
+without it; the pull request records the mutations.
+
+1. **A store cannot skip a declared migration.** Point 2 of the amendment
+   above relied on a check by hand. The runners apply only versions above
+   a store's highest (`harrier.pgstore`), so a migration numbered below a
+   version a store already reached was skipped in silence. Now
+   `harrier store migrate`, `open_postgres_store` and the hosted start
+   refuse a Postgres store that recorded a version above a declared
+   migration with statements that it never applied, naming that version,
+   and apply nothing (Failure modes;
+   `services/api/tests/test_credentials.py::test_a_store_that_skipped_a_declared_migration_is_refused`).
+   A version declared with no Postgres statements changes nothing and is
+   not counted. Spec 108 (PR #309) holds 17; it should merge before this
+   change, so no store reaches 18 first. If this one merges first, a store
+   migrated to 18 is refused once 17 is declared, rather than running
+   without it.
+2. **A lone surrogate is refused by its own rule.** UTF-8 cannot encode
+   one, and the codec's error quoted the character and held the value
+   (Behavior, "Credential kinds").
+3. **Nothing a caller wrote is repeated in a 422.** A field name the kind
+   does not take is reported under `fields`; a body that is not JSON is
+   reported under `body`, with no character offset. The request models
+   keep secret fields out of their `repr`.
+4. **The 422 is chosen by the matched route, not the request's path,** so
+   a root path changes nothing. A credentials route outside this module's
+   router, such as spec 109's Telegram route, gets this 422 only by
+   joining the router or the check.
+5. **Locally a body that is not JSON answers the local 404.** FastAPI reads
+   the body before any dependency runs, so it had answered 422.
+6. **The field rule is tested in the domain.** Spec 109's route will write
+   through `put_credential` with no request model in front of it
+   (`services/api/tests/test_credentials.py::test_a_refused_credential_writes_nothing_and_quotes_nothing`).
+
+Declined, with the reason: the 422 declared on `DELETE /credentials/{kind}`
+and `PUT /credentials/{kind}` stays. FastAPI declares a 422 on every route
+with a parameter unless the route declares `422`, `4XX` or `default`; the
+latter two would claim answers these routes do not send either, and taking
+`kind` outside the declared parameters would drop the path parameter from
+the contract. Point 5 of the amendment above says why the body it names is
+`CredentialRefusalOut`.
+
+Not changed: SQLite stores are not checked for a skipped version. Spec
+108's version 17 has no SQLite statements, so a local store that skips it
+loses nothing, and refusing an operator's local tracker file over a
+version that changes nothing there would stop the local product for no
+gain. A later migration with SQLite statements numbered the same way
+would need the same check on SQLite.

@@ -27,7 +27,13 @@ from pathlib import Path
 
 import pytest
 from pg_support import fresh_database
-from test_hosted_auth import API_HOST, SPA_ORIGIN, child_environment, start_api
+from test_hosted_auth import (
+    API_HOST,
+    CREDENTIALS_KEY_TEXT,
+    SPA_ORIGIN,
+    child_environment,
+    start_api,
+)
 from test_hosted_requests import (
     LoginRole,
     Server,
@@ -58,7 +64,7 @@ from harrier.loginrole import (
     login_role_problems,
 )
 from harrier.pgstore import check_postgres_version, postgres_connect, target_version
-from harrier.tracker.schema import TENANT_ROLE
+from harrier.tracker.schema import POSTGRES_MIGRATIONS, TENANT_ROLE
 from harrier_api import app as app_module
 from harrier_api import hostedstore
 from harrier_api.app import create_app
@@ -393,6 +399,7 @@ def start_as_a_process(login: LoginRole, tmp_path: Path) -> tuple[int, str, str]
         HARRIER_ALLOWED_HOSTS=API_HOST,
         HARRIER_CORS_ORIGINS=SPA_ORIGIN,
         HARRIER_DATABASE_URL=login.url,
+        HARRIER_CREDENTIALS_KEY=CREDENTIALS_KEY_TEXT,
     )
     started = start_api(environ, tmp_path)
     return started.returncode, started.stdout + started.stderr, started.stderr.strip()
@@ -403,16 +410,18 @@ def test_hosted_start_checks_the_store_version_once(
 ) -> None:
     target = target_version()
 
-    # One version behind.
+    # One migration behind: the version before the last one declared, which
+    # need not be target - 1 while another branch holds a number (spec 116).
+    previous = max(version for version, _ in POSTGRES_MIGRATIONS if version < target)
     roles: list[str] = []
     try:
         with fresh_database() as url:
-            migrate_to(url, target - 1, monkeypatch)
+            migrate_to(url, previous, monkeypatch)
             behind = Server(url, roles).login_role()
             code, printed, stderr = start_as_a_process(behind, tmp_path / "behind")
             assert code == 1, printed
             assert stderr.splitlines()[-1] == (
-                f"harrier.connection.StoreVersionError: {version_text(target - 1)}"
+                f"harrier.connection.StoreVersionError: {version_text(previous)}"
             )
             assert behind.password not in printed
     finally:

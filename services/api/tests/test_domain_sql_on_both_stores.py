@@ -12,6 +12,7 @@ row here is synthetic: invented companies, postings and people.
 from __future__ import annotations
 
 import json
+import os
 import re
 import threading
 import time
@@ -32,6 +33,7 @@ from harrier.connection import (
     StoreIntegrityError,
     StoreLocalOnlyError,
 )
+from harrier.credentials import KEY_BYTES, CredentialsKey, put_credential
 from harrier.profile import store as profile_store
 from harrier.profile.store import get_document, list_documents, owned_documents, put_document
 from harrier.resume import content as resume_content
@@ -39,7 +41,7 @@ from harrier.resume import split as resume_split
 from harrier.runoutcome import record_success
 from harrier.tracker import migrate_legacy
 from harrier.tracker import store as tracker_store
-from harrier.tracker.schema import OWNED_TABLES, TENANT_ROLE
+from harrier.tracker.schema import HOSTED_ONLY_TABLES, OWNED_TABLES, TENANT_ROLE
 from harrier.tracker.store import (
     DuplicateJobError,
     EligibilityAssessment,
@@ -206,7 +208,7 @@ _INSERT = re.compile(r"^\s*INSERT\s+INTO\s+(\w+)\s*\(([^)]*)\)", re.IGNORECASE)
 
 
 def test_no_domain_insert_supplies_an_id(
-    store: Connection, monkeypatch: pytest.MonkeyPatch
+    store: Connection, dual_store: DualStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Every new id comes from the store. On Postgres the tenant role may not
     write `id` (spec 105, migration 13), so an insert naming it is refused
@@ -228,13 +230,21 @@ def test_no_domain_insert_supplies_an_id(
     )
     set_config(store, LINKEDIN_SEARCHES, ["https://www.linkedin.com/jobs/search/?keywords=data"])
     record_success(store, "discovery")
+    if store.dialect == "postgres":
+        # The hosted-only table has no SQLite form to write (spec 116).
+        key = CredentialsKey("test", os.urandom(KEY_BYTES))
+        put_credential(store, key, str(dual_store.owner), "hunter", {"key": "synthetic"})
     columns: dict[str, set[str]] = {}
     for sql in seen:
         match = _INSERT.match(sql)
         if match is not None:
             names = {name.strip().lower() for name in match.group(2).split(",")}
             columns.setdefault(match.group(1).lower(), set()).update(names)
-    assert set(columns) == set(OWNED_TABLES)
+    # On SQLite a hosted-only table does not exist, so nothing writes it.
+    # On Postgres every owned table's writer runs here but schedule_state's:
+    # spec 108's scheduler (its PR 2) writes it, and joins this test then.
+    unwritten = set(HOSTED_ONLY_TABLES) if store.dialect == "sqlite" else {"schedule_state"}
+    assert set(columns) == set(OWNED_TABLES) - unwritten
     assert {table: "id" in names for table, names in columns.items()} == {
         table: False for table in columns
     }

@@ -169,6 +169,54 @@ def postgres_version(conn: psycopg.Connection[tuple[object, ...]]) -> int:
     return int(str(row[0])) if row is not None and row[0] is not None else 0
 
 
+def postgres_versions(conn: psycopg.Connection[tuple[object, ...]]) -> set[int]:
+    """Every version the store records; empty when it has no schema_version."""
+    row = conn.execute("SELECT to_regclass('schema_version') IS NOT NULL").fetchone()
+    if row is None or not row[0]:
+        return set()
+    return {int(str(found[0])) for found in conn.execute("SELECT version FROM schema_version")}
+
+
+def skipped_versions(recorded: set[int]) -> list[int]:
+    """Each declared Postgres migration with statements that the store
+    passed without applying: below its highest recorded version, and not
+    recorded itself.
+
+    The runner applies only versions above the store's highest, so a
+    migration numbered below a version a store already reached is never
+    applied. Two branches numbering migrations at once can declare one
+    (spec 116, Amendment of the local review of PR #310). A version with no
+    statements, declared for the other dialect, changes nothing and is not
+    counted.
+    """
+    from harrier.tracker.schema import POSTGRES_MIGRATIONS
+
+    if not recorded:
+        return []
+    top = max(recorded)
+    return sorted(
+        version
+        for version, statements in POSTGRES_MIGRATIONS
+        if statements and version < top and version not in recorded
+    )
+
+
+def skipped_message(recorded: set[int], skipped: list[int]) -> str:
+    named = ", ".join(str(version) for version in skipped)
+    return (
+        f"the store is at version {max(recorded)} but never applied migration {named}, "
+        "declared below it after the store passed it. harrier store migrate applies "
+        "migrations in order only; renumber the migration above the store's version."
+    )
+
+
+def check_no_skipped_versions(recorded: set[int]) -> None:
+    """Refuse a store that passed a declared migration without applying it."""
+    skipped = skipped_versions(recorded)
+    if skipped:
+        raise StoreVersionError(skipped_message(recorded, skipped))
+
+
 def apply_postgres_migrations(conn: psycopg.Connection[tuple[object, ...]]) -> tuple[int, int]:
     """Apply every pending Postgres migration, each whole or not at all.
 
@@ -217,6 +265,9 @@ def _apply_under_the_session_lock(
     known = target_version()
     if before > known:
         raise StoreVersionError(_ahead_message(before, known))
+    # Before anything is applied: applying the rest would move the store on
+    # and leave the skipped migration further behind.
+    check_no_skipped_versions(postgres_versions(conn))
     with conn.transaction():
         conn.execute("SELECT pg_advisory_xact_lock(%s)", (MIGRATION_LOCK_KEY,))
         conn.execute(POSTGRES_VERSION_TABLE.encode())
@@ -306,6 +357,7 @@ def open_postgres_store(url: str) -> psycopg.Connection[tuple[object, ...]]:
     conn = postgres_connect(url)
     try:
         check_postgres_version(postgres_version(conn))
+        check_no_skipped_versions(postgres_versions(conn))
     except BaseException:
         conn.close()
         raise

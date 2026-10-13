@@ -819,3 +819,76 @@ The full list, each with its result, is in the pull request.
   that reads the transaction from inside a request does so through a route
   added to the built app in the test, which declares `Conn` as every route
   does.
+
+## Amendment (2026-10-13): the login role must log in and must not inherit
+
+Akin decided in chat on 2026-10-13 (spec 110, "Amendment (2026-10-13):
+Akin's decisions", decision 3). Spec 110's `harrier store grant-tenant`
+refuses a role that cannot log in or is not `NOINHERIT`, and says these
+are the start checks, "called from the same function". On `main` at
+`874ea47`, `login_role_problems` in `services/api/src/harrier/loginrole.py`
+checks neither. Both checks go into that function, so the API's start,
+`grant-tenant` and `check-deploy` share them, and this spec's start
+refuses them too. The text above is not changed; this section adds to
+"The start checks" and "The login role".
+
+### Behavior (login and inherit)
+
+`login_role_problems` returns two more checks:
+
+- `cannot log in`: the role has `NOLOGIN` (`rolcanlogin` false in
+  `pg_catalog.pg_roles`);
+- `inherits`: the role has `INHERIT` (`rolinherit` true).
+
+Both are read with the role's other attributes, in the same query, and
+come after `bypassrls` and before the membership checks, in that order. A
+role that does not exist is still `no such role` alone, and a superuser is
+still `superuser` alone.
+
+Why each:
+
+- **`inherits`.** "The login role" already says the API's login role is
+  `NOINHERIT`, and nothing checked it. A login role with `INHERIT` holds
+  `harrier_tenant`'s grants itself, so a statement on its connection
+  reaches the tables without the request transaction's `SET LOCAL ROLE`.
+- **`cannot log in`.** For `grant-tenant` and `check-deploy`, which check a
+  role other than the one they connect as. At the API's start the check
+  reads `current_user`, the login role that has just logged in, so it
+  cannot fail there. It is in the shared function so that the three
+  callers refuse the same roles.
+
+A refused start reads as the other login role refusals do ("How a refusal
+reads"): `HostedStartRefused`, listing every problem by its check name,
+never the URL or the password, exit 1.
+
+### Failure modes (login and inherit)
+
+- **The API's login role was created without `NOINHERIT`.** Start refused
+  naming `inherits`. The operator runs `ALTER ROLE <login role>
+  NOINHERIT` as the migrator and starts again; spec 110's runbook creates
+  the role with `LOGIN NOINHERIT` in the first place.
+
+### Acceptance criteria (login and inherit)
+
+- [ ] A login role with `INHERIT`, otherwise passing, is refused at start
+      naming `inherits`, without the URL or the password;
+      `login_role_problems` returns `cannot log in` for a `NOLOGIN` role
+      and `inherits` for an `INHERIT` one, each in its place in the order
+      above, and neither for the `LOGIN NOINHERIT` login role the tests
+      create, which still starts
+      (planned test_the_login_role_must_log_in_and_must_not_inherit).
+
+### Honest limitations (login and inherit)
+
+- **`cannot log in` is never seen at start.** The start check runs as the
+  login role, which logged in. Only `grant-tenant` and `check-deploy`
+  (spec 110) can report it.
+- **Attributes are read once, at start.** An `ALTER ROLE ... INHERIT`
+  after the API has started is seen at its next start, or at the next
+  deploy's `check-deploy`, as for the other login role checks.
+
+### Migration (login and inherit)
+
+None. No hosted install exists. The login roles the tests create
+(`services/api/tests/test_hosted_requests.py`, `login_role`) are already
+`LOGIN NOINHERIT`, and spec 115's probe role was created that way too.

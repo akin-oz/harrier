@@ -33,6 +33,7 @@ import json
 import os
 import re
 import sqlite3
+import sys
 import unicodedata
 import uuid
 from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
@@ -338,6 +339,45 @@ def store_error_from_postgres(error: psycopg.Error) -> StoreDatabaseError:
     if state == _POSTGRES_SERIALIZATION_FAILURE:
         return StoreConflictError(message)
     return StoreDatabaseError(message)
+
+
+def _psycopg_error_class() -> type[BaseException] | None:
+    # From `sys.modules`, never imported here: a process that never loaded
+    # psycopg holds none of its errors, and a log record must not import it.
+    module = sys.modules.get("psycopg")
+    found = getattr(module, "Error", None) if module is not None else None
+    return found if isinstance(found, type) and issubclass(found, BaseException) else None
+
+
+def is_driver_error(error: object) -> bool:
+    """Whether `error` is the driver's own, psycopg's or sqlite3's, rather
+    than the store error the seam raises from it (spec 135)."""
+    if isinstance(error, sqlite3.Error):
+        return True
+    psycopg_error = _psycopg_error_class()
+    return psycopg_error is not None and isinstance(error, psycopg_error)
+
+
+def driver_error_text(error: BaseException) -> str:
+    """A driver error's text as a log may print it (spec 135).
+
+    The store error's text for it, which quotes no row value, after the
+    SQLSTATE when the error has one: never `str(error)`, which on Postgres
+    carries the server's `DETAIL` lines and with them the row. Empty when
+    the error cannot be rendered, so it is named by its class alone; this
+    is called on the logging path and never raises.
+    """
+    try:
+        if isinstance(error, sqlite3.Error):
+            return str(store_error_from_sqlite(error))
+        psycopg_error = _psycopg_error_class()
+        if psycopg_error is None or not isinstance(error, psycopg_error):
+            return ""
+        text = str(store_error_from_postgres(cast("psycopg.Error", error)))
+        state = getattr(error, "sqlstate", None)
+        return f"[{state}] {text}" if isinstance(state, str) and state else text
+    except Exception:
+        return ""
 
 
 # A character that may continue a Postgres identifier, so a `$` or an `E`

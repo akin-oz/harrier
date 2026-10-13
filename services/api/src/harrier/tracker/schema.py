@@ -520,6 +520,13 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
     # Postgres only (spec 105, amendment of 2026-10-11): owner identity
     # without schema auth. Empty on purpose, and declared so.
     (16, []),
+    # Postgres only (spec 108): the hosted scheduler's per-owner state and
+    # its reader. launchd keeps the local schedule. Empty on purpose, and
+    # declared so.
+    (17, []),
+    # Postgres only (spec 116): the per-owner credentials table. Locally
+    # credentials stay in .env. Empty on purpose, and declared so.
+    (18, []),
 ]
 
 # --- Postgres (spec 103, ADR-013) ---
@@ -699,12 +706,28 @@ MIGRATION_10_OWNED_TABLES: tuple[str, ...] = (
 )
 
 # Every table with an owner: migration 10's, and each table a later
-# migration created owned (spec 122's `job_eligibility`, migration 15).
-OWNED_TABLES: tuple[str, ...] = ("job_eligibility", *MIGRATION_10_OWNED_TABLES)
+# migration created owned (spec 122's `job_eligibility`, migration 15; spec
+# 108's `schedule_state`, migration 17; spec 116's `credentials`,
+# migration 18).
+OWNED_TABLES: tuple[str, ...] = (
+    "job_eligibility",
+    *MIGRATION_10_OWNED_TABLES,
+    "schedule_state",
+    "credentials",
+)
 
 # Every other table, with the reason it has no owner.
 UNOWNED_TABLES: dict[str, str] = {
     "schema_version": "migration bookkeeping, no personal data",
+}
+
+# Tables only the hosted store has, with the reason. The parity test leaves
+# them out of its comparison, and fails when one is missing on Postgres or
+# present on SQLite (specs 108 and 116).
+HOSTED_ONLY_TABLES: dict[str, str] = {
+    "schedule_state": "per-owner scheduler state (spec 108); "
+    "launchd keeps the local equivalent (ADR-006)",
+    "credentials": "per-owner encrypted credentials (spec 116); local credentials live in .env",
 }
 
 # Supabase's own functions in public, by signature as `oid::regprocedure`
@@ -717,9 +740,10 @@ SUPABASE_FUNCTIONS_IN_PUBLIC: dict[str, str] = {
     "returns event_trigger, so no role can call it (spec 115, N2)",
 }
 
-# Columns only the hosted store has, as (table, column).
+# Columns only the hosted store has, as (table, column), on the tables both
+# stores have. A hosted-only table is declared whole, above.
 HOSTED_ONLY_COLUMNS: tuple[tuple[str, str], ...] = tuple(
-    (table, "owner_id") for table in OWNED_TABLES
+    (table, "owner_id") for table in OWNED_TABLES if table not in HOSTED_ONLY_TABLES
 )
 
 # Keys that are per owner on Postgres and global on SQLite. Each maps (table,
@@ -768,6 +792,16 @@ SINGLE_DIALECT_MIGRATIONS: dict[int, tuple[Dialect, str]] = {
         "postgres",
         "owner identity read from the request claims without schema auth "
         "(spec 105, amendment of 2026-10-11); the local schema has no owner",
+    ),
+    17: (
+        "postgres",
+        "per-owner scheduler state and the role that lists it (spec 108); "
+        "launchd keeps the local schedule (ADR-006)",
+    ),
+    18: (
+        "postgres",
+        "per-owner encrypted credentials (spec 116); local credentials live in "
+        ".env, and a local table would put them in the file just backup copies",
     ),
 }
 
@@ -1392,6 +1426,132 @@ POSTGRES_OWNER_IDENTITY: list[str] = [
     f"REVOKE USAGE ON SCHEMA auth FROM {TENANT_ROLE}",
 ]
 
+# --- the hosted scheduler (spec 108, ADR-013 decision 4 as amended) ---
+
+# The role the scheduler takes to list due work. Its only reach past the
+# owner policy is EXECUTE on SCHEDULE_INPUTS_FUNCTION. It has no login: the
+# scheduler's own login is a member of it (spec 110 provisions that login).
+SCHEDULE_READER_ROLE = "harrier_schedule_reader"
+SCHEDULE_INPUTS_FUNCTION = "harrier_schedule_inputs()"
+
+# What schedule_state.last_outcome may hold (spec 108, Finishing a run).
+SCHEDULE_OUTCOMES: tuple[str, ...] = (
+    "running",
+    "ok",
+    "failed",
+    "crashed",
+    "timed_out",
+    "not_configured",
+    "refused",
+    "interrupted",
+    "missed",
+)
+
+# The user_config kind the function reads. harrier.userconfig.store names
+# the same kind; this module sits below it and does not import it.
+_SCHEDULE_KIND = "schedule"
+
+
+def _create_schedule_reader_role() -> str:
+    # As migration 10 makes the tenant role: the role belongs to the whole
+    # server, so another store may have made it already, or be making it
+    # now. NOINHERIT and NOBYPASSRLS: it reaches only what it is granted.
+    return f"""
+    DO $$
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{SCHEDULE_READER_ROLE}') THEN
+            CREATE ROLE {SCHEDULE_READER_ROLE} NOLOGIN NOINHERIT NOBYPASSRLS;
+        END IF;
+    EXCEPTION WHEN duplicate_object OR unique_violation THEN
+        NULL;
+    END
+    $$
+    """
+
+
+POSTGRES_SCHEDULE_STATE: list[str] = [
+    # Timestamps are ISO 8601 UTC text, written from Python. The owner is
+    # read as every owned table reads it since migration 16. The primary
+    # key leads with owner_id, so it is the owner index the catalog asks for.
+    f"""
+    CREATE TABLE schedule_state (
+        owner_id uuid NOT NULL DEFAULT public.{OWNER_ID_FUNCTION} REFERENCES auth.users (id),
+        job text NOT NULL,
+        last_slot_at text NOT NULL,
+        last_started_at text,
+        last_finished_at text,
+        last_outcome text NOT NULL CHECK (last_outcome IN ({_quoted_list(SCHEDULE_OUTCOMES)})),
+        last_exit integer,
+        last_ok_at text,
+        PRIMARY KEY (owner_id, job)
+    )
+    """,
+    "ALTER TABLE schedule_state ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE schedule_state FORCE ROW LEVEL SECURITY",
+    f"CREATE POLICY owner_only ON schedule_state AS PERMISSIVE FOR ALL TO {TENANT_ROLE} "
+    f"USING ({_OWNER_IS_REQUEST}) WITH CHECK ({_OWNER_IS_REQUEST})",
+    # Stated, never inherited. No DELETE and no TRUNCATE: deleting an
+    # owner's state is spec 111's.
+    f"REVOKE ALL ON schedule_state FROM {_EVERY_GRANTEE}",
+    f"GRANT SELECT, INSERT, UPDATE ON schedule_state TO {TENANT_ROLE}",
+    _create_schedule_reader_role(),
+    # The one listing across owners. It reads past the policy because its
+    # owner, the migrating role, bypasses row security. It returns the
+    # schedule kind of user_config and schedule_state, joined on the owner
+    # and keeping an owner present in either, and nothing else. An empty
+    # search_path and qualified names, as harrier_new_owner() has.
+    f"""
+    CREATE FUNCTION public.{SCHEDULE_INPUTS_FUNCTION}
+    RETURNS TABLE (
+        owner_id uuid, schedule text, schedule_updated_at text, job text,
+        last_slot_at text, last_started_at text, last_finished_at text,
+        last_outcome text, last_exit integer, last_ok_at text)
+    LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+        SELECT coalesce(c.owner_id, s.owner_id), c.value, c.updated_at, s.job,
+               s.last_slot_at, s.last_started_at, s.last_finished_at,
+               s.last_outcome, s.last_exit, s.last_ok_at
+        FROM (
+            SELECT u.owner_id, u.value, u.updated_at FROM public.user_config u
+            WHERE u.kind = {_sql_text(_SCHEDULE_KIND)}
+        ) c
+        FULL JOIN public.schedule_state s ON s.owner_id = c.owner_id
+    $$
+    """,
+    (
+        f"REVOKE ALL ON FUNCTION public.{SCHEDULE_INPUTS_FUNCTION} "
+        f"FROM PUBLIC, anon, authenticated, service_role, {TENANT_ROLE}"
+    ),
+    f"GRANT EXECUTE ON FUNCTION public.{SCHEDULE_INPUTS_FUNCTION} TO {SCHEDULE_READER_ROLE}",
+]
+
+# Spec 116: each owner's credentials, encrypted by the API with a key the
+# database never holds. Postgres only: locally credentials stay in .env
+# (HOSTED_ONLY_TABLES). Spec 105's shape whole: the owner defaults to the
+# request's (migration 16), row security forced, the one owner_only policy,
+# and grants stated rather than inherited. The primary key leads with
+# owner_id, which is the owner index the catalog test asks for. The kinds
+# are written out, not read from harrier.credentials, so this migration
+# stays what it was when a later spec adds one.
+POSTGRES_CREDENTIALS: list[str] = [
+    f"""
+    CREATE TABLE credentials (
+        owner_id uuid NOT NULL DEFAULT public.{OWNER_ID_FUNCTION} REFERENCES auth.users (id),
+        kind text NOT NULL CHECK (kind IN ('ai', 'apify', 'hunter', 'telegram')),
+        key_id text NOT NULL,
+        nonce bytea NOT NULL,
+        ciphertext bytea NOT NULL,
+        updated_at text NOT NULL DEFAULT {_PG_NOW},
+        PRIMARY KEY (owner_id, kind)
+    )
+    """,
+    "ALTER TABLE credentials ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE credentials FORCE ROW LEVEL SECURITY",
+    f"CREATE POLICY owner_only ON credentials AS PERMISSIVE FOR ALL TO {TENANT_ROLE} "
+    f"USING ({_OWNER_IS_REQUEST}) WITH CHECK ({_OWNER_IS_REQUEST})",
+    f"REVOKE ALL ON credentials FROM {_EVERY_GRANTEE}",
+    f"GRANT SELECT, INSERT, UPDATE, DELETE ON credentials TO {TENANT_ROLE}",
+]
+
 POSTGRES_MIGRATIONS: list[tuple[int, list[str]]] = [
     (POSTGRES_BASELINE_VERSION, POSTGRES_BASELINE),
     (10, POSTGRES_OWNERS),
@@ -1408,6 +1568,8 @@ POSTGRES_MIGRATIONS: list[tuple[int, list[str]]] = [
     (14, POSTGRES_OWNER_CORRECTIONS_2),
     (15, POSTGRES_JOB_ELIGIBILITY),
     (16, POSTGRES_OWNER_IDENTITY),
+    (17, POSTGRES_SCHEDULE_STATE),
+    (18, POSTGRES_CREDENTIALS),
 ]
 
 
