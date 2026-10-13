@@ -553,6 +553,15 @@ def catalog_fingerprint(conn: PgConnection) -> dict[str, list[tuple[Any, ...]]]:
         "WHERE nspname IN ('auth', 'public')",
         "auth.uid()": "SELECT proacl::text FROM pg_proc WHERE oid = 'auth.uid()'::regprocedure",
         "tracks": "SELECT row_to_json(t)::text FROM tracks t",
+        # The two roles the migrations create, and their memberships. Roles
+        # belong to the server, so only harrier's own are read: other tests
+        # make and drop roles meanwhile.
+        "roles": "SELECT rolname, rolsuper, rolinherit, rolcanlogin, rolbypassrls "
+        "FROM pg_roles WHERE rolname IN ('harrier_tenant', 'harrier_schedule_reader')",
+        "role memberships": "SELECT roleid::regrole::text, member::regrole::text "
+        "FROM pg_auth_members WHERE roleid::regrole::text IN "
+        "('harrier_tenant', 'harrier_schedule_reader') OR member::regrole::text IN "
+        "('harrier_tenant', 'harrier_schedule_reader')",
     }
     return {
         name: sorted(conn.execute(query.encode()).fetchall(), key=repr)
@@ -1394,6 +1403,21 @@ def test_every_table_is_owned_or_declared(store: PgConnection) -> None:
             "CREATE FUNCTION peek_owners() RETURNS bigint LANGUAGE sql SECURITY DEFINER "
             "SET search_path = '' AS 'SELECT count(*) FROM public.jobs'",
             "peek_owners(): SECURITY DEFINER in public",
+        ),
+        # The reader's attributes and memberships (local test integrity
+        # review of PR #309). The role belongs to the server and is created
+        # only when absent, so a test server that already has it would not
+        # see a wrong CREATE ROLE; these cases prove the checks fire.
+        ("ALTER ROLE harrier_schedule_reader BYPASSRLS", "harrier_schedule_reader: has BYPASSRLS"),
+        ("ALTER ROLE harrier_schedule_reader LOGIN", "harrier_schedule_reader: has LOGIN"),
+        ("ALTER ROLE harrier_schedule_reader INHERIT", "harrier_schedule_reader: has INHERIT"),
+        (
+            "GRANT harrier_tenant TO harrier_schedule_reader",
+            "harrier_schedule_reader: a member of harrier_tenant",
+        ),
+        (
+            "GRANT USAGE ON SEQUENCE jobs_id_seq TO harrier_schedule_reader",
+            "jobs_id_seq: harrier_schedule_reader holds USAGE",
         ),
     ],
 )

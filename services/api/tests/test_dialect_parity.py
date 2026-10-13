@@ -889,6 +889,24 @@ def test_a_hosted_only_table_naming_nothing_fails() -> None:
     ]
 
 
+def test_a_hosted_only_table_out_of_place_fails_the_whole_comparison(tmp_path: Path) -> None:
+    """The same cases on real stores, through the comparison the parity test
+    runs, so that comparison must report a stale declaration: a declared
+    table SQLite has too, and one Postgres lacks (local test integrity
+    review of PR #309)."""
+    with sqlite_store(tmp_path) as lite, postgres_store() as pg:
+        assert structural_problems(lite, pg) == []
+        lite.execute("CREATE TABLE schedule_state (job TEXT)")
+        assert structural_problems(lite, pg) == [
+            "HOSTED_ONLY_TABLES names schedule_state, which SQLite has too"
+        ]
+        lite.execute("DROP TABLE schedule_state")
+        pg.execute(b"DROP TABLE schedule_state")
+        assert structural_problems(lite, pg) == [
+            "HOSTED_ONLY_TABLES names schedule_state, not in Postgres"
+        ]
+
+
 def test_a_global_key_beside_its_per_owner_form_is_a_difference() -> None:
     """A global unique url left beside the per-owner one read as the same
     SQLite key, and the set in `declared_view` merged the two (review of PR

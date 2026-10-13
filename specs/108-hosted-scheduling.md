@@ -1353,7 +1353,10 @@ Migration 17, the next free version on `main` at `4b5c48d`
 (`services/api/src/harrier/tracker/schema.py`, `POSTGRES_SCHEDULE_STATE`).
 `MIGRATIONS` holds 17 with no statements and `SINGLE_DIALECT_MIGRATIONS`
 declares it Postgres only. Specs 106 and 116 each add a Postgres-only
-migration too; whichever lands after this one takes the next number.
+migration too. Spec 116's (PR #310) is 18, and the Postgres runner skips
+any version at or below the highest it has recorded, so this change
+merges before that one: a store that reached 18 first would never apply
+17.
 
 ### Where the text was wrong
 
@@ -1421,7 +1424,15 @@ migration too; whichever lands after this one takes the next number.
   each hosted job is a job `config/schedule.json` names, and the set is
   Open decision 3's.
 - `services/api/tests/test_owner_policy.py::test_a_failed_migration_leaves_no_trace_of_itself`
-  runs for migration 17 too.
+  runs for migration 17 too, and its fingerprint now reads the tenant and
+  reader roles' attributes and memberships.
+- `services/api/tests/test_hosted_schedule.py::test_schedule_state_has_the_specs_columns`:
+  the table's columns, types and nullability are the DDL's, each outcome
+  the spec lists is stored, any other is refused by the `CHECK` (23514),
+  and a null slot by `NOT NULL` (23502).
+- `services/api/tests/test_dialect_parity.py::test_a_hosted_only_table_out_of_place_fails_the_whole_comparison`:
+  the comparison the parity test runs reports a declared table SQLite has
+  too, and one Postgres lacks, on real stores.
 
 ### Existing tests that change
 
@@ -1441,9 +1452,9 @@ migration too; whichever lands after this one takes the next number.
 ### Mutations
 
 Each new behavior was removed or changed in the code, and the test that
-proves it was run: twenty mutations, each failing its test, and three
-more for the local reviews' findings below. The list, each with its
-result, is in the pull request.
+proves it was run: twenty mutations, each failing its test, and
+eighteen more for the local reviews' findings below. The list, each with
+its result, is in the pull request.
 
 ### From the local reviews of PR #309
 
@@ -1451,6 +1462,39 @@ The privacy and data integrity reviews each found the two points above
 in the first version: the unknown-field refusal named the owner's keys,
 and the timezone refusal chained `zoneinfo`'s error, which holds the
 zone. Both are fixed as stated, and the test fails with either put back.
+
+The test integrity review found places where a wrong change still
+passed, each confirmed by a mutation. Each test now fails under that
+mutation:
+
+- the parity comparison is tested on real stores, not only its helper;
+- the listing compares every column of every row, as a sorted list, so a
+  swapped, renamed, null or repeated column or row fails, and the
+  owners' other kinds (a watchlist and discovery settings) stay out;
+  `schedule_updated_at` is `user_config.updated_at`;
+- `schedule_state`'s shape and refusals are pinned (above);
+- the catalog's reader checks are each broken once: `BYPASSRLS`,
+  `LOGIN`, `INHERIT`, a membership of `harrier_tenant`, and a privilege
+  on a sequence. The role is created only when absent, so a test server
+  that already has it would not see a wrong `CREATE ROLE`; these cases are
+  what show the checks fire;
+- the refusals are compared whole, and the `OSError` branch is reached by
+  a `ZoneInfo` that raises `IsADirectoryError`, as some systems do for a
+  directory of the tz database;
+- `test_no_domain_insert_supplies_an_id` leaves hosted-only tables out on
+  SQLite only. On Postgres it leaves out `schedule_state` by name, until
+  PR 2's scheduler writes it.
+
+Two points are recorded as they stand:
+
+- **Definer functions are allowed by name, not signature.** The catalog
+  declares `harrier_new_owner` and `harrier_schedule_inputs` by name, as
+  it declared the first. An overload under either name with a body of its
+  own would pass the definer rule; the `EXECUTE` rules still apply to it.
+- **The rollback fingerprint reads harrier's two roles only.** Roles
+  belong to the server and other tests make and drop their own meanwhile,
+  so a failed migration 17 is checked to leave the tenant and reader
+  roles as they were, and no other role.
 
 Two points belong to PR 2 and are recorded here for it:
 
