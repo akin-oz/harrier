@@ -28,7 +28,7 @@ Four approved specs hand this spec work:
   limitations). Its Honest limitations also name an open hole: a
   connection error's traceback holds the frame of `postgres_connect`,
   whose `url` argument carries the password
-  (`services/api/src/harrier/pgstore.py:64-81`). "An error reporter that
+  (`services/api/src/harrier/pgstore.py:117-153`). "An error reporter that
   records local variables would see the password. None is configured;
   spec 110 decides the hosted one."
 - Spec 104 refuses to start the hosted API when the store is not at
@@ -61,15 +61,15 @@ findings here, each kept below with its own criterion:
 - **Hosted logs leave the machine.** Fly collects the API's standard
   output. Today `configure_logging` redacts by literal value, loading the
   values from one person's SQLite file
-  (`services/api/src/harrier/logsetup.py:89-91`, `:124-140`), and writes a
-  rotating file under `data/logs` (`logsetup.py:107-118`). Neither fits a
+  (`services/api/src/harrier/logsetup.py:105-106`, `:166-186`), and writes a
+  rotating file under `data/logs` (`logsetup.py:120-133`). Neither fits a
   process that serves many owners from Postgres. (privacy 5)
 - **`.env` reaches the container.** `docker-compose.yml:51-53` loads `.env`
   with `env_file`, so a hosted store URL written there becomes a production
   credential in the local container's environment, and every run
   subprocess inherits it. The CLI and the API also read
   `HARRIER_DATABASE_URL` from `.env` when it is not exported
-  (`store_target`, `connection.py:228-234` since spec 112's PR 1 moved it
+  (`store_target`, `connection.py:1298-1304` since spec 112's PR 1 moved it
   out of `pgstore.py` on 2026-10-11; spec 103 Corrections). (privacy 5)
 - **Tracebacks hold the URL.** Above. (test-integrity follow-up)
 - **The grant is nobody's step yet.** Migration 10 creates `harrier_tenant`
@@ -115,7 +115,8 @@ after specs 104, 112, 114 and 115.
 10. **Hosted logging.** `configure_logging` in hosted mode opens no SQLite,
     writes no file, and renders records without their text arguments
     (open decision 6). The hosted API refuses to start with prompt logging
-    on.
+    on. Superseded 2026-10-13: spec 135 owns hosted logs, and this item is
+    not built here ("Amendment (2026-10-13): Akin's decisions", decision 2).
 11. **No error reporter.** None is installed, and a test fails if one
     appears; adding one is its own spec, which must turn local variables
     off.
@@ -302,16 +303,21 @@ change that adds Supabase CLI files classifies them first.
 
 ### hosted logs
 
+Superseded 2026-10-13: spec 135 owns hosted logs, and nothing in this
+section is built by this spec. "Amendment (2026-10-13): Akin's decisions",
+decision 2, says what spec 135 covers and what it leaves open. The text
+below stays as the record of what was approved on 2026-10-10.
+
 Hosted means `HARRIER_AUTH=supabase` (spec 104). Locally nothing changes.
 
 - **Where.** Standard error only. No file handler and no `data/logs`.
   `configure_logging` opens no SQLite file: today it calls `connect()`
-  (`logsetup.py:138`), which on a hosted machine would create and migrate
+  (`logsetup.py:183`), which on a hosted machine would create and migrate
   an empty local tracker in the image's data directory.
 - **What a record carries.** Redaction by literal value cannot work
   hosted. It needs every owner's identity values in one process, read past
   the row policy, and the refresh at the write path
-  (`services/api/src/harrier/tracker/store.py:701-704`) would load one
+  (`services/api/src/harrier/tracker/store.py:954-957`) would load one
   owner's values and drop every other's. Instead the hosted formatter
   renders each record's template with its arguments typed: an `int`,
   `float` or `bool` argument as written, every other argument as `[text]`.
@@ -328,7 +334,7 @@ Hosted means `HARRIER_AUTH=supabase` (spec 104). Locally nothing changes.
   `CODEX_CLI_DEBUG`, `CLAUDE_CLI_DEBUG`, `OPENAI_DEBUG` or
   `ANTHROPIC_DEBUG` is set truthy (`services/api/src/harrier/llm/config.py:161-169`).
   With any of them on, `_log_call` writes prompts and outputs under
-  `data/llm-logs` (`services/api/src/harrier/llm/providers.py:46-55`),
+  `data/llm-logs` (`services/api/src/harrier/llm/providers.py:46-54`),
   which hosted would be tenants' application content on a shared machine.
   Text: `error: prompt logging (<variable>) is local only; unset it for the
   hosted API`. Exit 1, naming the variable, not its value.
@@ -429,13 +435,21 @@ holds the URL and its password.
       `.env` is accepted (planned test_a_remote_store_url_in_dotenv_is_refused).
 - [ ] Hosted, `configure_logging` opens no SQLite file and adds no file
       handler (planned test_hosted_logging_opens_no_database_and_no_file).
+      Superseded 2026-10-13: spec 135 owns hosted logs (Amendment
+      (2026-10-13), decision 2).
 - [ ] Hosted, a record with a text argument and one with an integer render
       as `[text]` and the integer, and an exception renders without its
       message (planned test_hosted_records_carry_no_text_arguments).
+      Superseded 2026-10-13: spec 135 owns hosted logs (Amendment
+      (2026-10-13), decision 2).
 - [ ] Hosted, the access line carries no query string (planned
       test_hosted_access_lines_drop_the_query).
+      Superseded 2026-10-13: spec 135 owns hosted logs (Amendment
+      (2026-10-13), decision 2).
 - [ ] The hosted API refuses to start with each prompt-logging variable
       set, naming it (planned test_hosted_start_refuses_prompt_logging).
+      Superseded 2026-10-13: spec 135 owns hosted logs (Amendment
+      (2026-10-13), decision 2).
 - [ ] No error reporting SDK is a dependency (planned
       test_no_error_reporter_is_installed).
 - [ ] `docs/deploy.md` covers the one-time setup of each environment, each
@@ -788,7 +802,7 @@ Amendment (2026-10-11) at the end of this spec takes that step here.
   - Spec 104's Configuration says "The API reads no `.env` file itself
     (`grep -rn dotenv services/api/src` finds nothing)". Since spec 103's
     Corrections, `store_target` reads `HARRIER_DATABASE_URL` from `.env`
-    when it is not exported (`connection.py:228-234`, in `pgstore.py`
+    when it is not exported (`connection.py:1298-1304`, in `pgstore.py`
     until spec 112's PR 1 moved it on 2026-10-11; through
     `harrier.envfile`, which the grep does not match). `HARRIER_AUTH` is
     still read from the environment only, so the conclusion about hosted
@@ -798,7 +812,8 @@ Amendment (2026-10-11) at the end of this spec takes that step here.
     `pgstore.py:137-149`. All three were stale. `postgres_connect` is at
     `pgstore.py:64-81`, and the latest version is whatever
     `target_version()` (`pgstore.py:84-88`) returns. (These two were
-    stale as well, at `:173-190` and `:193-197`; corrected 2026-10-11.) This text and its
+    stale as well, at `:173-190` and `:193-197`; corrected 2026-10-11, and
+    refreshed again on 2026-10-13 to `:117-153` and `:156-160`.) This text and its
     acceptance criteria cite `target_version()` rather than a number, so
     they do not go stale again.
 
@@ -1363,3 +1378,180 @@ project can show: which roles each login role actually reaches there.
       output against the staging project, passing, with role names and no
       URL, host, project reference or password; the first production
       deploy records the same against production.
+
+## Amendment (2026-10-13): Akin's decisions
+
+Akin decided in chat on 2026-10-13, after the implementing session reported
+that spec 114 is not built on `main` and that this spec is larger than one
+reviewable change. Three decisions follow, then the line numbers refreshed
+under D9, then three questions for Akin. On `main` at `874ea47`.
+
+### Decision 1: one spec, built once spec 114 lands
+
+This spec is not split. It is built in one change once spec 114 (the
+browser signs in to the hosted API) has merged; spec 114 starts now, in
+parallel. On `main` at `874ea47` nothing in `apps/web/src` reads
+`import.meta.env` (`grep -rn "import.meta.env" apps/web/src` finds
+nothing), so deploy step 7 would ship a local build of the SPA that calls
+`/api` on its own origin and cannot sign in.
+
+The scheduler steps wait for spec 108. They need `harrier operator
+scheduler` and the role `harrier_schedule_reader`, which spec 108's change
+creates and which are not on `main`. They are:
+
+- the runbook's scheduler machine, `--schedule hourly --restart no` in
+  production and no schedule in staging;
+- the deploy's `fly machine update` of that machine, which never passes
+  `--skip-start`, and the check after it (spec 108, "Amendment
+  (2026-10-12): the scheduler machine after an update");
+- the grant of `harrier_schedule_reader` to `harrier_scheduler` (Open
+  decision 11 below), and `check-deploy`'s expected set for
+  `harrier_scheduler`.
+
+If this spec's change is ready before spec 108 merges, these steps follow
+in a second change under this spec's trailer. The rest does not wait.
+Checks keyed to `harrier_run` (spec 106) apply to that login role once it
+exists, as "Amendment (2026-10-11): login roles reach no role past the
+policy" already says.
+
+### Decision 2: spec 135 owns hosted logs
+
+Spec 135 (hosted logs carry no personal data, and the hosted start opens
+no SQLite) owns hosted logging. This spec drops its own hosted logging
+part and builds none of it: Scope item 10, Behavior's "hosted logs", the
+four criteria marked superseded above, the two failure modes on prompt
+logging and on a name passed as a log argument, the two Honest
+limitations on typed rendering and on a value written into a template,
+the "Spec 104" line under "Changes to approved specs" as far as it
+concerns prompt logging, and Open decision 6. The Storage line "Hosted
+logging of the LLM debug log and the log file is already this spec's" now
+points to spec 135.
+
+| This spec's item | Where it stands |
+|---|---|
+| Hosted, `configure_logging` opens no SQLite file and writes no file | Spec 135, Scope item 1 and "The hosted start" |
+| What a hosted record carries: typed rendering, `[text]` for every text argument | Not adopted. Spec 135's rule replaces it: a driver error's text is withheld, and no row value reaches a record on the routes its test drives ("What a hosted log record may carry") |
+| Uvicorn's access line without the query string | Not in spec 135, whose Out of scope leaves the access log's paths and client address as they are. Open decision 13 |
+| The hosted start refuses prompt logging (`AI_DEBUG` and the four provider variables) | Not in spec 135. Open decision 13 |
+| Fly keeps logs 7 days | A fact about Fly; stays in Honest limitations, where "Hosted logs carry no text arguments" now reads as what spec 135 keeps out |
+
+Scope item 11, "No error reporter", stays here with its criterion
+(planned test_no_error_reporter_is_installed). Its sentence that a later
+reporter must "apply the hosted log rule to what it sends" now means spec
+135's rule.
+
+### Decision 3: the login role checks gain LOGIN and NOINHERIT
+
+Behavior says `harrier store grant-tenant` refuses a role that cannot log
+in or is not `NOINHERIT`, and that these are spec 104's start checks,
+"called from the same function". The function, `login_role_problems` in
+`services/api/src/harrier/loginrole.py` (spec 134), checks neither on
+`main` at `874ea47`. Both checks go into that function, so the API's start
+(spec 134), `grant-tenant` and `check-deploy` share them:
+
+- `cannot log in`: the role has `NOLOGIN` (`rolcanlogin` false);
+- `inherits`: the role has `INHERIT` (`rolinherit` true).
+
+This amends spec 134's start checks, which then refuse both. Spec 134's
+"Amendment (2026-10-13): the login role must log in and must not inherit"
+records that half, with its criterion. This spec's
+planned test_grant_tenant_refuses_a_role_that_can_bypass covers both
+cases for `grant-tenant`, one case each, as its criterion already says.
+
+### Line numbers, refreshed (D9)
+
+D9 left the refresh to the implementing change. Akin asked for it now, on
+`main` at `874ea47`, and the implementing change refreshes again.
+
+| Citation | Was | Now |
+|---|---|---|
+| `postgres_connect` | `pgstore.py:64-81` | `services/api/src/harrier/pgstore.py:117-153` |
+| `target_version()` | `pgstore.py:84-88` | `services/api/src/harrier/pgstore.py:156-160` |
+| identity values loaded in `configure_logging` | `logsetup.py:89-91` | `services/api/src/harrier/logsetup.py:105-106` |
+| `_load_identity_values` | `logsetup.py:124-140` | `services/api/src/harrier/logsetup.py:166-186` |
+| the rotating file handler | `logsetup.py:107-118` | `services/api/src/harrier/logsetup.py:120-133` |
+| `connect()` in logging | `logsetup.py:138` | `services/api/src/harrier/logsetup.py:183` |
+| `store_target` reading `.env` | `connection.py:228-234` | `services/api/src/harrier/connection.py:1298-1304` |
+| the redaction refresh at the write path | `store.py:701-704` | `services/api/src/harrier/tracker/store.py:954-957` |
+| `_log_call` | `providers.py:46-55` | `services/api/src/harrier/llm/providers.py:46-54` |
+
+Checked and unchanged: `.gitignore:2-4`, `.dockerignore:5-7`,
+`config/data-classification.json:6-7`, `docker-compose.yml:51-53` and
+`:72-76`, `services/api/src/harrier/tracker/schema.py:867-882`
+(`_create_tenant_role`), `services/api/src/harrier/llm/config.py:161-169`
+and `services/api/src/harrier/resume/vocabulary.py:139`. Proof / origin's
+"Code read on `main` at 44ac0d7" and the stub's stale citations under Out
+of scope are records of their dates and are not changed.
+
+### Open decisions for Akin (2026-10-13)
+
+11. **What grants `harrier_schedule_reader`.** The Amendment
+    (2026-10-11) names "two named deploy steps" for `harrier_scheduler`,
+    `harrier_tenant` and `harrier_schedule_reader`, but `grant-tenant`
+    grants only `harrier_tenant`, and no command grants the second.
+    Recommended: `harrier store grant-schedule-reader <role>`, run as the
+    migrator after `grant-tenant`. It refuses on a SQLite store as
+    `grant-tenant` does; refuses, exit 1, when `harrier_schedule_reader`
+    does not exist, naming spec 108's migration; refuses when
+    `login_role_problems` returns anything; otherwise runs `GRANT
+    harrier_schedule_reader TO <role>`, the name quoted as an identifier,
+    and prints `harrier_schedule_reader granted to <role>`, or `already
+    granted` when it was (planned test_grant_schedule_reader_grants_once).
+    It waits for spec 108 (Decision 1). Alternative: one command,
+    `harrier store grant <group role> <login role>`, accepting only
+    `harrier_tenant` and `harrier_schedule_reader`.
+12. **Where the Auth settings check and the cost projection live.** Both
+    have planned tests and neither has a module or a command. Recommended:
+    a module `services/api/src/harrier/deploychecks.py` and a `harrier
+    deploy` command group.
+    - `harrier deploy check-auth-settings` reads `HARRIER_SUPABASE_URL`
+      and `HARRIER_SUPABASE_PUBLISHABLE_KEY` from the environment, sends
+      `GET /auth/v1/settings`, and exits 1 naming the first field that
+      fails (`disable_signup`, `external.anonymous_users`, or
+      `external.<provider>`), or 0 printing `auth settings: invite only`.
+      The decision is a function of the parsed response, so
+      planned test_the_deploy_refuses_open_sign_up runs against a fake
+      response with no network. Deploy step 6 runs it as the store steps
+      run theirs.
+    - `harrier deploy project-cost --as-of <date> --line <name>=<usd>`,
+      repeated per line. The operator types the month so far from Fly's
+      billing page (Cost Explorer, as spec 115's F4 read it) and Vercel's
+      usage page, so no Fly or Vercel token joins the pipeline. It prints
+      the projection, spent so far / days elapsed × days in the month,
+      names the largest line, and exits 1 when the projection exceeds 5
+      USD (planned test_the_cost_projection_reports_a_month_over_budget,
+      with fixed figures and date). `docs/deploy.md` names both pages.
+
+    Alternative: a `curl` and `jq` step in `deploy.yml` for the Auth
+    settings, which a test could only read as text, and a script under
+    `deploy/` for the cost, outside the CLI and its import contracts.
+13. **The two hosted log items spec 135 does not carry.** Decision 2
+    drops them from this spec: the hosted start's refusal of prompt
+    logging, and the access line without its query string. Until one
+    spec carries them, a debug variable set on a Fly machine makes
+    `_log_call` write prompts and outputs under `data/llm-logs` there,
+    and a query string reaches Fly's log store. Recommended: an amendment
+    to spec 135 takes both, since it owns hosted logs. Alternative: this
+    spec keeps the prompt logging refusal as a start check, which is a
+    refusal rather than a log rendering, and spec 135 takes the query
+    string.
+
+### Changes to approved specs (2026-10-13)
+
+- **Spec 134:** its start checks also refuse a login role that cannot log
+  in or that inherits (Decision 3). Written into spec 134 as its own
+  amendment, by Akin's decision.
+- **Spec 135:** cited, not changed. Open decision 13 asks whether an
+  amendment to it takes the two items it does not carry.
+
+### Acceptance criteria (2026-10-13)
+
+- [ ] `harrier store grant-tenant` refuses a role with `NOLOGIN`, naming
+      `cannot log in`, and a role with `INHERIT`, naming `inherits`,
+      through `login_role_problems`
+      (planned test_grant_tenant_refuses_a_role_that_can_bypass, extended).
+- [ ] The change that builds this spec builds none of the four hosted log
+      criteria marked superseded, and changes `harrier.logsetup` only as
+      spec 135 says.
+- [ ] Open decisions 11 to 13 are answered before the change that builds
+      the steps they name.
