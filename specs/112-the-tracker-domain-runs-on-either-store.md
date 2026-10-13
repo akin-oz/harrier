@@ -1712,29 +1712,30 @@ amendment states it, on both stores, because SQLite has the same gap.
 ### Problem
 
 Failure modes says "the domain never continues after an error inside
-one". That is a claim about the domain. The seam does not enforce it, and
-when a caller does continue, the seam reports a success the store did not
-keep.
+one". That is a claim about the domain. Before this amendment the seam
+did not enforce it, and when a caller did continue, the seam reported a
+success the store had not kept. As the code stood at `c82d663`:
 
-- **Postgres.** A statement fails inside the outermost block, and the
-  caller catches the `StoreDatabaseError` without a nested
-  `transaction()`. The transaction is now failed (the driver reports
-  `TransactionStatus.INERROR`). Postgres refuses every later statement in
+- **Postgres.** A statement failed inside the outermost block, and the
+  caller caught the `StoreDatabaseError` without a nested
+  `transaction()`. The transaction was then failed (the driver reports
+  `TransactionStatus.INERROR`). Postgres refused every later statement in
   it, each with `current transaction is aborted, commands ignored until
-  end of transaction block`, and the caller may catch those too. The
-  block exits normally, and the seam's commit
-  (`services/api/src/harrier/connection.py:841`) sends `COMMIT`. Postgres
-  answers `ROLLBACK` and no error. The block returns as if it committed;
-  every write in it is gone.
+  end of transaction block`, and the caller could catch those too. The
+  block exited normally, and the seam's commit (`_PostgresBackend.commit`,
+  `services/api/src/harrier/connection.py:841` at `c82d663`) sent
+  `COMMIT`. Postgres answered `ROLLBACK` and no error. The block returned
+  as if it had committed; every write in it was gone.
 - **SQLite.** Some errors make SQLite roll back the whole transaction, not
   only the statement: a full disk (`SQLITE_FULL`), an I/O error, out of
   memory, and some busy cases (SQLite's "Response To Errors Within A
-  Transaction"). The caller catches the error. The driver is no longer in
-  a transaction, so the block's next write begins a new one with `BEGIN
-  IMMEDIATE` (`_SqliteBackend.run`), and the block's exit commits that one.
-  The sqlite3 module's `commit()` does nothing when no transaction is
-  open, so a block with no later write also exits as if it committed. The
-  writes before the failure are gone; the writes after it are kept.
+  Transaction"). The caller caught the error. The driver was no longer in
+  a transaction, so the block's next write began a new one with `BEGIN
+  IMMEDIATE` (`_SqliteBackend.run`), and the block's exit committed that
+  one. The sqlite3 module's `commit()` does nothing when no transaction is
+  open, so a block with no later write also exited as if it had
+  committed. The writes before the failure were gone; the writes after it
+  were kept.
 
 Measured through the seam on 2026-10-13 at `c82d663`, with probe scripts
 the pull request records:
@@ -1751,8 +1752,8 @@ the pull request records:
 Who meets it: any caller of `transaction()` that catches a store error
 inside it. The domain's own catch sites (Behavior, "The catch sites")
 re-raise, wrap the failing statement in its own block, or run outside a
-write transaction, with one exception: `logredact.refresh_installed` catches a
-failed identity read, and when a caller's block wraps `add_contact`
+write transaction, with one exception: `logredact.identity_values`, which
+`refresh_installed` calls, catches a failed identity read, and when a caller's block wraps `add_contact`
 (`services/api/src/harrier/tracker/store.py:944`), that read runs inside
 the caller's transaction. Spec 134's request transaction wraps every
 hosted request in a block, and guards its own commit. The CLI and spec
@@ -1775,7 +1776,8 @@ A block that has begun no transaction (on SQLite, one that has only read)
 has nothing to give up. A failure that leaves the transaction usable
 does not give it up: on SQLite a constraint error undoes its own statement
 and the transaction goes on, as today; on both stores a nested block that
-raised has rolled back to its savepoint (decision 3).
+raised has rolled back to its savepoint (Amendment (2026-10-11): split,
+owner and nesting, decision 3).
 
 **The outermost block exits normally in a transaction given up.** The seam
 does not commit. It rolls back (on SQLite only if the driver is still in
@@ -1800,8 +1802,10 @@ transaction given up, and its own exit raises as above.
 
 **Unchanged.** A block whose exception leaves it rolls back and the
 exception goes on, as Behavior says. A block whose transaction was not
-given up commits as today. A statement outside any block is its own
-transaction, as today.
+given up commits as today. On Postgres a statement outside any block is
+its own transaction; on SQLite a write outside any block opens the
+sqlite3 module's transaction, which the next outermost block adopts and
+commits; both as today.
 
 **Spec 134's request transaction.** It asks
 `harrier.pgstore.transaction_failed` before it commits and rolls back
@@ -1820,9 +1824,19 @@ the domain does.
 - **A caller catches a whole-transaction rollback, on SQLite.** Every
   later statement raises `StoreDatabaseError` with the text above; the
   outermost block's normal exit raises it too; nothing is kept.
-- **The rollback itself fails** (a lost connection). The error raised is
-  still the one above; the connection is lost with its transaction, as
-  Failure modes says of a lost connection.
+- **The connection is lost after the failure.** The exit raises either
+  way, and never reports a commit. When the seam has not yet seen the
+  loss, the driver still reports the failed state, so the exit raises the
+  text above and the rollback's own failure is not the one raised. When
+  it has (a later statement already met the lost connection), the driver
+  reports a broken connection rather than a failed transaction, and the
+  exit raises the lost connection's own `StoreDatabaseError`. Either way
+  the connection is lost with its transaction, as Failure modes says of a
+  lost connection.
+- **SQLite's out of memory.** It rolls the transaction back and reaches
+  Python as `MemoryError`, not as a `sqlite3.Error`. It counts as a
+  failed statement like any other: what the block's transaction becomes
+  decides, not the error's class.
 - **The caller catches the exit's error.** The transaction has already
   rolled back. Nothing is retried, and the next block starts clean.
 - **The same domain code on both stores.** A caught constraint error
@@ -1837,21 +1851,49 @@ where the case exists on both:
 
 - [ ] An outermost block writes a row, catches a failure that gives its
       transaction up (Postgres: a duplicate key; SQLite: a write past
-      `PRAGMA max_page_count`), and exits normally. The exit raises
-      `StoreDatabaseError` with the text above, the row is not in the
-      store, and the same connection then commits a new block
-      (planned test_a_block_whose_transaction_was_given_up_raises_at_its_exit).
+      `PRAGMA max_page_count`), and exits normally. A later statement in
+      the block is refused: on SQLite with the text above, on Postgres by
+      the server (`InFailedSqlTransaction`), not the seam. The exit raises
+      `StoreDatabaseError` itself, not a subclass, with the text above;
+      the row is not in the store, and the same connection then commits a
+      new block
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_block_whose_transaction_was_given_up_raises_at_its_exit`).
 - [ ] On SQLite, a write after that failure, in the same block or in a
       nested one, raises `StoreDatabaseError` with the text above, and is
-      not in the store after the block ends
-      (planned test_a_sqlite_write_after_the_store_gave_up_is_refused).
+      not in the store after the block ends; the nested block, refused as
+      it opens, does not take the write lock
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_sqlite_write_after_the_store_gave_up_is_refused`).
 - [ ] A nested block that catches such a failure and exits normally
       raises at its exit; the outer block that catches that raises at its
       own exit, with the text above, and nothing is kept
-      (planned test_a_caught_failure_inside_a_nested_block_fails_the_outermost).
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_caught_failure_inside_a_nested_block_fails_the_outermost`).
 - [ ] On SQLite, a block that catches a duplicate key error without a
       savepoint and goes on commits its other writes, as today
-      (planned test_a_caught_sqlite_constraint_error_keeps_the_transaction).
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_caught_sqlite_constraint_error_keeps_the_transaction`).
+- [ ] A `COMMIT` the caller runs inside a block, with no statement
+      failing, is not the store giving up: the exit raises nothing and the
+      row stays, on both stores (review of PR #304)
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_commit_inside_a_block_is_not_the_store_giving_up`).
+- [ ] On SQLite, a failed read in a block that began no transaction gives
+      nothing up, though the block before it began one and committed
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_sqlite_block_that_only_read_has_nothing_to_give_up`).
+- [ ] On SQLite, a transaction the block adopted from a write outside any
+      block, then lost to a full disk, is given up: the next write is
+      refused, the exit raises, and the first row is not in the store
+      (review of PR #304)
+      (`services/api/tests/test_seam_on_both_stores.py::test_an_adopted_sqlite_transaction_can_be_given_up`).
+- [ ] On SQLite, an out of memory failure (`PRAGMA hard_heap_limit`,
+      raised as `MemoryError`) gives the transaction up, and the exit
+      raises (review of PR #304)
+      (`services/api/tests/test_seam_on_both_stores.py::test_an_out_of_memory_failure_gives_up_the_sqlite_transaction`).
+- [ ] On Postgres, a connection terminated after the failure, before the
+      exit, still makes the exit raise `StoreDatabaseError` with the text
+      above, and nothing is kept (review of PR #304)
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_connection_lost_while_giving_up_still_says_so`).
+- [ ] A SQLite connection closed after a block that held a transaction
+      still raises `StoreDatabaseError`, not the driver's own error
+      (review of PR #304)
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_closed_sqlite_connection_still_raises_a_store_error`).
 - [ ] Each of the first three tests fails with the fix reverted, and the
       pull request records what each reversion made fail.
 
@@ -1885,13 +1927,29 @@ All three as recommended.
 
 ### Honest limitations (amendment of 2026-10-13)
 
-- On SQLite the seam sees the effect, a transaction it began that is no
-  longer open, not the error code. Only a full disk is provoked in the
-  tests; an I/O error, out of memory and a busy rollback are not.
+- On SQLite the seam sees the effect, a transaction it held that is no
+  longer open after a failure, not the error code. A full disk and out of
+  memory are provoked in the tests; an I/O error and a busy rollback are
+  not.
+- On SQLite a `CREATE`, or a write that starts with `WITH`, run in
+  autocommit inside a block that has not begun (Honest limitations,
+  amendment of the post-merge review of PR #288). When a later write in
+  that block gives the transaction up, they stay, and the exit's text
+  overstates: the store kept them (review of PR #304). Domain SQL has
+  neither inside a block.
 - The Postgres case is measured on 17.11 locally and on CI's Postgres in
   the tests; no other version was probed.
 - The exit's error carries no cause. A caller that wants the failing
   statement's error must log it where it catches it.
+- Transaction control run through `execute()` is not refused. A `COMMIT`
+  inside a block ends the seam's transaction. On Postgres the block's
+  later statements then run in autocommit, without the lock timeout or
+  the owner's identity; on SQLite they begin a new transaction that the
+  exit commits. And on SQLite a statement that fails after such a
+  `COMMIT`, while no transaction is open, reads as the store giving up, so
+  the exit says nothing was kept though the work before the `COMMIT` was.
+  No code under `services/api/src` runs transaction control through a
+  `Connection`. Refusing it is a change of its own (review of PR #304).
 
 ### Proof / origin (amendment of 2026-10-13)
 
