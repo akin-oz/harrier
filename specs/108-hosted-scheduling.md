@@ -681,7 +681,9 @@ The store (PR 1)
       passes).
 - [ ] Migration 10's statements are identical before and after this
       change, compared as text
-      (planned test_migration_10_statements_do_not_change).
+      (`services/api/tests/test_owner_policy.py::test_migration_10_statements_do_not_change`,
+      added by spec 116's change; this spec extends it to
+      `schedule_state`).
 - [ ] `HOSTED_ONLY_TABLES` declares `schedule_state`;
       `services/api/tests/test_dialect_parity.py::test_both_dialects_build_the_same_tracker`
       passes, and fails when a declared table does not exist on Postgres
