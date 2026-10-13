@@ -1500,6 +1500,8 @@ of scope are records of their dates and are not changed.
     It waits for spec 108 (Decision 1). Alternative: one command,
     `harrier store grant <group role> <login role>`, accepting only
     `harrier_tenant` and `harrier_schedule_reader`.
+    Taken 2026-10-13 (Akin, in chat): the recommended answer. "Open
+    decisions 11 to 13, taken (2026-10-13)" below states it.
 12. **Where the Auth settings check and the cost projection live.** Both
     have planned tests and neither has a module or a command. Recommended:
     a module `services/api/src/harrier/deploychecks.py` and a `harrier
@@ -1525,6 +1527,9 @@ of scope are records of their dates and are not changed.
     Alternative: a `curl` and `jq` step in `deploy.yml` for the Auth
     settings, which a test could only read as text, and a script under
     `deploy/` for the cost, outside the CLI and its import contracts.
+
+    Taken 2026-10-13 (Akin, in chat): the recommended answer. "Open
+    decisions 11 to 13, taken (2026-10-13)" below states it.
 13. **The two hosted log items spec 135 does not carry.** Decision 2
     drops them from this spec: the hosted start's refusal of prompt
     logging, and the access line without its query string. Until one
@@ -1535,6 +1540,9 @@ of scope are records of their dates and are not changed.
     spec keeps the prompt logging refusal as a start check, which is a
     refusal rather than a log rendering, and spec 135 takes the query
     string.
+    Taken 2026-10-13 (Akin, in chat): the recommended answer. Spec 135's
+    "Amendment (2026-10-13): prompt logging and query strings" carries
+    both, each with its own criterion.
 
 ### Changes to approved specs (2026-10-13)
 
@@ -1542,7 +1550,9 @@ of scope are records of their dates and are not changed.
   in or that inherits (Decision 3). Written into spec 134 as its own
   amendment, by Akin's decision.
 - **Spec 135:** cited, not changed. Open decision 13 asks whether an
-  amendment to it takes the two items it does not carry.
+  amendment to it takes the two items it does not carry. Answered the
+  same day: spec 135 takes both by its own amendment, by Akin's decision
+  (Open decision 13, taken).
 
 ### Acceptance criteria (2026-10-13)
 
@@ -1555,3 +1565,109 @@ of scope are records of their dates and are not changed.
       spec 135 says.
 - [ ] Open decisions 11 to 13 are answered before the change that builds
       the steps they name.
+
+### Open decisions 11 to 13, taken (2026-10-13)
+
+Akin answered Open decisions 11, 12 and 13 in chat on 2026-10-13, each
+with the recommended answer. This section states what 11 and 12 add to
+this spec. Open decision 13 is carried by spec 135's "Amendment
+(2026-10-13): prompt logging and query strings", not here.
+
+#### `harrier store grant-schedule-reader` (Open decision 11)
+
+`harrier store grant-schedule-reader <role>`, run as the migrator on a
+Postgres store at `target_version()`, mirrors `grant-tenant`:
+
+- on a SQLite store, refuses: `error: harrier store grant-schedule-reader
+  needs a Postgres store`, exit 1;
+- when the role `harrier_schedule_reader` does not exist, refuses: `error:
+  harrier_schedule_reader does not exist; spec 108's migration creates
+  it`, exit 1;
+- when `login_role_problems` returns anything for `<role>`, refuses, exit
+  1, naming each check and never the URL, as `grant-tenant` does. It runs
+  after `grant-tenant` for the same role, so `cannot set role
+  harrier_tenant` is not expected here;
+- otherwise runs `GRANT harrier_schedule_reader TO <role>`, the name
+  quoted as an identifier, and prints `harrier_schedule_reader granted to
+  <role>`, or `harrier_schedule_reader already granted to <role>` when it
+  was.
+
+`deploy.yml` runs it as a named step for `harrier_scheduler`, after that
+role's `grant-tenant` step and before `check-deploy`. It waits for spec
+108 (Decision 1).
+
+#### `harrier deploy` (Open decision 12)
+
+A new command group, `harrier deploy`, in `services/api/src/harrier_cli/main.py`,
+over a new module, `services/api/src/harrier/deploychecks.py`. Both sit
+under `services/api/src/`, which `config/data-classification.json`
+classifies as public; no new directory. Neither command opens the store.
+
+`harrier deploy check-auth-settings`:
+
+- reads `HARRIER_SUPABASE_URL` and `HARRIER_SUPABASE_PUBLISHABLE_KEY` from
+  the environment. A missing or empty one: `error: harrier deploy
+  check-auth-settings needs <variable>`, exit 1;
+- sends `GET <HARRIER_SUPABASE_URL>/auth/v1/settings` with the key as the
+  `apikey` header, waiting at most 10 seconds;
+- an answer other than 200, no answer, or a body that is not a JSON
+  object: `error: auth settings: <what happened>`, naming the status or
+  the failure, exit 1;
+- then fails, exit 1, on the first of these, naming the field:
+  `disable_signup` not `true` (false or missing: invite-only cannot be
+  shown); `external.anonymous_users` true; any other entry of `external`
+  true except `email` and `phone`, as `external.<name>`. Text: `error:
+  auth settings: <field> is <value>`;
+- otherwise prints `auth settings: invite only`, exit 0.
+
+It never prints the key, the URL or the response body. The decision is a
+function of the parsed JSON object, so the tests run it with no network.
+Deploy step 6 runs it after the REST probe.
+
+`harrier deploy project-cost --as-of <YYYY-MM-DD> --line <name>=<usd>`:
+
+- `--line` is given once per billed line, each the month so far in USD,
+  as the operator reads it from Fly's Cost Explorer and Vercel's usage
+  page for both projects. `--as-of` is the last day those figures cover;
+- the projection is spent so far / days elapsed × days in the month,
+  where spent so far is the sum of the lines, days elapsed is `--as-of`'s
+  day of the month, and days in the month is that month's length;
+- it prints `projected <x.xx> USD for <YYYY-MM>, from <y.yy> USD over <d>
+  of <n> days; largest line: <name> (<z.zz> USD)`;
+- when the projection exceeds 5 USD, compared before rounding, it prints
+  `over the 5 USD budget` and exits 1; otherwise exits 0;
+- no `--line`, a line without `=`, an amount that is not a number or is
+  negative, a name given twice, or a date that is not a calendar date:
+  a usage error naming the argument, exit 2. It reads no network and no
+  token, and writes nothing.
+
+`docs/deploy.md` runs `project-cost` once a month under "The monthly
+cost check" and names both pages.
+
+#### Acceptance criteria (Open decisions 11 and 12)
+
+- [ ] `harrier store grant-schedule-reader` grants once and reports an
+      existing grant (planned test_grant_schedule_reader_grants_once),
+      and refuses a SQLite store, a store without
+      `harrier_schedule_reader`, and a login role that
+      `login_role_problems` names, each with its text and never the URL
+      (planned test_grant_schedule_reader_refuses_what_it_cannot_grant).
+- [ ] `deploy.yml` runs `grant-schedule-reader` for `harrier_scheduler`
+      after that role's `grant-tenant` and before `check-deploy`, and runs
+      `harrier deploy check-auth-settings` in step 6 (planned
+      test_the_deploy_workflow_migrates_before_it_deploys, extended).
+- [ ] `harrier deploy check-auth-settings` fails on `disable_signup`
+      false or missing, on `external.anonymous_users` true and on an OAuth
+      provider turned on, and passes on invite-only settings, against a
+      fake response (planned test_the_deploy_refuses_open_sign_up); and
+      fails naming a missing variable, a status other than 200 and a body
+      that is not a JSON object, never printing the key
+      (planned test_check_auth_settings_refuses_what_it_cannot_read).
+- [ ] `harrier deploy project-cost` reports a month over budget with its
+      largest line and exits 1, and exits 0 under it, with fixed figures
+      and date (planned test_the_cost_projection_reports_a_month_over_budget);
+      and refuses each malformed argument above with exit 2
+      (planned test_project_cost_refuses_a_malformed_line).
+- [ ] `docs/deploy.md` names the `grant-schedule-reader` step and runs
+      `project-cost` monthly, naming Fly's Cost Explorer and Vercel's
+      usage page.
