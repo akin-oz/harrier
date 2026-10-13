@@ -51,9 +51,9 @@ from harrier.tracks import DEFAULT_TRACK_ID
 from harrier.tracks import Scope as TrackScope
 from harrier_api.capture_routes import capture_router
 from harrier_api.credentials_routes import (
-    credential_refusal,
+    credentials_refusal_response,
     credentials_router,
-    is_credentials_path,
+    is_credentials_route,
 )
 from harrier_api.demo import demo_db_path, is_demo_mode, seed_demo_db
 from harrier_api.deps import (
@@ -1501,8 +1501,8 @@ def _app_with_routes(manager: RunManager) -> FastAPI:
         # FastAPI's own 422 echoes the submitted input. On the credentials
         # routes the input is a secret, so the body names the field and the
         # rule only (spec 116). Every other route answers as FastAPI does.
-        if is_credentials_path(cast(str, request.scope["path"])):
-            return JSONResponse(status_code=422, content=credential_refusal(error).model_dump())
+        if is_credentials_route(request.scope):
+            return credentials_refusal_response(request, error)
         return await request_validation_exception_handler(request, error)
 
     @app.exception_handler(RunsNotHosted)

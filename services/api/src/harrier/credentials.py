@@ -74,13 +74,24 @@ FIELD_MAX_BYTES = 4096
 EMPTY = "must not be empty"
 TOO_LONG = f"must be at most {FIELD_MAX_BYTES} bytes in UTF-8"
 CONTROL_CHARACTER = "must not hold a control character"
+# A lone surrogate is text Python holds and UTF-8 cannot encode. Asked to,
+# the codec raises an error that quotes the character and holds the whole
+# value, so it is refused by its own rule first (local review of PR #310).
+NOT_UTF8 = "must be text that UTF-8 can encode"
 NOT_A_PROVIDER = "must be " + " or ".join(AI_PROVIDERS)
-UNKNOWN_FIELD = "is not a field of this kind"
+# The problem a field this kind does not take is reported under. The name
+# a caller sent is never repeated: it is their text, and may be a value.
+FIELDS = "fields"
+
+
+def unknown_field_problem(kind: CredentialKind) -> str:
+    return "may only be " + ", ".join(KIND_FIELDS[kind].fields)
 
 
 class CredentialRefused(ValueError):
     """A submitted credential breaks the field rule. Each problem names the
-    field and the rule, never the value."""
+    field and the rule, never the value, nor a field name the kind does not
+    have."""
 
     def __init__(self, problems: list[tuple[str, str]]) -> None:
         super().__init__("; ".join(f"{field} {problem}" for field, problem in problems))
@@ -90,10 +101,13 @@ class CredentialRefused(ValueError):
 def field_problem(value: str, *, optional: bool = False) -> str | None:
     """The rule `value` breaks once stripped, or None. A field becomes a
     process variable of a run (spec 106), so a control character, NUL
-    and newline included, is refused. Empty is allowed only when optional."""
+    and newline included, is refused. Empty is allowed only when optional.
+    Nothing here raises, so no error can carry the value."""
     stripped = value.strip()
     if not stripped:
         return None if optional else EMPTY
+    if any(unicodedata.category(character) == "Cs" for character in stripped):
+        return NOT_UTF8
     if len(stripped.encode("utf-8")) > FIELD_MAX_BYTES:
         return TOO_LONG
     if any(unicodedata.category(character) == "Cc" for character in stripped):
@@ -104,13 +118,15 @@ def field_problem(value: str, *, optional: bool = False) -> str | None:
 def checked_fields(kind: CredentialKind, fields: Mapping[str, str | None]) -> dict[str, str]:
     """`fields` stripped, with an optional field left out when empty.
 
-    Raises CredentialRefused naming each field that breaks the rule, is
-    missing, or is not one of the kind's.
+    Raises CredentialRefused naming each field that breaks the rule or is
+    missing, and, under `fields`, any field the kind does not take, without
+    its name. Spec 109's Telegram route writes through this, with no request
+    model in front of it.
     """
     declared = KIND_FIELDS[kind]
-    problems: list[tuple[str, str]] = [
-        (name, UNKNOWN_FIELD) for name in fields if name not in declared.fields
-    ]
+    problems: list[tuple[str, str]] = []
+    if any(name not in declared.fields for name in fields):
+        problems.append((FIELDS, unknown_field_problem(kind)))
     kept: dict[str, str] = {}
     for name in declared.fields:
         optional = name in declared.optional

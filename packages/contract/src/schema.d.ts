@@ -1525,12 +1525,12 @@ export interface components {
         AiCredentialIn: {
             /**
              * Key
-             * @description Stripped of surrounding whitespace; refused when empty, longer than 4096 bytes in UTF-8, or holding a control character.
+             * @description Stripped of surrounding whitespace; refused when empty, not text UTF-8 can encode, longer than 4096 bytes in UTF-8, or holding a control character.
              */
             key: string;
             /**
              * Model
-             * @description Optional; empty is unset. Stripped of surrounding whitespace; refused when empty, longer than 4096 bytes in UTF-8, or holding a control character.
+             * @description Optional; empty is unset. Stripped of surrounding whitespace; refused when empty, not text UTF-8 can encode, longer than 4096 bytes in UTF-8, or holding a control character.
              */
             model?: string | null;
             /**
@@ -1558,7 +1558,7 @@ export interface components {
         ApifyCredentialIn: {
             /**
              * Token
-             * @description Stripped of surrounding whitespace; refused when empty, longer than 4096 bytes in UTF-8, or holding a control character.
+             * @description Stripped of surrounding whitespace; refused when empty, not text UTF-8 can encode, longer than 4096 bytes in UTF-8, or holding a control character.
              */
             token: string;
         };
@@ -2312,7 +2312,7 @@ export interface components {
         HunterCredentialIn: {
             /**
              * Key
-             * @description Stripped of surrounding whitespace; refused when empty, longer than 4096 bytes in UTF-8, or holding a control character.
+             * @description Stripped of surrounding whitespace; refused when empty, not text UTF-8 can encode, longer than 4096 bytes in UTF-8, or holding a control character.
              */
             key: string;
         };

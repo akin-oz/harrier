@@ -21,6 +21,7 @@ one (`tests/pg_support.py`).
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import os
 import uuid
@@ -37,6 +38,7 @@ from fastapi.testclient import TestClient
 from pg_support import database_copy, new_owner, open_owner_store
 from test_host_lease import api_routes
 from test_hosted_auth import (
+    API_HOST,
     CREDENTIALS_KEY_TEXT,
     Clock,
     KeyServer,
@@ -48,33 +50,55 @@ from test_hosted_auth import (
 )
 from test_hosted_requests import Hosted, Server, copied_server, serving
 
-from harrier.connection import Connection, Cursor
+from harrier.connection import Connection, Cursor, StoreVersionError
 from harrier.credentials import (
     CONTROL_CHARACTER,
     EMPTY,
     FIELD_MAX_BYTES,
+    FIELDS,
     KEY_BYTES,
     KIND_FIELDS,
     KINDS,
+    NOT_A_PROVIDER,
+    NOT_UTF8,
     TOO_LONG,
+    CredentialRefused,
     CredentialsKey,
     CredentialUnreadable,
     decrypt,
     parse_key,
     put_credential,
     stored_credentials,
+    unknown_field_problem,
 )
 from harrier.db import connect
-from harrier.pgstore import postgres_connect
+from harrier.pgstore import (
+    migrate_postgres,
+    open_postgres_store,
+    postgres_connect,
+    target_version,
+)
 from harrier_api.app import create_app, create_hosted_app
-from harrier_api.credentials_routes import LOCAL_TEXT, TELEGRAM_ELSEWHERE, UNKNOWN_KIND
+from harrier_api.credentials_routes import (
+    LOCAL_TEXT,
+    TELEGRAM_ELSEWHERE,
+    UNKNOWN_KIND,
+    AiCredentialIn,
+    ApifyCredentialIn,
+    HunterCredentialIn,
+)
 from harrier_api.deps import get_conn
 from harrier_api.hostedauth import (
-    CREDENTIALS_KEY_REFUSAL,
     CREDENTIALS_KEY_VARIABLE,
     HostedConfigError,
     hosted_config,
 )
+
+# Spec 116's refusal, as its Behavior writes it without the `error: ` prefix.
+SPEC_116_REFUSAL = "HARRIER_CREDENTIALS_KEY must be <key id>:<base64 of 32 bytes>"
+
+# A table only the synthetic skipped migration creates.
+SKIPPED_TABLE = "harrier_skipped_probe"
 
 
 def secret(label: str = "value") -> str:
@@ -183,8 +207,86 @@ def test_a_credential_round_trips_for_its_owner_only(owners: TwoOwners) -> None:
     # B's own write lands under B and leaves A's alone.
     put_credential(owners.as_b, key, owners.b, "hunter", {"key": "b-key"})
     assert [row.kind for row in stored_credentials(owners.as_b)] == ["hunter"]
-    assert decrypt(key, owners.a, again["hunter"]) == written["hunter"]
-    assert len(stored_credentials(owners.as_a)) == len(KINDS)
+    # A's rows read again after B's write: the same four, A's hunter key
+    # untouched.
+    after = {row.kind: row for row in stored_credentials(owners.as_a)}
+    assert sorted(after) == sorted(KINDS)
+    assert decrypt(key, owners.a, after["hunter"]) == written["hunter"]
+    assert after["hunter"].ciphertext == again["hunter"].ciphertext
+
+
+def test_a_refused_credential_writes_nothing_and_quotes_nothing(owners: TwoOwners) -> None:
+    """The field rule in the domain, with no request model in front of it,
+    as spec 109's Telegram route will write (local review of PR #310). Each
+    refusal names the field and the rule, never the value or a field name
+    the kind does not take, and writes no row."""
+    value = secret("refused")
+    cases: list[tuple[str, dict[str, str | None], list[tuple[str, str]]]] = [
+        ("apify", {"token": " \t "}, [("token", EMPTY)]),
+        ("hunter", {"key": value + "x" * FIELD_MAX_BYTES}, [("key", TOO_LONG)]),
+        (
+            "telegram",
+            {"bot_token": value, "chat_id": f"{value}\n1"},
+            [("chat_id", CONTROL_CHARACTER)],
+        ),
+        ("telegram", {"bot_token": f"{value}\ud800", "chat_id": "1"}, [("bot_token", NOT_UTF8)]),
+        ("apify", {"token": "fine", value: "x"}, [(FIELDS, unknown_field_problem("apify"))]),
+        ("ai", {"provider": value, "key": "fine"}, [("provider", NOT_A_PROVIDER)]),
+        ("ai", {"key": "fine"}, [("provider", EMPTY)]),
+    ]
+    for kind, fields, problems in cases:
+        with pytest.raises(CredentialRefused) as refused:
+            put_credential(owners.as_a, credentials_key(), owners.a, kind, fields)  # pyright: ignore[reportArgumentType]
+        assert refused.value.problems == problems, kind
+        assert refused.value.__cause__ is None and refused.value.__context__ is None
+        shown = " ".join((str(refused.value), repr(refused.value), repr(refused.value.problems)))
+        assert_no_leak([shown], [value])
+    assert stored_credentials(owners.as_a) == []
+
+
+def test_a_store_that_skipped_a_declared_migration_is_refused(
+    owners: TwoOwners, server: Server, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A migration declared below the version a store already reached would
+    never be applied: the runner applies only higher versions. Migrating,
+    the store's opener and the hosted start refuse such a store, naming the
+    version, and nothing runs out of order. A version declared with no
+    statements is not counted (spec 116, local review of PR #310)."""
+    from harrier.tracker import schema
+
+    target = target_version()
+    real = list(schema.POSTGRES_MIGRATIONS)
+    below = [m for m in real if m[0] < target]
+    assert target - 1 not in {version for version, _ in real}, "pick a free version"
+    later = (target - 1, [f"CREATE TABLE {SKIPPED_TABLE} (id bigint)"])
+    monkeypatch.setattr(schema, "POSTGRES_MIGRATIONS", [*below, later, real[-1]])
+    text = (
+        f"the store is at version {target} but never applied migration {target - 1}, "
+        "declared below it after the store passed it. harrier store migrate applies "
+        "migrations in order only; renumber the migration above the store's version."
+    )
+    with pytest.raises(StoreVersionError) as refused:
+        migrate_postgres(owners.url)
+    assert str(refused.value) == text
+    with pytest.raises(StoreVersionError) as opened:
+        open_postgres_store(owners.url)
+    assert str(opened.value) == text
+    with closing(postgres_connect(owners.url)) as admin:
+        absent = admin.execute(b"SELECT to_regclass(%s) IS NULL", (SKIPPED_TABLE,)).fetchone()
+        assert absent == (True,), "the skipped migration ran out of order"
+        top = admin.execute(b"SELECT max(version) FROM schema_version").fetchone()
+    assert top == (target,)
+    with (
+        pytest.raises(StoreVersionError) as at_start,
+        serving(monkeypatch, server.login_role().url),
+    ):
+        pass
+    assert str(at_start.value) == text
+
+    # Declared with no statements, for the other dialect: nothing to skip.
+    monkeypatch.setattr(schema, "POSTGRES_MIGRATIONS", [*below, (target - 1, []), real[-1]])
+    assert migrate_postgres(owners.url) == (target, target)
+    open_postgres_store(owners.url).close()
 
 
 def test_a_ciphertext_moved_to_another_owner_or_kind_does_not_decrypt(
@@ -388,7 +490,12 @@ def test_a_refused_credential_body_does_not_echo_the_value(
         ("apify", {"token": f"{value}\nmore"}, [{"field": "token", "problem": CONTROL_CHARACTER}]),
         ("apify", {"token": f"{value}\x00"}, [{"field": "token", "problem": CONTROL_CHARACTER}]),
         ("hunter", {"key": value + "x" * FIELD_MAX_BYTES}, [{"field": "key", "problem": TOO_LONG}]),
-        ("hunter", {"key": "fine", "secret": value}, [{"field": "secret", "problem": ""}]),
+        (
+            "hunter",
+            {"key": "fine", value: "x"},
+            [{"field": FIELDS, "problem": unknown_field_problem("hunter")}],
+        ),
+        ("apify", {"token": f"{value}\ud800"}, [{"field": "token", "problem": NOT_UTF8}]),
         ("ai", {"provider": value, "key": "fine"}, [{"field": "provider", "problem": ""}]),
         (
             "ai",
@@ -401,7 +508,12 @@ def test_a_refused_credential_body_does_not_echo_the_value(
     ]
     answers: list[str] = []
     for kind, body, problems in cases:
-        response = client.put(f"/credentials/{kind}", json=body, headers=hosted.headers(owner))
+        # Sent as ASCII JSON, so a lone surrogate travels as its escape.
+        response = client.put(
+            f"/credentials/{kind}",
+            content=json.dumps(body).encode(),
+            headers={**hosted.headers(owner), "Content-Type": "application/json"},
+        )
         answers.append(response.text)
         assert response.status_code == 422, (kind, response.text)
         detail = response.json()["detail"]
@@ -411,14 +523,39 @@ def test_a_refused_credential_body_does_not_echo_the_value(
             if problem["problem"]:
                 assert entry["problem"] == problem["problem"]
             assert entry["problem"], entry
-    # A body that is not JSON is refused naming the body, not quoting it.
+    # A body that is not JSON is refused under the field "body", with no
+    # character offset and nothing of the text quoted.
     response = client.put(
         "/credentials/apify",
         content=f'{{"token": "{value}"'.encode(),
         headers={**hosted.headers(owner), "Content-Type": "application/json"},
     )
     assert response.status_code == 422, response.text
+    assert [entry["field"] for entry in response.json()["detail"]] == ["body"]
     answers.append(response.text)
+
+    # Served under a root path, the route is the same route, and its 422 the
+    # same: it is told by the matched route, not by the request's path.
+    mounted = TestClient(hosted.app, base_url=f"http://{API_HOST}", root_path="/mounted")
+    response = mounted.put(
+        "/mounted/credentials/apify",
+        content=json.dumps({"token": f"{value}\x00x"}).encode(),
+        headers={**hosted.headers(owner), "Content-Type": "application/json"},
+    )
+    assert (response.status_code, response.json()) == (
+        422,
+        {"detail": [{"field": "token", "problem": CONTROL_CHARACTER}]},
+    )
+    answers.append(response.text)
+
+    # A model that reaches a log record or an error by repr shows no secret.
+    for model in (
+        AiCredentialIn(provider="openai-api", key=value),
+        ApifyCredentialIn(token=value),
+        HunterCredentialIn(key=value),
+    ):
+        answers.append(repr(model))
+        answers.append(str(model))
 
     # Nothing refused was written.
     assert statuses(hosted, owner) == dict.fromkeys(KINDS, (False, None))
@@ -465,11 +602,22 @@ def test_credential_routes_are_not_served_locally() -> None:
     client = TestClient(app)
     walked: list[tuple[str, str]] = []
     for route in credentials_routes(app):
-        path = route.path.replace("{kind}", "apify")
         for method in sorted(route.methods or ()):
-            # A valid body, an invalid one, and none: always the local 404.
-            for body in ({"token": secret()}, {"token": ""}, None):
-                response = client.request(method, path, json=body, headers=auth())
+            # The PUT that refuses other kinds is reached with one of them.
+            filled = "telegram" if method == "PUT" else "apify"
+            path = route.path.replace("{kind}", filled)
+            # A valid body, an invalid one, none, and one that is not JSON,
+            # which FastAPI reads before any dependency: always the local 404.
+            for body in ({"token": secret()}, {"token": ""}, None, b'{"token": '):
+                if isinstance(body, bytes):
+                    response = client.request(
+                        method,
+                        path,
+                        content=body,
+                        headers={**auth(), "Content-Type": "application/json"},
+                    )
+                else:
+                    response = client.request(method, path, json=body, headers=auth())
                 assert (response.status_code, response.json()) == (404, {"detail": LOCAL_TEXT}), (
                     method,
                     path,
@@ -519,7 +667,7 @@ def test_hosted_start_needs_a_well_formed_credentials_key(
             environ[CREDENTIALS_KEY_VARIABLE] = value
         with pytest.raises(HostedConfigError) as refused:
             hosted_config(environ)
-        assert str(refused.value) == CREDENTIALS_KEY_REFUSAL, case
+        assert str(refused.value) == SPEC_116_REFUSAL, case
         assert CREDENTIALS_KEY_VARIABLE in str(refused.value)
         assert refused.value.__cause__ is None and refused.value.__context__ is None
         if value:
@@ -536,16 +684,23 @@ def test_hosted_start_needs_a_well_formed_credentials_key(
         started = start_api(environ, tmp_path)
         assert started.returncode == 1, started.stderr
         last_line = started.stderr.strip().splitlines()[-1]
-        assert last_line == f"harrier_api.hostedauth.HostedConfigError: {CREDENTIALS_KEY_REFUSAL}"
+        assert last_line == f"harrier_api.hostedauth.HostedConfigError: {SPEC_116_REFUSAL}"
+        # What the child was given: none of it, nor a long part of it, is
+        # printed (test integrity review of PR #310).
         printed = started.stdout + started.stderr
-        assert encoded not in printed and (value or encoded) not in printed
+        given = (value or "").partition(":")[2]
+        for part in (given, given[:20], given[-20:]):
+            assert not part or part not in printed, case
 
     # Well formed, the key is read, and its text form names its id only.
     config = hosted_config({**complete_hosted_environment(), CREDENTIALS_KEY_VARIABLE: good})
     assert config is not None
     assert config.credentials_key.key_id == key_id
-    for shown in (repr(config), str(config), repr(config.credentials_key)):
-        assert encoded not in shown and raw.hex() not in shown
+    assert repr(config.credentials_key) == f"CredentialsKey(key_id={key_id!r})"
+    assert str(config.credentials_key) == f"CredentialsKey(key_id={key_id!r})"
+    forms = (encoded, raw.hex(), repr(raw), raw.decode("latin-1"), encoded[:20])
+    for shown in (repr(config), str(config)):
+        assert not any(form in shown for form in forms), shown
 
     # A hosted start that takes the key logs nothing of it. The key fetch
     # fails, so the start logs, and there is a record to read.
@@ -557,7 +712,7 @@ def test_hosted_start_needs_a_well_formed_credentials_key(
     assert app.state.credentials_key is config.credentials_key
     records = [record.getMessage() for record in caplog.records]
     assert records, "the start logged nothing, so this proves nothing"
-    assert all(encoded not in text and raw.hex() not in text for text in records)
+    assert not any(form in text for form in forms for text in records)
 
     # Locally the variable is not read at all.
     assert hosted_config({CREDENTIALS_KEY_VARIABLE: "not a key"}) is None

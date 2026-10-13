@@ -362,7 +362,11 @@ body is answered with the field and the rule, never the value
 `services/api/tests/test_credentials.py::test_a_refused_credential_body_does_not_echo_the_value`).
 Locally every credentials route answers 404
 (`services/api/tests/test_credentials.py::test_credential_routes_are_not_served_locally`).
-Nothing decrypts a credential yet: spec 106's run start will.
+Nothing decrypts a credential yet: spec 106's run start will. A Postgres
+store that recorded a version above a declared migration it never applied
+is refused by `harrier store migrate`, the store's opener and the hosted
+start, since the runner applies only higher versions
+(`services/api/tests/test_credentials.py::test_a_store_that_skipped_a_declared_migration_is_refused`).
 
 No other hosted component exists yet. Specs 103 to 112 sequence the build:
 the Postgres store (103, approved), API authentication (104), row-level

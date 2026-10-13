@@ -19,14 +19,18 @@ local API. The routes are in the one contract all the same (spec 104).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field
 
 from harrier.credentials import (
     FIELD_MAX_BYTES,
+    FIELDS,
+    KIND_FIELDS,
     KINDS,
     AiProvider,
     CredentialKind,
@@ -35,6 +39,7 @@ from harrier.credentials import (
     delete_credential,
     field_problem,
     put_credential,
+    unknown_field_problem,
 )
 from harrier_api.deps import Conn, DatabaseRoute, ErrorOut
 
@@ -79,10 +84,12 @@ def _optional(value: str | None) -> str | None:
 
 
 _RULE = (
-    f"Stripped of surrounding whitespace; refused when empty, longer than "
-    f"{FIELD_MAX_BYTES} bytes in UTF-8, or holding a control character."
+    f"Stripped of surrounding whitespace; refused when empty, not text UTF-8 can "
+    f"encode, longer than {FIELD_MAX_BYTES} bytes in UTF-8, or holding a control character."
 )
-Secret = Annotated[str, AfterValidator(_required), Field(description=_RULE)]
+# Kept out of the model's repr, so a body that reaches a log record or an
+# error by `repr` carries no secret (local review of PR #310).
+Secret = Annotated[str, AfterValidator(_required), Field(description=_RULE, repr=False)]
 Provider = Annotated[AiProvider, BeforeValidator(_stripped)]
 
 
@@ -175,21 +182,47 @@ ELSEWHERE_RESPONSES: dict[int | str, dict[str, Any]] = {
 }
 
 
-def credential_refusal(error: RequestValidationError) -> CredentialRefusalOut:
+def credential_refusal(error: RequestValidationError, path: str) -> CredentialRefusalOut:
     """The 422 body for a refused credential: each error's field and its
     rule. Pydantic keeps the submitted value in `input`, which is dropped,
-    and never in `msg`."""
+    and never in `msg`. Three things a caller wrote are not repeated either
+    (local review of PR #310): a field name the kind does not take, which
+    is reported as the kind's own fields; the character offset of a body
+    that is not JSON, reported as the body; and nothing else of `loc` but
+    the declared field names."""
+    kind = path.rstrip("/").rpartition("/")[2]
     problems: list[CredentialProblemOut] = []
     for entry in error.errors():
-        location = [str(part) for part in entry.get("loc", ())]
-        field = ".".join(location[1:]) if location[:1] == ["body"] else ".".join(location)
-        problem = str(entry.get("msg", "")).removeprefix("Value error, ")
-        problems.append(CredentialProblemOut(field=field or "body", problem=problem))
+        location = list(entry.get("loc", ()))
+        if location[:1] == ["body"]:
+            location = location[1:]
+        if entry.get("type") == "extra_forbidden" and kind in KIND_FIELDS:
+            field, problem = FIELDS, unknown_field_problem(kind)
+        elif not location or not all(isinstance(part, str) for part in location):
+            field, problem = "body", str(entry.get("msg", ""))
+        else:
+            field = ".".join(str(part) for part in location)
+            problem = str(entry.get("msg", "")).removeprefix("Value error, ")
+        problems.append(CredentialProblemOut(field=field, problem=problem))
     return CredentialRefusalOut(detail=problems)
 
 
-def is_credentials_path(path: str) -> bool:
-    return path == PREFIX or path.startswith(PREFIX + "/")
+def is_credentials_route(scope: Mapping[str, Any]) -> bool:
+    """Whether the request matched one of this module's routes. Read from
+    the matched route, not the path, so a root path or a prefix changes
+    nothing (local review of PR #310)."""
+    route = scope.get("route")
+    return route is not None and any(route is own for own in credentials_router.routes)
+
+
+def credentials_refusal_response(request: Request, error: RequestValidationError) -> JSONResponse:
+    """A refused request on a credentials route. Locally the local 404
+    wins: FastAPI reads a body that is not JSON before any dependency runs,
+    so `hosted_only` never saw it (local review of PR #310)."""
+    if not getattr(request.app.state, "hosted", False):
+        return JSONResponse(status_code=404, content=ErrorOut(detail=LOCAL_TEXT).model_dump())
+    body = credential_refusal(error, cast(str, request.scope["path"]))
+    return JSONResponse(status_code=422, content=body.model_dump())
 
 
 # --- routes ---

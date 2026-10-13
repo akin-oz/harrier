@@ -126,7 +126,7 @@
         "description": "The one AI credential: its provider decides which key a run gets.",
         "properties": {
           "key": {
-            "description": "Stripped of surrounding whitespace; refused when empty, longer than 4096 bytes in UTF-8, or holding a control character.",
+            "description": "Stripped of surrounding whitespace; refused when empty, not text UTF-8 can encode, longer than 4096 bytes in UTF-8, or holding a control character.",
             "title": "Key",
             "type": "string"
           },
@@ -139,7 +139,7 @@
                 "type": "null"
               }
             ],
-            "description": "Optional; empty is unset. Stripped of surrounding whitespace; refused when empty, longer than 4096 bytes in UTF-8, or holding a control character.",
+            "description": "Optional; empty is unset. Stripped of surrounding whitespace; refused when empty, not text UTF-8 can encode, longer than 4096 bytes in UTF-8, or holding a control character.",
             "title": "Model"
           },
           "provider": {
@@ -201,7 +201,7 @@
         "additionalProperties": false,
         "properties": {
           "token": {
-            "description": "Stripped of surrounding whitespace; refused when empty, longer than 4096 bytes in UTF-8, or holding a control character.",
+            "description": "Stripped of surrounding whitespace; refused when empty, not text UTF-8 can encode, longer than 4096 bytes in UTF-8, or holding a control character.",
             "title": "Token",
             "type": "string"
           }
@@ -1762,7 +1762,7 @@
         "additionalProperties": false,
         "properties": {
           "key": {
-            "description": "Stripped of surrounding whitespace; refused when empty, longer than 4096 bytes in UTF-8, or holding a control character.",
+            "description": "Stripped of surrounding whitespace; refused when empty, not text UTF-8 can encode, longer than 4096 bytes in UTF-8, or holding a control character.",
             "title": "Key",
             "type": "string"
           }
