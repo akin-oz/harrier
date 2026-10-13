@@ -31,7 +31,14 @@ from pathlib import Path
 import psycopg
 import pytest
 from pg_support import open_owner_store
-from test_hosted_auth import API_HOST, SPA_ORIGIN, SUPABASE_URL, child_environment, start_api
+from test_hosted_auth import (
+    API_HOST,
+    CREDENTIALS_KEY_TEXT,
+    SPA_ORIGIN,
+    SUPABASE_URL,
+    child_environment,
+    start_api,
+)
 from test_hosted_requests import (
     PROBE_ROWS,
     Server,
@@ -460,6 +467,9 @@ def test_a_hosted_start_refuses_prompt_logging(
         HARRIER_ALLOWED_HOSTS=API_HOST,
         HARRIER_CORS_ORIGINS=SPA_ORIGIN,
         HARRIER_DATABASE_URL=url,
+        # Required since spec 116: without it the start refuses for the
+        # credentials key before it reaches the prompt-logging check.
+        HARRIER_CREDENTIALS_KEY=CREDENTIALS_KEY_TEXT,
         CLAUDE_CLI_DEBUG=" Yes ",
     )
     started = start_api(environ, tmp_path)

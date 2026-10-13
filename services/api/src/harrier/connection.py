@@ -223,6 +223,10 @@ WRITE_LOCK_NOT_HELD = (
     "the write lock was asked for inside a SQLite transaction this connection began without it"
 )
 POSTGRES_NOT_IDLE = "the Postgres connection is not idle, so no transaction can begin on it"
+# A block whose transaction the store gave up on: a Postgres transaction a
+# statement failed in, or a SQLite one the library rolled back whole (spec
+# 112, amendment of 2026-10-13).
+TRANSACTION_GIVEN_UP = "a statement failed inside this transaction, so the store kept none of it"
 
 # The refusals of a statement whose placeholders the seam cannot read the
 # same way on both stores (spec 112, post-merge review of PR #288).
@@ -644,6 +648,10 @@ class _Backend(Protocol):
 
     def forget_savepoint(self, name: str) -> bool: ...
 
+    def given_up(self) -> bool: ...
+
+    def refuse_given_up(self) -> None: ...
+
     def end(self) -> None: ...
 
     def commit(self) -> None: ...
@@ -718,6 +726,14 @@ class _SqliteBackend:
         # BEGIN IMMEDIATE, and after a write outside any block that the
         # module began a transaction for and that took the lock.
         self.write_locked = False
+        # Whether the outermost block holds a transaction: one it began, or
+        # one it adopted. False outside any block, so nothing after the block
+        # ends reads the driver on its account.
+        self.held = False
+        # Whether a statement failed and took that transaction with it.
+        # Only a failure counts: a COMMIT the caller ran also leaves the
+        # driver outside a transaction, and its work was kept.
+        self.lost = False
 
     def run(
         self, sql: str, statement: Statement, params: Sequence[object], *, in_block: bool
@@ -744,6 +760,7 @@ class _SqliteBackend:
     def _begin_writing(self) -> None:
         self.driver.execute("BEGIN IMMEDIATE")
         self.write_locked = True
+        self.held = True
         for name in self.pending:
             self.driver.execute(f"SAVEPOINT {name}")
         self.pending.clear()
@@ -767,6 +784,8 @@ class _SqliteBackend:
 
     def begin(self, *, immediate: bool) -> None:
         self.pending = []
+        self.held = self.driver.in_transaction
+        self.lost = False
         # A transaction the module began for a write outside any block is
         # taken as it is: the block commits it, as `with conn:` did.
         if self.driver.in_transaction:
@@ -792,8 +811,19 @@ class _SqliteBackend:
             return True
         return False
 
+    def given_up(self) -> bool:
+        # A full disk, an I/O error, out of memory and some busy cases roll
+        # the whole transaction back, not only the statement. The next write
+        # would begin a new one, which the block's exit would commit.
+        return self.lost
+
+    def refuse_given_up(self) -> None:
+        if self.given_up():
+            raise StoreDatabaseError(TRANSACTION_GIVEN_UP)
+
     def end(self) -> None:
         self.pending = []
+        self.held = False
         if not self.driver.in_transaction:
             self.write_locked = False
 
@@ -804,7 +834,14 @@ class _SqliteBackend:
         self.driver.rollback()
 
     def translate(self, error: Exception) -> StoreDatabaseError | None:
-        return store_error_from_sqlite(error) if isinstance(error, sqlite3.Error) else None
+        # Every failed statement and cursor read passes here, whatever it
+        # raised: SQLite's out of memory reaches Python as MemoryError, not
+        # as a sqlite3.Error, and rolls the transaction back all the same.
+        if self.held and not self.driver.in_transaction:
+            self.lost = True
+        if not isinstance(error, sqlite3.Error):
+            return None
+        return store_error_from_sqlite(error)
 
     def get_busy_timeout_ms(self) -> int:
         return int(self.driver.execute("PRAGMA busy_timeout").fetchone()[0])
@@ -874,6 +911,17 @@ class _PostgresBackend:
         # The outermost transaction always begins with BEGIN, so every
         # savepoint is opened with its block.
         return False
+
+    def given_up(self) -> bool:
+        # A statement failed and no rollback to a savepoint has ended the
+        # failed state. COMMIT here answers ROLLBACK with no error.
+        from psycopg.pq import TransactionStatus
+
+        return self.driver.info.transaction_status == TransactionStatus.INERROR
+
+    def refuse_given_up(self) -> None:
+        # The server refuses every later statement itself, with its own text.
+        return
 
     def end(self) -> None:
         return
@@ -1071,6 +1119,8 @@ class Connection:
 
     def _run(self, sql: str, statement: Statement, params: Sequence[object]) -> Cursor:
         in_block = self._depth > 0
+        if in_block:
+            self._backend.refuse_given_up()
         cursor = self._guard(lambda: self._backend.run(sql, statement, params, in_block=in_block))
         return _StoreCursor(cursor, self._backend.translate)
 
@@ -1093,6 +1143,13 @@ class Connection:
         without the inner work, and on Postgres stays usable. Nothing
         commits before the outermost block exits.
 
+        When the store has given up on the transaction (a statement failed
+        in it on Postgres, or SQLite rolled it back whole) and the block
+        exits normally, nothing commits: the outermost block rolls back and
+        raises StoreDatabaseError (`TRANSACTION_GIVEN_UP`). On SQLite every
+        later statement in the block is refused with that text; on
+        Postgres the server refuses them itself.
+
         Raises StoreDatabaseError, and touches nothing, when the transaction
         cannot begin as asked: on Postgres when the driver is already in a
         transaction the seam did not begin (`POSTGRES_NOT_IDLE`); on SQLite
@@ -1104,6 +1161,7 @@ class Connection:
                 yield
             return
         name = f"harrier_savepoint_{self._depth}"
+        self._backend.refuse_given_up()
         self._guard(lambda: self._backend.open_savepoint(name, immediate=immediate))
         self._depth += 1
         try:
@@ -1115,6 +1173,7 @@ class Connection:
                 self._quietly(f"RELEASE SAVEPOINT {name}")
             raise
         self._depth -= 1
+        self._backend.refuse_given_up()
         if not self._backend.forget_savepoint(name):
             self._guard(lambda: self._backend.control(f"RELEASE SAVEPOINT {name}"))
 
@@ -1131,6 +1190,7 @@ class Connection:
         self._depth = 1
         try:
             yield
+            given_up = self._guard(self._backend.given_up)
         except BaseException:
             self._depth = 0
             self._quietly_roll_back()
@@ -1138,6 +1198,11 @@ class Connection:
         finally:
             self._backend.end()
         self._depth = 0
+        if given_up:
+            # COMMIT would report success: Postgres answers it with ROLLBACK,
+            # and SQLite has no transaction left to commit.
+            self._quietly_roll_back()
+            raise StoreDatabaseError(TRANSACTION_GIVEN_UP)
         try:
             self._guard(self._backend.commit)
         except BaseException:
