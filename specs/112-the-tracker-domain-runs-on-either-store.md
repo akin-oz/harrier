@@ -1972,3 +1972,313 @@ needed the class to start. Read decision 4's placement of the run class,
 and its "Run commands refuse even with `HARRIER_RUN_OWNER`", as pointing
 at spec 106: run commands refuse until spec 106 lands. The other classes
 stay with spec 127. This note changes nothing else here.
+
+## Amendment (2026-10-13): transaction control is the seam's alone
+
+The amendment "a transaction the store gave up on" recorded in its
+Honest limitations that transaction control run through `execute()` is
+not refused, and called refusing it "a change of its own (review of PR
+#304)". This amendment states that change. Line numbers are from `main`
+at `8b22a67`.
+
+### Problem
+
+`Connection.execute()` (`services/api/src/harrier/connection.py:1102`)
+passes a statement to the driver whatever its first word. A caller can
+run `COMMIT`, `ROLLBACK`, `BEGIN` or `SAVEPOINT` itself, and the seam's
+promises about its transactions stop holding. Measured through the seam
+on 2026-10-13 at `8b22a67`, with Postgres 17.11, SQLite 3.50.4, CPython
+3.12.12 and psycopg 3.3.6:
+
+- **Postgres, on an owner's connection.** A block inserts row 1, runs
+  `conn.execute("COMMIT")`, then inserts row 2. Before the `COMMIT` the
+  block reads `lock_timeout` as `5s`, `current_user` as
+  `harrier_tenant`, and claims set. After it the connection is idle, and
+  the same read gives `0`, the login role (`harrier_migrator` in the
+  test database), and no claims. Row 2 runs in autocommit as that role.
+  The block exits with no error and both rows are kept. This spec
+  promises that no statement runs without the lock timeout and the
+  owner's identity ("Every Postgres transaction starts the same way" and
+  "The owner's identity (decision 2)", amendment of 2026-10-11). This one
+  did.
+- **SQLite.** The same block, raising after row 2: row 1 is kept. Its
+  `COMMIT` ended the seam's transaction, row 2 began a new `BEGIN
+  IMMEDIATE` one (`_SqliteBackend.run`), and the exception rolled back
+  only that one. The block was not atomic.
+- **SQLite, a failure after the `COMMIT`.** A block inserts row 3, runs
+  `COMMIT`, then catches a failed read. The exit raises
+  `TRANSACTION_GIVEN_UP` ("so the store kept none of it"), and row 3 is
+  in the store. The failure reads as the store giving up because the
+  driver is outside a transaction the seam held
+  (`_SqliteBackend.translate`).
+- **Outside any block, on SQLite.** `conn.execute("BEGIN")` leaves a
+  transaction open without the write lock. The next
+  `transaction(immediate=True)` is refused with `WRITE_LOCK_NOT_HELD`.
+- **Other shapes reach the store too.** Inside a block on Postgres,
+  `END` and `ABORT` leave the connection idle, and `SAVEPOINT s` runs.
+  On both stores `;COMMIT` commits: the empty statement before it is
+  skipped. On Postgres `SELECT 1; COMMIT` commits, because psycopg sends
+  a statement with no parameters by the simple query protocol, which
+  runs every statement in the text (`_execute_send` in psycopg's
+  `_cursor_base.py`, 3.3.6). On Postgres a vertical tab then `COMMIT`
+  commits, and so does `/* /* */ */ COMMIT`, because Postgres nests block
+  comments. On SQLite `/* /* */ COMMIT` commits, because SQLite does not.
+
+Nothing in the product meets this today. No code under
+`services/api/src` runs transaction control through a `Connection`. The
+only literal `BEGIN`, `COMMIT` and `ROLLBACK` statements outside
+`connection.py` are the migration runner's, on a raw `sqlite3.Connection`
+(`services/api/src/harrier/db.py:312`, `_apply_schema`). Inside
+`connection.py` every control statement goes to the driver directly, not
+through `execute()`. The full suite, run with a spy on `execute()`, found
+one caller: `test_a_commit_inside_a_block_is_not_the_store_giving_up`, on
+both stores. Who would meet it: a later caller of the seam that reaches
+for transaction control without knowing `transaction()` owns it.
+
+### Behavior (amendment of 2026-10-13: transaction control)
+
+**Transaction control.** A statement is transaction control when its
+first word is `BEGIN`, `START`, `COMMIT`, `END`, `ROLLBACK`, `ABORT`,
+`SAVEPOINT` or `RELEASE`, or its first two words are `PREPARE
+TRANSACTION`. So `START TRANSACTION`, `BEGIN IMMEDIATE`, `ROLLBACK TO
+SAVEPOINT`, `COMMIT PREPARED` and `ROLLBACK PREPARED` are, and `PREPARE
+name AS ...` is not. `SET TRANSACTION` and `SET SESSION CHARACTERISTICS`
+are not (decision 3).
+
+**How the first word is read.** From the start of the text, the seam
+skips whitespace (space, tab, line feed, carriage return, form feed and
+vertical tab), `;`, `--` comments to the end of their line, and `/* */`
+comments. A word is the run of ASCII letters, digits, `_` and `$` that
+follows, compared without regard to case, so `COMMITTED` is not
+`COMMIT`. Block comments are read both ways: ending at the first `*/`,
+as SQLite reads them, and nested, as Postgres reads them
+(`_block_comment_end`). The statement is transaction control when either
+reading finds it so. A comment that never closes leaves no word on that
+reading. This is the reading `begins_a_transaction` does, with three
+additions the probes above require: the vertical tab, the `;`, and the
+nested reading. `begins_a_transaction` itself is unchanged. It mirrors
+the sqlite3 module's own rule, for a different question.
+
+So a control word anywhere but first is not read. `SELECT 'COMMIT'`,
+`WITH c AS (SELECT 'COMMIT' AS x) SELECT x FROM c`, a `-- COMMIT` line
+before a `SELECT`, `DO $$ BEGIN ... END $$`, and SQLite's `CREATE TRIGGER
+... BEGIN ... END` all run as today.
+
+**What `execute()` does with it.** It raises `StoreDatabaseError`, the
+class itself, with the text `a statement may not control the
+transaction: transaction() begins, commits and rolls back` (decision 2).
+It raises before the driver runs anything and before the placeholder
+checks (`_parameters_match`), on both stores, inside a block at any
+depth and outside any block (decision 1). On Postgres outside a block it
+raises before the seam begins its own transaction for the statement, so
+no `BEGIN`, lock timeout or identity reaches the server. The error has
+no `__cause__`.
+
+**The block goes on.** The refusal is not a failed statement. Nothing
+reached the store, so on Postgres the transaction is not failed, and on
+neither store does the seam read the refusal as the store giving up
+(amendment "a transaction the store gave up on"). A caller that catches
+it goes on, and the block commits as if the statement had not been
+written. A caller that does not catch it leaves the block with an
+exception, which rolls back, as Behavior says.
+
+**A second statement in one call (decision 4).** On Postgres,
+`execute()` sends every statement by the extended query protocol, as
+psycopg already does for one with parameters. The server then refuses a
+text holding a second statement before it runs any of it, with `cannot
+insert multiple commands into a prepared statement`, raised as
+`StoreDatabaseError`. A trailing `;`, or a trailing comment after it,
+still runs, and so does a `BEGIN ATOMIC` function body, which the server
+parses as one statement. On SQLite nothing changes: the sqlite3 module
+already refuses a second statement before running any, with `You can
+only execute one statement at a time.`, raised as `StoreDatabaseError`.
+
+**No other way in.** `Connection` has no `executemany` and no
+`executescript`, and its cursors only fetch (`_StoreCursor`), so
+`execute()` is the one way a caller's SQL reaches a driver through the
+seam. A method added later that runs a caller's SQL refuses transaction
+control the same way.
+
+**Unchanged.**
+
+- The seam's own control statements. `begin`, `commit`, `rollback`,
+  `open_savepoint`, `_begin_writing`, `control` (which `RELEASE
+  SAVEPOINT` and `ROLLBACK TO SAVEPOINT` use) and `assume_identity` call
+  the driver directly, not `execute()`, and are not read.
+- `sqlite_driver`. Code whose subject is SQLite itself may still run
+  transaction control through it, and the seam does not see it. The
+  previous amendment's rule that only a failed statement gives a
+  transaction up stays, for a `COMMIT` run this way.
+- Raw drivers: the migration runner's `sqlite3.Connection`, `pgstore`'s
+  psycopg connections, and tests that open either.
+- Spec 134's request transaction. The `SET LOCAL` statements it runs
+  through `execute()` are not transaction control
+  (`services/api/src/harrier_api/hostedstore.py`,
+  `RequestTransaction.begin`).
+
+### Failure modes (amendment of 2026-10-13: transaction control)
+
+- **A caller catches the refusal and goes on.** The block's transaction
+  is as it was, and its exit commits, on both stores.
+- **The refusal inside a block the store already gave up on.** The
+  refusal is raised, not `TRANSACTION_GIVEN_UP`, because it is checked
+  first. The block's exit still raises `TRANSACTION_GIVEN_UP`.
+- **A text the two readings disagree on.** On Postgres
+  `/* /* */ COMMIT */ SELECT 1` is a `SELECT`. The SQLite reading finds
+  `COMMIT`, so the seam refuses it. A comment of that shape fails
+  closed.
+- **A second statement on Postgres inside a block.** The server refuses
+  it, which fails the transaction like any failed statement: the
+  block's exit raises `TRANSACTION_GIVEN_UP` unless a nested block held
+  the failure. On SQLite the module's refusal leaves the transaction
+  usable.
+- **A procedure or `DO` block that commits.** Postgres refuses it with
+  `invalid transaction termination`, inside a block and outside one,
+  because the seam always runs a statement inside a transaction.
+  Measured above with `DO $$ BEGIN COMMIT; END $$`. SQLite has neither.
+- **A statement built at run time.** The reading is of the text
+  `execute()` receives, so it holds however the text was built.
+
+### Acceptance criteria (amendment of 2026-10-13: transaction control)
+
+All in `services/api/tests/test_seam_on_both_stores.py`, on both stores
+unless a criterion names one:
+
+- [ ] Inside an outermost block that has inserted row 1, each of
+      `BEGIN`, `START TRANSACTION`, `COMMIT`, `END`, `ROLLBACK`,
+      `ROLLBACK TO SAVEPOINT harrier_savepoint_1`, `ABORT`, `SAVEPOINT
+      s`, `RELEASE s`, `PREPARE TRANSACTION 'x'` and `COMMIT PREPARED
+      'x'` raises `StoreDatabaseError` itself, with the text above and
+      no `__cause__`. The block then raises an exception of its own, and
+      row 1 is not in the store: the refused statement did not run
+      (planned test_transaction_control_through_execute_is_refused).
+- [ ] A block that catches the refusal, inserts row 2 and exits normally
+      commits rows 1 and 2. The same holds when the refusal is caught
+      inside a nested block
+      (planned test_a_refused_control_statement_gives_nothing_up).
+- [ ] Outside any block. On SQLite, `BEGIN` is refused,
+      `conn.in_transaction` is false after it, and
+      `transaction(immediate=True)` then begins. On Postgres, on a
+      connection whose identity cannot hold (as in
+      `test_a_lost_owner_identity_runs_no_statement`), `COMMIT` raises
+      the text above and not `IDENTITY_DID_NOT_HOLD`: it was refused
+      before the seam began a transaction
+      (planned test_transaction_control_outside_a_block_is_refused).
+- [ ] The seam refuses each of: a vertical tab then `COMMIT`; `;COMMIT`;
+      a `--` comment line then `COMMIT`; `/* x */ rollback`;
+      `/* /* */ */ COMMIT`; `/* /* */ COMMIT`; `Begin Immediate`. It
+      refuses none of: `SELECT 'COMMIT'`; the `WITH` statement above; a
+      `-- COMMIT` line then `SELECT 1`; `SELECT 1 AS "commit"`. On
+      Postgres it also refuses none of `PREPARE p AS SELECT 1`,
+      `DO $$ BEGIN NULL; END $$` and
+      `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ`; on SQLite, not a
+      `CREATE TEMP TRIGGER` whose body holds `;`
+      (planned test_the_seam_reads_a_first_word_as_either_store_would).
+- [ ] An `INSERT` of row 1 followed by `; COMMIT`, with no parameters,
+      raises `StoreDatabaseError` and leaves row 1 out of the store. On
+      Postgres the text is the server's, above
+      (planned test_a_second_statement_in_one_call_runs_nothing).
+- [ ] `test_a_commit_inside_a_block_is_not_the_store_giving_up` runs its
+      `COMMIT` through `conn.sqlite_driver`, on SQLite only. The previous
+      amendment's criterion that cites it now holds on SQLite only.
+- [ ] `test_a_nested_transaction_is_a_savepoint_on_both_stores` and
+      `test_a_stale_snapshot_is_a_conflict_not_a_busy_lock` pass
+      unchanged: the seam's own savepoints and a caller's `SET
+      TRANSACTION` still run.
+- [ ] The first, third and fifth of these tests fail with the change
+      reverted (the fifth on Postgres), and the pull request records
+      what each reversion made fail.
+
+### Out of scope (amendment of 2026-10-13: transaction control)
+
+- Statements that change the session or the identity without ending the
+  transaction: `SET` without `LOCAL`, `RESET`, `SET ROLE`, `SET SESSION
+  AUTHORIZATION`, `set_config(..., false)` and `DISCARD`. They break the
+  identity and lock timeout promise too (Honest limitations below). They
+  are not transaction control, and a first word cannot tell `SET LOCAL
+  statement_timeout`, which spec 134 runs, from `SET ROLE`. Refusing
+  them is a change of its own, with its own criterion, in this spec.
+- Transaction control through `sqlite_driver` or a raw driver.
+- Removing the rule that only a failed statement gives a SQLite
+  transaction up. A `COMMIT` through `sqlite_driver` still reaches it.
+- Changing `begins_a_transaction`.
+
+### Decisions (Akin, in chat, 2026-10-13: transaction control)
+
+All four as recommended.
+
+1. **Where it is refused.** Taken: everywhere, inside a block and
+   outside one. On SQLite a `BEGIN` outside a block opens the unlocked
+   transaction that `WRITE_LOCK_NOT_HELD` exists to catch, and one rule
+   is easier to state and test. Weighed instead: inside blocks only, where
+   the seam's promises break. Outside a block on Postgres every probe
+   was harmless, because the seam wraps the statement in its own
+   transaction.
+2. **The text and class.** Taken: `a statement may not control
+   the transaction: transaction() begins, commits and rolls back`, as
+   `StoreDatabaseError` itself. The text names the rule and what to use
+   instead, and no catch site needs a finer class. Weighed instead: a
+   subclass, which no caller needs today.
+3. **`SET TRANSACTION` and `SET SESSION CHARACTERISTICS`.** Taken:
+   leave both out. Neither begins nor ends a transaction. `SET
+   TRANSACTION` ends with its transaction (the probe's next block reads
+   `read committed`), and
+   `test_a_stale_snapshot_is_a_conflict_not_a_busy_lock` uses it on
+   purpose. `SET LOCAL transaction_isolation` does the same and starts
+   with `SET`, so refusing one spelling would not close it. `SET SESSION
+   CHARACTERISTICS` does outlive the block (the probe's next block reads
+   `serializable`), but so does `SET default_transaction_isolation`, and
+   both belong with the session statements left out above. Weighed instead:
+   include both. The stale snapshot test then sets its isolation with
+   `SET LOCAL transaction_isolation`, which the probe shows works.
+4. **A second statement in one call.** Taken: the extended query
+   protocol on Postgres, as Behavior says. The server parses the text,
+   so a `BEGIN ATOMIC` body still runs, and nothing runs when it
+   refuses. Without some answer, `SELECT 1; COMMIT` passes the first
+   word rule on Postgres and the rule is not whole. Weighed instead: the
+   seam scans for a `;` outside literals, quoted names, dollar quotes and
+   comments on Postgres, with its own text and without failing the
+   transaction, but it refuses a valid `BEGIN ATOMIC` body; or leave it
+   out and record it as a limitation. A scan on SQLite as well would
+   refuse the triggers tests create through the seam
+   (`services/api/tests/test_job_events.py:163`,
+   `services/api/tests/test_resume_documents.py:340`), whose bodies hold
+   `;`.
+
+### Honest limitations (amendment of 2026-10-13: transaction control)
+
+- The reading is pinned against Postgres 17.11 and SQLite 3.50.4. A
+  version whose tokenizer skips another character before the first word
+  would need the reader to follow.
+- Identity and session statements still break the promises this
+  amendment protects. Measured through the seam: `RESET ROLE` inside an
+  owner's block moves `current_user` from `harrier_tenant` to
+  `harrier_migrator` with the transaction still open, and `SET SESSION
+  CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL SERIALIZABLE` outside a
+  block makes the next block `serializable`. Out of scope above.
+- The second statement refusal on Postgres is the server's, with the
+  server's text, and it fails a block's transaction where the first word
+  refusal does not.
+- The spy covers what the suite runs, and the `grep` covers literal text
+  under `services/api/src`. Neither proves that no later caller builds a
+  control statement, which is why the refusal sits in the seam.
+- This replaces the last bullet of Honest limitations (amendment of
+  2026-10-13) for `execute()`. For `sqlite_driver` that bullet still
+  holds: a statement that fails after a `COMMIT` run there reads as the
+  store giving up.
+
+### Proof / origin (amendment of 2026-10-13: transaction control)
+
+- The Honest limitations of the amendment "a transaction the store gave
+  up on", and the review of pull request #304 that raised the gap.
+- Probes run through the seam on 2026-10-13 at `8b22a67`, from scripts
+  outside the repository: the block with a `COMMIT` on an owner's
+  connection, its SQLite twin, the failure after a `COMMIT`, a `BEGIN`
+  outside a block, each control word and comment shape on both stores
+  and on raw drivers, the `SET` forms, `RESET ROLE`, and the extended
+  protocol's handling of a second statement, a trailing `;` and a `BEGIN
+  ATOMIC` body. The pull request records each script and its output.
+- The full suite (3625 passed, 29 skipped) run with a spy on `execute()`
+  that logged transaction control and second statements. It found one
+  control caller (`services/api/tests/test_seam_on_both_stores.py:453`,
+  on both stores) and two SQLite triggers whose bodies hold `;`.
