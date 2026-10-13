@@ -309,6 +309,9 @@ def test_a_sqlite_write_after_the_store_gave_up_is_refused(tmp_path: Path) -> No
         with pytest.raises(StoreDatabaseError) as nested, conn.transaction(immediate=True):
             conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (3,))
         assert str(nested.value) == TRANSACTION_GIVEN_UP
+        # Refused as it opens: it did not begin a transaction and take the
+        # write lock.
+        assert _write_lock_is_free(path)
         with pytest.raises(StoreDatabaseError) as read:
             conn.execute(f"SELECT id FROM {table}")
         assert str(read.value) == TRANSACTION_GIVEN_UP
@@ -339,6 +342,34 @@ def test_a_caught_failure_inside_a_nested_block_fails_the_outermost(store: Store
     assert str(at_exit.value) == TRANSACTION_GIVEN_UP
     assert not conn.in_transaction
     assert ids(store.open(), table) == []
+
+
+def test_a_commit_inside_a_block_is_not_the_store_giving_up(store: Store) -> None:
+    """Only a failed statement gives a transaction up. A COMMIT the caller
+    ran also ends it, and its work was kept (review of PR #304)."""
+    conn = store.open()
+    table = new_table(conn, "id INTEGER PRIMARY KEY")
+
+    with conn.transaction():
+        conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (1,))
+        conn.execute("COMMIT")
+        conn.execute(f"SELECT id FROM {table}").fetchall()
+    assert 1 in ids(store.open(), table)
+
+
+def test_a_sqlite_block_that_only_read_has_nothing_to_give_up(tmp_path: Path) -> None:
+    """A failed read in a block that began no transaction gives nothing up,
+    though the block before it began one and committed."""
+    path = tmp_path / "seam.db"
+    with closing(connect(path)) as conn:
+        table = new_table(conn, "id INTEGER PRIMARY KEY")
+        with conn.transaction():
+            conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (1,))
+        with conn.transaction():
+            with pytest.raises(StoreDatabaseError):
+                conn.execute("SELECT id FROM no_such_table")
+            conn.execute(f"SELECT id FROM {table}").fetchall()
+        assert ids(conn, table) == [1]
 
 
 def test_a_caught_sqlite_constraint_error_keeps_the_transaction(tmp_path: Path) -> None:

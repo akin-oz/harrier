@@ -690,6 +690,10 @@ class _SqliteBackend:
         # one it adopted. Read only while a block is open; the next
         # outermost block sets it again.
         self.held = False
+        # Whether a statement failed and took that transaction with it.
+        # Only a failure counts: a COMMIT the caller ran also leaves the
+        # driver outside a transaction, and its work was kept.
+        self.lost = False
 
     def run(
         self, sql: str, statement: Statement, params: Sequence[object], *, in_block: bool
@@ -741,6 +745,7 @@ class _SqliteBackend:
     def begin(self, *, immediate: bool) -> None:
         self.pending = []
         self.held = self.driver.in_transaction
+        self.lost = False
         # A transaction the module began for a write outside any block is
         # taken as it is: the block commits it, as `with conn:` did.
         if self.driver.in_transaction:
@@ -770,7 +775,7 @@ class _SqliteBackend:
         # A full disk, an I/O error, out of memory and some busy cases roll
         # the whole transaction back, not only the statement. The next write
         # would begin a new one, which the block's exit would commit.
-        return self.held and not self.driver.in_transaction
+        return self.lost
 
     def refuse_given_up(self) -> None:
         if self.given_up():
@@ -788,7 +793,12 @@ class _SqliteBackend:
         self.driver.rollback()
 
     def translate(self, error: Exception) -> StoreDatabaseError | None:
-        return store_error_from_sqlite(error) if isinstance(error, sqlite3.Error) else None
+        if not isinstance(error, sqlite3.Error):
+            return None
+        # Every failed statement and cursor read passes here.
+        if self.held and not self.driver.in_transaction:
+            self.lost = True
+        return store_error_from_sqlite(error)
 
     def get_busy_timeout_ms(self) -> int:
         return int(self.driver.execute("PRAGMA busy_timeout").fetchone()[0])

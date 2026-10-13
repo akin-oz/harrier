@@ -1843,7 +1843,8 @@ where the case exists on both:
       (`services/api/tests/test_seam_on_both_stores.py::test_a_block_whose_transaction_was_given_up_raises_at_its_exit`).
 - [ ] On SQLite, a write after that failure, in the same block or in a
       nested one, raises `StoreDatabaseError` with the text above, and is
-      not in the store after the block ends
+      not in the store after the block ends; the nested block, refused as
+      it opens, does not take the write lock
       (`services/api/tests/test_seam_on_both_stores.py::test_a_sqlite_write_after_the_store_gave_up_is_refused`).
 - [ ] A nested block that catches such a failure and exits normally
       raises at its exit; the outer block that catches that raises at its
@@ -1852,6 +1853,13 @@ where the case exists on both:
 - [ ] On SQLite, a block that catches a duplicate key error without a
       savepoint and goes on commits its other writes, as today
       (`services/api/tests/test_seam_on_both_stores.py::test_a_caught_sqlite_constraint_error_keeps_the_transaction`).
+- [ ] A `COMMIT` the caller runs inside a block, with no statement
+      failing, is not the store giving up: the exit raises nothing and the
+      row stays, on both stores (review of PR #304)
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_commit_inside_a_block_is_not_the_store_giving_up`).
+- [ ] On SQLite, a failed read in a block that began no transaction gives
+      nothing up, though the block before it began one and committed
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_sqlite_block_that_only_read_has_nothing_to_give_up`).
 - [ ] Each of the first three tests fails with the fix reverted, and the
       pull request records what each reversion made fail.
 
@@ -1892,6 +1900,15 @@ All three as recommended.
   the tests; no other version was probed.
 - The exit's error carries no cause. A caller that wants the failing
   statement's error must log it where it catches it.
+- Transaction control run through `execute()` is not refused. A `COMMIT`
+  inside a block ends the seam's transaction. On Postgres the block's
+  later statements then run in autocommit, without the lock timeout or
+  the owner's identity; on SQLite they begin a new transaction that the
+  exit commits. And on SQLite a statement that fails after such a
+  `COMMIT`, while no transaction is open, reads as the store giving up, so
+  the exit says nothing was kept though the work before the `COMMIT` was.
+  No code under `services/api/src` runs transaction control through a
+  `Connection`. Refusing it is a change of its own (review of PR #304).
 
 ### Proof / origin (amendment of 2026-10-13)
 
