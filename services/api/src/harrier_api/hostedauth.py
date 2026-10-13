@@ -30,7 +30,7 @@ import threading
 import urllib.request
 import uuid
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, cast
 from urllib.parse import urlsplit
 
@@ -41,7 +41,9 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from harrier.connection import URL_VARIABLE, store_target
+from harrier.credentials import KEY_SHAPE, CredentialsKey, parse_key
 from harrier.demo import DEMO_ENV
+from harrier.llm.config import DEBUG_VARIABLES, debug_value_on
 
 if TYPE_CHECKING:
     from jwt import PyJWK
@@ -54,6 +56,8 @@ AUTH_VARIABLE = "HARRIER_AUTH"
 SUPABASE_URL_VARIABLE = "HARRIER_SUPABASE_URL"
 ALLOWED_HOSTS_VARIABLE = "HARRIER_ALLOWED_HOSTS"
 CORS_ORIGINS_VARIABLE = "HARRIER_CORS_ORIGINS"
+# The key that encrypts every owner's credentials, a Fly secret (spec 116).
+CREDENTIALS_KEY_VARIABLE = "HARRIER_CREDENTIALS_KEY"
 HOSTED_AUTH = "supabase"
 
 # A service credential on a request path is the service role on a request
@@ -94,6 +98,9 @@ CORS_ORIGINS_REFUSAL = (
     f"{CORS_ORIGINS_VARIABLE} must list one or more exact https:// origins, separated by "
     "commas, with no wildcard and no path"
 )
+# One text for a key that is absent, of another form, or not 32 bytes: it
+# names the variable and the form, never the value (spec 116).
+CREDENTIALS_KEY_REFUSAL = f"{CREDENTIALS_KEY_VARIABLE} must be {KEY_SHAPE}"
 
 # A host name as the trusted-host middleware compares it: the Host header's
 # text before the first colon. A port or a wildcard would make an entry that
@@ -111,6 +118,9 @@ class HostedConfig:
     supabase_url: str
     allowed_hosts: tuple[str, ...]
     cors_origins: tuple[str, ...]
+    # Its text form names the key id only; kept out of the config's repr
+    # all the same (spec 116).
+    credentials_key: CredentialsKey = field(repr=False)
 
     @property
     def issuer(self) -> str:
@@ -163,10 +173,19 @@ def hosted_config(environ: Mapping[str, str]) -> HostedConfig | None:
         supabase_url=_supabase_url(environ.get(SUPABASE_URL_VARIABLE, "")),
         allowed_hosts=_allowed_hosts(environ.get(ALLOWED_HOSTS_VARIABLE, "")),
         cors_origins=_cors_origins(environ.get(CORS_ORIGINS_VARIABLE, "")),
+        credentials_key=_credentials_key(environ.get(CREDENTIALS_KEY_VARIABLE, "")),
     )
     _refuse_a_service_credential(environ)
+    _refuse_prompt_logging(environ)
     _refuse_operator_notification_settings(environ)
     return config
+
+
+def _credentials_key(raw: str) -> CredentialsKey:
+    key = parse_key(raw)
+    if key is None:
+        raise HostedConfigError(CREDENTIALS_KEY_REFUSAL)
+    return key
 
 
 def _hosted_group_installed() -> bool:
@@ -259,6 +278,20 @@ def _service_credential_refusal(name: str) -> str:
         f"the environment holds a service credential in {name}; "
         "the hosted API refuses to start with one"
     )
+
+
+def prompt_logging_refusal(name: str) -> str:
+    return f"prompt logging ({name}) is local only; unset it for the hosted API"
+
+
+def _refuse_prompt_logging(environ: Mapping[str, str]) -> None:
+    """Prompt logging writes every prompt and output under the data
+    directory: hosted, tenants' application content on a shared machine's
+    disk. The first variable that is on is named, never its value (spec
+    135, Amendment (2026-10-13): prompt logging and query strings)."""
+    for name in DEBUG_VARIABLES:
+        if debug_value_on(environ.get(name, "")):
+            raise HostedConfigError(prompt_logging_refusal(name))
 
 
 # --- routes: what the hosted API serves, and what needs a token ---

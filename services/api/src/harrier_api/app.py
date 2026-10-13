@@ -16,7 +16,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
-from fastapi.exception_handlers import http_exception_handler
+from fastapi.exception_handlers import (
+    http_exception_handler,
+    request_validation_exception_handler,
+)
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -33,7 +37,7 @@ from harrier.db import DatabaseOwnedByHost, connect, default_db_path, lease_dire
 from harrier.demo import repo_root
 from harrier.hostlease import oldest_hold
 from harrier.logredact import scrub_outbound
-from harrier.logsetup import configure_logging, scrub_uvicorn_handlers
+from harrier.logsetup import configure_logging, drop_access_queries, scrub_uvicorn_handlers
 from harrier.tracker import list_jobs
 from harrier.tracker.reasons import CANDIDATE, COMPANY, SYSTEM, codes_for
 from harrier.tracker.selector import SelectorError
@@ -46,6 +50,11 @@ from harrier.tracker.store import (
 from harrier.tracks import DEFAULT_TRACK_ID
 from harrier.tracks import Scope as TrackScope
 from harrier_api.capture_routes import capture_router
+from harrier_api.credentials_routes import (
+    credentials_refusal_response,
+    credentials_router,
+    is_credentials_route,
+)
 from harrier_api.demo import demo_db_path, is_demo_mode, seed_demo_db
 from harrier_api.deps import (
     CAUSE_JOIN,
@@ -1487,6 +1496,15 @@ def _app_with_routes(manager: RunManager) -> FastAPI:
             error.detail = scrub_outbound(detail)
         return await http_exception_handler(request, error)
 
+    @app.exception_handler(RequestValidationError)
+    async def refused_body(request: Request, error: RequestValidationError) -> Response:  # pyright: ignore[reportUnusedFunction]
+        # FastAPI's own 422 echoes the submitted input. On the credentials
+        # routes the input is a secret, so the body names the field and the
+        # rule only (spec 116). Every other route answers as FastAPI does.
+        if is_credentials_route(request.scope):
+            return credentials_refusal_response(request, error)
+        return await request_validation_exception_handler(request, error)
+
     @app.exception_handler(RunsNotHosted)
     async def runs_not_hosted(request: Request, error: RunsNotHosted) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
         # Hosted, no run starts until spec 106. Raised by `start`, and by
@@ -1516,6 +1534,7 @@ def _app_with_routes(manager: RunManager) -> FastAPI:
     app.include_router(ops_router)
     app.include_router(tracks_router)
     app.include_router(settings_router)
+    app.include_router(credentials_router)
 
     # The route class applies the bearer scheme to each route that needs a
     # token; the document names the scheme once (spec 104).
@@ -1544,8 +1563,13 @@ def create_app(run_manager: RunManager | None = None, spa_dir: Path | None = Non
         raise HostedConfigError(POSTGRES_NEEDS_HOSTED_REFUSAL)
     # logsetup said it was called by the CLI and by the API. Only the CLI ever
     # called it, so the process serving the browser had no configured root
-    # logger and no identity redaction (spec 045).
-    configure_logging()
+    # logger and no identity redaction (spec 045). Hosted, it opens no local
+    # store and writes no file (spec 135).
+    configure_logging(hosted=hosted is not None)
+    # Hosted, uvicorn's access line drops the query, which carries what a
+    # person typed (spec 135). Installed first on each handler.
+    if hosted is not None:
+        drop_access_queries()
     # uvicorn logs an unhandled exception on its own handler, which the
     # root's filters never see (spec 133). Before the modes part, so the
     # hosted app gets it too.
@@ -1622,6 +1646,9 @@ def create_hosted_app(
     manager = run_manager if run_manager is not None else RunManager()
     app = _app_with_routes(manager)
     app.state.hosted = True
+    # The credentials routes encrypt with it; spec 106's run start will
+    # decrypt with it. Never logged: its text form names the id only.
+    app.state.credentials_key = config.credentials_key
     keys = SigningKeys(
         fetch_keys if fetch_keys is not None else fetch_from(config.jwks_url),
         clock,

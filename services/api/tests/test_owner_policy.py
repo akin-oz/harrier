@@ -100,6 +100,7 @@ EXPECTED_GRANTS: dict[str, frozenset[str]] = {
     "job_events": frozenset({"SELECT"}),
     "job_eligibility": frozenset({"SELECT"}),
     "tracks": frozenset({"SELECT", "INSERT", "UPDATE"}),
+    "credentials": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),
     "schema_version": frozenset({"SELECT"}),
     # No DELETE: deleting an owner's scheduler state is spec 111's (spec 108).
     "schedule_state": frozenset({"SELECT", "INSERT", "UPDATE"}),
@@ -180,6 +181,13 @@ REQUIRED: dict[str, dict[str, object]] = {
         "job": "synthetic",
         "last_slot_at": "2026-10-10T09:00:00Z",
         "last_outcome": "ok",
+    },
+    # Synthetic bytes, not a ciphertext of anything.
+    "credentials": {
+        "kind": "apify",
+        "key_id": "synthetic",
+        "nonce": bytes(12),
+        "ciphertext": b"synthetic",
     },
 }
 
@@ -514,12 +522,14 @@ MIGRATION_10_DIGEST = "e60a207077ef5fa52402d261165c9fc27613f9a70d0dead59253b0237
 def test_migration_10_statements_do_not_change() -> None:
     """Migration 10 reads frozen copies of the live declarations
     (MIGRATION_10_OWNED_TABLES), so a table a later migration declares,
-    such as spec 108's schedule_state, changes nothing it applies (spec
-    108, Scope item 2). Compared as text, through its digest."""
+    such as spec 108's schedule_state or spec 116's credentials, changes
+    nothing it applies (spec 108, Scope item 2; spec 116, Scope item 1).
+    Compared as text, through its digest."""
     statements = migration(10)
     joined = "\n;\n".join(statements).encode()
     assert hashlib.sha256(joined).hexdigest() == MIGRATION_10_DIGEST
-    assert not any("schedule_state" in statement for statement in statements)
+    for table in ("schedule_state", "credentials"):
+        assert not any(table in statement for statement in statements), table
 
 
 def catalog_fingerprint(conn: PgConnection) -> dict[str, list[tuple[Any, ...]]]:

@@ -18,6 +18,7 @@ Every token, key and secret here is made at run time.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -44,6 +45,7 @@ from starlette.middleware.cors import SAFELISTED_HEADERS
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from harrier.connection import Connection
+from harrier.credentials import CredentialsKey, parse_key
 from harrier.demo import repo_root
 from harrier_api import app as app_module
 from harrier_api.app import create_app, create_hosted_app
@@ -70,6 +72,23 @@ API_HOST = "api.example.test"
 SPA_ORIGIN = "https://app.example.test"
 KID = "current-key"
 CONTRACT = repo_root() / "packages" / "contract" / "openapi.json"
+
+
+def new_credentials_key_text() -> str:
+    """A `HARRIER_CREDENTIALS_KEY` made at run time: a key id and 32 random
+    bytes in base64 (spec 116)."""
+    return f"test-{uuid.uuid4().hex[:8]}:{base64.b64encode(os.urandom(32)).decode()}"
+
+
+# The one key every hosted start in these tests is given.
+CREDENTIALS_KEY_TEXT = new_credentials_key_text()
+
+
+def credentials_key() -> CredentialsKey:
+    key = parse_key(CREDENTIALS_KEY_TEXT)
+    assert key is not None
+    return key
+
 
 # The two texts spec 104 writes out under Failure modes, written out here
 # too, so a changed constant fails. The other refusals' texts are the code's
@@ -172,7 +191,10 @@ class Hosted:
 
 
 CONFIG = HostedConfig(
-    supabase_url=SUPABASE_URL, allowed_hosts=(API_HOST,), cors_origins=(SPA_ORIGIN,)
+    supabase_url=SUPABASE_URL,
+    allowed_hosts=(API_HOST,),
+    cors_origins=(SPA_ORIGIN,),
+    credentials_key=credentials_key(),
 )
 
 
@@ -394,6 +416,7 @@ def complete_hosted_environment() -> dict[str, str]:
         "HARRIER_ALLOWED_HOSTS": API_HOST,
         "HARRIER_CORS_ORIGINS": SPA_ORIGIN,
         "HARRIER_DATABASE_URL": f"postgresql://harrier_api:{PASSWORD}@127.0.0.1:1/postgres",
+        "HARRIER_CREDENTIALS_KEY": CREDENTIALS_KEY_TEXT,
     }
 
 

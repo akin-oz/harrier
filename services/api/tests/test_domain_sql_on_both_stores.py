@@ -12,6 +12,7 @@ row here is synthetic: invented companies, postings and people.
 from __future__ import annotations
 
 import json
+import os
 import re
 import threading
 import time
@@ -32,6 +33,7 @@ from harrier.connection import (
     StoreIntegrityError,
     StoreLocalOnlyError,
 )
+from harrier.credentials import KEY_BYTES, CredentialsKey, put_credential
 from harrier.profile import store as profile_store
 from harrier.profile.store import get_document, list_documents, owned_documents, put_document
 from harrier.resume import content as resume_content
@@ -206,7 +208,7 @@ _INSERT = re.compile(r"^\s*INSERT\s+INTO\s+(\w+)\s*\(([^)]*)\)", re.IGNORECASE)
 
 
 def test_no_domain_insert_supplies_an_id(
-    store: Connection, monkeypatch: pytest.MonkeyPatch
+    store: Connection, dual_store: DualStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Every new id comes from the store. On Postgres the tenant role may not
     write `id` (spec 105, migration 13), so an insert naming it is refused
@@ -228,6 +230,10 @@ def test_no_domain_insert_supplies_an_id(
     )
     set_config(store, LINKEDIN_SEARCHES, ["https://www.linkedin.com/jobs/search/?keywords=data"])
     record_success(store, "discovery")
+    if store.dialect == "postgres":
+        # The hosted-only table has no SQLite form to write (spec 116).
+        key = CredentialsKey("test", os.urandom(KEY_BYTES))
+        put_credential(store, key, str(dual_store.owner), "hunter", {"key": "synthetic"})
     columns: dict[str, set[str]] = {}
     for sql in seen:
         match = _INSERT.match(sql)

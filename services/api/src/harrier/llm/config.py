@@ -22,6 +22,17 @@ PROVIDER_ENV = "AI_PROVIDER"
 MODEL_ENV = "AI_MODEL"
 DEBUG_ENV = "AI_DEBUG"
 
+# Each turns on prompt logging (`harrier.llm.providers._log_call`): the
+# shared one first, then one per provider, in the order `PROVIDERS` names
+# them. The hosted API refuses to start with any of them on (spec 135).
+PROVIDER_DEBUG_ENV = {
+    "codex-cli": "CODEX_CLI_DEBUG",
+    "claude-cli": "CLAUDE_CLI_DEBUG",
+    "openai-api": "OPENAI_DEBUG",
+    "anthropic-api": "ANTHROPIC_DEBUG",
+}
+DEBUG_VARIABLES = (DEBUG_ENV, *PROVIDER_DEBUG_ENV.values())
+
 PROVIDERS = ("codex-cli", "claude-cli", "openai-api", "anthropic-api")
 
 CODEX_FALLBACK_LOCATIONS = (
@@ -158,12 +169,11 @@ def load_config(*, provider: str | None = None, model: str | None = None) -> LLM
     return LLMConfig(provider=selected_provider, model=selected_model, api_key=api_key)
 
 
+def debug_value_on(value: str) -> bool:
+    """Whether a debug variable's value turns prompt logging on."""
+    return value.strip().lower() in {"1", "true", "yes"}
+
+
 def debug_enabled(provider: str) -> bool:
-    env_names = {
-        "codex-cli": "CODEX_CLI_DEBUG",
-        "claude-cli": "CLAUDE_CLI_DEBUG",
-        "openai-api": "OPENAI_DEBUG",
-        "anthropic-api": "ANTHROPIC_DEBUG",
-    }
-    values = [os.getenv(DEBUG_ENV, ""), os.getenv(env_names[provider], "")]
-    return any(value.strip().lower() in {"1", "true", "yes"} for value in values)
+    values = [os.getenv(DEBUG_ENV, ""), os.getenv(PROVIDER_DEBUG_ENV[provider], "")]
+    return any(debug_value_on(value) for value in values)
