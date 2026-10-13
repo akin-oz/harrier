@@ -150,7 +150,9 @@ def owners(monkeypatch: pytest.MonkeyPatch, manager: RunManager) -> Generator[Ow
     server = KeyServer()
     key = new_ec_key()
     server.publish(KID, key)
-    app = create_hosted_app(CONFIG, run_manager=manager, fetch_keys=server, clock=Clock())
+    app = create_hosted_app(
+        CONFIG, run_manager=manager, fetch_keys=server, clock=Clock(), database_url=None
+    )
     # One portal for every request, so the runs the test starts live on the
     # loop the routes read them from.
     with TestClient(app, base_url=f"http://{API_HOST}") as client:
@@ -172,7 +174,7 @@ def test_the_hosted_app_needs_hosted_mode() -> None:
     the app from how it was built, so the hosted app is refused in a local
     process: the two cannot disagree."""
     with pytest.raises(HostedConfigError) as refused:
-        create_hosted_app(CONFIG, fetch_keys=KeyServer(), clock=Clock())
+        create_hosted_app(CONFIG, fetch_keys=KeyServer(), clock=Clock(), database_url=None)
     assert str(refused.value) == HOSTED_APP_REFUSAL
 
 

@@ -904,38 +904,86 @@ def owner_claims(owner: str) -> dict[str, str]:
     return {"sub": sub, "role": "authenticated", "aud": "authenticated"}
 
 
+IdentityPart = Literal["role", "claims", "owner", "read-back"]
+
+
+class IdentityDidNotHold(StoreDatabaseError):
+    """An owner transaction's identity did not hold (spec 134).
+
+    `differed` names what did not hold: `role`, `claims` or `owner` for a
+    value the read-back found different, or the step that was refused
+    (`role`, `claims`, or `read-back`). The message is spec 106's text and
+    those names, and carries no value the read-back found or set.
+    """
+
+    def __init__(self, differed: tuple[IdentityPart, ...]) -> None:
+        super().__init__(f"{IDENTITY_DID_NOT_HOLD} ({', '.join(differed)})")
+        self.differed = differed
+
+
+def _owner_form(sub: str) -> str:
+    """`sub` as `harrier_owner_id()::text` prints it, when it is a UUID."""
+    try:
+        return str(uuid.UUID(sub))
+    except ValueError:
+        return sub
+
+
 def assume_identity(driver: psycopg.Connection[Any], claims: Mapping[str, object]) -> None:
     """Act as the owner `claims` names, for the rest of the open transaction.
 
     The three steps spec 112 gives every outermost transaction of an owner's
     connection (Amendment (2026-10-11): split, owner and nesting, decision
     2): `SET LOCAL ROLE harrier_tenant`, the claims set local with
-    `set_config(..., true)`, and a read-back of both. Spec 104's request
-    transaction passes the request's verified claims to this same function.
+    `set_config(..., true)`, and a read-back. Spec 134's request
+    transaction passes the request's verified claims to this same function,
+    so requests and runs (spec 106) are checked alike.
 
-    Raises StoreDatabaseError with spec 106's text when the read-back
-    differs from what was set, as it does when the transaction was split or
-    never opened and `SET LOCAL` did nothing, or when a step is refused. The
-    caller rolls back, and runs no other statement.
+    The read-back is one statement: `current_user`, the `sub` of the claims
+    setting, and `public.harrier_owner_id()`, the owner the row policy and
+    the `owner_id` defaults read (spec 105, migration 16). It goes on only
+    when the role is `harrier_tenant` and both equal the `sub` it set (spec
+    134, "The read-back, in every owner transaction").
+
+    Raises IdentityDidNotHold, a StoreDatabaseError with spec 106's text,
+    naming what differed: as when the transaction was split or never opened
+    and `SET LOCAL` did nothing, when the function returns another owner or
+    none, or when a step is refused, such as the read-back on a store where
+    the tenant lost `EXECUTE` on the function. The caller rolls back, and
+    runs no other statement.
     """
     import psycopg
 
     from harrier.tracker.schema import TENANT_ROLE
 
     sub = str(claims.get("sub", ""))
+    step: IdentityPart = "role"
     try:
         driver.execute(f"SET LOCAL ROLE {TENANT_ROLE}".encode())
+        step = "claims"
         driver.execute(
             b"SELECT set_config('request.jwt.claims', %s, true)", (json.dumps(dict(claims)),)
         )
+        step = "read-back"
         row = driver.execute(
             b"SELECT current_user::text, "
-            b"current_setting('request.jwt.claims', true)::jsonb ->> 'sub'"
+            b"nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub', "
+            b"public.harrier_owner_id()::text"
         ).fetchone()
     except psycopg.Error as error:
-        raise StoreDatabaseError(IDENTITY_DID_NOT_HOLD) from error
-    if row is None or tuple(row) != (TENANT_ROLE, sub):
-        raise StoreDatabaseError(IDENTITY_DID_NOT_HOLD)
+        raise IdentityDidNotHold((step,)) from error
+    if row is None:
+        raise IdentityDidNotHold(("read-back",))
+    role, claimed, owner = tuple(row)
+    differed: list[IdentityPart] = []
+    if role != TENANT_ROLE:
+        differed.append("role")
+    if claimed != sub:
+        differed.append("claims")
+    if owner is None or owner != _owner_form(sub):
+        differed.append("owner")
+    if differed:
+        raise IdentityDidNotHold(tuple(differed))
 
 
 class Connection:

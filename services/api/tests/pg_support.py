@@ -116,6 +116,12 @@ def _with_user(url: str, user: str, password: str) -> str:
     return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
+def with_user(url: str, user: str, password: str) -> str:
+    """`url` as another role: the hosted API's login role, for one (spec
+    134). The password is made at run time by the test that made the role."""
+    return _with_user(url, user, password)
+
+
 def superuser_url(url: str) -> str:
     """The test server's superuser, on the database `url` names: for the few
     steps the migrating role may not take, such as installing the shim or

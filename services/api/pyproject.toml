@@ -64,6 +64,9 @@ hosted = [
     # 2.15.1, as locked, refuses a token whose `alg` differs from its key's
     # (`PyJWS._verify_signature`); the verifier relies on it (spec 104).
     "pyjwt[crypto]>=2.15.1",
+    # One pool of connections as the login role, each request's transaction
+    # leased from it (spec 134).
+    "psycopg-pool>=3.2",
     {include-group = "postgres"},
 ]
 
