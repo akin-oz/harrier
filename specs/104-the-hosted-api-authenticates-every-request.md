@@ -518,12 +518,12 @@ Start-up:
 - [ ] A login role that is a superuser, has `BYPASSRLS`, is a member of
       `service_role`, cannot `SET ROLE harrier_tenant`, or owns a table in
       `public` is refused at start, one case each
-      (planned test_hosted_start_refuses_a_login_role_that_can_bypass_policy). Moved (2026-10-12) to spec 134.
+      (`services/api/tests/test_hosted_start.py::test_hosted_start_refuses_a_login_role_that_can_bypass_policy`). Moved (2026-10-12) to spec 134.
 - [ ] A store one version behind `target_version()`, and one ahead, are
       each refused at start with `check_postgres_version`'s text, exit 1;
       a store at the target version starts, and a request after start
       runs no statement against `schema_version`
-      (planned test_hosted_start_checks_the_store_version_once).
+      (`services/api/tests/test_hosted_start.py::test_hosted_start_checks_the_store_version_once`).
       (post-merge review of PRs #194 and #207, 2026-10-10) Moved (2026-10-12) to spec 134.
 - [ ] With `HARRIER_AUTH=supabase` written in a `.env` file in the working
       directory and absent from the process environment, the API starts
@@ -590,22 +590,24 @@ The request transaction (Postgres tests, run in CI as spec 103 requires).
 Moved (2026-10-12) to spec 134, every criterion in this group:
 
 - [ ] Inside a request, `current_user` is `harrier_tenant`, `auth.uid()` is
-      the token's `sub`, and `auth.jwt()` is its payload
-      (planned test_the_request_transaction_runs_as_its_user).
+      the token's `sub`, and `auth.jwt()` is its payload.
       Superseded: it cannot hold as `harrier_tenant` after migration 16;
-      "Amendment (2026-10-11): migration 16's follow-ups" restates it.
+      "Amendment (2026-10-11): migration 16's follow-ups" restates it, and
+      spec 134's
+      `services/api/tests/test_hosted_requests.py::test_the_request_transaction_runs_as_its_user`
+      proves the restated criterion.
 - [ ] Added 2026-10-10 from spec 105: inside a request, `current_user` is
       `harrier_tenant` and its `rolbypassrls` in `pg_roles` is false
-      (planned test_a_request_never_runs_as_a_bypassrls_role).
+      (`services/api/tests/test_hosted_requests.py::test_a_request_never_runs_as_a_bypassrls_role`).
 - [ ] After the request, the same pooled connection reports the login role
-      and no claims (planned test_identity_ends_with_the_request).
+      and no claims (`services/api/tests/test_hosted_requests.py::test_identity_ends_with_the_request`).
 - [ ] A connection in autocommit mode is detected by the read-back: 500,
       and a probe statement placed after it never runs
-      (planned test_a_lost_set_local_stops_the_request).
+      (`services/api/tests/test_hosted_requests.py::test_a_lost_set_local_stops_the_request`).
 - [ ] Two concurrent requests with different tokens each see only their
-      own `sub` (planned test_concurrent_requests_keep_their_identities).
+      own `sub` (`services/api/tests/test_hosted_requests.py::test_concurrent_requests_keep_their_identities`).
 - [ ] A route that raises rolls its writes back; a 4xx response rolls back
-      (planned test_a_refused_request_commits_nothing).
+      (`services/api/tests/test_hosted_requests.py::test_a_refused_request_commits_nothing`).
 
 Runs and stream. Moved (2026-10-12) to spec 132, every criterion in this
 group:
@@ -969,11 +971,11 @@ Moved (2026-10-12) to spec 134, every criterion in this group.
       lock_timeout = 0`, `SET statement_timeout = 0` and `SET
       idle_in_transaction_session_timeout = 0` without `LOCAL`, the next
       request on the same pooled connection sees the chosen values again
-      (planned test_the_request_role_has_lock_and_statement_timeouts).
+      (`services/api/tests/test_hosted_requests.py::test_the_request_role_has_lock_and_statement_timeouts`).
 - [ ] Inside a request, `current_setting('transaction_isolation')` is
       `read committed`, and two concurrent track inserts for one owner
       through the request transaction get two ids
-      (planned test_the_request_transaction_reads_committed).
+      (`services/api/tests/test_hosted_requests.py::test_the_request_transaction_reads_committed`).
 - [ ] The change that sets the values says, for each, why that value.
 
 ## Amendment (2026-10-11): migration 16's follow-ups
@@ -1104,7 +1106,7 @@ Moved (2026-10-12) to spec 134, every criterion in this group.
 - [ ] Inside a request, `current_user` is `harrier_tenant`,
       `public.harrier_owner_id()` is the token's `sub`, and
       `current_setting('request.jwt.claims', true)::jsonb` equals its
-      verified payload (planned test_the_request_transaction_runs_as_its_user).
+      verified payload (`services/api/tests/test_hosted_requests.py::test_the_request_transaction_runs_as_its_user`).
       This replaces the criterion above that names `auth.uid()` and
       `auth.jwt()`.
 - [ ] On a throwaway store whose `harrier_owner_id()` is replaced to
@@ -1113,14 +1115,14 @@ Moved (2026-10-12) to spec 134, every criterion in this group.
       the function returning null, and with `EXECUTE` on it revoked from
       `harrier_tenant`; and the log record names the value that differed
       and holds no claim value
-      (planned test_the_read_back_checks_the_owner_the_policy_reads).
+      (`services/api/tests/test_hosted_requests.py::test_the_read_back_checks_the_owner_the_policy_reads`).
 - [ ] A login role is refused at start, one case each, when it is a
       member, through a `NOINHERIT` intermediate role, of a `BYPASSRLS`
       role, of a superuser role, of a role without `BYPASSRLS` that owns a
       table in `public`, and of `service_role`; a direct membership granted
       `WITH SET FALSE` is refused too; and a login role that is a member of
       `harrier_tenant` alone starts
-      (planned test_hosted_start_refuses_a_login_role_that_can_set_role_past_the_policy).
+      (`services/api/tests/test_hosted_start.py::test_hosted_start_refuses_a_login_role_that_can_set_role_past_the_policy`).
 
 ## Amendment (2026-10-12): the store password in logs and HTTP errors
 
@@ -1293,8 +1295,10 @@ assumption (its A5).
 - [ ] With a complete hosted configuration and a Postgres
       `HARRIER_DATABASE_URL`, the API exits 1 with spec 103's text, and the
       hosted app assembled from the same configuration serves a request
-      with a valid token
-      (`services/api/tests/test_hosted_auth.py::test_a_complete_hosted_configuration_still_meets_the_spec_103_gate`).
+      with a valid token. Superseded (2026-10-13) by spec 134, which lifts
+      the gate: its test was removed with the gate, and the same
+      configuration now starts and serves
+      (`services/api/tests/test_hosted_start.py::test_create_app_serves_a_complete_hosted_configuration_hosted`).
 - [ ] `Refusal` in `apps/web/src/shared/api/refusal.ts` names
       `AuthRefusalOut`, and `pnpm type-check` and `pnpm lint` pass against
       the regenerated contract.

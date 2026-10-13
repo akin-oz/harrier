@@ -1,11 +1,12 @@
 """Hosted mode and the bearer token (spec 104).
 
-The hosted app cannot start under spec 104 alone: `create_app` still
-refuses a Postgres store with spec 103's text until spec 134. So these tests
-build it with `create_hosted_app`, the assembly step `create_app` calls
-after that gate, with a key fetcher that serves keys made here and a clock
-the test moves. No test reaches the network or a database: `get_conn` is
-replaced by a spy that records whether a request reached it.
+These tests build the hosted app with `create_hosted_app`, the assembly step
+`create_app` calls, with a key fetcher that serves keys made here and a
+clock the test moves, and without a database URL, so no store is opened.
+No test reaches the network or a database: `get_conn` is replaced by a spy
+that records whether a request reached it. The hosted app on a Postgres
+store, and `create_app` serving it, are spec 134's
+(`tests/test_hosted_requests.py`).
 
 Every token, key and secret here is made at run time.
 """
@@ -42,7 +43,7 @@ from jwt.algorithms import ECAlgorithm, RSAAlgorithm
 from starlette.middleware.cors import SAFELISTED_HEADERS
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from harrier.connection import POSTGRES_NOT_YET, Connection
+from harrier.connection import Connection
 from harrier.demo import repo_root
 from harrier_api import app as app_module
 from harrier_api.app import create_app, create_hosted_app
@@ -189,7 +190,7 @@ def build(
     # The process is hosted as the app is: `create_hosted_app` refuses
     # otherwise (spec 132).
     monkeypatch.setenv("HARRIER_AUTH", "supabase")
-    app = create_hosted_app(config, fetch_keys=server, clock=clock)
+    app = create_hosted_app(config, fetch_keys=server, clock=clock, database_url=None)
     entered: list[dict[str, Any]] = []
 
     def spy(request: Request) -> Iterator[Connection]:
@@ -418,24 +419,6 @@ def test_hosted_start_refuses_incomplete_configuration(case: str, tmp_path: Path
     for value in (PASSWORD, SECRET, SUPABASE_URL, "postgresql://", "project-ref"):
         assert value not in printed, (case, value)
     assert not (tmp_path / "data").exists()
-
-
-def test_a_complete_hosted_configuration_still_meets_the_spec_103_gate(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    environ = child_environment(tmp_path, **complete_hosted_environment())
-    started = start_api(environ, tmp_path)
-    assert started.returncode == 1, started.stderr
-    assert started.stderr.strip().splitlines()[-1] == f"RuntimeError: {POSTGRES_NOT_YET}"
-    assert PASSWORD not in started.stdout + started.stderr
-
-    # The same configuration, assembled, serves a request with a valid token.
-    config = hosted_config(complete_hosted_environment())
-    assert config is not None
-    hosted = build(monkeypatch, config=config)
-    response = hosted.client.get("/runs", headers=bearer(hosted.token()))
-    assert response.status_code == 200, response.text
-    assert response.json() == []
 
 
 # --- tokens ---
@@ -808,7 +791,7 @@ def test_the_key_set_is_fetched_from_the_project(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr(urllib.request, "urlopen", urlopen)
     monkeypatch.setenv("HARRIER_AUTH", "supabase")
-    client = TestClient(create_hosted_app(config), base_url=f"http://{API_HOST}")
+    client = TestClient(create_hosted_app(config, database_url=None), base_url=f"http://{API_HOST}")
     response = client.get("/runs", headers=bearer(mint(key, claims_for())))
     assert response.status_code == 200, response.text
     assert [url for url, _ in opened] == [config.jwks_url]

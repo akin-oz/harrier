@@ -16,9 +16,9 @@ PyJWT is imported where a token is verified, never at module level. The
 configuration reader runs on every start, local ones included, and the
 image installs no `hosted` group.
 
-Hosted mode does not serve yet: `create_app` still refuses a Postgres store
-with spec 103's text, so the hosted app is assembled only by the tests until
-spec 134 lifts that gate (spec 104, the split amendment of 2026-10-12).
+The verified claims are where this module stops. Each request's database
+identity, the pool and the start checks are `harrier_api.hostedstore`'s
+(spec 134).
 """
 
 from __future__ import annotations
@@ -64,6 +64,11 @@ SECRET_KEY_PREFIX = "sb_secret_"
 AUTH_VALUE_REFUSAL = f"{AUTH_VARIABLE} must be empty or {HOSTED_AUTH}"
 NEEDS_POSTGRES_REFUSAL = (
     f"{AUTH_VARIABLE}={HOSTED_AUTH} needs {URL_VARIABLE} to name a Postgres store"
+)
+# The other half of the same rule: the API serves Postgres only hosted, where
+# each request runs as its user (spec 134, The gate).
+POSTGRES_NEEDS_HOSTED_REFUSAL = (
+    f"the API serves a Postgres store only with {AUTH_VARIABLE}={HOSTED_AUTH} (spec 104)"
 )
 DEMO_REFUSAL = (
     f"{DEMO_ENV} cannot run with {AUTH_VARIABLE}={HOSTED_AUTH}: demo mode seeds a local SQLite file"

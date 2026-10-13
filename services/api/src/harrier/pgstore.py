@@ -44,6 +44,8 @@ from harrier.connection import (
 
 if TYPE_CHECKING:
     import psycopg
+    from psycopg.rows import TupleRow
+    from psycopg_pool import ConnectionPool
 
 # The key of the advisory locks the migration runner takes: a session-level
 # one from before it reads the version until its last migration commits
@@ -308,3 +310,77 @@ def open_postgres_store(url: str) -> psycopg.Connection[tuple[object, ...]]:
         conn.close()
         raise
     return conn
+
+
+# --- the hosted API's pool (spec 134) ---
+
+POOL_UNREACHABLE = "could not connect to the store"
+
+
+class RequestPool:
+    """The hosted API's connections, as the login role in the URL (spec 134).
+
+    Each is in autocommit mode, as the seam requires, with prepared
+    statements off (`prepare_threshold=None`): a transaction-mode pooler may
+    hand each transaction to another server connection, where a statement
+    prepared on the last one does not exist (spec 115, A5).
+
+    `lease` hands one out and `release` takes it back. A connection that is
+    closed, broken or not idle is discarded on release rather than handed
+    out again: `idle_in_transaction_session_timeout` ends the server's
+    connection, not only its transaction, and a connection left in a
+    transaction would carry it to the next request. The pool would roll such
+    a transaction back and keep the connection; this discards it.
+    """
+
+    def __init__(self, url: str, *, min_size: int, max_size: int, wait_seconds: float) -> None:
+        require_driver()
+        from psycopg_pool import ConnectionPool, PoolTimeout
+
+        self._pool: ConnectionPool[psycopg.Connection[TupleRow]] = ConnectionPool(
+            url,
+            min_size=min_size,
+            max_size=max_size,
+            timeout=wait_seconds,
+            open=False,
+            name="harrier-requests",
+            kwargs={"autocommit": True, "prepare_threshold": None, "connect_timeout": 10},
+        )
+        try:
+            self._pool.open(wait=True, timeout=wait_seconds)
+            opened = True
+        except PoolTimeout:
+            opened = False
+        if not opened:
+            self._pool.close()
+            # Raised after the except block, so the pool's error is not
+            # chained. It names no URL, host or user (spec 134, The gate).
+            raise StoreConnectionError(POOL_UNREACHABLE)
+
+    def lease(self) -> psycopg.Connection[TupleRow]:
+        """One connection, waiting at most the pool's wait. Raises the
+        pool's `PoolTimeout` when none comes free in time."""
+        return self._pool.getconn()
+
+    def release(self, conn: psycopg.Connection[TupleRow]) -> None:
+        from psycopg.pq import TransactionStatus
+
+        if not conn.closed and conn.info.transaction_status != TransactionStatus.IDLE:
+            conn.close()
+        self._pool.putconn(conn)
+
+    def handed_out(self) -> int:
+        """How many connections the pool has handed out since it opened."""
+        return int(self._pool.get_stats().get("requests_num", 0))
+
+    def close(self) -> None:
+        self._pool.close()
+
+
+def transaction_failed(conn: psycopg.Connection[TupleRow]) -> bool:
+    """Whether `conn` is in a transaction a statement has failed in. A COMMIT
+    there rolls back and reports no error, so a caller that would commit
+    must ask first."""
+    from psycopg.pq import TransactionStatus
+
+    return conn.info.transaction_status == TransactionStatus.INERROR

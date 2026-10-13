@@ -27,6 +27,7 @@ from harrier.db import default_db_path
 from harrier.tracker import schema
 from harrier.tracker.schema import MIGRATIONS, POSTGRES_MIGRATIONS
 from harrier_api.app import create_app
+from harrier_api.hostedauth import POSTGRES_NEEDS_HOSTED_REFUSAL, HostedConfigError
 from harrier_cli.main import load_project_env, main
 
 SPEC_112_REFUSAL = (
@@ -386,10 +387,12 @@ def test_store_on_an_unreachable_postgres_never_prints_the_password(
 
 
 def test_the_api_refuses_to_start_on_a_postgres_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Local, the API serves no Postgres store: only hosted mode does, where
+    # each request runs as its user (spec 134, The gate).
     monkeypatch.setenv(URL_VARIABLE, UNREACHABLE_URL)
-    with pytest.raises(RuntimeError) as refused:
+    with pytest.raises(HostedConfigError) as refused:
         create_app()
-    assert str(refused.value) == SPEC_112_REFUSAL.removeprefix("error: ").rstrip("\n")
+    assert str(refused.value) == POSTGRES_NEEDS_HOSTED_REFUSAL
 
     monkeypatch.setenv(URL_VARIABLE, "mysql://x")
     with pytest.raises(StoreUrlError) as invalid:
@@ -410,9 +413,9 @@ def test_a_url_in_dotenv_reaches_the_api_as_it_reaches_the_cli(
     monkeypatch.delenv(URL_VARIABLE)
     (tmp_path / ".env").write_text(f"{URL_VARIABLE}={UNREACHABLE_URL}\n", encoding="utf-8")
 
-    with pytest.raises(RuntimeError) as refused:
+    with pytest.raises(HostedConfigError) as refused:
         create_app()
-    assert str(refused.value) == SPEC_112_REFUSAL.removeprefix("error: ").rstrip("\n")
+    assert str(refused.value) == POSTGRES_NEEDS_HOSTED_REFUSAL
 
     code, _, err = run(["tracks", "list"], capsys)
     assert (code, err) == (1, SPEC_112_REFUSAL)

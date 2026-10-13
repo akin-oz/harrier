@@ -28,7 +28,7 @@ from starlette.responses import PlainTextResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from harrier.apply.brief import Brief
-from harrier.connection import POSTGRES_NOT_YET, Connection, store_target
+from harrier.connection import Connection, store_target
 from harrier.db import DatabaseOwnedByHost, connect, default_db_path, lease_directory
 from harrier.demo import repo_root
 from harrier.hostlease import oldest_hold
@@ -56,6 +56,7 @@ from harrier_api.deps import (
     DatabaseHoldOut,
     DatabaseRoute,
     ErrorOut,
+    get_conn,
     merge_responses,
     require_operation,
     scope_for,
@@ -64,6 +65,7 @@ from harrier_api.hostedauth import (
     BEARER_SCHEME_NAME,
     BEARER_SECURITY_SCHEME,
     HOSTED_APP_REFUSAL,
+    POSTGRES_NEEDS_HOSTED_REFUSAL,
     Clock,
     HostedAuthMiddleware,
     HostedConfig,
@@ -74,6 +76,12 @@ from harrier_api.hostedauth import (
     fetch_from,
     hosted_config,
     hosted_mode,
+)
+from harrier_api.hostedstore import (
+    RequestStore,
+    RequestTransactionMiddleware,
+    hosted_conn,
+    open_request_store,
 )
 from harrier_api.localauth import (
     TOKEN_RESPONSES,
@@ -1437,7 +1445,7 @@ def _app_with_routes(manager: RunManager) -> FastAPI:
     the hosted API serves one document with the local one (ADR-005)."""
 
     @asynccontextmanager
-    async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
+    async def lifespan(served: FastAPI) -> AsyncGenerator[None]:
         # When the app is served, never when it is imported or built: an
         # import is `just contract` on the host, whose data directory is the
         # container's, and removing inputs there deleted a running
@@ -1445,6 +1453,10 @@ def _app_with_routes(manager: RunManager) -> FastAPI:
         # this server's journal shows were cut off go.
         manager.release_interrupted_inputs()
         yield
+        # Hosted, the pool's connections close with the server (spec 134).
+        store = getattr(served.state, "request_store", None)
+        if isinstance(store, RequestStore):
+            store.close()
 
     app = FastAPI(
         title="harrier",
@@ -1524,12 +1536,12 @@ def create_app(run_manager: RunManager | None = None, spa_dir: Path | None = Non
     # configuration names the variable and stops the start (spec 104).
     hosted = hosted_config(os.environ)
     # Before anything opens SQLite. A bad HARRIER_DATABASE_URL raises
-    # StoreUrlError, and a Postgres one refuses with the CLI's text. Nothing
-    # serves requests from Postgres until spec 134 lifts this, so a complete
-    # hosted configuration, which names Postgres, stops here too (spec 103;
-    # spec 104, the split amendment of 2026-10-12, decision 2).
-    if store_target().is_postgres:
-        raise RuntimeError(POSTGRES_NOT_YET)
+    # StoreUrlError. A Postgres store is served only hosted, where each
+    # request runs as its user under the row policy; the local API has no
+    # user to run as (spec 134, The gate).
+    target = store_target()
+    if hosted is None and target.is_postgres:
+        raise HostedConfigError(POSTGRES_NEEDS_HOSTED_REFUSAL)
     # logsetup said it was called by the CLI and by the API. Only the CLI ever
     # called it, so the process serving the browser had no configured root
     # logger and no identity redaction (spec 045).
@@ -1539,7 +1551,8 @@ def create_app(run_manager: RunManager | None = None, spa_dir: Path | None = Non
     # hosted app gets it too.
     scrub_uvicorn_handlers()
     if hosted is not None:
-        return create_hosted_app(hosted, run_manager=run_manager)
+        # `hosted_config` refuses hosted mode on anything but Postgres.
+        return create_hosted_app(hosted, run_manager=run_manager, database_url=target.url)
     if is_demo_mode():
         seed_demo_db()
     manager = run_manager if run_manager is not None else RunManager()
@@ -1583,14 +1596,22 @@ def create_hosted_app(
     run_manager: RunManager | None = None,
     fetch_keys: KeyFetcher | None = None,
     clock: Clock = time.time,
+    database_url: str | None,
 ) -> FastAPI:
     """The hosted app: the same routes behind the token, the configured
-    hosts and the configured origins (spec 104).
+    hosts and the configured origins (spec 104), each request running as
+    its user on the Postgres store `database_url` names (spec 134).
 
-    `create_app` calls this only after the spec 103 gate, which under spec
-    104 it never passes on a Postgres URL, so no process serves it until
-    spec 134. The tests call it directly, with an injected key fetcher, and
-    no test reaches the network.
+    With `database_url`, after the first key fetch, it opens the pool and
+    runs the start checks (`open_request_store`), which raise to refuse the
+    start; then `get_conn` is the request transaction, ended by
+    `RequestTransactionMiddleware` inside the token check. `create_app`
+    always passes it. `None`, which only spec 104's and spec 132's tests
+    pass, leaves routes on the local SQLite store as the local app does,
+    with no request transaction and no row policy; it has no default, so a
+    caller cannot get that app by leaving the URL out (data integrity
+    review of PR #301). The tests inject the key fetcher, and none reaches
+    the network.
 
     It refuses unless the process environment says hosted too: the run
     manager reads hosted mode from there, so an app built hosted in a local
@@ -1611,6 +1632,16 @@ def create_hosted_app(
     # succeeds, so the platform does not restart a healthy process during a
     # Supabase outage.
     keys.prime()
+    if database_url is not None:
+        # After the key fetch, as spec 134's start checks run. A refusal
+        # raises here, so uvicorn's import fails and the process exits 1.
+        app.state.request_store = open_request_store(database_url)
+        # The hosted `get_conn`, for every route that declares `Conn`. An
+        # override, so the route declarations and the local dependency are
+        # the same in both modes, and the contract stays one document.
+        app.dependency_overrides[get_conn] = hosted_conn
+        # Innermost: it sees each response's status before the client does.
+        app.add_middleware(RequestTransactionMiddleware)
     # Innermost first. The token is checked on the path without its /api
     # prefix and inside the host check, and every answer, a 401 included,
     # passes the CORS layer on its way out, so the SPA can read it.
