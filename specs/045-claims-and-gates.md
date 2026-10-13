@@ -1537,3 +1537,158 @@ All three as recommended.
 - The probes above, run through the seam at 8b22a67 against the local
   Postgres 17 test server and SQLite. The pull request records each script
   and its output.
+
+## Amendment (2026-10-13): a refresh never drops a value the filter held
+
+The amendment above ("a failed identity read leaves the caller's
+transaction usable") found this while it was written, and records it in
+its Out of scope with the criterion it should meet. Its Decision 3 gives
+it an amendment of its own. This is that amendment.
+
+### Problem (amendment of 2026-10-13: refresh)
+
+The text above says the identity set "is refreshed from the one tracker
+write path" so that a contact added later is redacted. It never says what
+a refresh does with the values the filter already holds. The code
+replaces them, and that loses redaction.
+
+- `refresh_installed` (`services/api/src/harrier/logredact.py`) calls
+  `identity_values` and passes the result to every installed filter's
+  `refresh`. `IdentityRedactionFilter.refresh` replaces the filter's value
+  set with it.
+- `identity_values` catches a `StoreDatabaseError` from each of its two
+  loaders and goes on, so when one read fails it returns only the other
+  source's values.
+- So a refresh whose candidate read fails drops every candidate value the
+  filter held, and one whose contact read fails drops every contact. The
+  next record that carries one of those values is logged in clear.
+
+Measured through the code at `fd8dfb0` on 2026-10-13, on SQLite, with a
+synthetic candidate name. The probe built a filter from the store,
+renamed `profile_documents` so the candidate read fails, and called
+`refresh_installed`:
+
+```
+before refresh: hello [redacted]
+after a refresh whose candidate read failed: hello Synthetic Candidate Name
+```
+
+Who meets it: a local process with the identity filter installed (the CLI
+and the local API; hosted mode installs none, spec 135), when a contact is
+added (`add_contact`, `services/api/src/harrier/tracker/store.py`, the one
+caller of `refresh_installed`) while one of the two reads fails. A read
+fails on an I/O error, a damaged file, a store mid-migration, or a missing
+table. None of these is common, which is why it went unseen. Each makes
+the one control that keeps identity out of a pasted log quietly stop
+covering a source, with no warning.
+
+A deleted contact has the same shape without any failure. No refresh
+follows `delete_contact`, but the next `add_contact` refreshes from a store
+without the deleted contact, and its name is no longer redacted in this
+process. Measured the same way, with two synthetic contacts: the filter
+built while the first existed, then the first deleted and the second
+added:
+
+```
+built: mail [redacted]
+after delete and a later add: mail Synthetic Contact One | mail [redacted]
+```
+
+### Behavior (amendment of 2026-10-13: refresh)
+
+**A refresh only adds.** `IdentityRedactionFilter.refresh(values)` makes
+the filter's set the union of what it held and `values`. A value the
+filter redacted stays redacted for the life of the process, whatever a
+later refresh reads. `refresh_installed` is otherwise unchanged: it reads
+once and pushes the result into every installed filter.
+
+**Startup is unchanged.** `configure_logging` builds the filter from the
+store's current values, as today, so a restart drops a value no longer in
+the store. When the startup load fails, no filter is installed and the
+warning `identity redaction is unavailable; logs are not redacted` is
+logged, as today (`services/api/src/harrier/logsetup.py`,
+`_install_identity_redaction`).
+
+**Order is unchanged.** Longest value first, and a value shorter than
+`WORD_BOUNDED_BELOW` matched on a word boundary, over the whole union.
+
+### Failure modes (amendment of 2026-10-13: refresh)
+
+- **One read fails during a refresh.** The filter keeps every value it
+  held and adds what the other read returned.
+- **Both reads fail.** `identity_values` returns an empty set; the filter
+  keeps every value it held.
+- **A value leaves the store** (a contact deleted, a profile name
+  corrected). The filter keeps redacting the old value until the process
+  restarts. That over-redacts: a log line can show `[redacted]` where the
+  old value no longer names anyone. It never under-redacts.
+- **A long-running process.** The set grows only by values the store held
+  at some refresh, a few per contact added. No limit is set.
+
+### Acceptance criteria (amendment of 2026-10-13: refresh)
+
+- [ ] A filter built from a store holding a synthetic candidate name
+      still redacts it after a refresh whose candidate read fails
+      (a renamed `profile_documents` on SQLite), and the same refresh
+      adds a contact added since
+      (planned test_a_refresh_whose_read_fails_keeps_the_values_it_held).
+- [ ] A synthetic contact deleted after the filter was built is still
+      redacted after a later refresh that reads the store without it
+      (planned test_a_refresh_keeps_a_value_the_store_no_longer_holds).
+- [ ] `refresh` with an empty set leaves every held value redacted
+      (planned test_an_empty_refresh_drops_nothing).
+- [ ] A contact added after startup is still redacted, as before
+      (`services/api/tests/test_logging.py::test_a_contact_added_after_startup_is_redacted`).
+- [ ] Each new test fails with `refresh` replacing the set, as today, and
+      the pull request records what each reversion made fail.
+
+All in `services/api/tests/test_logging.py`, with synthetic values only.
+
+### Out of scope (amendment of 2026-10-13: refresh)
+
+- **Refreshing on the other identity writes.** Only `add_contact` calls
+  `refresh_installed`. A contact edited through `update_contact_fields`,
+  and a candidate name changed through `put_document` or
+  `put_documents_and_rekind` (`services/api/src/harrier/profile/store.py`),
+  are not redacted until the process restarts. The text above promises a
+  contact is redactable "from the moment it exists"; an edited value is
+  the same promise, and it is not kept. It changes when the filter learns
+  a value, not what it keeps, so it gets its own amendment here, with its
+  own criterion.
+- A warning when a refresh's read fails. With nothing dropped, the filter
+  stays whole, and the startup warning already covers a store the process
+  cannot read at all.
+- Hosted mode, which installs no identity filter (spec 135).
+- Redaction by literal value, which misses a paraphrase or another
+  spelling (Limitations above).
+
+### Decisions (Akin, in chat, 2026-10-13: refresh)
+
+Both as recommended.
+
+1. **Keep everything, or keep per source.** Taken: a refresh only
+   adds, as Behavior says. It closes the failed read and the deleted
+   contact with one rule, in one line of code, and its only cost is
+   over-redacting an old value until restart. Weighed instead was keeping a
+   source's old values only when that source's read failed, and replacing
+   them when it succeeded. It redacts exactly the store's current values,
+   but leaves the deleted contact in clear and needs `identity_values` to
+   report which read failed.
+2. **The other identity writes.** Taken: their own amendment, as
+   Out of scope says, drafted after this one. Weighed instead was to take
+   them into this change, which makes one diff answer two questions.
+
+### Honest limitations (amendment of 2026-10-13: refresh)
+
+- The failed read is provoked only by renaming a table on SQLite. An I/O
+  error, a damaged file and a Postgres store are reasoned from the code,
+  not probed. The fix does not depend on why the read failed.
+- The process memory holds identity values it would otherwise have
+  dropped. They are already in that memory today, in the store's rows and
+  the filter, and none of it is written anywhere new.
+
+### Proof / origin (amendment of 2026-10-13: refresh)
+
+- The amendment above, its Out of scope, first item, and its Decision 3.
+- The two probes above, run at `fd8dfb0`. The pull request records each
+  script and its output.
