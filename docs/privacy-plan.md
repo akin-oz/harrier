@@ -86,6 +86,30 @@ same name is not caught, and no value-matching filter would catch it. Logs are
 never-in-git regardless, so this defends the log that gets pasted into an issue
 or shared on a call, not the repository.
 
+**Hosted logs (spec 135).** The hosted API holds no identity values and
+redacts none by value: they are the owners' rows on Postgres, which its login
+role may not read at start. Its logging opens no local store, installs no
+identity filter and writes only to stderr
+(`services/api/tests/test_hosted_logs.py::test_a_hosted_start_opens_no_local_store`,
+`::test_hosted_logging_writes_stderr_only`). What keeps personal data out is
+that no row value reaches a record:
+
+- A driver error, psycopg's or sqlite3's, is printed as its type, its
+  SQLSTATE and the store error's text, never by `str()`, whose `DETAIL` lines
+  quote the row. This holds in a traceback's whole chain, in an exception
+  group, and for a driver error passed as a log argument, in both modes and
+  in the CLI (`harrier.logredact.SecretScrubFilter`;
+  `::test_a_failed_statement_logs_none_of_its_row`,
+  `::test_every_shape_of_driver_error_is_withheld`,
+  `::test_a_sqlite_driver_error_is_withheld_too`,
+  `::test_an_unrenderable_driver_error_keeps_its_record`).
+- The routes that read or write a contact log no identity value hosted, at
+  `DEBUG` (`::test_contact_routes_log_no_identity_value_hosted`). This is a
+  test of today's log calls, not a filter: a new log call on a hosted path
+  that quotes a contact is caught by nothing at run time.
+- The access log keeps the method, the path and the status. A path names a
+  job by its selector, not a person.
+
 ## 6. Fixture policy
 
 - Fixtures are authored, not recorded (revised by spec 021). Scrubbing a real

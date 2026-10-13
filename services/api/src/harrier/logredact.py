@@ -24,7 +24,9 @@ What this does and does not protect:
   query that failed would log and recurse.
 
 `SecretScrubFilter`, at the end, is the other filter here: it keeps the store
-password and other credential-shaped values out of the log stream (spec 133).
+password and other credential-shaped values out of the log stream (spec 133),
+and a driver error's text, which quotes the row, out of every record (spec
+135).
 """
 
 from __future__ import annotations
@@ -34,10 +36,19 @@ import logging
 import os
 import re
 import traceback
+from collections.abc import Mapping
 from pathlib import Path
+from types import TracebackType
 from typing import cast
 
-from harrier.connection import URL_VARIABLE, Connection, StoreDatabaseError, url_parts
+from harrier.connection import (
+    URL_VARIABLE,
+    Connection,
+    StoreDatabaseError,
+    driver_error_text,
+    is_driver_error,
+    url_parts,
+)
 
 # A one-character value is not identifying and matches everywhere. Everything
 # longer is redacted, but a short value only where it stands as its own word:
@@ -332,9 +343,70 @@ def scrub_outbound(text: str) -> str:
     return scrub_secrets(_mask(text, store_password_forms()))
 
 
+# --- a driver error's text (spec 135) ---
+
+
+def _driver_error_shown(error: BaseException) -> str:
+    """A driver error as a log argument prints it: the seam's text, or its
+    class when the seam cannot render it."""
+    return driver_error_text(error) or f"{type(error).__module__}.{type(error).__qualname__}"
+
+
+def _withhold_driver_text(top: traceback.TracebackException, error: BaseException) -> None:
+    """Replace the text of every driver error in a formatted chain.
+
+    `TracebackException` builds its tree in step with the exception's:
+    `__cause__`, `__context__` and a group's members, each built from the
+    exception's own (`traceback.py`, `TracebackException.__init__`). So the
+    two are walked together, and only a driver error's line changes: its
+    type and frames stay, and so does every other exception's text.
+    """
+    pending: list[tuple[traceback.TracebackException, BaseException]] = [(top, error)]
+    seen: set[int] = set()
+    while pending:
+        formatted, exception = pending.pop()
+        if id(formatted) in seen:
+            continue
+        seen.add(id(formatted))
+        if is_driver_error(exception):
+            if not hasattr(formatted, "_str"):
+                # A Python whose traceback keeps the text elsewhere: the
+                # filter withholds the whole record rather than print it.
+                raise RuntimeError("the exception text cannot be withheld")
+            # Private to `traceback`, and what `format_exception_only`
+            # prints after the type: set, not read, so no other text moves.
+            setattr(formatted, "_str", driver_error_text(exception))  # noqa: B010
+            formatted.__notes__ = None
+        if formatted.__cause__ is not None and exception.__cause__ is not None:
+            pending.append((formatted.__cause__, exception.__cause__))
+        if formatted.__context__ is not None and exception.__context__ is not None:
+            pending.append((formatted.__context__, exception.__context__))
+        members = formatted.exceptions
+        if members and isinstance(exception, BaseExceptionGroup):
+            group = cast("BaseExceptionGroup[BaseException]", exception)
+            pending.extend(zip(members, group.exceptions, strict=False))
+
+
+def format_exception_withheld(
+    exc_info: tuple[type[BaseException], BaseException, TracebackType | None]
+    | tuple[None, None, None],
+) -> str:
+    """`logging.Formatter.formatException`, with every driver error in the
+    chain printed as its type and `driver_error_text` (spec 135)."""
+    error = exc_info[1]
+    if error is None:
+        return logging.Formatter().formatException(exc_info)
+    formatted = traceback.TracebackException(type(error), error, error.__traceback__, compact=True)
+    _withhold_driver_text(formatted, error)
+    text = "".join(formatted.format())
+    # As `formatException` does: no trailing newline.
+    return text[:-1] if text.endswith("\n") else text
+
+
 class SecretScrubFilter(logging.Filter):
     """Passes a record's message, exception text and stack text through
-    `scrub_outbound` (spec 133).
+    `scrub_outbound` (spec 133), after withholding the text of every driver
+    error in the record (spec 135).
 
     Separate from `IdentityRedactionFilter`, which does nothing without
     identity values and is not installed when they cannot be loaded: the two
@@ -349,12 +421,14 @@ class SecretScrubFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
+            self._withhold_driver_arguments(record)
             self._scrub_message(record)
             # Formatted here, as `logging.Formatter.format` would, because
             # the formatter prints `exc_text` instead of formatting
-            # `exc_info` again once it is set. Chained causes included.
+            # `exc_info` again once it is set. Chained causes included, each
+            # driver error among them without its text (spec 135).
             if record.exc_info and not record.exc_text:
-                record.exc_text = logging.Formatter().formatException(record.exc_info)
+                record.exc_text = format_exception_withheld(record.exc_info)
             if record.exc_text:
                 record.exc_text = scrub_outbound(record.exc_text)
             if record.stack_info:
@@ -368,6 +442,28 @@ class SecretScrubFilter(logging.Filter):
             record.exc_text = None
             record.stack_info = None
         return True
+
+    @staticmethod
+    def _withhold_driver_arguments(record: logging.LogRecord) -> None:
+        """A driver error logged as the message or as an argument renders
+        as the seam's text, not as `str()`, which quotes the row (spec 135)."""
+        if isinstance(record.msg, BaseException) and is_driver_error(record.msg):
+            record.msg = _driver_error_shown(record.msg)
+        args = record.args
+        if isinstance(args, tuple) and any(is_driver_error(arg) for arg in args):
+            record.args = tuple(
+                _driver_error_shown(arg)
+                if isinstance(arg, BaseException) and is_driver_error(arg)
+                else arg
+                for arg in args
+            )
+        elif isinstance(args, Mapping) and any(is_driver_error(arg) for arg in args.values()):
+            record.args = {
+                key: _driver_error_shown(arg)
+                if isinstance(arg, BaseException) and is_driver_error(arg)
+                else arg
+                for key, arg in args.items()
+            }
 
     @staticmethod
     def _scrub_message(record: logging.LogRecord) -> None:

@@ -336,6 +336,11 @@ can reach a role past the policy through any membership
 a store whose default isolation is not `read committed`, and a store not at
 the version the code needs
 (`services/api/tests/test_hosted_start.py::test_hosted_start_checks_the_store_version_once`).
+Hosted logs go to stderr only, which the platform collects. The hosted
+start opens no local SQLite store and writes no log file
+(spec 135, `services/api/tests/test_hosted_logs.py::test_a_hosted_start_opens_no_local_store`),
+and a driver error's text, which quotes the row, never reaches a log record
+(`services/api/tests/test_hosted_logs.py::test_a_failed_statement_logs_none_of_its_row`).
 
 No other hosted component exists yet. Specs 103 to 112 sequence the build:
 the Postgres store (103, approved), API authentication (104), row-level

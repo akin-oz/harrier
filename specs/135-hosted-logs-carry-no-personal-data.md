@@ -206,12 +206,12 @@ The hosted start (Postgres tests, run in CI as spec 103 requires):
       `target_version()` and `HARRIER_DATA_DIR` set to an empty temporary
       directory leaves that directory with no `harrier.db`, no
       `harrier.db-wal`, no `harrier.db-shm` and no `logs` directory
-      (planned test_a_hosted_start_opens_no_local_store).
+      (`services/api/tests/test_hosted_logs.py::test_a_hosted_start_opens_no_local_store`).
 - [ ] After that start, no handler of the root logger is a
       `RotatingFileHandler`, none carries an `IdentityRedactionFilter`,
       every one carries the secret scrub filter, and the INFO line above
       was logged once
-      (planned test_hosted_logging_writes_stderr_only).
+      (`services/api/tests/test_hosted_logs.py::test_hosted_logging_writes_stderr_only`).
 - [ ] A local `create_app`, and the CLI, still create the log file and
       install the identity filter: the existing tests in
       `services/api/tests/test_logging.py` pass unchanged.
@@ -225,28 +225,27 @@ A driver error in a log record:
       configured, the `uvicorn.error` record of the unhandled exception
       included; and that record still names the psycopg class, the
       SQLSTATE and the route's frames
-      (planned test_a_failed_statement_logs_none_of_its_row).
+      (`services/api/tests/test_hosted_logs.py::test_a_failed_statement_logs_none_of_its_row`).
 - [ ] The same chain logged with `logger.exception` from domain code, a
       psycopg error passed as a log argument, a psycopg error in a
       `__context__`, and one inside an `ExceptionGroup` each leave none of
       the row's values in the formatted record
-      (planned test_every_shape_of_driver_error_is_withheld).
+      (`services/api/tests/test_hosted_logs.py::test_every_shape_of_driver_error_is_withheld`).
 - [ ] A SQLite driver error whose text quotes a value, chained to a store
       error, leaves that value out of the formatted record
-      (planned test_a_sqlite_driver_error_is_withheld_too).
+      (`services/api/tests/test_hosted_logs.py::test_a_sqlite_driver_error_is_withheld_too`).
 - [ ] A driver error the seam cannot render is printed by its class name,
       and the record is not dropped
-      (planned test_an_unrenderable_driver_error_keeps_its_record).
+      (`services/api/tests/test_hosted_logs.py::test_an_unrenderable_driver_error_keeps_its_record`).
 
 Identity values hosted:
 
 - [ ] On a hosted app over a throwaway store, with the root logger at
-      `DEBUG`, one synthetic owner's contacts and candidate profile hold
-      marker values, and `GET /outreach/contacts`, `POST
-      /outreach/{selector}/candidates/approve` and `GET
-      /outreach/{selector}/best-contact` each run; no log record of any
-      logger contains a marker
-      (planned test_contact_routes_log_no_identity_value_hosted).
+      `DEBUG`, one synthetic owner's contact holds marker values, and `POST
+      /outreach/{selector}/candidates/approve`, `POST
+      /outreach/{selector}/best-contact` and `GET /outreach/contacts` each
+      run; no log record of any logger contains a marker
+      (`services/api/tests/test_hosted_logs.py::test_contact_routes_log_no_identity_value_hosted`).
 
 Gates:
 
@@ -352,3 +351,49 @@ Akin took both recommendations in chat on 2026-10-13.
   (`connect`), `services/api/src/harrier_api/app.py` (`create_app`).
 - psycopg 3, `Error.diag`: `str()` of an error includes the `DETAIL`.
   https://www.psycopg.org/psycopg3/docs/api/errors.html
+
+## Amendment (2026-10-13): what building it settled
+
+Building this spec found two places in the identity criterion where the
+text was wrong, and settled one mechanism the text left open. Each is
+stated here so the code and the spec agree.
+
+- **`best-contact` is a `POST`.** The criterion said `GET
+  /outreach/{selector}/best-contact`. The route sets the best contact and
+  is `POST` (`services/api/src/harrier_api/outreach_routes.py`,
+  `set_best_contact`). The criterion above now says `POST`.
+- **The candidate profile is not seeded.** The criterion seeded marker
+  values in the owner's candidate profile too. None of the three routes
+  reads the profile, so a marker there proves nothing about them. The
+  criterion now seeds the contact only, staged as discovery stages it and
+  stored by the approve route, and the test checks that the marker reached
+  the routes (`GET /outreach/contacts` returns it) before it checks the
+  log.
+- **How a driver error's text is withheld.** `traceback.TracebackException`
+  builds its tree of a chain in step with the exceptions themselves:
+  `__cause__`, `__context__` and a group's members. `SecretScrubFilter`
+  walks the two together and replaces only a driver error's printed text,
+  so its type and frames stay, and so does every other exception's text
+  (`services/api/src/harrier/logredact.py`, `format_exception_withheld`).
+  The text it replaces is a private attribute of `traceback`
+  (`_str`). On a Python that keeps it elsewhere the filter withholds the
+  whole record rather than print the driver's text; the tests above fail
+  there, so the change is seen.
+- **What tells a driver error.** `harrier.connection.is_driver_error` reads
+  psycopg's error class from `sys.modules` and never imports it: a process
+  that never loaded psycopg holds none of its errors, and the import
+  contract keeps psycopg inside the seam.
+
+Each test fails when the code it proves is removed. The mutations, run
+against a local Postgres 17:
+
+| Mutation | Fails |
+|---|---|
+| `create_app` calls `configure_logging()` without `hosted` | `test_a_hosted_start_opens_no_local_store`, `test_hosted_logging_writes_stderr_only` |
+| the hosted branch leaves earlier identity filters registered | `test_hosted_logging_writes_stderr_only` |
+| the filter formats the traceback with `str()` of each exception | `test_a_failed_statement_logs_none_of_its_row`, three shapes of `test_every_shape_of_driver_error_is_withheld`, `test_a_sqlite_driver_error_is_withheld_too`, `test_an_unrenderable_driver_error_keeps_its_record` |
+| driver errors passed as arguments are not withheld | three shapes of `test_every_shape_of_driver_error_is_withheld`, `test_an_unrenderable_driver_error_keeps_its_record` |
+| the walk skips `__context__` | the `__context__` shape |
+| the walk skips a group's members | the `ExceptionGroup` shape |
+| the seam's rendering may raise | `test_an_unrenderable_driver_error_keeps_its_record` |
+| the approve route logs the contact's name at `DEBUG` | `test_contact_routes_log_no_identity_value_hosted` |

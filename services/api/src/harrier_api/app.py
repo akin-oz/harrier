@@ -1544,8 +1544,9 @@ def create_app(run_manager: RunManager | None = None, spa_dir: Path | None = Non
         raise HostedConfigError(POSTGRES_NEEDS_HOSTED_REFUSAL)
     # logsetup said it was called by the CLI and by the API. Only the CLI ever
     # called it, so the process serving the browser had no configured root
-    # logger and no identity redaction (spec 045).
-    configure_logging()
+    # logger and no identity redaction (spec 045). Hosted, it opens no local
+    # store and writes no file (spec 135).
+    configure_logging(hosted=hosted is not None)
     # uvicorn logs an unhandled exception on its own handler, which the
     # root's filters never see (spec 133). Before the modes part, so the
     # hosted app gets it too.

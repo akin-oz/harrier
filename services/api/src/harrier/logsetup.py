@@ -22,7 +22,12 @@ fails if the call is removed again.
 
 Handlers also carry the identity redaction filter (`harrier.logredact`), which
 the privacy plan claimed existed and which did not, and before it the secret
-scrub, which keeps the store password out of the log (spec 133).
+scrub, which keeps the store password out of the log (spec 133) and a driver
+error's text with it (spec 135).
+
+Hosted, logging opens nothing: no database, so no identity values and no
+identity filter, and no file (spec 135). The identity values hosted are the
+owners' rows on Postgres, which the API's login role may not read at start.
 """
 
 from __future__ import annotations
@@ -36,7 +41,7 @@ from pathlib import Path
 
 from harrier.connection import StoreDatabaseError
 from harrier.db import DatabaseOwnedByContainer, DatabaseOwnershipError, connect, data_dir
-from harrier.logredact import SecretScrubFilter
+from harrier.logredact import SecretScrubFilter, forget_all
 
 LOG_DIR_NAME = "logs"
 LOG_FILE_NAME = "harrier.log"
@@ -48,6 +53,11 @@ MAX_BYTES = 5 * 1024 * 1024
 BACKUP_COUNT = 3
 
 FORMAT = "%(asctime)s %(levelname)-7s %(name)s: %(message)s"
+
+HOSTED_NOTE = (
+    "hosted: identity values are not loaded, "
+    "and driver errors are logged without their text (spec 135)"
+)
 
 _configured = False
 
@@ -65,12 +75,15 @@ def log_path() -> Path:
     return data_dir() / LOG_DIR_NAME / LOG_FILE_NAME
 
 
-def configure_logging(*, force: bool = False) -> None:
+def configure_logging(*, force: bool = False, hosted: bool = False) -> None:
     """Set up the root logger once.
 
     The level comes from the environment so a quiet default can be turned up
     without a code change, which matters because the interesting lines here
     are the ones that explain why a run did less than expected.
+
+    `hosted` is the hosted API's: stderr only, which the platform collects,
+    and nothing opened under the data directory (spec 135).
     """
     global _configured
     if _configured and not force:
@@ -93,6 +106,16 @@ def configure_logging(*, force: bool = False) -> None:
     # that install no identity filter included (spec 133).
     stream.addFilter(SECRET_SCRUB)
     root.addHandler(stream)
+
+    if hosted:
+        # No local tracker exists hosted, and opening one created an empty
+        # harrier.db under the data directory at every start. Nothing else
+        # is installed: a filter registered by an earlier local call would
+        # read identity values through the request's connection.
+        forget_all()
+        root.info(HOSTED_NOTE)
+        _configured = True
+        return
 
     # The redaction values come from the database, so they are loaded before
     # the log file is opened. When the container owns the database this
@@ -192,7 +215,7 @@ def _install_identity_redaction(root: logging.Logger, values: set[str] | None) -
     A failure to load them means no redaction, so it says so rather than
     passing silently.
     """
-    from harrier.logredact import IdentityRedactionFilter, forget_all, register
+    from harrier.logredact import IdentityRedactionFilter, register
 
     if values is None:
         root.warning("identity redaction is unavailable; logs are not redacted")
