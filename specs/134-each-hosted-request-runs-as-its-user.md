@@ -350,59 +350,59 @@ The gate and the start checks:
       API exits 1 with this spec's text; with complete hosted mode, a
       store at `target_version()` and a login role that passes, it starts;
       `app.py` holds no `POSTGRES_NOT_YET`
-      (planned test_the_api_serves_postgres_only_in_hosted_mode).
+      (`services/api/tests/test_hosted_start.py::test_the_api_serves_postgres_only_in_hosted_mode`).
 - [ ] A login role that is a superuser, has `BYPASSRLS`, is a member of
       `service_role`, cannot `SET ROLE harrier_tenant`, or owns a table in
       `public` is refused at start, one case each, and no refusal prints
       the URL or the password
-      (planned test_hosted_start_refuses_a_login_role_that_can_bypass_policy).
+      (`services/api/tests/test_hosted_start.py::test_hosted_start_refuses_a_login_role_that_can_bypass_policy`).
 - [ ] A login role is refused at start, one case each, when it is a
       member, through a `NOINHERIT` intermediate role, of a `BYPASSRLS`
       role, of a superuser role, of a role without `BYPASSRLS` that owns a
       table in `public`, and of `service_role`; a direct membership granted
       `WITH SET FALSE` is refused too; and a login role that is a member
       of `harrier_tenant` alone starts
-      (planned test_hosted_start_refuses_a_login_role_that_can_set_role_past_the_policy).
+      (`services/api/tests/test_hosted_start.py::test_hosted_start_refuses_a_login_role_that_can_set_role_past_the_policy`).
 - [ ] The function in `services/api/src/harrier/loginrole.py` returns the
       same check names for each case above when called directly, and
       returns nothing for a login role that passes
-      (planned test_the_login_role_checks_name_each_failure).
+      (`services/api/tests/test_hosted_start.py::test_the_login_role_checks_name_each_failure`).
 - [ ] A store one version behind `target_version()`, and one ahead, are
       each refused at start with `check_postgres_version`'s text, exit 1;
       a store at the target version starts, and a request after start
       runs no statement against `schema_version`
-      (planned test_hosted_start_checks_the_store_version_once).
+      (`services/api/tests/test_hosted_start.py::test_hosted_start_checks_the_store_version_once`).
 - [ ] A login role whose `default_transaction_isolation` is `repeatable
       read` is refused at start
-      (planned test_a_store_defaulting_to_another_isolation_is_refused).
+      (`services/api/tests/test_hosted_start.py::test_a_store_defaulting_to_another_isolation_is_refused`).
 
 The request transaction (Postgres tests, run in CI as spec 103 requires):
 
 - [ ] Inside a request, `current_user` is `harrier_tenant`,
       `public.harrier_owner_id()` is the token's `sub`, and
       `current_setting('request.jwt.claims', true)::jsonb` equals its
-      verified payload (planned test_the_request_transaction_runs_as_its_user).
+      verified payload (`services/api/tests/test_hosted_requests.py::test_the_request_transaction_runs_as_its_user`).
 - [ ] Inside a request, `current_user` is `harrier_tenant` and its
       `rolbypassrls` in `pg_roles` is false
-      (planned test_a_request_never_runs_as_a_bypassrls_role).
+      (`services/api/tests/test_hosted_requests.py::test_a_request_never_runs_as_a_bypassrls_role`).
 - [ ] After the request, the same pooled connection reports the login role
-      and no claims (planned test_identity_ends_with_the_request).
+      and no claims (`services/api/tests/test_hosted_requests.py::test_identity_ends_with_the_request`).
 - [ ] A connection in autocommit mode is detected by the read-back: 500,
       and a probe statement placed after it never runs
-      (planned test_a_lost_set_local_stops_the_request).
+      (`services/api/tests/test_hosted_requests.py::test_a_lost_set_local_stops_the_request`).
 - [ ] Two concurrent requests with different tokens each see only their
-      own `sub` (planned test_concurrent_requests_keep_their_identities).
+      own `sub` (`services/api/tests/test_hosted_requests.py::test_concurrent_requests_keep_their_identities`).
 - [ ] A route that raises rolls its writes back; a 4xx response rolls
       back, including one a route returns without raising, such as
       `POST /capture/add`'s 409; and a commit that fails answers 500, not
       the route's 200
-      (planned test_a_refused_request_commits_nothing).
+      (`services/api/tests/test_hosted_requests.py::test_a_refused_request_commits_nothing`).
 - [ ] A request without a token, an expired one and a forged one each
       leave the pool's count of connections handed out unchanged
-      (planned test_a_refused_token_takes_nothing_from_the_pool).
+      (`services/api/tests/test_hosted_requests.py::test_a_refused_token_takes_nothing_from_the_pool`).
 - [ ] A request that reaches `get_conn` without verified claims is answered
       500 and takes nothing from the pool
-      (planned test_a_request_without_claims_opens_nothing).
+      (`services/api/tests/test_hosted_requests.py::test_a_request_without_claims_opens_nothing`).
 
 The owner read-back:
 
@@ -412,11 +412,11 @@ The owner read-back:
       the function returning null, and with `EXECUTE` on it revoked from
       `harrier_tenant`; and the log record names the value that differed
       and holds no claim value
-      (planned test_the_read_back_checks_the_owner_the_policy_reads).
+      (`services/api/tests/test_hosted_requests.py::test_the_read_back_checks_the_owner_the_policy_reads`).
 - [ ] On the same three stores, a `Connection` opened by `open_store(owner=...)`
       raises `StoreDatabaseError` with `IDENTITY_DID_NOT_HOLD` at its
       first transaction, before any domain statement runs
-      (planned test_an_owner_connection_checks_the_owner_the_policy_reads).
+      (`services/api/tests/test_hosted_requests.py::test_an_owner_connection_checks_the_owner_the_policy_reads`).
 
 Timeouts and isolation:
 
@@ -430,14 +430,14 @@ Timeouts and isolation:
       lock_timeout = 0`, `SET statement_timeout = 0` and `SET
       idle_in_transaction_session_timeout = 0` without `LOCAL`, the next
       request on the same pooled connection sees the chosen values again
-      (planned test_the_request_role_has_lock_and_statement_timeouts).
+      (`services/api/tests/test_hosted_requests.py::test_the_request_role_has_lock_and_statement_timeouts`).
 - [ ] A connection the server ended for idling in its transaction is not
       handed to the next request
-      (planned test_a_connection_ended_by_the_idle_timeout_is_not_reused).
+      (`services/api/tests/test_hosted_requests.py::test_a_connection_ended_by_the_idle_timeout_is_not_reused`).
 - [ ] Inside a request, `current_setting('transaction_isolation')` is
       `read committed`, and two concurrent track inserts for one owner
       through the request transaction get two ids
-      (planned test_the_request_transaction_reads_committed).
+      (`services/api/tests/test_hosted_requests.py::test_the_request_transaction_reads_committed`).
 - [ ] The change that sets the three timeout values says, for each, why
       that value.
 
@@ -591,4 +591,170 @@ the review-response rule; the text above is not changed.
       `HARRIER_DATABASE_URL` that passes the start checks, `create_app`
       returns the hosted app: a request without a token is 401 `missing`,
       and `GET /session` is 404
-      (planned test_create_app_serves_a_complete_hosted_configuration_hosted).
+      (`services/api/tests/test_hosted_start.py::test_create_app_serves_a_complete_hosted_configuration_hosted`).
+
+## Amendment (2026-10-13): what building it settled
+
+Building this spec settled what the text left to the implementation, and
+found two places where it was silent or wrong. Each is stated here so the
+code and the spec agree.
+
+### Open decision 1, taken
+
+The recommended answer. A request that finds no free connection waits
+`POOL_WAIT_SECONDS`, then fails as any exception does: 500, no declared
+body, no contract change
+(`services/api/src/harrier_api/hostedstore.py`).
+
+### The chosen values, and why each
+
+All are constants in `services/api/src/harrier_api/hostedstore.py`, each
+with its reason beside it. None is measured: the hosted store's real query
+times are not known yet.
+
+- **`lock_timeout`, 5 seconds** (`REQUEST_LOCK_TIMEOUT_MS`). The wait the
+  domain was written for: SQLite's busy timeout, `BUSY_TIMEOUT_MS` in
+  `services/api/src/harrier/db.py`, which the seam already gives every
+  Postgres transaction. It is set on the `Connection` as `busy_timeout_ms`,
+  as Behavior says; because it equals the seam's default, removing that
+  assignment changes no test (Mutations, below).
+- **`statement_timeout`, 30 seconds** (`REQUEST_STATEMENT_TIMEOUT_MS`).
+  Each harrier statement reads or writes one owner's rows. Six times the
+  lock timeout, so a statement waiting on a lock is stopped by the lock
+  timeout, and this one bounds only a statement that runs.
+- **`idle_in_transaction_session_timeout`, 120 seconds**
+  (`REQUEST_IDLE_TIMEOUT_MS`). The longest wait a route makes while its
+  transaction is open is `POST /capture/add` fetching a posting to enrich
+  it: three attempts of 30 seconds with 2 and 4 seconds between them,
+  `harrier.screening.http`'s defaults, 96 seconds. Above that, so a slow
+  posting is not cut off.
+- **The pool: one connection at start, at most ten, a 10 second wait**
+  (`POOL_MIN_SIZE`, `POOL_MAX_SIZE`, `POOL_WAIT_SECONDS`). One so the start
+  checks can run; ten is chosen for the one machine of the first hosted
+  release, and spec 110 sizes it against the plan; the wait is
+  `postgres_connect`'s `connect_timeout`, the longest harrier already waits
+  to reach the store.
+
+### Where the code is
+
+- **`services/api/src/harrier_api/hostedstore.py`, a new module** beside
+  `hostedauth.py`: the start checks, the request transaction, the hosted
+  `get_conn` (`hosted_conn`) and `RequestTransactionMiddleware`. Scope did
+  not name it. It sits under `services/api/src/`, which
+  `config/data-classification.json` classifies as public; no new
+  directory.
+- **The pool is `RequestPool` in `services/api/src/harrier/pgstore.py`.**
+  The import contract keeps `psycopg` to the seam and the driver module
+  (spec 128), and the pool hands out psycopg connections, so the pool is
+  driver code. Its `release` discards a connection that is open but not
+  idle: `psycopg_pool` would roll it back and hand it out again. A closed
+  or broken one the pool discards itself.
+- **`login_role_problems(conn, role)` takes the seam's `Connection`,** not
+  a psycopg one, for the same contract; spec 110's commands, not built
+  yet, can open one with `open_store`. Each problem is a check name, and for a membership the role
+  reached and why it is past the policy (`superuser`, `bypassrls`, `owns a
+  table in public`, `owns a table with row security`, or `named` for
+  `service_role` and `postgres`). Two things the text left open: a role
+  that does not exist is `no such role` alone, and a superuser is
+  `superuser` alone, because `pg_has_role` answers true for every role when
+  asked about a superuser. Before Postgres 16, membership is the right to
+  `SET ROLE`, so the tenant check reads `MEMBER` there and `SET` from 16 on.
+  `grant-tenant`, which runs before the grant, expects `cannot set role
+  harrier_tenant`.
+- **The hosted `get_conn` is a dependency override** that
+  `create_hosted_app` installs. Every route keeps declaring `Conn`, the
+  local `get_conn` is unchanged, and the contract stays one document.
+  `create_hosted_app` without a database URL, which only spec 104's and
+  spec 132's tests build, installs neither the override nor the middleware,
+  so those tests keep their SQLite store; `create_app` always passes the
+  URL.
+- **The read-back error is `IdentityDidNotHold`,** a `StoreDatabaseError`
+  in `services/api/src/harrier/connection.py`. Its text is spec 106's,
+  then the names in parentheses: `role`, `claims` or `owner` for what
+  differed, or the step that was refused (`role`, `claims` or
+  `read-back`). A `sub` is compared with `harrier_owner_id()::text` in its
+  canonical UUID form.
+
+### How a refusal reads
+
+- **The gate** raises `HostedConfigError` with
+  `POSTGRES_NEEDS_HOSTED_REFUSAL` (`services/api/src/harrier_api/hostedauth.py`),
+  so the last line a refused start prints is
+  `harrier_api.hostedauth.HostedConfigError: the API serves a Postgres store
+  only with HARRIER_AUTH=supabase (spec 104)`, as spec 104's own start
+  refusals read.
+- **A login role, isolation or unreachable store** raises
+  `HostedStartRefused` (`services/api/src/harrier_api/hostedstore.py`).
+  The login role's text lists every problem and never the login role's own
+  name, which is part of the URL. A store the pool cannot connect to, for
+  any reason, reads `the hosted API cannot run its start checks: it could
+  not connect to the store`, with nothing chained
+  (`services/api/tests/test_hosted_start.py::test_an_unreachable_store_refuses_the_start`).
+  A check statement the store refuses names the check.
+- **The store version** raises `StoreVersionError` with
+  `check_postgres_version`'s text, unwrapped.
+
+### Where the text was silent or wrong
+
+- **A transaction a statement failed in.** A route can catch a failed
+  statement and still answer 200. Postgres then answers `COMMIT` with
+  `ROLLBACK` and no error (checked on Postgres 17.11 for this amendment),
+  so the client would see a success the store did not keep, which Commit
+  and rollback forbids. The middleware asks before it commits and answers
+  such a request as a failed commit: 500 with the generic detail
+  (`services/api/tests/test_hosted_requests.py::test_a_refused_request_commits_nothing`).
+  The seam's own `transaction()` commits the same way outside a request;
+  that is spec 112's to state, and is recorded for it rather than changed
+  here.
+- **The generic detail on a failed commit** is the one detail this spec
+  defines, `the request could not run as its user`.
+- **Some existing tests change.** Behavior in local mode is unchanged, but
+  the gate's text is: `services/api/tests/test_store_cli.py::test_the_api_refuses_to_start_on_a_postgres_url`
+  and `services/api/tests/test_store_cli.py::test_a_url_in_dotenv_reaches_the_api_as_it_reaches_the_cli`
+  now expect this spec's refusal instead of spec 103's. Spec 104's test of
+  the closed gate is removed with the gate, and its criterion points here.
+  Spec 103's statement that the CLI and the API share `POSTGRES_NOT_YET` no
+  longer holds for the API, which Scope item 1 says.
+
+### Tests the criteria did not name
+
+- `services/api/tests/test_hosted_requests.py::test_a_statement_after_the_transaction_ends_is_refused`:
+  a body read after the headers fails with `REQUEST_ENDED` (Commit and
+  rollback, the fourth point).
+- `services/api/tests/test_hosted_requests.py::test_a_connection_left_in_a_transaction_is_not_reused`:
+  the release discards a connection that is not idle.
+- `services/api/tests/test_hosted_start.py::test_an_unreachable_store_refuses_the_start`:
+  the failure mode "The database is unreachable at start".
+- `services/api/tests/test_hosted_requests.py::test_the_read_back_checks_the_claims_it_set`:
+  the claims differ while the role and the owner hold, so the claims'
+  comparison is what stops the request.
+- `services/api/tests/test_hosted_requests.py::test_a_lost_set_local_stops_the_request`
+  runs twice: with `BEGIN` lost, the criterion's case, and with only the
+  role step lost, where the role's comparison is what stops the request.
+  In both the login role may run the read-back and the probe, so nothing
+  else would.
+
+### Mutations
+
+Each new behavior was removed or changed in the code, and the test that
+proves it was run. Every mutation failed its test but two, each for a
+reason stated here. Removing the `busy_timeout_ms` assignment changes
+nothing, since the chosen lock timeout equals the seam's default.
+Removing the release's discard of a connection that is not idle leaves
+`services/api/tests/test_hosted_requests.py::test_a_connection_ended_by_the_idle_timeout_is_not_reused`
+passing, because the pool discards a closed connection itself; the
+discard is proved by
+`services/api/tests/test_hosted_requests.py::test_a_connection_left_in_a_transaction_is_not_reused`.
+The full list, each with its result, is in the pull request.
+
+### Honest limitations (as built)
+
+- **The pool discards a broken connection when it comes back, not before
+  it is handed out.** A connection the server ended while it sat in the
+  pool fails the next request that takes it, with 500, and is then
+  discarded. Checking each connection on the way out costs a round trip
+  per request and is not done.
+- **The probe routes the tests add are the tests' own.** Every criterion
+  that reads the transaction from inside a request does so through a route
+  added to the built app in the test, which declares `Conn` as every route
+  does.

@@ -170,8 +170,9 @@ SQL still names a track and never a tenant; the database applies the owner
 from the session (ADR-012 point 2). The local product described above does
 not change.
 
-A Postgres store can be created, and the domain runs on it, but nothing
-outside the tests reads or writes tracker rows there yet.
+A Postgres store can be created, and the domain runs on it. The hosted
+API serves it (below); no command outside `harrier store` reads or writes
+tracker rows there yet.
 `HARRIER_DATABASE_URL` chooses the store: unset or empty, the local
 SQLite store; a `postgresql://` URL, the Postgres store; any other value is
 refused (`services/api/src/harrier/connection.py`,
@@ -179,8 +180,9 @@ refused (`services/api/src/harrier/connection.py`,
 applies pending migrations and `harrier store status` prints the dialect
 and version. They are the only commands that run on Postgres: every other
 command refuses to start while the URL names it until spec 127, and the
-API until spec 134 (`services/api/tests/test_store_cli.py`). Opening a Postgres store
-never migrates it. The Postgres baseline, recorded as version 9, sits in
+API serves it only in hosted mode (`services/api/tests/test_store_cli.py`,
+`services/api/tests/test_hosted_start.py::test_the_api_serves_postgres_only_in_hosted_mode`).
+Opening a Postgres store never migrates it. The Postgres baseline, recorded as version 9, sits in
 `services/api/src/harrier/tracker/schema.py` beside the SQLite migrations,
 and `services/api/tests/test_dialect_parity.py` holds the two stores to the
 same tables, defaults and refusals.
@@ -251,13 +253,12 @@ default privileges, which grant those roles everything the migrating role
 creates, in `public` and in every schema. No migration creates them, and
 migration 10 refuses a store without the roles and the auth objects.
 
-This polices rows; it does not yet serve anyone. No hosted API serves a
-request until spec 134, and the CLI admits a Postgres URL only for
-`harrier store` until spec 127, so no owner can reach their rows through
-harrier. A role with
-`BYPASSRLS`, such as Supabase's `service_role`, sees every owner's rows
-(`services/api/tests/test_owner_policy.py::test_a_bypassrls_role_sees_every_owner`); keeping requests off such
-a role is spec 104's.
+The hosted API is the one path an owner reaches their rows by (below);
+the CLI admits a Postgres URL only for `harrier store` until spec 127. A
+role with `BYPASSRLS`, such as Supabase's `service_role`, sees every owner's
+rows
+(`services/api/tests/test_owner_policy.py::test_a_bypassrls_role_sees_every_owner`);
+the hosted API's start refuses a login role that can reach one (spec 134).
 
 The shim is not Supabase, so the isolation tests also ran on a real
 project: a Supabase staging project on Postgres 17.6, migrated by
@@ -306,10 +307,35 @@ in both modes, so there is one document
 Hosted, spec 035's local token is not read: the bearer token serves its
 purpose
 (`services/api/tests/test_hosted_auth.py::test_the_local_token_is_not_read_hosted`).
-The hosted API does not serve yet. `create_app` still refuses a Postgres
-URL with spec 103's text, so the hosted app is assembled only in the tests
-until spec 134 lifts that gate
-(`services/api/tests/test_hosted_auth.py::test_a_complete_hosted_configuration_still_meets_the_spec_103_gate`).
+The hosted API serves the Postgres store, and only it does: without
+hosted mode a Postgres URL is refused at start
+(`services/api/tests/test_hosted_start.py::test_the_api_serves_postgres_only_in_hosted_mode`,
+`services/api/tests/test_hosted_start.py::test_create_app_serves_a_complete_hosted_configuration_hosted`).
+Each request runs as its user (spec 134,
+`services/api/src/harrier_api/hostedstore.py`). It takes a connection from
+a pool and opens one transaction through the seam: `harrier_tenant`, the
+verified claims, and a read-back that the role, the claims' `sub` and
+`harrier_owner_id()` are the token's, in every owner transaction, runs
+included
+(`services/api/tests/test_hosted_requests.py::test_the_request_transaction_runs_as_its_user`,
+`services/api/tests/test_hosted_requests.py::test_the_read_back_checks_the_owner_the_policy_reads`).
+Its lock, statement and idle timeouts are `SET LOCAL` in every request
+(`services/api/tests/test_hosted_requests.py::test_the_request_role_has_lock_and_statement_timeouts`).
+A middleware commits below 400 and rolls back otherwise before the client
+sees the status
+(`services/api/tests/test_hosted_requests.py::test_a_refused_request_commits_nothing`).
+The API connects as a dedicated login role, `harrier_api`, `NOINHERIT` and
+a member of `harrier_tenant` and of nothing else. The operator creates it
+with a password (`CREATE ROLE harrier_api LOGIN NOINHERIT`) and grants it
+`harrier_tenant`, which spec 110's `harrier store grant-tenant` is to do with
+the same checks. At start the API refuses a login role that is a superuser,
+has `BYPASSRLS`, owns a table in `public`, cannot set `harrier_tenant`, or
+can reach a role past the policy through any membership
+(`services/api/src/harrier/loginrole.py`,
+`services/api/tests/test_hosted_start.py::test_the_login_role_checks_name_each_failure`),
+a store whose default isolation is not `read committed`, and a store not at
+the version the code needs
+(`services/api/tests/test_hosted_start.py::test_hosted_start_checks_the_store_version_once`).
 
 No other hosted component exists yet. Specs 103 to 112 sequence the build:
 the Postgres store (103, approved), API authentication (104), row-level
