@@ -352,6 +352,89 @@ Akin took both recommendations in chat on 2026-10-13.
 - psycopg 3, `Error.diag`: `str()` of an error includes the `DETAIL`.
   https://www.psycopg.org/psycopg3/docs/api/errors.html
 
+## Amendment (2026-10-13): prompt logging and query strings
+
+Akin decided in chat on 2026-10-13 that this spec carries two items spec
+110 dropped when it gave hosted logs to this spec (spec 110, "Amendment
+(2026-10-13): Akin's decisions", decision 2 and Open decision 13, taken).
+Spec 110 had specified both, under its "hosted logs", and this spec's text
+above carries neither: its Out of scope leaves the access log's paths and
+client address as they are. This changes an approved spec by Akin's
+decision. The text above is not changed; this section adds to Scope and
+Behavior, and narrows the Out of scope line on the access log to the paths
+and the client address.
+
+### Scope (amendment)
+
+5. **The hosted start refuses prompt logging.**
+6. **A hosted access line carries no query string.**
+
+Classification: both change files under `services/api/src/` and
+`services/api/tests/`, which `config/data-classification.json` classifies
+as public. No new directory.
+
+### Behavior (amendment)
+
+**Prompt logging.** With any of `AI_DEBUG`, `CODEX_CLI_DEBUG`,
+`CLAUDE_CLI_DEBUG`, `OPENAI_DEBUG` or `ANTHROPIC_DEBUG` on, `_log_call`
+writes every prompt and output under `data/llm-logs`
+(`services/api/src/harrier/llm/providers.py:46-54`). Hosted, that is
+tenants' application content on a shared machine's disk. "On" is the rule
+`debug_enabled` already applies
+(`services/api/src/harrier/llm/config.py:161-169`): the value, stripped and
+lowercased, is `1`, `true` or `yes`.
+
+`create_app` hosted refuses to start when any of the five is on, before it
+serves anything:
+
+```
+error: prompt logging (<variable>) is local only; unset it for the hosted API
+```
+
+Exit 1. It names the first variable found on, in the order above, and
+never its value. A variable set to anything else (`0`, `false`, empty) is
+off and the start goes on. The local API and the CLI are unchanged.
+
+**Query strings.** Hosted, uvicorn's access line prints the method, the
+path without `?` and everything after it, the protocol and the status. A
+`?` encoded in the path (`%3F`) is part of the path and is kept. The query
+is dropped by the hosted logging set up under "The hosted start", on the
+`uvicorn.access` handlers this spec's filter already covers, before the
+secret scrub runs. Locally the access line is unchanged.
+
+Why: a query string carries what a person typed into a search or a
+filter. A path names a route and a job, which this spec's Honest
+limitations already accept.
+
+### Failure modes (amendment)
+
+- **A debug variable set on a Fly machine**, in `[env]` or as a secret.
+  The hosted start refuses, naming it; the machine never passes its health
+  check, and Fly keeps the previous one (spec 110).
+- **A debug variable set to `0` or `false` hosted.** Off; the start goes
+  on.
+- **A request with a query string hosted.** Its access line shows the path
+  alone.
+
+### Acceptance criteria (amendment)
+
+- [ ] The hosted start refuses with each of the five variables set to
+      `1`, `true` and `yes`, one case each, with the text above naming the
+      variable and not its value, exit 1; it starts with each set to `0`
+      and to empty; and the local API starts with any of them on
+      (planned test_a_hosted_start_refuses_prompt_logging).
+- [ ] Hosted, a request to a path with a query string writes an access
+      line holding the path and no part of the query; a path holding
+      `%3F` keeps it; locally the same request's line keeps its query
+      (planned test_a_hosted_access_line_carries_no_query).
+
+### Honest limitations (amendment)
+
+- **Read at start.** A debug variable is read once, when the app is built.
+  On Fly a changed variable restarts the machine, so it is read again.
+- **Paths stay.** Data a route takes in its path, rather than its query,
+  is still printed, as this spec's Honest limitations say of selectors.
+
 ## Amendment (2026-10-13): what building it settled
 
 Building this spec found two places in the identity criterion where the

@@ -1359,9 +1359,9 @@ def _file_value(kind: str) -> object:
     dependencies=[Depends(require_token)],
 )
 def list_configuration(conn: Conn) -> list[ConfigOut]:
-    from harrier.userconfig import KINDS
+    from harrier.userconfig import kinds_for
 
-    return [_config_out(conn, kind) for kind in KINDS]
+    return [_config_out(conn, kind) for kind in kinds_for(conn)]
 
 
 @config_router.get(
@@ -1371,9 +1371,9 @@ def list_configuration(conn: Conn) -> list[ConfigOut]:
     dependencies=[Depends(require_token)],
 )
 def get_configuration(kind: str, conn: Conn) -> ConfigOut:
-    from harrier.userconfig import KINDS
+    from harrier.userconfig import kinds_for
 
-    if kind not in KINDS:
+    if kind not in kinds_for(conn):
         raise HTTPException(status_code=404, detail=f"unknown configuration kind {kind}")
     return _config_out(conn, kind)
 
@@ -1385,9 +1385,9 @@ def get_configuration(kind: str, conn: Conn) -> ConfigOut:
     dependencies=[Depends(require_token)],
 )
 def put_configuration(kind: str, body: ConfigIn, conn: Conn) -> ConfigOut:
-    from harrier.userconfig import KINDS, ConfigError, set_config
+    from harrier.userconfig import ConfigError, kinds_for, set_config
 
-    if kind not in KINDS:
+    if kind not in kinds_for(conn):
         raise HTTPException(status_code=404, detail=f"unknown configuration kind {kind}")
     try:
         set_config(conn, kind, body.value)
@@ -1406,9 +1406,9 @@ def put_configuration(kind: str, body: ConfigIn, conn: Conn) -> ConfigOut:
 )
 def delete_configuration(kind: str, conn: Conn) -> ConfigOut:
     """Remove a stored value, restoring the file fallback."""
-    from harrier.userconfig import KINDS, delete_config
+    from harrier.userconfig import delete_config, kinds_for
 
-    if kind not in KINDS:
+    if kind not in kinds_for(conn):
         raise HTTPException(status_code=404, detail=f"unknown configuration kind {kind}")
     delete_config(conn, kind)
     return _config_out(conn, kind)

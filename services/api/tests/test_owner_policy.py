@@ -17,6 +17,7 @@ locally without one (`tests/pg_support.py`).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -60,6 +61,8 @@ from harrier.tracker.schema import (
     OWNED_TABLES,
     OWNER_ID_FUNCTION,
     POSTGRES_BASELINE_VERSION,
+    SCHEDULE_INPUTS_FUNCTION,
+    SCHEDULE_READER_ROLE,
     SUPABASE_FUNCTIONS_IN_PUBLIC,
     SUPABASE_ROLES,
     TENANT_ROLE,
@@ -98,6 +101,8 @@ EXPECTED_GRANTS: dict[str, frozenset[str]] = {
     "job_eligibility": frozenset({"SELECT"}),
     "tracks": frozenset({"SELECT", "INSERT", "UPDATE"}),
     "schema_version": frozenset({"SELECT"}),
+    # No DELETE: deleting an owner's scheduler state is spec 111's (spec 108).
+    "schedule_state": frozenset({"SELECT", "INSERT", "UPDATE"}),
 }
 
 # What the tenant role may write on every column but id of a table whose id
@@ -129,6 +134,19 @@ TENANT_ATTRIBUTES = (
     ("rolreplication", "REPLICATION"),
 )
 
+# The SECURITY DEFINER functions harrier declares in public: a new owner's
+# track 1 (spec 105), and the scheduler's one listing across owners (spec
+# 108). Any other is a catalog problem.
+DECLARED_DEFINER_FUNCTIONS = ("harrier_new_owner", "harrier_schedule_inputs")
+
+# The attributes the schedule reader must not have (spec 108).
+READER_ATTRIBUTES = (
+    ("rolsuper", "SUPERUSER"),
+    ("rolbypassrls", "BYPASSRLS"),
+    ("rolcanlogin", "LOGIN"),
+    ("rolinherit", "INHERIT"),
+)
+
 # pg_default_acl's object kinds.
 DEFAULT_ACL_KINDS = {
     "r": "tables",
@@ -158,6 +176,11 @@ REQUIRED: dict[str, dict[str, object]] = {
     "user_config": {"kind": "synthetic"},
     "job_runs": {"job": "synthetic", "last_success_at": "2026-10-10 00:00:00"},
     "tracks": {"slug": "synthetic", "kind": "industry", "label": "Synthetic"},
+    "schedule_state": {
+        "job": "synthetic",
+        "last_slot_at": "2026-10-10T09:00:00Z",
+        "last_outcome": "ok",
+    },
 }
 
 
@@ -481,6 +504,24 @@ def test_migration_10_gives_existing_users_track_one(monkeypatch: pytest.MonkeyP
         assert job == (UUID(owner), 1)
 
 
+# Migration 10's statements, joined by "\n;\n" and hashed with SHA-256, as
+# `main` built them at 4b5c48d (2026-10-13), the commit spec 108 was
+# implemented on. Migration 10 is merged history: a store that applied it
+# must stay the store a fresh one builds.
+MIGRATION_10_DIGEST = "e60a207077ef5fa52402d261165c9fc27613f9a70d0dead59253b0237c5e042b"
+
+
+def test_migration_10_statements_do_not_change() -> None:
+    """Migration 10 reads frozen copies of the live declarations
+    (MIGRATION_10_OWNED_TABLES), so a table a later migration declares,
+    such as spec 108's schedule_state, changes nothing it applies (spec
+    108, Scope item 2). Compared as text, through its digest."""
+    statements = migration(10)
+    joined = "\n;\n".join(statements).encode()
+    assert hashlib.sha256(joined).hexdigest() == MIGRATION_10_DIGEST
+    assert not any("schedule_state" in statement for statement in statements)
+
+
 def catalog_fingerprint(conn: PgConnection) -> dict[str, list[tuple[Any, ...]]]:
     """What a migration can change: relations, columns and their defaults,
     keys, functions, triggers, policies and their expressions, grants,
@@ -512,6 +553,15 @@ def catalog_fingerprint(conn: PgConnection) -> dict[str, list[tuple[Any, ...]]]:
         "WHERE nspname IN ('auth', 'public')",
         "auth.uid()": "SELECT proacl::text FROM pg_proc WHERE oid = 'auth.uid()'::regprocedure",
         "tracks": "SELECT row_to_json(t)::text FROM tracks t",
+        # The two roles the migrations create, and their memberships. Roles
+        # belong to the server, so only harrier's own are read: other tests
+        # make and drop roles meanwhile.
+        "roles": "SELECT rolname, rolsuper, rolinherit, rolcanlogin, rolbypassrls "
+        "FROM pg_roles WHERE rolname IN ('harrier_tenant', 'harrier_schedule_reader')",
+        "role memberships": "SELECT roleid::regrole::text, member::regrole::text "
+        "FROM pg_auth_members WHERE roleid::regrole::text IN "
+        "('harrier_tenant', 'harrier_schedule_reader') OR member::regrole::text IN "
+        "('harrier_tenant', 'harrier_schedule_reader')",
     }
     return {
         name: sorted(conn.execute(query.encode()).fetchall(), key=repr)
@@ -519,7 +569,7 @@ def catalog_fingerprint(conn: PgConnection) -> dict[str, list[tuple[Any, ...]]]:
     }
 
 
-@pytest.mark.parametrize("version", [10, 13, 14, 16])
+@pytest.mark.parametrize("version", [10, 13, 14, 16, 17])
 def test_a_failed_migration_leaves_no_trace_of_itself(
     version: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1021,7 +1071,7 @@ def catalog_problems(conn: PgConnection) -> list[str]:
     for signature, name, definer, config, _ in functions:
         if not definer or signature in exempt:
             continue
-        if name != "harrier_new_owner":
+        if name not in DECLARED_DEFINER_FUNCTIONS:
             problems.append(f"{name}(): SECURITY DEFINER in public")
         # Without its own empty search_path, a definer function resolves
         # names through the caller's, which the caller controls.
@@ -1053,7 +1103,58 @@ def catalog_problems(conn: PgConnection) -> list[str]:
             problems.append(f"{name}(): executable by PUBLIC")
     problems += owner_identity_problems(conn)
     problems += auth_uid_references(conn)
+    problems += schedule_reader_problems(conn, exempt)
     return sorted(problems)
+
+
+def schedule_reader_problems(conn: PgConnection, exempt: set[str]) -> list[str]:
+    """What breaks spec 108's rules for the schedule reader: it exists with
+    no attribute that widens it, is a member of no role, holds no privilege
+    on any table, column or sequence in public, and executes exactly one
+    function there, harrier_schedule_inputs(). Supabase's declared
+    functions in `exempt` are skipped, as catalog_problems skips them."""
+    problems: list[str] = []
+    role = conn.execute(
+        f"SELECT {', '.join(column for column, _ in READER_ATTRIBUTES)} "
+        "FROM pg_roles WHERE rolname = %s".encode(),
+        (SCHEDULE_READER_ROLE,),
+    ).fetchone()
+    if role is None:
+        return [f"{SCHEDULE_READER_ROLE}: no such role"]
+    for (_, attribute), has in zip(READER_ATTRIBUTES, role, strict=True):
+        if has:
+            problems.append(f"{SCHEDULE_READER_ROLE}: has {attribute}")
+    for (member_of,) in conn.execute(
+        "SELECT roleid::regrole::text FROM pg_auth_members WHERE member = %s::regrole",
+        (SCHEDULE_READER_ROLE,),
+    ).fetchall():
+        problems.append(f"{SCHEDULE_READER_ROLE}: a member of {member_of}")
+    for relation, privilege in conn.execute(
+        "SELECT c.relname, a.privilege_type FROM pg_class c "
+        "CROSS JOIN LATERAL aclexplode(c.relacl) a "
+        "WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p', 'S') "
+        "AND a.grantee = %s::regrole "
+        "UNION SELECT c.relname || '.' || att.attname, a.privilege_type FROM pg_class c "
+        "JOIN pg_attribute att ON att.attrelid = c.oid "
+        "CROSS JOIN LATERAL aclexplode(att.attacl) a "
+        "WHERE c.relnamespace = 'public'::regnamespace AND a.grantee = %s::regrole",
+        (SCHEDULE_READER_ROLE, SCHEDULE_READER_ROLE),
+    ).fetchall():
+        problems.append(f"{relation}: {SCHEDULE_READER_ROLE} holds {privilege}")
+    executes = {
+        str(signature).removeprefix("public.")
+        for (signature,) in conn.execute(
+            "SELECT oid::regprocedure::text FROM pg_proc "
+            "WHERE pronamespace = 'public'::regnamespace "
+            "AND has_function_privilege(%s, oid, 'EXECUTE')",
+            (SCHEDULE_READER_ROLE,),
+        ).fetchall()
+    }
+    for signature in sorted(executes - exempt - {SCHEDULE_INPUTS_FUNCTION}):
+        problems.append(f"{signature}: executable by {SCHEDULE_READER_ROLE}")
+    if SCHEDULE_INPUTS_FUNCTION not in executes:
+        problems.append(f"{SCHEDULE_INPUTS_FUNCTION}: {SCHEDULE_READER_ROLE} cannot execute it")
+    return problems
 
 
 def owner_identity_problems(conn: PgConnection) -> list[str]:
@@ -1261,6 +1362,63 @@ def test_every_table_is_owned_or_declared(store: PgConnection) -> None:
             "ALTER FUNCTION harrier_owner_id() SECURITY DEFINER",
             "harrier_owner_id(): SECURITY DEFINER in public",
         ),
+        # The scheduler's state and listing (spec 108).
+        (
+            "GRANT DELETE ON schedule_state TO harrier_tenant",
+            "schedule_state: harrier_tenant holds",
+        ),
+        (
+            "ALTER TABLE schedule_state NO FORCE ROW LEVEL SECURITY",
+            "schedule_state: row security is not forced",
+        ),
+        (
+            "GRANT EXECUTE ON FUNCTION harrier_schedule_inputs() TO harrier_tenant",
+            "harrier_schedule_inputs(): executable by harrier_tenant",
+        ),
+        (
+            "GRANT EXECUTE ON FUNCTION harrier_schedule_inputs() TO service_role",
+            "harrier_schedule_inputs(): executable by service_role",
+        ),
+        (
+            "ALTER FUNCTION harrier_schedule_inputs() RESET search_path",
+            "harrier_schedule_inputs(): SECURITY DEFINER without an empty search_path",
+        ),
+        (
+            "REVOKE EXECUTE ON FUNCTION harrier_schedule_inputs() FROM harrier_schedule_reader",
+            "harrier_schedule_inputs(): harrier_schedule_reader cannot execute it",
+        ),
+        (
+            "GRANT SELECT ON user_config TO harrier_schedule_reader",
+            "user_config: harrier_schedule_reader holds SELECT",
+        ),
+        (
+            "GRANT SELECT (kind) ON user_config TO harrier_schedule_reader",
+            "user_config.kind: harrier_schedule_reader holds SELECT",
+        ),
+        (
+            "GRANT EXECUTE ON FUNCTION harrier_owner_id() TO harrier_schedule_reader",
+            "harrier_owner_id(): executable by harrier_schedule_reader",
+        ),
+        (
+            "CREATE FUNCTION peek_owners() RETURNS bigint LANGUAGE sql SECURITY DEFINER "
+            "SET search_path = '' AS 'SELECT count(*) FROM public.jobs'",
+            "peek_owners(): SECURITY DEFINER in public",
+        ),
+        # The reader's attributes and memberships (local test integrity
+        # review of PR #309). The role belongs to the server and is created
+        # only when absent, so a test server that already has it would not
+        # see a wrong CREATE ROLE; these cases prove the checks fire.
+        ("ALTER ROLE harrier_schedule_reader BYPASSRLS", "harrier_schedule_reader: has BYPASSRLS"),
+        ("ALTER ROLE harrier_schedule_reader LOGIN", "harrier_schedule_reader: has LOGIN"),
+        ("ALTER ROLE harrier_schedule_reader INHERIT", "harrier_schedule_reader: has INHERIT"),
+        (
+            "GRANT harrier_tenant TO harrier_schedule_reader",
+            "harrier_schedule_reader: a member of harrier_tenant",
+        ),
+        (
+            "GRANT USAGE ON SEQUENCE jobs_id_seq TO harrier_schedule_reader",
+            "jobs_id_seq: harrier_schedule_reader holds USAGE",
+        ),
     ],
 )
 def test_the_catalog_names_each_breach(store: PgConnection, breach: str, named: str) -> None:
@@ -1340,7 +1498,7 @@ def test_track_two_needs_migration_16_on_the_faithful_shim(
             assert error.diag.message_primary == "permission denied for schema auth"
         migrate_postgres(url)
         with psycopg.connect(url, autocommit=True) as conn:
-            assert postgres_version(conn) == 16
+            assert postgres_version(conn) == target_version()
             ids: list[Any] = []
             for slug in ("second", "third"):
                 with as_owner(conn, owner):
@@ -1584,7 +1742,8 @@ def test_an_undeclared_supabase_function_is_a_catalog_problem(
             f"{name}(): SECURITY DEFINER without an empty search_path",
             *(
                 f"{name}(): executable by {grantee}"
-                for grantee in (*NO_PRIVILEGE_ROLES, TENANT_ROLE, "PUBLIC")
+                # PUBLIC's EXECUTE reaches the schedule reader too (spec 108).
+                for grantee in (*NO_PRIVILEGE_ROLES, TENANT_ROLE, SCHEDULE_READER_ROLE, "PUBLIC")
             ),
         ]
     )
@@ -1603,6 +1762,7 @@ def test_owner_a_reads_nothing_of_owner_b(store: PgConnection) -> None:
     not_granted = {
         *((table, verb) for table in JOB_HISTORY_TABLES for verb in ("UPDATE", "DELETE")),
         ("tracks", "DELETE"),
+        ("schedule_state", "DELETE"),
     }
 
     with as_owner(store, a):
