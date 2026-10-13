@@ -14,8 +14,22 @@ import urllib.request
 
 from harrier.demo import is_demo_mode
 from harrier.runoutcome import RunOutcome
+from harrier.sources import scrub_secrets
 
 logger = logging.getLogger(__name__)
+
+
+def redact_values(text: str, *values: str) -> str:
+    """`text` with each value removed, as given and as `repr` escapes it:
+    `http.client.InvalidURL` quotes the request path so, a tab as `\\t`.
+    The send holds the token, so it removes it by value; `scrub_secrets`
+    matches only a well-formed `/bot<token>`, and a stray space or tab ends
+    its match (privacy review of PR #312). The chat id travels in the
+    request body, which no error here quotes."""
+    forms = {form for value in values if value for form in (value, repr(value)[1:-1])}
+    for form in sorted(forms, key=len, reverse=True):
+        text = text.replace(form, "REDACTED")
+    return text
 
 
 def send_telegram_message(
@@ -55,7 +69,11 @@ def send_telegram_message(
             logger.warning("telegram send failed: HTTP %s", response.status)
             return 1
     except Exception as exc:
-        logger.warning("telegram send failed: %s", exc)
+        # The exception text can embed the request path, `/bot<token>/...`:
+        # `http.client.InvalidURL` quotes it, escaped, whitespace and all.
+        # Hosted, logs leave the machine (spec 109, A failed send).
+        reason = redact_values(str(exc), token)
+        logger.warning("telegram send failed: %s", scrub_secrets(reason))
         return 1
 
 

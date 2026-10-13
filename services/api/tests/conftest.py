@@ -227,6 +227,21 @@ def _data_dir(  # pyright: ignore[reportUnusedFunction]
     monkeypatch.delenv("HARRIER_AUTH", raising=False)
 
 
+# The operator's notification settings, which the hosted API refuses to
+# start with (spec 109). A developer's shell may export them.
+OPERATOR_NOTIFICATION_PREFIXES = ("TELEGRAM_", "GMAIL_")
+
+
+@pytest.fixture(autouse=True)
+def _no_operator_notification_settings(  # pyright: ignore[reportUnusedFunction]
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No test inherits them: a test that wants one sets it."""
+    for name in list(os.environ):
+        if name.startswith(OPERATOR_NOTIFICATION_PREFIXES):
+            monkeypatch.delenv(name)
+
+
 # --- the store URL pin (spec 103) ---
 
 DOTENV_FALLBACK = "dotenv_fallback"

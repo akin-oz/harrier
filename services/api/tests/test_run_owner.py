@@ -56,6 +56,7 @@ from harrier_api.app import create_app, create_hosted_app
 from harrier_api.hostedauth import HOSTED_APP_REFUSAL, HostedConfigError
 from harrier_api.runmodels import TOKEN_EXPIRED_LINE, OwnedRuns, get_runs
 from harrier_api.runs import (
+    GMAIL_NOT_HOSTED_DETAIL,
     RUNS_NOT_HOSTED_DETAIL,
     TERMINAL_STATES,
     Run,
@@ -299,6 +300,13 @@ class StartCase:
     send: dict[str, Any]
     # Whether the route writes an input file before it calls `start`.
     writes_input: bool = False
+    # The refusal the route answers itself before it calls `start`, if any:
+    # the mail watch is refused hosted for good (spec 109).
+    own_refusal: str = ""
+
+    @property
+    def detail(self) -> str:
+        return self.own_refusal or RUNS_NOT_HOSTED_DETAIL
 
 
 # Every route that can start a run, with a request each would accept, so
@@ -317,7 +325,7 @@ START_CASES: tuple[StartCase, ...] = (
     StartCase("POST", "/outreach/{job}/find-contacts", {"json": {}}),
     StartCase("POST", "/outreach/{job}/draft", {"json": {"tone": "direct"}}, True),
     StartCase("POST", "/outreach/backfill-posters", {"json": {}}),
-    StartCase("POST", "/mail/watch", {"json": {}}),
+    StartCase("POST", "/mail/watch", {"json": {}}, own_refusal=GMAIL_NOT_HOSTED_DETAIL),
     StartCase("POST", "/ops/feeds", {}),
     StartCase("POST", "/ops/feeds/prune", {"json": {"confirm": True}}),
     StartCase("POST", "/ops/reconsider", {"json": {}}),
@@ -335,11 +343,13 @@ START_CASES: tuple[StartCase, ...] = (
     StartCase("POST", "/settings/backups/{archive}/verify", {}),
 )
 
-# The routes as the contract names them.
-START_ROUTES = {
-    (case.method.lower(), case.path.replace("{job}", "{selector}").replace("{archive}", "{name}"))
-    for case in START_CASES
-}
+
+def route_of(case: StartCase) -> tuple[str, str]:
+    """The route as the contract names it."""
+    return (
+        case.method.lower(),
+        case.path.replace("{job}", "{selector}").replace("{archive}", "{name}"),
+    )
 
 
 @pytest.mark.parametrize("case", START_CASES, ids=lambda case: f"{case.method} {case.path}")
@@ -394,10 +404,11 @@ def test_starting_a_run_hosted_is_refused_until_spec_106(
             case.method, path, headers=hosted.as_owner(caller), **case.send
         )
         assert response.status_code == 501, response.text
-        assert response.json() == {"detail": RUNS_NOT_HOSTED_DETAIL}
-    # A route that writes its input is refused there, before `start`; every
-    # other route reached `start` with the caller as the run's owner.
-    assert given == ([] if case.writes_input else [caller])
+        assert response.json() == {"detail": case.detail}
+    # A route that writes its input, or refuses on its own, is refused
+    # there, before `start`; every other route reached `start` with the
+    # caller as the run's owner.
+    assert given == ([] if case.writes_input or case.own_refusal else [caller])
     # Nothing exists that the run would have left: no input file, not even
     # the directory, no journal entry, no run and no process.
     assert not run_inputs_dir().exists(), sorted(run_inputs_dir().iterdir())
@@ -413,18 +424,29 @@ def test_the_contract_declares_the_hosted_run_refusal() -> None:
     built = create_app(run_manager=_RunManager(kind_commands={})).openapi()
     committed = json.loads(CONTRACT.read_text(encoding="utf-8"))
     for document in (committed, built):
-        declared: set[tuple[str, str]] = set()
+        declared: dict[str, set[tuple[str, str]]] = {}
         for path, operations in document["paths"].items():
             for method, operation in operations.items():
                 refusal = operation["responses"].get("501")
                 if refusal is None:
                     continue
-                declared.add((method, path))
                 assert refusal["content"]["application/json"]["schema"] == error_out
-                assert RUNS_NOT_HOSTED_DETAIL in refusal["description"], (method, path)
+                detail = (
+                    GMAIL_NOT_HOSTED_DETAIL
+                    if GMAIL_NOT_HOSTED_DETAIL in refusal["description"]
+                    else RUNS_NOT_HOSTED_DETAIL
+                )
+                assert detail in refusal["description"], (method, path)
+                declared.setdefault(detail, set()).add((method, path))
         # Exactly the routes the test above starts a run on, each of which
-        # answered the 501.
-        assert declared == START_ROUTES
+        # answered the 501 it declares. The mail routes' own 501, the read
+        # among them, is proved by
+        # tests/test_tenant_notifications.py::test_hosted_mail_routes_answer_501.
+        by_detail: dict[str, set[tuple[str, str]]] = {}
+        for case in START_CASES:
+            by_detail.setdefault(case.detail, set()).add(route_of(case))
+        by_detail[GMAIL_NOT_HOSTED_DETAIL].add(("get", "/mail/events"))
+        assert declared == by_detail
 
 
 # --- locally ---

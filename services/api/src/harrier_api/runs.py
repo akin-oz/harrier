@@ -322,6 +322,30 @@ class RunsNotHosted(Exception):
         super().__init__(RUNS_NOT_HOSTED_DETAIL)
 
 
+GMAIL_NOT_HOSTED_DETAIL = "Gmail watch is not offered on the hosted service (spec 109)"
+GMAIL_WATCH_KIND = "gmail-watch"
+
+
+class GmailNotHosted(RunsNotHosted):
+    """Gmail watch does not run on the hosted API (spec 109).
+
+    A hosted watch would fetch restricted Gmail data on a server and keep
+    what it derived in the store, which Google allows only after a security
+    assessment. Refused before anything is written or spawned, and before
+    the refusal of every hosted run, so it still holds once spec 106 lifts
+    that one. A `RunsNotHosted`, so the API answers 501 in these words
+    through that refusal's handler.
+    """
+
+    def __init__(self) -> None:
+        Exception.__init__(self, GMAIL_NOT_HOSTED_DETAIL)
+
+
+def refuse_every_hosted_run() -> None:
+    """Spec 132's refusal of every hosted start, which spec 106 lifts."""
+    raise RunsNotHosted
+
+
 def runs_hosted() -> bool:
     """Whether this process serves hosted, read when it is asked: spec 104's
     `HARRIER_AUTH=supabase` in the process environment."""
@@ -659,9 +683,14 @@ class RunManager:
         same bytes. A request with other options while one runs raises
         `RunConflictError` rather than being folded into a run that ignores
         them (review of PR #208).
+
+        Hosted, a `gmail-watch` is refused with `GmailNotHosted` first, so
+        that refusal outlives the one spec 106 lifts (spec 109).
         """
         if runs_hosted():
-            raise RunsNotHosted
+            if kind == GMAIL_WATCH_KIND:
+                raise GmailNotHosted
+            refuse_every_hosted_run()
         # A kind that acts on everything locks on the empty target, which is
         # the one-at-a-time behaviour discovery always had. Kinds never
         # collide with each other because the lock is on the pair.

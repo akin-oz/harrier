@@ -238,12 +238,15 @@ def test_a_success_today_reads_as_today() -> None:
 
 def test_the_digest_leads_with_every_scheduled_job(db: Connection) -> None:
     """Every job is named even when it has no row, because a job missing from
-    the list is exactly the job nobody notices has stopped."""
+    the list is exactly the job nobody notices has stopped. On Postgres the
+    mail watch is not a job: Gmail is not offered there (spec 109)."""
     from harrier.digest import SCHEDULED_JOBS, schedule_health_lines
+    from harrier.runoutcome import MAIL_WATCH_JOB
 
+    jobs = [job for job in SCHEDULED_JOBS if db.dialect == "sqlite" or job != MAIL_WATCH_JOB]
     lines = schedule_health_lines(db)
-    assert len(lines) == len(SCHEDULED_JOBS)
-    for job in SCHEDULED_JOBS:
+    assert len(lines) == len(jobs)
+    for job in jobs:
         assert any(line.startswith(f"{job}:") for line in lines)
 
 
