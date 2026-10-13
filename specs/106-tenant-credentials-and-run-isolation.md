@@ -295,7 +295,7 @@ whole environment. Nothing else reaches the child.
 | Source | Names |
 |---|---|
 | Copied from the server's environment when set | `PATH`, `LANG`, `LC_ALL`, `TZ`, `PLAYWRIGHT_BROWSERS_PATH` (`Dockerfile:95`), `HARRIER_REVISION`, `HARRIER_BUILT_AT`, `HARRIER_LOG_LEVEL`, `APIFY_LINKEDIN_ACTOR`, `APIFY_LINKEDIN_PROFILE_SEARCH_ACTOR`, `APIFY_ACADEMIC_ACTOR`, `APIFY_ACADEMIC_PORTALS`, `ANTHROPIC_MAX_TOKENS` |
-| Set by the run manager | `HOME` and `HARRIER_DATA_DIR`, both the owner's run directory; `HARRIER_DATABASE_URL`, the value of the API's `HARRIER_RUN_DATABASE_URL`; `HARRIER_RUN_OWNER`, the owner's id |
+| Set by the run manager | `HOME` and `HARRIER_DATA_DIR`, both the owner's run directory; `HARRIER_DATABASE_URL`, the value of the API's `HARRIER_RUN_DATABASE_URL`; `HARRIER_RUN_OWNER`, the owner's id; `PYTHONSAFEPATH`, `1` (Amendment (2026-10-13, implementation)) |
 | From the owner's credentials | the names in the kinds table, for each kind the owner has set |
 
 Every other name is absent. In particular: the API's own
@@ -1321,6 +1321,57 @@ scheduler (spec 108, PR 2) needs. They are provided here, not left to spec
   with them, and the process it spawned is its handle. The run manager
   does the same for API runs.
 
+### What the local reviews of PR #316 changed
+
+Four local reviews (privacy, data integrity, contract, test integrity) ran
+on the pull request. Each finding below was reproduced, by a probe or by a
+mutation, before it was fixed.
+
+- **The exact-value scrub reaches every string.** It replaced the owner's
+  values only in top-level strings, nested dicts and strings directly in
+  a list. It now covers every string at any depth, keys, the event's
+  type, and a number equal to a value, such as a chat id written as a
+  number
+  (`services/api/tests/test_hosted_runs.py::test_every_place_an_event_carries_text_is_redacted`).
+  The pattern scrub at the same choke point had the same gaps; spec 035
+  already says nothing reaches the stream unscrubbed, so that fix carries
+  spec 035's trailer
+  (`services/api/tests/test_api_exposure.py::test_every_string_an_event_carries_is_scrubbed`).
+- **The run login's password is a secret of the run.** "The owner's
+  values never reach the stream" named the credential fields only. The
+  child also holds the run login's password, so every form of it joins
+  the run's scrub set.
+- **One more name is set by the run manager:** `PYTHONSAFEPATH=1`. The
+  run's working directory is its owner's run directory, and `python -m`
+  puts the working directory first on the import path, so a `.py` file
+  that landed there would run in the owner's next run
+  (`services/api/tests/test_hosted_runs.py::test_a_hosted_run_imports_nothing_from_its_directory`).
+  The table under "The child's environment" names it in the row "Set by
+  the run manager".
+- **The state change event comes before the record's write.** A stream
+  that read between the state and its event ended without the terminal
+  event
+  (`services/api/tests/test_hosted_runs.py::test_a_hosted_runs_stream_ends_with_its_terminal_state`).
+  A record write never turns a row stored `interrupted` back.
+- **A hosted run whose store refuses it** prints `error: this run could
+  not open its store`, exit 1, and not a traceback naming the run
+  login's host and database
+  (`services/api/tests/test_hosted_runs.py::test_a_run_that_cannot_open_its_store_says_one_line`).
+- **Tests that could pass for the wrong reason** were rewritten: the
+  allowlist is spelled out in the test, concurrent starts make one run
+  (`services/api/tests/test_hosted_runs.py::test_concurrent_starts_of_one_request_make_one_run`),
+  each offered kind's route reaches `start` hosted
+  (`services/api/tests/test_run_owner.py::test_a_kind_offered_hosted_reaches_its_start`),
+  the store password scrub reads no `.env` in a hosted run
+  (`services/api/tests/test_hosted_runs.py::test_the_password_scrub_reads_no_env_file_in_a_hosted_run`),
+  and the Postgres tests send no beat to the network.
+
+Declined, with the reason on the pull request: the contract's 404
+description for a run id ("names no run this server holds") stays,
+because a run read from `run_records` is one the server holds in its
+store; and `test_a_run_outcome_key_is_per_owner_without_naming_one` stays
+a pin of behavior spec 105 built, now labelled so.
+
 ### Honest limitations added
 
 - **An open event stream can delay the stop record.** uvicorn waits for
@@ -1330,6 +1381,11 @@ scheduler (spec 108, PR 2) needs. They are provided here, not left to spec
   owner's next list, as for a hard stop. Spec 110's launch command can
   bound uvicorn's wait with `--timeout-graceful-shutdown` below
   `kill_timeout`; that is spec 110's to set, not done here.
+- **A cancelled start can leave a row `queued`.** If the task awaiting
+  the binding is cancelled, the thread still commits the row, and the run
+  is never registered. This process never reads its own rows as cut off,
+  so the row stays `queued` until a later process starts. Only a shutdown
+  or a timeout cancels a start today.
 - **A start that leases a second connection.** A route that already holds
   its request transaction's connection takes a second one from the same
   pool for the run's binding. With the pool exhausted the start waits
