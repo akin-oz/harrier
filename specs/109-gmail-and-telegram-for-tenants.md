@@ -280,7 +280,10 @@ allowlist.
 
 `send_telegram_message` logs `telegram send failed: <text>` where `<text>`
 is `scrub_secrets(str(exc))`, so a message that embeds `/bot<token>` logs
-`/botREDACTED`. The return codes do not change.
+`/botREDACTED`. The return codes do not change. Amended (2026-10-13,
+privacy review of PR #312): before the scrub, the send removes the token
+it holds by value, as given and as `repr` escapes it, so a token with a
+stray space, tab, newline or carriage return is not logged either.
 
 ### Gmail in the first hosted release
 
@@ -854,15 +857,95 @@ anyway.
    test reading `caplog` passed with the scrub in `notify.py` removed. The
    test captures on the `harrier.notify` logger itself
    (`services/api/tests/test_tenant_notifications.py::test_a_telegram_failure_log_never_holds_the_token`).
-7. **The test environment.** `child_environment` in
-   `services/api/tests/test_hosted_auth.py` drops `TELEGRAM_` and `GMAIL_`
-   names from the developer's shell, as it drops hosted variables, so a
-   developer with either exported can still run the start tests.
+7. **The test environment.** An autouse fixture in
+   `services/api/tests/conftest.py`, `_no_operator_notification_settings`,
+   removes every `TELEGRAM_` and `GMAIL_` name a developer's shell exports
+   before each test, and a test that wants one sets it. Without it, a
+   shell exporting `TELEGRAM_CHAT_ID` fails every in-process hosted test
+   and every hosted start test (test integrity review of PR #312; the pull
+   request records the run). Locally the API still starts with all four
+   settings present
+   (`services/api/tests/test_tenant_notifications.py::test_hosted_start_refuses_operator_notification_settings`,
+   its local case).
 8. **Spec 106's 501 text for `gmail-watch`.** Spec 106's kinds table words
    it `<kind> runs are not offered on the hosted service (spec 109)`. The
    run manager raises this spec's text, `Gmail watch is not offered on the
    hosted service (spec 109)`, before spec 106's table is read. Recorded
    in spec 106's amendment.
+
+### The local reviews of part 1
+
+- **Privacy: a malformed token leaked (fixed).** `scrub_secrets` matches
+  `/bot` followed by digits, and stops at the first character outside the
+  token's class. A token with a leading space, tab or newline, or a
+  carriage return or space inside, reached the failure log whole or in
+  part, through the real HTTP client: `http.client.InvalidURL` quotes the
+  path with `repr`. `send_telegram_message` holds the token, so it now
+  removes it by value, as given and as `repr` escapes it, before the
+  scrub (`redact_values` in `services/api/src/harrier/notify.py`). The
+  test sends each such token through the real client, with no network,
+  plus a faked error that quotes the path as written, and checks every
+  8-character window
+  (`services/api/tests/test_tenant_notifications.py::test_a_telegram_failure_log_never_holds_the_token`).
+  The chat id travels in the request body, which no error quotes, so it
+  is not redacted there; the test checks it is absent all the same.
+  `scrub_secrets` itself is unchanged: it is not in this spec's list of
+  files, and the send is the one place that holds the token.
+- **Privacy: a `.env` in a run's working directory.** A spawned CLI loads
+  `.env` from its working directory, so a file there holding
+  `TELEGRAM_BOT_TOKEN` would reach a run. Spec 106 already refuses that
+  (planned test_a_hosted_run_reads_no_env_file in its criteria). Nothing
+  added.
+- **Data integrity: the architecture document's one dialect branch
+  (fixed).** `docs/architecture.md` said the write lock is the one branch
+  on the dialect in domain code. It now names all three: the write lock,
+  spec 108's `kinds_for`, and this spec's `mail_offered`.
+- **Data integrity: the dialect stands for "hosted" in the digest
+  (declined).** On a Postgres store the digest runs only as a hosted run:
+  the CLI refuses it on a Postgres URL today, and spec 127 admits it
+  there only in spec 106's run class. No local operator reaches a
+  Postgres digest. Behavior above says "on a Postgres connection" on
+  purpose.
+- **Data integrity: 501 before authentication (declined).** Hosted, the
+  bearer token is checked by middleware before routing, so a request
+  without one never reaches either mail route's dependency.
+  `services/api/tests/test_hosted_auth.py::test_every_hosted_route_but_health_needs_a_token`
+  walks every route, the mail routes included, and gets 401.
+- **Data integrity: stale prose outside this spec's files (recorded).**
+  The module docstring of `services/api/src/harrier/hostedschedule.py`
+  still says `gmail-watch` joins "when a hosted Gmail spec exists"; that
+  is now spec 118. And a Postgres digest still lists a `digest` health
+  line while `digest` is not in `HOSTED_JOBS`; spec 108 adds it once
+  owners can save Telegram settings, which is part 2. Both are spec 108's
+  files and text.
+- **Data integrity: a parameter shadowing a function (fixed).**
+  `render_digest`'s keyword is `mail_watch_offered`.
+- **Test integrity (fixed).** The test with spec 106's lift now starts
+  another kind and sees it reach its spawn, so the lift is real. The mail
+  route test records every file opened under the data directory while
+  the requests run, not only the one read it patches. The open recorder
+  reads relative paths, bytes and file descriptors. Two assertions that
+  could not fail are gone: no input directory is ever written by `start`,
+  and the chat id is never in the request path. Item 7 above records the
+  fixture for a developer's shell.
+
+### Recorded for the web (contract review of PR #312)
+
+This spec builds nothing in `apps/web` (Scope; the browser's half is spec
+114's). The local contract review of part 1 found two web gaps the new
+501 opens. Neither is fixed in part 1; each waits for the change that
+first serves the inbox to a hosted owner, whose spec takes this
+criterion:
+
+- [ ] On a hosted 501 from `GET /mail/events`, the inbox page shows the
+      API's `detail`, `Gmail watch is not offered on the hosted service
+      (spec 109)`, read through `refusalMessage` in
+      `apps/web/src/shared/api/refusal.ts`, not the generic "could not
+      read the mail archive"; and the comment in
+      `apps/web/src/pages/inbox/InboxPage.tsx` that says the route
+      "declares no refusal response" is corrected, since the route
+      declares 401, 422, 503 and 501 (planned web test "a hosted inbox
+      says Gmail watch is not offered").
 
 Under `services/api/src` part 1 touches `harrier/notify.py`,
 `harrier/digest.py`, `harrier_api/runs.py`, `harrier_api/mail_routes.py`

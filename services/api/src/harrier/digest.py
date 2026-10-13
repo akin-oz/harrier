@@ -222,7 +222,7 @@ def render_digest(
     updates: list[dict[str, object]],
     schedule_health: list[str] | None = None,
     *,
-    mail_offered: bool = True,
+    mail_watch_offered: bool = True,
 ) -> str:
     lines = [f"Daily job digest — {target_date.isoformat()}", ""]
 
@@ -278,7 +278,7 @@ def render_digest(
             lines.append(f"  - ... and {len(ghosted) - 10} more")
 
     lines.extend(["", "Updates needing action"])
-    if not mail_offered:
+    if not mail_watch_offered:
         lines.append(MAIL_NOT_OFFERED_LINE)
     elif updates:
         for item in updates[:5]:
@@ -353,7 +353,7 @@ def build_digest(conn: Connection, scope: Scope, target_date: date) -> str:
         ghosted_applications(rows, target_date),
         actionable_updates(target_date, scope) if offered else [],
         schedule_health_lines(conn),
-        mail_offered=offered,
+        mail_watch_offered=offered,
     )
 
 

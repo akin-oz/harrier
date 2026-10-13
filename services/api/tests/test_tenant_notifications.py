@@ -19,12 +19,14 @@ Telegram, Google or Supabase; the Postgres tests use the local test server
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import http.client
 import json
 import logging
+import os
 import secrets
+import socket
 import sys
-import urllib.parse
 import urllib.request
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -50,7 +52,6 @@ from harrier_api.runs import (
     RunManager,
     RunParams,
     RunsNotHosted,
-    run_inputs_dir,
 )
 
 # --- synthetic secrets ---
@@ -95,30 +96,68 @@ class AsEmitted(logging.Handler):
         self.messages.append(record.getMessage())
 
 
-def test_a_telegram_failure_log_never_holds_the_token(monkeypatch: pytest.MonkeyPatch) -> None:
-    token, chat = bot_token(), chat_id()
+def malformed_tokens(token: str) -> dict[str, str]:
+    """A token as an owner or an `.env` line could carry it: with a stray
+    character where the scrub's `/bot<digits>:` pattern stops reading
+    (privacy review of PR #312)."""
+    bot, secret = token.split(":", 1)
+    return {
+        "a leading space": f" {token}",
+        "a leading tab": f"\t{token}",
+        "a leading newline": f"\n{token}",
+        "a carriage return inside": f"{bot}:{secret[:8]}\r{secret[8:]}",
+        "a space inside": f"{bot}:{secret[:8]} {secret[8:]}",
+    }
+
+
+# Faked rather than sent: a well-formed token would reach the network, and
+# the last case is an error that quotes the path as written, not escaped.
+FAKED = ("well formed", "a tab, quoted as written")
+TOKEN_CASES = (*FAKED, *malformed_tokens(bot_token()))
+
+
+@pytest.mark.parametrize("case", TOKEN_CASES)
+def test_a_telegram_failure_log_never_holds_the_token(
+    case: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clean = bot_token()
+    token = {
+        "well formed": clean,
+        "a tab, quoted as written": malformed_tokens(clean)["a leading tab"],
+    }.get(case) or malformed_tokens(clean)[case]
     monkeypatch.delenv("HARRIER_DEMO", raising=False)
 
-    def refuse(request: urllib.request.Request, timeout: float) -> object:
-        # What `http.client` raises for a token pasted with a stray
-        # character: its message quotes the request path, token and all.
-        path = urllib.parse.urlparse(request.full_url).path
-        raise http.client.InvalidURL(f"URL can't contain control characters. {path!r}")
+    def no_network(*args: object, **kwargs: object) -> object:
+        raise AssertionError("this test reaches no network")
 
-    monkeypatch.setattr(urllib.request, "urlopen", refuse)
+    # The malformed tokens go through the real HTTP client, which refuses
+    # the path before it connects and quotes it, escaped, in its error.
+    monkeypatch.setattr(socket, "create_connection", no_network)
+    if case in FAKED:
+        # What `http.client` raises for a path it will not send, quoting it
+        # escaped; or an error that quotes it as written.
+        def refuse(request: urllib.request.Request, timeout: float) -> object:
+            # Read off the URL as the request holds it: `urlparse` would
+            # drop the tab before any error could quote it.
+            path = request.full_url.removeprefix("https://api.telegram.org")
+            if case == "well formed":
+                raise http.client.InvalidURL(f"URL can't contain control characters. {path!r}")
+            raise OSError(f"cannot send {path}")
+
+        monkeypatch.setattr(urllib.request, "urlopen", refuse)
     notify_logger = logging.getLogger("harrier.notify")
     emitted = AsEmitted()
     notify_logger.addHandler(emitted)
     monkeypatch.setattr(notify_logger, "level", logging.DEBUG)
     try:
-        assert send_telegram_message("a digest line", token=token, chat_id=chat) == 1
+        assert send_telegram_message("a digest line", token=token, chat_id=chat_id()) == 1
     finally:
         notify_logger.removeHandler(emitted)
 
     failed = [message for message in emitted.messages if "telegram send failed" in message]
     assert len(failed) == 1, emitted.messages
-    assert "/botREDACTED/sendMessage" in failed[0]
-    assert_holds_none_of("\n".join(emitted.messages), token, chat)
+    assert "/botREDACTED/sendMessage" in failed[0], failed[0]
+    assert_holds_none_of("\n".join(emitted.messages), clean, token)
 
 
 # --- Gmail, hosted ---
@@ -136,7 +175,7 @@ def test_hosted_mail_routes_answer_501(monkeypatch: pytest.MonkeyPatch, tmp_path
         read.append(limit)
 
     monkeypatch.setattr("harrier.mail.read_events", read_events)
-    spawned: list[object] = []
+    spawned: list[tuple[object, ...]] = []
 
     async def spawn(*argv: object, **_: object) -> object:
         spawned.append(argv)
@@ -155,23 +194,25 @@ def test_hosted_mail_routes_answer_501(monkeypatch: pytest.MonkeyPatch, tmp_path
 
     with owners(monkeypatch, manager) as hosted:
         headers = hosted.as_owner(new_owner())
-        for method, route, send in (
-            ("GET", "/mail/events", {}),
-            ("GET", "/mail/events?limit=5", {}),
-            ("POST", "/mail/watch", {"json": {}}),
-            ("POST", "/mail/watch", {"json": {"dry_run": True}}),
-        ):
-            response = hosted.client.request(method, route, headers=headers, **send)
-            assert response.status_code == 501, (route, response.text)
-            assert response.json() == {"detail": GMAIL_NOT_HOSTED_DETAIL}, route
+        with opened_under(path.parent.parent) as opened:
+            for method, route, send in (
+                ("GET", "/mail/events", {}),
+                ("GET", "/mail/events?limit=5", {}),
+                ("POST", "/mail/watch", {"json": {}}),
+                ("POST", "/mail/watch", {"json": {"dry_run": True}}),
+            ):
+                response = hosted.client.request(method, route, headers=headers, **send)
+                assert response.status_code == 501, (route, response.text)
+                assert response.json() == {"detail": GMAIL_NOT_HOSTED_DETAIL}, route
 
-    # Neither route read the archive nor reached the run manager.
+    # Neither route opened a file in the data directory, read the archive or
+    # reached the run manager.
+    assert opened == []
     assert read == []
     assert started == []
     assert spawned == []
     assert manager.list_runs() == []
     assert not (tmp_path / "journal.jsonl").exists()
-    assert not run_inputs_dir().exists()
 
     # Both declare the 501 with its detail, in the committed contract and in
     # the document the local app builds, so the two modes share one.
@@ -195,7 +236,7 @@ def test_a_hosted_gmail_watch_run_is_refused_before_it_spawns(
         # Spec 106 lifts the refusal of every hosted run; the Gmail one
         # stays.
         monkeypatch.setattr("harrier_api.runs.refuse_every_hosted_run", lambda: None)
-    spawned: list[object] = []
+    spawned: list[tuple[object, ...]] = []
 
     async def spawn(*argv: object, **_: object) -> object:
         spawned.append(argv)
@@ -217,16 +258,51 @@ def test_a_hosted_gmail_watch_run_is_refused_before_it_spawns(
             with pytest.raises(RunsNotHosted) as other:
                 await manager.start("demo", owner=new_owner())
             assert not isinstance(other.value, GmailNotHosted)
+            return
+        # Lifted, another kind gets past the refusal to its spawn, so the
+        # lift is real and only the Gmail refusal stopped the watch.
+        demo = await manager.start("demo", owner=new_owner())
+        for _ in range(200):
+            if spawned:
+                break
+            await asyncio.sleep(0.01)
+        assert [run.kind for run in manager.list_runs()] == [demo.kind] == ["demo"]
 
     asyncio.run(attempt())
 
-    assert spawned == []
-    assert manager.list_runs() == []
-    assert not journal.exists()
-    assert not run_inputs_dir().exists()
+    if lifted:
+        assert len(spawned) == 1, spawned
+        assert "gmail-watch" not in " ".join(str(part) for part in spawned[0])
+    else:
+        assert spawned == []
+        assert manager.list_runs() == []
+        assert not journal.exists()
 
 
 # --- the digest on Postgres ---
+
+
+def opened_path(raw: object) -> str | None:
+    """The real path an `open` audit event names: a path as text, bytes or
+    a path object, relative ones against the working directory, or a file
+    descriptor where the platform can say what it refers to."""
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        get_path = getattr(fcntl, "F_GETPATH", None)
+        proc = f"/proc/self/fd/{raw}"
+        try:
+            if os.path.exists(proc):
+                return os.path.realpath(os.readlink(proc))
+            if get_path is None:
+                return None
+            named = fcntl.fcntl(raw, get_path, b"\0" * 1024).rstrip(b"\0")
+            return os.path.realpath(os.fsdecode(named))
+        except OSError:
+            return None
+    if isinstance(raw, (str, bytes, os.PathLike)):
+        return os.path.realpath(os.fsdecode(raw))  # pyright: ignore[reportUnknownArgumentType]
+    return None
 
 
 @contextmanager
@@ -236,13 +312,13 @@ def opened_under(directory: Path) -> Generator[list[str]]:
     removed, so this one records only while its list is live."""
     opened: list[str] = []
     live = [True]
-    root = str(directory.resolve())
+    root = os.path.realpath(directory)
 
     def hook(event: str, args: tuple[Any, ...]) -> None:
-        if not live or event != "open" or not args or not isinstance(args[0], (str, Path)):
+        if not live or event != "open" or not args:
             return
-        path = str(Path(args[0]).resolve()) if Path(args[0]).is_absolute() else str(args[0])
-        if path.startswith(root):
+        path = opened_path(args[0])
+        if path is not None and (path == root or path.startswith(root + os.sep)):
             opened.append(path)
 
     sys.addaudithook(hook)
@@ -296,9 +372,10 @@ def test_a_postgres_digest_reads_no_mail_file_and_says_why(dual_store: DualStore
 # --- the hosted API's own environment ---
 
 OPERATOR_SETTINGS = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "GMAIL_ACCOUNT", "GMAIL_EMPTY")
+LOCAL = "locally, every one of them"
 
 
-@pytest.mark.parametrize("name", OPERATOR_SETTINGS)
+@pytest.mark.parametrize("name", (*OPERATOR_SETTINGS, LOCAL))
 def test_hosted_start_refuses_operator_notification_settings(name: str, tmp_path: Path) -> None:
     values = {
         "TELEGRAM_BOT_TOKEN": bot_token(),
@@ -307,6 +384,12 @@ def test_hosted_start_refuses_operator_notification_settings(name: str, tmp_path
         # Present and empty is refused too: the name alone is the operator's.
         "GMAIL_EMPTY": "",
     }
+    if name == LOCAL:
+        # The local product keeps its `.env` Telegram and Gmail settings:
+        # the API starts with all of them (spec 109, Migration).
+        started = start_api(child_environment(tmp_path, **values), tmp_path)
+        assert started.returncode == 0, started.stderr
+        return
     environ = child_environment(tmp_path, **{**complete_hosted_environment(), name: values[name]})
 
     started = start_api(environ, tmp_path)

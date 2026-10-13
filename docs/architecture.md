@@ -196,10 +196,15 @@ as a parameter. The dedupe folds `A` to `Z` and nothing else
 come from `RETURNING id`, and no domain insert supplies one. The four
 upserts are an update, an insert in a savepoint, and the update once more
 when another writer inserted the key first (`update_or_insert`); none names
-a tenant. The write lock is the one branch on the dialect in domain code
-(`_write_lock` in `services/api/src/harrier/tracker/store.py`): SQLite
+a tenant. Domain code branches on the dialect in three places. The write
+lock (`_write_lock` in `services/api/src/harrier/tracker/store.py`): SQLite
 still locks the whole file, and Postgres locks the job rows a write depends
-on, `FOR UPDATE`, so writers of other jobs do not wait. The cutover and the
+on, `FOR UPDATE`, so writers of other jobs do not wait. The configuration
+kinds a store holds (`kinds_for` in
+`services/api/src/harrier/userconfig/store.py`, spec 108). And the digest,
+which on Postgres reads no mail file and names no mail watch, because
+Gmail is not offered there (`mail_offered` in
+`services/api/src/harrier/digest.py`, spec 109). The cutover and the
 legacy import refuse a Postgres connection with `StoreLocalOnlyError`. The
 `store` fixture in `services/api/tests/conftest.py` runs a test once per
 store, on Postgres as one synthetic owner under the row policy, and fails
