@@ -24,6 +24,8 @@ import json
 import pickle
 import re
 import sqlite3
+import subprocess
+import sys
 import time
 import uuid
 from collections.abc import Callable, Iterator
@@ -50,6 +52,7 @@ from harrier.connection import (
     NUMBERED_PLACEHOLDER,
     OWNER_NEEDS_POSTGRES,
     POSTGRES_NOT_IDLE,
+    TRANSACTION_GIVEN_UP,
     UNKNOWN_TRACK,
     UNKNOWN_TRACK_CONSTRAINT,
     URL_VARIABLE,
@@ -253,6 +256,231 @@ def test_a_nested_transaction_is_a_savepoint_on_both_stores(store: Store) -> Non
             conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (1,))
     assert ids(store.open(), table) == [1, 3, 4]
     assert not conn.in_transaction
+
+
+def a_failure_that_gives_up(store: Store, conn: Connection, table: str) -> Callable[[], object]:
+    """A statement whose failure leaves the store keeping none of the
+    transaction it runs in (spec 112, amendment of 2026-10-13). On Postgres
+    any failure does; here a second row 1 in `table`, so call it in a block
+    that has written row 1. On SQLite a write past the file's page limit,
+    which rolls the whole transaction back; a constraint error would not."""
+    if store.dialect == "postgres":
+        return lambda: conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (1,))
+    filler = new_table(conn, "b BLOB")
+    pages = int(conn.execute("PRAGMA page_count").fetchone()[0])
+    conn.execute(f"PRAGMA max_page_count = {pages + 2}")
+    return lambda: conn.execute(f"INSERT INTO {filler} (b) VALUES (randomblob(?))", (1_000_000,))
+
+
+def test_a_block_whose_transaction_was_given_up_raises_at_its_exit(store: Store) -> None:
+    conn = store.open()
+    table = new_table(conn, "id INTEGER PRIMARY KEY")
+    fail = a_failure_that_gives_up(store, conn, table)
+
+    with pytest.raises(StoreDatabaseError) as at_exit, conn.transaction():
+        conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (1,))
+        # Caught without a savepoint: the store keeps none of the block.
+        with pytest.raises(StoreDatabaseError):
+            fail()
+        with pytest.raises(StoreDatabaseError) as later:
+            conn.execute(f"SELECT id FROM {table}")
+        if store.dialect == "sqlite":
+            assert str(later.value) == TRANSACTION_GIVEN_UP
+        else:
+            # The server refuses it in its own words; the seam adds nothing.
+            assert type(later.value.__cause__).__name__ == "InFailedSqlTransaction"
+            assert str(later.value) != TRANSACTION_GIVEN_UP
+    # Not a busy lock or a conflict, which a caller might retry.
+    assert type(at_exit.value) is StoreDatabaseError
+    assert str(at_exit.value) == TRANSACTION_GIVEN_UP
+    assert at_exit.value.__cause__ is None
+    assert not conn.in_transaction
+    assert ids(store.open(), table) == []
+    # The connection is idle, and its next block commits.
+    with conn.transaction():
+        conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (2,))
+    assert ids(store.open(), table) == [2]
+
+
+def test_a_sqlite_write_after_the_store_gave_up_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "seam.db"
+    store = Store("sqlite", lambda: connect(path))
+    conn = store.open()
+    table = new_table(conn, "id INTEGER PRIMARY KEY")
+    fail = a_failure_that_gives_up(store, conn, table)
+
+    with pytest.raises(StoreDatabaseError) as at_exit, conn.transaction():
+        conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (1,))
+        with pytest.raises(StoreDatabaseError):
+            fail()
+        # Without the refusal this write would begin a new transaction, and
+        # the block's exit would commit it.
+        with pytest.raises(StoreDatabaseError) as later:
+            conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (2,))
+        assert str(later.value) == TRANSACTION_GIVEN_UP
+        with pytest.raises(StoreDatabaseError) as nested, conn.transaction(immediate=True):
+            conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (3,))
+        assert str(nested.value) == TRANSACTION_GIVEN_UP
+        # Refused as it opens: it did not begin a transaction and take the
+        # write lock.
+        assert _write_lock_is_free(path)
+        with pytest.raises(StoreDatabaseError) as read:
+            conn.execute(f"SELECT id FROM {table}")
+        assert str(read.value) == TRANSACTION_GIVEN_UP
+        assert type(later.value) is StoreDatabaseError
+    assert type(at_exit.value) is StoreDatabaseError
+    assert str(at_exit.value) == TRANSACTION_GIVEN_UP
+    assert ids(store.open(), table) == []
+    for opened in store.opened:
+        opened.close()
+
+
+def test_a_caught_failure_inside_a_nested_block_fails_the_outermost(store: Store) -> None:
+    conn = store.open()
+    table = new_table(conn, "id INTEGER PRIMARY KEY")
+    fail = a_failure_that_gives_up(store, conn, table)
+
+    with pytest.raises(StoreDatabaseError) as at_exit, conn.transaction():
+        conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (1,))
+        # The inner block swallows its failure and exits normally, which
+        # its exit refuses; the outer block swallows that refusal too.
+        with (
+            pytest.raises(StoreDatabaseError) as inner,
+            conn.transaction(),
+            pytest.raises(StoreDatabaseError),
+        ):
+            fail()
+        if store.dialect == "sqlite":
+            # On Postgres the server refuses the release, in its own words.
+            assert str(inner.value) == TRANSACTION_GIVEN_UP
+    assert type(at_exit.value) is StoreDatabaseError
+    assert str(at_exit.value) == TRANSACTION_GIVEN_UP
+    assert not conn.in_transaction
+    assert ids(store.open(), table) == []
+
+
+def test_an_adopted_sqlite_transaction_can_be_given_up(tmp_path: Path) -> None:
+    """A write outside any block opens the sqlite3 module's transaction,
+    which the next block adopts. Losing it is the store giving up too, or
+    the block's next write would begin a new transaction and commit it
+    without the first row (review of PR #304)."""
+    path = tmp_path / "seam.db"
+    store = Store("sqlite", lambda: connect(path))
+    conn = store.open()
+    table = new_table(conn, "id INTEGER PRIMARY KEY")
+    fail = a_failure_that_gives_up(store, conn, table)
+    conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (1,))
+    assert conn.in_transaction
+
+    with pytest.raises(StoreDatabaseError) as at_exit, conn.transaction():
+        with pytest.raises(StoreDatabaseError):
+            fail()
+        with pytest.raises(StoreDatabaseError) as later:
+            conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (2,))
+        assert str(later.value) == TRANSACTION_GIVEN_UP
+    assert str(at_exit.value) == TRANSACTION_GIVEN_UP
+    assert ids(store.open(), table) == []
+    for opened in store.opened:
+        opened.close()
+
+
+# SQLite's heap limit holds for the whole process, and PRAGMA can only lower
+# it, so the out of memory case runs in a child that takes the limit with it.
+OUT_OF_MEMORY_CHILD = """
+import sys
+from contextlib import closing
+from pathlib import Path
+
+from harrier.connection import StoreDatabaseError
+from harrier.db import connect
+
+path = Path(sys.argv[1])
+with closing(connect(path)) as conn, closing(connect(path)) as other:
+    with conn.transaction():
+        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+        conn.execute("CREATE TABLE f (b BLOB)")
+    try:
+        with conn.transaction():
+            conn.execute("INSERT INTO t (id) VALUES (?)", (1,))
+            conn.execute("PRAGMA hard_heap_limit = 8000000")
+            try:
+                conn.execute(
+                    "INSERT INTO f (b) VALUES (zeroblob(?) || randomblob(?))", (20000000, 10)
+                )
+            except MemoryError:
+                print("memory error")
+    except StoreDatabaseError as error:
+        print(error)
+    else:
+        print("committed")
+    print([int(row[0]) for row in other.execute("SELECT id FROM t")])
+"""
+
+
+def test_an_out_of_memory_failure_gives_up_the_sqlite_transaction(tmp_path: Path) -> None:
+    """SQLite's out of memory rolls the transaction back and reaches Python
+    as MemoryError, not a sqlite3.Error (review of PR #304)."""
+    child = subprocess.run(
+        [sys.executable, "-c", OUT_OF_MEMORY_CHILD, str(tmp_path / "seam.db")],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert child.returncode == 0, child.stderr
+    assert child.stdout.splitlines() == ["memory error", TRANSACTION_GIVEN_UP, "[]"]
+
+
+def test_a_closed_sqlite_connection_still_raises_a_store_error(tmp_path: Path) -> None:
+    """After a block that held a transaction ends, nothing reads the closed
+    driver on its account (review of PR #304)."""
+    conn = connect(tmp_path / "seam.db")
+    table = new_table(conn, "id INTEGER PRIMARY KEY")
+    with conn.transaction():
+        conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (1,))
+    conn.close()
+    with pytest.raises(StoreDatabaseError):
+        conn.execute(f"SELECT id FROM {table}")
+
+
+def test_a_commit_inside_a_block_is_not_the_store_giving_up(store: Store) -> None:
+    """Only a failed statement gives a transaction up. A COMMIT the caller
+    ran also ends it, and its work was kept (review of PR #304)."""
+    conn = store.open()
+    table = new_table(conn, "id INTEGER PRIMARY KEY")
+
+    with conn.transaction():
+        conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (1,))
+        conn.execute("COMMIT")
+        conn.execute(f"SELECT id FROM {table}").fetchall()
+    assert 1 in ids(store.open(), table)
+
+
+def test_a_sqlite_block_that_only_read_has_nothing_to_give_up(tmp_path: Path) -> None:
+    """A failed read in a block that began no transaction gives nothing up,
+    though the block before it began one and committed."""
+    path = tmp_path / "seam.db"
+    with closing(connect(path)) as conn:
+        table = new_table(conn, "id INTEGER PRIMARY KEY")
+        with conn.transaction():
+            conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (1,))
+        with conn.transaction():
+            with pytest.raises(StoreDatabaseError):
+                conn.execute("SELECT id FROM no_such_table")
+            conn.execute(f"SELECT id FROM {table}").fetchall()
+        assert ids(conn, table) == [1]
+
+
+def test_a_caught_sqlite_constraint_error_keeps_the_transaction(tmp_path: Path) -> None:
+    path = tmp_path / "seam.db"
+    with closing(connect(path)) as conn, closing(connect(path)) as other:
+        table = new_table(conn, "id INTEGER PRIMARY KEY")
+        with conn.transaction():
+            conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (1,))
+            # SQLite undoes the refused statement only.
+            with pytest.raises(StoreIntegrityError):
+                conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (1,))
+            conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (2,))
+        assert ids(other, table) == [1, 2]
 
 
 def test_a_connection_offers_no_commit_or_rollback(store: Store) -> None:
@@ -817,6 +1045,31 @@ def test_a_stale_snapshot_is_a_conflict_not_a_busy_lock(store: Store) -> None:
     assert not isinstance(refused.value, StoreBusyError)
     # The connection would wait up to BUSY_TIMEOUT_MS for a lock; it did not.
     assert time.monotonic() - started < BUSY_TIMEOUT_MS / 2000
+
+
+def test_a_connection_lost_while_giving_up_still_says_so(migrated_postgres: str) -> None:
+    """The rollback at the exit fails when the connection is gone. The error
+    the caller sees is still the store giving up (spec 112, amendment of
+    2026-10-13, Failure modes)."""
+    with closing(open_store({URL_VARIABLE: migrated_postgres})) as conn:
+        table = new_table(conn, "id INTEGER PRIMARY KEY")
+        pid = int(conn.execute("SELECT pg_backend_pid()").fetchone()[0])
+        with pytest.raises(StoreDatabaseError) as at_exit, conn.transaction():
+            conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (1,))
+            with pytest.raises(StoreIntegrityError):
+                conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (1,))
+            with closing(raw(migrated_postgres)) as admin:
+                admin.execute("SELECT pg_terminate_backend(%s)", (pid,))
+                deadline = time.monotonic() + 5
+                while admin.execute(
+                    "SELECT 1 FROM pg_stat_activity WHERE pid = %s", (pid,)
+                ).fetchone():
+                    assert time.monotonic() < deadline, "the backend did not end"
+                    time.sleep(0.05)
+        assert type(at_exit.value) is StoreDatabaseError
+        assert str(at_exit.value) == TRANSACTION_GIVEN_UP
+    with closing(open_store({URL_VARIABLE: migrated_postgres})) as other:
+        assert ids(other, table) == []
 
 
 def test_a_postgres_driver_in_a_transaction_is_never_adopted(migrated_postgres: str) -> None:

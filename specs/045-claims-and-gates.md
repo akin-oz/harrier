@@ -1272,3 +1272,423 @@ decides as before.
 - The guard reads the name, not whether its value reaches git. So
   `git --config-env=core.hooksPath=X commit ...` is denied with `X` unset,
   though git refuses it.
+
+## Amendment (2026-10-13): a failed identity read leaves the caller's transaction usable
+
+Spec 112's amendment "a transaction the store gave up on" (pull request
+#304, merged as 8b22a67) lists this under its Out of scope and sends it
+here: spec 045 owns the redaction, so the gap goes into it, with its own
+criterion, in a change of its own.
+
+### Problem
+
+`identity_values` catches `StoreDatabaseError` from each of its two
+loaders and goes on, by design: a store that predates the tables, or is
+mid-migration, must not stop the process from logging
+(`services/api/src/harrier/logredact.py`, `identity_values`;
+`services/api/tests/test_logging.py::test_identity_values_survives_a_database_without_the_tables`).
+`refresh_installed` calls it from the tracker write path, after
+`add_contact`'s own `with conn.transaction():` block
+(`services/api/src/harrier/tracker/store.py`, `add_contact`). That block
+is a savepoint when a caller's block wraps `add_contact`, so the refresh
+then reads inside the caller's transaction.
+
+On Postgres a failed read there leaves the caller's transaction failed
+(the driver reports `TransactionStatus.INERROR`). Since pull request #304
+the caller's block raises `StoreDatabaseError` with the text `a statement
+failed inside this transaction, so the store kept none of it` at its
+exit, and nothing it wrote is kept. Before #304 the writes were lost with
+no error.
+
+Measured through the seam on 2026-10-13 at 8b22a67, on the local
+Postgres 17 test server, with probe scripts the pull request records.
+Each probe migrates a throwaway database and opens an owner's connection.
+The caller's block inserts a synthetic contact, then reads identity
+values:
+
+- With the tenant role's `SELECT` on `profile_documents` revoked: the
+  block raised the text above, and 0 rows were kept.
+- With another session holding `profile_documents` in `ACCESS EXCLUSIVE`
+  mode and the connection's `busy_timeout_ms` at 200: the same, 0 rows
+  kept.
+- `add_contact` inside a caller's block, an identity filter registered
+  and the `SELECT` revoked: the same, 0 rows kept.
+- The same three, with each loader run inside its own
+  `with conn.transaction():`: each block committed and kept its row, and
+  the read returned the contact's values.
+
+**It does not happen on any path the code reaches today.** Four facts
+close it, each proven:
+
+1. Hosted, `configure_logging(hosted=True)` registers no identity filter
+   and forgets any filter an earlier call registered, so
+   `refresh_installed` returns before it reads (spec 135;
+   `services/api/src/harrier/logsetup.py`, `configure_logging`;
+   `services/api/tests/test_hosted_logs.py::test_hosted_logging_writes_stderr_only`
+   asserts that no filter is registered). Spec 134's request transaction
+   is the one block that wraps `add_contact` today, through the approve
+   route, and no identity read runs in it.
+2. The local API and the CLI refuse a Postgres store, but for
+   `harrier store`
+   (`services/api/tests/test_store_cli.py::test_the_api_refuses_to_start_on_a_postgres_url`,
+   `services/api/tests/test_store_cli.py::test_a_data_command_is_refused_on_a_postgres_url`).
+   So no process holds both a registered filter and a Postgres
+   connection.
+3. Outside any block a read on Postgres is its own transaction
+   (`services/api/src/harrier/connection.py`, `Connection.execute`), so a
+   failed read there fails nothing else. `add_contact` has one caller
+   chain: `approve_candidate` (`services/api/src/harrier/outreach/discovery.py`)
+   calls `upsert_contact` (`services/api/src/harrier/outreach/contacts.py`),
+   which calls `add_contact`. The local approve route
+   (`services/api/src/harrier_api/outreach_routes.py`) and
+   `harrier contacts approve` (`services/api/src/harrier_cli/main.py`)
+   open no block around it, and the local API wraps no request in one
+   (`services/api/src/harrier_api/deps.py`, `get_conn`).
+4. On SQLite a failed read leaves the caller's transaction usable. The
+   probe renamed `profile_documents`, wrote a contact in a caller's block
+   and read identity values: the block committed and kept its row. SQLite
+   fails a statement that names a missing table before it runs, and the
+   transaction goes on, as spec 112 states of a constraint error. The
+   errors that make SQLite roll back the whole transaction (a full disk,
+   an I/O error, out of memory) lose it whatever savepoint is open.
+
+**Which reads can fail on a migrated Postgres store.** Both tables exist
+there (the probe listed `contacts` and `profile_documents`). A missing
+table is not one of the ways: `open_store` refuses a store that is not at
+the code's version
+(`services/api/tests/test_postgres_store.py::test_opening_an_unmigrated_store_is_refused`),
+and the hosted start checks the version
+(`services/api/tests/test_hosted_start.py::test_hosted_start_checks_the_store_version_once`).
+Row policy is not one either: it hides rows from a `SELECT`, it does not
+refuse one. What remains:
+
+- a missing privilege, such as the tenant role's `SELECT` revoked, which
+  `services/api/tests/test_seam_on_both_stores.py::test_identity_reads_survive_a_store_error_on_both_stores`
+  already provokes;
+- a lock timeout, while another session holds the table in a mode that
+  blocks reads, as a migration's `ALTER TABLE` does;
+- a lost connection.
+
+So this amendment closes a latent hazard. It goes live the day any of the
+four facts stops holding: a hosted identity filter, a CLI or run command
+on Postgres (spec 106, spec 110) that registers one, or a caller that
+wraps `add_contact` in a block. Spec 112's Failure modes says the identity
+reads "run outside write transactions (the refresh ... runs after the
+commit)". That is true of `add_contact`'s own block only, which is why
+nothing guards the case.
+
+### Behavior
+
+**On Postgres, each loader runs in a block of its own.** `identity_values`
+runs `_candidate_identity_values` and `_contact_identity_values` each
+inside its own `with conn.transaction():`, when `conn.dialect` is
+`"postgres"`.
+
+- Inside a caller's block that block is a savepoint
+  (`services/api/src/harrier/connection.py`, `Connection.transaction`). A
+  failed read rolls back to it and ends the failed state, so the caller's
+  transaction goes on usable and commits what it wrote. The loader's
+  values are missing from the result, as today, and the other loader
+  still runs.
+- Outside any block that block is the read's own transaction, which is
+  what `Connection.execute` gives a statement outside a block today. The
+  result is the same, and the connection is idle afterwards (the probe
+  read the same values both ways and found the driver idle after each).
+
+**On SQLite nothing changes.** The loaders run as they do today, with no
+block. A block would buy nothing there (Problem, fact 4), and it would
+change one case. Outside any block, after a write the sqlite3 module began
+a transaction for, a block adopts that transaction: the probe found it
+committed when both reads succeeded and rolled back when one failed.
+Today a read leaves it open. Inside a caller's block a SQLite block that
+only reads begins nothing (the probe found the driver outside a
+transaction after it), so the case outside a block is the only
+difference. Decision 1 keeps SQLite as it is rather than accept it.
+
+**Unchanged.** `identity_values` returns what it can and never raises
+`StoreDatabaseError`. `refresh_installed` pushes the result into every
+registered filter, as today. The start-up load in `configure_logging`
+reads through a connection it has just opened, outside any block, and
+behaves as today. Nothing in `services/api/src/harrier/connection.py`
+changes.
+
+Files: `services/api/src/harrier/logredact.py` (`identity_values`) and
+`services/api/tests/test_seam_on_both_stores.py`. No file is added, so
+`config/data-classification.json` does not change.
+
+### Failure modes
+
+- **A read fails inside a caller's block, on Postgres.** Rolled back to
+  its savepoint; the caller's block commits; the loader's values are
+  absent from the result.
+- **Both reads fail.** The result is empty, as today, and the caller's
+  block commits.
+- **The caller's transaction was already given up before the refresh.**
+  Postgres refuses the savepoint itself. That refusal is a
+  `StoreDatabaseError` from the opening block, caught like a failed read.
+  The caller's block raises at its exit, as spec 112 states, because it
+  was given up before the read ran.
+- **The connection is lost during a read.** No savepoint helps. The read
+  is caught, and the caller's block raises at its exit, as spec 112
+  states of a lost connection. Nothing is kept.
+- **A read waits on a lock.** It waits up to `busy_timeout_ms`, then fails
+  and rolls back to its savepoint. The caller is slower by that wait, at
+  most once per loader.
+- **A loader raises something other than `StoreDatabaseError`.** Its
+  block rolls back to the savepoint and the error goes on to the caller,
+  as such an error from a loader goes on today.
+- **SQLite.** Every case behaves as today, a whole-transaction rollback
+  during a read included: the caller's block raises at its exit (spec
+  112).
+
+### Acceptance criteria
+
+In `services/api/tests/test_seam_on_both_stores.py`, on a migrated
+throwaway Postgres opened for an owner, with synthetic values only:
+
+- [ ] A caller's block inserts a contact, the tenant role's `SELECT` on
+      `profile_documents` revoked, and reads identity values. The read
+      returns the contact's values, the block exits without an error, and
+      the row is in the store
+      (planned test_a_failed_identity_read_leaves_the_callers_transaction_usable).
+- [ ] The same with another session holding `profile_documents` in
+      `ACCESS EXCLUSIVE` mode and a short `busy_timeout_ms`, in place of
+      the revoked privilege
+      (planned test_an_identity_read_that_times_out_leaves_the_callers_transaction_usable).
+- [ ] `add_contact` inside a caller's block, with an identity filter
+      registered and the `SELECT` revoked: the block commits, the row is
+      in the store, and the filter redacts the new contact's name
+      (planned test_a_contact_added_inside_a_callers_block_survives_a_failed_identity_read).
+- [ ] Outside any block, the read returns the same values it returns
+      today, and the driver is idle afterwards
+      (planned test_identity_values_outside_a_block_leaves_postgres_idle).
+- [ ] On SQLite, a write outside any block, then a read of identity
+      values: the sqlite3 module's transaction is still open and the row
+      is not committed
+      (planned test_identity_values_leaves_a_pending_sqlite_write_alone).
+- [ ] `services/api/tests/test_seam_on_both_stores.py::test_identity_reads_survive_a_store_error_on_both_stores`
+      and the identity tests in `services/api/tests/test_logging.py` pass
+      unchanged.
+- [ ] Each of the first three tests fails with the blocks reverted, and
+      the pull request records what each reversion made fail.
+
+### Out of scope
+
+- **A refresh that loads less drops values the filter held.** Found while
+  writing this amendment, and true on both stores today. The probe
+  registered a filter that redacted a synthetic candidate name, renamed
+  `profile_documents` on SQLite, and called `refresh_installed`: the next
+  record carried the name in clear. `IdentityRedactionFilter.refresh`
+  replaces the value set with whatever loaded. This amendment makes it
+  neither worse nor better: the refresh pushes a partial set with or
+  without a savepoint. It changes what a refresh keeps, so it gets an
+  amendment of its own here, with its own criterion: a refresh whose read
+  of one source fails keeps the values it held from that source.
+- A public `Connection` property that says whether a block is open, which
+  would let the loaders nest only inside a caller's block on both stores.
+  `services/api/src/harrier/connection.py` is spec 112's.
+- Retrying a read that timed out.
+- A hosted identity filter. Spec 135 decided against one.
+- Spec 134's guard in its request transaction. It stays.
+
+### Decisions (Akin, in chat, 2026-10-13)
+
+All three as recommended.
+
+1. **Postgres only, or both stores.** Taken: Postgres only. On
+   SQLite a savepoint saves nothing (Problem, fact 4), and outside a block
+   it commits or rolls back a write the caller made outside any block,
+   where today the read leaves it open. Weighed instead was the same block
+   on both stores, one dialect branch fewer, with that SQLite case
+   accepted and stated: no code under `services/api/src` reads identity
+   values after such a write, since `add_contact`'s own block commits any
+   transaction it adopts before the refresh runs.
+2. **Close it now, or when a path makes it live.** Taken: now. The
+   change is one function and its tests, and the hazard goes live with no
+   signal the day spec 106 or spec 110 runs a command on Postgres with
+   local logging, or a caller wraps `add_contact`. Weighed instead was to
+   record it as a precondition in those specs and change nothing here.
+3. **The dropped values in a partial refresh (Out of scope, first item).**
+   Taken: its own amendment, proposed after this one. It changes
+   what the filter holds on every store and touches
+   `IdentityRedactionFilter`, where this one changes only whether a read's
+   failure reaches the caller. Weighed instead was to take it into this
+   change, which makes one diff answer two questions.
+
+### Honest limitations
+
+- The hazard is unreachable today (Problem). The tests prove the
+  mechanism on a connection the tests build, not on a path a user takes.
+- A lost connection still loses the caller's transaction. Nothing here
+  can save it.
+- The lock timeout case is measured with one lock mode and one timeout,
+  on Postgres 17 locally. The privilege case is measured there too; CI's
+  Postgres runs the tests.
+- On Postgres each loader costs two more statements inside a caller's
+  block (`SAVEPOINT` and `RELEASE SAVEPOINT`). Not measured; the path is
+  one `add_contact`.
+- On SQLite a whole-transaction rollback during a read still gives up the
+  caller's transaction, loudly since #304.
+
+### Proof / origin
+
+- `specs/112-the-tracker-domain-runs-on-either-store.md`, amendment of
+  2026-10-13, Out of scope: the gap and where it goes.
+- The probes above, run through the seam at 8b22a67 against the local
+  Postgres 17 test server and SQLite. The pull request records each script
+  and its output.
+
+## Amendment (2026-10-13): a refresh never drops a value the filter held
+
+The amendment above ("a failed identity read leaves the caller's
+transaction usable") found this while it was written, and records it in
+its Out of scope with the criterion it should meet. Its Decision 3 gives
+it an amendment of its own. This is that amendment.
+
+### Problem (amendment of 2026-10-13: refresh)
+
+The text above says the identity set "is refreshed from the one tracker
+write path" so that a contact added later is redacted. It never says what
+a refresh does with the values the filter already holds. The code
+replaces them, and that loses redaction.
+
+- `refresh_installed` (`services/api/src/harrier/logredact.py`) calls
+  `identity_values` and passes the result to every installed filter's
+  `refresh`. `IdentityRedactionFilter.refresh` replaces the filter's value
+  set with it.
+- `identity_values` catches a `StoreDatabaseError` from each of its two
+  loaders and goes on, so when one read fails it returns only the other
+  source's values.
+- So a refresh whose candidate read fails drops every candidate value the
+  filter held, and one whose contact read fails drops every contact. The
+  next record that carries one of those values is logged in clear.
+
+Measured through the code at `fd8dfb0` on 2026-10-13, on SQLite, with a
+synthetic candidate name. The probe built a filter from the store,
+renamed `profile_documents` so the candidate read fails, and called
+`refresh_installed`:
+
+```
+before refresh: hello [redacted]
+after a refresh whose candidate read failed: hello Synthetic Candidate Name
+```
+
+Who meets it: a local process with the identity filter installed (the CLI
+and the local API; hosted mode installs none, spec 135), when a contact is
+added (`add_contact`, `services/api/src/harrier/tracker/store.py`, the one
+caller of `refresh_installed`) while one of the two reads fails. A read
+fails on an I/O error, a damaged file, a store mid-migration, or a missing
+table. None of these is common, which is why it went unseen. Each makes
+the one control that keeps identity out of a pasted log quietly stop
+covering a source, with no warning.
+
+A deleted contact has the same shape without any failure. No refresh
+follows `delete_contact`, but the next `add_contact` refreshes from a store
+without the deleted contact, and its name is no longer redacted in this
+process. Measured the same way, with two synthetic contacts: the filter
+built while the first existed, then the first deleted and the second
+added:
+
+```
+built: mail [redacted]
+after delete and a later add: mail Synthetic Contact One | mail [redacted]
+```
+
+### Behavior (amendment of 2026-10-13: refresh)
+
+**A refresh only adds.** `IdentityRedactionFilter.refresh(values)` makes
+the filter's set the union of what it held and `values`. A value the
+filter redacted stays redacted for the life of the process, whatever a
+later refresh reads. `refresh_installed` is otherwise unchanged: it reads
+once and pushes the result into every installed filter.
+
+**Startup is unchanged.** `configure_logging` builds the filter from the
+store's current values, as today, so a restart drops a value no longer in
+the store. When the startup load fails, no filter is installed and the
+warning `identity redaction is unavailable; logs are not redacted` is
+logged, as today (`services/api/src/harrier/logsetup.py`,
+`_install_identity_redaction`).
+
+**Order is unchanged.** Longest value first, and a value shorter than
+`WORD_BOUNDED_BELOW` matched on a word boundary, over the whole union.
+
+### Failure modes (amendment of 2026-10-13: refresh)
+
+- **One read fails during a refresh.** The filter keeps every value it
+  held and adds what the other read returned.
+- **Both reads fail.** `identity_values` returns an empty set; the filter
+  keeps every value it held.
+- **A value leaves the store** (a contact deleted, a profile name
+  corrected). The filter keeps redacting the old value until the process
+  restarts. That over-redacts: a log line can show `[redacted]` where the
+  old value no longer names anyone. It never under-redacts.
+- **A long-running process.** The set grows only by values the store held
+  at some refresh, a few per contact added. No limit is set.
+
+### Acceptance criteria (amendment of 2026-10-13: refresh)
+
+- [ ] A filter built from a store holding a synthetic candidate name
+      still redacts it after a refresh whose candidate read fails
+      (a renamed `profile_documents` on SQLite), and the same refresh
+      adds a contact added since
+      (planned test_a_refresh_whose_read_fails_keeps_the_values_it_held).
+- [ ] A synthetic contact deleted after the filter was built is still
+      redacted after a later refresh that reads the store without it
+      (planned test_a_refresh_keeps_a_value_the_store_no_longer_holds).
+- [ ] `refresh` with an empty set leaves every held value redacted
+      (planned test_an_empty_refresh_drops_nothing).
+- [ ] A contact added after startup is still redacted, as before
+      (`services/api/tests/test_logging.py::test_a_contact_added_after_startup_is_redacted`).
+- [ ] Each new test fails with `refresh` replacing the set, as today, and
+      the pull request records what each reversion made fail.
+
+All in `services/api/tests/test_logging.py`, with synthetic values only.
+
+### Out of scope (amendment of 2026-10-13: refresh)
+
+- **Refreshing on the other identity writes.** Only `add_contact` calls
+  `refresh_installed`. A contact edited through `update_contact_fields`,
+  and a candidate name changed through `put_document` or
+  `put_documents_and_rekind` (`services/api/src/harrier/profile/store.py`),
+  are not redacted until the process restarts. The text above promises a
+  contact is redactable "from the moment it exists"; an edited value is
+  the same promise, and it is not kept. It changes when the filter learns
+  a value, not what it keeps, so it gets its own amendment here, with its
+  own criterion.
+- A warning when a refresh's read fails. With nothing dropped, the filter
+  stays whole, and the startup warning already covers a store the process
+  cannot read at all.
+- Hosted mode, which installs no identity filter (spec 135).
+- Redaction by literal value, which misses a paraphrase or another
+  spelling (Limitations above).
+
+### Decisions (Akin, in chat, 2026-10-13: refresh)
+
+Both as recommended.
+
+1. **Keep everything, or keep per source.** Taken: a refresh only
+   adds, as Behavior says. It closes the failed read and the deleted
+   contact with one rule, in one line of code, and its only cost is
+   over-redacting an old value until restart. Weighed instead was keeping a
+   source's old values only when that source's read failed, and replacing
+   them when it succeeded. It redacts exactly the store's current values,
+   but leaves the deleted contact in clear and needs `identity_values` to
+   report which read failed.
+2. **The other identity writes.** Taken: their own amendment, as
+   Out of scope says, drafted after this one. Weighed instead was to take
+   them into this change, which makes one diff answer two questions.
+
+### Honest limitations (amendment of 2026-10-13: refresh)
+
+- The failed read is provoked only by renaming a table on SQLite. An I/O
+  error, a damaged file and a Postgres store are reasoned from the code,
+  not probed. The fix does not depend on why the read failed.
+- The process memory holds identity values it would otherwise have
+  dropped. They are already in that memory today, in the store's rows and
+  the filter, and none of it is written anywhere new.
+
+### Proof / origin (amendment of 2026-10-13: refresh)
+
+- The amendment above, its Out of scope, first item, and its Decision 3.
+- The two probes above, run at `fd8dfb0`. The pull request records each
+  script and its output.

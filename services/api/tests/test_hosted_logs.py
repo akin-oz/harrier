@@ -469,9 +469,10 @@ def test_a_hosted_start_refuses_prompt_logging(
         HARRIER_ALLOWED_HOSTS=API_HOST,
         HARRIER_CORS_ORIGINS=SPA_ORIGIN,
         HARRIER_DATABASE_URL=url,
-        # A complete configuration but for the prompt logging, so the start
-        # is refused for that and nothing else (spec 116 added the key).
+        # Required since spec 116: without it the start refuses for the
+        # credentials key before it reaches the prompt-logging check.
         HARRIER_CREDENTIALS_KEY=CREDENTIALS_KEY_TEXT,
+        # Required since spec 106, for the same reason.
         HARRIER_RUN_DATABASE_URL=RUN_DATABASE_URL,
         CLAUDE_CLI_DEBUG=" Yes ",
     )
