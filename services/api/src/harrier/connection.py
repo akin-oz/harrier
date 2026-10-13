@@ -727,8 +727,8 @@ class _SqliteBackend:
         # module began a transaction for and that took the lock.
         self.write_locked = False
         # Whether the outermost block holds a transaction: one it began, or
-        # one it adopted. Read only while a block is open; the next
-        # outermost block sets it again.
+        # one it adopted. False outside any block, so nothing after the block
+        # ends reads the driver on its account.
         self.held = False
         # Whether a statement failed and took that transaction with it.
         # Only a failure counts: a COMMIT the caller ran also leaves the
@@ -823,6 +823,7 @@ class _SqliteBackend:
 
     def end(self) -> None:
         self.pending = []
+        self.held = False
         if not self.driver.in_transaction:
             self.write_locked = False
 
@@ -833,11 +834,13 @@ class _SqliteBackend:
         self.driver.rollback()
 
     def translate(self, error: Exception) -> StoreDatabaseError | None:
-        if not isinstance(error, sqlite3.Error):
-            return None
-        # Every failed statement and cursor read passes here.
+        # Every failed statement and cursor read passes here, whatever it
+        # raised: SQLite's out of memory reaches Python as MemoryError, not
+        # as a sqlite3.Error, and rolls the transaction back all the same.
         if self.held and not self.driver.in_transaction:
             self.lost = True
+        if not isinstance(error, sqlite3.Error):
+            return None
         return store_error_from_sqlite(error)
 
     def get_busy_timeout_ms(self) -> int:
