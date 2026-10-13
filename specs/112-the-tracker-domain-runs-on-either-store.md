@@ -1903,3 +1903,14 @@ All three as recommended.
 - SQLite's documentation, "Response To Errors Within A Transaction"
   (`https://www.sqlite.org/lang_transaction.html`): the errors that may
   roll back a whole transaction.
+
+## Note (2026-10-13): the run class is spec 106's
+
+Decision 4 of the Amendment (2026-10-11): split, owner and nesting sent
+every gate class to spec 127, the run class included. Akin moved the run
+class to spec 106 in chat on 2026-10-13 (spec 106, Amendment
+(2026-10-13), decision 1), because spec 127 depends on 106 and 106's runs
+needed the class to start. Read decision 4's placement of the run class,
+and its "Run commands refuse even with `HARRIER_RUN_OWNER`", as pointing
+at spec 106: run commands refuse until spec 106 lands. The other classes
+stay with spec 127. This note changes nothing else here.
