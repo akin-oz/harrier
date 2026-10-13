@@ -23,7 +23,7 @@ import time
 import uuid
 from collections.abc import Generator, Iterator
 from contextlib import closing, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +56,7 @@ from harrier.credentials import parse_key, put_credential
 from harrier.pgstore import postgres_connect
 from harrier.runoutcome import last_success, record_success
 from harrier.tracker.schema import OWNED_TABLES
+from harrier_api import hostedruns
 from harrier_api.app import create_app
 from harrier_api.hostedauth import RUN_DATABASE_URL_REFUSAL, HostedConfigError
 from harrier_api.hostedstore import RUN_LOGIN_IS_THE_API_LOGIN, HostedStartRefused
@@ -73,6 +74,7 @@ class App:
     manager: RunManager
     key: ec.EllipticCurvePrivateKey
     server: Server
+    beats: list[str]
 
     def headers(self, owner: str) -> dict[str, str]:
         return bearer(mint(self.key, claims_for(sub=owner)))
@@ -128,13 +130,27 @@ def demo_manager(tmp_path: Path, script: str) -> RunManager:
 def hosted_app(
     monkeypatch: pytest.MonkeyPatch, server: Server, manager: RunManager
 ) -> Generator[App]:
+    """The hosted app, its keep-awake beats sent nowhere: each is recorded
+    instead, and the test reaches no network."""
     login = server.login_role()
+    sent: list[str] = []
+
+    def send(url: str) -> int:
+        sent.append(url)
+        return 200
+
+    monkeypatch.setattr(hostedruns, "get_status", send)
     with run_login_for(login.url) as run_url:
         key = keys_served_here(monkeypatch)
         hosted_environment(monkeypatch, login.url, run_url)
+        # Two hosts: the beats go to the first.
+        monkeypatch.setenv("HARRIER_ALLOWED_HOSTS", f"{API_HOST},second.example.test")
         app = create_app(run_manager=manager)
+        records = manager.hosted_runs
+        assert records is not None
+        assert records.keep_awake.url == f"https://{API_HOST}/health"
         with TestClient(app, base_url=f"http://{API_HOST}") as client:
-            yield App(client, manager, key, server)
+            yield App(client, manager, key, server, sent)
 
 
 def wait_until(condition: Any, what: str) -> None:
@@ -183,6 +199,9 @@ def test_a_run_reads_only_its_owners_rows(
 
 
 def test_a_run_outcome_key_is_per_owner_without_naming_one(server: Server) -> None:
+    """A pin, not new behavior: spec 106 keeps `discovery:<track id>` as it
+    is, because `job_runs` is keyed by owner since spec 105. This holds that
+    two owners' runs of track 1 keep two rows."""
     a, b = server.owner(), server.owner()
     times = {a: "2026-10-12 08:00:00", b: "2026-10-13 09:00:00"}
     for owner, at in times.items():
@@ -338,6 +357,18 @@ def test_a_run_cut_off_by_a_stop_reads_interrupted(
         assert row is not None
         assert row["owner"] == a and row["api_instance"] == records.api_instance
         assert row["started_at"] is not None
+        # A row another process holds is not this process's to write.
+        stranger = app.manager.get(live)
+        assert stranger is not None
+        records.record(replace(stranger, id=left[a], state="succeeded"))
+        assert (app.row(left[a]) or {})["state"] == "running"
+        # Listing while it runs leaves its own row running: only another
+        # process's rows are read as cut off.
+        while_live = app.client.get("/runs", headers=app.headers(a)).json()
+        assert {item["id"]: item["state"] for item in while_live}[live] == "running"
+        assert (app.row(live) or {})["state"] == "running"
+        # The machine was kept awake while it ran, through its first host.
+        assert app.beats and set(app.beats) == {f"https://{API_HOST}/health"}
         signal.write_text("", encoding="utf-8")
         app.ended(live)
         wait_until(lambda: (app.row(live) or {}).get("state") == "succeeded", "succeeded")
@@ -358,8 +389,8 @@ def test_a_run_cut_off_by_a_stop_reads_interrupted(
         # A's list shows the cut-off row interrupted, and stores it so.
         listed = app.client.get("/runs", headers=app.headers(a))
         assert listed.status_code == 200, listed.text
-        states = {item["id"]: item["state"] for item in listed.json()}
-        assert states == {live: "succeeded", left[a]: "interrupted"}
+        pairs = sorted((item["id"], item["state"]) for item in listed.json())
+        assert pairs == sorted([(live, "succeeded"), (left[a], "interrupted")])
         stored = app.row(left[a])
         assert stored is not None
         assert stored["state"] == "interrupted" and stored["ended_at"] is not None

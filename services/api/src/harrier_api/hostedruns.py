@@ -223,12 +223,14 @@ class KeepAwake:
         self,
         host: str,
         *,
-        send: Callable[[str], int] = get_status,
+        send: Callable[[str], int] | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         interval: float = BEAT_INTERVAL_SECONDS,
     ) -> None:
         self.url = f"https://{host}{HEALTH_PATH}"
-        self._send = send
+        # Looked up when built, not when the module loads, so the app's
+        # beats can be pointed elsewhere by replacing `get_status`.
+        self._send = send if send is not None else get_status
         self._sleep = sleep
         self._interval = interval
         self._task: asyncio.Task[None] | None = None

@@ -45,7 +45,7 @@ from harrier.llm.config import (
     resolve_auto_providers,
 )
 from harrier.logredact import SECRET_REDACTION
-from harrier_api.hostedruns import HEALTH_PATH, HostedRuns, KeepAwake
+from harrier_api.hostedruns import BEAT_INTERVAL_SECONDS, HEALTH_PATH, HostedRuns, KeepAwake
 from harrier_api.runenv import (
     COPIED_VARIABLES,
     BoundRun,
@@ -58,7 +58,6 @@ from harrier_api.runs import (
     KIND_COMMANDS,
     NO_OWNER_DETAIL,
     PARAMETERIZED_KINDS,
-    TERMINAL_STATES,
     Run,
     RunCredentialRefused,
     RunManager,
@@ -122,7 +121,7 @@ class Beats:
 
     sent: list[str] = field(default_factory=lambda: [])
     fail: bool = False
-    slept: int = 0
+    slept: list[float] = field(default_factory=lambda: [])
 
     def send(self, url: str) -> int:
         self.sent.append(url)
@@ -130,8 +129,8 @@ class Beats:
             raise ConnectionError("synthetic failure")
         return 200
 
-    async def sleep(self, _seconds: float) -> None:
-        self.slept += 1
+    async def sleep(self, seconds: float) -> None:
+        self.slept.append(seconds)
         await asyncio.sleep(0.02)
 
 
@@ -146,10 +145,12 @@ class InMemoryRecords:
     keep_awake: KeepAwake
     rows: dict[str, dict[str, object]] = field(default_factory=lambda: {})
     bound: dict[str, BoundRun] = field(default_factory=lambda: {})
+    begun: int = 0
 
     def begin(
         self, run: Run, needs: Iterable[CredentialKind], extra: Mapping[str, str] | None = None
     ) -> BoundRun:
+        self.begun += 1
         bound = bind_run(
             server_env=os.environ,
             owner=run.owner,
@@ -245,12 +246,40 @@ def test_every_run_kind_declares_its_hosted_answer() -> None:
 
 
 def test_a_hosted_run_needs_an_owner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Refused before the kind is read and before anything is bound, for a
+    kind that runs and a kind the table refuses alike."""
     hosted = hosted_manager(tmp_path, monkeypatch)
-    with pytest.raises(RunsNotHosted) as refused:
-        asyncio.run(hosted.manager.start("demo", owner=""))
-    assert str(refused.value) == NO_OWNER_DETAIL
+    for kind in ("demo", "tailor"):
+        with pytest.raises(RunsNotHosted) as refused:
+            asyncio.run(hosted.manager.start(kind, owner=""))
+        assert str(refused.value) == NO_OWNER_DETAIL
+    assert hosted.records.begun == 0
     assert hosted.manager.list_runs() == []
     assert hosted.records.rows == {}
+
+
+def test_concurrent_starts_of_one_request_make_one_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hosted start awaits the store between the lock check and the
+    registration, so starts take turns: two at once of the same owner,
+    kind and target make one run, not two (test integrity review of PR
+    #316)."""
+    signal = tmp_path / "go-on"
+    hosted = hosted_manager(tmp_path, monkeypatch, waits_for(signal))
+    owner = new_owner()
+
+    async def go() -> tuple[Run, Run]:
+        first, second = await asyncio.gather(
+            hosted.manager.start("demo", owner=owner), hosted.manager.start("demo", owner=owner)
+        )
+        signal.write_text("", encoding="utf-8")
+        await hosted.manager.wait(first.id)
+        return first, second
+
+    first, second = asyncio.run(go())
+    assert first.id == second.id
+    assert hosted.records.begun == 1
 
 
 def test_run_records_hold_the_run_managers_states() -> None:
@@ -410,18 +439,40 @@ EXCLUDED = (
 )
 
 
+# Spec 106's "Copied from the server's environment when set", written out
+# here rather than read from the code, so a name the code adds is a failure.
+SPEC_COPIED = (
+    "PATH",
+    "LANG",
+    "LC_ALL",
+    "TZ",
+    "PLAYWRIGHT_BROWSERS_PATH",
+    "HARRIER_REVISION",
+    "HARRIER_BUILT_AT",
+    "HARRIER_LOG_LEVEL",
+    "APIFY_LINKEDIN_ACTOR",
+    "APIFY_LINKEDIN_PROFILE_SEARCH_ACTOR",
+    "APIFY_ACADEMIC_ACTOR",
+    "APIFY_ACADEMIC_PORTALS",
+    "ANTHROPIC_MAX_TOKENS",
+)
+
+
 def test_the_child_environment_holds_only_the_allowlist_and_its_owners_values(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    assert set(COPIED_VARIABLES) == set(SPEC_COPIED)
+    assert set(SPEC_COPIED).isdisjoint(EXCLUDED)
     sentinel = synthetic_secret("sentinel")
     random_name = f"SYNTHETIC_{uuid.uuid4().hex.upper()}"
     hosted = hosted_manager(tmp_path, monkeypatch)
     # Set after the manager, so the run URL and hosted mode stay what the
     # manager needs, and each excluded name holds the sentinel otherwise.
+    # Nothing writes an excluded name after this.
     for name in (*EXCLUDED, random_name):
         if name not in ("HARRIER_RUN_DATABASE_URL", "HARRIER_AUTH"):
             monkeypatch.setenv(name, sentinel)
-    copied = {name: f"copied-{name}" for name in COPIED_VARIABLES if name != "PATH"}
+    copied = {name: f"copied-{name}" for name in SPEC_COPIED if name != "PATH"}
     for name, value in copied.items():
         monkeypatch.setenv(name, value)
     owner = new_owner()
@@ -496,6 +547,11 @@ def test_a_hosted_run_works_in_its_owners_directory(
     )
     hosted = hosted_manager(tmp_path, monkeypatch, script)
     owners = new_owner(), new_owner()
+    # One directory exists already, readable by others: the run makes it
+    # private as it is, not only when it creates it.
+    early = tmp_path / "api-data" / "owners" / owners[0]
+    early.mkdir(parents=True)
+    early.chmod(0o755)
     seen: list[str] = []
     for owner in owners:
         run = run_to_end(hosted.manager, owner)
@@ -563,6 +619,27 @@ def test_a_hosted_run_reads_no_store_url_from_env_file(
     assert started.stderr.strip() == f"error: {cli.OWNER_WITHOUT_POSTGRES}"
 
 
+@pytest.mark.dotenv_fallback
+def test_the_password_scrub_reads_no_env_file_in_a_hosted_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The store password scrub falls back to `.env` for the URL whose
+    password it masks. In a hosted run it does not, so a `.env` in the run's
+    working directory adds nothing to what the run treats as its store."""
+    from harrier.logredact import store_password_forms
+
+    password = f"dotenvpw{uuid.uuid4().hex}"
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(
+        f"HARRIER_DATABASE_URL=postgresql://u:{password}@127.0.0.1:1/db\n", encoding="utf-8"
+    )
+    monkeypatch.delenv("HARRIER_DATABASE_URL")
+    # Locally the file is read.
+    assert password in store_password_forms()
+    monkeypatch.setenv(RUN_OWNER_VARIABLE, new_owner())
+    assert store_password_forms() == ()
+
+
 # --- the run class on a Postgres store ---
 
 RUN_VERBS: dict[str, list[str]] = {
@@ -588,7 +665,10 @@ def cli_on_postgres(
     tmp_path holding a `.env`, and every open recorded and refused."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").write_text("TELEGRAM_BOT_TOKEN=synthetic-from-dotenv\n", encoding="utf-8")
-    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    # Set and removed through monkeypatch, so the test's end removes what
+    # a `.env` read may have written, whatever fails first.
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "placeholder")
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN")
     monkeypatch.setenv("HARRIER_DATABASE_URL", RUN_DATABASE_URL)
     opened: list[object] = []
 
@@ -873,13 +953,21 @@ def test_an_active_run_keeps_the_machine_awake(
     assert "a keep-awake beat failed: ConnectionError" in caplog.text
     assert "api.example.test" not in caplog.text
 
-    # Locally nothing is sent.
+    # The beats wait the interval they were given.
+    assert set(beats.slept) == {1.0}
+    # The interval the app uses is below the 80 s after which spec 115's F1
+    # saw the proxy stop the machine.
+    assert BEAT_INTERVAL_SECONDS < 80
+
+    # Locally nothing is sent: a local manager has no beats at all.
     monkeypatch.delenv("HARRIER_AUTH")
-    beats.sent.clear()
-    local = run_to_end(hosted.manager, "")
-    signal.unlink()
-    assert local.state == "succeeded" or local.state in TERMINAL_STATES
-    assert beats.sent == []
+    local_manager = RunManager(
+        journal_path=tmp_path / "local.jsonl",
+        kind_commands={"demo": [sys.executable, "-c", ""]},
+    )
+    assert local_manager.hosted_runs is None
+    local = run_to_end(local_manager, "")
+    assert local.state == "succeeded"
 
 
 # --- binding a run from another caller (spec 108) ---

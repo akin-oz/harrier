@@ -63,7 +63,6 @@ from harrier_api.runmodels import (
     get_runs,
 )
 from harrier_api.runs import (
-    HOSTED_RUN_KINDS,
     TERMINAL_STATES,
     Run,
     RunManager,
@@ -363,8 +362,30 @@ START_CASES: tuple[StartCase, ...] = (
     StartCase("POST", "/settings/backups/{archive}/verify", "verify-backup", {}),
 )
 
-# The routes whose kind spec 106's table refuses hosted.
-REFUSED_CASES = tuple(case for case in START_CASES if not HOSTED_RUN_KINDS[case.kind].runs)
+# Spec 106's table, "Which kinds run hosted", written out here rather than
+# read from the code: each refused kind's detail. A kind not listed runs.
+SPEC_REFUSALS: dict[str, str] = {
+    **{
+        kind: f"{kind} runs are not available on the hosted API until spec 107"
+        for kind in (
+            "tailor",
+            "cover-letter",
+            "answers",
+            "evaluate",
+            "outreach-draft",
+            "find-contacts",
+            "backfill-posters",
+            "scoring-export",
+        )
+    },
+    "gmail-watch": "gmail-watch runs are not offered on the hosted service (spec 109)",
+    "backup": "backup runs are local only",
+    "verify-backup": "verify-backup runs are local only",
+}
+
+# The routes whose kind spec 106's table refuses hosted, and the others.
+REFUSED_CASES = tuple(case for case in START_CASES if case.kind in SPEC_REFUSALS)
+OFFERED_CASES = tuple(case for case in START_CASES if case.kind not in SPEC_REFUSALS)
 
 # The routes as the contract names them.
 START_ROUTES = {
@@ -429,7 +450,7 @@ def test_a_kind_not_offered_hosted_answers_501_naming_its_spec(
             case.method, path, headers=hosted.as_owner(caller), **case.send
         )
         assert response.status_code == 501, response.text
-        assert response.json() == {"detail": HOSTED_RUN_KINDS[case.kind].refusal}
+        assert response.json() == {"detail": SPEC_REFUSALS[case.kind]}
     # A route that writes its input is refused there, before `start`; every
     # other route reached `start` with the caller as the run's owner.
     assert given == ([] if case.writes_input else [caller])
@@ -439,6 +460,51 @@ def test_a_kind_not_offered_hosted_answers_501_naming_its_spec(
     assert not journal.exists()
     assert manager.list_runs() == []
     assert spawned == []
+
+
+@pytest.mark.parametrize("case", OFFERED_CASES, ids=lambda case: f"{case.method} {case.path}")
+def test_a_kind_offered_hosted_reaches_its_start(
+    case: StartCase,
+    hosted_process: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Spec 106: a route whose kind the table offers is not refused hosted.
+    It writes its input, if it has one, and reaches `start` with its kind
+    and the caller as owner; binding the run is the store's, which these
+    apps do not have, so `start` is replaced here (test integrity review of
+    PR #316)."""
+    monkeypatch = hosted_process
+    conn = connect()
+    job = add_job(
+        conn,
+        {
+            "company": "Northwind Labs",
+            "title": "Senior Engineer",
+            "url": "https://boards.example.com/northwind/1",
+            "source": "greenhouse",
+            "location": "Remote, Europe",
+        },
+        scope=default_scope(conn),
+    )
+    conn.close()
+    manager = hosted_manager(tmp_path)
+    given: list[tuple[str, str]] = []
+
+    async def start(kind: str, params: Any = None, *, owner: str = "") -> Run:
+        given.append((kind, owner))
+        for path in () if params is None else params.files:
+            path.unlink(missing_ok=True)
+        return Run(id="offered", kind=kind, command=[], owner=owner)
+
+    monkeypatch.setattr(manager, "start", start)
+    caller = new_owner()
+    with owners(monkeypatch, manager) as hosted:
+        path = case.path.replace("{job}", str(job))
+        response = hosted.client.request(
+            case.method, path, headers=hosted.as_owner(caller), **case.send
+        )
+        assert response.status_code == 200, response.text
+    assert given == [(case.kind, caller)]
 
 
 def test_the_contract_declares_the_hosted_run_refusal() -> None:
