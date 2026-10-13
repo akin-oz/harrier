@@ -152,9 +152,16 @@ class IdentityRedactionFilter(logging.Filter):
         ]
 
     def refresh(self, values: set[str]) -> None:
-        """Replace the value set in place, so every handler already holding
-        this filter starts redacting the new values immediately."""
-        self._set_values(values)
+        """Add `values` to the set in place, so every handler already holding
+        this filter starts redacting them immediately.
+
+        Nothing is dropped. A refresh whose read of one source failed returns
+        only the other's values, and a deleted contact is missing from the
+        next read; replacing the set logged both in clear (spec 045,
+        amendment of 2026-10-13). A value this process has redacted stays
+        redacted until it restarts.
+        """
+        self._set_values({*self._values, *values})
 
     def filter(self, record: logging.LogRecord) -> bool:
         if not self._values:

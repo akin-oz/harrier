@@ -976,6 +976,9 @@ def update_contact_fields(conn: Connection, contact_id: int, fields: Mapping[str
             f"UPDATE contacts SET {assignments} WHERE id = ?",
             [*[str(value) for value in fields.values()], contact_id],
         )
+    # An edited name is identity data from the moment it is written, as a new
+    # contact is (spec 045, amendment of 2026-10-13).
+    refresh_installed(conn)
 
 
 def delete_contact(conn: Connection, contact_id: int) -> bool:
