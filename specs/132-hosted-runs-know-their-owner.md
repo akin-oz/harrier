@@ -174,7 +174,7 @@ the run inputs directory, not only `start`.
 - [ ] Hosted, every route that can start a run answers 501 with the spec
       106 text, and after each the run inputs directory holds no file, the
       journal holds no new entry and no process was spawned
-      (`services/api/tests/test_run_owner.py::test_starting_a_run_hosted_is_refused_until_spec_106`,
+      (`services/api/tests/test_run_owner.py::test_a_kind_not_offered_hosted_answers_501_naming_its_spec`,
       one case per route).
 - [ ] Locally, a run's owner is empty, every run is listed, and the
       journal entry it writes reads back
@@ -278,7 +278,7 @@ the points below, so the code and the spec agree.
   `write_run_input` covers all six. The 501 test has one case per route
   and marks the six, and for each of the others it checks that `start`
   was reached with the caller as owner
-  (`services/api/tests/test_run_owner.py::test_starting_a_run_hosted_is_refused_until_spec_106`).
+  (`services/api/tests/test_run_owner.py::test_a_kind_not_offered_hosted_answers_501_naming_its_spec`).
 - **One file outside the Scope's paths changes.** Spec 104's "Runs and
   stream" criteria marked three of this spec's tests as planned. The
   citation check fails a planned test that exists, so
@@ -368,3 +368,16 @@ the points below, so the code and the spec agree.
 - The stream test runs on the wall clock: its token expires at least
   three seconds after it is minted, and the stream must end within ten.
   A machine that stalls longer than that fails it.
+
+## Note (2026-10-13): spec 106 lifts the 501
+
+Spec 106 is built. Hosted, a run starts when its kind is one spec 106's
+table offers and the request carries an owner; a run with an empty owner
+is still refused before it starts, now with `a run on the hosted API needs
+an owner`, and a kind the table refuses answers 501 naming its spec. The
+two citations of the test that proved every hosted start refused are
+re-cited to the test that replaced it, which covers the refused kinds with
+one case per route
+(`services/api/tests/test_run_owner.py::test_a_kind_not_offered_hosted_answers_501_naming_its_spec`).
+A hosted run's journal entry no longer exists: spec 106 records hosted
+runs in `run_records`. Nothing else in this spec changes.
