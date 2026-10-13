@@ -108,6 +108,10 @@ os.environ["HARRIER_DATA_DIR"] = str(SESSION_DATA_DIR)
 # empty value wins over `.env` (spec 011), so a hosted URL there never reaches
 # a test, which sets its own when it wants Postgres (spec 060, spec 103).
 os.environ["HARRIER_DATABASE_URL"] = ""
+# Local mode, whatever the operator's shell names: importing the API builds
+# the app, which reads hosted mode from the process environment (spec 104).
+# The hosted tests build their own configuration.
+os.environ.pop("HARRIER_AUTH", None)
 atexit.register(shutil.rmtree, SESSION_DATA_DIR.parent, ignore_errors=True)
 
 GUARD_PROBE_EVENT = "harrier.tests.operator_data_guard_probe"
@@ -220,6 +224,7 @@ def _data_dir(  # pyright: ignore[reportUnusedFunction]
     """
     monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("HARRIER_DATABASE_URL", "")
+    monkeypatch.delenv("HARRIER_AUTH", raising=False)
 
 
 # --- the store URL pin (spec 103) ---
@@ -534,8 +539,10 @@ def auth() -> dict[str, str]:
 
 ERROR_OUT_SCHEMA = {"$ref": "#/components/schemas/ErrorOut"}
 # Statuses a route's own refusals never use: success, the token (spec 035),
-# the schema (FastAPI) and the host lease (spec 075).
-NOT_A_REFUSAL = frozenset({"200", "201", "403", "422", "503"})
+# the schema (FastAPI), the host lease (spec 075) and the hosted bearer
+# token (spec 104). The last is declared by the route class and proved by
+# tests/test_hosted_auth.py::test_the_contract_declares_every_auth_refusal.
+NOT_A_REFUSAL = frozenset({"200", "201", "401", "403", "422", "503"})
 
 
 def own_causes(responses: dict[str, Any], status: str) -> set[str]:

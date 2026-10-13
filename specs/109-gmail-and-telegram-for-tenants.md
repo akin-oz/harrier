@@ -198,7 +198,7 @@ the only outbound messages" stand as written.
 Locally the routes are registered but answer 404 with `ErrorOut` detail
 `Telegram is configured in .env on the local product`, so the exported
 document is the same in both modes (spec 104,
-planned test_the_contract_is_the_same_in_both_modes). Hosted, spec 104's
+`services/api/tests/test_hosted_auth.py::test_the_contract_is_the_same_in_both_modes`). Hosted, spec 104's
 middleware requires a bearer token on each.
 
 `TelegramSettingsIn`: `bot_token` (`SecretStr`), `chat_id` (`str`). Both

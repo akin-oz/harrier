@@ -216,6 +216,7 @@ test("a refused approval is shown in the words the API used", async () => {
 type ErrorOut = components["schemas"]["ErrorOut"];
 type DatabaseHeldOut = components["schemas"]["DatabaseHeldOut"];
 type HTTPValidationError = components["schemas"]["HTTPValidationError"];
+type AuthRefusalOut = components["schemas"]["AuthRefusalOut"];
 type User = ReturnType<typeof userEvent.setup>;
 
 async function clickInDueRow(user: User, name: string): Promise<void> {
@@ -393,11 +394,14 @@ test("an outreach refusal is read through the contract's types", () => {
   // Checked by `pnpm type-check`, which compiles this file; when the test
   // runs, `expectTypeOf` does nothing. A reader that took `unknown` again,
   // or a call whose 404, 409 or 503 lost its declared body, does not compile.
+  // A 503 is the host lease's body or, hosted, the unavailable signing keys'
+  // (spec 104).
   // `DatabaseHeldOut` fits `ErrorOut` by shape, so the reader's union is
-  // pinned here by name (spec 129, Honest limitations).
+  // pinned here by name (spec 129, Honest limitations). The hosted API's
+  // token refusal joins it (spec 104).
   expectTypeOf(refusalMessage)
     .parameter(0)
-    .toEqualTypeOf<ErrorOut | DatabaseHeldOut | HTTPValidationError>();
+    .toEqualTypeOf<ErrorOut | DatabaseHeldOut | HTTPValidationError | AuthRefusalOut>();
 
   expectTypeOf<
     Declared<operations["listOutreachDue"]["responses"][404]>
@@ -444,33 +448,38 @@ test("an outreach refusal is read through the contract's types", () => {
   expectTypeOf<Declared<operations["findContacts"]["responses"][404]>>().toEqualTypeOf<ErrorOut>();
   expectTypeOf<Declared<operations["findContacts"]["responses"][409]>>().toEqualTypeOf<ErrorOut>();
 
+  expectTypeOf<Declared<operations["listOutreachDue"]["responses"][503]>>().toEqualTypeOf<
+    DatabaseHeldOut | AuthRefusalOut
+  >();
+  expectTypeOf<Declared<operations["listOutreachContacts"]["responses"][503]>>().toEqualTypeOf<
+    DatabaseHeldOut | AuthRefusalOut
+  >();
+  expectTypeOf<Declared<operations["listCandidates"]["responses"][503]>>().toEqualTypeOf<
+    DatabaseHeldOut | AuthRefusalOut
+  >();
+  expectTypeOf<Declared<operations["markOutreachSent"]["responses"][503]>>().toEqualTypeOf<
+    DatabaseHeldOut | AuthRefusalOut
+  >();
+  expectTypeOf<Declared<operations["markOutreachReplied"]["responses"][503]>>().toEqualTypeOf<
+    DatabaseHeldOut | AuthRefusalOut
+  >();
+  expectTypeOf<Declared<operations["snoozeOutreach"]["responses"][503]>>().toEqualTypeOf<
+    DatabaseHeldOut | AuthRefusalOut
+  >();
+  expectTypeOf<Declared<operations["approveCandidate"]["responses"][503]>>().toEqualTypeOf<
+    DatabaseHeldOut | AuthRefusalOut
+  >();
+  expectTypeOf<Declared<operations["rejectCandidate"]["responses"][503]>>().toEqualTypeOf<
+    DatabaseHeldOut | AuthRefusalOut
+  >();
+  expectTypeOf<Declared<operations["findContacts"]["responses"][503]>>().toEqualTypeOf<
+    DatabaseHeldOut | AuthRefusalOut
+  >();
+
+  // Hosted, a missing, invalid or expired token is a 401 (spec 104).
   expectTypeOf<
-    Declared<operations["listOutreachDue"]["responses"][503]>
-  >().toEqualTypeOf<DatabaseHeldOut>();
-  expectTypeOf<
-    Declared<operations["listOutreachContacts"]["responses"][503]>
-  >().toEqualTypeOf<DatabaseHeldOut>();
-  expectTypeOf<
-    Declared<operations["listCandidates"]["responses"][503]>
-  >().toEqualTypeOf<DatabaseHeldOut>();
-  expectTypeOf<
-    Declared<operations["markOutreachSent"]["responses"][503]>
-  >().toEqualTypeOf<DatabaseHeldOut>();
-  expectTypeOf<
-    Declared<operations["markOutreachReplied"]["responses"][503]>
-  >().toEqualTypeOf<DatabaseHeldOut>();
-  expectTypeOf<
-    Declared<operations["snoozeOutreach"]["responses"][503]>
-  >().toEqualTypeOf<DatabaseHeldOut>();
-  expectTypeOf<
-    Declared<operations["approveCandidate"]["responses"][503]>
-  >().toEqualTypeOf<DatabaseHeldOut>();
-  expectTypeOf<
-    Declared<operations["rejectCandidate"]["responses"][503]>
-  >().toEqualTypeOf<DatabaseHeldOut>();
-  expectTypeOf<
-    Declared<operations["findContacts"]["responses"][503]>
-  >().toEqualTypeOf<DatabaseHeldOut>();
+    Declared<operations["listOutreachDue"]["responses"][401]>
+  >().toEqualTypeOf<AuthRefusalOut>();
 });
 
 test("no candidates reads as none found rather than an empty table", async () => {

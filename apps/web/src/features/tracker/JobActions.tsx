@@ -5,6 +5,7 @@ import type { KeyboardEvent } from "react";
 
 import type { Job, JobStatus } from "../../entities/job";
 import { api } from "../../shared/api/client";
+import type { Refusal } from "../../shared/api/refusal";
 import {
   TRACKS_KEY,
   trackKey,
@@ -637,15 +638,10 @@ export function JobActions({ job, track, onApply }: Props) {
   );
 }
 
-// What a tracker write answers when it refuses, as the contract declares it
-// (spec 082): the domain's words on a 404 or a 409, the hold on a 503, and
-// the field errors on a 422. Named from the generated types, so a body the
-// contract adds to one of these writes, or a field it renames, fails the
-// type check here rather than reaching the operator as the fallback.
-type Refusal =
-  | components["schemas"]["ErrorOut"]
-  | components["schemas"]["DatabaseHeldOut"]
-  | components["schemas"]["HTTPValidationError"];
+// What a tracker write answers when it refuses is the shared `Refusal`, named
+// from the contract's generated types (spec 082). A copy of it here once
+// lacked the hosted token refusal and still compiled, because the shapes fit
+// (spec 104).
 
 // The API answers a refusal with a `detail` string that is the message the
 // domain wrote. Showing it verbatim is the point: the CLI prints the same

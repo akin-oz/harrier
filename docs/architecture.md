@@ -179,7 +179,7 @@ refused (`services/api/src/harrier/connection.py`,
 applies pending migrations and `harrier store status` prints the dialect
 and version. They are the only commands that run on Postgres: every other
 command refuses to start while the URL names it until spec 127, and the
-API until spec 104 (`services/api/tests/test_store_cli.py`). Opening a Postgres store
+API until spec 134 (`services/api/tests/test_store_cli.py`). Opening a Postgres store
 never migrates it. The Postgres baseline, recorded as version 9, sits in
 `services/api/src/harrier/tracker/schema.py` beside the SQLite migrations,
 and `services/api/tests/test_dialect_parity.py` holds the two stores to the
@@ -251,8 +251,8 @@ default privileges, which grant those roles everything the migrating role
 creates, in `public` and in every schema. No migration creates them, and
 migration 10 refuses a store without the roles and the auth objects.
 
-This polices rows; it does not yet serve anyone. Nothing authenticates a
-request until spec 104, and the CLI admits a Postgres URL only for
+This polices rows; it does not yet serve anyone. No hosted API serves a
+request until spec 134, and the CLI admits a Postgres URL only for
 `harrier store` until spec 127, so no owner can reach their rows through
 harrier. A role with
 `BYPASSRLS`, such as Supabase's `service_role`, sees every owner's rows
@@ -281,13 +281,42 @@ A store stopped at version 15 refuses an owner's second track there, as the
 project did
 (`services/api/tests/test_owner_policy.py::test_track_two_needs_migration_16_on_the_faithful_shim`).
 
+Hosted mode is explicit (spec 104). `HARRIER_AUTH=supabase` turns it on,
+read from the process environment only, never from a `.env` file. It then
+requires `HARRIER_SUPABASE_URL`, `HARRIER_ALLOWED_HOSTS`,
+`HARRIER_CORS_ORIGINS` and a Postgres `HARRIER_DATABASE_URL`, and refuses
+to start naming the variable when one is missing or malformed. Demo mode,
+a missing `hosted` dependency group and a service credential in the
+environment refuse the start too
+(`services/api/src/harrier_api/hostedauth.py`,
+`services/api/tests/test_hosted_auth.py::test_hosted_start_refuses_incomplete_configuration`).
+Unset or empty, the API is the local API of spec 035, unchanged
+(`services/api/tests/test_hosted_auth.py::test_local_mode_has_no_hosted_middleware`).
+The hosted app needs a Supabase access token in the `Authorization`
+header on every route but `GET /health`. An ASGI middleware checks it
+before routing against the project's published ES256 or RS256 keys and
+answers a refusal with `AuthRefusalOut`: 401, 403 for an anonymous
+session, or 503 while the keys cannot be fetched. It trusts only the
+configured host names and sends CORS headers only to the configured
+origins. The contract declares the 401 and the bearer scheme on every
+route that needs the token
+(`services/api/tests/test_hosted_auth.py::test_the_contract_declares_every_auth_refusal`),
+in both modes, so there is one document
+(`services/api/tests/test_hosted_auth.py::test_the_contract_is_the_same_in_both_modes`).
+Hosted, spec 035's local token is not read: the bearer token serves its
+purpose
+(`services/api/tests/test_hosted_auth.py::test_the_local_token_is_not_read_hosted`).
+The hosted API does not serve yet. `create_app` still refuses a Postgres
+URL with spec 103's text, so the hosted app is assembled only in the tests
+until spec 134 lifts that gate
+(`services/api/tests/test_hosted_auth.py::test_a_complete_hosted_configuration_still_meets_the_spec_103_gate`).
+
 No other hosted component exists yet. Specs 103 to 112 sequence the build:
 the Postgres store (103, approved), API authentication (104), row-level
 policy (105, approved), tenant credentials and run isolation (106),
 artifacts in Storage (107), hosted scheduling (108), Gmail and Telegram for
 tenants (109), the deploy pipeline (110), sign-up, export and deletion
-(111), and the domain on either store (112). Specs 104 and 106 to 112 stay
-`approved: no` until refined.
+(111), and the domain on either store (112).
 
 ## Honest limitations
 

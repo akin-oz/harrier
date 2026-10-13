@@ -46,12 +46,25 @@ dev = [
     # The Postgres store's tests run in CI and wherever a test server is
     # named (spec 103, tests/pg_support.py).
     {include-group = "postgres"},
+    # The hosted API's token tests run everywhere, with keys made in the
+    # test (spec 104).
+    {include-group = "hosted"},
 ]
 # The hosted Postgres store is optional: install with `uv sync --group
 # postgres`. Without it, a postgresql:// HARRIER_DATABASE_URL is refused with
 # that instruction, and the local SQLite store is unaffected (spec 103).
 postgres = [
     "psycopg[binary]>=3.2",
+]
+# The hosted API is optional: install with `uv sync --group hosted`. With
+# HARRIER_AUTH=supabase and without it, the API refuses to start naming that
+# command (spec 104). It verifies Supabase's signed tokens, and it serves a
+# Postgres store, so it includes that group.
+hosted = [
+    # 2.15.1, as locked, refuses a token whose `alg` differs from its key's
+    # (`PyJWS._verify_signature`); the verifier relies on it (spec 104).
+    "pyjwt[crypto]>=2.15.1",
+    {include-group = "postgres"},
 ]
 
 [build-system]

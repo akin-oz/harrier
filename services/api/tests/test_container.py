@@ -242,9 +242,10 @@ PYPROJECT = ROOT / "services" / "api" / "pyproject.toml"
 BUILD_ONLY_GROUPS = {"dev"}
 
 # Not a feature of this image. The local container runs on SQLite; the
-# Postgres store is the hosted deployment's, and which image serves it is
-# spec 110's decision. Spec 103 keeps a local install unchanged.
-NOT_IN_THE_LOCAL_IMAGE = {"postgres"}
+# Postgres store and the hosted API are the hosted deployment's, and which
+# image serves them is spec 110's decision. Specs 103 and 104 keep a local
+# install unchanged.
+NOT_IN_THE_LOCAL_IMAGE = {"postgres", "hosted"}
 
 
 def dependency_groups() -> set[str]:

@@ -576,3 +576,19 @@ this spec.
   running migrations before a deploy serves: spec 110.
 - Identity values in hosted logs, rate limiting, and audit logging of
   successful requests.
+
+## Amendment (2026-10-12): from the review of PR #297
+
+The test integrity review of spec 104's pull request (PR #297) found that
+nothing proves `create_app` hands a complete hosted configuration to
+`create_hosted_app`. Under spec 104 the gate refuses first, so that line
+of `services/api/src/harrier_api/app.py` cannot run, and replacing it with
+nothing changes no test. This spec lifts the gate, so the line first runs
+here, and the criterion belongs here. Recorded under spec 104's trailer by
+the review-response rule; the text above is not changed.
+
+- [ ] With a complete hosted configuration and a Postgres
+      `HARRIER_DATABASE_URL` that passes the start checks, `create_app`
+      returns the hosted app: a request without a token is 401 `missing`,
+      and `GET /session` is 404
+      (planned test_create_app_serves_a_complete_hosted_configuration_hosted).

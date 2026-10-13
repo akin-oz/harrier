@@ -21,6 +21,7 @@ import sys
 import textwrap
 from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.routing import APIRoute
@@ -304,13 +305,27 @@ def test_every_route_that_opens_the_database_declares_the_503() -> None:
     }
     assert len(with_conn) > 10, "the walk is not finding the routes that open the database"
     # Judged on the contract, which is what a client sees: exactly the routes
-    # that open the database declare the 503, and no other.
+    # that open the database declare the 503 with the hold's body, and no
+    # other. The hosted API's 503 for unavailable signing keys shares the
+    # status on every route that needs a token (spec 104), so the body, not
+    # the status, is what names this cause.
     spec = app.openapi()
+    held = {"$ref": "#/components/schemas/DatabaseHeldOut"}
+
+    def bodies(operation: dict[str, Any]) -> list[object]:
+        # Any media type: a route that answers HTML declares its 503 there.
+        entry = operation.get("responses", {}).get("503", {})
+        found: list[object] = []
+        for media in entry.get("content", {}).values():
+            schema = media.get("schema", {})
+            found.extend(schema.get("anyOf", [schema]))
+        return found
+
     declared = {
         (method, path)
         for path, operations in spec["paths"].items()
         for method, operation in operations.items()
-        if "503" in operation.get("responses", {})
+        if held in bodies(operation)
     }
     assert declared == with_conn
 

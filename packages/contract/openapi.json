@@ -234,6 +234,32 @@
         "title": "ArtifactOut",
         "type": "object"
       },
+      "AuthRefusalOut": {
+        "description": "Why the hosted API refused a request's token (spec 104). `detail` is\na fixed sentence per reason, and never quotes the token, a claim, or the\nverifier's words. The local API never sends it.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "missing",
+              "invalid",
+              "expired",
+              "anonymous",
+              "keys_unavailable"
+            ],
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail",
+          "reason"
+        ],
+        "title": "AuthRefusalOut",
+        "type": "object"
+      },
       "BackfillIn": {
         "properties": {
           "dry_run": {
@@ -2820,6 +2846,13 @@
         "title": "WatchIn",
         "type": "object"
       }
+    },
+    "securitySchemes": {
+      "bearer": {
+        "bearerFormat": "JWT",
+        "scheme": "bearer",
+        "type": "http"
+      }
     }
   },
   "info": {
@@ -2883,6 +2916,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -2920,13 +2963,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Draftanswers"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Draft Answers"
       }
     },
@@ -2979,6 +3035,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -3016,13 +3082,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Listartifacts"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "List Artifacts"
       }
     },
@@ -3077,6 +3156,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -3114,13 +3203,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Readartifact"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Read Artifact"
       }
     },
@@ -3169,6 +3271,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -3206,13 +3318,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Getbrief"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Get Brief"
       },
       "put": {
@@ -3281,6 +3406,16 @@
             },
             "description": "the store refused the brief, in its words"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -3318,13 +3453,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Putbrief"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Put Brief"
       }
     },
@@ -3382,6 +3530,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -3419,13 +3577,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Draftcoverletter"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Draft Cover Letter"
       }
     },
@@ -3483,6 +3654,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -3520,13 +3701,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Evaluateoffer"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Evaluate Offer Route"
       }
     },
@@ -3585,6 +3779,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -3622,13 +3826,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Tailorresume"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Tailor Resume"
       }
     },
@@ -3755,6 +3972,16 @@
             },
             "description": "company and title are required"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -3785,13 +4012,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Capturejob"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Capture Via Post"
       }
     },
@@ -3879,6 +4119,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -3886,13 +4136,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Listconfig"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "List Configuration"
       }
     },
@@ -3921,6 +4184,16 @@
             },
             "description": "a file holds a value the store refuses"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -3938,13 +4211,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Importconfig"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Import Configuration"
       }
     },
@@ -3974,6 +4260,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -4001,13 +4297,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Deleteconfig"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Delete Configuration"
       },
       "get": {
@@ -4034,6 +4343,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -4061,13 +4380,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Getconfig"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Get Configuration"
       },
       "put": {
@@ -4114,6 +4446,16 @@
             },
             "description": "The value is not the shape this kind requires."
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -4141,19 +4483,32 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Putconfig"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Put Configuration"
       }
     },
     "/health": {
       "get": {
-        "description": "Always 200 while the process runs, so the compose healthcheck never\nmarks the container unhealthy because a host run holds the database.\n\nIt looks for a host lease before it opens anything, and with one present\nit does not open the database at all; that is why it takes no `Conn`\n(spec 075). Its own lease, when it runs on the host, is not a hold.",
+        "description": "Always 200 while the process runs, so the compose healthcheck never\nmarks the container unhealthy because a host run holds the database.\n\nIt looks for a host lease before it opens anything, and with one present\nit does not open the database at all; that is why it takes no `Conn`\n(spec 075). Its own lease, when it runs on the host, is not a hold.\n\nHosted, it is the one public route, and it opens nothing: counting jobs\nwithout an identity would fail under the row policy or, on a role that\nbypasses it, count every owner's rows, and where the store lives is no\ncaller's business (spec 104).",
         "operationId": "getHealth",
         "responses": {
           "200": {
@@ -4249,6 +4604,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -4273,13 +4638,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Listjobs"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Jobs"
       }
     },
@@ -4318,6 +4696,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -4327,8 +4715,23 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "List Mail Events"
       }
     },
@@ -4357,6 +4760,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -4379,8 +4792,23 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Run Mail Watch"
       }
     },
@@ -4411,6 +4839,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -4433,8 +4871,23 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Take Backup"
       }
     },
@@ -4474,6 +4927,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -4511,13 +4974,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Checkdata"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Check Data"
       }
     },
@@ -4569,6 +5045,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -4606,13 +5092,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Linkcontactids"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Link Contact Ids"
       }
     },
@@ -4665,6 +5164,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -4702,13 +5211,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Rundigest"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Run Digest Route"
       }
     },
@@ -4757,6 +5279,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -4804,13 +5336,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Rundiscover"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Run Discover"
       }
     },
@@ -4862,6 +5407,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -4899,13 +5454,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Reassesseligibility"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Reassess Job Eligibility"
       }
     },
@@ -4959,6 +5527,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -4996,13 +5574,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Evaluateprospects"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Evaluate Prospects Route"
       }
     },
@@ -5054,6 +5645,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -5091,13 +5692,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Backfillevents"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Backfill Events Route"
       }
     },
@@ -5132,6 +5746,16 @@
               "text/csv": {}
             },
             "description": "the CSV, as `harrier export` writes it"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
             "description": "missing or wrong local API token"
@@ -5170,13 +5794,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Downloadcontactscsv"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Download Contacts"
       }
     },
@@ -5212,6 +5849,16 @@
             },
             "description": "the CSV, as `harrier export` writes it"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -5239,13 +5886,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Downloadjobscsv"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Download Jobs"
       }
     },
@@ -5264,6 +5924,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -5276,8 +5946,23 @@
               }
             },
             "description": "refused: a run of this kind is active with other options, or the request lacks its explicit field"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Check Feeds"
       }
     },
@@ -5308,6 +5993,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -5330,8 +6025,23 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Prune Dead Feeds"
       }
     },
@@ -5354,6 +6064,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -5361,13 +6081,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Listprofiledocuments"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "List Profile Documents"
       }
     },
@@ -5419,6 +6152,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -5456,13 +6199,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Reconsider"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Reconsider"
       }
     },
@@ -5481,17 +6237,40 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "503": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Getschedule"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Get Schedule"
       }
     },
@@ -5531,6 +6310,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -5568,13 +6357,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Exportscoringfeatures"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Export Scoring Features"
       }
     },
@@ -5603,6 +6405,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -5625,8 +6437,23 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Backfill"
       }
     },
@@ -5648,6 +6475,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -5655,13 +6492,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Listoutreachcontacts"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "List Outreach Contacts"
       }
     },
@@ -5704,6 +6554,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -5741,13 +6601,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Listoutreachdue"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "List Outreach Due"
       }
     },
@@ -5790,6 +6663,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -5827,13 +6710,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Syncoutreach"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Sync Outreach"
       }
     },
@@ -5891,6 +6787,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -5928,13 +6834,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Setbestcontact"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Set Best Contact"
       }
     },
@@ -5987,6 +6906,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -6024,13 +6953,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Listcandidates"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "List Candidates"
       }
     },
@@ -6089,6 +7031,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -6126,13 +7078,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Approvecandidate"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Approve"
       }
     },
@@ -6190,6 +7155,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -6227,13 +7202,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Rejectcandidate"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Reject"
       }
     },
@@ -6292,6 +7280,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -6329,13 +7327,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Draftoutreach"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Draft Outreach"
       }
     },
@@ -6394,6 +7405,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -6431,13 +7452,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Findcontacts"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Find Contacts"
       }
     },
@@ -6495,6 +7529,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -6532,13 +7576,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Markoutreachreplied"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Mark Replied"
       }
     },
@@ -6597,6 +7654,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -6634,13 +7701,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Markoutreachsent"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Mark Sent"
       }
     },
@@ -6698,6 +7778,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -6735,13 +7825,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Snoozeoutreach"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Snooze"
       }
     },
@@ -6762,8 +7865,33 @@
               }
             },
             "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "List Runs"
       },
       "post": {
@@ -6789,6 +7917,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -6811,8 +7949,23 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Start Run"
       }
     },
@@ -6841,6 +7994,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -6860,8 +8023,23 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Get Run"
       }
     },
@@ -6890,6 +8068,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -6912,8 +8100,23 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Cancel Run"
       }
     },
@@ -6942,6 +8145,16 @@
             },
             "description": "SSE stream; each message's data field is a RunEventOut JSON payload."
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -6961,8 +8174,23 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Stream Run Events"
       }
     },
@@ -7000,10 +8228,35 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "List Backups"
       }
     },
@@ -7032,6 +8285,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
             "description": "missing or wrong local API token"
@@ -7065,8 +8328,23 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Verify Backup"
       }
     },
@@ -7085,10 +8363,35 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "List Command Places"
       }
     },
@@ -7117,6 +8420,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -7129,8 +8442,23 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Route Feeds"
       }
     },
@@ -7149,10 +8477,35 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Host Facts"
       }
     },
@@ -7201,6 +8554,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -7238,13 +8601,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Addjob"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Add Job By Hand"
       }
     },
@@ -7287,6 +8663,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -7311,13 +8697,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Trackercounts"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Tracker Counts"
       }
     },
@@ -7389,6 +8788,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -7413,13 +8822,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Listqueue"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "List Queue"
       }
     },
@@ -7472,6 +8894,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -7506,13 +8938,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Listjobeligibility"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "List Job Eligibility"
       },
       "post": {
@@ -7569,6 +9014,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -7606,13 +9061,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Setjobeligibility"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Set Job Eligibility"
       }
     },
@@ -7665,6 +9133,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -7689,13 +9167,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Listjobevents"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "List Job Events"
       }
     },
@@ -7754,6 +9245,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -7791,13 +9292,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Recordcompanyoutcome"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Record Job Outcome"
       }
     },
@@ -7845,6 +9359,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -7882,13 +9406,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Rescorejob"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Rescore Job"
       }
     },
@@ -7947,6 +9484,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "403": {
             "description": "missing or wrong local API token"
           },
@@ -7984,13 +9531,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Changejobstatus"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Change Job Status"
       }
     },
@@ -8013,17 +9573,40 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
           "503": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Listtracks"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Get Tracks"
       },
       "post": {
@@ -8048,6 +9631,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
             "description": "missing or wrong local API token"
@@ -8076,13 +9669,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Addtrack"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Post Track"
       }
     },
@@ -8104,8 +9710,33 @@
               }
             },
             "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Get Track Kinds"
       }
     },
@@ -8134,6 +9765,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
             "description": "missing or wrong local API token"
@@ -8172,13 +9813,26 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseHeldOut"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Archivetrack"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075)."
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Post Archive"
       }
     }

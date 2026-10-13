@@ -269,6 +269,11 @@ export interface paths {
          *     It looks for a host lease before it opens anything, and with one present
          *     it does not open the database at all; that is why it takes no `Conn`
          *     (spec 075). Its own lease, when it runs on the host, is not a hold.
+         *
+         *     Hosted, it is the one public route, and it opens nothing: counting jobs
+         *     without an identity would fail under the row policy or, on a role that
+         *     bypasses it, count every owner's rows, and where the store lives is no
+         *     caller's business (spec 104).
          */
         get: operations["getHealth"];
         put?: never;
@@ -1469,6 +1474,21 @@ export interface components {
             media_type: string;
             /** Produced By */
             produced_by: string;
+        };
+        /**
+         * AuthRefusalOut
+         * @description Why the hosted API refused a request's token (spec 104). `detail` is
+         *     a fixed sentence per reason, and never quotes the token, a claim, or the
+         *     verifier's words. The local API never sends it.
+         */
+        AuthRefusalOut: {
+            /** Detail */
+            detail: string;
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "missing" | "invalid" | "expired" | "anonymous" | "keys_unavailable";
         };
         /** BackfillIn */
         BackfillIn: {
@@ -2700,6 +2720,15 @@ export interface operations {
                     "application/json": components["schemas"]["RunOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -2734,13 +2763,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -2766,6 +2795,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ArtifactOut"][];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
             /** @description missing or wrong local API token */
@@ -2802,13 +2840,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -2835,6 +2873,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
             /** @description missing or wrong local API token */
@@ -2871,13 +2918,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -2903,6 +2950,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BriefOut"];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
             /** @description missing or wrong local API token */
@@ -2939,13 +2995,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -2988,6 +3044,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -3022,13 +3087,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -3058,6 +3123,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
             /** @description missing or wrong local API token */
@@ -3094,13 +3168,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -3130,6 +3204,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
             /** @description missing or wrong local API token */
@@ -3166,13 +3249,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -3202,6 +3285,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
             /** @description missing or wrong local API token */
@@ -3238,13 +3330,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -3316,6 +3408,15 @@ export interface operations {
                     "application/json": components["schemas"]["CaptureOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -3348,13 +3449,13 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -3446,6 +3547,15 @@ export interface operations {
                     "application/json": components["schemas"]["ConfigOut"][];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -3453,13 +3563,13 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -3491,6 +3601,15 @@ export interface operations {
                     "application/json": components["schemas"]["SettingsErrorOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -3507,13 +3626,13 @@ export interface operations {
                     "application/json": components["schemas"]["SettingsErrorOut"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -3536,6 +3655,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConfigOut"];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
             /** @description missing or wrong local API token */
@@ -3563,13 +3691,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -3607,6 +3735,15 @@ export interface operations {
                     "application/json": components["schemas"]["ConfigErrorOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -3632,13 +3769,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -3663,6 +3800,15 @@ export interface operations {
                     "application/json": components["schemas"]["ConfigOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -3688,13 +3834,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -3742,6 +3888,15 @@ export interface operations {
                     "application/json": components["schemas"]["JobOut"][];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description the track parameter named no track */
             404: {
                 headers: {
@@ -3760,13 +3915,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -3791,6 +3946,15 @@ export interface operations {
                     "application/json": components["schemas"]["MailEventsOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -3798,6 +3962,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description the hosted API cannot fetch its signing keys (spec 104) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -3824,6 +3997,15 @@ export interface operations {
                     "application/json": components["schemas"]["RunOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -3847,6 +4029,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description the hosted API cannot fetch its signing keys (spec 104) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -3873,6 +4064,15 @@ export interface operations {
                     "application/json": components["schemas"]["RunOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -3898,6 +4098,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description the hosted API cannot fetch its signing keys (spec 104) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
         };
     };
     checkData: {
@@ -3919,6 +4128,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DataCheckOut"];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
             /** @description missing or wrong local API token */
@@ -3955,13 +4173,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -3989,6 +4207,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LinkContactsOut"];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
             /** @description missing or wrong local API token */
@@ -4025,13 +4252,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -4059,6 +4286,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
             /** @description missing or wrong local API token */
@@ -4095,13 +4331,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -4129,6 +4365,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
             /** @description missing or wrong local API token */
@@ -4174,13 +4419,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -4208,6 +4453,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EligibilityReassessOut"];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
             /** @description missing or wrong local API token */
@@ -4244,13 +4498,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -4280,6 +4534,15 @@ export interface operations {
                     "application/json": components["schemas"]["RunOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -4314,13 +4577,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -4350,6 +4613,15 @@ export interface operations {
                     "application/json": components["schemas"]["RunOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -4384,13 +4656,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -4414,6 +4686,15 @@ export interface operations {
                 };
                 content: {
                     "text/csv": unknown;
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
             /** @description missing or wrong local API token */
@@ -4450,13 +4731,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -4480,6 +4761,15 @@ export interface operations {
                 };
                 content: {
                     "text/csv": unknown;
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
             /** @description missing or wrong local API token */
@@ -4507,13 +4797,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -4536,6 +4826,15 @@ export interface operations {
                     "application/json": components["schemas"]["RunOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -4550,6 +4849,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description the hosted API cannot fetch its signing keys (spec 104) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -4574,6 +4882,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
             /** @description missing or wrong local API token */
@@ -4601,6 +4918,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description the hosted API cannot fetch its signing keys (spec 104) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
         };
     };
     listProfileDocuments: {
@@ -4621,6 +4947,15 @@ export interface operations {
                     "application/json": components["schemas"]["ProfileDocumentOut"][];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -4628,13 +4963,13 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -4664,6 +4999,15 @@ export interface operations {
                     "application/json": components["schemas"]["RunOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -4698,13 +5042,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -4727,13 +5071,22 @@ export interface operations {
                     "application/json": components["schemas"]["ScheduleOut"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -4757,6 +5110,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
             /** @description missing or wrong local API token */
@@ -4793,13 +5155,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -4824,6 +5186,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
             /** @description missing or wrong local API token */
@@ -4851,6 +5222,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description the hosted API cannot fetch its signing keys (spec 104) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
         };
     };
     listOutreachContacts: {
@@ -4871,6 +5251,15 @@ export interface operations {
                     "application/json": components["schemas"]["ContactOut"][];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -4878,13 +5267,13 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -4910,6 +5299,15 @@ export interface operations {
                     "application/json": components["schemas"]["OutreachRowOut"][];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -4944,13 +5342,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -4976,6 +5374,15 @@ export interface operations {
                     "application/json": components["schemas"]["OutreachRowOut"][];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -5010,13 +5417,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -5048,6 +5455,15 @@ export interface operations {
                     "application/json": components["schemas"]["OutreachRowOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -5082,13 +5498,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -5114,6 +5530,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CandidateOut"][];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
             /** @description missing or wrong local API token */
@@ -5150,13 +5575,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -5188,6 +5613,15 @@ export interface operations {
                     "application/json": components["schemas"]["ContactOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -5222,13 +5656,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -5260,6 +5694,15 @@ export interface operations {
                     "application/json": components["schemas"]["CandidateOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -5294,13 +5737,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -5332,6 +5775,15 @@ export interface operations {
                     "application/json": components["schemas"]["RunOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -5366,13 +5818,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -5404,6 +5856,15 @@ export interface operations {
                     "application/json": components["schemas"]["RunOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -5438,13 +5899,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -5476,6 +5937,15 @@ export interface operations {
                     "application/json": components["schemas"]["OutreachRowOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -5510,13 +5980,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -5548,6 +6018,15 @@ export interface operations {
                     "application/json": components["schemas"]["OutreachRowOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -5582,13 +6061,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -5620,6 +6099,15 @@ export interface operations {
                     "application/json": components["schemas"]["OutreachRowOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -5654,13 +6142,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -5681,6 +6169,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunOut"][];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
+            /** @description the hosted API cannot fetch its signing keys (spec 104) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -5705,6 +6211,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
             /** @description missing or wrong local API token */
@@ -5732,6 +6247,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description the hosted API cannot fetch its signing keys (spec 104) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
         };
     };
     getRun: {
@@ -5754,6 +6278,15 @@ export interface operations {
                     "application/json": components["schemas"]["RunOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description the run id names no run this server holds */
             404: {
                 headers: {
@@ -5770,6 +6303,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description the hosted API cannot fetch its signing keys (spec 104) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -5792,6 +6334,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
             /** @description missing or wrong local API token */
@@ -5819,6 +6370,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description the hosted API cannot fetch its signing keys (spec 104) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
         };
     };
     streamRunEvents: {
@@ -5841,6 +6401,15 @@ export interface operations {
                     "application/json": components["schemas"]["RunEventOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description the run id names no run this server holds */
             404: {
                 headers: {
@@ -5857,6 +6426,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description the hosted API cannot fetch its signing keys (spec 104) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -5899,12 +6477,30 @@ export interface operations {
                     "application/json": components["schemas"]["BackupsOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description the hosted API cannot fetch its signing keys (spec 104) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
             };
         };
     };
@@ -5926,6 +6522,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
             /** @description missing or wrong local API token */
@@ -5962,6 +6567,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description the hosted API cannot fetch its signing keys (spec 104) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
         };
     };
     listCommandPlaces: {
@@ -5982,12 +6596,30 @@ export interface operations {
                     "application/json": components["schemas"]["CommandPlacesOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description the hosted API cannot fetch its signing keys (spec 104) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
             };
         };
     };
@@ -6013,6 +6645,15 @@ export interface operations {
                     "application/json": components["schemas"]["FeedRoutingOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -6027,6 +6668,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description the hosted API cannot fetch its signing keys (spec 104) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -6049,12 +6699,30 @@ export interface operations {
                     "application/json": components["schemas"]["HostFactsOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description the hosted API cannot fetch its signing keys (spec 104) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
             };
         };
     };
@@ -6081,6 +6749,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AddJobOut"];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
             /** @description missing or wrong local API token */
@@ -6117,13 +6794,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -6151,6 +6828,15 @@ export interface operations {
                     };
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description the track parameter named no track */
             404: {
                 headers: {
@@ -6169,13 +6855,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -6203,6 +6889,15 @@ export interface operations {
                     "application/json": components["schemas"]["JobOut"][];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description the track parameter named no track */
             404: {
                 headers: {
@@ -6221,13 +6916,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -6253,6 +6948,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EligibilityEntryOut"][];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
             /** @description the selector named no job, or more than one; or the track parameter named no track */
@@ -6282,13 +6986,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -6320,6 +7024,15 @@ export interface operations {
                     "application/json": components["schemas"]["EligibilityOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -6354,13 +7067,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -6388,6 +7101,15 @@ export interface operations {
                     "application/json": components["schemas"]["JobEventOut"][];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description the selector named no job, or more than one; or the track parameter named no track */
             404: {
                 headers: {
@@ -6406,13 +7128,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -6444,6 +7166,15 @@ export interface operations {
                     "application/json": components["schemas"]["JobOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -6478,13 +7209,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -6512,6 +7243,15 @@ export interface operations {
                     "application/json": components["schemas"]["RescoreOut"];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description missing or wrong local API token */
             403: {
                 headers: {
@@ -6546,13 +7286,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -6582,6 +7322,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobOut"];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
             /** @description missing or wrong local API token */
@@ -6618,13 +7367,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -6647,13 +7396,22 @@ export interface operations {
                     "application/json": components["schemas"]["TrackOut"][];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -6678,6 +7436,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TrackOut"];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
             /** @description missing or wrong local API token */
@@ -6705,13 +7472,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
@@ -6734,6 +7501,24 @@ export interface operations {
                     "application/json": components["schemas"]["TrackKindOut"][];
                 };
             };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
+            /** @description the hosted API cannot fetch its signing keys (spec 104) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
         };
     };
     archiveTrack: {
@@ -6754,6 +7539,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TrackOut"];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
             /** @description missing or wrong local API token */
@@ -6790,13 +7584,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075). */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
