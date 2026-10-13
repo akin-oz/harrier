@@ -242,21 +242,43 @@ def _env_file_url(cwd: str) -> str:
         return ""
 
 
+def _quoted_forms(form: str) -> tuple[str, ...]:
+    """`form` as `repr` and `json.dumps` write it, without the quotes
+    around it (spec 133, Amendment (2026-10-12): a password quoted by
+    `repr` or `json.dumps`).
+
+    `repr` escapes `'` only when the text it quotes holds both quote kinds,
+    which the text around the password decides, so both readings. A suffix
+    holding both forces the escaped one, and is cut off again.
+    """
+    import json
+
+    escaped = repr(form + "'\"")[1:-4]
+    return (
+        escaped,
+        escaped.replace("\\'", "'"),
+        json.dumps(form)[1:-1],
+        json.dumps(form, ensure_ascii=False)[1:-1],
+    )
+
+
 @functools.lru_cache(maxsize=8)
 def _password_forms_of(url: str) -> tuple[str, ...]:
     if not url.strip():
         return ()
     try:
-        return url_parts(url.strip()).passwords
+        forms = url_parts(url.strip()).passwords
     except Exception:
         # A URL `store_target` refuses: the process does not open it, and
         # nothing here may raise on the logging path.
         return ()
+    return tuple(dict.fromkeys((*forms, *(q for form in forms for q in _quoted_forms(form)))))
 
 
 def store_password_forms() -> tuple[str, ...]:
     """Every form of the configured store URL's password (spec 133, open
-    decision 1): as written, percent-decoded, and as libpq reads it.
+    decision 1): as written, percent-decoded, and as libpq reads it, each
+    also as `repr` and `json.dumps` quote it.
 
     A driver can quote the password alone, outside any URL shape
     `scrub_secrets` knows, and the process knows its own password, so no
