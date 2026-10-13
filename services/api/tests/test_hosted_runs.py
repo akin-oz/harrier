@@ -16,12 +16,14 @@ import hashlib
 import json
 import logging
 import os
+import signal
 import stat
 import subprocess
 import sys
 import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
@@ -998,6 +1000,158 @@ def test_an_active_run_keeps_the_machine_awake(
     assert local_manager.hosted_runs is None
     local = run_to_end(local_manager, "")
     assert local.state == "succeeded"
+
+
+# --- the stop signal, bounded (review of PR #316) ---
+
+
+# A child that ignores SIGTERM and starts a grandchild that inherits that,
+# and its output, then prints the grandchild's pid and waits. With
+# `escape`, the grandchild leaves the child's process group.
+def holds_output(escape: bool = False) -> str:
+    return (
+        "import signal, subprocess, sys, time\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        f"grandchild = subprocess.Popen(['sleep', '300'], start_new_session={escape})\n"
+        "print(f'grandchild {grandchild.pid}', flush=True)\n"
+        "time.sleep(300)\n"
+    )
+
+
+def grandchild_of(run: Run) -> int:
+    for event in run.events:
+        line = event.data.get("line")
+        if isinstance(line, str) and line.startswith("grandchild "):
+            return int(line.split()[1])
+    raise AssertionError(f"no grandchild yet: {run.events}")
+
+
+def alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def end_everything(manager: RunManager, run: Run, grandchild: int | None) -> None:
+    """Kill what a failed stop left: the run's child and its grandchild."""
+    process = manager._processes.get(run.id)  # pyright: ignore[reportPrivateUsage]
+    for pid in (grandchild, None if process is None else process.pid):
+        if pid is not None:
+            with suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
+
+
+def stop_while_held(hosted: Hosted, owner: str) -> tuple[Run, int, float]:
+    """Start a run, wait for its grandchild, then stop the manager; return
+    the run, the grandchild's pid and how long the stop took."""
+
+    async def go() -> tuple[Run, int, float]:
+        run = await hosted.manager.start("demo", owner=owner)
+        deadline = time.monotonic() + 10
+        while not any("grandchild " in str(e.data.get("line")) for e in run.events):
+            assert time.monotonic() < deadline, run.events
+            await asyncio.sleep(0.02)
+        began = time.monotonic()
+        # Bounded here, so a stop that hangs fails the test rather than
+        # holding the suite, and leaves no process behind when it does.
+        try:
+            await asyncio.wait_for(hosted.manager.stop_hosted(), timeout=8)
+        except TimeoutError:
+            end_everything(hosted.manager, run, grandchild_of(run))
+            raise
+        return run, grandchild_of(run), time.monotonic() - began
+
+    return asyncio.run(go())
+
+
+def test_the_stop_signal_ends_a_run_whose_grandchild_holds_its_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A child that ignores SIGTERM and a grandchild that holds the run's
+    output: the stop ends both, through the run's process group, records
+    the run `interrupted`, and returns within the two graces."""
+    hosted = hosted_manager(tmp_path, monkeypatch, holds_output())
+    run, grandchild, took = stop_while_held(hosted, new_owner())
+    try:
+        assert run.state == "interrupted"
+        assert hosted.records.rows[run.id]["state"] == "interrupted"
+        assert took < 3, took
+        deadline = time.monotonic() + 5
+        while alive(grandchild) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not alive(grandchild)
+    finally:
+        if alive(grandchild):
+            os.kill(grandchild, signal.SIGKILL)
+
+
+def test_the_stop_signal_is_bounded_when_a_process_escapes_the_group(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A grandchild in a session of its own is out of reach of the group's
+    signals and keeps the output open: the stop still returns, the run is
+    still recorded `interrupted`, and nothing it raises escapes."""
+    hosted = hosted_manager(tmp_path, monkeypatch, holds_output(escape=True))
+    run, grandchild, took = stop_while_held(hosted, new_owner())
+    try:
+        assert run.state == "interrupted"
+        assert hosted.records.rows[run.id]["state"] == "interrupted"
+        assert took < 4, took
+        assert run.secrets == frozenset() and run.env is None
+    finally:
+        if alive(grandchild):
+            os.kill(grandchild, signal.SIGKILL)
+
+
+def test_a_stop_during_spawn_ends_the_run_it_spawns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The stop comes while the child is being spawned: the stop returns
+    within its bound, the run stays `interrupted`, and the child spawned
+    after it is ended, signalled as soon as it exists."""
+    hosted = hosted_manager(tmp_path, monkeypatch, holds_output())
+    # A grace longer than the bound below: a stop that waited for the grace
+    # to signal the late child would fail it.
+    hosted.manager._grace_seconds = 3.0  # pyright: ignore[reportPrivateUsage]
+    real = asyncio.create_subprocess_exec
+    spawned: list[asyncio.subprocess.Process] = []
+
+    async def go() -> tuple[Run, float]:
+        release = asyncio.Event()
+
+        async def slow_spawn(*argv: Any, **kwargs: Any) -> asyncio.subprocess.Process:
+            await release.wait()
+            process = await real(*argv, **kwargs)
+            spawned.append(process)
+            return process
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", slow_spawn)
+        run = await hosted.manager.start("demo", owner=new_owner())
+        while run.state != "running":
+            await asyncio.sleep(0.01)
+        asyncio.get_running_loop().call_later(0.01, release.set)
+        began = time.monotonic()
+        try:
+            await asyncio.wait_for(hosted.manager.stop_hosted(), timeout=8)
+        except TimeoutError:
+            held = [e.data.get("line") for e in run.events]
+            pids = [int(str(line).split()[1]) for line in held if "grandchild " in str(line)]
+            end_everything(hosted.manager, run, pids[0] if pids else None)
+            raise
+        return run, time.monotonic() - began
+
+    run, took = asyncio.run(go())
+    assert len(spawned) == 1
+    try:
+        assert run.state == "interrupted"
+        assert hosted.records.rows[run.id]["state"] == "interrupted"
+        assert took < 2, took
+        assert spawned[0].returncode is not None
+    finally:
+        with suppress(ProcessLookupError):
+            os.killpg(spawned[0].pid, signal.SIGKILL)
 
 
 # --- binding a run from another caller (spec 108) ---

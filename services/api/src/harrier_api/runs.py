@@ -15,9 +15,11 @@ import logging
 import math
 import os
 import re
+import signal
 import sys
 import uuid
 from collections.abc import AsyncIterator, Mapping
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -996,19 +998,17 @@ class RunManager:
         run.cancel_requested = True
         process = self._processes.get(run_id)
         if process is not None and process.returncode is None:
-            process.terminate()
+            _signal(run, process, signal.SIGTERM)
             self._tasks[f"{run_id}:escalate"] = asyncio.create_task(self._escalate(run_id, process))
         return self._runs.get(run_id)
 
     async def _escalate(self, run_id: str, process: asyncio.subprocess.Process) -> None:
         task = self._tasks.get(run_id)
-        if task is None:
+        run = self._runs.get(run_id)
+        if task is None or run is None:
             return
-        try:
-            await asyncio.wait_for(asyncio.shield(task), timeout=self._grace_seconds)
-        except TimeoutError:
-            if process.returncode is None:
-                process.kill()
+        if not await _finished_within(task, self._grace_seconds):
+            _signal(run, process, signal.SIGKILL)
 
     async def wait(self, run_id: str) -> Run:
         task = self._tasks.get(run_id)
@@ -1058,6 +1058,11 @@ class RunManager:
                 stderr=asyncio.subprocess.STDOUT,
                 env=env,
                 cwd=cwd,
+                # Hosted, the child leads a process group of its own, so a
+                # stop or a cancel reaches every process it started, and
+                # none keeps the output pipe open after it (review of PR
+                # #316). Locally the child is spawned as it always was.
+                start_new_session=run.hosted,
             )
         except OSError as error:
             await self._append(run, "log_line", {"line": f"failed to spawn: {error}"})
@@ -1070,7 +1075,7 @@ class RunManager:
         self._processes[run.id] = process
         if run.stopped:
             # The stop signal came while it was being spawned.
-            process.terminate()
+            _signal(run, process, signal.SIGTERM)
         stdout = process.stdout
         assert stdout is not None
         async for raw in stdout:
@@ -1156,8 +1161,15 @@ class RunManager:
 
     async def stop_hosted(self) -> None:
         """The stop signal, hosted (spec 106): record every active hosted
-        run `interrupted` as its owner, then terminate the children with the
-        cancel grace and wait for them. Their states change no more."""
+        run `interrupted` as its owner, then end the children, and return
+        within a bounded time whatever they do. Their states change no more.
+
+        Each run's process group gets SIGTERM, then SIGKILL after the cancel
+        grace, so a grandchild goes with its parent. A run whose reader is
+        still not done after a second grace, because a process outside the
+        group holds its output open, is cancelled: its record already says
+        `interrupted`, and its inputs and secrets go with the cancellation.
+        Nothing raised by a run's task escapes (review of PR #316)."""
         active = [
             run for run in self._runs.values() if run.hosted and run.state in ("queued", "running")
         ]
@@ -1167,19 +1179,22 @@ class RunManager:
             await self._set_state(run, "interrupted")
         for run in active:
             process = self._processes.get(run.id)
-            if process is not None and process.returncode is None:
-                process.terminate()
+            if process is not None:
+                _signal(run, process, signal.SIGTERM)
         for run in active:
             task = self._tasks.get(run.id)
             if task is None:
                 continue
-            try:
-                await asyncio.wait_for(asyncio.shield(task), timeout=self._grace_seconds)
-            except TimeoutError:
-                process = self._processes.get(run.id)
-                if process is not None and process.returncode is None:
-                    process.kill()
-                    await task
+            if await _finished_within(task, self._grace_seconds):
+                continue
+            process = self._processes.get(run.id)
+            if process is not None:
+                _signal(run, process, signal.SIGKILL)
+            if await _finished_within(task, self._grace_seconds):
+                continue
+            task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await task
         if self._hosted is not None:
             await self._hosted.keep_awake.stop()
 
@@ -1288,6 +1303,33 @@ class RunManager:
                 owner=str(record.get("owner") or ""),
             )
         self._interrupted_inputs = [path for paths in held.values() for path in paths]
+
+
+def _signal(run: Run, process: asyncio.subprocess.Process, sig: signal.Signals) -> None:
+    """Send `sig` to a run's process: hosted, to its whole process group,
+    whose id is the child's pid (`start_new_session`), even once the child
+    itself has exited, since a grandchild may still hold its output; locally
+    to the child alone, as the run manager always has."""
+    if run.hosted:
+        with suppress(ProcessLookupError, PermissionError):
+            os.killpg(process.pid, sig)
+        return
+    if process.returncode is None:
+        process.send_signal(sig)
+
+
+async def _finished_within(task: asyncio.Task[None], seconds: float) -> bool:
+    """Whether `task` ends within `seconds`. The task is not cancelled when
+    it does not; an exception it ended with is the task's own, not this
+    wait's."""
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=seconds)
+    except TimeoutError:
+        return False
+    except Exception:
+        # The task ended; how is not the waiter's.
+        return True
+    return True
 
 
 def format_sse(event: RunEvent) -> str:

@@ -1400,6 +1400,29 @@ because a run read from `run_records` is one the server holds in its
 store; and `test_a_run_outcome_key_is_per_owner_without_naming_one` stays
 a pin of behavior spec 105 built, now labelled so.
 
+### The stop is bounded (CodeRabbit's review of `86e60bb`)
+
+The stop signal waited for a run's reader without a limit after it killed
+the child. A grandchild that inherited the run's output kept the pipe
+open, so the app's shutdown hung, and Fly's second signal ended it before
+the pool closed. Now:
+
+- A hosted child leads a process group of its own (`start_new_session`),
+  and the stop, a cancel and its escalation signal the whole group, so a
+  grandchild goes with its parent. Locally the child is spawned and
+  signalled as before.
+- The stop sends SIGTERM to every active run's group, SIGKILL after the
+  cancel grace, and cancels a run's reader after a second grace. The run
+  was recorded `interrupted` before any signal, its inputs and secrets go
+  with the cancellation, and nothing the reader raises escapes the stop.
+  A child spawned while the stop runs is signalled as soon as it exists.
+
+Proved by
+`services/api/tests/test_hosted_runs.py::test_the_stop_signal_ends_a_run_whose_grandchild_holds_its_output`,
+`services/api/tests/test_hosted_runs.py::test_the_stop_signal_is_bounded_when_a_process_escapes_the_group`
+and
+`services/api/tests/test_hosted_runs.py::test_a_stop_during_spawn_ends_the_run_it_spawns`.
+
 ### Honest limitations added
 
 - **An open event stream can delay the stop record.** uvicorn waits for
@@ -1409,6 +1432,10 @@ a pin of behavior spec 105 built, now labelled so.
   owner's next list, as for a hard stop. Spec 110's launch command can
   bound uvicorn's wait with `--timeout-graceful-shutdown` below
   `kill_timeout`; that is spec 110's to set, not done here.
+- **A process that leaves its run's group outlives the stop.** A
+  grandchild that starts a session of its own is out of reach of the
+  group's signals. The stop still returns within two graces and records
+  the run `interrupted`, but that process runs until the machine stops.
 - **A cancelled start can leave a row `queued`.** If the task awaiting
   the binding is cancelled, the thread still commits the row, and the run
   is never registered. This process never reads its own rows as cut off,
