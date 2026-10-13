@@ -14,6 +14,7 @@ import urllib.request
 
 from harrier.demo import is_demo_mode
 from harrier.runoutcome import RunOutcome
+from harrier.sources import scrub_secrets
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,10 @@ def send_telegram_message(
             logger.warning("telegram send failed: HTTP %s", response.status)
             return 1
     except Exception as exc:
-        logger.warning("telegram send failed: %s", exc)
+        # The exception text can embed the request path, `/bot<token>/...`:
+        # `http.client.InvalidURL` quotes it. Hosted, logs leave the machine
+        # (spec 109, A failed send).
+        logger.warning("telegram send failed: %s", scrub_secrets(str(exc)))
         return 1
 
 

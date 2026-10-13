@@ -61,6 +61,13 @@ HOSTED_AUTH = "supabase"
 SERVICE_ROLE_KEY_VARIABLE = "SUPABASE_SERVICE_ROLE_KEY"
 SECRET_KEY_PREFIX = "sb_secret_"
 
+# The operator's own notification settings. `send_telegram_message` falls
+# back to the first two, so a run that inherited them would send every
+# owner's notifications to the operator's chat; Gmail is not offered hosted
+# at all. Each owner's Telegram settings are their own (spec 109).
+OPERATOR_NOTIFICATION_VARIABLES = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
+GMAIL_VARIABLE_PREFIX = "GMAIL_"
+
 AUTH_VALUE_REFUSAL = f"{AUTH_VARIABLE} must be empty or {HOSTED_AUTH}"
 NEEDS_POSTGRES_REFUSAL = (
     f"{AUTH_VARIABLE}={HOSTED_AUTH} needs {URL_VARIABLE} to name a Postgres store"
@@ -158,6 +165,7 @@ def hosted_config(environ: Mapping[str, str]) -> HostedConfig | None:
         cors_origins=_cors_origins(environ.get(CORS_ORIGINS_VARIABLE, "")),
     )
     _refuse_a_service_credential(environ)
+    _refuse_operator_notification_settings(environ)
     return config
 
 
@@ -230,6 +238,20 @@ def _refuse_a_service_credential(environ: Mapping[str, str]) -> None:
     for name in sorted(environ):
         if environ[name].strip().startswith(SECRET_KEY_PREFIX):
             raise HostedConfigError(_service_credential_refusal(name))
+
+
+def _refuse_operator_notification_settings(environ: Mapping[str, str]) -> None:
+    """Refuse a start whose environment holds the operator's Telegram or
+    any Gmail setting, set or empty, naming it and never its value (spec
+    109). Spec 106 builds a run's environment from an allowlist; this makes
+    the value absent in the first place."""
+    for name in sorted(environ):
+        if name in OPERATOR_NOTIFICATION_VARIABLES or name.startswith(GMAIL_VARIABLE_PREFIX):
+            raise HostedConfigError(operator_notification_refusal(name))
+
+
+def operator_notification_refusal(name: str) -> str:
+    return f"the hosted API must not hold {name}; notification settings are per owner (spec 109)"
 
 
 def _service_credential_refusal(name: str) -> str:

@@ -9,21 +9,39 @@ summary are dropped entirely on the grounds that they are the other party's
 words. So there is no identifying content here to protect, unlike the
 artifacts of spec 047 or the contacts of spec 048, both of which
 authenticate. Nothing in this module widens what is stored.
+
+Hosted, both routes answer 501: Gmail watch is not offered on the hosted
+service (spec 109). The refusal is each route's first dependency, so
+neither reads the events file nor starts a run.
 """
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 
-from harrier_api.deps import DatabaseRoute, merge_responses
+from harrier_api.deps import DatabaseRoute, ErrorOut, merge_responses
 from harrier_api.localauth import TOKEN_RESPONSES, require_token
 from harrier_api.runmodels import RUN_CONFLICT_RESPONSES, Manager, RunOut, run_out
-from harrier_api.runs import RunParams
+from harrier_api.runs import GMAIL_NOT_HOSTED_DETAIL, GmailNotHosted, RunParams
 
-mail_router = APIRouter(route_class=DatabaseRoute)
+
+def gmail_is_local(request: Request) -> None:
+    """Hosted, refuse before the route reads a file or starts a run (spec
+    109). The app answers `GmailNotHosted` with 501 and its detail."""
+    if getattr(request.app.state, "hosted", False):
+        raise GmailNotHosted
+
+
+# Declared on both routes, in both modes, so the contract is one document
+# (spec 104). The local API never sends it.
+GMAIL_NOT_HOSTED_RESPONSES: dict[int | str, dict[str, Any]] = {
+    501: {"model": ErrorOut, "description": f"hosted only: {GMAIL_NOT_HOSTED_DETAIL}"},
+}
+
+mail_router = APIRouter(route_class=DatabaseRoute, dependencies=[Depends(gmail_is_local)])
 
 
 class WatchIn(BaseModel):
@@ -90,7 +108,9 @@ def _as_event(raw: dict[str, object]) -> MailEventOut:
     )
 
 
-@mail_router.get("/mail/events", operation_id="listMailEvents")
+@mail_router.get(
+    "/mail/events", operation_id="listMailEvents", responses=GMAIL_NOT_HOSTED_RESPONSES
+)
 def list_mail_events(limit: Annotated[int | None, Query(ge=1, le=500)] = None) -> MailEventsOut:
     """The archived events, newest first.
 
@@ -112,7 +132,11 @@ def list_mail_events(limit: Annotated[int | None, Query(ge=1, le=500)] = None) -
     "/mail/watch",
     operation_id="runMailWatch",
     dependencies=[Depends(require_token)],
-    responses=merge_responses(TOKEN_RESPONSES, RUN_CONFLICT_RESPONSES),
+    # The run conflict, but not the hosted run refusal: hosted, this route
+    # refuses with its own 501 before it reaches the run manager.
+    responses=merge_responses(
+        TOKEN_RESPONSES, {409: RUN_CONFLICT_RESPONSES[409]}, GMAIL_NOT_HOSTED_RESPONSES
+    ),
 )
 async def run_mail_watch(body: WatchIn, manager: Manager) -> RunOut:
     """The same `gmail-watch` verb the CLI runs, as a run.

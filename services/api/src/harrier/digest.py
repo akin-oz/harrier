@@ -41,6 +41,10 @@ DIGEST_ACTIONABLE_KINDS = {
 TOP_PROSPECT_STATUSES = {"prospect", "shortlisted", "tailored_cv_requested"}
 WAIT_ACTIONS = {"wait for reply", "wait until outreach window"}
 GHOSTED_DAYS = 21
+# The mail section on a Postgres store, where no watch runs (spec 109).
+# "None" there would read as "no mail needs you", which is not what
+# happened.
+MAIL_NOT_OFFERED_LINE = "Gmail watch is not offered on the hosted service."
 
 SendFn = Callable[[str], int]
 
@@ -217,6 +221,8 @@ def render_digest(
     ghosted: list[str],
     updates: list[dict[str, object]],
     schedule_health: list[str] | None = None,
+    *,
+    mail_offered: bool = True,
 ) -> str:
     lines = [f"Daily job digest — {target_date.isoformat()}", ""]
 
@@ -272,7 +278,9 @@ def render_digest(
             lines.append(f"  - ... and {len(ghosted) - 10} more")
 
     lines.extend(["", "Updates needing action"])
-    if updates:
+    if not mail_offered:
+        lines.append(MAIL_NOT_OFFERED_LINE)
+    elif updates:
         for item in updates[:5]:
             tracker = item["tracker_row"]
             tracker_text = f", tracker {tracker}" if tracker not in (None, "", "null") else ""
@@ -290,14 +298,27 @@ def render_digest(
 SCHEDULED_JOBS = (DISCOVERY_JOB, DIGEST_JOB, MAIL_WATCH_JOB)
 
 
+def mail_offered(conn: Connection) -> bool:
+    """Whether the mail watch runs beside this store: on the local SQLite
+    store, never on a Postgres one, where Gmail is not offered (spec 109)."""
+    return conn.dialect == "sqlite"
+
+
 def schedule_health_lines(conn: Connection) -> list[str]:
     """One line per scheduled job, whether or not it has ever succeeded.
 
     Every job is named even when it has no row, because a job missing from
-    this list is exactly the job nobody notices has stopped (spec 029).
+    this list is exactly the job nobody notices has stopped (spec 029). On
+    a Postgres store `mail-watch` is not a job: it can never succeed there,
+    and no hosted schedule runs it (spec 109).
     """
     recorded = all_last_success(conn)
-    jobs = [*SCHEDULED_JOBS, *academic_discovery_jobs(conn)]
+    scheduled = (
+        SCHEDULED_JOBS
+        if mail_offered(conn)
+        else tuple(job for job in SCHEDULED_JOBS if job != MAIL_WATCH_JOB)
+    )
+    jobs = [*scheduled, *academic_discovery_jobs(conn)]
     return [describe_age(job, recorded.get(job)) for job in jobs]
 
 
@@ -321,14 +342,18 @@ def academic_discovery_jobs(conn: Connection) -> list[str]:
 
 def build_digest(conn: Connection, scope: Scope, target_date: date) -> str:
     rows = list_jobs(conn, scope)
+    # On Postgres the mail section opens no file: the events file belongs to
+    # a machine's data directory, not to an owner (spec 109).
+    offered = mail_offered(conn)
     return render_digest(
         target_date,
         find_new_prospects(rows, target_date),
         top_prospects(rows),
         outreach_actions_due(rows),
         ghosted_applications(rows, target_date),
-        actionable_updates(target_date, scope),
+        actionable_updates(target_date, scope) if offered else [],
         schedule_health_lines(conn),
+        mail_offered=offered,
     )
 
 

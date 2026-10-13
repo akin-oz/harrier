@@ -442,18 +442,19 @@ reaches the network):
       (planned test_telegram_settings_are_per_owner).
 - [ ] A hosted run of owner A has A's `TELEGRAM_BOT_TOKEN` and
       `TELEGRAM_CHAT_ID`, a run of owner B with none saved has neither, and
-      no run has a `GMAIL_` variable
-      (planned test_a_hosted_run_carries_only_its_owners_telegram_settings).
+      no run has a `GMAIL_` variable. Moved to spec 106 by its Amendment
+      (2026-10-13, spec 109), which carries the planned test; see this
+      spec's Amendment (2026-10-13).
 - [ ] The hosted API refuses to start with `TELEGRAM_BOT_TOKEN`,
       `TELEGRAM_CHAT_ID` or a `GMAIL_` variable in its environment, naming
       the variable and printing no value, one case each
-      (planned test_hosted_start_refuses_operator_notification_settings).
+      (`services/api/tests/test_tenant_notifications.py::test_hosted_start_refuses_operator_notification_settings`).
 
 Telegram, both modes:
 
 - [ ] A send whose exception text holds `/bot<token>` logs
       `/botREDACTED` and returns 1
-      (planned test_a_telegram_failure_log_never_holds_the_token).
+      (`services/api/tests/test_tenant_notifications.py::test_a_telegram_failure_log_never_holds_the_token`).
 - [ ] Locally, the three Telegram routes answer 404 with the local detail,
       and `services/api/tests/test_demo.py::test_demo_never_sends_telegram_even_with_credentials_present`
       and `services/api/tests/test_mail.py::test_live_run_sends_actionable_and_stops_on_send_failure`
@@ -463,19 +464,23 @@ Gmail:
 
 - [ ] Hosted, `GET /mail/events` and `POST /mail/watch` answer 501 with the
       spec 109 detail, read no file and start no run
-      (planned test_hosted_mail_routes_answer_501).
+      (`services/api/tests/test_tenant_notifications.py::test_hosted_mail_routes_answer_501`).
 - [ ] Hosted, `RunManager.start("gmail-watch", ...)` raises
       `GmailNotHosted` and writes no input file and spawns nothing, also
       with spec 104's run refusal lifted
-      (planned test_a_hosted_gmail_watch_run_is_refused_before_it_spawns).
+      (`services/api/tests/test_tenant_notifications.py::test_a_hosted_gmail_watch_run_is_refused_before_it_spawns`).
 - [ ] With a Postgres URL, `harrier gmail-watch` and `harrier gmail-oauth`
       exit 1 with the local-only text and open nothing
       (planned test_gmail_commands_are_local_only_on_postgres), and spec
       112's command walk still places every command in one class.
+      Delivered by spec 127, whose Scope item 7 and criteria already hold
+      both, and whose walk is its planned
+      test_every_command_has_a_postgres_refusal_class; see this spec's
+      Amendment (2026-10-13).
 - [ ] On a Postgres connection the digest's "Updates needing action" holds
       the not-offered line, its health lines omit `mail-watch`, and no file
       under the data directory is opened; on SQLite the digest is unchanged
-      (planned test_a_postgres_digest_reads_no_mail_file_and_says_why).
+      (`services/api/tests/test_tenant_notifications.py::test_a_postgres_digest_reads_no_mail_file_and_says_why`).
 - [ ] Locally, every test in `services/api/tests/test_mail.py`,
       `services/api/tests/test_mail_watch.py` and
       `services/api/tests/test_digest.py` passes unchanged.
@@ -763,3 +768,103 @@ unverified tenant client published to production keeps refresh tokens past
 - Changing the local Telegram or Gmail setup, `.env.example`, or `harrier
   gmail-oauth`.
 - Spec 040's unchecked timeout criteria for the mail client.
+
+## Amendment (2026-10-13): delivered in parts, and what the first part found
+
+Written in the change that builds the first part. The text above stands
+except where this section says otherwise.
+
+### Why in parts
+
+Three things this spec relies on are not on `main` at `67032b8`:
+
+- **Spec 116's credential store** (`put_credential`, `stored_credentials`,
+  the `telegram` kind). It is draft PR #310 on
+  `feat-116-credential-store`. Scope items 1 and 2, the three Telegram
+  routes and `check_telegram`, write through it.
+- **Spec 106's run environment.** `build_run_env` and the allowlist do not
+  exist: hosted, every run is still refused (`RunsNotHosted`,
+  `services/api/src/harrier_api/runs.py`). The criterion "A hosted run of
+  owner A has A's `TELEGRAM_BOT_TOKEN`..." tests that module.
+- **Spec 127's CLI classes.** On a Postgres URL the CLI runs `harrier
+  store` and refuses every other command with `POSTGRES_NOT_YET`. Spec
+  127 owns the class table, the walk and the local-only text, and already
+  carries `gmail-watch` and `gmail-oauth` in its local-only class (its
+  Scope item 7 and criterion). Its Amendment (2026-10-13) says a command
+  outside the store and run classes keeps `POSTGRES_NOT_YET` until it
+  lands, so this spec cannot give the two commands the local-only text
+  first.
+
+So this spec is delivered as follows. This splits the delivery, not the
+spec; Akin may prefer to split the spec instead.
+
+| Part | What | When |
+|---|---|---|
+| 1 (this change) | Scope items 3, 4 (API and run manager), 5, 6; the 501 on both mail routes in the contract; ADR-013 and `docs/architecture.md` for Gmail and the start refusal | now, on `main` |
+| 2 | Scope items 1 and 2: the Telegram routes, `check_telegram`, their contract and tests, and the architecture line that they exist; the line numbers this spec cites (decision D9) | after PR #310 merges |
+| spec 106 | the criterion on a hosted run's Telegram variables, moved there by its Amendment (2026-10-13, spec 109) | with spec 106 |
+| spec 127 | `gmail-watch` and `gmail-oauth` refused with the local-only text, and the walk | with spec 127, as it already states |
+
+Until part 2 lands, an owner has no way to save Telegram settings, so a
+hosted run would notify nobody. No hosted run starts before spec 106
+anyway.
+
+### What part 1 found
+
+1. **The start refusal's text.** Spec 104's start refusals are raised as
+   `HostedConfigError` with no `error: ` prefix; the process ends on that
+   exception's line. This one is built the same way: `the hosted API must
+   not hold <NAME>; notification settings are per owner (spec 109)`
+   (`services/api/src/harrier_api/hostedauth.py`). "Holds" means the name
+   is present, set or empty: the name alone is the operator's, and an
+   empty value today would be a filled one tomorrow
+   (`services/api/tests/test_tenant_notifications.py::test_hosted_start_refuses_operator_notification_settings`,
+   one case each and one empty `GMAIL_` case).
+2. **`GmailNotHosted` is a `RunsNotHosted`.** So the app answers it with
+   501 and its own detail through the handler that already answers every
+   hosted run refusal, and `harrier_api/app.py` is not touched, as the
+   diff criterion requires. The run manager checks it before the refusal
+   spec 106 lifts (`refuse_every_hosted_run`), and the test runs with that
+   refusal lifted
+   (`services/api/tests/test_tenant_notifications.py::test_a_hosted_gmail_watch_run_is_refused_before_it_spawns`).
+3. **The mail routes refuse as their first dependency.** Both routes raise
+   `GmailNotHosted` hosted, before they read the archive or reach the run
+   manager
+   (`services/api/tests/test_tenant_notifications.py::test_hosted_mail_routes_answer_501`).
+   `POST /mail/watch` therefore declares the Gmail 501 only, not the run
+   refusal's. Spec 132's tests learned this:
+   `services/api/tests/test_run_owner.py::test_starting_a_run_hosted_is_refused_until_spec_106`
+   expects the Gmail detail from `POST /mail/watch` and no call to
+   `start`, and
+   `services/api/tests/test_run_owner.py::test_the_contract_declares_the_hosted_run_refusal`
+   reads each 501 by its detail.
+4. **A body that is not JSON.** Hosted, `POST /mail/watch` with a body
+   that does not parse answers FastAPI's 422, because FastAPI reads the
+   body before any dependency runs. It reads no file and starts no run.
+   A parsed body, valid or not, gets the 501.
+5. **The digest's line has no bullet.** "Updates needing action" holds
+   exactly `Gmail watch is not offered on the hosted service.`, the text
+   above, where the `None` line is `• None`
+   (`services/api/tests/test_tenant_notifications.py::test_a_postgres_digest_reads_no_mail_file_and_says_why`).
+   Spec 029's test of the health lines runs on both stores since spec
+   126, and now expects `mail-watch` on SQLite only
+   (`services/api/tests/test_run_outcome.py::test_the_digest_leads_with_every_scheduled_job`).
+6. **The scrub test reads the record as notify emits it.** The root's
+   handlers carry spec 133's scrub, which rewrites a record in place, so a
+   test reading `caplog` passed with the scrub in `notify.py` removed. The
+   test captures on the `harrier.notify` logger itself
+   (`services/api/tests/test_tenant_notifications.py::test_a_telegram_failure_log_never_holds_the_token`).
+7. **The test environment.** `child_environment` in
+   `services/api/tests/test_hosted_auth.py` drops `TELEGRAM_` and `GMAIL_`
+   names from the developer's shell, as it drops hosted variables, so a
+   developer with either exported can still run the start tests.
+8. **Spec 106's 501 text for `gmail-watch`.** Spec 106's kinds table words
+   it `<kind> runs are not offered on the hosted service (spec 109)`. The
+   run manager raises this spec's text, `Gmail watch is not offered on the
+   hosted service (spec 109)`, before spec 106's table is read. Recorded
+   in spec 106's amendment.
+
+Under `services/api/src` part 1 touches `harrier/notify.py`,
+`harrier/digest.py`, `harrier_api/runs.py`, `harrier_api/mail_routes.py`
+and `harrier_api/hostedauth.py` (the module that holds spec 104's start
+checks), all in the diff criterion's list.

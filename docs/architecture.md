@@ -337,6 +337,28 @@ a store whose default isolation is not `read committed`, and a store not at
 the version the code needs
 (`services/api/tests/test_hosted_start.py::test_hosted_start_checks_the_store_version_once`).
 
+Gmail watch is local only (spec 109). A hosted watch would store and
+transmit restricted Gmail data on servers, which Google allows only after
+a security assessment. Hosted, `GET /mail/events` and `POST /mail/watch`
+answer 501 and read nothing
+(`services/api/tests/test_tenant_notifications.py::test_hosted_mail_routes_answer_501`),
+the run manager refuses a `gmail-watch` before it spawns, also once spec
+106 lets hosted runs start
+(`services/api/tests/test_tenant_notifications.py::test_a_hosted_gmail_watch_run_is_refused_before_it_spawns`),
+and a digest on a Postgres store opens no mail file, says Gmail watch is
+not offered and leaves `mail-watch` out of its health lines
+(`services/api/tests/test_tenant_notifications.py::test_a_postgres_digest_reads_no_mail_file_and_says_why`).
+Each tenant connecting their own Google client is spec 118. Telegram
+settings are per owner: the hosted API refuses to start while its
+environment holds `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` or any `GMAIL_`
+variable, naming it and never its value
+(`services/api/tests/test_tenant_notifications.py::test_hosted_start_refuses_operator_notification_settings`).
+The routes that store each owner's bot token and chat id wait for spec
+116's credential store, and a run receives them through spec 106's run
+environment. A failed Telegram send logs the scrubbed reason, never the
+token
+(`services/api/tests/test_tenant_notifications.py::test_a_telegram_failure_log_never_holds_the_token`).
+
 No other hosted component exists yet. Specs 103 to 112 sequence the build:
 the Postgres store (103, approved), API authentication (104), row-level
 policy (105, approved), tenant credentials and run isolation (106),

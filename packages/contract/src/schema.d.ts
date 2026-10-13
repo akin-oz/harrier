@@ -4000,6 +4000,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description hosted only: Gmail watch is not offered on the hosted service (spec 109) */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
             /** @description the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
@@ -4067,7 +4076,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            /** @description hosted only: Gmail watch is not offered on the hosted service (spec 109) */
             501: {
                 headers: {
                     [name: string]: unknown;

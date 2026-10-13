@@ -271,13 +271,14 @@ def test_hosted_mode_is_read_from_the_process_environment_only(
 
 
 def child_environment(tmp_path: Path, **overrides: str) -> dict[str, str]:
-    """The process environment for an API start, with no hosted variable
-    or service credential the developer's shell may hold."""
+    """The process environment for an API start, with no hosted variable,
+    service credential or notification setting (spec 109) the developer's
+    shell may hold."""
     environ = {
         name: value
         for name, value in os.environ.items()
         if not name.startswith(("HARRIER_AUTH", "HARRIER_SUPABASE", "HARRIER_ALLOWED"))
-        and not name.startswith(("HARRIER_CORS", "SUPABASE_"))
+        and not name.startswith(("HARRIER_CORS", "SUPABASE_", "TELEGRAM_", "GMAIL_"))
         and not value.strip().startswith("sb_secret_")
         and name != "HARRIER_DEMO"
     }
