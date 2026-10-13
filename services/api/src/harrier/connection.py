@@ -227,6 +227,11 @@ POSTGRES_NOT_IDLE = "the Postgres connection is not idle, so no transaction can 
 # statement failed in, or a SQLite one the library rolled back whole (spec
 # 112, amendment of 2026-10-13).
 TRANSACTION_GIVEN_UP = "a statement failed inside this transaction, so the store kept none of it"
+# The refusal of a statement that would begin, end or mark a transaction
+# itself (spec 112, amendment of 2026-10-13: transaction control).
+TRANSACTION_CONTROL = (
+    "a statement may not control the transaction: transaction() begins, commits and rolls back"
+)
 
 # The refusals of a statement whose placeholders the seam cannot read the
 # same way on both stores (spec 112, post-merge review of PR #288).
@@ -697,6 +702,86 @@ def begins_a_transaction(sql: str) -> bool:
     return head.startswith(("insert", "update", "delete", "replace"))
 
 
+# The first words of a statement that controls the transaction, and the one
+# pair (spec 112, amendment of 2026-10-13: transaction control).
+_CONTROL_WORDS = frozenset(
+    {"begin", "start", "commit", "end", "rollback", "abort", "savepoint", "release"}
+)
+_CONTROL_PAIR = ("prepare", "transaction")
+# What may stand before a word: whitespace, the vertical tab included, and
+# the `;` of an empty statement.
+_BEFORE_A_WORD = " \t\n\r\f\v;"
+_WORD = re.compile(r"[A-Za-z0-9_$]*")
+_POSTGRES_LINE_END = re.compile(r"[\r\n]")
+_READINGS: tuple[Dialect, ...] = ("sqlite", "postgres")
+
+
+def _next_word_at(sql: str, index: int, reading: Dialect) -> int:
+    """The index of the next word from `index`, as `reading` skips what
+    stands before one, or the end of the text when a comment never closes.
+
+    A `--` comment ends at a line feed; on the Postgres reading at a
+    carriage return too, as Postgres's own scanner ends one. A block
+    comment ends at the first `*/` on the SQLite reading, and nests on the
+    Postgres one (`_block_comment_end`).
+    """
+    while index < len(sql):
+        if sql[index] in _BEFORE_A_WORD:
+            index += 1
+        elif sql.startswith("--", index):
+            if reading == "postgres":
+                line_end = _POSTGRES_LINE_END.search(sql, index)
+                index = len(sql) if line_end is None else line_end.end()
+            else:
+                newline = sql.find("\n", index)
+                index = len(sql) if newline < 0 else newline + 1
+        elif sql.startswith("/*", index):
+            if reading == "postgres":
+                index = _block_comment_end(sql, index)
+            else:
+                close = sql.find("*/", index + 2)
+                index = len(sql) if close < 0 else close + 2
+        else:
+            return index
+    return len(sql)
+
+
+def _first_words(sql: str, reading: Dialect) -> tuple[str, ...]:
+    """The first two words of `sql` as `reading` finds them, in lower case.
+    A word is a run of ASCII letters, digits, `_` and `$`."""
+    words: list[str] = []
+    index = 0
+    while len(words) < 2:
+        found = _WORD.match(sql, _next_word_at(sql, index, reading))
+        if found is None or not found.group(0):
+            break
+        words.append(found.group(0).lower())
+        index = found.end()
+    return tuple(words)
+
+
+def controls_the_transaction(sql: str) -> bool:
+    """Whether `sql` begins, ends or marks a transaction itself (spec 112,
+    amendment of 2026-10-13: transaction control).
+
+    True when its first word is BEGIN, START, COMMIT, END, ROLLBACK, ABORT,
+    SAVEPOINT or RELEASE, or its first two are PREPARE TRANSACTION, on
+    either reading of what stands before them: SQLite's or Postgres's. Only
+    the first word is read, so a control word inside a literal, a quoted
+    name, a comment or a body after it is not. `begins_a_transaction`
+    reads the same way for another question, and is left as the sqlite3
+    module's rule. Pinned on both stores by
+    `services/api/tests/test_seam_on_both_stores.py::test_the_seam_reads_a_first_word_as_either_store_would`.
+    """
+    for reading in _READINGS:
+        words = _first_words(sql, reading)
+        if words[:1] and words[0] in _CONTROL_WORDS:
+            return True
+        if words == _CONTROL_PAIR:
+            return True
+    return False
+
+
 class _SqliteBackend:
     """SQLite under the seam's transactions (spec 112, post-merge review of
     PR #288).
@@ -853,6 +938,37 @@ class _SqliteBackend:
         self.driver.close()
 
 
+@functools.cache
+def _extended_cursor() -> type[psycopg.Cursor[Any]]:
+    """A psycopg cursor that sends every statement by the extended query
+    protocol (spec 112, amendment of 2026-10-13: transaction control,
+    decision 4).
+
+    psycopg sends a statement whose parameters are an empty sequence by the
+    simple protocol, which runs every statement in the text: `SELECT 1;
+    COMMIT` committed through the seam (psycopg 3.3.6, `_execute_send` in
+    `_cursor_base.py`). By the extended protocol the server refuses a
+    second statement before it runs any. psycopg offers no public switch
+    for it. Pipeline mode sends the extended protocol too, but after it the
+    server's idle in transaction timeout no longer fired, which spec 134's
+    request transaction relies on. So this overrides the method that
+    chooses, and asks for the extended protocol always. A psycopg that
+    renames it fails
+    `services/api/tests/test_seam_on_both_stores.py::test_a_second_statement_in_one_call_runs_nothing`.
+
+    Built on first use: the local store never imports psycopg.
+    """
+    import psycopg
+
+    class ExtendedCursor(psycopg.Cursor[Any]):
+        def _execute_send(
+            self, query: Any, *, force_extended: bool = False, binary: bool | None = None
+        ) -> None:
+            super()._execute_send(query, force_extended=True, binary=binary)
+
+    return ExtendedCursor
+
+
 class _PostgresBackend:
     dialect: Dialect = "postgres"
 
@@ -869,7 +985,7 @@ class _PostgresBackend:
     def run(
         self, sql: str, statement: Statement, params: Sequence[object], *, in_block: bool
     ) -> Any:
-        cursor = self.driver.cursor(row_factory=_postgres_row_factory)
+        cursor = _extended_cursor()(self.driver, row_factory=_postgres_row_factory)
         # Parameters are always passed, an empty sequence included, so
         # psycopg always reads the doubled `%` of read_statement as one.
         cursor.execute(statement.psycopg.encode(), params)
@@ -1107,10 +1223,22 @@ class Connection:
         differently (`read_statement`), for parameters passed as a mapping,
         and for a count of parameters other than the count of `?`.
 
+        Raises StoreDatabaseError (`TRANSACTION_CONTROL`) for a statement
+        that controls the transaction (`controls_the_transaction`), on both
+        stores, inside a block at any depth and outside one. It is checked
+        first: before the placeholders, before the refusal in a block the
+        store gave up on, and on Postgres before the statement's own transaction begins. No
+        driver sees it, so the store has given nothing up, and a block that
+        catches it goes on.
+
         On Postgres a statement outside `transaction()` runs in a
         transaction of its own, which begins as every transaction does, so
-        none runs without the lock timeout and the owner's identity.
+        none runs without the lock timeout and the owner's identity. A text
+        holding a second statement is refused by the server before it runs
+        any; on SQLite by the sqlite3 module.
         """
+        if controls_the_transaction(sql):
+            raise StoreDatabaseError(TRANSACTION_CONTROL)
         statement = _parameters_match(sql, params)
         if self._backend.dialect == "postgres" and self._depth == 0:
             with self.transaction():

@@ -2052,12 +2052,18 @@ comments. A word is the run of ASCII letters, digits, `_` and `$` that
 follows, compared without regard to case, so `COMMITTED` is not
 `COMMIT`. Block comments are read both ways: ending at the first `*/`,
 as SQLite reads them, and nested, as Postgres reads them
-(`_block_comment_end`). The statement is transaction control when either
-reading finds it so. A comment that never closes leaves no word on that
-reading. This is the reading `begins_a_transaction` does, with three
-additions the probes above require: the vertical tab, the `;`, and the
-nested reading. `begins_a_transaction` itself is unchanged. It mirrors
-the sqlite3 module's own rule, for a different question.
+(`_block_comment_end`). A `--` comment ends at a line feed on both
+readings, and on the Postgres reading at a carriage return too, as
+Postgres's scanner ends one. Measured while implementing, on Postgres
+17.11 by the extended protocol: `-- c`, a carriage return, then `COMMIT`
+ends the transaction; SQLite 3.50.4 reads the same text as a comment.
+The statement is transaction control when either reading finds it so.
+A comment that never closes leaves no word on that reading. This is the
+reading `begins_a_transaction` does, with four additions the probes above
+require: the vertical tab, the `;`, the nested reading, and the carriage
+return that ends a Postgres line comment. `begins_a_transaction` itself
+is unchanged. It mirrors the sqlite3 module's own rule, for a different
+question.
 
 So a control word anywhere but first is not read. `SELECT 'COMMIT'`,
 `WITH c AS (SELECT 'COMMIT' AS x) SELECT x FROM c`, a `-- COMMIT` line
@@ -2151,11 +2157,11 @@ unless a criterion names one:
       'x'` raises `StoreDatabaseError` itself, with the text above and
       no `__cause__`. The block then raises an exception of its own, and
       row 1 is not in the store: the refused statement did not run
-      (planned test_transaction_control_through_execute_is_refused).
+      (`services/api/tests/test_seam_on_both_stores.py::test_transaction_control_through_execute_is_refused`).
 - [ ] A block that catches the refusal, inserts row 2 and exits normally
       commits rows 1 and 2. The same holds when the refusal is caught
       inside a nested block
-      (planned test_a_refused_control_statement_gives_nothing_up).
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_refused_control_statement_gives_nothing_up`).
 - [ ] Outside any block. On SQLite, `BEGIN` is refused,
       `conn.in_transaction` is false after it, and
       `transaction(immediate=True)` then begins. On Postgres, on a
@@ -2163,9 +2169,10 @@ unless a criterion names one:
       `test_a_lost_owner_identity_runs_no_statement`), `COMMIT` raises
       the text above and not `IDENTITY_DID_NOT_HOLD`: it was refused
       before the seam began a transaction
-      (planned test_transaction_control_outside_a_block_is_refused).
+      (`services/api/tests/test_seam_on_both_stores.py::test_transaction_control_outside_a_block_is_refused`).
 - [ ] The seam refuses each of: a vertical tab then `COMMIT`; `;COMMIT`;
-      a `--` comment line then `COMMIT`; `/* x */ rollback`;
+      a `--` comment line then `COMMIT`; a `--` comment ended by a
+      carriage return then `COMMIT`; `/* x */ rollback`;
       `/* /* */ */ COMMIT`; `/* /* */ COMMIT`; `Begin Immediate`. It
       refuses none of: `SELECT 'COMMIT'`; the `WITH` statement above; a
       `-- COMMIT` line then `SELECT 1`; `SELECT 1 AS "commit"`. On
@@ -2173,11 +2180,11 @@ unless a criterion names one:
       `DO $$ BEGIN NULL; END $$` and
       `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ`; on SQLite, not a
       `CREATE TEMP TRIGGER` whose body holds `;`
-      (planned test_the_seam_reads_a_first_word_as_either_store_would).
+      (`services/api/tests/test_seam_on_both_stores.py::test_the_seam_reads_a_first_word_as_either_store_would`).
 - [ ] An `INSERT` of row 1 followed by `; COMMIT`, with no parameters,
       raises `StoreDatabaseError` and leaves row 1 out of the store. On
       Postgres the text is the server's, above
-      (planned test_a_second_statement_in_one_call_runs_nothing).
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_second_statement_in_one_call_runs_nothing`).
 - [ ] `test_a_commit_inside_a_block_is_not_the_store_giving_up` runs its
       `COMMIT` through `conn.sqlite_driver`, on SQLite only. The previous
       amendment's criterion that cites it now holds on SQLite only.
@@ -2259,6 +2266,18 @@ All four as recommended.
 - The second statement refusal on Postgres is the server's, with the
   server's text, and it fails a block's transaction where the first word
   refusal does not.
+- The extended protocol rests on a protected psycopg method. psycopg
+  sends a statement with an empty parameter sequence by the simple
+  protocol and offers no public switch, so the seam's cursor overrides
+  `_execute_send` to ask for the extended protocol always
+  (`services/api/src/harrier/connection.py`, `_extended_cursor`). Pipeline
+  mode also sends it, but after it the server's idle in transaction
+  timeout no longer fired, which spec 134's request transaction relies on.
+  `services/api/uv.lock` holds psycopg at 3.3.6, while
+  `services/api/pyproject.toml` allows `>=3.2`. A psycopg that renames or
+  reshapes the method fails
+  `services/api/tests/test_seam_on_both_stores.py::test_a_second_statement_in_one_call_runs_nothing`
+  rather than passing silently. (Found while implementing.)
 - The spy covers what the suite runs, and the `grep` covers literal text
   under `services/api/src`. Neither proves that no later caller builds a
   control statement, which is why the refusal sits in the seam.
