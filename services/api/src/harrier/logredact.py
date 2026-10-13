@@ -288,6 +288,13 @@ def _password_forms_of(url: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys((*forms, *(q for form in forms for q in _quoted_forms(form)))))
 
 
+def store_password_forms_of(url: str) -> tuple[str, ...]:
+    """Every form of `url`'s password, as `store_password_forms` gives the
+    configured URL's: for a URL this process holds for another, such as a
+    hosted run's login (spec 106). Empty for a URL with none."""
+    return _password_forms_of(url)
+
+
 def store_password_forms() -> tuple[str, ...]:
     """Every form of the configured store URL's password (spec 133, open
     decision 1): as written, percent-decoded, and as libpq reads it, each

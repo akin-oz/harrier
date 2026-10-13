@@ -404,6 +404,7 @@ def test_the_child_environment_holds_only_the_allowlist_and_its_owners_values(
         "HARRIER_DATA_DIR": digest(str(tmp_path / "api-data" / "owners" / owner)),
         "HARRIER_DATABASE_URL": digest(RUN_DATABASE_URL),
         RUN_OWNER_VARIABLE: digest(owner),
+        "PYTHONSAFEPATH": digest("1"),
         "AI_PROVIDER": digest("anthropic-api"),
         "ANTHROPIC_API_KEY": digest(ai_key),
         "AI_MODEL": digest("m-1"),
@@ -684,8 +685,63 @@ def test_a_credential_value_never_reaches_the_event_stream(
     assert text.count(SECRET_REDACTION) == 2
     progress = [event for event in run.events if event.type == "progress"]
     assert progress[0].data["message"] == f"provider said {SECRET_REDACTION}"
-    # Neither the provider nor the model is secret.
+    # The scrub set is dropped once the run's process is reaped.
     assert run.secrets == frozenset()
+
+
+def test_every_place_an_event_carries_text_is_redacted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The exact-value scrub reaches every string a structured event holds,
+    at any depth and in its keys and type, a chat id written as a number,
+    and the run login's password, which the child holds too (privacy
+    review of PR #316)."""
+    owner = new_owner()
+    secret = synthetic_secret("apify")
+    chat = str(uuid.uuid4().int)[:12]
+    password = RUN_DATABASE_URL.split(":")[2].split("@")[0]
+    events = [
+        {"event": f"type {secret}", "message": "m"},
+        {"event": "progress", secret: 1, "items": [{"msg": secret}, [secret]]},
+        {"event": "summary", "chat": int(chat)},
+    ]
+    script = emit(*(f"::harrier::{json.dumps(event)}" for event in events), f"bare {password}")
+    key = credentials_key()
+    credentials = {
+        owner: [
+            stored(key, owner, "apify", {"token": secret}),
+            stored(key, owner, "telegram", {"bot_token": synthetic_secret("b"), "chat_id": chat}),
+        ]
+    }
+    hosted = hosted_manager(tmp_path, monkeypatch, script, credentials)
+    run = run_to_end(hosted.manager, owner)
+    assert run.state == "succeeded"
+    shown = json.dumps([[event.type, event.data] for event in run.events])
+    for value in (secret, chat, password):
+        assert value not in shown
+    assert f"type {SECRET_REDACTION}" in [event.type for event in run.events]
+    summary = next(event for event in run.events if event.type == "summary")
+    assert summary.data["chat"] == SECRET_REDACTION
+
+
+def test_a_hosted_run_imports_nothing_from_its_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The run's working directory is not on its import path, so a `.py`
+    file that lands in the owner's directory never runs in the owner's run
+    (privacy review of PR #316)."""
+    owner = new_owner()
+    directory = tmp_path / "api-data" / "owners" / owner
+    directory.mkdir(parents=True)
+    (directory / "harrier_planted.py").write_text("PLANTED = True\n", encoding="utf-8")
+    script = (
+        "import importlib.util, json\n"
+        "print(json.dumps({'found': importlib.util.find_spec('harrier_planted') is not None}),"
+        " flush=True)\n"
+    )
+    hosted = hosted_manager(tmp_path, monkeypatch, script)
+    run = run_to_end(hosted.manager, owner)
+    assert printed(run) == {"found": False}
 
 
 def test_a_telegram_chat_id_never_reaches_the_event_stream(
@@ -785,7 +841,10 @@ def test_a_run_binds_without_the_api(tmp_path: Path) -> None:
     )
     assert bound.env["TZ"] == "Europe/Amsterdam"
     assert bound.env["APIFY_TOKEN"] == apify
-    assert bound.secrets == frozenset({apify})
+    # The owner's secret fields and the run login's password.
+    password = RUN_DATABASE_URL.split(":")[2].split("@")[0]
+    assert apify in bound.secrets and password in bound.secrets
+    assert "Europe/Amsterdam" not in bound.secrets
     assert apify not in repr(bound)
     with pytest.raises(ExtraVariableRefused):
         bind_run(

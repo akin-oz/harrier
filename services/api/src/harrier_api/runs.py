@@ -634,31 +634,36 @@ def scrub_event_data(data: dict[str, object]) -> dict[str, object]:
     return scrubbed
 
 
+def redacted_text(text: str, values: frozenset[str]) -> str:
+    """`text` with each exact occurrence of `values` replaced by `REDACTED`,
+    longest first, so a value inside another leaves no part of it."""
+    for value in sorted(values, key=len, reverse=True):
+        text = text.replace(value, SECRET_REDACTION)
+    return text
+
+
+def _redacted(value: object, values: frozenset[str]) -> object:
+    if isinstance(value, str):
+        return redacted_text(value, values)
+    if isinstance(value, dict):
+        return {
+            redacted_text(str(key), values): _redacted(item, values)
+            for key, item in cast("dict[object, object]", value).items()
+        }
+    if isinstance(value, list):
+        return [_redacted(item, values) for item in cast("list[object]", value)]
+    if isinstance(value, int | float) and not isinstance(value, bool) and str(value) in values:
+        # A chat id the child wrote as a number (decision D7).
+        return SECRET_REDACTION
+    return value
+
+
 def redact_values(data: dict[str, object], values: frozenset[str]) -> dict[str, object]:
-    """Every string an event carries, with each exact occurrence of `values`
-    replaced by `REDACTED`: a hosted run's secret credential fields (spec
-    106). Longest first, so a value inside another leaves no part of it."""
-    ordered = sorted(values, key=len, reverse=True)
-
-    def redact(text: str) -> str:
-        for value in ordered:
-            text = text.replace(value, SECRET_REDACTION)
-        return text
-
-    redacted: dict[str, object] = {}
-    for key, value in data.items():
-        if isinstance(value, str):
-            redacted[key] = redact(value)
-        elif isinstance(value, dict):
-            redacted[key] = redact_values(cast("dict[str, object]", value), values)
-        elif isinstance(value, list):
-            redacted[key] = [
-                redact(item) if isinstance(item, str) else item
-                for item in cast("list[object]", value)
-            ]
-        else:
-            redacted[key] = value
-    return redacted
+    """Everything an event carries, with each exact occurrence of `values`
+    replaced by `REDACTED`: a hosted run's secret values (spec 106). Every
+    string at any depth, keys included, and a number equal to a value. The
+    event's type is redacted by the caller with `redacted_text`."""
+    return cast("dict[str, object]", _redacted(data, values))
 
 
 def hide_directory(data: dict[str, object], directory: HiddenDirectory) -> dict[str, object]:
@@ -1083,6 +1088,7 @@ class RunManager:
         # left would no longer match (spec 106).
         if run.secrets:
             data = redact_values(data, run.secrets)
+            event_type = redacted_text(event_type, run.secrets)
         scrubbed = scrub_event_data(data)
         for directory in run.hidden:
             scrubbed = hide_directory(scrubbed, directory)

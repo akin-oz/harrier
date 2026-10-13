@@ -40,6 +40,7 @@ from harrier.credentials import (
     StoredCredential,
     decrypt,
 )
+from harrier.logredact import store_password_forms_of
 
 # The run login's URL on the API, passed to the run as its
 # `HARRIER_DATABASE_URL` and never under its own name.
@@ -158,6 +159,10 @@ def build_run_env(
         env[name] = value
     env["HOME"] = str(run_dir)
     env["HARRIER_DATA_DIR"] = str(run_dir)
+    # The working directory is the owner's run directory, and `python -m`
+    # would put it first on the import path: a `.py` file that landed there
+    # would run in the owner's next run (privacy review of PR #316).
+    env["PYTHONSAFEPATH"] = "1"
     env[URL_VARIABLE] = server_env[RUN_DATABASE_URL_VARIABLE]
     env[RUN_OWNER_VARIABLE] = str(uuid.UUID(owner))
     for kind, fields in credentials.items():
@@ -169,7 +174,7 @@ def build_run_env(
 class BoundRun:
     """What a hosted run is spawned with. The environment and the secrets
     are kept out of the repr, so a bound run that reaches a log record
-    carries no value."""
+    carries no credential; its working directory names the owner."""
 
     env: dict[str, str] = field(repr=False)
     cwd: Path
@@ -202,4 +207,8 @@ def bind_run(
             raise RunCredentialMissing(kind)
     run_dir = owner_run_dir(root, owner)
     env = build_run_env(server_env, owner, run_dir, decrypted, extra=extra)
-    return BoundRun(env=env, cwd=run_dir, secrets=secret_values(decrypted))
+    # The run login's password, in every form a driver or `repr` can print
+    # it: the child holds it, and its output reaches the stream (privacy
+    # review of PR #316).
+    login = store_password_forms_of(server_env[RUN_DATABASE_URL_VARIABLE])
+    return BoundRun(env=env, cwd=run_dir, secrets=secret_values(decrypted) | frozenset(login))
