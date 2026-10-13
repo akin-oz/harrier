@@ -388,24 +388,36 @@ def _parse_key_set(document: object) -> dict[str, PyJWK]:
 
 
 class SigningKeys:
-    """The project's published signing keys, cached (spec 104, Keys)."""
+    """The project's published signing keys, cached (spec 104, Keys).
+
+    The fetch runs outside the lock, by one thread at a time. While it runs,
+    a token whose key the cache holds is answered from the cache, within the
+    hour the last good set is trusted, so a slow or unreachable endpoint
+    holds no request that does not need it. A token whose key the cache
+    lacks waits for the fetch in flight, which may be bringing that key, at
+    most a little longer than the fetch's own timeout.
+    """
 
     def __init__(self, fetch: KeyFetcher, clock: Clock, *, source: str = "") -> None:
         self._fetch = fetch
         self._clock = clock
         self._source = source
         self._lock = threading.Lock()
+        self._settled = threading.Condition(self._lock)
         self._keys: dict[str, PyJWK] = {}
         self._fetched_at: float | None = None
         self._attempted_at: float | None = None
         self._forced_at: float | None = None
         self._last_failed = False
+        self._refreshing = False
 
     def prime(self) -> None:
         """The fetch at start. A failure is logged and the API starts anyway:
         authenticated routes answer 503 until a fetch succeeds."""
         with self._lock:
-            self._refresh(self._clock())
+            now = self._clock()
+            self._claim(now)
+        self._refresh(now)
 
     def key_for(self, kid: str) -> PyJWK:
         with self._lock:
@@ -413,20 +425,35 @@ class SigningKeys:
             fetched_at = self._fetched_at
             stale = fetched_at is None or now - fetched_at >= CACHE_SECONDS
             unknown = kid not in self._keys
-            if (stale or unknown) and self._may_fetch(now, forced=unknown and not stale):
-                if unknown and not stale:
+            forced = unknown and not stale
+            fetch = (
+                (stale or unknown) and not self._refreshing and self._may_fetch(now, forced=forced)
+            )
+            if fetch:
+                if forced:
                     self._forced_at = now
-                self._refresh(now)
-            fetched_at = self._fetched_at
-            if fetched_at is None or now - fetched_at > STALE_LIMIT_SECONDS:
-                raise KeysUnavailable
-            key = self._keys.get(kid)
-            if key is not None:
-                return key
-            if self._last_failed:
-                # The endpoint is down, so this may be a new key.
-                raise KeysUnavailable
-            raise UnknownKey
+                self._claim(now)
+        if fetch:
+            self._refresh(now)
+        with self._lock:
+            if kid not in self._keys:
+                # The fetch in flight may be bringing this key.
+                self._settled.wait_for(
+                    lambda: not self._refreshing, timeout=FETCH_TIMEOUT_SECONDS + 1
+                )
+            return self._answer(kid, now)
+
+    def _answer(self, kid: str, now: float) -> PyJWK:
+        fetched_at = self._fetched_at
+        if fetched_at is None or now - fetched_at > STALE_LIMIT_SECONDS:
+            raise KeysUnavailable
+        key = self._keys.get(kid)
+        if key is not None:
+            return key
+        if self._last_failed:
+            # The endpoint is down, so this may be a new key.
+            raise KeysUnavailable
+        raise UnknownKey
 
     def _may_fetch(self, now: float, *, forced: bool) -> bool:
         attempted = self._attempted_at
@@ -436,23 +463,37 @@ class SigningKeys:
             return self._forced_at is None or now - self._forced_at >= REFRESH_COOLDOWN_SECONDS
         return True
 
-    def _refresh(self, now: float) -> None:
+    def _claim(self, now: float) -> None:
+        """Make this thread the one that fetches. Called holding the lock."""
+        self._refreshing = True
         self._attempted_at = now
+
+    def _refresh(self, now: float) -> None:
+        """The fetch, without the lock; its result is applied under it."""
+        keys: dict[str, PyJWK] | None = None
+        failure = ""
         try:
             keys = _parse_key_set(self._fetch())
         except Exception as error:
-            self._last_failed = True
+            failure = type(error).__name__
+        finally:
+            with self._lock:
+                if keys is None:
+                    self._last_failed = True
+                else:
+                    self._keys = keys
+                    self._fetched_at = now
+                    self._last_failed = False
+                self._refreshing = False
+                self._settled.notify_all()
+        if keys is None:
             # The source names the host and path, never a query; the
             # exception's own text could quote a response, so only its type.
             logger.warning(
                 "the signing key set could not be fetched from %s: %s",
                 self._source or "the configured key endpoint",
-                type(error).__name__,
+                failure,
             )
-            return
-        self._keys = keys
-        self._fetched_at = now
-        self._last_failed = False
 
 
 # --- the token ---
