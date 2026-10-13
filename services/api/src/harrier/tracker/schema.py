@@ -520,6 +520,9 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
     # Postgres only (spec 105, amendment of 2026-10-11): owner identity
     # without schema auth. Empty on purpose, and declared so.
     (16, []),
+    # Postgres only (spec 116): the per-owner credentials table. Locally
+    # credentials stay in .env. Empty on purpose, and declared so.
+    (18, []),
 ]
 
 # --- Postgres (spec 103, ADR-013) ---
@@ -699,12 +702,20 @@ MIGRATION_10_OWNED_TABLES: tuple[str, ...] = (
 )
 
 # Every table with an owner: migration 10's, and each table a later
-# migration created owned (spec 122's `job_eligibility`, migration 15).
-OWNED_TABLES: tuple[str, ...] = ("job_eligibility", *MIGRATION_10_OWNED_TABLES)
+# migration created owned (spec 122's `job_eligibility`, migration 15; spec
+# 116's `credentials`, migration 18).
+OWNED_TABLES: tuple[str, ...] = ("job_eligibility", *MIGRATION_10_OWNED_TABLES, "credentials")
 
 # Every other table, with the reason it has no owner.
 UNOWNED_TABLES: dict[str, str] = {
     "schema_version": "migration bookkeeping, no personal data",
+}
+
+# Tables only the hosted store has, with the reason SQLite has none. The
+# parity test leaves them out of its comparison, and fails when one is
+# missing on Postgres or present on SQLite (spec 116).
+HOSTED_ONLY_TABLES: dict[str, str] = {
+    "credentials": "per-owner encrypted credentials (spec 116); local credentials live in .env",
 }
 
 # Supabase's own functions in public, by signature as `oid::regprocedure`
@@ -717,9 +728,10 @@ SUPABASE_FUNCTIONS_IN_PUBLIC: dict[str, str] = {
     "returns event_trigger, so no role can call it (spec 115, N2)",
 }
 
-# Columns only the hosted store has, as (table, column).
+# Columns only the hosted store has, as (table, column), on the tables both
+# stores have. A hosted-only table is declared whole, above.
 HOSTED_ONLY_COLUMNS: tuple[tuple[str, str], ...] = tuple(
-    (table, "owner_id") for table in OWNED_TABLES
+    (table, "owner_id") for table in OWNED_TABLES if table not in HOSTED_ONLY_TABLES
 )
 
 # Keys that are per owner on Postgres and global on SQLite. Each maps (table,
@@ -768,6 +780,11 @@ SINGLE_DIALECT_MIGRATIONS: dict[int, tuple[Dialect, str]] = {
         "postgres",
         "owner identity read from the request claims without schema auth "
         "(spec 105, amendment of 2026-10-11); the local schema has no owner",
+    ),
+    18: (
+        "postgres",
+        "per-owner encrypted credentials (spec 116); local credentials live in "
+        ".env, and a local table would put them in the file just backup copies",
     ),
 }
 
@@ -1392,6 +1409,34 @@ POSTGRES_OWNER_IDENTITY: list[str] = [
     f"REVOKE USAGE ON SCHEMA auth FROM {TENANT_ROLE}",
 ]
 
+# Spec 116: each owner's credentials, encrypted by the API with a key the
+# database never holds. Postgres only: locally credentials stay in .env
+# (HOSTED_ONLY_TABLES). Spec 105's shape whole: the owner defaults to the
+# request's (migration 16), row security forced, the one owner_only policy,
+# and grants stated rather than inherited. The primary key leads with
+# owner_id, which is the owner index the catalog test asks for. The kinds
+# are written out, not read from harrier.credentials, so this migration
+# stays what it was when a later spec adds one.
+POSTGRES_CREDENTIALS: list[str] = [
+    f"""
+    CREATE TABLE credentials (
+        owner_id uuid NOT NULL DEFAULT public.{OWNER_ID_FUNCTION} REFERENCES auth.users (id),
+        kind text NOT NULL CHECK (kind IN ('ai', 'apify', 'hunter', 'telegram')),
+        key_id text NOT NULL,
+        nonce bytea NOT NULL,
+        ciphertext bytea NOT NULL,
+        updated_at text NOT NULL DEFAULT {_PG_NOW},
+        PRIMARY KEY (owner_id, kind)
+    )
+    """,
+    "ALTER TABLE credentials ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE credentials FORCE ROW LEVEL SECURITY",
+    f"CREATE POLICY owner_only ON credentials AS PERMISSIVE FOR ALL TO {TENANT_ROLE} "
+    f"USING ({_OWNER_IS_REQUEST}) WITH CHECK ({_OWNER_IS_REQUEST})",
+    f"REVOKE ALL ON credentials FROM {_EVERY_GRANTEE}",
+    f"GRANT SELECT, INSERT, UPDATE, DELETE ON credentials TO {TENANT_ROLE}",
+]
+
 POSTGRES_MIGRATIONS: list[tuple[int, list[str]]] = [
     (POSTGRES_BASELINE_VERSION, POSTGRES_BASELINE),
     (10, POSTGRES_OWNERS),
@@ -1408,6 +1453,7 @@ POSTGRES_MIGRATIONS: list[tuple[int, list[str]]] = [
     (14, POSTGRES_OWNER_CORRECTIONS_2),
     (15, POSTGRES_JOB_ELIGIBILITY),
     (16, POSTGRES_OWNER_IDENTITY),
+    (18, POSTGRES_CREDENTIALS),
 ]
 
 

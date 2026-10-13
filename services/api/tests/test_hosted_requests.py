@@ -46,6 +46,7 @@ from pg_support import (
 )
 from test_hosted_auth import (
     API_HOST,
+    CREDENTIALS_KEY_TEXT,
     KID,
     SPA_ORIGIN,
     SUPABASE_URL,
@@ -368,6 +369,7 @@ def hosted_environment(monkeypatch: pytest.MonkeyPatch, database_url: str) -> No
     monkeypatch.setenv("HARRIER_ALLOWED_HOSTS", API_HOST)
     monkeypatch.setenv("HARRIER_CORS_ORIGINS", SPA_ORIGIN)
     monkeypatch.setenv(URL_VARIABLE, database_url)
+    monkeypatch.setenv("HARRIER_CREDENTIALS_KEY", CREDENTIALS_KEY_TEXT)
 
 
 def keys_served_here(monkeypatch: pytest.MonkeyPatch) -> ec.EllipticCurvePrivateKey:

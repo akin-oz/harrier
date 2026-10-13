@@ -17,6 +17,7 @@ locally without one (`tests/pg_support.py`).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -97,6 +98,7 @@ EXPECTED_GRANTS: dict[str, frozenset[str]] = {
     "job_events": frozenset({"SELECT"}),
     "job_eligibility": frozenset({"SELECT"}),
     "tracks": frozenset({"SELECT", "INSERT", "UPDATE"}),
+    "credentials": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),
     "schema_version": frozenset({"SELECT"}),
 }
 
@@ -158,6 +160,13 @@ REQUIRED: dict[str, dict[str, object]] = {
     "user_config": {"kind": "synthetic"},
     "job_runs": {"job": "synthetic", "last_success_at": "2026-10-10 00:00:00"},
     "tracks": {"slug": "synthetic", "kind": "industry", "label": "Synthetic"},
+    # Synthetic bytes, not a ciphertext of anything.
+    "credentials": {
+        "kind": "apify",
+        "key_id": "synthetic",
+        "nonce": bytes(12),
+        "ciphertext": b"synthetic",
+    },
 }
 
 
@@ -256,6 +265,22 @@ def migration(version: int) -> list[str]:
     return next(
         statements for number, statements in schema.POSTGRES_MIGRATIONS if number == version
     )
+
+
+# Migration 10's statements, joined as below, on `main` before spec 116.
+MIGRATION_10_DIGEST = "e60a207077ef5fa52402d261165c9fc27613f9a70d0dead59253b0237c5e042b"
+
+
+def test_migration_10_statements_do_not_change() -> None:
+    """Migration 10 reads frozen copies of the live declarations
+    (MIGRATION_10_OWNED_TABLES), so a table a later migration declares,
+    such as spec 116's credentials, changes nothing it applies (spec 116,
+    Scope item 1; spec 108 plans the same test). Compared as text, through
+    its digest."""
+    statements = migration(10)
+    joined = "\n;\n".join(statements).encode()
+    assert hashlib.sha256(joined).hexdigest() == MIGRATION_10_DIGEST
+    assert not any("credentials" in statement for statement in statements)
 
 
 def migrate_to(url: str, version: int, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1340,7 +1365,7 @@ def test_track_two_needs_migration_16_on_the_faithful_shim(
             assert error.diag.message_primary == "permission denied for schema auth"
         migrate_postgres(url)
         with psycopg.connect(url, autocommit=True) as conn:
-            assert postgres_version(conn) == 16
+            assert postgres_version(conn) == target_version()
             ids: list[Any] = []
             for slug in ("second", "third"):
                 with as_owner(conn, owner):

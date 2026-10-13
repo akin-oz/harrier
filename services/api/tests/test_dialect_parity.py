@@ -59,7 +59,7 @@ import os
 import re
 import sqlite3
 import time
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -77,6 +77,7 @@ from harrier.tracker.schema import (
     ELIGIBILITY_ORIGINS,
     ELIGIBILITY_VERDICTS,
     HOSTED_ONLY_COLUMNS,
+    HOSTED_ONLY_TABLES,
     OWNER_SCOPED_KEYS,
     STATUSES,
 )
@@ -740,12 +741,37 @@ def test_the_sqlite_side_runs_in_a_zone_that_is_not_utc(tmp_path: Path) -> None:
         assert time.localtime().tm_gmtoff == NOT_UTC_OFFSET_SECONDS
 
 
-def structural_problems(lite: sqlite3.Connection, pg: PgConnection) -> list[str]:
+def hosted_only_problems(
+    lite_tables: set[str], pg_tables: set[str], hosted_tables: Mapping[str, str]
+) -> list[str]:
+    """Every declared hosted-only table that Postgres lacks or SQLite has
+    too (spec 116). A declaration that matches nothing would excuse a table
+    that is not there, as a stale column declaration would."""
+    problems: list[str] = []
+    for table in sorted(hosted_tables):
+        if table not in pg_tables:
+            problems.append(f"HOSTED_ONLY_TABLES names {table}, not in Postgres")
+        if table in lite_tables:
+            problems.append(f"HOSTED_ONLY_TABLES names {table}, which SQLite has too")
+    return problems
+
+
+def structural_problems(
+    lite: sqlite3.Connection,
+    pg: PgConnection,
+    hosted_tables: Mapping[str, str] = HOSTED_ONLY_TABLES,
+) -> list[str]:
     """Every way the two stores' tables, columns, types and keys differ,
     past the declared differences. The whole comparison, in one place, so a
-    test can run it on a store it has changed."""
+    test can run it on a store it has changed. A declared hosted-only table
+    is left out of the Postgres side once it is known to be there and not
+    on SQLite."""
     lite_tables = sqlite_tables(lite)
     pg_tables = postgres_tables(pg)
+    declared = hosted_only_problems(lite_tables, pg_tables, hosted_tables)
+    if declared:
+        return declared
+    pg_tables -= set(hosted_tables)
     if lite_tables != pg_tables:
         return [
             f"tables differ. Only in SQLite: {sorted(lite_tables - pg_tables)}. "
@@ -791,7 +817,8 @@ def test_both_dialects_build_the_same_tracker(tmp_path: Path) -> None:
             "WHERE c.relnamespace = 'public'::regnamespace AND a.attname = 'owner_id'"
         ).fetchall()
         assert {str(table): str(default) for table, default in defaults} == dict.fromkeys(
-            (table for table, _ in HOSTED_ONLY_COLUMNS), "harrier_owner_id()"
+            (*(table for table, _ in HOSTED_ONLY_COLUMNS), *HOSTED_ONLY_TABLES),
+            "harrier_owner_id()",
         )
         hosted = {table for table, _ in HOSTED_ONLY_COLUMNS}
         assert {table: pg_rows[table]["owner_id"] for table in hosted} == dict.fromkeys(
@@ -801,6 +828,30 @@ def test_both_dialects_build_the_same_tracker(tmp_path: Path) -> None:
         # The table list for the defaults is written by hand; a new table
         # must join it, or its defaults go unchecked.
         assert {table for table, _, _ in MINIMAL_ROWS} == lite_tables - {"schema_version"}
+
+
+def test_a_hosted_only_table_is_declared_for_parity(tmp_path: Path) -> None:
+    """`credentials` is on Postgres only, declared in HOSTED_ONLY_TABLES, and
+    the comparison passes. Undeclared, it is a difference; a declaration
+    naming a table Postgres lacks, or one SQLite has too, fails the whole
+    comparison (spec 116)."""
+    with sqlite_store(tmp_path) as lite, postgres_store() as pg:
+        assert "credentials" in HOSTED_ONLY_TABLES
+        assert "credentials" in postgres_tables(pg)
+        assert "credentials" not in sqlite_tables(lite)
+        assert structural_problems(lite, pg) == []
+
+        assert structural_problems(lite, pg, hosted_tables={}) == [
+            "tables differ. Only in SQLite: []. Only in Postgres: ['credentials']"
+        ]
+        absent = {**HOSTED_ONLY_TABLES, "nowhere": "a table neither store has"}
+        assert structural_problems(lite, pg, hosted_tables=absent) == [
+            "HOSTED_ONLY_TABLES names nowhere, not in Postgres"
+        ]
+        on_both = {**HOSTED_ONLY_TABLES, "contacts": "a table both stores have"}
+        assert structural_problems(lite, pg, hosted_tables=on_both) == [
+            "HOSTED_ONLY_TABLES names contacts, which SQLite has too"
+        ]
 
 
 def test_a_declaration_naming_nothing_fails() -> None:
