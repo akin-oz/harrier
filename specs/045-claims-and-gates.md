@@ -1450,22 +1450,22 @@ throwaway Postgres opened for an owner, with synthetic values only:
       `profile_documents` revoked, and reads identity values. The read
       returns the contact's values, the block exits without an error, and
       the row is in the store
-      (planned test_a_failed_identity_read_leaves_the_callers_transaction_usable).
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_failed_identity_read_leaves_the_callers_transaction_usable`).
 - [ ] The same with another session holding `profile_documents` in
       `ACCESS EXCLUSIVE` mode and a short `busy_timeout_ms`, in place of
       the revoked privilege
-      (planned test_an_identity_read_that_times_out_leaves_the_callers_transaction_usable).
+      (`services/api/tests/test_seam_on_both_stores.py::test_an_identity_read_that_times_out_leaves_the_callers_transaction_usable`).
 - [ ] `add_contact` inside a caller's block, with an identity filter
       registered and the `SELECT` revoked: the block commits, the row is
       in the store, and the filter redacts the new contact's name
-      (planned test_a_contact_added_inside_a_callers_block_survives_a_failed_identity_read).
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_contact_added_inside_a_callers_block_survives_a_failed_identity_read`).
 - [ ] Outside any block, the read returns the same values it returns
       today, and the driver is idle afterwards
-      (planned test_identity_values_outside_a_block_leaves_postgres_idle).
+      (`services/api/tests/test_seam_on_both_stores.py::test_identity_values_outside_a_block_leaves_postgres_idle`).
 - [ ] On SQLite, a write outside any block, then a read of identity
       values: the sqlite3 module's transaction is still open and the row
       is not committed
-      (planned test_identity_values_leaves_a_pending_sqlite_write_alone).
+      (`services/api/tests/test_seam_on_both_stores.py::test_identity_values_leaves_a_pending_sqlite_write_alone`).
 - [ ] `services/api/tests/test_seam_on_both_stores.py::test_identity_reads_survive_a_store_error_on_both_stores`
       and the identity tests in `services/api/tests/test_logging.py` pass
       unchanged.

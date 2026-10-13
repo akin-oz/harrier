@@ -901,6 +901,103 @@ def test_identity_reads_survive_a_store_error_on_both_stores(tmp_path: Path) -> 
             assert identity_values(pg) == set(contact)
 
 
+# --- a failed identity read leaves the caller's transaction usable (spec 045) ---
+
+IDENTITY_CONTACT = ("Synthetic Reader Contact", "synthetic.reader@example.test")
+INSERT_CONTACT = "INSERT INTO contacts (person_name, person_email) VALUES (?, ?)"
+
+
+def _contacts(url: str, owner: str) -> list[str]:
+    with closing(open_store({URL_VARIABLE: url}, owner=owner)) as conn:
+        return [str(row[0]) for row in conn.execute("SELECT person_name FROM contacts")]
+
+
+def test_a_failed_identity_read_leaves_the_callers_transaction_usable() -> None:
+    with fresh_database() as url:
+        migrate_postgres(url)
+        with closing(raw(url)) as admin:
+            owner = new_owner(admin)
+            admin.execute(f"REVOKE SELECT ON profile_documents FROM {TENANT_ROLE}".encode())
+        with closing(open_store({URL_VARIABLE: url}, owner=owner)) as conn:
+            with conn.transaction():
+                conn.execute(INSERT_CONTACT, IDENTITY_CONTACT)
+                assert identity_values(conn) == set(IDENTITY_CONTACT)
+            assert not conn.in_transaction
+        assert _contacts(url, owner) == [IDENTITY_CONTACT[0]]
+
+
+def test_an_identity_read_that_times_out_leaves_the_callers_transaction_usable() -> None:
+    with fresh_database() as url:
+        migrate_postgres(url)
+        with closing(raw(url)) as admin:
+            owner = new_owner(admin)
+        with (
+            closing(raw(url)) as holder,
+            closing(open_store({URL_VARIABLE: url}, owner=owner)) as conn,
+        ):
+            conn.busy_timeout_ms = 200
+            with holder.transaction():
+                holder.execute("LOCK TABLE profile_documents IN ACCESS EXCLUSIVE MODE")
+                with conn.transaction():
+                    conn.execute(INSERT_CONTACT, IDENTITY_CONTACT)
+                    assert identity_values(conn) == set(IDENTITY_CONTACT)
+        assert _contacts(url, owner) == [IDENTITY_CONTACT[0]]
+
+
+def test_a_contact_added_inside_a_callers_block_survives_a_failed_identity_read() -> None:
+    import logging
+
+    from harrier.logredact import REDACTION, IdentityRedactionFilter, forget_all, register
+    from harrier.tracker.store import add_contact
+
+    with fresh_database() as url:
+        migrate_postgres(url)
+        with closing(raw(url)) as admin:
+            owner = new_owner(admin)
+            admin.execute(f"REVOKE SELECT ON profile_documents FROM {TENANT_ROLE}".encode())
+        redaction = IdentityRedactionFilter(set())
+        forget_all()
+        register(redaction)
+        try:
+            with (
+                closing(open_store({URL_VARIABLE: url}, owner=owner)) as conn,
+                conn.transaction(),
+            ):
+                add_contact(
+                    conn, {"person_name": IDENTITY_CONTACT[0], "person_email": IDENTITY_CONTACT[1]}
+                )
+        finally:
+            forget_all()
+        assert _contacts(url, owner) == [IDENTITY_CONTACT[0]]
+        record = logging.LogRecord(
+            "x", logging.INFO, "", 0, f"replied to {IDENTITY_CONTACT[0]}", (), None
+        )
+        redaction.filter(record)
+        assert record.getMessage() == f"replied to {REDACTION}"
+
+
+def test_identity_values_outside_a_block_leaves_postgres_idle(migrated_postgres: str) -> None:
+    with closing(raw(migrated_postgres)) as admin:
+        owner = new_owner(admin)
+    with closing(open_store({URL_VARIABLE: migrated_postgres}, owner=owner)) as conn:
+        conn.execute(INSERT_CONTACT, IDENTITY_CONTACT)
+        assert identity_values(conn) == set(IDENTITY_CONTACT)
+        assert not conn.in_transaction
+
+
+def test_identity_values_leaves_a_pending_sqlite_write_alone(tmp_path: Path) -> None:
+    """A write outside any block opens the sqlite3 module's transaction. A
+    block around the reads would adopt it and commit it; the reads leave it
+    open, as before the amendment."""
+    path = tmp_path / "identity.db"
+    with closing(connect(path)) as conn, closing(connect(path)) as other:
+        conn.execute(INSERT_CONTACT, IDENTITY_CONTACT)
+        assert conn.in_transaction
+        assert identity_values(conn) == set(IDENTITY_CONTACT)
+        assert conn.in_transaction
+        assert other.execute("SELECT person_name FROM contacts").fetchall() == []
+
+
 # --- the post-merge review of PR #288 ---
 
 
