@@ -20,20 +20,18 @@ tenant's keys. ADR-013 decision 8 stores credentials per owner and gives
 each run only its owner's. Akin chose bring-your-own LLM keys (spec 102,
 open decision 3).
 
-Line numbers below are from `main` at `44ac0d7` (2026-10-10), except the
-`harrier_api/app.py` ones, refreshed to `main` at `524dd8a` on 2026-10-11,
-the `schema.py` ones, refreshed to `main` at `5c3d083` after migration 16,
-and the `harrier_cli/main.py` ones, refreshed to `main` at `a7b9998`. Counts say how they were taken.
+Line numbers below are from `main` at `7e5f75f` (2026-10-13), refreshed
+by the implementing change (decision D9). Counts say how they were taken.
 
 The post-merge review of PRs #194 and #207 (2026-10-10) added five
 problems this spec owns:
 
 - **A run is a CLI process, and ADR-013 says there is no tenant CLI.**
   Every run kind is a `harrier_cli.main` command
-  (`services/api/src/harrier_api/runs.py:39`, `KIND_COMMANDS`, and `:98`,
-  `PARAMETERIZED_KINDS`; `build_command` at `:397` starts every argv with
+  (`services/api/src/harrier_api/runs.py:40`, `KIND_COMMANDS`, and `:99`,
+  `PARAMETERIZED_KINDS`; `build_command` at `:429` starts every argv with
   `harrier_cli.main`), spawned by `asyncio.create_subprocess_exec`
-  (`runs.py:713-717`). ADR-013 decision 4 says "the hosted deployment has
+  (`runs.py:761-765`). ADR-013 decision 4 says "the hosted deployment has
   no tenant CLI", and spec 112 refuses every command but `harrier store`
   on a Postgres URL. This spec amends ADR-013 decision 4: a run is a CLI
   process bound by its parent, the API, to one owner, and asks spec 112
@@ -44,7 +42,7 @@ problems this spec owns:
   inside a run; it does not contain a compromised run, which can claim any
   owner. This spec states that limit. (architecture 1)
 - **The child's environment is inherited.** `create_subprocess_exec` is
-  called with no `env` (`runs.py:713-717`), and the CLI LLM providers copy
+  called with no `env` (`runs.py:761-765`), and the CLI LLM providers copy
   `os.environ` again (`services/api/src/harrier/llm/providers.py:103`,
   `:157`). Hosted, the child's environment is built from an allowlist,
   never inherited, and excludes `HARRIER_DATABASE_URL` and every other
@@ -54,7 +52,7 @@ problems this spec owns:
   This spec decrypts an owner's credentials only at run start.
   (architecture 10)
 - **Runs are per machine on Fly.** The run registry is an in-memory dict
-  per process (`runs.py:580`). A stream request routed to another Fly
+  per process (`runs.py:618`). A stream request routed to another Fly
   machine answers 404, and Fly's auto-stop kills a machine's runs. Either
   one machine with auto-stop off, or `fly-replay` routing of run requests
   to the machine that holds the run, decided with spec 110.
@@ -73,42 +71,42 @@ Refining the stub found six more, each of which would mix owners once
 spec 104's 501 is lifted:
 
 - **Two owners' runs join each other.** `RunManager.start` joins an active
-  run with the same kind, target and signature (`runs.py:632-641`), and
-  `active_run` matches on kind and target only (`runs.py:597-601`). The
+  run with the same kind, target and signature (`runs.py:679-688`), and
+  `active_run` matches on kind and target only (`runs.py:635-639`). The
   target is a track slug for reconsideration
-  (`services/api/src/harrier_api/ops_routes.py:137`), a date for the
-  digest (`ops_routes.py:217`), and empty for discovery started from
-  `POST /runs` (`services/api/src/harrier_api/app.py:1111`). Slugs are per
+  (`services/api/src/harrier_api/ops_routes.py:144`), a date for the
+  digest (`ops_routes.py:224`), and empty for discovery started from
+  `POST /runs` (`services/api/src/harrier_api/app.py:1186`). Slugs are per
   owner since spec 105, so owner B asking for a reconsideration of track
   `job` while owner A's runs would be handed A's run, with A's run id. And
   every discovery on the machine would share one lock.
 - **Every run writes under one data directory.** `data_dir()`
-  (`services/api/src/harrier/db.py:35-48`) is the root of every file a run
+  (`services/api/src/harrier/db.py:36-49`) is the root of every file a run
   writes: 40 lines in 26 files under `services/api/src` call it (`grep -rn
   'data_dir()'`, then `grep -rln`). Four of those paths are built from a
   track id (`academic/discovery.py:153`, `:172`,
-  `screening/seen.py:85`, and the run key above, found with `grep -rnE
+  `screening/seen.py:111`, and the run key above, found with `grep -rnE
   'track\.id\}|str\((scope\.)?track(_id|\.id)\)'`). On one machine, owner
   A's track 1 and owner B's track 1 would share seen-state and saved
   datasets.
 - **A run reads `.env`.** `main` calls `load_project_env()` first
-  (`services/api/src/harrier_cli/main.py:3078-3079`), which copies every
+  (`services/api/src/harrier_cli/main.py:3073-3077`), which copies every
   key of `.env` in the working directory that the environment lacks
-  (`main.py:53-59`). An allowlist that leaves a name out would then be
+  (`main.py:59-65`). An allowlist that leaves a name out would then be
   filled from a file. The image excludes `.env` (`.dockerignore:5-6`), so
   this is a guard against a file that should not be there, not a known
   leak.
 - **`auto` can pick a CLI provider.** `resolve_auto_providers` tries the
   `codex` binary first and the `claude` binary last
-  (`services/api/src/harrier/llm/config.py:123-138`), and the image
+  (`services/api/src/harrier/llm/config.py:134-149`), and the image
   installs the claude CLI (`Dockerfile:135`). ADR-013 decision 8 makes the
   CLI providers local only, and nothing enforces it.
 - **A run's log redaction opens SQLite.** `_load_identity_values` opens
-  `connect()` (`services/api/src/harrier/logsetup.py:123-140`). In a
+  `connect()` (`services/api/src/harrier/logsetup.py:204-224`). In a
   hosted run that is an empty SQLite file in the data directory, so logs
   would be unredacted.
 - **Credentials are read from the environment by name.** `OPENAI_API_KEY`
-  and `ANTHROPIC_API_KEY` (`llm/config.py:131-153`), `APIFY_TOKEN`
+  and `ANTHROPIC_API_KEY` (`llm/config.py:142-164`), `APIFY_TOKEN`
   (`sources/apify_linkedin.py:42`, `sources/apify_academic.py:51`,
   `outreach/discovery.py:56`), `HUNTER_API_KEY` (`outreach/hunter.py:23`),
   `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (`notify.py:32-33`), and the
@@ -152,7 +150,7 @@ function.
    the API providers only.
 7. **A hosted run's log redaction reads its own store.**
 8. **The owner's secret values are scrubbed from the run's events** at
-   `RunManager._append`, the existing choke point (`runs.py:755-769`).
+   `RunManager._append`, the existing choke point (`runs.py:803-817`).
 9. **A second login role for runs.** Hosted start-up requires
    `HARRIER_RUN_DATABASE_URL`, checked with spec 104's login-role checks
    (Changes to approved specs).
@@ -231,23 +229,23 @@ them.
 ### Which kinds run hosted
 
 `HOSTED_RUN_KINDS` maps every key of `KIND_COMMANDS` and
-`PARAMETERIZED_KINDS` (18 distinct kinds, counted from `runs.py:39-51` and
-`:98-179`) to one answer. The proposed table:
+`PARAMETERIZED_KINDS` (18 distinct kinds, counted from `runs.py:40-52` and
+`:99-180`) to one answer. The proposed table:
 
 | Kind | Hosted | Needs | Why |
 |---|---|---|---|
 | `discovery` | runs | none up front | results are tracker rows; each source reports its own missing token (`sources/apify_linkedin.py:315`) |
-| `demo` | runs | none | `demo-run` exercises the run machinery and touches no data (`harrier_cli/main.py:2226-2227`); spec 110's staging check uses it |
+| `demo` | runs | none | `demo-run` exercises the run machinery and touches no data (`harrier_cli/main.py:2221-2222`); spec 110's staging check uses it |
 | `digest` | runs | `telegram`, unless `--dry-run` | it sends through `send_telegram_message` (`harrier/digest.py:22`, `:341`) |
-| `check-feeds` | runs | none | reads the owner's boards from the store (`harrier_cli/main.py:1742-1758`) |
+| `check-feeds` | runs | none | reads the owner's boards from the store (`harrier_cli/main.py:1737-1753`) |
 | `reconsider` | runs | none | results are tracker rows |
 | `events-backfill` | runs | none | results are event rows |
-| `evaluate-prospects` | runs | `ai` | calls `evaluate_offer` (`harrier/offers/batch.py:91`); results are tracker rows |
-| `tailor` | 501 until spec 107 | | the result is a file (`resume/tailor.py:51`) |
-| `cover-letter` | 501 until spec 107 | | a file (`apply/letters.py:197`) |
-| `answers` | 501 until spec 107 | | a file (`apply/answers.py:169`) |
-| `evaluate` | 501 until spec 107 | | a report file (`offers/evaluate.py:107`; `harrier_cli/main.py:631`) |
-| `outreach-draft` | 501 until spec 107 | | a draft file (`outreach/drafts.py:122`) |
+| `evaluate-prospects` | runs | `ai` | calls `evaluate_offer` (`harrier/offers/batch.py:89`); results are tracker rows |
+| `tailor` | 501 until spec 107 | | the result is a file (`resume/tailor.py:52`) |
+| `cover-letter` | 501 until spec 107 | | a file (`apply/letters.py:164`) |
+| `answers` | 501 until spec 107 | | a file (`apply/answers.py:166`) |
+| `evaluate` | 501 until spec 107 | | a report file (`offers/evaluate.py:107`; `harrier_cli/main.py:637`) |
+| `outreach-draft` | 501 until spec 107 | | a draft file (`outreach/drafts.py:123`) |
 | `find-contacts` | 501 until spec 107 | | candidates are staged in a file (`outreach/discovery.py:45`), which approval reads |
 | `backfill-posters` | 501 until spec 107 | | stages posters into the same candidates file (`outreach/backfill.py:1-8`, `:62-77`) |
 | `scoring-export` | 501 until spec 107 | | an export file (`scoring/export.py:42`) |
@@ -314,7 +312,7 @@ the prefixes `HARRIER_`, `AI_`, `OPENAI_`, `ANTHROPIC_`, `CODEX_`,
 `SUPABASE_`, `FLY_`, then `sort -u`), keeping only those that are
 configuration and not a secret.
 
-Grandchildren (Chromium, `pdftotext` in `resume/pdf.py:70`) inherit the
+Grandchildren (Chromium, `pdfinfo` in `resume/pdf.py:86`) inherit the
 child's environment, which is already the allowlist.
 
 ### The owner's run directory
@@ -322,13 +320,13 @@ child's environment, which is already the allowlist.
 `<API data_dir()>/owners/<owner id>/`, created with mode 0700 on first use.
 Every path a run builds under `data_dir()` is then under its owner's
 directory with no domain change, because `data_dir()` honours
-`HARRIER_DATA_DIR` (`db.py:35-38`). That qualifies by owner every file path
+`HARRIER_DATA_DIR` (`db.py:36-39`). That qualifies by owner every file path
 built from a track id (`academic/discovery.py:153`, `:172`,
-`screening/seen.py:85`). Mode 0700 does not separate owners from each
+`screening/seen.py:111`). Mode 0700 does not separate owners from each
 other, since every run is the same user (The trust model); it keeps the
 directory from other users of the machine.
 
-The API's own inputs (`runs.py:302-332`) stay in the API's
+The API's own inputs (`runs.py:303-304`, `:331-364`) stay in the API's
 `data_dir()/runs/inputs`, named by random id and removed when the run ends.
 This directory is an interim. Spec 107 moves run files to Storage under
 the owner's prefix and removes it.
@@ -349,8 +347,8 @@ it is taken, the binding is specified by what it guarantees, not by how.
 
 The run-outcome key `discovery:<track id>` (`academic/discovery.py:71`)
 does not change. It is stored in `job_runs`, whose Postgres primary key is
-`(owner_id, job)` since spec 105 (`schema.py:935`), and read under the
-owner's policy (`runoutcome.py:138-161`). Owner A's `discovery:1` and owner
+`(owner_id, job)` since spec 105 (`schema.py:969`), and read under the
+owner's policy (`runoutcome.py:139-162`). Owner A's `discovery:1` and owner
 B's `discovery:1` are two rows. Writing the owner into the key would make
 domain SQL name a tenant, which ADR-013 decision 2 forbids. The keys that
 did need an owner are the in-memory lock key (above) and the file paths
@@ -466,7 +464,7 @@ the operator can rotate either alone; and a `CONNECTION LIMIT` on
 
 ### Where a run lives on Fly
 
-The registry, the journal (`runs.py:575-577`) and a run's process are on
+The registry, the journal (`runs.py:613-615`) and a run's process are on
 one machine. A request for a run reaches the right machine only if there
 is one.
 
@@ -536,96 +534,86 @@ Decision 8's note naming the key's location is spec 116's.
 
 ## Acceptance criteria
 
-- [ ] Every kind in `KIND_COMMANDS` and `PARAMETERIZED_KINDS` has one entry
+- [x] Every kind in `KIND_COMMANDS` and `PARAMETERIZED_KINDS` has one entry
       in `HOSTED_RUN_KINDS`, and a new kind without one fails the test
-      (planned test_every_run_kind_declares_its_hosted_answer).
-- [ ] Hosted, each kind refused in the table answers 501 with its detail,
-      writes no input file and spawns nothing (planned
-      test_a_kind_not_offered_hosted_answers_501_naming_its_spec). Spec
+      (`services/api/tests/test_hosted_runs.py::test_every_run_kind_declares_its_hosted_answer`).
+- [x] Hosted, each kind refused in the table answers 501 with its detail,
+      writes no input file and spawns nothing (`services/api/tests/test_run_owner.py::test_a_kind_not_offered_hosted_answers_501_naming_its_spec`). Spec
       104's planned refusal test for every hosted run is replaced by this
       one.
-- [ ] Hosted, owner B starting a kind and target owner A has active gets a
+- [x] Hosted, owner B starting a kind and target owner A has active gets a
       new run with a different id; A's request repeated joins A's run
-      (planned test_two_owners_never_join_each_others_run).
-- [ ] A run whose kind needs an unset credential is refused with 409 and
-      spawns nothing (planned
-      test_a_run_that_needs_a_missing_credential_is_refused_before_spawning).
-- [ ] With a server environment holding a sentinel value under every name
+      (`services/api/tests/test_hosted_runs.py::test_two_owners_never_join_each_others_run`).
+- [x] A run whose kind needs an unset credential is refused with 409 and
+      spawns nothing (`services/api/tests/test_hosted_runs.py::test_a_run_that_needs_a_missing_credential_is_refused_before_spawning`).
+- [x] With a server environment holding a sentinel value under every name
       the Behavior section excludes, plus a random name, a hosted child's
       environment (captured by a child that prints its names and hashes of
       its values) holds exactly the allowlisted names, its owner's values,
-      and no sentinel (planned
-      test_the_child_environment_holds_only_the_allowlist_and_its_owners_values).
-- [ ] `HARRIER_CREDENTIALS_KEY`, the API's `HARRIER_DATABASE_URL` value and
-      another owner's credential never reach a child (planned
-      test_the_credentials_key_never_reaches_a_run).
-- [ ] A hosted run's working directory, `HOME` and `HARRIER_DATA_DIR` are
+      and no sentinel (`services/api/tests/test_hosted_runs.py::test_the_child_environment_holds_only_the_allowlist_and_its_owners_values`).
+- [x] `HARRIER_CREDENTIALS_KEY`, the API's `HARRIER_DATABASE_URL` value and
+      another owner's credential never reach a child (`services/api/tests/test_hosted_runs.py::test_the_credentials_key_never_reaches_a_run`).
+- [x] A hosted run's working directory, `HOME` and `HARRIER_DATA_DIR` are
       its owner's run directory, mode 0700, and two owners' runs on track
-      id 1 write seen-state to two different files (planned
-      test_a_hosted_run_works_in_its_owners_directory).
-- [ ] A hosted run with a `.env` file in its working directory does not
-      load it (planned test_a_hosted_run_reads_no_env_file).
-- [ ] On a run `Connection`, every transaction, including one opened by a
+      id 1 write seen-state to two different files (`services/api/tests/test_hosted_runs.py::test_a_hosted_run_works_in_its_owners_directory`).
+- [x] A hosted run with a `.env` file in its working directory does not
+      load it (`services/api/tests/test_hosted_runs.py::test_a_hosted_run_reads_no_env_file`).
+- [x] On a run `Connection`, every transaction, including one opened by a
       bare statement, runs as `harrier_tenant` with the owner's `sub`, and
       a probe placed before the identity statements never runs
       (`services/api/tests/test_seam_on_both_stores.py::test_an_owner_connection_sets_its_identity_in_every_transaction`
       and
       `services/api/tests/test_seam_on_both_stores.py::test_a_lost_owner_identity_runs_no_statement`;
       re-cited by the Amendment (2026-10-13)).
-- [ ] A run connection whose identity read-back differs raises the
+- [x] A run connection whose identity read-back differs raises the
       identity error and runs no domain statement
       (`services/api/tests/test_seam_on_both_stores.py::test_a_lost_owner_identity_runs_no_statement`;
       re-cited by the Amendment (2026-10-13)).
-- [ ] A run as owner A reads none of owner B's rows in any owned table
-      (planned test_a_run_reads_only_its_owners_rows).
-- [ ] Two owners each record `discovery:1` and both rows exist with their
-      own success time (planned
-      test_a_run_outcome_key_is_per_owner_without_naming_one).
-- [ ] On a Postgres URL, each run class verb without `HARRIER_RUN_OWNER`
+- [x] A run as owner A reads none of owner B's rows in any owned table
+      (`services/api/tests/test_hosted_runs_on_postgres.py::test_a_run_reads_only_its_owners_rows`).
+- [x] Two owners each record `discovery:1` and both rows exist with their
+      own success time (`services/api/tests/test_hosted_runs_on_postgres.py::test_a_run_outcome_key_is_per_owner_without_naming_one`).
+- [x] On a Postgres URL, each run class verb without `HARRIER_RUN_OWNER`
       is refused with the run class text, exit 1, and opens nothing; with
       it, the verb runs and opens its store with `open_store(owner=...)`;
       with it set, a command outside the run class is refused and no
       `.env` is read; `HARRIER_RUN_OWNER` that is not a UUID, or beside
-      SQLite, is refused (planned
-      test_a_run_command_needs_an_owner_on_postgres). Restated by the
+      SQLite, is refused (`services/api/tests/test_hosted_runs.py::test_a_run_command_needs_an_owner_on_postgres`). Restated by the
       Amendment (2026-10-13): the walk that puts every command in one
       class, and spec 127's planned
       test_the_postgres_gate_has_operator_and_run_classes, are spec 127's.
-- [ ] In a hosted run, `codex-cli` and `claude-cli` are refused, and `auto`
+- [x] In a hosted run, `codex-cli` and `claude-cli` are refused, and `auto`
       never selects a CLI provider even with both binaries present
-      (planned test_hosted_runs_offer_only_the_api_providers).
-- [ ] A hosted run's log redaction loads its owner's identity values from
-      Postgres and creates no SQLite file (planned
-      test_a_hosted_run_redacts_logs_from_its_own_store).
-- [ ] A child that prints its owner's API key in a log line and in a
+      (`services/api/tests/test_hosted_runs.py::test_hosted_runs_offer_only_the_api_providers`).
+- [x] A hosted run's log redaction loads its owner's identity values from
+      Postgres and creates no SQLite file (`services/api/tests/test_hosted_runs_on_postgres.py::test_a_hosted_run_redacts_logs_from_its_own_store`).
+- [x] A child that prints its owner's API key in a log line and in a
       structured event produces events holding `REDACTED` and not the key
-      (planned test_a_credential_value_never_reaches_the_event_stream).
-- [ ] A child that prints its owner's Telegram chat id in a log line, a
+      (`services/api/tests/test_hosted_runs.py::test_a_credential_value_never_reaches_the_event_stream`).
+- [x] A child that prints its owner's Telegram chat id in a log line, a
       structured event and its summary produces events and a summary
-      holding `REDACTED` and not the chat id (decision D7; planned
-      test_a_telegram_chat_id_never_reaches_the_event_stream).
+      holding `REDACTED` and not the chat id (decision D7; `services/api/tests/test_hosted_runs.py::test_a_telegram_chat_id_never_reaches_the_event_stream`).
 - Moved to spec 107 by the Amendment (2026-10-13), decision 3: the
   criterion that binds a hosted run's `files()` to its owner, and its
   planned test. This spec is built without Storage.
-- [ ] Hosted start refuses a missing or non-Postgres
+- [x] Hosted start refuses a missing or non-Postgres
       `HARRIER_RUN_DATABASE_URL`, one whose role fails a login-role check,
-      and one naming the API's own role (planned
-      test_hosted_start_checks_the_run_login_role).
-- [ ] Locally, with `HARRIER_AUTH` and `HARRIER_DATABASE_URL` unset, every
+      and one naming the API's own role (`services/api/tests/test_hosted_runs_on_postgres.py::test_hosted_start_checks_the_run_login_role`).
+- [x] Locally, with `HARRIER_AUTH` and `HARRIER_DATABASE_URL` unset, every
       existing run test passes unchanged, including
       `services/api/tests/test_runs.py::test_journal_survives_restart`.
 
 Documents and gates:
 
-- [ ] ADR-013 decision 4 carries the "Amended (spec 106)" note.
-- [ ] `docs/architecture.md`'s hosted section states the trust model and
+- [x] ADR-013 decision 4 carries the "Amended (spec 106)" note.
+- [x] `docs/architecture.md`'s hosted section states the trust model and
       names `runenv.py` and this spec.
-- [ ] Once approved, the specs named under "Changes to approved specs"
+- [x] Once approved, the specs named under "Changes to approved specs"
       carry those lines, and nothing else in them changes.
-- [ ] CI's `check-python` job runs the new Postgres tests, not skipped.
-- [ ] `uv run ruff check`, `uv run pyright`, `pnpm type-check` and `pnpm
+- [x] CI's `check-python` job runs the new Postgres tests, not skipped.
+- [x] `uv run ruff check`, `uv run pyright`, `pnpm type-check` and `pnpm
       lint` pass.
-- [ ] `just check` passes.
+- [x] `just check` passes.
 
 ## Honest limitations
 
@@ -699,7 +687,7 @@ spec.
   `RunsNotHosted`; each kind answers as `HOSTED_RUN_KINDS` says (Behavior,
   "Which kinds run hosted"). Its planned refusal test for every hosted run
   is replaced by
-  planned test_a_kind_not_offered_hosted_answers_501_naming_its_spec.
+  `services/api/tests/test_run_owner.py::test_a_kind_not_offered_hosted_answers_501_naming_its_spec`.
   Hosted start-up also requires `HARRIER_RUN_DATABASE_URL`, checked with
   its login-role checks, and refuses one naming the API's own role.
 - **Spec 112:** `open_store()` takes an optional `owner` and returns a run
@@ -980,7 +968,7 @@ proxy may then stop the machine as usual.
 
 ### A run cut off by a stop
 
-The run journal is a file on the machine's root disk (`runs.py:575-577`),
+The run journal is a file on the machine's root disk (`runs.py:613-615`),
 which a start after an idle stop resets (spec 115's F2). Hosted, the
 record lives in Supabase instead, in a new hosted-only owned table:
 
@@ -1002,7 +990,7 @@ CREATE TABLE run_records (
 );
 ```
 
-- The states are `RunState`'s (`runs.py:35`). Timestamps are ISO 8601 UTC
+- The states are `RunState`'s (`runs.py:36`). Timestamps are ISO 8601 UTC
   text, as `schedule_state` (spec 108) and `job_runs` use.
 - Row security is enabled and forced with the `owner_only` policy every
   owned table has (spec 105, Amendment); the primary key leads with
@@ -1030,7 +1018,7 @@ Writes, each as the run's owner:
 3. **The stop signal.** When the API receives the signal Fly sends before
    it stops the machine, it records every active run `interrupted`, each
    in a transaction as its owner, then terminates the children with the
-   run manager's grace (`runs.py:567`). Whether an auto-stop sends that
+   run manager's grace (`runs.py:605`). Whether an auto-stop sends that
    signal and waits is spec 115's F2.
 4. **A hard stop.** If the process ends with no chance to write, rows stay
    `queued` or `running` with the earlier `api_instance`. From the next
@@ -1050,30 +1038,28 @@ unchanged and `run_records` is not read.
 
 ### Acceptance criteria (hosting budget)
 
-- [ ] Hosted, with a fake clock and a fake HTTP client, the first active
+- [x] Hosted, with a fake clock and a fake HTTP client, the first active
       run sends `GET /health` to the first host in
       `HARRIER_ALLOWED_HOSTS`, beats repeat at the interval while any run
       is active, and stop after the last run ends; a failed beat fails no
-      run; locally nothing is sent (planned
-      test_an_active_run_keeps_the_machine_awake).
-- [ ] The new Postgres-only migration creates `run_records` as under
+      run; locally nothing is sent (`services/api/tests/test_hosted_runs.py::test_an_active_run_keeps_the_machine_awake`).
+- [x] The new Postgres-only migration creates `run_records` as under
       "A run cut off by a stop", declared in `SINGLE_DIALECT_MIGRATIONS`
       and `HOSTED_ONLY_TABLES`, and
       `services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared`
       and
       `services/api/tests/test_owner_policy.py::test_owner_a_reads_nothing_of_owner_b`
       pass with it.
-- [ ] A hosted run's row is inserted at start and follows each state
+- [x] A hosted run's row is inserted at start and follows each state
       change as its owner; a row left `running` by another
       `api_instance` reads and is stored `interrupted` on its owner's
       next `GET /runs`, and another owner's such row is untouched
-      (planned test_a_run_cut_off_by_a_stop_reads_interrupted).
-- [ ] On the stop signal, every active hosted run is recorded
-      `interrupted` as its owner before the process exits (planned
-      test_the_stop_signal_records_active_runs_interrupted).
-- [ ] Locally, `services/api/tests/test_runs.py::test_journal_survives_restart`
+      (`services/api/tests/test_hosted_runs_on_postgres.py::test_a_run_cut_off_by_a_stop_reads_interrupted`).
+- [x] On the stop signal, every active hosted run is recorded
+      `interrupted` as its owner before the process exits (`services/api/tests/test_hosted_runs_on_postgres.py::test_the_stop_signal_records_active_runs_interrupted`).
+- [x] Locally, `services/api/tests/test_runs.py::test_journal_survives_restart`
       passes unchanged and nothing reads or writes `run_records`.
-- [ ] Spec 115's F1 and F2 are recorded confirmed or refuted before a
+- [x] Spec 115's F1 and F2 are recorded confirmed or refuted before a
       hosted run kind is offered, and a refuted one amends this section
       first.
 
@@ -1219,3 +1205,144 @@ parallel, on branch `feat-116-credential-store`.
   and its Amendment (2026-10-13).
 - `specs/107-artifacts-and-run-state-in-storage.md`, "Which store a call
   uses", "Binding a run".
+
+## Amendment (2026-10-13, implementation): what building it found
+
+This spec was built whole, without Storage, on branch
+`feat-106-hosted-runs`. Building it found the places below where the text
+above was silent or wrong. Each is stated so the code and the spec agree;
+where the text above disagrees, this section holds. Nothing else changes.
+
+### Where the text was wrong
+
+1. **The run start's store work is its own owner transaction, not the
+   route's.** "Starting a hosted run" step 4 has the route read the
+   ciphertexts in its request transaction, and "A run cut off by a stop"
+   write 1 inserts the row there. The request transaction commits when the
+   response starts, after `start` returns, while the run's first state
+   change, written on another connection, can come first: under `READ
+   COMMITTED` it finds no committed row and is lost. So `start` reads the
+   owner's ciphertexts, binds the run and inserts its row in one
+   transaction of its own, on the API's login as the owner (`SET LOCAL
+   ROLE harrier_tenant`, the owner's claims, `assume_identity`'s
+   read-back), committed before anything is spawned
+   (`services/api/src/harrier_api/hostedruns.py`, `HostedRuns.begin`). A
+   refused binding writes nothing. `GET /runs` and `GET /runs/{run_id}`
+   read `run_records` the same way, not in the request's transaction. The
+   reach is the one "The trust model" gives the API: the owner is the
+   verified `sub`. The route no longer passes ciphertexts to `start`, so a
+   route that starts a run declares no new dependency, and the contract
+   changes only in two descriptions (below).
+2. **A run's store opens as its owner from the first statement.** Spec
+   112's `open_store(owner=...)` read the store's version as the login
+   role before any owner transaction. The run login holds no grant of its
+   own, so the read was refused and no hosted run could open its store.
+   `open_store` with an owner now reads the version inside an owner
+   transaction, as the hosted API's start check reads it as
+   `harrier_tenant` (spec 134)
+   (`services/api/src/harrier/connection.py`, `_open_owner_store`;
+   `services/api/tests/test_hosted_runs_on_postgres.py::test_a_run_reads_only_its_owners_rows`).
+3. **Two more readers of `.env`.** "The CLI on a Postgres URL" stops
+   `main` calling `load_project_env()`. `store_target` and the store
+   password scrub (`harrier.logredact`) each read `.env` in the working
+   directory when `HARRIER_DATABASE_URL` is absent. Spec 109's privacy
+   review found the first reader; these are the same shape. In a hosted
+   run neither reads it, so a `.env` cannot name a run's store or add a
+   variable to it
+   (`services/api/tests/test_hosted_runs.py::test_a_hosted_run_reads_no_store_url_from_env_file`,
+   `services/api/tests/test_hosted_runs.py::test_a_hosted_run_reads_no_env_file`).
+   "A hosted run" is `HARRIER_RUN_OWNER` present in the environment,
+   whatever its value (`harrier.connection.in_a_hosted_run`).
+4. **`run_records.owner_id` defaults to `harrier_owner_id()`,** not
+   `auth.uid()`, as spec 108's amendment of 2026-10-13 found for
+   `schedule_state`. Migration 19, the next free version on `main` at
+   `7e5f75f`, with no open branch holding it
+   (`services/api/src/harrier/tracker/schema.py`, `POSTGRES_RUN_RECORDS`).
+5. **The scrub set is dropped when the process is reaped,** not at the
+   terminal state. On the stop signal a run is recorded `interrupted`
+   before its process is terminated, and a line it prints while it stops
+   is scrubbed all the same.
+
+### Where the text was silent
+
+6. **The texts.** A hosted start with no owner: 501 `a run on the hosted
+   API needs an owner`. The run login's start refusals name
+   `HARRIER_RUN_DATABASE_URL` and the failed check, never the URL:
+   `HARRIER_AUTH=supabase needs HARRIER_RUN_DATABASE_URL, a postgresql://
+   URL for the run login role` when it is missing, empty or not a Postgres
+   URL; `the hosted API refuses HARRIER_RUN_DATABASE_URL's login role:
+   <checks>`; and `the hosted API refuses HARRIER_RUN_DATABASE_URL: it
+   names the API's own login role; runs need a login role of their own`.
+   The contract's 501 on every route that starts a run now reads `hosted
+   only: this kind of run is not offered on the hosted API; the detail
+   names the spec that will offer it, or says it is local only`, and its
+   409 adds `or, hosted, the run needs a credential that is not set or
+   cannot be read`. A run verb on a Postgres store without an owner gets
+   the run class text from a person's shell as well as from anywhere else.
+7. **The beat interval** is 30 seconds, the interval spec 115's F1
+   confirmed (the proxy stopped the probe 80 s to 126 s after its last
+   request) (`services/api/src/harrier_api/hostedruns.py`,
+   `BEAT_INTERVAL_SECONDS`).
+8. **The stop signal is the app's shutdown.** uvicorn turns the signal
+   Fly sends into the lifespan's shutdown, which records every active
+   hosted run `interrupted`, terminates the children with the cancel
+   grace, and only then closes the pool
+   (`services/api/tests/test_hosted_runs_on_postgres.py::test_the_stop_signal_records_active_runs_interrupted`).
+9. **`gmail-watch`'s detail** is the table's, `gmail-watch runs are not
+   offered on the hosted service (spec 109)`. Spec 109's open pull request
+   #312 refuses the kind first with its own text, `Gmail watch is not
+   offered on the hosted service (spec 109)`, and amends this spec with a
+   criterion on the Telegram variables. Whichever merges second keeps
+   spec 109's refusal and text, as #312's amendment says, and cites its
+   test.
+
+### What spec 108 asked of the run binding, decided here
+
+Spec 108's agent found that the text above lacks three things its
+scheduler (spec 108, PR 2) needs. They are provided here, not left to spec
+108, because each is a property of the binding this spec defines:
+
+- **A caller other than the API.** `runenv.bind_run` takes the owner,
+  the owner's ciphertexts, the key, the credential kinds the command
+  needs, and extra variables, and holds no API state. The scheduler reads
+  the owner's ciphertexts as the owner in its own transaction and calls
+  it
+  (`services/api/tests/test_hosted_runs.py::test_a_run_binds_without_the_api`).
+- **Extra environment is `TZ` only.** Any other name is refused with
+  `ExtraVariableRefused`, naming it.
+- **A typed refusal that says a credential is missing.** `bind_run` raises
+  `RunCredentialMissing`, whose `kind` names the kind and whose text is
+  this spec's 409; an undecryptable one raises spec 116's
+  `CredentialUnreadable`. The run manager answers both as
+  `RunCredentialRefused`, whose `missing` tells the two apart, so spec
+  108's `not_configured` and `refused` outcomes need no text matching.
+- **A handle to wait on and terminate.** The binding returns the
+  environment and the working directory; the caller spawns the command
+  with them, and the process it spawned is its handle. The run manager
+  does the same for API runs.
+
+### Honest limitations added
+
+- **An open event stream can delay the stop record.** uvicorn waits for
+  open connections before the lifespan's shutdown runs, and a run's event
+  stream stays open while the run does. If Fly's second signal comes
+  first, the rows stay `running` and are read `interrupted` on the
+  owner's next list, as for a hard stop. Spec 110's launch command can
+  bound uvicorn's wait with `--timeout-graceful-shutdown` below
+  `kill_timeout`; that is spec 110's to set, not done here.
+- **A start that leases a second connection.** A route that already holds
+  its request transaction's connection takes a second one from the same
+  pool for the run's binding. With the pool exhausted the start waits
+  `POOL_WAIT_SECONDS` and fails 500, as any request does.
+- **The hosted run kinds are offered in code, not deployed.** Spec 115's F1
+  and F2 are confirmed (spec 115, "Fly checks (2026-10-12)"), so this
+  section's last criterion is met; deploying is spec 110's.
+
+### Proof / origin (implementation amendment)
+
+- The implementing change on `feat-106-hosted-runs`, its tests named
+  above, and the race found while placing the start's insert.
+- `specs/108-hosted-scheduling.md`, "What this spec needs from spec 106's
+  run binding", and spec 108's agent's report relayed on 2026-10-13.
+- `specs/109-gmail-and-telegram-for-tenants.md` and pull request #312.
+- `specs/115-spec-105-holds-on-a-real-supabase-project.md`, F1 and F2.
