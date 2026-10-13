@@ -169,6 +169,14 @@ found three ways past them, each closed above:
       one case per field and shape). With nothing to mask, each field
       reads exactly as the parser wrote it
       (`services/api/tests/test_store_password_scrub.py::test_an_error_field_with_nothing_to_mask_is_unchanged`).
+- [ ] With a password generated at run time, a message that quotes the
+      password alone with `repr` or with `json.dumps` leaves no
+      8-character window of it through any of the four sinks of the first
+      criterion. One password holds both `'` and `"`; the other holds `'`,
+      a backslash, a control character and a non-ASCII character
+      (`services/api/tests/test_store_password_scrub.py::test_a_password_quoted_by_repr_or_json_is_masked_at_every_sink`,
+      one case per sink, quoting and password; Amendment (2026-10-12): a
+      password quoted by `repr` or `json.dumps`).
 - [ ] Each new behavior has a test that fails when the code it proves is
       removed, and the pull request records each mutation and its result.
 - [ ] `uv run ruff check`, `uv run pyright` and `uv run lint-imports`
@@ -190,15 +198,13 @@ found three ways past them, each closed above:
 - A handler someone adds later without going through `configure_logging`
   is not filtered. The three places that install the filter are named in
   Scope; a fourth is a new change.
-- A decoded password is not masked where a message quotes it alone with
-  `!r` and it holds a character `repr` escapes: a backslash, a control or
-  other non-printable character, or either quote when it holds both. The
-  escaped text is none of the forms `UrlParts.passwords` lists. The
-  configuration and schedule refusals quote values that way, and the
-  schedule loader quotes any value holding a backslash. A URL keeps its
-  password percent-encoded, which `repr` leaves alone, so a quoted URL and
-  the password as the URL writes it are masked (Amendment (2026-10-12):
-  exception text in a 200 body; review of PR #298).
+- A password quoted once by `repr` or `json.dumps` is masked (Amendment
+  (2026-10-12): a password quoted by `repr` or `json.dumps`). A password
+  quoted twice, such as `%r` of an exception whose message already quotes
+  it with `!r`, is escaped twice, and that text is not masked. Nor is a
+  password quoted by `ascii()` (`!a`, `%a`) or by `repr` of its bytes when
+  it holds a non-ASCII character, a password `reprlib` truncates, or any
+  other encoding (base64, a hex dump, an HTML entity).
 - A value the operator stored is returned as data, unmasked, wherever a
   route returns it: `ConfigOut.value`, the import report
   (`ConfigImportOut.report`, which names a dropped feed and the one kept),
@@ -444,3 +450,63 @@ not fixed here, because masking an escaped form changes `scrub_outbound`
 for every sink. A value the operator stored is returned as data in other
 fields: recorded, because this spec covers error text and `value` cannot
 be masked without breaking a round trip.
+
+## Amendment (2026-10-12): a password quoted by `repr` or `json.dumps`
+
+The amendment above found a gap in `scrub_outbound` and left it open. Akin
+asked in chat on 2026-10-12 for it to be closed here, since it is the
+property this spec owns and it reaches every sink.
+
+**The gap.** `scrub_outbound` masks the forms `UrlParts.passwords` lists:
+the password as written, percent-decoded, and as libpq reads it. A message
+that quotes the password alone with `repr` writes `\` as `\\`, a control
+or other non-printable character as an escape, and `'` as `\'` when the
+quoted text holds both quote kinds. `json.dumps` writes `"` as `\"`, `\`
+as `\\`, a control character as an escape and, by default, non-ASCII as
+`\uXXXX`. The escaped text is none of the forms, so the whole password
+leaves the process. Reproduced before this amendment with
+`scrub_outbound(repr({'until': password}))` and with `json.dumps` of the
+same value, for a password holding both quote kinds. The configuration
+and schedule refusals quote the value they refused with `!r`
+(`harrier.userconfig.store`, `ConfigError`; `harrier.schedule`,
+`ScheduleConfigError`), as does any log call that uses `%r`. A URL keeps
+its password percent-encoded, which neither function changes, so a quoted
+URL was already masked.
+
+**Behavior.** `harrier.logredact.store_password_forms` lists, for each
+form `UrlParts.passwords` lists, the form as written and four quoted
+forms of it, each without the quotes around it:
+
+- as `repr` writes it with `'` escaped, which is how it appears inside a
+  quoted text holding both quote kinds;
+- as `repr` writes it with `'` left as it is, which is how it appears
+  inside a text that does not hold both;
+- as `json.dumps` writes it, non-ASCII as `\uXXXX`;
+- as `json.dumps` writes it with `ensure_ascii=False`, non-ASCII left as
+  it is.
+
+A quoted form equal to one already listed is listed once. Every sink
+already passes its text through `scrub_outbound`, which masks the union of
+every listed form's spans, so no sink changes. The forms are computed
+once per URL, as the forms are today.
+
+**Failure modes.** A password with nothing `repr` or `json.dumps` escapes
+has no new form, and scrubbing is as before. Computing a form cannot
+raise on the logging path: both functions accept every string.
+
+**Proof.** `services/api/tests/test_store_password_scrub.py::test_a_password_quoted_by_repr_or_json_is_masked_at_every_sink`
+runs each of the four sinks of the first criterion with a driver error
+that quotes a password alone with `repr`, inside a dict as a `!r` message
+quotes it, with `json.dumps`, and inside a dict with `json.dumps` and
+`ensure_ascii=False`, as Starlette writes a JSON body. Two passwords, each
+made at run time: the `store_password` fixture's, which holds both quote
+kinds, and one that holds `'`, a backslash, a control character and a
+non-ASCII character and no `"`, so `repr` leaves its `'` as it is. Each
+case finds no 8-character window of the password in what the sink wrote.
+Removing any one of the four quoted forms fails at least one case
+(the local privacy review of PR #299 found the first version of the test
+proved only two of them).
+
+**Limitation.** One level of quoting. A password quoted twice, such as
+`%r` of an exception whose message already quotes it with `!r`, has `\`
+escaped again, and that text is not masked (Honest limitations).

@@ -30,7 +30,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from urllib.parse import quote
 
@@ -67,6 +67,9 @@ class StorePassword:
     decoded: str
     encoded: str
     url: str
+    # The password alone as the driver's message quotes it; empty for
+    # plain double quotes.
+    quoted: str = ""
 
     def leaks(self, text: str) -> list[str]:
         """Every 8-character window of either form found in `text`."""
@@ -103,6 +106,10 @@ def _root_logging_restored(monkeypatch: pytest.MonkeyPatch) -> Generator[None]: 
 
 @pytest.fixture()
 def store_password(monkeypatch: pytest.MonkeyPatch) -> StorePassword:
+    return _made_password("%'\" @:/")
+
+
+def _made_password(specials: str) -> StorePassword:
     # Plain runs around characters a URL cannot carry raw, so the URL holds
     # it percent-encoded and a driver can quote either form. The middle
     # holds the shapes `scrub_secrets` reads as a parameter (`pass=`,
@@ -111,7 +118,7 @@ def store_password(monkeypatch: pytest.MonkeyPatch) -> StorePassword:
     plain = string.ascii_letters + string.digits
     decoded = (
         f"{_synthetic(plain, 16)}pass={_synthetic(plain, 8)}&token={_synthetic(plain, 8)}"
-        f"?secret={_synthetic(plain, 8)}%'\" @:/{_synthetic(plain, 16)}"
+        f"?secret={_synthetic(plain, 8)}{specials}{_synthetic(plain, 16)}"
     )
     encoded = quote(decoded, safe="")
     url = f"postgresql://harrier:{encoded}@db.example.test:5432/tracker?sslmode=require"
@@ -136,8 +143,9 @@ def _driver_error(password: StorePassword) -> OperationalError:
     # The decoded form alone, and the form as written alone, as libpq quotes
     # a URL it refuses still percent-encoded (`UrlParts`), outside the URL
     # shape `scrub_secrets` knows.
+    alone = password.quoted or f'"{password.decoded}"'
     return OperationalError(
-        f'connection to "{password.url}" failed: password "{password.decoded}" was refused'
+        f'connection to "{password.url}" failed: password {alone} was refused'
         f" (as written: {password.encoded})"
     )
 
@@ -376,6 +384,52 @@ def test_no_log_or_http_error_carries_the_store_password(
 
     assert "REDACTED" in out
     assert store_password.leaks(out) == []
+
+
+# A message that quotes the password alone with `!r` or as JSON escapes
+# some of its characters, so the text it writes is none of the forms the
+# URL lists (spec 133, Amendment (2026-10-12): a password quoted by `repr`
+# or `json.dumps`).
+QUOTINGS: dict[str, Callable[[str], str]] = {
+    "repr": repr,
+    "repr in a dict": lambda password: repr({"until": password}),
+    "json.dumps": json.dumps,
+    # As Starlette writes a JSON body.
+    "json.dumps, non-ASCII as is": lambda password: json.dumps(
+        {"until": password}, ensure_ascii=False
+    ),
+}
+
+# The fixture's password holds both quote kinds, so `repr` writes its `'`
+# as `\\'`. This one holds no `"`, so `repr` leaves its `'` as it is and
+# escapes the backslash and the control character, and only the default
+# `json.dumps` escapes the non-ASCII character.
+ONE_QUOTE = "%' \\\x01\u00e9@:/"
+
+
+@pytest.mark.parametrize("specials", [None, ONE_QUOTE], ids=["both quotes", "one quote"])
+@pytest.mark.parametrize("quoting", list(QUOTINGS))
+@pytest.mark.parametrize("sink", list(SINKS))
+def test_a_password_quoted_by_repr_or_json_is_masked_at_every_sink(
+    sink: str,
+    quoting: str,
+    specials: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    store_password: StorePassword,
+    uvicorn_streams: tuple[io.StringIO, io.StringIO],
+) -> None:
+    """No 8-character window of the password leaves the process through
+    the sink, however the message quoted it."""
+    made = store_password if specials is None else _made_password(specials)
+    quoted = QUOTINGS[quoting](made.decoded)
+    assert made.decoded not in quoted, "the quoting escaped nothing"
+    password = replace(made, quoted=quoted)
+
+    out = SINKS[sink](monkeypatch, capsys, password, uvicorn_streams)
+
+    assert "REDACTED" in out
+    assert password.leaks(out) == []
 
 
 # --- the filter needs no identity values ---
