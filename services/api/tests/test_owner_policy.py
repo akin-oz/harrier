@@ -104,6 +104,8 @@ EXPECTED_GRANTS: dict[str, frozenset[str]] = {
     "schema_version": frozenset({"SELECT"}),
     # No DELETE: deleting an owner's scheduler state is spec 111's (spec 108).
     "schedule_state": frozenset({"SELECT", "INSERT", "UPDATE"}),
+    # No DELETE either: deleting an owner's run records is spec 111's (spec 106).
+    "run_records": frozenset({"SELECT", "INSERT", "UPDATE"}),
 }
 
 # What the tenant role may write on every column but id of a table whose id
@@ -188,6 +190,14 @@ REQUIRED: dict[str, dict[str, object]] = {
         "key_id": "synthetic",
         "nonce": bytes(12),
         "ciphertext": b"synthetic",
+    },
+    "run_records": {
+        "run_id": "synthetic",
+        "kind": "demo",
+        "target": "",
+        "state": "queued",
+        "api_instance": "synthetic",
+        "created_at": "2026-10-13T09:00:00+00:00",
     },
 }
 
@@ -528,7 +538,7 @@ def test_migration_10_statements_do_not_change() -> None:
     statements = migration(10)
     joined = "\n;\n".join(statements).encode()
     assert hashlib.sha256(joined).hexdigest() == MIGRATION_10_DIGEST
-    for table in ("schedule_state", "credentials"):
+    for table in ("schedule_state", "credentials", "run_records"):
         assert not any(table in statement for statement in statements), table
 
 
@@ -1773,6 +1783,7 @@ def test_owner_a_reads_nothing_of_owner_b(store: PgConnection) -> None:
         *((table, verb) for table in JOB_HISTORY_TABLES for verb in ("UPDATE", "DELETE")),
         ("tracks", "DELETE"),
         ("schedule_state", "DELETE"),
+        ("run_records", "DELETE"),
     }
 
     with as_owner(store, a):

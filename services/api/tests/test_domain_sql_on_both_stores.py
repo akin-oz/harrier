@@ -243,7 +243,11 @@ def test_no_domain_insert_supplies_an_id(
     # On SQLite a hosted-only table does not exist, so nothing writes it.
     # On Postgres every owned table's writer runs here but schedule_state's:
     # spec 108's scheduler (its PR 2) writes it, and joins this test then.
-    unwritten = set(HOSTED_ONLY_TABLES) if store.dialect == "sqlite" else {"schedule_state"}
+    # run_records is written by the hosted run manager, not by domain code,
+    # and supplies no id either: its key is the run's (spec 106).
+    unwritten = (
+        set(HOSTED_ONLY_TABLES) if store.dialect == "sqlite" else {"schedule_state", "run_records"}
+    )
     assert set(columns) == set(OWNED_TABLES) - unwritten
     assert {table: "id" in names for table, names in columns.items()} == {
         table: False for table in columns
