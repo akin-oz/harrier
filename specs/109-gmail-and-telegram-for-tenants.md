@@ -782,9 +782,11 @@ except where this section says otherwise.
 Three things this spec relies on are not on `main` at `67032b8`:
 
 - **Spec 116's credential store** (`put_credential`, `stored_credentials`,
-  the `telegram` kind). It is draft PR #310 on
-  `feat-116-credential-store`. Scope items 1 and 2, the three Telegram
-  routes and `check_telegram`, write through it.
+  the `telegram` kind). It was draft PR #310 on
+  `feat-116-credential-store`, and merged to `main` (`7e5f75f`) while
+  part 1 was in review; part 1's branch merged `main` in. Scope items 1
+  and 2, the three Telegram routes and `check_telegram`, write through
+  it, and are part 2, a change of their own.
 - **Spec 106's run environment.** `build_run_env` and the allowlist do not
   exist: hosted, every run is still refused (`RunsNotHosted`,
   `services/api/src/harrier_api/runs.py`). The criterion "A hosted run of
@@ -804,7 +806,7 @@ spec; Akin may prefer to split the spec instead.
 | Part | What | When |
 |---|---|---|
 | 1 (this change) | Scope items 3, 4 (API and run manager), 5, 6; the 501 on both mail routes in the contract; ADR-013 and `docs/architecture.md` for Gmail and the start refusal | now, on `main` |
-| 2 | Scope items 1 and 2: the Telegram routes, `check_telegram`, their contract and tests, and the architecture line that they exist; the line numbers this spec cites (decision D9) | after PR #310 merges |
+| 2 | Scope items 1 and 2: the Telegram routes, `check_telegram`, their contract and tests, and the architecture line that they exist; the line numbers this spec cites (decision D9) | next; PR #310 merged on 2026-10-13 |
 | spec 106 | the criterion on a hosted run's Telegram variables, moved there by its Amendment (2026-10-13, spec 109) | with spec 106 |
 | spec 127 | `gmail-watch` and `gmail-oauth` refused with the local-only text, and the walk | with spec 127, as it already states |
 
