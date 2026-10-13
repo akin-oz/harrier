@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from harrier.connection import Connection, refuse_unless_local
+from harrier.logredact import refresh_installed
 from harrier.tracker.schema import CONTACT_FIELDS, NOTE_KEYS, STATUSES, TRACKER_FIELDS
 from harrier.tracker.store import TrackerError, expand_notes, extract_note_value
 
@@ -181,6 +182,9 @@ def migrate(
                 [row[name] for name in CONTACT_FIELDS],
             )
             report.contacts_imported += 1
+    # The imported contacts are identity data for the rest of this process
+    # (spec 045, amendment of 2026-10-13).
+    refresh_installed(conn)
 
     report.notes_keys_expanded = dict(expanded_counts)
     report.unknown_statuses = dict(status_fallbacks)

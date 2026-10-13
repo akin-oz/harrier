@@ -181,6 +181,152 @@ def test_an_unrelated_line_is_left_alone(db: Connection, monkeypatch: pytest.Mon
     assert written[0] == "fetched 15 postings from exampleco"
 
 
+# --- what a refresh keeps, and which writes refresh (spec 045, amendment of 2026-10-13) ---
+
+
+def _logged(written: list[str], text: str) -> str:
+    """Log `text` through the configured handlers and return what came out."""
+    before = len(written)
+    logging.getLogger("harrier.outreach").info(text)
+    assert len(written) == before + 1, "nothing was logged"
+    return written[-1]
+
+
+def _contact_id(db: Connection, name: str) -> int:
+    row = db.execute("SELECT id FROM contacts WHERE person_name = ?", (name,)).fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+def test_a_refresh_whose_read_fails_keeps_the_values_it_held(
+    db: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A refresh whose candidate read failed used to replace the set with the
+    contacts alone, so the candidate's name reached the log in clear."""
+    from harrier.tracker.store import add_contact
+
+    written = _capture(monkeypatch)
+    db.execute("ALTER TABLE profile_documents RENAME TO profile_documents_gone")
+    add_contact(db, {"person_name": "Wilhelmina Latecomer", "company": "Exampleco"})
+
+    assert CANDIDATE["name"] not in _logged(written, f"drafted for {CANDIDATE['name']}")
+    assert "Wilhelmina Latecomer" not in _logged(written, "drafted for Wilhelmina Latecomer")
+
+
+def test_a_refresh_keeps_a_value_the_store_no_longer_holds(
+    db: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A deleted contact is missing from the next read; the refresh after a
+    later add used to drop its name."""
+    from harrier.tracker.store import add_contact, delete_contact
+
+    written = _capture(monkeypatch)
+    assert delete_contact(db, _contact_id(db, "Jordan Sample"))
+    add_contact(db, {"person_name": "Wilhelmina Latecomer", "company": "Exampleco"})
+
+    assert "Jordan Sample" not in _logged(written, "replied to Jordan Sample")
+
+
+def test_an_empty_refresh_drops_nothing() -> None:
+    redaction = IdentityRedactionFilter({"Wilhelmina Latecomer"})
+    redaction.refresh(set())
+    record = logging.LogRecord("x", logging.INFO, "", 0, "for Wilhelmina Latecomer", (), None)
+    redaction.filter(record)
+    assert record.getMessage() == f"for {REDACTION}"
+
+
+def test_an_edited_contact_is_redacted_at_once(
+    db: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from harrier.tracker.store import update_contact_fields
+
+    written = _capture(monkeypatch)
+    update_contact_fields(db, _contact_id(db, "Jordan Sample"), {"person_name": "Jordan Renamed"})
+
+    assert "Jordan Renamed" not in _logged(written, "replied to Jordan Renamed")
+
+
+def test_a_changed_candidate_name_is_redacted_at_once(
+    db: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    from harrier.profile.store import put_document
+
+    written = _capture(monkeypatch)
+    facts = json.dumps({"candidate": {"name": "Deniz Yenisoy"}})
+    put_document(db, "resume_facts", "facts", "json", facts)
+
+    assert "Deniz Yenisoy" not in _logged(written, "draft prepared for Deniz Yenisoy")
+
+
+def test_a_split_profile_name_is_redacted_at_once(
+    db: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    from harrier.profile.store import put_documents_and_rekind
+
+    written = _capture(monkeypatch)
+    facts = json.dumps({"candidate": {"name": "Deniz Yenisoy"}})
+    put_documents_and_rekind(
+        db,
+        [("resume_facts", "facts", "json", facts, None)],
+        ("resume_data", "bundle", "resume_data_presplit"),
+    )
+
+    assert "Deniz Yenisoy" not in _logged(written, "draft prepared for Deniz Yenisoy")
+
+
+def test_an_imported_contact_is_redacted_at_once(
+    db: Connection, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import csv
+
+    from harrier.tracker.migrate_legacy import migrate
+    from harrier.tracker.schema import TRACKER_FIELDS
+
+    jobs_csv = tmp_path / "jobs.csv"
+    with jobs_csv.open("w", newline="", encoding="utf-8") as handle:
+        csv.writer(handle).writerow(TRACKER_FIELDS)
+    contacts_csv = tmp_path / "contacts.csv"
+    with contacts_csv.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["person_name", "company"])
+        writer.writerow(["Imported Sample", "Exampleco"])
+
+    written = _capture(monkeypatch)
+    migrate(db, jobs_csv, contacts_csv)
+
+    assert "Imported Sample" not in _logged(written, "replied to Imported Sample")
+
+
+def test_a_failed_identity_write_does_not_refresh(
+    db: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A value the store holds but the filter has not read shows whether a
+    refresh ran: the failed write must leave it unread."""
+    import json
+
+    from harrier.profile.store import ProfileDocumentError, put_documents_and_rekind
+
+    written = _capture(monkeypatch)
+    with db.transaction():
+        db.execute(
+            "INSERT INTO contacts (person_name, person_email) VALUES (?, ?)",
+            ("Unread Sample", "unread@example.com"),
+        )
+    facts = json.dumps({"candidate": {"name": "Deniz Yenisoy"}})
+    with pytest.raises(ProfileDocumentError):
+        put_documents_and_rekind(
+            db,
+            [("resume_facts", "facts", "json", facts, None)],
+            ("resume_data", "no_such_bundle", "resume_data_presplit"),
+        )
+
+    assert "Unread Sample" in _logged(written, "replied to Unread Sample")
+
+
 def test_the_longest_value_is_redacted_first() -> None:
     """The address contains the local part; redacting the shorter one first
     would leave a fragment of the longer behind."""

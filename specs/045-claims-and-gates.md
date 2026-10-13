@@ -1631,12 +1631,12 @@ logged, as today (`services/api/src/harrier/logsetup.py`,
       still redacts it after a refresh whose candidate read fails
       (a renamed `profile_documents` on SQLite), and the same refresh
       adds a contact added since
-      (planned test_a_refresh_whose_read_fails_keeps_the_values_it_held).
+      (`services/api/tests/test_logging.py::test_a_refresh_whose_read_fails_keeps_the_values_it_held`).
 - [ ] A synthetic contact deleted after the filter was built is still
       redacted after a later refresh that reads the store without it
-      (planned test_a_refresh_keeps_a_value_the_store_no_longer_holds).
+      (`services/api/tests/test_logging.py::test_a_refresh_keeps_a_value_the_store_no_longer_holds`).
 - [ ] `refresh` with an empty set leaves every held value redacted
-      (planned test_an_empty_refresh_drops_nothing).
+      (`services/api/tests/test_logging.py::test_an_empty_refresh_drops_nothing`).
 - [ ] A contact added after startup is still redacted, as before
       (`services/api/tests/test_logging.py::test_a_contact_added_after_startup_is_redacted`).
 - [ ] Each new test fails with `refresh` replacing the set, as today, and
@@ -1779,17 +1779,17 @@ All in `services/api/tests/test_logging.py`, with synthetic values only:
 
 - [ ] A contact's name edited through `update_contact_fields` after the
       filter was built is redacted at once
-      (planned test_an_edited_contact_is_redacted_at_once).
+      (`services/api/tests/test_logging.py::test_an_edited_contact_is_redacted_at_once`).
 - [ ] A candidate name written through `put_document` after the filter
       was built is redacted at once
-      (planned test_a_changed_candidate_name_is_redacted_at_once).
+      (`services/api/tests/test_logging.py::test_a_changed_candidate_name_is_redacted_at_once`).
 - [ ] A candidate name written through `put_documents_and_rekind` is
       redacted at once
-      (planned test_a_split_profile_name_is_redacted_at_once).
+      (`services/api/tests/test_logging.py::test_a_split_profile_name_is_redacted_at_once`).
 - [ ] A contact imported by the legacy `migrate` is redacted at once
-      (planned test_an_imported_contact_is_redacted_at_once).
+      (`services/api/tests/test_logging.py::test_an_imported_contact_is_redacted_at_once`).
 - [ ] A writer whose block raised does not refresh
-      (planned test_a_failed_identity_write_does_not_refresh).
+      (`services/api/tests/test_logging.py::test_a_failed_identity_write_does_not_refresh`).
 - [ ] Each new test fails with its writer's refresh removed, and the pull
       request records what each removal made fail.
 

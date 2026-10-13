@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from harrier.connection import Connection, by_code_point, store_now, update_or_insert
+from harrier.logredact import refresh_installed
 from harrier.tracks import DEFAULT_TRACK_ID, refuse_archived_track
 
 # Old-repo-relative path -> (kind, format). Read-only sources.
@@ -102,6 +103,10 @@ def put_document(
     track. Which kinds may be owned is `TRACK_OWNED_KINDS` (spec 099)."""
     with conn.transaction():
         _upsert(conn, kind, name, fmt, content, track_id)
+    # After every write, not only the identity kinds: a second list of them
+    # here would have to follow logredact's, and a missed step is a silent
+    # leak (spec 045, amendment of 2026-10-13).
+    refresh_installed(conn)
 
 
 def put_documents_and_rekind(
@@ -126,6 +131,7 @@ def put_documents_and_rekind(
             # Raised inside the transaction, so the writes above roll back:
             # the whole of it or none of it (review of PR #219).
             raise ProfileDocumentError(f"no shared {old_kind}/{name} to move to {new_kind}")
+    refresh_installed(conn)
 
 
 def get_document(conn: Connection, kind: str, name: str) -> str | None:
