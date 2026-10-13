@@ -226,7 +226,7 @@ tables but `id` (migration 13), so no key a tenant can write into tells one
 owner what another holds
 (`services/api/tests/test_owner_policy.py::test_an_owner_cannot_choose_or_change_an_id`).
 Each owner has their own track 1, and a job or event can reference only its
-own owner's track or job. Migrations 10, 13, 14, 16 and 18 are Postgres only
+own owner's track or job. Migrations 10, 13, 14, 16, 17 and 18 are Postgres only
 (`SINGLE_DIALECT_MIGRATIONS`): SQLite records those versions and changes
 nothing, so the local schema names no tenant. The catalog test,
 `services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared`,

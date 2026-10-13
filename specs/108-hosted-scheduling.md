@@ -681,13 +681,11 @@ The store (PR 1)
       passes).
 - [ ] Migration 10's statements are identical before and after this
       change, compared as text
-      (`services/api/tests/test_owner_policy.py::test_migration_10_statements_do_not_change`,
-      added by spec 116's change; this spec extends it to
-      `schedule_state`).
+      (`services/api/tests/test_owner_policy.py::test_migration_10_statements_do_not_change`).
 - [ ] `HOSTED_ONLY_TABLES` declares `schedule_state`;
       `services/api/tests/test_dialect_parity.py::test_both_dialects_build_the_same_tracker`
       passes, and fails when a declared table does not exist on Postgres
-      (planned test_a_hosted_only_table_naming_nothing_fails).
+      (`services/api/tests/test_dialect_parity.py::test_a_hosted_only_table_naming_nothing_fails`).
 - [ ] The catalog test passes with `schedule_state` owned and policed,
       its grants as under Behavior, and `harrier_schedule_inputs` as the
       second declared definer function
@@ -701,11 +699,11 @@ The store (PR 1)
       the schedule and state of two owners and no column of any other
       kind or table; as `harrier_tenant`, `anon`, `authenticated` and
       `service_role`, calling it is refused
-      (planned test_only_the_reader_lists_schedules).
+      (`services/api/tests/test_hosted_schedule.py::test_only_the_reader_lists_schedules`).
 - [ ] The `schedule` kind is accepted on a Postgres connection with a
       valid value, refused naming the field for each case under Behavior,
       and is an unknown kind on SQLite with today's message
-      (planned test_the_schedule_kind_is_hosted_only).
+      (`services/api/tests/test_hosted_schedule.py::test_the_schedule_kind_is_hosted_only`).
 - [ ] `just contract` shows no diff.
 
 The process and the report (PR 2)
@@ -1340,3 +1338,188 @@ and so how often this happens.
 - A plain update of a machine with no schedule, staging's, was not
   probed. Whether it starts that machine is for spec 110's first staging
   deploy to see.
+
+## Amendment (2026-10-13): what building the store settled
+
+Building PR 1, the store (Scope items 1 to 4), found three places where
+the text above was silent or wrong, and settled what it left open. Each is
+stated here so the code and the spec agree. Where the text above
+disagrees, this section holds. PR 2 is not built: spec 106's run binding,
+which it starts runs through, is not on `main`.
+
+### The migration's version
+
+Migration 17, the next free version on `main` at `4b5c48d`
+(`services/api/src/harrier/tracker/schema.py`, `POSTGRES_SCHEDULE_STATE`).
+`MIGRATIONS` holds 17 with no statements and `SINGLE_DIALECT_MIGRATIONS`
+declares it Postgres only. Specs 106 and 116 each add a Postgres-only
+migration too. Spec 116's (PR #310) is 18, and the Postgres runner skips
+any version at or below the highest it has recorded, so this change
+merges before that one: a store that reached 18 first would never apply
+17.
+
+### Where the text was wrong
+
+- **The owner is read through `harrier_owner_id()`, not `auth.uid()`.**
+  The DDL under "The store" gives `owner_id` the default `auth.uid()`, and
+  the policy "that every owned table has". Since migration 16 (spec 105,
+  amendment of 2026-10-11) every owned table defaults `owner_id` to
+  `public.harrier_owner_id()` and its `owner_only` policy compares with
+  it, because Supabase's `postgres` cannot grant the tenant role anything
+  in schema `auth`. `schedule_state` does the same. With `auth.uid()` the
+  catalog test names the default as depending on it, and a tenant insert
+  would be refused on Supabase
+  (`services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared`).
+- **`HOSTED_ONLY_COLUMNS` covers the tables both stores have.** It was
+  built from every owned table, so `schedule_state` would have been
+  declared twice: as a hosted-only table and as a table with a hosted-only
+  column, which the parity test reads as a stale column declaration.
+  It now leaves out the tables `HOSTED_ONLY_TABLES` declares.
+- **`HOSTED_JOBS` lands with the store.** Scope item 5 puts the hosted
+  job set in `services/api/src/harrier/hostedschedule.py`, a PR 2 module,
+  but the `schedule` kind (item 4, PR 1) refuses a job outside it. PR 1
+  creates the module holding `HOSTED_JOBS` alone; PR 2 adds the rest.
+
+### Where the text was silent
+
+- **Both fields are required.** "The owner's choice" lists the refusals
+  but not a missing field. A schedule without a timezone has no slot, and
+  one without `jobs` is not a choice, so each is refused naming the field:
+  `schedule.timezone is required`, `schedule.jobs is required`. A
+  `timezone` that is not text, and a `jobs` that is not a list, are
+  refused the same way.
+- **A refusal quotes nothing the owner wrote.** Each message names
+  `schedule`, `schedule.timezone` or `schedule.jobs`. An unknown field is
+  counted, never named, since a key is the owner's text: `schedule has 2
+  unknown fields; expected only ['jobs', 'timezone']`. The refusal chains
+  no exception either: `zoneinfo`'s error quotes the zone, so the timezone
+  refusal is raised outside the `except` block, and neither `__cause__`
+  nor `__context__` carries it (`raise ... from None` would still leave
+  it as `__context__`). The scheduler may then log a refusal as it is,
+  traceback included, which "A tick" asks of it
+  (`services/api/tests/test_hosted_schedule.py::test_the_schedule_kind_is_hosted_only`).
+- **A key naming a directory of the tz database**, such as `Europe`, is
+  refused as a zone `zoneinfo` cannot load.
+- **The routes.** `GET /config` lists `schedule` hosted, after the local
+  kinds, and `GET`, `PUT` and `DELETE /config/schedule` answer it; on
+  SQLite each answers 404 as for any unknown kind. A kind with no row
+  reads as today's other store-only kinds read: `source` `file`, `value`
+  null. `harrier.userconfig.kinds_for` gives the kinds a connection holds,
+  and the routes read it (`services/api/src/harrier_api/app.py`).
+- **The schedule reader's catalog rules.** The catalog test also holds
+  `harrier_schedule_reader` to the attributes the migration creates it
+  with (no `SUPERUSER`, `BYPASSRLS`, `LOGIN` or `INHERIT`), to no
+  membership, to no privilege on any table, column or sequence in
+  `public`, and to `EXECUTE` on `harrier_schedule_inputs()` and on no
+  other function there.
+
+### Tests the criteria did not name
+
+- `services/api/tests/test_hosted_schedule.py::test_the_routes_serve_the_kind_hosted`:
+  the hosted app serves the kind through the request's connection, and a
+  refused value is a 400 naming the field.
+- `services/api/tests/test_hosted_schedule.py::test_the_local_routes_do_not_know_the_kind`:
+  the local API answers 404 for the kind and lists the local kinds only.
+- `services/api/tests/test_hosted_schedule.py::test_the_hosted_jobs_are_committed_jobs`:
+  each hosted job is a job `config/schedule.json` names, and the set is
+  Open decision 3's.
+- `services/api/tests/test_owner_policy.py::test_a_failed_migration_leaves_no_trace_of_itself`
+  runs for migration 17 too, and its fingerprint now reads the tenant and
+  reader roles' attributes and memberships.
+- `services/api/tests/test_hosted_schedule.py::test_schedule_state_has_the_specs_columns`:
+  the table's columns, types and nullability are the DDL's, each outcome
+  the spec lists is stored, any other is refused by the `CHECK` (23514),
+  and a null slot by `NOT NULL` (23502).
+- `services/api/tests/test_dialect_parity.py::test_a_hosted_only_table_out_of_place_fails_the_whole_comparison`:
+  the comparison the parity test runs reports a declared table SQLite has
+  too, and one Postgres lacks, on real stores.
+
+### Existing tests that change
+
+- `services/api/tests/test_owner_policy.py`: the owned-table tests take
+  `schedule_state` with synthetic values; it has no `DELETE` grant, so
+  owner A's delete of B's rows is refused before the policy, as on
+  `tracks`; `test_track_two_needs_migration_16_on_the_faithful_shim`
+  expects `target_version()` rather than 16 after a full migration; and
+  an undeclared function executable by `PUBLIC` is now also named as
+  executable by the reader.
+- `services/api/tests/test_dialect_parity.py`: the owner defaults it
+  reads are every owned table's, a hosted-only table's among them.
+- `services/api/tests/test_domain_sql_on_both_stores.py::test_no_domain_insert_supplies_an_id`
+  leaves out hosted-only tables: `schedule_state`'s writer is PR 2's
+  scheduler, which runs on Postgres alone.
+
+### Mutations
+
+Each new behavior was removed or changed in the code, and the test that
+proves it was run: twenty mutations, each failing its test, and
+eighteen more for the local reviews' findings below. The list, each with
+its result, is in the pull request.
+
+### From the local reviews of PR #309
+
+The privacy and data integrity reviews each found the two points above
+in the first version: the unknown-field refusal named the owner's keys,
+and the timezone refusal chained `zoneinfo`'s error, which holds the
+zone. Both are fixed as stated, and the test fails with either put back.
+
+The test integrity review found places where a wrong change still
+passed, each confirmed by a mutation. Each test now fails under that
+mutation:
+
+- the parity comparison is tested on real stores, not only its helper;
+- the listing compares every column of every row, as a sorted list, so a
+  swapped, renamed, null or repeated column or row fails, and the
+  owners' other kinds (a watchlist and discovery settings) stay out;
+  `schedule_updated_at` is `user_config.updated_at`;
+- `schedule_state`'s shape and refusals are pinned (above);
+- the catalog's reader checks are each broken once: `BYPASSRLS`,
+  `LOGIN`, `INHERIT`, a membership of `harrier_tenant`, and a privilege
+  on a sequence. The role is created only when absent, so a test server
+  that already has it would not see a wrong `CREATE ROLE`; these cases are
+  what show the checks fire;
+- the refusals are compared whole, and the `OSError` branch is reached by
+  a `ZoneInfo` that raises `IsADirectoryError`, as some systems do for a
+  directory of the tz database;
+- `test_no_domain_insert_supplies_an_id` leaves hosted-only tables out on
+  SQLite only. On Postgres it leaves out `schedule_state` by name, until
+  PR 2's scheduler writes it.
+
+Two points are recorded as they stand:
+
+- **Definer functions are allowed by name, not signature.** The catalog
+  declares `harrier_new_owner` and `harrier_schedule_inputs` by name, as
+  it declared the first. An overload under either name with a body of its
+  own would pass the definer rule; the `EXECUTE` rules still apply to it.
+- **The rollback fingerprint reads harrier's two roles only.** Roles
+  belong to the server and other tests make and drop their own meanwhile,
+  so a failed migration 17 is checked to leave the tenant and reader
+  roles as they were, and no other role.
+
+Two points belong to PR 2 and are recorded here for it:
+
+- **Two timestamp formats meet in the due rule.** `schedule_updated_at`
+  is `user_config.updated_at`, written by `store_now()` as `YYYY-MM-DD
+  HH:MM:SS`; `last_slot_at` is ISO 8601 with `T` and `Z`. Compared as
+  text, a space sorts before `T`, so on one day the two order wrongly. PR
+  2's "at or after the row's `updated_at`" parses both before comparing,
+  and its planned test_a_new_choice_starts_at_the_next_slot covers a
+  choice made on the slot's own day.
+- **The zone database is the image's.** `tzdata` is a dependency on
+  Windows only (`services/api/uv.lock`); the hosted image reads the
+  system's zone files. An image without them refuses every schedule
+  write at the timezone check. Spec 110's staging check on `TZ` covers
+  the image; PR 2's due computation reads the same files.
+
+### Honest limitations (the store)
+
+- **The reader role is created only when absent,** as the text says and
+  as migration 10 did for the tenant role. A `harrier_schedule_reader`
+  made earlier with other attributes keeps them; the catalog test names
+  each, but nothing corrects it on a live store. Migrations 13 and 14
+  added that correction for the tenant role after review.
+- **Staging is not checked here.** Spec 110's first two staging checks
+  under Honest limitations (that Supabase's `postgres` owns the function
+  with `BYPASSRLS`, and may create and grant the role) still stand.
+- The line numbers cited above are not refreshed by this change; decision
+  D9 leaves that to the change that implements the process.

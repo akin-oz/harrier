@@ -35,7 +35,13 @@ import pytest
 from conftest import auth
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
-from pg_support import database_copy, new_owner, open_owner_store
+from pg_support import (
+    database_copy,
+    fresh_database,
+    new_owner,
+    open_owner_store,
+    run_as_migrator,
+)
 from test_host_lease import api_routes
 from test_hosted_auth import (
     API_HOST,
@@ -49,6 +55,7 @@ from test_hosted_auth import (
     start_api,
 )
 from test_hosted_requests import Hosted, Server, copied_server, serving
+from test_owner_policy import migrate_to
 
 from harrier.connection import Connection, Cursor, StoreVersionError
 from harrier.credentials import (
@@ -96,9 +103,6 @@ from harrier_api.hostedauth import (
 
 # Spec 116's refusal, as its Behavior writes it without the `error: ` prefix.
 SPEC_116_REFUSAL = "HARRIER_CREDENTIALS_KEY must be <key id>:<base64 of 32 bytes>"
-
-# A table only the synthetic skipped migration creates.
-SKIPPED_TABLE = "harrier_skipped_probe"
 
 
 def secret(label: str = "value") -> str:
@@ -248,20 +252,23 @@ def test_a_store_that_skipped_a_declared_migration_is_refused(
     owners: TwoOwners, server: Server, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A migration declared below the version a store already reached would
-    never be applied: the runner applies only higher versions. Migrating,
-    the store's opener and the hosted start refuse such a store, naming the
+    never be applied: the runner applies only higher versions. A store that
+    records the latest version without the one declared before it, as a
+    store migrated to 18 before 17 was declared would, is refused by
+    migrating, by the store's opener and by the hosted start, naming the
     version, and nothing runs out of order. A version declared with no
-    statements is not counted (spec 116, local review of PR #310)."""
+    statements is not counted. A store at the previous version, the order
+    the runner expects, migrates on (spec 116, local review of PR #310)."""
     from harrier.tracker import schema
 
     target = target_version()
     real = list(schema.POSTGRES_MIGRATIONS)
-    below = [m for m in real if m[0] < target]
-    assert target - 1 not in {version for version, _ in real}, "pick a free version"
-    later = (target - 1, [f"CREATE TABLE {SKIPPED_TABLE} (id bigint)"])
-    monkeypatch.setattr(schema, "POSTGRES_MIGRATIONS", [*below, later, real[-1]])
+    previous = max(version for version, _ in real if version < target)
+    forget = f"DELETE FROM schema_version WHERE version = {previous}"
+    run_as_migrator(owners.url, forget)
+    run_as_migrator(server.url, forget)
     text = (
-        f"the store is at version {target} but never applied migration {target - 1}, "
+        f"the store is at version {target} but never applied migration {previous}, "
         "declared below it after the store passed it. harrier store migrate applies "
         "migrations in order only; renumber the migration above the store's version."
     )
@@ -272,10 +279,9 @@ def test_a_store_that_skipped_a_declared_migration_is_refused(
         open_postgres_store(owners.url)
     assert str(opened.value) == text
     with closing(postgres_connect(owners.url)) as admin:
-        absent = admin.execute(b"SELECT to_regclass(%s) IS NULL", (SKIPPED_TABLE,)).fetchone()
-        assert absent == (True,), "the skipped migration ran out of order"
-        top = admin.execute(b"SELECT max(version) FROM schema_version").fetchone()
-    assert top == (target,)
+        rows = admin.execute(b"SELECT version FROM schema_version ORDER BY 1").fetchall()
+    recorded = {int(str(row[0])) for row in rows}
+    assert target in recorded and previous not in recorded, "a migration ran out of order"
     with (
         pytest.raises(StoreVersionError) as at_start,
         serving(monkeypatch, server.login_role().url),
@@ -284,9 +290,18 @@ def test_a_store_that_skipped_a_declared_migration_is_refused(
     assert str(at_start.value) == text
 
     # Declared with no statements, for the other dialect: nothing to skip.
-    monkeypatch.setattr(schema, "POSTGRES_MIGRATIONS", [*below, (target - 1, []), real[-1]])
+    emptied = [(v, [] if v == previous else statements) for v, statements in real]
+    monkeypatch.setattr(schema, "POSTGRES_MIGRATIONS", emptied)
     assert migrate_postgres(owners.url) == (target, target)
     open_postgres_store(owners.url).close()
+    monkeypatch.setattr(schema, "POSTGRES_MIGRATIONS", real)
+
+    # A store at the previous version migrates to the latest: what it lacks
+    # is above its own version, so nothing is skipped.
+    with fresh_database() as url:
+        migrate_to(url, previous, monkeypatch)
+        assert migrate_postgres(url) == (previous, target)
+        open_postgres_store(url).close()
 
 
 def test_a_ciphertext_moved_to_another_owner_or_kind_does_not_decrypt(

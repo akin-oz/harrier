@@ -268,8 +268,8 @@ Only the API process decrypts, at run start (spec 106)."
 - [ ] Migration 10's statements are identical before and after this
       change, compared as text
       (`services/api/tests/test_owner_policy.py::test_migration_10_statements_do_not_change`,
-      spec 108's planned test, added by whichever of the two specs lands
-      first).
+      added by spec 108's store change; this spec extends it to
+      `credentials`).
 - [ ] `services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared`
       passes with `credentials` included, and fails when the policy is
       dropped from it (recorded in the pull request).
@@ -342,7 +342,8 @@ Only the API process decrypts, at run start (spec 106)."
 - **One AI credential per owner.** An owner with both providers' keys
   chooses one.
 - **The migration's version is 18, not 17.** Spec 108's branch holds 17
-  (Amendment (2026-10-13)). Until both land, the numbering has a gap.
+  (Amendment (2026-10-13)). Spec 108 merged first (PR #309), so 18 applies
+  after 17 and the numbering has no gap.
 - The line numbers cited here are refreshed by the change that implements
   this spec, not before (decision D9, 2026-10-11).
 
@@ -486,7 +487,7 @@ built, and this section says why.
    (`feat-108-scheduler`) holds 17 for `schedule_state`. The runners apply
    only versions above a store's own, so a store migrated to 18 before 17
    exists would never apply 17. No hosted store serves yet (spec 110).
-   Spec 108 should merge first. The amendment below (local review of PR
+   Spec 108 merged first (PR #309). The amendment below (local review of PR
    #310) makes a store that skipped a declared migration refused rather
    than trusting that order.
    Two tests read the latest version as a fixed or consecutive number and

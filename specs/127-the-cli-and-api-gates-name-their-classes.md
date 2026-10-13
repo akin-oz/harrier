@@ -234,3 +234,39 @@ operator with a Postgres URL sees new refusal texts.
 - The API's hosted mode and its refusals: spec 104.
 - The seam and `open_store(owner=...)`: spec 112.
 - The domain's SQL on Postgres: spec 126.
+
+## Amendment (2026-10-13): the run class moved to spec 106
+
+Akin decided in chat on 2026-10-13 to move the run class into spec 106
+(spec 106, Amendment (2026-10-13), decision 1). This spec depends on 106,
+and 106's runs could not start on a Postgres store until this spec gave
+them a class, so neither could land first. Nothing else in this spec
+changes.
+
+**Moved to spec 106,** and built there:
+
+- the class "run command, owner required", with its verbs: `discover`,
+  `demo-run`, `digest`, `config check-feeds`, `reconsider`, `events
+  backfill`, `evaluate-prospects`;
+- `HARRIER_RUN_OWNER` as Behavior lists it: no `.env` read, a UUID, a
+  Postgres store only, and `open_store(owner=...)` (Scope item 5);
+- the run class's refusal text.
+
+**Kept here:**
+
+- the full class table beside the parser, with the run class as one row
+  whose list is spec 106's;
+- the `harrier operator` group and each subcommand's role declaration;
+- the local-only and everything-else texts, and the operator text on
+  SQLite;
+- `gmail-watch` and `gmail-oauth` in the local-only class;
+- the removal of `POSTGRES_NOT_YET`;
+- the walk (planned test_every_command_has_a_postgres_refusal_class) and
+  planned test_the_postgres_gate_has_operator_and_run_classes, whose
+  run class clause now checks a class spec 106 built;
+- the documents.
+
+Until this spec lands, a command outside the store and run classes keeps
+spec 112's `POSTGRES_NOT_YET` (spec 106, Amendment (2026-10-13)). Scope
+item 1's sequencing stands: this spec is built after specs 106, 108 and
+111 build their commands.

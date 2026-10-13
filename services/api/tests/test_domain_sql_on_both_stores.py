@@ -240,10 +240,11 @@ def test_no_domain_insert_supplies_an_id(
         if match is not None:
             names = {name.strip().lower() for name in match.group(2).split(",")}
             columns.setdefault(match.group(1).lower(), set()).update(names)
-    expected = set(OWNED_TABLES)
-    if store.dialect == "sqlite":
-        expected -= set(HOSTED_ONLY_TABLES)
-    assert set(columns) == expected
+    # On SQLite a hosted-only table does not exist, so nothing writes it.
+    # On Postgres every owned table's writer runs here but schedule_state's:
+    # spec 108's scheduler (its PR 2) writes it, and joins this test then.
+    unwritten = set(HOSTED_ONLY_TABLES) if store.dialect == "sqlite" else {"schedule_state"}
+    assert set(columns) == set(OWNED_TABLES) - unwritten
     assert {table: "id" in names for table, names in columns.items()} == {
         table: False for table in columns
     }
