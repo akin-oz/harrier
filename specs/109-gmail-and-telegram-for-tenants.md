@@ -838,7 +838,7 @@ anyway.
    (`services/api/tests/test_tenant_notifications.py::test_hosted_mail_routes_answer_501`).
    `POST /mail/watch` therefore declares the Gmail 501 only, not the run
    refusal's. Spec 132's tests learned this:
-   `services/api/tests/test_run_owner.py::test_starting_a_run_hosted_is_refused_until_spec_106`
+   `services/api/tests/test_run_owner.py::test_a_kind_not_offered_hosted_answers_501_naming_its_spec`
    expects the Gmail detail from `POST /mail/watch` and no call to
    `start`, and
    `services/api/tests/test_run_owner.py::test_the_contract_declares_the_hosted_run_refusal`
@@ -896,7 +896,7 @@ anyway.
 - **Privacy: a `.env` in a run's working directory.** A spawned CLI loads
   `.env` from its working directory, so a file there holding
   `TELEGRAM_BOT_TOKEN` would reach a run. Spec 106 already refuses that
-  (planned test_a_hosted_run_reads_no_env_file in its criteria). Nothing
+  (`services/api/tests/test_hosted_runs.py::test_a_hosted_run_reads_no_env_file`). Nothing
   added.
 - **Data integrity: the architecture document's one dialect branch
   (fixed).** `docs/architecture.md` said the write lock is the one branch
@@ -953,3 +953,19 @@ Under `services/api/src` part 1 touches `harrier/notify.py`,
 `harrier/digest.py`, `harrier_api/runs.py`, `harrier_api/mail_routes.py`
 and `harrier_api/hostedauth.py` (the module that holds spec 104's start
 checks), all in the diff criterion's list.
+
+## Note (2026-10-13): spec 106 is built
+
+Spec 106 lifts the refusal of every hosted run, so
+`refuse_every_hosted_run` is gone and the Gmail refusal is the one that
+stays: `RunManager.start` raises `GmailNotHosted` for `gmail-watch` before
+the owner and spec 106's table are read, and the table's row carries this
+spec's text. The run manager test now serves hosted with its store half
+in memory, so another kind reaches its spawn with no stand-in for the
+lift
+(`services/api/tests/test_tenant_notifications.py::test_a_hosted_gmail_watch_run_is_refused_before_it_spawns`).
+Spec 132's refusal test named above is spec 106's replacement, which
+expects this spec's detail from `POST /mail/watch` and no call to `start`.
+The two citations above that named a test that no longer exists, or one
+still marked planned, now cite the tests as built. Nothing else in this
+spec changes.
