@@ -1840,18 +1840,18 @@ where the case exists on both:
       `PRAGMA max_page_count`), and exits normally. The exit raises
       `StoreDatabaseError` with the text above, the row is not in the
       store, and the same connection then commits a new block
-      (planned test_a_block_whose_transaction_was_given_up_raises_at_its_exit).
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_block_whose_transaction_was_given_up_raises_at_its_exit`).
 - [ ] On SQLite, a write after that failure, in the same block or in a
       nested one, raises `StoreDatabaseError` with the text above, and is
       not in the store after the block ends
-      (planned test_a_sqlite_write_after_the_store_gave_up_is_refused).
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_sqlite_write_after_the_store_gave_up_is_refused`).
 - [ ] A nested block that catches such a failure and exits normally
       raises at its exit; the outer block that catches that raises at its
       own exit, with the text above, and nothing is kept
-      (planned test_a_caught_failure_inside_a_nested_block_fails_the_outermost).
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_caught_failure_inside_a_nested_block_fails_the_outermost`).
 - [ ] On SQLite, a block that catches a duplicate key error without a
       savepoint and goes on commits its other writes, as today
-      (planned test_a_caught_sqlite_constraint_error_keeps_the_transaction).
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_caught_sqlite_constraint_error_keeps_the_transaction`).
 - [ ] Each of the first three tests fails with the fix reverted, and the
       pull request records what each reversion made fail.
 

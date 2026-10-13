@@ -50,6 +50,7 @@ from harrier.connection import (
     NUMBERED_PLACEHOLDER,
     OWNER_NEEDS_POSTGRES,
     POSTGRES_NOT_IDLE,
+    TRANSACTION_GIVEN_UP,
     UNKNOWN_TRACK,
     UNKNOWN_TRACK_CONSTRAINT,
     URL_VARIABLE,
@@ -253,6 +254,104 @@ def test_a_nested_transaction_is_a_savepoint_on_both_stores(store: Store) -> Non
             conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (1,))
     assert ids(store.open(), table) == [1, 3, 4]
     assert not conn.in_transaction
+
+
+def a_failure_that_gives_up(store: Store, conn: Connection, table: str) -> Callable[[], object]:
+    """A statement whose failure leaves the store keeping none of the
+    transaction it runs in (spec 112, amendment of 2026-10-13). On Postgres
+    any failure does; here a second row 1 in `table`, so call it in a block
+    that has written row 1. On SQLite a write past the file's page limit,
+    which rolls the whole transaction back; a constraint error would not."""
+    if store.dialect == "postgres":
+        return lambda: conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (1,))
+    filler = new_table(conn, "b BLOB")
+    pages = int(conn.execute("PRAGMA page_count").fetchone()[0])
+    conn.execute(f"PRAGMA max_page_count = {pages + 2}")
+    return lambda: conn.execute(f"INSERT INTO {filler} (b) VALUES (randomblob(?))", (1_000_000,))
+
+
+def test_a_block_whose_transaction_was_given_up_raises_at_its_exit(store: Store) -> None:
+    conn = store.open()
+    table = new_table(conn, "id INTEGER PRIMARY KEY")
+    fail = a_failure_that_gives_up(store, conn, table)
+
+    with pytest.raises(StoreDatabaseError) as at_exit, conn.transaction():
+        conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (1,))
+        # Caught without a savepoint: the store keeps none of the block.
+        with pytest.raises(StoreDatabaseError):
+            fail()
+    assert str(at_exit.value) == TRANSACTION_GIVEN_UP
+    assert at_exit.value.__cause__ is None
+    assert not conn.in_transaction
+    assert ids(store.open(), table) == []
+    # The connection is idle, and its next block commits.
+    with conn.transaction():
+        conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (2,))
+    assert ids(store.open(), table) == [2]
+
+
+def test_a_sqlite_write_after_the_store_gave_up_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "seam.db"
+    store = Store("sqlite", lambda: connect(path))
+    conn = store.open()
+    table = new_table(conn, "id INTEGER PRIMARY KEY")
+    fail = a_failure_that_gives_up(store, conn, table)
+
+    with pytest.raises(StoreDatabaseError) as at_exit, conn.transaction():
+        conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (1,))
+        with pytest.raises(StoreDatabaseError):
+            fail()
+        # Without the refusal this write would begin a new transaction, and
+        # the block's exit would commit it.
+        with pytest.raises(StoreDatabaseError) as later:
+            conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (2,))
+        assert str(later.value) == TRANSACTION_GIVEN_UP
+        with pytest.raises(StoreDatabaseError) as nested, conn.transaction(immediate=True):
+            conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (3,))
+        assert str(nested.value) == TRANSACTION_GIVEN_UP
+        with pytest.raises(StoreDatabaseError) as read:
+            conn.execute(f"SELECT id FROM {table}")
+        assert str(read.value) == TRANSACTION_GIVEN_UP
+    assert str(at_exit.value) == TRANSACTION_GIVEN_UP
+    assert ids(store.open(), table) == []
+    for opened in store.opened:
+        opened.close()
+
+
+def test_a_caught_failure_inside_a_nested_block_fails_the_outermost(store: Store) -> None:
+    conn = store.open()
+    table = new_table(conn, "id INTEGER PRIMARY KEY")
+    fail = a_failure_that_gives_up(store, conn, table)
+
+    with pytest.raises(StoreDatabaseError) as at_exit, conn.transaction():
+        conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (1,))
+        # The inner block swallows its failure and exits normally, which
+        # its exit refuses; the outer block swallows that refusal too.
+        with (
+            pytest.raises(StoreDatabaseError) as inner,
+            conn.transaction(),
+            pytest.raises(StoreDatabaseError),
+        ):
+            fail()
+        if store.dialect == "sqlite":
+            # On Postgres the server refuses the release, in its own words.
+            assert str(inner.value) == TRANSACTION_GIVEN_UP
+    assert str(at_exit.value) == TRANSACTION_GIVEN_UP
+    assert not conn.in_transaction
+    assert ids(store.open(), table) == []
+
+
+def test_a_caught_sqlite_constraint_error_keeps_the_transaction(tmp_path: Path) -> None:
+    path = tmp_path / "seam.db"
+    with closing(connect(path)) as conn, closing(connect(path)) as other:
+        table = new_table(conn, "id INTEGER PRIMARY KEY")
+        with conn.transaction():
+            conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (1,))
+            # SQLite undoes the refused statement only.
+            with pytest.raises(StoreIntegrityError):
+                conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (1,))
+            conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (2,))
+        assert ids(other, table) == [1, 2]
 
 
 def test_a_connection_offers_no_commit_or_rollback(store: Store) -> None:
