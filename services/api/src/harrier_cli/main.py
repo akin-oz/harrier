@@ -18,6 +18,7 @@ from harrier.connection import (
     POSTGRES_NOT_YET,
     RUN_OWNER_VARIABLE,
     Connection,
+    StoreError,
     StoreLibraryTooOld,
     StoreUrlError,
     in_a_hosted_run,
@@ -90,6 +91,7 @@ RUN_CLASS: frozenset[str] = frozenset(
 )
 
 NOT_AN_OWNER = f"{RUN_OWNER_VARIABLE} is not an owner id"
+RUN_STORE_REFUSED = "this run could not open its store"
 OWNER_WITHOUT_POSTGRES = (
     f"{RUN_OWNER_VARIABLE} is set but HARRIER_DATABASE_URL names no Postgres store"
 )
@@ -157,6 +159,12 @@ def _run_hosted(args: argparse.Namespace) -> int:
         result: int = args.func(args)
     except TrackerError as error:
         print(f"error: {error}", file=sys.stderr)
+        return 1
+    except StoreError:
+        # One line, naming nothing of the store: the run's output reaches its
+        # owner, and the store's text names the run login's host and
+        # database (data integrity review of PR #316).
+        print(f"error: {RUN_STORE_REFUSED}", file=sys.stderr)
         return 1
     return result
 

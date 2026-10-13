@@ -344,6 +344,16 @@ def test_a_run_cut_off_by_a_stop_reads_interrupted(
         ended = app.row(live)
         assert ended is not None
         assert ended["exit_code"] == 0 and ended["ended_at"] is not None
+        # A write still in flight never turns a row the stop signal stored
+        # `interrupted` back (data integrity review of PR #316).
+        with psycopg.connect(server.url, autocommit=True) as conn:
+            conn.execute("UPDATE run_records SET state = 'interrupted' WHERE run_id = %s", (live,))
+        held = app.manager.get(live)
+        assert held is not None
+        records.record(held)
+        assert (app.row(live) or {})["state"] == "interrupted"
+        with psycopg.connect(server.url, autocommit=True) as conn:
+            conn.execute("UPDATE run_records SET state = 'succeeded' WHERE run_id = %s", (live,))
 
         # A's list shows the cut-off row interrupted, and stores it so.
         listed = app.client.get("/runs", headers=app.headers(a))

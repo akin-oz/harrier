@@ -1002,8 +1002,10 @@ class RunManager:
             # (spec 047).
             self._cleanup_input(run)
             # The scrub set goes once the process is reaped, so a line it
-            # prints after a stop is still scrubbed (spec 106).
+            # prints after a stop is still scrubbed, and the environment
+            # with it, spawned or not (spec 106).
             run.secrets = frozenset()
+            run.env = None
 
     def _cleanup_input(self, run: Run) -> None:
         for path in run.input_paths:
@@ -1106,11 +1108,14 @@ class RunManager:
             # The stop signal recorded it; nothing after that changes it.
             return
         run.state = state
+        if not run.hosted:
+            self._journal(run)
+        # The event before any await: a stream that sees a terminal state
+        # ends once it has every event, so the state and its event may not
+        # straddle the record's write (data integrity review of PR #316).
+        await self._append(run, "state_change", {"state": state, "exit_code": run.exit_code})
         if run.hosted:
             await self._record(run)
-        else:
-            self._journal(run)
-        await self._append(run, "state_change", {"state": state, "exit_code": run.exit_code})
 
     async def _record(self, run: Run) -> None:
         """Store a hosted run's state in `run_records`, as its owner. A

@@ -1568,17 +1568,9 @@ POSTGRES_CREDENTIALS: list[str] = [
 # 105's shape whole, as migration 18's. It holds the run's id, kind,
 # target, state, times and exit code, and the API process that ran it;
 # never a parameter, an event or an output. The states are the run
-# manager's, written out so this migration stays what it was. No DELETE
+# manager's `RunState`, written out in the statement so this migration stays
+# what it was (`tests/test_hosted_runs.py` holds the two together). No DELETE
 # and no TRUNCATE: deleting an owner's rows is spec 111's.
-RUN_RECORD_STATES: tuple[str, ...] = (
-    "queued",
-    "running",
-    "succeeded",
-    "failed",
-    "cancelled",
-    "interrupted",
-)
-
 POSTGRES_RUN_RECORDS: list[str] = [
     f"""
     CREATE TABLE run_records (
@@ -1586,7 +1578,8 @@ POSTGRES_RUN_RECORDS: list[str] = [
         run_id text NOT NULL,
         kind text NOT NULL,
         target text NOT NULL,
-        state text NOT NULL CHECK (state IN ({_quoted_list(RUN_RECORD_STATES)})),
+        state text NOT NULL CHECK (state IN ('queued', 'running', 'succeeded', 'failed',
+            'cancelled', 'interrupted')),
         api_instance text NOT NULL,
         created_at text NOT NULL,
         started_at text,

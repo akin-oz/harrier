@@ -125,11 +125,12 @@ class HostedRuns:
 
     def record(self, run: Run) -> None:
         """Store `run`'s state, times and exit code, as its owner, on the
-        row this process inserted."""
+        row this process inserted. A row the stop signal stored
+        `interrupted` stays so, whatever write was still in flight."""
         with self.as_owner(run.owner) as conn:
             conn.execute(
                 "UPDATE run_records SET state = ?, started_at = ?, ended_at = ?, exit_code = ? "
-                "WHERE run_id = ? AND api_instance = ?",
+                "WHERE run_id = ? AND api_instance = ? AND state <> 'interrupted'",
                 (
                     run.state,
                     run.started_at,

@@ -253,6 +253,48 @@ def test_a_hosted_run_needs_an_owner(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert hosted.records.rows == {}
 
 
+def test_run_records_hold_the_run_managers_states() -> None:
+    """Migration 19's CHECK lists `RunState`'s values, written out in the
+    statement so the migration stays what it was; a state added to one and
+    not the other fails here (data integrity review of PR #316)."""
+    from typing import get_args
+
+    from harrier.tracker.schema import POSTGRES_RUN_RECORDS
+    from harrier_api.runs import RunState
+
+    create = POSTGRES_RUN_RECORDS[0]
+    listed = create.split("CHECK (state IN (", 1)[1].split("))", 1)[0]
+    assert {part.strip().strip("'") for part in listed.split(",")} == set(get_args(RunState))
+
+
+def test_a_hosted_runs_stream_ends_with_its_terminal_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The state change event is appended before the record's write is
+    awaited, so a stream that reads between them still gets it (data
+    integrity review of PR #316)."""
+    hosted = hosted_manager(tmp_path, monkeypatch, emit("one line"))
+    slow = hosted.records.record
+
+    def record(run: Run) -> None:
+        time.sleep(0.3)
+        slow(run)
+
+    monkeypatch.setattr(hosted.records, "record", record)
+
+    async def go() -> list[tuple[str, object]]:
+        run = await hosted.manager.start("demo", owner=new_owner())
+        seen: list[tuple[str, object]] = []
+        async for event in hosted.manager.stream(run.id):
+            seen.append((event.type, event.data.get("state")))
+            await asyncio.sleep(0.1)
+        await hosted.manager.wait(run.id)
+        return seen
+
+    seen = asyncio.run(go())
+    assert seen[-1] == ("state_change", "succeeded"), seen
+
+
 # --- the lock ---
 
 
@@ -613,6 +655,26 @@ def test_a_run_command_needs_an_owner_on_postgres(
     assert capsys.readouterr().err.strip() == f"error: {cli.OWNER_WITHOUT_POSTGRES}"
     assert opened == []
     assert "TELEGRAM_BOT_TOKEN" not in os.environ
+
+
+def test_a_run_that_cannot_open_its_store_says_one_line(
+    cli_on_postgres: tuple[list[object], pytest.MonkeyPatch],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The run's output reaches its owner, so a store that refuses the run
+    is one line naming nothing of the store, not a traceback with its host
+    (data integrity review of PR #316)."""
+    from harrier.connection import StoreConnectionError
+
+    _opened, monkeypatch = cli_on_postgres
+    monkeypatch.setenv(RUN_OWNER_VARIABLE, new_owner())
+
+    def refused(*_args: object, owner: str | None = None) -> object:
+        raise StoreConnectionError("cannot connect to the Postgres store at db.internal:5432/x")
+
+    monkeypatch.setattr(cli, "open_store", refused)
+    assert cli.main(["reconsider"]) == 1
+    assert capsys.readouterr().err.strip() == f"error: {cli.RUN_STORE_REFUSED}"
 
 
 # --- providers ---
