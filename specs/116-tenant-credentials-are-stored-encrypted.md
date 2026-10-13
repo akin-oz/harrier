@@ -236,9 +236,9 @@ Only the API process decrypts, at run start (spec 106)."
       (`services/api/tests/test_postgres_store.py::test_every_new_migration_declares_both_dialects`
       passes); `OWNED_TABLES` holds `credentials`.
 - [ ] Migration 10's statements are identical before and after this
-      change, compared as text (spec 108's planned
-      test_migration_10_statements_do_not_change, added by whichever of
-      the two specs lands first).
+      change, compared as text
+      (`services/api/tests/test_owner_policy.py::test_migration_10_statements_do_not_change`,
+      added by spec 108's store change).
 - [ ] `services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared`
       passes with `credentials` included, and fails when the policy is
       dropped from it (recorded in the pull request).
