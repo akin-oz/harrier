@@ -121,6 +121,43 @@
         "title": "AddJobOut",
         "type": "object"
       },
+      "AiCredentialIn": {
+        "additionalProperties": false,
+        "description": "The one AI credential: its provider decides which key a run gets.",
+        "properties": {
+          "key": {
+            "description": "Stripped of surrounding whitespace; refused when empty, not text UTF-8 can encode, longer than 4096 bytes in UTF-8, or holding a control character.",
+            "title": "Key",
+            "type": "string"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional; empty is unset. Stripped of surrounding whitespace; refused when empty, not text UTF-8 can encode, longer than 4096 bytes in UTF-8, or holding a control character.",
+            "title": "Model"
+          },
+          "provider": {
+            "enum": [
+              "openai-api",
+              "anthropic-api"
+            ],
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "key"
+        ],
+        "title": "AiCredentialIn",
+        "type": "object"
+      },
       "AnswerLimitsOut": {
         "properties": {
           "max_sentences": {
@@ -158,6 +195,21 @@
           }
         },
         "title": "AnswersIn",
+        "type": "object"
+      },
+      "ApifyCredentialIn": {
+        "additionalProperties": false,
+        "properties": {
+          "token": {
+            "description": "Stripped of surrounding whitespace; refused when empty, not text UTF-8 can encode, longer than 4096 bytes in UTF-8, or holding a control character.",
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "ApifyCredentialIn",
         "type": "object"
       },
       "ArchiveOut": {
@@ -850,6 +902,95 @@
           }
         },
         "title": "CoverLetterIn",
+        "type": "object"
+      },
+      "CredentialProblemOut": {
+        "properties": {
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "problem": {
+            "title": "Problem",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "problem"
+        ],
+        "title": "CredentialProblemOut",
+        "type": "object"
+      },
+      "CredentialRefusalOut": {
+        "description": "A refused body: the field and the rule, never the submitted value.",
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/CredentialProblemOut"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "CredentialRefusalOut",
+        "type": "object"
+      },
+      "CredentialStatusOut": {
+        "description": "Whether one kind is set, and when it was last written. Never a value.",
+        "properties": {
+          "kind": {
+            "enum": [
+              "ai",
+              "apify",
+              "hunter",
+              "telegram"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "set": {
+            "title": "Set",
+            "type": "boolean"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "kind",
+          "set",
+          "updated_at"
+        ],
+        "title": "CredentialStatusOut",
+        "type": "object"
+      },
+      "CredentialsOut": {
+        "description": "One item per kind, in the kinds table's order.",
+        "properties": {
+          "credentials": {
+            "items": {
+              "$ref": "#/components/schemas/CredentialStatusOut"
+            },
+            "title": "Credentials",
+            "type": "array"
+          }
+        },
+        "required": [
+          "credentials"
+        ],
+        "title": "CredentialsOut",
         "type": "object"
       },
       "DataCheckOut": {
@@ -1615,6 +1756,21 @@
           "commands"
         ],
         "title": "HostPanelRowOut",
+        "type": "object"
+      },
+      "HunterCredentialIn": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "description": "Stripped of surrounding whitespace; refused when empty, not text UTF-8 can encode, longer than 4096 bytes in UTF-8, or holding a control character.",
+            "title": "Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "HunterCredentialIn",
         "type": "object"
       },
       "ImportedKindOut": {
@@ -4544,6 +4700,455 @@
           }
         ],
         "summary": "Put Configuration"
+      }
+    },
+    "/credentials": {
+      "get": {
+        "operationId": "list_credentials_credentials_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "credentials are read from .env on the local API"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 List Credentials Credentials Get"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List Credentials"
+      }
+    },
+    "/credentials/ai": {
+      "put": {
+        "operationId": "put_ai_credential_credentials_ai_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiCredentialIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialStatusOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "credentials are read from .env on the local API"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialRefusalOut"
+                }
+              }
+            },
+            "description": "a field is empty, too long, or holds a control character"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Put Ai Credential Credentials Ai Put"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Put Ai Credential"
+      }
+    },
+    "/credentials/apify": {
+      "put": {
+        "operationId": "put_apify_credential_credentials_apify_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApifyCredentialIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialStatusOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "credentials are read from .env on the local API"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialRefusalOut"
+                }
+              }
+            },
+            "description": "a field is empty, too long, or holds a control character"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Put Apify Credential Credentials Apify Put"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Put Apify Credential"
+      }
+    },
+    "/credentials/hunter": {
+      "put": {
+        "operationId": "put_hunter_credential_credentials_hunter_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HunterCredentialIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialStatusOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "credentials are read from .env on the local API"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialRefusalOut"
+                }
+              }
+            },
+            "description": "a field is empty, too long, or holds a control character"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Put Hunter Credential Credentials Hunter Put"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Put Hunter Credential"
+      }
+    },
+    "/credentials/{kind}": {
+      "delete": {
+        "operationId": "delete_a_credential_credentials__kind__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "title": "Kind",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialStatusOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "credentials are read from .env on the local API; or no credential kind has that name"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialRefusalOut"
+                }
+              }
+            },
+            "description": "a request the schema refuses, named by field and rule"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Delete A Credential Credentials  Kind  Delete"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Delete A Credential"
+      },
+      "put": {
+        "description": "Every kind this module does not set. Takes no body and opens nothing.",
+        "operationId": "put_other_credential_credentials__kind__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "title": "Kind",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "credentials are read from .env on the local API; or the telegram credential is set by its own route (spec 109); or no credential kind has that name"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialRefusalOut"
+                }
+              }
+            },
+            "description": "a request the schema refuses, named by field and rule"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the hosted API cannot fetch its signing keys (spec 104)"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Put Other Credential"
       }
     },
     "/health": {

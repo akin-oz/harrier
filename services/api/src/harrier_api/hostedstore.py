@@ -44,7 +44,12 @@ from harrier.connection import (
 )
 from harrier.db import BUSY_TIMEOUT_MS
 from harrier.loginrole import login_role_problems
-from harrier.pgstore import RequestPool, check_postgres_version, transaction_failed
+from harrier.pgstore import (
+    RequestPool,
+    check_no_skipped_versions,
+    check_postgres_version,
+    transaction_failed,
+)
 from harrier.tracker.schema import TENANT_ROLE
 
 if TYPE_CHECKING:
@@ -190,6 +195,7 @@ def run_start_checks(pool: RequestPool) -> None:
             check = "store version"
             conn.execute(f"SET LOCAL ROLE {TENANT_ROLE}")
             check_postgres_version(_store_version(conn))
+            check_no_skipped_versions(_store_versions(conn))
             raise _CheckedNothingWritten
     except _CheckedNothingWritten:
         pass
@@ -201,6 +207,12 @@ def run_start_checks(pool: RequestPool) -> None:
         # Raised after the except block, so the driver's error is not
         # chained to it, and a traceback prints none.
         raise HostedStartRefused(check_failed(check, failed))
+
+
+def _store_versions(conn: Connection) -> set[int]:
+    """`harrier.pgstore.postgres_versions`, through the seam. Called after
+    `_store_version` found the table."""
+    return {int(row[0]) for row in conn.execute("SELECT version FROM public.schema_version")}
 
 
 def _store_version(conn: Connection) -> int:

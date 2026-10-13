@@ -16,7 +16,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
-from fastapi.exception_handlers import http_exception_handler
+from fastapi.exception_handlers import (
+    http_exception_handler,
+    request_validation_exception_handler,
+)
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -46,6 +50,11 @@ from harrier.tracker.store import (
 from harrier.tracks import DEFAULT_TRACK_ID
 from harrier.tracks import Scope as TrackScope
 from harrier_api.capture_routes import capture_router
+from harrier_api.credentials_routes import (
+    credentials_refusal_response,
+    credentials_router,
+    is_credentials_route,
+)
 from harrier_api.demo import demo_db_path, is_demo_mode, seed_demo_db
 from harrier_api.deps import (
     CAUSE_JOIN,
@@ -1487,6 +1496,15 @@ def _app_with_routes(manager: RunManager) -> FastAPI:
             error.detail = scrub_outbound(detail)
         return await http_exception_handler(request, error)
 
+    @app.exception_handler(RequestValidationError)
+    async def refused_body(request: Request, error: RequestValidationError) -> Response:  # pyright: ignore[reportUnusedFunction]
+        # FastAPI's own 422 echoes the submitted input. On the credentials
+        # routes the input is a secret, so the body names the field and the
+        # rule only (spec 116). Every other route answers as FastAPI does.
+        if is_credentials_route(request.scope):
+            return credentials_refusal_response(request, error)
+        return await request_validation_exception_handler(request, error)
+
     @app.exception_handler(RunsNotHosted)
     async def runs_not_hosted(request: Request, error: RunsNotHosted) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
         # Hosted, no run starts until spec 106. Raised by `start`, and by
@@ -1516,6 +1534,7 @@ def _app_with_routes(manager: RunManager) -> FastAPI:
     app.include_router(ops_router)
     app.include_router(tracks_router)
     app.include_router(settings_router)
+    app.include_router(credentials_router)
 
     # The route class applies the bearer scheme to each route that needs a
     # token; the document names the scheme once (spec 104).
@@ -1627,6 +1646,9 @@ def create_hosted_app(
     manager = run_manager if run_manager is not None else RunManager()
     app = _app_with_routes(manager)
     app.state.hosted = True
+    # The credentials routes encrypt with it; spec 106's run start will
+    # decrypt with it. Never logged: its text form names the id only.
+    app.state.credentials_key = config.credentials_key
     keys = SigningKeys(
         fetch_keys if fetch_keys is not None else fetch_from(config.jwks_url),
         clock,

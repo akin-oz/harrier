@@ -226,7 +226,7 @@ tables but `id` (migration 13), so no key a tenant can write into tells one
 owner what another holds
 (`services/api/tests/test_owner_policy.py::test_an_owner_cannot_choose_or_change_an_id`).
 Each owner has their own track 1, and a job or event can reference only its
-own owner's track or job. Migrations 10, 13, 14 and 16 are Postgres only
+own owner's track or job. Migrations 10, 13, 14, 16, 17 and 18 are Postgres only
 (`SINGLE_DIALECT_MIGRATIONS`): SQLite records those versions and changes
 nothing, so the local schema names no tenant. The catalog test,
 `services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared`,
@@ -345,6 +345,37 @@ The access line drops the query
 (`services/api/tests/test_hosted_logs.py::test_a_hosted_access_line_carries_no_query`),
 and the start refuses prompt logging
 (`services/api/tests/test_hosted_logs.py::test_a_hosted_start_refuses_prompt_logging`).
+
+Each owner's credentials (an AI key, an Apify token, a Hunter key, a
+Telegram bot) are stored encrypted (spec 116,
+`services/api/src/harrier/credentials.py`). The `credentials` table is
+Postgres only, created by migration 18 and declared in
+`HOSTED_ONLY_TABLES`: locally credentials stay in `.env`, and the parity
+test leaves the table out and fails when the declaration names a table
+Postgres lacks or SQLite has
+(`services/api/tests/test_dialect_parity.py::test_a_hosted_only_table_is_declared_for_parity`).
+It is owned and policed as every owned table is. Each row is AES-256-GCM
+over the kind's fields, with a fresh nonce per write and the owner and kind
+as associated data, so a ciphertext moved to another owner's row or kind
+does not decrypt
+(`services/api/tests/test_credentials.py::test_a_ciphertext_moved_to_another_owner_or_kind_does_not_decrypt`,
+`services/api/tests/test_credentials.py::test_the_database_never_holds_a_credential_in_plain_text`).
+The key is `HARRIER_CREDENTIALS_KEY`, a Fly secret on the API app; the
+hosted API refuses to start without a well formed one
+(`services/api/tests/test_credentials.py::test_hosted_start_needs_a_well_formed_credentials_key`).
+`GET /credentials` says which kinds are set and when, and `PUT` and
+`DELETE` set and remove one; no route reads a value back, and a refused
+body is answered with the field and the rule, never the value
+(`services/api/src/harrier_api/credentials_routes.py`,
+`services/api/tests/test_credentials.py::test_credential_routes_never_return_a_value`,
+`services/api/tests/test_credentials.py::test_a_refused_credential_body_does_not_echo_the_value`).
+Locally every credentials route answers 404
+(`services/api/tests/test_credentials.py::test_credential_routes_are_not_served_locally`).
+Nothing decrypts a credential yet: spec 106's run start will. A Postgres
+store that recorded a version above a declared migration it never applied
+is refused by `harrier store migrate`, the store's opener and the hosted
+start, since the runner applies only higher versions
+(`services/api/tests/test_credentials.py::test_a_store_that_skipped_a_declared_migration_is_refused`).
 
 No other hosted component exists yet. Specs 103 to 112 sequence the build:
 the Postgres store (103, approved), API authentication (104), row-level

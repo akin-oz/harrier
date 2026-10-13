@@ -164,6 +164,10 @@ Postgres hosted), and a JWT boundary the local product never had. Chosen.
    OAuth token) is stored per owner, encrypted at rest, and reaches only
    that owner's runs. A run's subprocess environment carries its owner's
    credentials and no one else's.
+
+   **Amended (spec 116).** The key that encrypts tenant credentials is a
+   Fly secret on the API app; the ciphertext is in Supabase. Only the API
+   process decrypts, at run start (spec 106).
 9. **The local product does not change.** SQLite per data directory,
    ADR-010's container, ADR-011's single kernel, launchd and the CLI
    providers stay as they are. Nothing hosted-only is required to run the
