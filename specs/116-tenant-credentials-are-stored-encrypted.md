@@ -114,7 +114,11 @@ Gmail follow-on of spec 109 adds it; the `CHECK` below refuses it.
 Each field is stripped of surrounding whitespace. A field is refused when
 it is empty (except `model`), longer than 4096 bytes in UTF-8, or holds a
 control character, NUL or newline included, because the value becomes an
-environment variable. 4096 is a chosen bound, not a measured one.
+environment variable. 4096 is a chosen bound, not a measured one. A field
+holding a lone surrogate, text UTF-8 cannot encode, is refused as `must be
+text that UTF-8 can encode` (Amendment (2026-10-13, local review of PR
+#310)). A field the kind does not take is refused under the name `fields`,
+`may only be <the kind's fields>`, and its own name is not repeated.
 
 ### Storage
 
@@ -242,6 +246,12 @@ Only the API process decrypts, at run start (spec 106)."
 - **Another owner's credential.** Unreachable by policy: reads see zero
   rows, writes store the session's owner only (spec 105).
 - **A credentials route on the local API.** 404 with the local text.
+- **A store that passed a declared migration without applying it.** A
+  Postgres migration with statements, numbered below the store's highest
+  recorded version and not recorded itself, is never applied by the
+  runner. `harrier store migrate`, the store's opener and the hosted start
+  refuse such a store naming the version, and nothing is applied out of
+  order (Amendment (2026-10-13, local review of PR #310)).
 - **The migration on a store without spec 105's auth objects.** Refused as
   migration 10 is; the store stays at its previous version.
 - **A credentials table on SQLite, or a declared table missing on
@@ -298,6 +308,15 @@ Only the API process decrypts, at run start (spec 106)."
       (`services/api/tests/test_credentials.py::test_hosted_start_needs_a_well_formed_credentials_key`).
 - [ ] `services/api/src/harrier/credentials.py` reads no environment
       variable (`grep -n environ` and `grep -n getenv` find nothing).
+- [ ] The field rule refuses each case in the domain, with no request
+      model in front of it, quotes no value and no unknown field name, and
+      writes no row
+      (`services/api/tests/test_credentials.py::test_a_refused_credential_writes_nothing_and_quotes_nothing`).
+- [ ] A Postgres store that passed a declared migration without applying
+      it is refused by `harrier store migrate`, the store's opener and the
+      hosted start, naming the version; a version declared with no
+      statements is not counted
+      (`services/api/tests/test_credentials.py::test_a_store_that_skipped_a_declared_migration_is_refused`).
 - [ ] `just contract` leaves no diff after the regenerated files are
       committed.
 - [ ] ADR-013 decision 8 carries the "Amended (spec 116)" note under
@@ -467,9 +486,9 @@ built, and this section says why.
    (`feat-108-scheduler`) holds 17 for `schedule_state`. The runners apply
    only versions above a store's own, so a store migrated to 18 before 17
    exists would never apply 17. No hosted store serves yet (spec 110).
-   If this spec lands first, spec 108 checks before it merges that no
-   store was migrated to 18 in between; if one was, spec 108 renumbers
-   above 18.
+   Spec 108 should merge first. The amendment below (local review of PR
+   #310) makes a store that skipped a declared migration refused rather
+   than trusting that order.
    Two tests read the latest version as a fixed or consecutive number and
    now read it from the declarations:
    `services/api/tests/test_hosted_start.py::test_hosted_start_checks_the_store_version_once`
@@ -508,3 +527,55 @@ built, and this section says why.
    `your <kind> credential cannot be read; set it again`, with the kind
    and key id for its log. `KIND_FIELDS` names each kind's secret fields
    for spec 106's scrub (`services/api/src/harrier/credentials.py`).
+
+## Amendment (2026-10-13, local review of PR #310)
+
+The local privacy, data integrity, contract and test integrity reviews
+of PR #310 found the gaps below. Each fix carries a test that fails
+without it; the pull request records the mutations.
+
+1. **A store cannot skip a declared migration.** Point 2 of the amendment
+   above relied on a check by hand. The runners apply only versions above
+   a store's highest (`harrier.pgstore`), so a migration numbered below a
+   version a store already reached was skipped in silence. Now
+   `harrier store migrate`, `open_postgres_store` and the hosted start
+   refuse a Postgres store that recorded a version above a declared
+   migration with statements that it never applied, naming that version,
+   and apply nothing (Failure modes;
+   `services/api/tests/test_credentials.py::test_a_store_that_skipped_a_declared_migration_is_refused`).
+   A version declared with no Postgres statements changes nothing and is
+   not counted. Spec 108 (PR #309) holds 17; it should merge before this
+   change, so no store reaches 18 first. If this one merges first, a store
+   migrated to 18 is refused once 17 is declared, rather than running
+   without it.
+2. **A lone surrogate is refused by its own rule.** UTF-8 cannot encode
+   one, and the codec's error quoted the character and held the value
+   (Behavior, "Credential kinds").
+3. **Nothing a caller wrote is repeated in a 422.** A field name the kind
+   does not take is reported under `fields`; a body that is not JSON is
+   reported under `body`, with no character offset. The request models
+   keep secret fields out of their `repr`.
+4. **The 422 is chosen by the matched route, not the request's path,** so
+   a root path changes nothing. A credentials route outside this module's
+   router, such as spec 109's Telegram route, gets this 422 only by
+   joining the router or the check.
+5. **Locally a body that is not JSON answers the local 404.** FastAPI reads
+   the body before any dependency runs, so it had answered 422.
+6. **The field rule is tested in the domain.** Spec 109's route will write
+   through `put_credential` with no request model in front of it
+   (`services/api/tests/test_credentials.py::test_a_refused_credential_writes_nothing_and_quotes_nothing`).
+
+Declined, with the reason: the 422 declared on `DELETE /credentials/{kind}`
+and `PUT /credentials/{kind}` stays. FastAPI declares a 422 on every route
+with a parameter unless the route declares `422`, `4XX` or `default`; the
+latter two would claim answers these routes do not send either, and taking
+`kind` outside the declared parameters would drop the path parameter from
+the contract. Point 5 of the amendment above says why the body it names is
+`CredentialRefusalOut`.
+
+Not changed: SQLite stores are not checked for a skipped version. Spec
+108's version 17 has no SQLite statements, so a local store that skips it
+loses nothing, and refusing an operator's local tracker file over a
+version that changes nothing there would stop the local product for no
+gain. A later migration with SQLite statements numbered the same way
+would need the same check on SQLite.
