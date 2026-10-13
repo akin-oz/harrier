@@ -2,7 +2,8 @@ import type { components } from "@harrier/contract";
 
 // What a route answers when it refuses, as the contract declares it: the
 // domain's words on a 400, 404 or 409, the hold on a 503, the field errors
-// on a 422, and the hosted API's token refusal on a 401 or 503 (spec 104).
+// on a 422, the hosted API's token refusal on a 401 or 503 (spec 104), and
+// the hosted API's refusal to start a run on a 501 (spec 132).
 // Named from the generated types, so a body the contract changes fails the
 // type check here rather than reaching the operator as the fallback (spec
 // 082's pattern).

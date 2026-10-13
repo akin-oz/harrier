@@ -168,26 +168,26 @@ the run inputs directory, not only `start`.
 - [ ] Hosted, owner B's `GET /runs` omits owner A's run, and B's get,
       cancel and stream of it answer 404 `run not found`, with A's run
       still running after B's cancel
-      (planned test_another_owners_run_is_not_found).
+      (`services/api/tests/test_run_owner.py::test_another_owners_run_is_not_found`).
 - [ ] Hosted, a run with an empty owner is listed to no one and answered
-      404 to every owner (planned test_a_run_without_an_owner_is_no_ones).
+      404 to every owner (`services/api/tests/test_run_owner.py::test_a_run_without_an_owner_is_no_ones`).
 - [ ] Hosted, every route that can start a run answers 501 with the spec
       106 text, and after each the run inputs directory holds no file, the
       journal holds no new entry and no process was spawned
-      (planned test_starting_a_run_hosted_is_refused_until_spec_106,
+      (`services/api/tests/test_run_owner.py::test_starting_a_run_hosted_is_refused_until_spec_106`,
       one case per route).
 - [ ] Locally, a run's owner is empty, every run is listed, and the
       journal entry it writes reads back
-      (planned test_a_local_run_has_no_owner).
+      (`services/api/tests/test_run_owner.py::test_a_local_run_has_no_owner`).
 - [ ] A journal line without `owner` loads, with an empty owner
-      (planned test_an_old_journal_entry_has_no_owner).
+      (`services/api/tests/test_run_owner.py::test_an_old_journal_entry_has_no_owner`).
 - [ ] The event stream ends with the final comment line when its token's
       `exp` passes, also while no event is pending, and a reconnect with a
       new token and `Last-Event-ID` receives the remaining events
-      (planned test_the_event_stream_ends_at_token_expiry).
+      (`services/api/tests/test_run_owner.py::test_the_event_stream_ends_at_token_expiry`).
 - [ ] Every route that can start a run declares the 501 with `ErrorOut` in
       `packages/contract/openapi.json`, and no other route does
-      (planned test_the_contract_declares_the_hosted_run_refusal).
+      (`services/api/tests/test_run_owner.py::test_the_contract_declares_the_hosted_run_refusal`).
 - [ ] `just contract` leaves no diff after the regenerated files are
       committed.
 - [ ] Each new behavior has a test that fails when the code it proves is
@@ -261,3 +261,110 @@ empty. No variable, file or route changes for the local product.
   machines: spec 106.
 - The browser reading the stream with `fetch`: spec 114.
 - The bearer token, its verification and the middleware: spec 104.
+
+## Amendment (2026-10-12): what building it settled
+
+Building this spec showed one place where the text was wrong and settled
+the points below, so the code and the spec agree.
+
+### Where the text was wrong
+
+- **Six routes write their input before `start`, not three.** "Starting a
+  run, hosted" and "Where spec 104's text was wrong" name one route per
+  file. In `services/api/src/harrier_api/app.py`, `_apply_params` writes
+  the free text for all four apply routes (`tailorResume`,
+  `draftCoverLetter`, `draftAnswers`, `evaluateOffer`), so six routes in
+  the three files named write a file before `start`. The refusal in
+  `write_run_input` covers all six. The 501 test has one case per route
+  and marks the six, and for each of the others it checks that `start`
+  was reached with the caller as owner
+  (`services/api/tests/test_run_owner.py::test_starting_a_run_hosted_is_refused_until_spec_106`).
+- **One file outside the Scope's paths changes.** Spec 104's "Runs and
+  stream" criteria marked three of this spec's tests as planned. The
+  citation check fails a planned test that exists, so
+  `specs/104-the-hosted-api-authenticates-every-request.md` now cites them
+  as built. No other text of spec 104 changes. Inside the Scope's paths,
+  `own_causes` in `services/api/tests/conftest.py` sets the 501's cause
+  beside the 409's, as one declared by mechanism, so a route's own causes
+  are still checked without it.
+- **The web app changes too.** The Scope said every changed file sits
+  under `services/api/` and `packages/contract/`. The contract review of
+  PR #300 found three run starts on the Operations page that read only the
+  run and took any other answer for the local token's refusal: the feed
+  check (`apps/web/src/pages/operations/FeedsSection.tsx`), the decision
+  history backfill (`HistorySection.tsx`) and the feature export
+  (`ScoringSection.tsx`), in the same directory. Hosted, the operator
+  would have read "the local API token was not accepted" instead of the
+  501's words; the same gap already hid their 409. Each now reads the
+  refusal body through `refusalMessage`, as every other run start does,
+  and `apps/web/src/shared/api/refusal.ts` names the 501 among the
+  refusals it reads. The files are public: none matches a never-in-git
+  pattern in `config/data-classification.json`, and public is the
+  complement of those.
+
+### What the build settled
+
+- **Open decision 1 takes the recommended answer.** The stream's last
+  line at expiry is the SSE comment `: token expired` (`TOKEN_EXPIRED_LINE`
+  in `services/api/src/harrier_api/runmodels.py`).
+- **Where "hosted" is read.** `runs_hosted` in
+  `services/api/src/harrier_api/runs.py` reads `HARRIER_AUTH=supabase`
+  from the process environment each time it is asked (`hosted_mode` in
+  `services/api/src/harrier_api/hostedauth.py`). `start`,
+  `write_run_input` and the owner view all ask it, so the three agree.
+  `write_run_input` has no request, which is why the process environment,
+  and not the assembled app, is the source. So that the app and the run
+  manager cannot disagree, `create_hosted_app` refuses with
+  `HostedConfigError` unless the variable is set
+  (`services/api/tests/test_run_owner.py::test_the_hosted_app_needs_hosted_mode`).
+  `create_app` builds the hosted app only when it is set, and the local
+  app only when it is not. Spec 104's tests in
+  `services/api/tests/test_hosted_auth.py` therefore set it before they
+  build the hosted app, and unset it before they build the local one
+  (test-integrity review of PR #300).
+- **The owner is passed in one place.** `Manager`, the dependency every
+  run route takes, is now `OwnedRuns` in
+  `services/api/src/harrier_api/runmodels.py`: the run manager as the
+  request's owner sees it. Its `start` passes the request's `sub`, and its
+  `list_runs`, `get`, `cancel` and `stream` apply the owner filter. No
+  route passes an owner itself, so a new route cannot pass the wrong one.
+  `stream` refuses a run its owner does not see with `KeyError`, as an
+  unknown id, rather than relying on the route to ask `get` first
+  (test-integrity review of PR #300,
+  `services/api/tests/test_run_owner.py::test_another_owners_run_is_not_found`).
+- **A hosted request without verified claims.** The middleware lets none
+  through; this is the second line. Such a view has the empty owner, so it
+  sees no run, and it takes `exp` as passed, so a stream it opened ends at
+  once
+  (`services/api/tests/test_run_owner.py::test_a_run_without_an_owner_is_no_ones`).
+- **The backups list reads runs too.** `GET /settings/backups` marks each
+  archive with the latest verification run the registry holds
+  (`_verification` in `services/api/src/harrier_api/settings_routes.py`).
+  It reads the runs through the same view, so hosted it marks an archive
+  only from the caller's own verification runs. The Behavior section named
+  the run routes only; this route reads runs, so the same rule holds.
+- **No leeway on the stream.** The verifier accepts a token up to 30
+  seconds past its `exp` (spec 104, The token). A stream opened with such
+  a token ends at once, before any event, because `exp` has passed.
+- **The contract's words.** The 501 is declared with `ErrorOut` and the
+  description `hosted only: runs are not available on the hosted API
+  until spec 106`.
+
+### Acceptance criteria (amendment of 2026-10-12)
+
+- [ ] Hosted, the backups list marks an archive only from the caller's
+      verification runs
+      (`services/api/tests/test_run_owner.py::test_a_backup_verification_is_its_owners`).
+- [ ] A refusal to start a run, the hosted 501 among them, reaches the
+      operator in the API's words on the feed check, the decision history
+      backfill and the feature export
+      (`OperationsPage.test.tsx::a hosted refusal to start a run is shown in the API's words`).
+
+### Honest limitations (as built)
+
+- The hosted half of "a run records its owner" is proven up to `start`,
+  which refuses. No hosted run exists until spec 106, so no test reads a
+  hosted run's journal entry with its owner.
+- The stream test runs on the wall clock: its token expires at least
+  three seconds after it is minted, and the stream must end within ten.
+  A machine that stalls longer than that fails it.

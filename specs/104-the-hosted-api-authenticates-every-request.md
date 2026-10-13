@@ -612,13 +612,13 @@ group:
 
 - [ ] Hosted, owner B's `GET /runs` omits owner A's run, and B's get,
       cancel and stream of it answer 404
-      (planned test_another_owners_run_is_not_found).
+      (`services/api/tests/test_run_owner.py::test_another_owners_run_is_not_found`).
 - [ ] Hosted, every run route answers 501 with the spec 106 text, and no
       input file is written and no process spawned
-      (planned test_starting_a_run_hosted_is_refused_until_spec_106).
+      (`services/api/tests/test_run_owner.py::test_starting_a_run_hosted_is_refused_until_spec_106`).
 - [ ] The event stream ends when its token's `exp` passes, and a reconnect
       with a new token and `Last-Event-ID` receives the remaining events
-      (planned test_the_event_stream_ends_at_token_expiry).
+      (`services/api/tests/test_run_owner.py::test_the_event_stream_ends_at_token_expiry`).
 
 Cross-origin and hosts:
 

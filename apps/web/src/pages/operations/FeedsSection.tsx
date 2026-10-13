@@ -18,7 +18,8 @@ export function FeedsSection({ createEventSource }: { createEventSource: EventSo
 
   const check = useMutation({
     mutationFn: async (): Promise<RunOut> => {
-      const { data } = await api.POST("/ops/feeds");
+      const { data, error } = await api.POST("/ops/feeds");
+      if (error !== undefined) throw new Error(refusalMessage(error, "the check was refused"));
       if (data === undefined) throw new Error(TOKEN_REFUSED);
       return data;
     },

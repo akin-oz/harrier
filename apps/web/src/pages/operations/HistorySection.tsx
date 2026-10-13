@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRunStream } from "../../features/runs/useRunStream";
 import type { EventSourceFactory, RunOut } from "../../features/runs/useRunStream";
 import { api } from "../../shared/api/client";
-import { RunOutput, TOKEN_REFUSED, countIn } from "./RunOutput";
+import { RunOutput, TOKEN_REFUSED, countIn, refusalMessage } from "./RunOutput";
 
 /**
  * Decision history backfill (`harrier events backfill`, spec 079). A dry
@@ -17,7 +17,10 @@ export function HistorySection({ createEventSource }: { createEventSource: Event
 
   const start = useMutation({
     mutationFn: async (dryRun: boolean): Promise<RunOut> => {
-      const { data } = await api.POST("/ops/events/backfill", { body: { dry_run: dryRun } });
+      const { data, error } = await api.POST("/ops/events/backfill", {
+        body: { dry_run: dryRun },
+      });
+      if (error !== undefined) throw new Error(refusalMessage(error, "the backfill was refused"));
       if (data === undefined) throw new Error(TOKEN_REFUSED);
       return data;
     },

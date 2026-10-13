@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 import time
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import date
 from enum import StrEnum
@@ -63,14 +63,17 @@ from harrier_api.deps import (
 from harrier_api.hostedauth import (
     BEARER_SCHEME_NAME,
     BEARER_SECURITY_SCHEME,
+    HOSTED_APP_REFUSAL,
     Clock,
     HostedAuthMiddleware,
     HostedConfig,
+    HostedConfigError,
     KeyFetcher,
     SigningKeys,
     TokenVerifier,
     fetch_from,
     hosted_config,
+    hosted_mode,
 )
 from harrier_api.localauth import (
     TOKEN_RESPONSES,
@@ -86,8 +89,8 @@ from harrier_api.runs import (
     RunConflictError,
     RunManager,
     RunParams,
+    RunsNotHosted,
     RunState,
-    format_sse,
     write_run_input,
 )
 from harrier_api.settings_routes import settings_router
@@ -1212,12 +1215,10 @@ async def stream_run_events(run_id: str, request: Request, manager: Manager) -> 
     except ValueError:
         last_event_id = 0
 
-    async def event_stream() -> AsyncIterator[str]:
-        async for event in manager.stream(run_id, last_event_id):
-            yield format_sse(event)
-
+    # Hosted, the stream also ends when the token that opened it expires
+    # (spec 132); `Manager` carries the request's `exp`.
     return StreamingResponse(
-        event_stream(),
+        manager.stream(run_id, last_event_id),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -1474,6 +1475,14 @@ def _app_with_routes(manager: RunManager) -> FastAPI:
             error.detail = scrub_outbound(detail)
         return await http_exception_handler(request, error)
 
+    @app.exception_handler(RunsNotHosted)
+    async def runs_not_hosted(request: Request, error: RunsNotHosted) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
+        # Hosted, no run starts until spec 106. Raised by `start`, and by
+        # `write_run_input` on the routes that write an input file before
+        # they call it. Every route that starts a run declares the 501
+        # (`RUN_CONFLICT_RESPONSES`, spec 132).
+        return JSONResponse(status_code=501, content=ErrorOut(detail=str(error)).model_dump())
+
     @app.exception_handler(DatabaseOwnedByHost)
     async def database_held(request: Request, error: DatabaseOwnedByHost) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
         # Raised by `get_conn` inside the container while a host lease exists
@@ -1582,7 +1591,13 @@ def create_hosted_app(
     104 it never passes on a Postgres URL, so no process serves it until
     spec 134. The tests call it directly, with an injected key fetcher, and
     no test reaches the network.
+
+    It refuses unless the process environment says hosted too: the run
+    manager reads hosted mode from there, so an app built hosted in a local
+    process would serve runs as the local API does (spec 132).
     """
+    if not hosted_mode(os.environ):
+        raise HostedConfigError(HOSTED_APP_REFUSAL)
     manager = run_manager if run_manager is not None else RunManager()
     app = _app_with_routes(manager)
     app.state.hosted = True

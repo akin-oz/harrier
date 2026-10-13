@@ -2959,6 +2959,16 @@
             },
             "description": "Validation Error"
           },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "hosted only: runs are not available on the hosted API until spec 106"
+          },
           "503": {
             "content": {
               "application/json": {
@@ -3573,6 +3583,16 @@
             },
             "description": "Validation Error"
           },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "hosted only: runs are not available on the hosted API until spec 106"
+          },
           "503": {
             "content": {
               "application/json": {
@@ -3696,6 +3716,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "hosted only: runs are not available on the hosted API until spec 106"
           },
           "503": {
             "content": {
@@ -3821,6 +3851,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "hosted only: runs are not available on the hosted API until spec 106"
           },
           "503": {
             "content": {
@@ -4793,6 +4833,16 @@
             },
             "description": "Validation Error"
           },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "hosted only: runs are not available on the hosted API until spec 106"
+          },
           "503": {
             "content": {
               "application/json": {
@@ -4871,6 +4921,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "hosted only: runs are not available on the hosted API until spec 106"
           },
           "503": {
             "content": {
@@ -5207,6 +5267,16 @@
             },
             "description": "Validation Error"
           },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "hosted only: runs are not available on the hosted API until spec 106"
+          },
           "503": {
             "content": {
               "application/json": {
@@ -5331,6 +5401,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "hosted only: runs are not available on the hosted API until spec 106"
           },
           "503": {
             "content": {
@@ -5570,6 +5650,16 @@
             },
             "description": "Validation Error"
           },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "hosted only: runs are not available on the hosted API until spec 106"
+          },
           "503": {
             "content": {
               "application/json": {
@@ -5687,6 +5777,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "hosted only: runs are not available on the hosted API until spec 106"
           },
           "503": {
             "content": {
@@ -5947,6 +6047,16 @@
             },
             "description": "refused: a run of this kind is active with other options, or the request lacks its explicit field"
           },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "hosted only: runs are not available on the hosted API until spec 106"
+          },
           "503": {
             "content": {
               "application/json": {
@@ -6025,6 +6135,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "hosted only: runs are not available on the hosted API until spec 106"
           },
           "503": {
             "content": {
@@ -6195,6 +6315,16 @@
             },
             "description": "Validation Error"
           },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "hosted only: runs are not available on the hosted API until spec 106"
+          },
           "503": {
             "content": {
               "application/json": {
@@ -6353,6 +6483,16 @@
             },
             "description": "Validation Error"
           },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "hosted only: runs are not available on the hosted API until spec 106"
+          },
           "503": {
             "content": {
               "application/json": {
@@ -6437,6 +6577,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "hosted only: runs are not available on the hosted API until spec 106"
           },
           "503": {
             "content": {
@@ -7323,6 +7473,16 @@
             },
             "description": "Validation Error"
           },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "hosted only: runs are not available on the hosted API until spec 106"
+          },
           "503": {
             "content": {
               "application/json": {
@@ -7447,6 +7607,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "hosted only: runs are not available on the hosted API until spec 106"
           },
           "503": {
             "content": {
@@ -7950,6 +8120,16 @@
             },
             "description": "Validation Error"
           },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "hosted only: runs are not available on the hosted API until spec 106"
+          },
           "503": {
             "content": {
               "application/json": {
@@ -8328,6 +8508,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "hosted only: runs are not available on the hosted API until spec 106"
           },
           "503": {
             "content": {
