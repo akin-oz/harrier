@@ -218,6 +218,9 @@ class Probes:
 
     entered: list[str] = field(default_factory=lambda: [])
     barrier: threading.Barrier = field(default_factory=lambda: threading.Barrier(2, timeout=20))
+    # Set by a slow route once it holds its connection, so a test asks for
+    # the next one only then rather than after a guessed sleep.
+    holding: threading.Event = field(default_factory=threading.Event)
 
 
 def add_probe_routes(app: FastAPI) -> Probes:
@@ -259,6 +262,11 @@ def add_probe_routes(app: FastAPI) -> Probes:
         if then == "conflict":
             # Returned, not raised, as `POST /capture/add` answers 409.
             return JSONResponse(status_code=409, content={"detail": "refused"})
+        if then == "created":
+            # 201, as `POST /tracks` answers: below 400, so kept.
+            return JSONResponse(status_code=201, content={"written": body})
+        if then == "bad request":
+            return JSONResponse(status_code=400, content={"detail": "refused"})
         if then == "failed statement":
             # A statement fails at the top of the request's transaction and
             # the route answers 200 anyway: COMMIT there rolls back.
@@ -282,6 +290,7 @@ def add_probe_routes(app: FastAPI) -> Probes:
     def idle(conn: Conn, seconds: float) -> dict[str, Any]:
         row = conn.execute("SELECT pg_backend_pid()").fetchone()
         probes.entered.append(f"idle {row[0]}")
+        probes.holding.set()
         time.sleep(seconds)
         return {"pid": row[0]}
 
@@ -314,6 +323,7 @@ def add_probe_routes(app: FastAPI) -> Probes:
 
     def slow_body(conn: Conn, seconds: float) -> StreamingResponse:
         conn.execute("SELECT 1")
+        probes.holding.set()
 
         def body() -> Iterator[bytes]:
             # After the headers, so after the transaction ended.
@@ -474,10 +484,23 @@ class _Dropping:
         return getattr(self.inner, name)
 
 
-@pytest.mark.parametrize("dropped", [b"BEGIN", b"SET LOCAL ROLE"], ids=["begin", "role step"])
+LOST = {
+    # Every SET LOCAL ended with its own statement: none of the three holds.
+    "begin": (b"BEGIN", "role, claims, owner"),
+    # Only the role step was lost: the claims and the owner hold.
+    "role step": (b"SET LOCAL ROLE", "role"),
+}
+
+
+@pytest.mark.parametrize("case", sorted(LOST))
 def test_a_lost_set_local_stops_the_request(
-    dropped: bytes, server: Server, hosted: Hosted, monkeypatch: pytest.MonkeyPatch
+    case: str,
+    server: Server,
+    hosted: Hosted,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    dropped, differed = LOST[case]
     pool = hosted.store.pool
     lease, release = pool.lease, pool.release
     # The login role may run the read-back and the probe itself, so only the
@@ -499,12 +522,15 @@ def test_a_lost_set_local_stops_the_request(
 
     monkeypatch.setattr(pool, "lease", lambda: _Dropping(lease(), dropped))
     monkeypatch.setattr(pool, "release", returned)
+    caplog.set_level(logging.WARNING, logger="harrier_api.hostedstore")
 
     response = hosted.client().get("/probe/sequence", headers=hosted.headers(server.owner()))
 
     assert (response.status_code, response.json()) == (500, GENERIC)
     assert hosted.probes.entered == []
     assert not sequence_ran(server)
+    # The read-back's comparison stopped it, not an error of its own.
+    assert f"could not run as its user: {differed} differed" in caplog.text
 
 
 class _OtherClaims(_Dropping):
@@ -585,6 +611,10 @@ def test_a_refused_request_commits_nothing(
         return client.post("/probe/write", params={"body": body, "then": then}, headers=headers)
 
     assert write("kept", "ok").status_code == 200
+    # Below 400 is kept, whatever the success: 201.
+    assert write("kept as created", "created").status_code == 201
+    # 400, the first status that is not.
+    assert write("returned 400", "bad request").status_code == 400
     # A route that raises.
     assert write("raised", "raise").status_code == 500
     # A 4xx the route returns without raising.
@@ -595,7 +625,7 @@ def test_a_refused_request_commits_nothing(
     # A failed statement the route caught: COMMIT would roll back silently.
     failed = write("after a failed statement", "failed statement")
     assert (failed.status_code, failed.json()) == (500, GENERIC)
-    assert probe_rows(server) == ["kept"]
+    assert probe_rows(server) == ["kept", "kept as created"]
 
     # `POST /capture/add` answers its duplicate 409 by returning, and the
     # middleware rolls that transaction back by its status.
@@ -655,7 +685,9 @@ def test_the_connection_returns_before_the_body_is_sent(
 
         slow = threading.Thread(target=download)
         slow.start()
-        time.sleep(0.5)
+        # Its headers are sent once it holds the connection and returns.
+        assert hosted.probes.holding.wait(timeout=10)
+        time.sleep(0.2)
         started = time.monotonic()
         response = hosted.client().get("/probe/identity", headers=headers)
         waited = time.monotonic() - started
@@ -697,7 +729,7 @@ def test_a_request_ends_while_others_wait_for_a_connection(
 
         holder = threading.Thread(target=ask, args=("holder", "/probe/idle", {"seconds": 0.5}))
         holder.start()
-        time.sleep(0.2)
+        assert hosted.probes.holding.wait(timeout=10)
         waiters = [
             threading.Thread(target=ask, args=(f"waiter {n}", "/probe/identity", {}))
             for n in range(3)
@@ -847,16 +879,22 @@ def test_the_request_role_has_lock_and_statement_timeouts(
 
         # Another session holds a table in ACCESS EXCLUSIVE mode. The
         # request fails once its lock timeout passes, without waiting for
-        # that session, and its write before the wait is not kept.
-        with closing(postgres_connect(server.url)) as holder:
-            holder.execute(b"BEGIN")
-            holder.execute(b"LOCK TABLE jobs IN ACCESS EXCLUSIVE MODE")
-            started = time.monotonic()
-            with pytest.raises(StoreBusyError):
-                client.post("/probe/locked", params={"body": "waited"}, headers=headers)
-            waited = time.monotonic() - started
-            holder.execute(b"ROLLBACK")
-        assert REQUEST_LOCK_TIMEOUT_MS / 1000 <= waited < REQUEST_STATEMENT_TIMEOUT_MS / 1000
+        # that session, and its write before the wait is not kept. The
+        # request's own value, shorter here than the chosen one, so the
+        # test proves it is the request's and waits less.
+        with monkeypatch.context() as shorter:
+            shorter.setattr(hostedstore, "REQUEST_LOCK_TIMEOUT_MS", 1500)
+            seen = client.get("/probe/identity", headers=headers).json()
+            assert seen["settings"]["lock_timeout"] == "1500"
+            with closing(postgres_connect(server.url)) as holder:
+                holder.execute(b"BEGIN")
+                holder.execute(b"LOCK TABLE jobs IN ACCESS EXCLUSIVE MODE")
+                started = time.monotonic()
+                with pytest.raises(StoreBusyError):
+                    client.post("/probe/locked", params={"body": "waited"}, headers=headers)
+                waited = time.monotonic() - started
+                holder.execute(b"ROLLBACK")
+        assert 1.5 <= waited < REQUEST_LOCK_TIMEOUT_MS / 1000
         assert probe_rows(server) == []
 
         # A plain SET outlives its transaction on the connection; the next

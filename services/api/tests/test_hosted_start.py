@@ -50,6 +50,7 @@ from harrier.loginrole import (
     OWNS_A_TABLE_IN_PUBLIC,
     REACHED_BY_NAME,
     REACHED_BYPASSRLS,
+    REACHED_OWNS_POLICED,
     REACHED_OWNS_PUBLIC,
     REACHED_SUPERUSER,
     SUPERUSER,
@@ -171,6 +172,22 @@ def cannot_set_tenant(server: Server) -> tuple[LoginRole, list[LoginRoleProblem]
     return server.login_role(tenant="none"), [LoginRoleProblem(CANNOT_SET_TENANT)]
 
 
+def tenant_without_set(server: Server) -> tuple[LoginRole, list[LoginRoleProblem]]:
+    """A member of `harrier_tenant` that may not set it: membership is not
+    the right to `SET ROLE` since Postgres 16."""
+    return server.login_role(tenant="SET FALSE"), [LoginRoleProblem(CANNOT_SET_TENANT)]
+
+
+def owns_a_partitioned_public_table(server: Server) -> tuple[LoginRole, list[LoginRoleProblem]]:
+    login = server.login_role()
+    table = f"public.harrier_t_{uuid.uuid4().hex[:12]}"
+    server.sql(
+        f"CREATE TABLE {table} (n integer) PARTITION BY RANGE (n)",
+        f"ALTER TABLE {table} OWNER TO {login.name}",
+    )
+    return login, [LoginRoleProblem(OWNS_A_TABLE_IN_PUBLIC)]
+
+
 def owns_a_public_table(server: Server) -> tuple[LoginRole, list[LoginRoleProblem]]:
     login = server.login_role()
     table = f"public.harrier_t_{uuid.uuid4().hex[:12]}"
@@ -199,6 +216,25 @@ def through_a_noinherit_role(
     return set_up
 
 
+def through_a_noinherit_role_a_policed_table_owner(
+    server: Server,
+) -> tuple[LoginRole, list[LoginRoleProblem]]:
+    """The owner of a table with row security enabled outside `public`."""
+    login = server.login_role()
+    between = server.role("NOLOGIN NOINHERIT")
+    reached = server.role("NOLOGIN")
+    schema = f"harrier_t_{uuid.uuid4().hex[:12]}"
+    server.sql(
+        f"CREATE SCHEMA {schema}",
+        f"CREATE TABLE {schema}.policed (body text)",
+        f"ALTER TABLE {schema}.policed ENABLE ROW LEVEL SECURITY",
+        f"ALTER TABLE {schema}.policed OWNER TO {reached}",
+        f"GRANT {reached} TO {between}",
+        f"GRANT {between} TO {login.name}",
+    )
+    return login, [LoginRoleProblem(MEMBER_PAST_THE_POLICY, reached, (REACHED_OWNS_POLICED,))]
+
+
 def granted_without_set(server: Server) -> tuple[LoginRole, list[LoginRoleProblem]]:
     login = server.login_role()
     reached = server.role("NOLOGIN BYPASSRLS")
@@ -211,7 +247,9 @@ BYPASS_CASES: dict[str, SetUp] = {
     "bypassrls": bypassrls,
     "a member of service_role": member_of_service_role,
     "cannot set the tenant role": cannot_set_tenant,
+    "a member of the tenant role without set": tenant_without_set,
     "owns a table in public": owns_a_public_table,
+    "owns a partitioned table in public": owns_a_partitioned_public_table,
 }
 
 SET_ROLE_CASES: dict[str, SetUp] = {
@@ -226,6 +264,15 @@ SET_ROLE_CASES: dict[str, SetUp] = {
     ),
     "through a noinherit role, service_role": through_a_noinherit_role(
         "", (REACHED_BYPASSRLS, REACHED_BY_NAME), named="service_role"
+    ),
+    "through a noinherit role, postgres": through_a_noinherit_role(
+        # The server's bootstrap superuser, which has BYPASSRLS too.
+        "",
+        (REACHED_SUPERUSER, REACHED_BYPASSRLS, REACHED_BY_NAME),
+        named="postgres",
+    ),
+    "through a noinherit role, the owner of a policed table": (
+        through_a_noinherit_role_a_policed_table_owner
     ),
     "a direct membership without set": granted_without_set,
 }
@@ -246,6 +293,17 @@ def refused_start(
     return refused.value
 
 
+# Two refusals written out, so the text is proved as an operator reads it
+# and not only as the code builds it (test integrity review of PR #301).
+WRITTEN = {
+    "bypassrls": "the hosted API refuses its login role: bypassrls",
+    "a member of service_role": (
+        "the hosted API refuses its login role: "
+        "member of a role past the policy: service_role (bypassrls, named)"
+    ),
+}
+
+
 @pytest.mark.parametrize("case", sorted(BYPASS_CASES))
 def test_hosted_start_refuses_a_login_role_that_can_bypass_policy(
     case: str, server: Server, monkeypatch: pytest.MonkeyPatch
@@ -253,6 +311,8 @@ def test_hosted_start_refuses_a_login_role_that_can_bypass_policy(
     login, problems = BYPASS_CASES[case](server)
     refused = refused_start(server, monkeypatch, login)
     assert str(refused) == login_role_refusal(problems)
+    if case in WRITTEN:
+        assert str(refused) == WRITTEN[case]
 
 
 @pytest.mark.parametrize("case", [*sorted(SET_ROLE_CASES), "harrier_tenant alone"])

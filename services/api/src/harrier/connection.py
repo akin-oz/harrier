@@ -932,7 +932,7 @@ def assume_identity(driver: psycopg.Connection[Any], claims: Mapping[str, object
         step = "read-back"
         row = driver.execute(
             b"SELECT current_user::text, "
-            b"current_setting('request.jwt.claims', true)::jsonb ->> 'sub', "
+            b"nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub', "
             b"public.harrier_owner_id()::text"
         ).fetchone()
     except psycopg.Error as error:

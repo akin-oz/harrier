@@ -616,8 +616,9 @@ times are not known yet.
   domain was written for: SQLite's busy timeout, `BUSY_TIMEOUT_MS` in
   `services/api/src/harrier/db.py`, which the seam already gives every
   Postgres transaction. It is set on the `Connection` as `busy_timeout_ms`,
-  as Behavior says; because it equals the seam's default, removing that
-  assignment changes no test (Mutations, below).
+  as Behavior says, so the request's value holds even where it differs
+  from the seam's default
+  (`services/api/tests/test_hosted_requests.py::test_the_request_role_has_lock_and_statement_timeouts`).
 - **`statement_timeout`, 30 seconds** (`REQUEST_STATEMENT_TIMEOUT_MS`).
   Each harrier statement reads or writes one owner's rows. Six times the
   lock timeout, so a statement waiting on a lock is stopped by the lock
@@ -673,7 +674,11 @@ times are not known yet.
   then the names in parentheses: `role`, `claims` or `owner` for what
   differed, or the step that was refused (`role`, `claims` or
   `read-back`). A `sub` is compared with `harrier_owner_id()::text` in its
-  canonical UUID form.
+  canonical UUID form. The read-back reads an empty claims setting as
+  none, as `harrier_owner_id()` does: with `BEGIN` lost, the local claims
+  have ended by the read-back and the setting is empty, and casting that
+  to `jsonb` raised, so an error rather than the comparison stopped the
+  request (test integrity review of PR #301).
 
 ### How a refusal reads
 
@@ -735,10 +740,11 @@ times are not known yet.
   the claims differ while the role and the owner hold, so the claims'
   comparison is what stops the request.
 - `services/api/tests/test_hosted_requests.py::test_a_lost_set_local_stops_the_request`
-  runs twice: with `BEGIN` lost, the criterion's case, and with only the
-  role step lost, where the role's comparison is what stops the request.
-  In both the login role may run the read-back and the probe, so nothing
-  else would.
+  runs twice: with `BEGIN` lost, the criterion's case, where the role,
+  the claims and the owner all differ, and with only the role step lost,
+  where the role alone does. In both the login role may run the read-back
+  and the probe, and the test asserts the logged names, so the read-back's
+  comparison is what stops the request, not an error of its own.
 - `services/api/tests/test_hosted_requests.py::test_an_exhausted_pool_answers_500`:
   Open decision 1 as taken. The 500 is Starlette's own, plain text, and
   is sent outside the CORS layer, as every unhandled exception's is
@@ -752,10 +758,11 @@ times are not known yet.
 ### Mutations
 
 Each new behavior was removed or changed in the code, and the test that
-proves it was run. Every mutation failed its test but two, each for a
-reason stated here. Removing the `busy_timeout_ms` assignment changes
-nothing, since the chosen lock timeout equals the seam's default.
-Removing the release's discard of a connection that is not idle leaves
+proves it was run. Every mutation failed its test but one, for a reason
+stated here. (Removing the `busy_timeout_ms` assignment changed nothing
+while the lock test used the chosen value, which equals the seam's
+default; the test now sets its own.) Removing the release's discard of a
+connection that is not idle leaves
 `services/api/tests/test_hosted_requests.py::test_a_connection_ended_by_the_idle_timeout_is_not_reused`
 passing, because the pool discards a closed connection itself; the
 discard is proved by
@@ -782,6 +789,15 @@ The full list, each with its result, is in the pull request.
 - **A check statement the store refuses** is covered by its own test
   (privacy review), and the pool's own connection warnings are described
   under How a refusal reads.
+- **The test integrity review** found checks no case reached, and each
+  now has one: a membership reaching the owner of a policed table outside
+  `public`, `postgres` by name, a partitioned table in `public`, and
+  `harrier_tenant` granted without `SET`. Two login role refusals are
+  written out in full rather than built with the code's own function;
+  the commit boundary is proved at 201 (kept) and 400 (rolled back); the
+  lock test sets its own lock timeout, which proves the request's value is
+  the one that holds; and the two timing tests wait for the slow request
+  to hold its connection rather than for a guessed time.
 
 ### Honest limitations (as built)
 
