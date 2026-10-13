@@ -884,3 +884,51 @@ The text above says where each changed it.
     and role share one resume, letter and answers file today.
   - `offers/batch.py:58-62` appends to `evaluations/audit.jsonl` with no
     bound and no reader in the code.
+
+## Amendment (2026-10-13): a run's Storage identity comes here from spec 106
+
+Akin decided in chat on 2026-10-13 to move spec 106's Open decision 8
+here, with the criterion that rested on it (spec 106, Amendment
+(2026-10-13), decision 3). Spec 106 is built without Storage. This spec
+receives the binding of a run's `files()` and the choice of the run's
+Storage token, both to be decided when this spec is built. Nothing else
+in this spec changes.
+
+Where "Which store a call uses" ("Binding a run"), decision D3 and Open
+decision 2 say a run's Storage identity and its token are spec 106's,
+read this amendment: they are this spec's. A hosted run is started by
+spec 106's run manager, so the binding is made in that start, before any
+domain code runs. This amendment does not change `depends`.
+
+### Acceptance criteria (amendment of 2026-10-13)
+
+Received from spec 106, unchanged:
+
+- [ ] In a hosted run, `files()` is bound to the run's owner before any
+      domain code runs, writes only under that owner's prefix, and never
+      returns this spec's local store (decision D3; planned
+      test_a_hosted_run_binds_its_owners_storage).
+
+### Open decision for Akin (amendment of 2026-10-13)
+
+**The token a run uses for Storage.** Received from spec 106's Open
+decision 8, to be decided when this spec is built. A Storage request
+needs a token Supabase accepts, with `sub` the run's owner; a database
+login that sets claims is not enough. The two ways, as spec 106 stated
+them:
+
+- forward and refresh the owner's own session, which a scheduled run
+  (spec 108) does not have;
+- a signing key harrier holds, imported into the project, that mints
+  short-lived tokens for the run's owner, which gives the holder of that
+  key the power to act as any owner in Storage.
+
+No recommendation is made in this text. Until this is taken, the
+criterion above states the guarantee only.
+
+### Proof / origin (amendment of 2026-10-13)
+
+- `specs/106-tenant-credentials-and-run-isolation.md`, Open decision 8,
+  Behavior ("The run's Storage identity"), and its Amendment
+  (2026-10-13), decision 3.
+- Akin's decision in chat on 2026-10-13, relayed by the coordinator.
