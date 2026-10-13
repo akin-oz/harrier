@@ -1385,10 +1385,16 @@ migration too; whichever lands after this one takes the next number.
   `schedule.timezone is required`, `schedule.jobs is required`. A
   `timezone` that is not text, and a `jobs` that is not a list, are
   refused the same way.
-- **A refusal names the field and never the value.** Each message names
-  `schedule`, `schedule.timezone` or `schedule.jobs`, and quotes nothing
-  the owner wrote but an unknown field's name. The scheduler may then log
-  a refusal as it is, which "A tick" asks of it.
+- **A refusal quotes nothing the owner wrote.** Each message names
+  `schedule`, `schedule.timezone` or `schedule.jobs`. An unknown field is
+  counted, never named, since a key is the owner's text: `schedule has 2
+  unknown fields; expected only ['jobs', 'timezone']`. The refusal chains
+  no exception either: `zoneinfo`'s error quotes the zone, so the timezone
+  refusal is raised outside the `except` block, and neither `__cause__`
+  nor `__context__` carries it (`raise ... from None` would still leave
+  it as `__context__`). The scheduler may then log a refusal as it is,
+  traceback included, which "A tick" asks of it
+  (`services/api/tests/test_hosted_schedule.py::test_the_schedule_kind_is_hosted_only`).
 - **A key naming a directory of the tz database**, such as `Europe`, is
   refused as a zone `zoneinfo` cannot load.
 - **The routes.** `GET /config` lists `schedule` hosted, after the local
@@ -1435,8 +1441,31 @@ migration too; whichever lands after this one takes the next number.
 ### Mutations
 
 Each new behavior was removed or changed in the code, and the test that
-proves it was run: twenty mutations, each failing its test. The list,
-each with its result, is in the pull request.
+proves it was run: twenty mutations, each failing its test, and three
+more for the local reviews' findings below. The list, each with its
+result, is in the pull request.
+
+### From the local reviews of PR #309
+
+The privacy and data integrity reviews each found the two points above
+in the first version: the unknown-field refusal named the owner's keys,
+and the timezone refusal chained `zoneinfo`'s error, which holds the
+zone. Both are fixed as stated, and the test fails with either put back.
+
+Two points belong to PR 2 and are recorded here for it:
+
+- **Two timestamp formats meet in the due rule.** `schedule_updated_at`
+  is `user_config.updated_at`, written by `store_now()` as `YYYY-MM-DD
+  HH:MM:SS`; `last_slot_at` is ISO 8601 with `T` and `Z`. Compared as
+  text, a space sorts before `T`, so on one day the two order wrongly. PR
+  2's "at or after the row's `updated_at`" parses both before comparing,
+  and its planned test_a_new_choice_starts_at_the_next_slot covers a
+  choice made on the slot's own day.
+- **The zone database is the image's.** `tzdata` is a dependency on
+  Windows only (`services/api/uv.lock`); the hosted image reads the
+  system's zone files. An image without them refuses every schedule
+  write at the timezone check. Spec 110's staging check on `TZ` covers
+  the image; PR 2's due computation reads the same files.
 
 ### Honest limitations (the store)
 

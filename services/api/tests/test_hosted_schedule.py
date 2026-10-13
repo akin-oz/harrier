@@ -55,11 +55,24 @@ INSUFFICIENT_PRIVILEGE = "42501"
 
 VALID = {"timezone": "Europe/Amsterdam", "jobs": ["discovery", "academic-discovery"]}
 
+# A key an owner might write, synthetic. A refusal counts it, never names it.
+OWNER_KEY = "Sam Example sam@example.com"
+
 # Each refusal under spec 108's "The owner's choice", and the field its
-# message names. The value itself is never in the message.
+# message names. Nothing the owner wrote is in the message: no value, and
+# no unknown field's name (OWNER_TEXT).
 REFUSALS: tuple[tuple[str, object, str], ...] = (
     ("not an object", ["discovery"], "schedule must be a JSON object"),
-    ("another field", {**VALID, "times": ["09:00"]}, "schedule has unknown fields ['times']"),
+    (
+        "another field",
+        {**VALID, "times": ["09:00"]},
+        "schedule has 1 unknown field; expected only ['jobs', 'timezone']",
+    ),
+    (
+        "two other fields",
+        {**VALID, "times": ["09:00"], OWNER_KEY: 1},
+        "schedule has 2 unknown fields; expected only ['jobs', 'timezone']",
+    ),
     ("no timezone", {"jobs": []}, "schedule.timezone is required"),
     ("no jobs", {"timezone": "UTC"}, "schedule.jobs is required"),
     ("an unknown zone", {**VALID, "timezone": "Mars/Olympus_Mons"}, "schedule.timezone"),
@@ -72,6 +85,10 @@ REFUSALS: tuple[tuple[str, object, str], ...] = (
     ("a job that is not text", {**VALID, "jobs": [7]}, "schedule.jobs has an entry"),
     ("a repeated job", {**VALID, "jobs": ["discovery", "discovery"]}, "schedule.jobs repeats"),
 )
+
+
+# What an owner wrote in REFUSALS that is not a field name or a hosted job.
+OWNER_TEXT = ("Mars", "passwd", "gmail-watch", "digest", "09:00", "times", "Sam", "example.com")
 
 
 # --- the kind ---
@@ -113,9 +130,11 @@ def test_the_schedule_kind_is_hosted_only(db: Connection) -> None:
             set_config(db, SCHEDULE, value)
         message = str(refused.value)
         assert message.startswith(named), (case, message)
-        assert not any(
-            secret in message for secret in ("Mars", "passwd", "gmail-watch", "digest", "09:00")
-        ), (case, message)
+        assert not any(text in message for text in OWNER_TEXT), (case, message)
+        # Nor does any exception the refusal carries, which a traceback in
+        # a log would print: zoneinfo's own error quotes the zone.
+        carried = [refused.value.__cause__, refused.value.__context__]
+        assert carried == [None, None], (case, carried)
     # Nothing refused was written.
     assert get_config(db, SCHEDULE) == {"timezone": "Asia/Tokyo", "jobs": []}
 

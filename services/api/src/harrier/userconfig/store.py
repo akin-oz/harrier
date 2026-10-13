@@ -144,7 +144,9 @@ def _validate_schedule(value: object) -> dict[str, object]:
     """The `schedule` kind (spec 108): an object with exactly `timezone`, a
     zone `zoneinfo` loads, and `jobs`, distinct hosted job names. Empty
     `jobs` pauses the owner's schedule. Each refusal names the field and
-    never the value, so the scheduler may log the text as it is."""
+    quotes nothing the owner wrote, not even an unknown field's name, and
+    chains no exception that holds a value, so the scheduler may log a
+    refusal as it is, traceback included."""
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
     # Imported here, as the academic search module is: the hosted job set
@@ -154,22 +156,28 @@ def _validate_schedule(value: object) -> dict[str, object]:
     if not isinstance(value, dict):
         raise ConfigError(f"{SCHEDULE} must be a JSON object, got {type(value).__name__}")
     fields = cast("dict[object, object]", value)
-    unknown = sorted(str(key) for key in fields if key not in SCHEDULE_FIELDS)
+    unknown = sum(1 for key in fields if key not in SCHEDULE_FIELDS)
     if unknown:
+        # Counted, never named: a key is text the owner wrote.
         raise ConfigError(
-            f"{SCHEDULE} has unknown fields {unknown}; expected only {list(SCHEDULE_FIELDS)}"
+            f"{SCHEDULE} has {unknown} unknown field{'s' if unknown > 1 else ''}; "
+            f"expected only {list(SCHEDULE_FIELDS)}"
         )
     for name in SCHEDULE_FIELDS:
         if name not in fields:
             raise ConfigError(f"{SCHEDULE}.{name} is required")
     timezone = fields["timezone"]
-    try:
-        if not isinstance(timezone, str):
-            raise ValueError(timezone)
-        ZoneInfo(timezone)
-    except (ZoneInfoNotFoundError, ValueError, OSError) as exc:
-        # OSError: a key that names a directory of the tz database.
-        raise ConfigError(f"{SCHEDULE}.timezone is not a zone this server can load") from exc
+    loads = isinstance(timezone, str)
+    if loads:
+        try:
+            ZoneInfo(cast("str", timezone))
+        except (ZoneInfoNotFoundError, ValueError, OSError):
+            # OSError: a key that names a directory of the tz database.
+            loads = False
+    if not loads:
+        # Raised outside the except block, so neither __cause__ nor
+        # __context__ carries zoneinfo's error, whose text holds the value.
+        raise ConfigError(f"{SCHEDULE}.timezone is not a zone this server can load")
     jobs = fields["jobs"]
     if not isinstance(jobs, list):
         raise ConfigError(f"{SCHEDULE}.jobs must be a JSON list, got {type(jobs).__name__}")
