@@ -1639,8 +1639,7 @@ approve with this amendment, or in that spec's own change.
   (step 3) also reads `public.harrier_owner_id()` and requires it to equal
   the token's `sub`; its
   planned criterion that "`auth.uid()` is the token's `sub`, and
-  `auth.jwt()` is its payload" inside a request (planned
-  test_the_request_transaction_runs_as_its_user) cannot hold as
+  `auth.jwt()` is its payload" inside a request (`services/api/tests/test_hosted_requests.py::test_the_request_transaction_runs_as_its_user`) cannot hold as
   `harrier_tenant` on Supabase and reads `harrier_owner_id()` and the
   claims setting instead.
 - **Spec 115.** Its acceptance criterion "The eleven
