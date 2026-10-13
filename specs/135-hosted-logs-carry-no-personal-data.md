@@ -1,8 +1,8 @@
 ---
 spec: 135
 title: Hosted logs carry no personal data, and the hosted start opens no SQLite
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [029, 045, 112, 133, 134]
 ---
