@@ -1219,3 +1219,27 @@ parallel, on branch `feat-116-credential-store`.
   and its Amendment (2026-10-13).
 - `specs/107-artifacts-and-run-state-in-storage.md`, "Which store a call
   uses", "Binding a run".
+
+## Amendment (2026-10-13, spec 109): a criterion spec 109 cannot build
+
+Spec 109's first part was built before this spec. One of its criteria
+tests this spec's run environment, which does not exist yet, so it moves
+here (spec 109, Amendment (2026-10-13)). It adds nothing to Behavior:
+"The child's environment" already gives a run its owner's credentials
+under the kinds table's names, `telegram` among them, and leaves out
+every `GMAIL_` name.
+
+- [ ] A hosted run of owner A has A's `TELEGRAM_BOT_TOKEN` and
+      `TELEGRAM_CHAT_ID`, a run of owner B with no Telegram credential
+      has neither, and no run has a `GMAIL_` variable, even with the
+      server's environment holding one (planned
+      test_a_hosted_run_carries_only_its_owners_telegram_settings, moved
+      from spec 109).
+
+One wording to settle when this spec is built: the kinds table's 501 text
+for `gmail-watch` is `<kind> runs are not offered on the hosted service
+(spec 109)`. The run manager already raises spec 109's `GmailNotHosted`
+for that kind, before any table is read, with `Gmail watch is not offered
+on the hosted service (spec 109)`
+(`services/api/tests/test_tenant_notifications.py::test_a_hosted_gmail_watch_run_is_refused_before_it_spawns`).
+The table's row for `gmail-watch` is answered by that refusal.
