@@ -33,7 +33,7 @@ from harrier.db import DatabaseOwnedByHost, connect, default_db_path, lease_dire
 from harrier.demo import repo_root
 from harrier.hostlease import oldest_hold
 from harrier.logredact import scrub_outbound
-from harrier.logsetup import configure_logging, scrub_uvicorn_handlers
+from harrier.logsetup import configure_logging, drop_access_queries, scrub_uvicorn_handlers
 from harrier.tracker import list_jobs
 from harrier.tracker.reasons import CANDIDATE, COMPANY, SYSTEM, codes_for
 from harrier.tracker.selector import SelectorError
@@ -1547,6 +1547,10 @@ def create_app(run_manager: RunManager | None = None, spa_dir: Path | None = Non
     # logger and no identity redaction (spec 045). Hosted, it opens no local
     # store and writes no file (spec 135).
     configure_logging(hosted=hosted is not None)
+    # Hosted, uvicorn's access line drops the query, which carries what a
+    # person typed (spec 135). Installed first on each handler.
+    if hosted is not None:
+        drop_access_queries()
     # uvicorn logs an unhandled exception on its own handler, which the
     # root's filters never see (spec 133). Before the modes part, so the
     # hosted app gets it too.

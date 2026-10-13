@@ -422,11 +422,11 @@ limitations already accept.
       `1`, `true` and `yes`, one case each, with the text above naming the
       variable and not its value, exit 1; it starts with each set to `0`
       and to empty; and the local API starts with any of them on
-      (planned test_a_hosted_start_refuses_prompt_logging).
+      (`services/api/tests/test_hosted_logs.py::test_a_hosted_start_refuses_prompt_logging`).
 - [ ] Hosted, a request to a path with a query string writes an access
       line holding the path and no part of the query; a path holding
       `%3F` keeps it; locally the same request's line keeps its query
-      (planned test_a_hosted_access_line_carries_no_query).
+      (`services/api/tests/test_hosted_logs.py::test_a_hosted_access_line_carries_no_query`).
 
 ### Honest limitations (amendment)
 
@@ -467,6 +467,32 @@ stated here so the code and the spec agree.
   that never loaded psycopg holds none of its errors, and the import
   contract keeps psycopg inside the seam.
 
+The amendment "prompt logging and query strings" landed on main while
+this change was open, and is built here too:
+
+- **The refusal's text.** The amendment writes it as `error: prompt
+  logging (<variable>) is local only; unset it for the hosted API`, as
+  spec 104 writes its refusals. Like them, it is raised as
+  `HostedConfigError` from `hosted_config`
+  (`services/api/src/harrier_api/hostedauth.py`), so the process's last
+  line is `harrier_api.hostedauth.HostedConfigError: prompt logging
+  (<variable>) is local only; unset it for the hosted API`, exit 1. It is
+  checked after spec 104's configuration checks.
+- **One rule for "on".** `harrier.llm.config` now names the five
+  variables in the amendment's order (`DEBUG_VARIABLES`) and holds the
+  rule `debug_enabled` already applied (`debug_value_on`); the refusal
+  and `debug_enabled` both read them.
+- **Where the query filter is installed.** In `create_app`, hosted, next
+  to `scrub_uvicorn_handlers` (`harrier.logsetup.drop_access_queries`),
+  not in `configure_logging`, which runs once per process: a second
+  uvicorn in the same process, as the test starts, makes new access
+  handlers, and a filter installed once would miss them.
+- **Before the secret scrub, with no visible effect.** The filter is
+  first on each access handler, as the amendment says. For uvicorn's
+  access record the order shows in no output: the scrub masks each
+  argument in place and keeps all five, so the query filter finds the
+  path either way. No test can fail on the order, and none claims to.
+
 Each test fails when the code it proves is removed. The mutations, run
 against a local Postgres 17:
 
@@ -480,3 +506,11 @@ against a local Postgres 17:
 | the walk skips a group's members | the `ExceptionGroup` shape |
 | the seam's rendering may raise | `test_an_unrenderable_driver_error_keeps_its_record` |
 | the approve route logs the contact's name at `DEBUG` | `test_contact_routes_log_no_identity_value_hosted` |
+| the hosted start does not refuse prompt logging | `test_a_hosted_start_refuses_prompt_logging` |
+| the variables are read in another order | `test_a_hosted_start_refuses_prompt_logging` |
+| the refusal quotes the variable's value | `test_a_hosted_start_refuses_prompt_logging` |
+| the local API refuses prompt logging too | `test_a_hosted_start_refuses_prompt_logging` |
+| the query filter is not installed | `test_a_hosted_access_line_carries_no_query` |
+| the query filter is installed locally too | `test_a_hosted_access_line_carries_no_query` |
+| an encoded `%3F` is read as the query's start | `test_a_hosted_access_line_carries_no_query` |
+| the query filter runs after the secret scrub | none: the order shows in no output (above) |

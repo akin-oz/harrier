@@ -31,11 +31,14 @@ from pathlib import Path
 import psycopg
 import pytest
 from pg_support import open_owner_store
+from test_hosted_auth import API_HOST, SPA_ORIGIN, SUPABASE_URL, child_environment, start_api
 from test_hosted_requests import (
     PROBE_ROWS,
     Server,
     copied_server,
     create_probes,
+    hosted_environment,
+    keys_served_here,
     serving,
 )
 from test_hosted_start import start_as_a_process
@@ -43,13 +46,16 @@ from test_hosted_start import start_as_a_process
 import harrier.connection
 import harrier.logredact
 from harrier import logsetup
-from harrier.connection import Connection, StoreDatabaseError, StoreIntegrityError
+from harrier.connection import URL_VARIABLE, Connection, StoreDatabaseError, StoreIntegrityError
 from harrier.db import connect
+from harrier.llm.config import DEBUG_VARIABLES
 from harrier.logredact import IdentityRedactionFilter
 from harrier.logsetup import HOSTED_NOTE, SECRET_SCRUB, UVICORN_LOGGERS, configure_logging
 from harrier.outreach.discovery import candidates_output_path
 from harrier.tracker.store import add_job
 from harrier.tracks import default_scope
+from harrier_api.app import create_app
+from harrier_api.hostedauth import HostedConfigError, prompt_logging_refusal
 
 UVICORN_ERROR = "uvicorn.error"
 
@@ -75,6 +81,12 @@ def fresh_logging(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         for logger in [logging.getLogger(name)]
     }
     installed = list(harrier.logredact._INSTALLED)  # pyright: ignore[reportPrivateUsage]
+    # A filter added to a handler stays on it after the handler is put back.
+    filters = {
+        handler: list(handler.filters)
+        for logger in (root, *(logging.getLogger(name) for name in saved_uvicorn))
+        for handler in logger.handlers
+    }
     monkeypatch.setattr(logsetup, "_configured", False)
     try:
         yield
@@ -89,6 +101,8 @@ def fresh_logging(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
             logger.handlers[:] = handlers
             logger.setLevel(level)
             logger.propagate = propagate
+        for handler, kept_filters in filters.items():
+            handler.filters[:] = kept_filters
         harrier.logredact.forget_all()
         for kept in installed:
             harrier.logredact.register(kept)
@@ -426,3 +440,133 @@ def test_contact_routes_log_no_identity_value_hosted(
     written = buffer.getvalue()
     assert written.strip(), "nothing was logged, so nothing was checked"
     assert marker not in written
+
+
+# --- prompt logging and query strings (Amendment (2026-10-13)) ---
+
+
+def test_a_hosted_start_refuses_prompt_logging(
+    server: Server, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fresh_logging: None
+) -> None:
+    for name in DEBUG_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+    url = server.login_role().url
+
+    # As uvicorn starts it: the import fails and the process exits 1.
+    environ = child_environment(
+        tmp_path,
+        HARRIER_AUTH="supabase",
+        HARRIER_SUPABASE_URL=SUPABASE_URL,
+        HARRIER_ALLOWED_HOSTS=API_HOST,
+        HARRIER_CORS_ORIGINS=SPA_ORIGIN,
+        HARRIER_DATABASE_URL=url,
+        CLAUDE_CLI_DEBUG=" Yes ",
+    )
+    started = start_api(environ, tmp_path)
+    assert started.returncode == 1, started.stderr
+    last_line = started.stderr.strip().splitlines()[-1]
+    assert last_line == (
+        f"harrier_api.hostedauth.HostedConfigError: {prompt_logging_refusal('CLAUDE_CLI_DEBUG')}"
+    )
+    assert "Yes" not in started.stderr
+
+    keys_served_here(monkeypatch)
+    hosted_environment(monkeypatch, url)
+    for name in DEBUG_VARIABLES:
+        for value in ("1", "true", "yes"):
+            monkeypatch.setenv(name, value)
+            with pytest.raises(HostedConfigError) as refused:
+                create_app()
+            assert str(refused.value) == prompt_logging_refusal(name)
+            monkeypatch.delenv(name)
+    # Two on: the first in the order the spec names is the one named.
+    monkeypatch.setenv("ANTHROPIC_DEBUG", "1")
+    monkeypatch.setenv("CODEX_CLI_DEBUG", "1")
+    with pytest.raises(HostedConfigError) as refused:
+        create_app()
+    assert str(refused.value) == prompt_logging_refusal("CODEX_CLI_DEBUG")
+    monkeypatch.delenv("ANTHROPIC_DEBUG")
+    monkeypatch.delenv("CODEX_CLI_DEBUG")
+
+    for name in DEBUG_VARIABLES:
+        for value in ("0", ""):
+            monkeypatch.setenv(name, value)
+            with serving(monkeypatch, url):
+                pass
+            monkeypatch.delenv(name)
+
+    # The local API starts with any of them on.
+    monkeypatch.delenv("HARRIER_AUTH")
+    monkeypatch.setenv(URL_VARIABLE, "")
+    for name in DEBUG_VARIABLES:
+        monkeypatch.setenv(name, "1")
+        assert create_app() is not None
+        monkeypatch.delenv(name)
+
+
+def access_line(path: str, host: str) -> str:
+    """Serve the app with uvicorn on a free port, as `uvicorn
+    harrier_api.app:app` serves it, request `path`, and return what
+    uvicorn's access handlers wrote."""
+    import socket
+    import threading
+    import time
+    import urllib.error
+    import urllib.request
+
+    import uvicorn
+
+    listening = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listening.bind(("127.0.0.1", 0))
+    port = int(listening.getsockname()[1])
+    # Configured as uvicorn configures it: its logging first, then the app
+    # is built, through the factory.
+    server = uvicorn.Server(uvicorn.Config(create_app, factory=True, log_level="info"))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [listening]}, daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 30
+        while not server.started:
+            assert thread.is_alive() and time.monotonic() < deadline, "uvicorn did not start"
+            time.sleep(0.02)
+        buffer = io.StringIO()
+        for handler in logging.getLogger("uvicorn.access").handlers:
+            assert isinstance(handler, logging.StreamHandler)
+            handler.setStream(buffer)
+        request = urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers={"Host": host})
+        try:
+            with urllib.request.urlopen(request, timeout=10):
+                pass
+        except urllib.error.HTTPError:
+            pass
+    finally:
+        server.should_exit = True
+        thread.join(30)
+        listening.close()
+    return buffer.getvalue()
+
+
+def test_a_hosted_access_line_carries_no_query(
+    server: Server, monkeypatch: pytest.MonkeyPatch, fresh_logging: None
+) -> None:
+    query = f"synthetic-query-{uuid.uuid4().hex}"
+    in_path = f"synthetic-path-{uuid.uuid4().hex}"
+
+    local = access_line(f"/health?q={query}", "localhost")
+    assert f"GET /health?q={query} HTTP/1.1" in local
+
+    login = server.login_role()
+    keys_served_here(monkeypatch)
+    hosted_environment(monkeypatch, login.url)
+    # The store password in the query as well: neither it nor the rest of
+    # the query reaches the line.
+    hosted = access_line(f"/health?q={query}&p={login.password}", API_HOST)
+    assert '"GET /health HTTP/1.1" 200' in hosted
+    assert query not in hosted
+    assert login.password not in hosted
+    assert "?" not in hosted
+
+    # A `?` the path holds, encoded, is the path's and stays.
+    encoded = access_line(f"/health%3F{in_path}?q={query}", API_HOST)
+    assert f"GET /health%3F{in_path} HTTP/1.1" in encoded
+    assert query not in encoded

@@ -343,6 +343,31 @@ def scrub_outbound(text: str) -> str:
     return scrub_secrets(_mask(text, store_password_forms()))
 
 
+# --- the hosted access line's query (spec 135) ---
+
+
+class AccessQueryFilter(logging.Filter):
+    """Drops the query from uvicorn's access line, hosted (spec 135,
+    Amendment (2026-10-13): prompt logging and query strings).
+
+    uvicorn logs the line with five arguments, the third the path as
+    `get_path_with_query_string` builds it: the path percent-quoted, so a
+    `?` in it is `%3F`, then `?` and the query
+    (`uvicorn/protocols/utils.py`). Everything from the first `?` is the
+    query. The five stay five, because uvicorn's access formatter unpacks
+    them. A record of another shape passes unchanged.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and len(args) == 5 and isinstance(args[2], str):
+            record.args = (args[0], args[1], args[2].split("?", 1)[0], args[3], args[4])
+        return True
+
+
+ACCESS_QUERY = AccessQueryFilter()
+
+
 # --- a driver error's text (spec 135) ---
 
 

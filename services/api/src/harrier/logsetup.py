@@ -41,7 +41,7 @@ from pathlib import Path
 
 from harrier.connection import StoreDatabaseError
 from harrier.db import DatabaseOwnedByContainer, DatabaseOwnershipError, connect, data_dir
-from harrier.logredact import SecretScrubFilter, forget_all
+from harrier.logredact import ACCESS_QUERY, SecretScrubFilter, forget_all
 
 LOG_DIR_NAME = "logs"
 LOG_FILE_NAME = "harrier.log"
@@ -69,6 +69,7 @@ SECRET_SCRUB = SecretScrubFilter()
 # the root handlers never sees their records. `uvicorn.error` propagates to
 # `uvicorn` (uvicorn/config.py, LOGGING_CONFIG).
 UVICORN_LOGGERS = ("uvicorn", "uvicorn.access")
+ACCESS_LOGGER = "uvicorn.access"
 
 
 def log_path() -> Path:
@@ -184,6 +185,21 @@ def scrub_uvicorn_handlers() -> None:
     for name in UVICORN_LOGGERS:
         for handler in logging.getLogger(name).handlers:
             handler.addFilter(SECRET_SCRUB)
+
+
+def drop_access_queries() -> None:
+    """Install the query filter on uvicorn's access handlers.
+
+    Called by the hosted API when the app is built, as
+    `scrub_uvicorn_handlers` is, so the handlers uvicorn configured before
+    it built the app carry it (spec 135). First on each handler, before
+    the secret scrub, as the spec says. For uvicorn's access record the
+    order shows in no output: the scrub masks each argument in place and
+    keeps all five, so the query filter finds the path either way.
+    """
+    for handler in logging.getLogger(ACCESS_LOGGER).handlers:
+        if ACCESS_QUERY not in handler.filters:
+            handler.filters.insert(0, ACCESS_QUERY)
 
 
 def _load_identity_values() -> set[str] | None:

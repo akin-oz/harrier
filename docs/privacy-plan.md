@@ -107,8 +107,12 @@ that no row value reaches a record:
   `DEBUG` (`::test_contact_routes_log_no_identity_value_hosted`). This is a
   test of today's log calls, not a filter: a new log call on a hosted path
   that quotes a contact is caught by nothing at run time.
-- The access log keeps the method, the path and the status. A path names a
-  job by its selector, not a person.
+- The access log keeps the method, the path and the status, and drops the
+  query, which carries what a person typed
+  (`::test_a_hosted_access_line_carries_no_query`). A path names a job by
+  its selector, not a person.
+- The hosted start refuses prompt logging, which writes every prompt and
+  output to the machine's disk (`::test_a_hosted_start_refuses_prompt_logging`).
 
 ## 6. Fixture policy
 

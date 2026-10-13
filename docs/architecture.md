@@ -341,6 +341,10 @@ start opens no local SQLite store and writes no log file
 (spec 135, `services/api/tests/test_hosted_logs.py::test_a_hosted_start_opens_no_local_store`),
 and a driver error's text, which quotes the row, never reaches a log record
 (`services/api/tests/test_hosted_logs.py::test_a_failed_statement_logs_none_of_its_row`).
+The access line drops the query
+(`services/api/tests/test_hosted_logs.py::test_a_hosted_access_line_carries_no_query`),
+and the start refuses prompt logging
+(`services/api/tests/test_hosted_logs.py::test_a_hosted_start_refuses_prompt_logging`).
 
 No other hosted component exists yet. Specs 103 to 112 sequence the build:
 the Postgres store (103, approved), API authentication (104), row-level
