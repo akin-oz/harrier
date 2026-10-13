@@ -33,7 +33,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from harrier.apply.brief import Brief
 from harrier.connection import Connection, store_target
-from harrier.db import DatabaseOwnedByHost, connect, default_db_path, lease_directory
+from harrier.db import DatabaseOwnedByHost, connect, data_dir, default_db_path, lease_directory
 from harrier.demo import repo_root
 from harrier.hostlease import oldest_hold
 from harrier.logredact import scrub_outbound
@@ -86,9 +86,11 @@ from harrier_api.hostedauth import (
     hosted_config,
     hosted_mode,
 )
+from harrier_api.hostedruns import HostedRuns, KeepAwake
 from harrier_api.hostedstore import (
     RequestStore,
     RequestTransactionMiddleware,
+    check_run_login_role,
     hosted_conn,
     open_request_store,
 )
@@ -104,6 +106,7 @@ from harrier_api.outreach_routes import outreach_router
 from harrier_api.runmodels import RUN_CONFLICT_RESPONSES, Manager, RunOut, run_out
 from harrier_api.runs import (
     RunConflictError,
+    RunCredentialRefused,
     RunManager,
     RunParams,
     RunsNotHosted,
@@ -901,7 +904,7 @@ def _apply_params(
     return RunParams(
         job_id=job_id,
         switches=frozenset({"--no-ai"}) if no_ai else frozenset(),
-        input_path=write_run_input(text) if stripped else None,
+        input_path=write_run_input(text, kind=operation) if stripped else None,
     )
 
 
@@ -1224,7 +1227,9 @@ async def cancel_run(run_id: str, manager: Manager) -> RunOut:
     },
 )
 async def stream_run_events(run_id: str, request: Request, manager: Manager) -> StreamingResponse:
-    if manager.get(run_id) is None:
+    # Only a run this machine holds has events: one read from spec 106's
+    # `run_records` answers as an unknown id does.
+    if manager.live(run_id) is None:
         raise HTTPException(status_code=404, detail="run not found")
     last_id_header = request.headers.get("last-event-id", "0")
     try:
@@ -1462,6 +1467,10 @@ def _app_with_routes(manager: RunManager) -> FastAPI:
         # this server's journal shows were cut off go.
         manager.release_interrupted_inputs()
         yield
+        # The stop signal, which uvicorn turns into this shutdown: hosted,
+        # every active run is recorded `interrupted` as its owner, then its
+        # process is ended, before the pool closes (spec 106).
+        await manager.stop_hosted()
         # Hosted, the pool's connections close with the server (spec 134).
         store = getattr(served.state, "request_store", None)
         if isinstance(store, RequestStore):
@@ -1507,11 +1516,17 @@ def _app_with_routes(manager: RunManager) -> FastAPI:
 
     @app.exception_handler(RunsNotHosted)
     async def runs_not_hosted(request: Request, error: RunsNotHosted) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
-        # Hosted, no run starts until spec 106. Raised by `start`, and by
-        # `write_run_input` on the routes that write an input file before
-        # they call it. Every route that starts a run declares the 501
-        # (`RUN_CONFLICT_RESPONSES`, spec 132).
+        # Hosted, a kind spec 106's table does not run, or a run with no
+        # owner. Raised by `start`, and by `write_run_input` on the routes
+        # that write an input file before they call it. Every route that
+        # starts a run declares the 501 (`RUN_CONFLICT_RESPONSES`).
         return JSONResponse(status_code=501, content=ErrorOut(detail=str(error)).model_dump())
+
+    @app.exception_handler(RunCredentialRefused)
+    async def run_credential_refused(request: Request, error: RunCredentialRefused) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
+        # Hosted, a run needs a credential its owner has not set or that
+        # does not decrypt (spec 106). The text names the kind only.
+        return JSONResponse(status_code=409, content=ErrorOut(detail=str(error)).model_dump())
 
     @app.exception_handler(DatabaseOwnedByHost)
     async def database_held(request: Request, error: DatabaseOwnedByHost) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
@@ -1663,6 +1678,24 @@ def create_hosted_app(
         # After the key fetch, as spec 134's start checks run. A refusal
         # raises here, so uvicorn's import fails and the process exits 1.
         app.state.request_store = open_request_store(database_url)
+        # The run login: the same checks, and never the API's own role
+        # (spec 106). A refusal raises here, as the store's do.
+        try:
+            check_run_login_role(config.run_database_url, app.state.request_store.role)
+        except BaseException:
+            app.state.request_store.close()
+            raise
+        # Runs bind to their owners through the API's pool and key, and
+        # keep the machine awake through its first public host (spec 106).
+        manager.serve_hosted(
+            HostedRuns(
+                pool=app.state.request_store.pool,
+                key=config.credentials_key,
+                root=data_dir(),
+                server_env=os.environ,
+                keep_awake=KeepAwake(config.allowed_hosts[0]),
+            )
+        )
         # The hosted `get_conn`, for every route that declares `Conn`. An
         # override, so the route declarations and the local dependency are
         # the same in both modes, and the contract stays one document.

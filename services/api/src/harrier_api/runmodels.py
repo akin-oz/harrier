@@ -24,7 +24,6 @@ from pydantic import BaseModel
 
 from harrier_api.deps import ErrorOut
 from harrier_api.runs import (
-    RUNS_NOT_HOSTED_DETAIL,
     Run,
     RunEvent,
     RunManager,
@@ -57,21 +56,31 @@ def run_out(run: Run) -> RunOut:
     )
 
 
+# The 501's description: a kind the hosted table refuses names the spec that
+# will offer it (spec 106).
+RUN_NOT_HOSTED_DESCRIPTION = (
+    "hosted only: this kind of run is not offered on the hosted API; "
+    "the detail names the spec that will offer it, or says it is local only"
+)
+
 # What every route that starts a run can answer when a run of the same kind
 # and target is active with other options (`RunConflictError`, review of
-# PR #208), and, hosted, when no run may start (`RunsNotHosted`, spec 132).
-# Declared so the generated client reads the words by type. Every route that
-# calls `start` declares this, and only those. The local API never sends the
-# 501; its document is the hosted one.
+# PR #208), hosted when the run needs a credential its owner has not set or
+# that cannot be read (`RunCredentialRefused`, spec 106), and, hosted, when
+# the kind does not run there (`RunsNotHosted`, spec 106). Declared so the
+# generated client reads the words by type. Every route that calls `start`
+# declares this, and only those. The local API never sends the 501; its
+# document is the hosted one.
 RUN_CONFLICT_RESPONSES: dict[int | str, dict[str, Any]] = {
     409: {
         "model": ErrorOut,
         "description": "refused: a run of this kind is active with other options, "
-        "or the request lacks its explicit field",
+        "or the request lacks its explicit field, or, hosted, the run needs a "
+        "credential that is not set or cannot be read",
     },
     501: {
         "model": ErrorOut,
-        "description": f"hosted only: {RUNS_NOT_HOSTED_DETAIL}",
+        "description": RUN_NOT_HOSTED_DESCRIPTION,
     },
 }
 
@@ -106,15 +115,38 @@ class OwnedRuns:
         return not self.hosted or (run.owner != "" and run.owner == self.owner)
 
     def get(self, run_id: str) -> Run | None:
+        """A run this owner sees: live on this machine, or, hosted, read
+        from `run_records` (spec 106)."""
+        run = self.live(run_id)
+        if run is not None or self.manager.get(run_id) is not None:
+            return run
+        records = self.manager.hosted_runs
+        if not self.hosted or not self.owner or records is None:
+            return None
+        return records.one(self.owner, run_id)
+
+    def list_runs(self) -> list[Run]:
+        """The runs this owner sees. Hosted, the live ones on this machine
+        and every other row of the owner's `run_records`, a row an earlier
+        process left active read `interrupted` (spec 106)."""
+        live = [run for run in self.manager.list_runs() if self.sees(run)]
+        records = self.manager.hosted_runs
+        if not self.hosted or not self.owner or records is None:
+            return live
+        held = {run.id for run in live}
+        stored = [run for run in records.listed(self.owner) if run.id not in held]
+        return sorted([*live, *stored], key=lambda run: run.created_at, reverse=True)
+
+    def live(self, run_id: str) -> Run | None:
+        """A run this owner sees that this machine holds: the only ones
+        that can be cancelled or streamed."""
         run = self.manager.get(run_id)
         return run if run is not None and self.sees(run) else None
 
-    def list_runs(self) -> list[Run]:
-        return [run for run in self.manager.list_runs() if self.sees(run)]
-
     async def cancel(self, run_id: str) -> Run | None:
-        # Another owner's run is not cancelled: it is not found.
-        if self.get(run_id) is None:
+        # Another owner's run is not cancelled: it is not found. A run read
+        # from `run_records` has no process here to cancel.
+        if self.live(run_id) is None:
             return None
         return await self.manager.cancel(run_id)
 
@@ -132,7 +164,7 @@ class OwnedRuns:
         A run this owner does not see raises `KeyError`, as an unknown id
         does, so the stream holds the owner rule itself rather than
         trusting its caller to ask `get` first."""
-        if self.get(run_id) is None:
+        if self.live(run_id) is None:
             raise KeyError(run_id)
         return sse_until(self.manager.stream(run_id, last_event_id), self.expires_at)
 

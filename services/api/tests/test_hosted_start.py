@@ -41,6 +41,7 @@ from test_hosted_requests import (
     drop_roles,
     hosted_environment,
     keys_served_here,
+    run_login_for,
     serving,
 )
 from test_owner_policy import migrate_to
@@ -130,8 +131,10 @@ def test_the_contract_is_the_same_with_the_store(
     declaration: the hosted app on a store serves the committed contract
     (contract review of this change)."""
     keys_served_here(monkeypatch)
-    hosted_environment(monkeypatch, server.login_role().url)
-    app = create_app()
+    login = server.login_role()
+    with run_login_for(login.url) as run_url:
+        hosted_environment(monkeypatch, login.url, run_url)
+        app = create_app()
     try:
         assert app.dependency_overrides  # the hosted get_conn is installed
         served = json.dumps(app.openapi(), sort_keys=True)
@@ -392,16 +395,18 @@ def start_as_a_process(login: LoginRole, tmp_path: Path) -> tuple[int, str, str]
     endpoint is a closed port on this machine: the first fetch fails, is
     logged, and the start goes on to the store, as spec 104 says it does."""
     tmp_path.mkdir(parents=True, exist_ok=True)
-    environ = child_environment(
-        tmp_path,
-        HARRIER_AUTH="supabase",
-        HARRIER_SUPABASE_URL="https://127.0.0.1:1",
-        HARRIER_ALLOWED_HOSTS=API_HOST,
-        HARRIER_CORS_ORIGINS=SPA_ORIGIN,
-        HARRIER_DATABASE_URL=login.url,
-        HARRIER_CREDENTIALS_KEY=CREDENTIALS_KEY_TEXT,
-    )
-    started = start_api(environ, tmp_path)
+    with run_login_for(login.url) as run_url:
+        environ = child_environment(
+            tmp_path,
+            HARRIER_AUTH="supabase",
+            HARRIER_SUPABASE_URL="https://127.0.0.1:1",
+            HARRIER_ALLOWED_HOSTS=API_HOST,
+            HARRIER_CORS_ORIGINS=SPA_ORIGIN,
+            HARRIER_DATABASE_URL=login.url,
+            HARRIER_CREDENTIALS_KEY=CREDENTIALS_KEY_TEXT,
+            HARRIER_RUN_DATABASE_URL=run_url,
+        )
+        started = start_api(environ, tmp_path)
     return started.returncode, started.stdout + started.stderr, started.stderr.strip()
 
 

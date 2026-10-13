@@ -467,7 +467,7 @@ async def draft_outreach(
     params = RunParams(
         job_id=int(row["id"]),
         switches=frozenset({"--ai"}) if body.ai else frozenset(),
-        input_path=write_run_input(json.dumps(payload)),
+        input_path=write_run_input(json.dumps(payload), kind="outreach-draft"),
     )
     return run_out(await manager.start("outreach-draft", params))
 

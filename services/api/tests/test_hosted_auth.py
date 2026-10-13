@@ -190,11 +190,16 @@ class Hosted:
         return mint(self.key, claims_for(**overrides))
 
 
+# A run login URL that names a closed port: the apps built from this
+# configuration open no store, so nothing connects to it (spec 106).
+RUN_DATABASE_URL = f"postgresql://harrier_run:{uuid.uuid4().hex}@127.0.0.1:1/postgres"
+
 CONFIG = HostedConfig(
     supabase_url=SUPABASE_URL,
     allowed_hosts=(API_HOST,),
     cors_origins=(SPA_ORIGIN,),
     credentials_key=credentials_key(),
+    run_database_url=RUN_DATABASE_URL,
 )
 
 
@@ -417,6 +422,7 @@ def complete_hosted_environment() -> dict[str, str]:
         "HARRIER_CORS_ORIGINS": SPA_ORIGIN,
         "HARRIER_DATABASE_URL": f"postgresql://harrier_api:{PASSWORD}@127.0.0.1:1/postgres",
         "HARRIER_CREDENTIALS_KEY": CREDENTIALS_KEY_TEXT,
+        "HARRIER_RUN_DATABASE_URL": RUN_DATABASE_URL,
     }
 
 

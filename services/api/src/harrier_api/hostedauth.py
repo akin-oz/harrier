@@ -40,7 +40,7 @@ from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from harrier.connection import URL_VARIABLE, store_target
+from harrier.connection import URL_VARIABLE, StoreUrlError, store_target
 from harrier.credentials import KEY_SHAPE, CredentialsKey, parse_key
 from harrier.demo import DEMO_ENV
 from harrier.llm.config import DEBUG_VARIABLES, debug_value_on
@@ -58,6 +58,9 @@ ALLOWED_HOSTS_VARIABLE = "HARRIER_ALLOWED_HOSTS"
 CORS_ORIGINS_VARIABLE = "HARRIER_CORS_ORIGINS"
 # The key that encrypts every owner's credentials, a Fly secret (spec 116).
 CREDENTIALS_KEY_VARIABLE = "HARRIER_CREDENTIALS_KEY"
+# The run login's URL: a second login role, which a hosted run receives as
+# its `HARRIER_DATABASE_URL` (spec 106). The name is `harrier_api.runenv`'s.
+RUN_DATABASE_URL_VARIABLE = "HARRIER_RUN_DATABASE_URL"
 HOSTED_AUTH = "supabase"
 
 # A service credential on a request path is the service role on a request
@@ -94,6 +97,12 @@ CORS_ORIGINS_REFUSAL = (
 # One text for a key that is absent, of another form, or not 32 bytes: it
 # names the variable and the form, never the value (spec 116).
 CREDENTIALS_KEY_REFUSAL = f"{CREDENTIALS_KEY_VARIABLE} must be {KEY_SHAPE}"
+# One text for a run URL that is absent, empty or not a Postgres URL: it
+# names the variable, never the value (spec 106).
+RUN_DATABASE_URL_REFUSAL = (
+    f"{AUTH_VARIABLE}={HOSTED_AUTH} needs {RUN_DATABASE_URL_VARIABLE}, "
+    "a postgresql:// URL for the run login role"
+)
 
 # A host name as the trusted-host middleware compares it: the Host header's
 # text before the first colon. A port or a wildcard would make an entry that
@@ -114,6 +123,9 @@ class HostedConfig:
     # Its text form names the key id only; kept out of the config's repr
     # all the same (spec 116).
     credentials_key: CredentialsKey = field(repr=False)
+    # The run login's URL, password included: kept out of the repr (spec
+    # 106). Its role is checked when the store opens.
+    run_database_url: str = field(repr=False)
 
     @property
     def issuer(self) -> str:
@@ -167,10 +179,25 @@ def hosted_config(environ: Mapping[str, str]) -> HostedConfig | None:
         allowed_hosts=_allowed_hosts(environ.get(ALLOWED_HOSTS_VARIABLE, "")),
         cors_origins=_cors_origins(environ.get(CORS_ORIGINS_VARIABLE, "")),
         credentials_key=_credentials_key(environ.get(CREDENTIALS_KEY_VARIABLE, "")),
+        run_database_url=_run_database_url(environ.get(RUN_DATABASE_URL_VARIABLE, "")),
     )
     _refuse_a_service_credential(environ)
     _refuse_prompt_logging(environ)
     return config
+
+
+def _run_database_url(raw: str) -> str:
+    """`raw` when it is a Postgres URL `store_target` accepts. Refused, with
+    one text naming the variable, when it is anything else: the URL's own
+    refusal names `HARRIER_DATABASE_URL`, and the value is never quoted."""
+    target = None
+    try:
+        target = store_target({URL_VARIABLE: raw})
+    except StoreUrlError:
+        target = None
+    if target is None or not target.is_postgres:
+        raise HostedConfigError(RUN_DATABASE_URL_REFUSAL)
+    return raw
 
 
 def _credentials_key(raw: str) -> CredentialsKey:

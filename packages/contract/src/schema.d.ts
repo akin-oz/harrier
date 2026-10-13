@@ -2909,7 +2909,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description application documents from the browser are the default track's; or refused: a run of this kind is active with other options, or the request lacks its explicit field */
+            /** @description application documents from the browser are the default track's; or refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -2927,7 +2927,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            /** @description hosted only: this kind of run is not offered on the hosted API; the detail names the spec that will offer it, or says it is local only */
             501: {
                 headers: {
                     [name: string]: unknown;
@@ -3323,7 +3323,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description application documents from the browser are the default track's; or refused: a run of this kind is active with other options, or the request lacks its explicit field */
+            /** @description application documents from the browser are the default track's; or refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3341,7 +3341,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            /** @description hosted only: this kind of run is not offered on the hosted API; the detail names the spec that will offer it, or says it is local only */
             501: {
                 headers: {
                     [name: string]: unknown;
@@ -3413,7 +3413,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field; or the track may not run this operation */
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read; or the track may not run this operation */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3431,7 +3431,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            /** @description hosted only: this kind of run is not offered on the hosted API; the detail names the spec that will offer it, or says it is local only */
             501: {
                 headers: {
                     [name: string]: unknown;
@@ -3503,7 +3503,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description application documents from the browser are the default track's; or refused: a run of this kind is active with other options, or the request lacks its explicit field; or the track is archived */
+            /** @description application documents from the browser are the default track's; or refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read; or the track is archived */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3521,7 +3521,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            /** @description hosted only: this kind of run is not offered on the hosted API; the detail names the spec that will offer it, or says it is local only */
             501: {
                 headers: {
                     [name: string]: unknown;
@@ -4547,7 +4547,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -4565,7 +4565,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            /** @description hosted only: this kind of run is not offered on the hosted API; the detail names the spec that will offer it, or says it is local only */
             501: {
                 headers: {
                     [name: string]: unknown;
@@ -4623,7 +4623,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -4641,7 +4641,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            /** @description hosted only: this kind of run is not offered on the hosted API; the detail names the spec that will offer it, or says it is local only */
             501: {
                 headers: {
                     [name: string]: unknown;
@@ -4865,7 +4865,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description the request needs its explicit field; or refused: a run of this kind is active with other options, or the request lacks its explicit field; or the track may not run this operation */
+            /** @description the request needs its explicit field; or refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read; or the track may not run this operation */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -4883,7 +4883,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            /** @description hosted only: this kind of run is not offered on the hosted API; the detail names the spec that will offer it, or says it is local only */
             501: {
                 headers: {
                     [name: string]: unknown;
@@ -4953,7 +4953,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description discovery from the browser is the default track's; or refused: a run of this kind is active with other options, or the request lacks its explicit field; or the track is archived */
+            /** @description discovery from the browser is the default track's; or refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read; or the track is archived */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -4980,7 +4980,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            /** @description hosted only: this kind of run is not offered on the hosted API; the detail names the spec that will offer it, or says it is local only */
             501: {
                 headers: {
                     [name: string]: unknown;
@@ -5129,7 +5129,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field; or the track may not run this operation */
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read; or the track may not run this operation */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -5147,7 +5147,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            /** @description hosted only: this kind of run is not offered on the hosted API; the detail names the spec that will offer it, or says it is local only */
             501: {
                 headers: {
                     [name: string]: unknown;
@@ -5217,7 +5217,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field; or the track may not run this operation */
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read; or the track may not run this operation */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -5235,7 +5235,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            /** @description hosted only: this kind of run is not offered on the hosted API; the detail names the spec that will offer it, or says it is local only */
             501: {
                 headers: {
                     [name: string]: unknown;
@@ -5430,7 +5430,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -5439,7 +5439,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            /** @description hosted only: this kind of run is not offered on the hosted API; the detail names the spec that will offer it, or says it is local only */
             501: {
                 headers: {
                     [name: string]: unknown;
@@ -5497,7 +5497,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description the request needs its explicit field; or refused: a run of this kind is active with other options, or the request lacks its explicit field */
+            /** @description the request needs its explicit field; or refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -5515,7 +5515,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            /** @description hosted only: this kind of run is not offered on the hosted API; the detail names the spec that will offer it, or says it is local only */
             501: {
                 headers: {
                     [name: string]: unknown;
@@ -5630,7 +5630,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -5648,7 +5648,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            /** @description hosted only: this kind of run is not offered on the hosted API; the detail names the spec that will offer it, or says it is local only */
             501: {
                 headers: {
                     [name: string]: unknown;
@@ -5752,7 +5752,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field; or the track may not run this operation */
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read; or the track may not run this operation */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -5770,7 +5770,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            /** @description hosted only: this kind of run is not offered on the hosted API; the detail names the spec that will offer it, or says it is local only */
             501: {
                 headers: {
                     [name: string]: unknown;
@@ -5828,7 +5828,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -5846,7 +5846,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            /** @description hosted only: this kind of run is not offered on the hosted API; the detail names the spec that will offer it, or says it is local only */
             501: {
                 headers: {
                     [name: string]: unknown;
@@ -6433,7 +6433,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field; or the track may not run this operation */
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read; or the track may not run this operation */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -6451,7 +6451,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            /** @description hosted only: this kind of run is not offered on the hosted API; the detail names the spec that will offer it, or says it is local only */
             501: {
                 headers: {
                     [name: string]: unknown;
@@ -6523,7 +6523,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field; or the track may not run this operation */
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read; or the track may not run this operation */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -6541,7 +6541,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            /** @description hosted only: this kind of run is not offered on the hosted API; the detail names the spec that will offer it, or says it is local only */
             501: {
                 headers: {
                     [name: string]: unknown;
@@ -6880,7 +6880,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -6898,7 +6898,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            /** @description hosted only: this kind of run is not offered on the hosted API; the detail names the spec that will offer it, or says it is local only */
             501: {
                 headers: {
                     [name: string]: unknown;
@@ -7209,7 +7209,7 @@ export interface operations {
                     "application/json": components["schemas"]["SettingsErrorOut"];
                 };
             };
-            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field */
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -7227,7 +7227,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description hosted only: runs are not available on the hosted API until spec 106 */
+            /** @description hosted only: this kind of run is not offered on the hosted API; the detail names the spec that will offer it, or says it is local only */
             501: {
                 headers: {
                     [name: string]: unknown;

@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import math
 import os
 import re
@@ -20,13 +21,20 @@ from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
+from harrier.credentials import CredentialKind, CredentialUnreadable
 from harrier.db import data_dir
 from harrier.discovery import SOURCE_ORDER
-from harrier.logredact import scrub_outbound
+from harrier.logredact import SECRET_REDACTION, scrub_outbound
 from harrier.tracks import InvalidSlugError, validate_slug
 from harrier_api.hostedauth import hosted_mode
+from harrier_api.runenv import RunCredentialMissing
+
+if TYPE_CHECKING:
+    from harrier_api.hostedruns import HostedRuns
+
+logger = logging.getLogger(__name__)
 
 PROTOCOL_PREFIX = "::harrier::"
 # `interrupted` is not a failure. A run whose process disappeared, which is
@@ -304,22 +312,116 @@ def run_inputs_dir() -> Path:
     return data_dir() / "runs" / "inputs"
 
 
-RUNS_NOT_HOSTED_DETAIL = "runs are not available on the hosted API until spec 106"
+# --- which kinds run hosted (spec 106) ---
+
+
+@dataclass(frozen=True)
+class HostedAnswer:
+    """A run kind's answer on the hosted API (spec 106, "Which kinds run
+    hosted"): it runs, with the credential kinds it needs, or it is refused
+    with the detail that names why.
+
+    `needs` is waived when the run's switches include `unless`: a dry
+    digest previews and sends nothing, so it needs no Telegram credential.
+    """
+
+    runs: bool
+    needs: tuple[CredentialKind, ...] = ()
+    unless: str | None = None
+    refusal: str = ""
+
+    def needed(self, switches: frozenset[str]) -> tuple[CredentialKind, ...]:
+        return () if self.unless is not None and self.unless in switches else self.needs
+
+
+def _until_107(kind: str) -> HostedAnswer:
+    # The result is a file, which no hosted route can serve until spec 107
+    # moves run files to Storage.
+    return HostedAnswer(
+        runs=False, refusal=f"{kind} runs are not available on the hosted API until spec 107"
+    )
+
+
+def _local_only(kind: str) -> HostedAnswer:
+    return HostedAnswer(runs=False, refusal=f"{kind} runs are local only")
+
+
+RUNS = HostedAnswer(runs=True)
+
+# Every kind of `KIND_COMMANDS` and `PARAMETERIZED_KINDS`, once each
+# (`tests/test_hosted_runs.py` holds the two together).
+HOSTED_RUN_KINDS: dict[str, HostedAnswer] = {
+    "discovery": RUNS,
+    "demo": RUNS,
+    "digest": HostedAnswer(runs=True, needs=("telegram",), unless="--dry-run"),
+    "check-feeds": RUNS,
+    "reconsider": RUNS,
+    "events-backfill": RUNS,
+    "evaluate-prospects": HostedAnswer(runs=True, needs=("ai",)),
+    **{
+        kind: _until_107(kind)
+        for kind in (
+            "tailor",
+            "cover-letter",
+            "answers",
+            "evaluate",
+            "outreach-draft",
+            "find-contacts",
+            "backfill-posters",
+            "scoring-export",
+        )
+    },
+    "gmail-watch": HostedAnswer(
+        runs=False, refusal="gmail-watch runs are not offered on the hosted service (spec 109)"
+    ),
+    "backup": _local_only("backup"),
+    "verify-backup": _local_only("verify-backup"),
+}
+
+# A hosted start with no owner: spec 104's middleware should have refused
+# the request, so this is a route reached some other way (spec 132).
+NO_OWNER_DETAIL = "a run on the hosted API needs an owner"
+# The hosted API was built with no store, which only tests do.
+NO_STORE_DETAIL = "the hosted API holds no store for runs"
 
 
 class RunsNotHosted(Exception):
-    """A run may not start on the hosted API (spec 132).
+    """A run may not start on the hosted API (spec 106). The API answers 501
+    with the detail: a kind the table refuses names the spec that will
+    offer it, and a run with no owner is refused whatever its kind, before
+    a file, a record or a process exists (ADR-013 decision 4)."""
 
-    A run's process inherits the server's environment, so hosted it would
-    spend the operator's keys on a tenant's behalf and open the store as the
-    API's login role. Spec 106 gives a run its owner's credentials and
-    database identity; until then every hosted start is refused, and a run
-    with no owner stays refused after it (ADR-013 decision 4). The API
-    answers 501 in these words.
-    """
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail)
 
-    def __init__(self) -> None:
-        super().__init__(RUNS_NOT_HOSTED_DETAIL)
+
+class RunCredentialRefused(Exception):
+    """A hosted run needs a credential its owner has not set, or one that
+    does not decrypt. The API answers 409 with spec 106's text, which names
+    the kind and never a value. `missing` says which, so a caller other
+    than the API can tell a credential to set from one to set again (spec
+    108's `not_configured`)."""
+
+    def __init__(self, kind: CredentialKind, text: str, *, missing: bool) -> None:
+        super().__init__(text)
+        self.kind: CredentialKind = kind
+        self.missing = missing
+
+
+def refuse_unless_hosted(kind: str | None) -> None:
+    """Raise `RunsNotHosted` with `kind`'s detail when this process serves
+    hosted and the kind does not run there. Nothing locally. Hosted, no
+    kind is refused: a file written for no named kind has no run to remove
+    it."""
+    if not runs_hosted():
+        return
+    if kind is None:
+        raise RunsNotHosted("a run input on the hosted API names the kind of its run")
+    answer = HOSTED_RUN_KINDS.get(kind)
+    if answer is None:
+        raise RunsNotHosted(f"{kind} runs are not available on the hosted API")
+    if not answer.runs:
+        raise RunsNotHosted(answer.refusal)
 
 
 def runs_hosted() -> bool:
@@ -328,7 +430,7 @@ def runs_hosted() -> bool:
     return hosted_mode(os.environ)
 
 
-def write_run_input(text: str | bytes, suffix: str = ".txt") -> Path:
+def write_run_input(text: str | bytes, suffix: str = ".txt", *, kind: str | None = None) -> Path:
     """Put the operator's free text on disk so it never reaches argv.
 
     Bytes are written as they arrived: an uploaded export is the operator's
@@ -344,13 +446,14 @@ def write_run_input(text: str | bytes, suffix: str = ".txt") -> Path:
 
     It is removed when the run that consumes it ends (spec 047).
 
-    Hosted it refuses before the directory or a file exists: six routes
-    (the four apply routes, discovery's uploads and the outreach draft)
-    write their input before they call `RunManager.start`, so a refusal
-    there alone would leave this file behind (spec 132).
+    Hosted it refuses a kind that does not run there before the directory
+    or a file exists: six routes (the four apply routes, discovery's uploads
+    and the outreach draft) write their input before they call
+    `RunManager.start`, so a refusal there alone would leave this file
+    behind (specs 132 and 106). Discovery runs hosted, and its uploads stay
+    in the API's own run inputs directory, removed when the run ends.
     """
-    if runs_hosted():
-        raise RunsNotHosted
+    refuse_unless_hosted(kind)
     directory = run_inputs_dir()
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     # mkdir's mode is ignored when the directory already exists, and this one
@@ -531,6 +634,33 @@ def scrub_event_data(data: dict[str, object]) -> dict[str, object]:
     return scrubbed
 
 
+def redact_values(data: dict[str, object], values: frozenset[str]) -> dict[str, object]:
+    """Every string an event carries, with each exact occurrence of `values`
+    replaced by `REDACTED`: a hosted run's secret credential fields (spec
+    106). Longest first, so a value inside another leaves no part of it."""
+    ordered = sorted(values, key=len, reverse=True)
+
+    def redact(text: str) -> str:
+        for value in ordered:
+            text = text.replace(value, SECRET_REDACTION)
+        return text
+
+    redacted: dict[str, object] = {}
+    for key, value in data.items():
+        if isinstance(value, str):
+            redacted[key] = redact(value)
+        elif isinstance(value, dict):
+            redacted[key] = redact_values(cast("dict[str, object]", value), values)
+        elif isinstance(value, list):
+            redacted[key] = [
+                redact(item) if isinstance(item, str) else item
+                for item in cast("list[object]", value)
+            ]
+        else:
+            redacted[key] = value
+    return redacted
+
+
 def hide_directory(data: dict[str, object], directory: HiddenDirectory) -> dict[str, object]:
     """Every string an event carries, with that directory's path removed."""
     hidden: dict[str, object] = {}
@@ -581,6 +711,18 @@ class Run:
     # Who started it: the verified `sub` of the request hosted, empty
     # locally. Hosted, a run with an empty owner is no one's (spec 132).
     owner: str = ""
+    # Started hosted, bound to its owner (spec 106): recorded in
+    # `run_records` instead of the journal, and spawned with `env` in `cwd`.
+    hosted: bool = False
+    # The child's whole environment, dropped once it is spawned.
+    env: dict[str, str] | None = field(default=None, repr=False)
+    cwd: Path | None = None
+    # The owner's secret values, replaced in every event and dropped at a
+    # terminal state. In memory only.
+    secrets: frozenset[str] = field(default=frozenset(), repr=False)
+    # Recorded `interrupted` by the stop signal: nothing changes its state
+    # after that (spec 106, "A run cut off by a stop").
+    stopped: bool = False
 
 
 class RunManager:
@@ -619,7 +761,22 @@ class RunManager:
         self._processes: dict[str, asyncio.subprocess.Process] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._condition = asyncio.Condition()
+        # Hosted only: the store, the key and the beats (spec 106). Set by
+        # the hosted app once its store is open.
+        self._hosted: HostedRuns | None = None
+        # Hosted starts await the store between the lock check and the
+        # registration, so they take turns, and two requests cannot both
+        # find no active run and start two.
+        self._start_lock = asyncio.Lock()
         self._load_journal()
+
+    def serve_hosted(self, hosted: HostedRuns) -> None:
+        """Give the manager its hosted half (spec 106)."""
+        self._hosted = hosted
+
+    @property
+    def hosted_runs(self) -> HostedRuns | None:
+        return self._hosted
 
     # -- queries ------------------------------------------------------------
 
@@ -632,11 +789,23 @@ class RunManager:
     def list_runs(self) -> list[Run]:
         return sorted(self._runs.values(), key=lambda run: run.created_at, reverse=True)
 
-    def active_run(self, kind: str, target: str = "") -> Run | None:
+    def active_run(self, kind: str, target: str = "", owner: str = "") -> Run | None:
+        """The active run of `kind` on `target` that `owner` started. The
+        lock is per owner: another owner's run of the same kind and target
+        is not this owner's to join or wait for (spec 106). Locally every
+        run's owner is empty."""
         for run in self._runs.values():
-            if run.kind == kind and run.target == target and run.state in ("queued", "running"):
+            if (
+                run.kind == kind
+                and run.target == target
+                and run.owner == owner
+                and run.state in ("queued", "running")
+            ):
                 return run
         return None
+
+    def _any_hosted_active(self) -> bool:
+        return any(run.hosted and run.state in ("queued", "running") for run in self._runs.values())
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -644,13 +813,16 @@ class RunManager:
         """Start a run, return the active run it repeats, or refuse.
 
         `owner` is the caller's: the request's verified `sub` hosted, empty
-        locally (spec 132). Hosted, every start is refused with
-        `RunsNotHosted` before a journal entry, a registered run or a
+        locally (spec 132). Hosted (spec 106, "Starting a hosted run"), a run
+        with an empty owner and a kind `HOSTED_RUN_KINDS` refuses are
+        refused with `RunsNotHosted` before a record, a registered run or a
         process exists; `write_run_input` refused first, so the attempt has
-        no file. A run with an empty owner is among them, and is what stays
-        refused when spec 106 lifts the rest (ADR-013 decision 4).
+        no file. A kind that runs is bound to its owner: its credentials
+        decrypted, `RunCredentialRefused` when one it needs is unset or
+        unreadable, its row inserted, and its process spawned with the
+        environment `runenv` builds, in the owner's run directory.
 
-        The lock is per (kind, target) rather than per kind, so two jobs
+        The lock is per (owner, kind, target) rather than per kind, so two jobs
         tailor at once while one job tailored twice joins the run already in
         flight. ADR-004 called for this under "artifact renders are per-slug
         locked"; spec 047 is where it was built.
@@ -661,7 +833,16 @@ class RunManager:
         them (review of PR #208).
         """
         if runs_hosted():
-            raise RunsNotHosted
+            try:
+                if not owner:
+                    raise RunsNotHosted(NO_OWNER_DETAIL)
+                refuse_unless_hosted(kind)
+            except RunsNotHosted:
+                # Refused before it became a run: its files go with it.
+                self._discard_input(params)
+                raise
+            async with self._start_lock:
+                return await self._start_hosted(kind, params, owner)
         # A kind that acts on everything locks on the empty target, which is
         # the one-at-a-time behaviour discovery always had. Kinds never
         # collide with each other because the lock is on the pair.
@@ -676,7 +857,7 @@ class RunManager:
             self._discard_input(params)
             raise
         signature = _signature(command, files)
-        active = self.active_run(kind, target)
+        active = self.active_run(kind, target, owner)
         if active is not None:
             # This attempt never becomes a run, so the files written for it
             # have no terminal state to be cleaned up by. Removing them here
@@ -698,6 +879,69 @@ class RunManager:
         )
         self._runs[run.id] = run
         self._journal(run)
+        self._tasks[run.id] = asyncio.create_task(self._execute(run))
+        return run
+
+    async def _start_hosted(self, kind: str, params: RunParams | None, owner: str) -> Run:
+        """Spec 106, "Starting a hosted run", from step 3: the lock per
+        owner, the binding, the record, then the spawn."""
+        target = _target(params)
+        files = () if params is None else params.files
+        try:
+            command = (
+                list(self._kind_commands[kind]) if params is None else build_command(kind, params)
+            )
+        except (KeyError, ValueError):
+            self._discard_input(params)
+            raise
+        signature = _signature(command, files)
+        active = self.active_run(kind, target, owner)
+        if active is not None:
+            self._discard_input(params)
+            if active.signature != signature:
+                raise RunConflictError(active)
+            return active
+        hosted = self._hosted
+        if hosted is None:
+            self._discard_input(params)
+            raise RuntimeError(NO_STORE_DETAIL)
+        run = Run(
+            id=uuid.uuid4().hex[:12],
+            kind=kind,
+            command=command,
+            target=target,
+            input_paths=files,
+            signature=signature,
+            hidden=() if params is None else params.hidden,
+            owner=owner,
+            hosted=True,
+        )
+        answer = HOSTED_RUN_KINDS[kind]
+        needs = answer.needed(frozenset() if params is None else params.switches)
+        try:
+            bound = await asyncio.to_thread(hosted.begin, run, needs)
+        except RunCredentialMissing as missing:
+            self._discard_input(params)
+            raise RunCredentialRefused(missing.kind, str(missing), missing=True) from None
+        except CredentialUnreadable as unreadable:
+            self._discard_input(params)
+            # The kind and key id, never a value or the owner (spec 106).
+            logger.warning(
+                "a run was refused: a stored %s credential with key id %s does not decrypt",
+                unreadable.kind,
+                unreadable.key_id,
+            )
+            raise RunCredentialRefused(
+                cast(CredentialKind, unreadable.kind), str(unreadable), missing=False
+            ) from None
+        except BaseException:
+            self._discard_input(params)
+            raise
+        run.env = bound.env
+        run.cwd = bound.cwd
+        run.secrets = bound.secrets
+        self._runs[run.id] = run
+        hosted.keep_awake.wake(self._any_hosted_active)
         self._tasks[run.id] = asyncio.create_task(self._execute(run))
         return run
 
@@ -748,6 +992,9 @@ class RunManager:
             # operator's free text does not outlive the run that consumed it
             # (spec 047).
             self._cleanup_input(run)
+            # The scrub set goes once the process is reaped, so a line it
+            # prints after a stop is still scrubbed (spec 106).
+            run.secrets = frozenset()
 
     def _cleanup_input(self, run: Run) -> None:
         for path in run.input_paths:
@@ -755,20 +1002,39 @@ class RunManager:
         run.input_paths = ()
 
     async def _run_process(self, run: Run) -> None:
+        if run.stopped:
+            return
+        # Hosted, each time is set before the state change that writes the
+        # run's row; locally the journal keeps the order it always had.
+        if run.hosted:
+            run.started_at = _now()
         await self._set_state(run, "running")
-        run.started_at = _now()
+        if run.started_at is None:
+            run.started_at = _now()
+        # Hosted, the environment the binding built and the owner's run
+        # directory; locally the server's own, as spec 035 states.
+        env, cwd = run.env, run.cwd
+        run.env = None
         try:
             process = await asyncio.create_subprocess_exec(
                 *run.command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
+                env=env,
+                cwd=cwd,
             )
         except OSError as error:
             await self._append(run, "log_line", {"line": f"failed to spawn: {error}"})
+            if run.hosted:
+                run.ended_at = _now()
             await self._set_state(run, "failed")
-            run.ended_at = _now()
+            if run.ended_at is None:
+                run.ended_at = _now()
             return
         self._processes[run.id] = process
+        if run.stopped:
+            # The stop signal came while it was being spawned.
+            process.terminate()
         stdout = process.stdout
         assert stdout is not None
         async for raw in stdout:
@@ -790,6 +1056,9 @@ class RunManager:
             else:
                 await self._append(run, "log_line", {"line": line})
         run.exit_code = await process.wait()
+        if run.stopped:
+            # Recorded `interrupted` by the stop signal, which ended it.
+            return
         run.ended_at = _now()
         if run.cancel_requested:
             await self._set_state(run, "cancelled")
@@ -809,6 +1078,11 @@ class RunManager:
         covered (review finding on PR #39). Doing it here makes the property
         hold for every future caller without anyone remembering.
         """
+        # The owner's exact values first, on the text as the child wrote
+        # it: the pattern scrub can rewrite part of a value, and what it
+        # left would no longer match (spec 106).
+        if run.secrets:
+            data = redact_values(data, run.secrets)
         scrubbed = scrub_event_data(data)
         for directory in run.hidden:
             scrubbed = hide_directory(scrubbed, directory)
@@ -817,9 +1091,56 @@ class RunManager:
             self._condition.notify_all()
 
     async def _set_state(self, run: Run, state: RunState) -> None:
+        if run.stopped and state != "interrupted":
+            # The stop signal recorded it; nothing after that changes it.
+            return
         run.state = state
-        self._journal(run)
+        if run.hosted:
+            await self._record(run)
+        else:
+            self._journal(run)
         await self._append(run, "state_change", {"state": state, "exit_code": run.exit_code})
+
+    async def _record(self, run: Run) -> None:
+        """Store a hosted run's state in `run_records`, as its owner. A
+        failed write is logged by class and fails nothing: the run goes on
+        and its row is read `interrupted` once this process is gone."""
+        hosted = self._hosted
+        if hosted is None:
+            return
+        try:
+            await asyncio.to_thread(hosted.record, run)
+        except Exception as error:
+            logger.warning("a run's record was not written: %s", type(error).__name__)
+
+    async def stop_hosted(self) -> None:
+        """The stop signal, hosted (spec 106): record every active hosted
+        run `interrupted` as its owner, then terminate the children with the
+        cancel grace and wait for them. Their states change no more."""
+        active = [
+            run for run in self._runs.values() if run.hosted and run.state in ("queued", "running")
+        ]
+        for run in active:
+            run.stopped = True
+            run.ended_at = _now()
+            await self._set_state(run, "interrupted")
+        for run in active:
+            process = self._processes.get(run.id)
+            if process is not None and process.returncode is None:
+                process.terminate()
+        for run in active:
+            task = self._tasks.get(run.id)
+            if task is None:
+                continue
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=self._grace_seconds)
+            except TimeoutError:
+                process = self._processes.get(run.id)
+                if process is not None and process.returncode is None:
+                    process.kill()
+                    await task
+        if self._hosted is not None:
+            await self._hosted.keep_awake.stop()
 
     async def stream(self, run_id: str, last_event_id: int = 0) -> AsyncIterator[RunEvent]:
         """Yield events after last_event_id, live until the run is terminal."""

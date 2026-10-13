@@ -576,7 +576,7 @@ async def run_discover(
     written: dict[str, Path] = {}
     try:
         for flag, (data, suffix) in contents.items():
-            written[flag] = write_run_input(data, suffix)
+            written[flag] = write_run_input(data, suffix, kind="discovery")
     except OSError:
         # Every file this attempt wrote, not only the first.
         for path in written.values():
