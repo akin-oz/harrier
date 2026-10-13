@@ -1692,3 +1692,139 @@ Both as recommended.
 - The amendment above, its Out of scope, first item, and its Decision 3.
 - The two probes above, run at `fd8dfb0`. The pull request records each
   script and its output.
+
+## Amendment (2026-10-13): every identity write refreshes the filter
+
+The amendment above ("a refresh never drops a value the filter held")
+lists this under its Out of scope, and its Decision 2 gives it an
+amendment of its own. This is that amendment.
+
+### Problem (amendment of 2026-10-13: every write)
+
+The text above promises that a contact is redactable "from the moment it
+exists", and the API is a long-running process where "added later is the
+normal case". Only `add_contact` keeps that promise: it is the one caller
+of `refresh_installed` (`services/api/src/harrier/tracker/store.py`).
+Three other functions write identity values and do not refresh:
+
+- `update_contact_fields` (`services/api/src/harrier/tracker/store.py`)
+  edits a contact's `person_name`, `person_email` or `linkedin_url`.
+- `put_document` and `put_documents_and_rekind`
+  (`services/api/src/harrier/profile/store.py`) write the candidate's
+  `resume_facts`, `resume_data` and `resume_data_presplit` documents, which
+  `_candidate_identity_values` reads.
+- `migrate` (`services/api/src/harrier/tracker/migrate_legacy.py`) imports
+  the old system's contacts into the tracker in one transaction, without
+  `add_contact`.
+
+So an edited contact, a changed candidate name, or an imported contact is
+not redacted until the process restarts. Measured at `a704f95` on
+2026-10-13, on SQLite, with synthetic values. The probe built a filter
+from the store, then renamed a contact with `update_contact_fields` and
+changed the candidate's name with `put_document`:
+
+```
+edited contact: mail Synthetic Contact New
+changed candidate: hello Synthetic Candidate New
+```
+
+The writers are called from the API and the CLI through
+`harrier.outreach.contacts`, `harrier.outreach.joblink`,
+`harrier.resume.framing`, `harrier.resume.split`, `harrier.apply.brief`,
+`harrier.offers.stories` and `harrier_api.demo`. A fix inside each caller
+would miss the next one, so the refresh belongs in the writers.
+
+### Behavior (amendment of 2026-10-13: every write)
+
+**Each identity writer refreshes after its own transaction**, as
+`add_contact` does today. `update_contact_fields`, `put_document`,
+`put_documents_and_rekind` and the legacy `migrate` call
+`refresh_installed(conn)` once their own `with conn.transaction():` block
+has ended normally. A writer whose block raised does not refresh: nothing
+it wrote is kept.
+
+**Every write, not only identity ones.** The refresh follows every call to
+these writers, whatever kind or column it wrote. A rule keyed to
+`_IDENTITY_KINDS` or `_CONTACT_IDENTITY_COLUMNS` would have to change in
+step with `logredact.py` every time an identity source is added there, and
+a missed step is a silent leak. These writes are paced by a person or a
+tailoring run, never per log record.
+
+**Nothing else changes.** `refresh_installed` returns at once when no
+filter is installed (hosted mode, spec 135), reads each loader in its own
+block on Postgres (the amendment "a failed identity read leaves the
+caller's transaction usable"), and only adds values (the amendment "a
+refresh never drops a value the filter held"). `delete_contact` does not
+refresh: under the previous amendment a refresh would keep the deleted
+contact's values anyway.
+
+### Failure modes (amendment of 2026-10-13: every write)
+
+- **A writer's block raises.** No refresh. The error reaches the caller,
+  as today.
+- **The refresh's read fails.** The write is kept, and the filter keeps
+  every value it held; only the new value is missing until the next
+  refresh or restart. `refresh_installed` never raises a store error into
+  its caller, as today.
+- **A writer runs inside a caller's block.** Its own block is a savepoint,
+  so the refresh reads before the caller commits. It reads the caller's
+  uncommitted value, on the same connection, so the new value is redacted
+  at once. If the caller then rolls back, the filter keeps redacting a
+  value the store does not hold, which over-redacts until restart.
+- **No filter installed.** No read at all.
+
+### Acceptance criteria (amendment of 2026-10-13: every write)
+
+All in `services/api/tests/test_logging.py`, with synthetic values only:
+
+- [ ] A contact's name edited through `update_contact_fields` after the
+      filter was built is redacted at once
+      (planned test_an_edited_contact_is_redacted_at_once).
+- [ ] A candidate name written through `put_document` after the filter
+      was built is redacted at once
+      (planned test_a_changed_candidate_name_is_redacted_at_once).
+- [ ] A candidate name written through `put_documents_and_rekind` is
+      redacted at once
+      (planned test_a_split_profile_name_is_redacted_at_once).
+- [ ] A contact imported by the legacy `migrate` is redacted at once
+      (planned test_an_imported_contact_is_redacted_at_once).
+- [ ] A writer whose block raised does not refresh
+      (planned test_a_failed_identity_write_does_not_refresh).
+- [ ] Each new test fails with its writer's refresh removed, and the pull
+      request records what each removal made fail.
+
+### Out of scope (amendment of 2026-10-13: every write)
+
+- Writes that do not go through these functions. Nothing under
+  `services/api/src` writes `contacts` or `profile_documents` another way
+  apart from the schema's migrations (`grep` for `INSERT`, `UPDATE` and
+  `DELETE` on both tables, on 2026-10-13).
+- A hosted identity filter (spec 135).
+- A refresh per log record, which the text above rules out.
+
+### Decisions (Akin, in chat, 2026-10-13: every write)
+
+Both as recommended.
+
+1. **Every write, or identity writes only.** Taken: every write,
+   as Behavior says, for the reason given there. Weighed instead was refreshing
+   only when the write touches an identity kind or column. It saves a
+   read on most profile writes, at the price of a second list that must
+   track `logredact.py`.
+2. **The legacy import.** Taken: include it. It is a one-shot CLI
+   command, but the process logs while it runs, and the cost is one
+   refresh. Weighed instead was leaving it out, since a CLI process is short
+   lived.
+
+### Honest limitations (amendment of 2026-10-13: every write)
+
+- Only `update_contact_fields` and `put_document` were probed. The other
+  two writers are read from the code.
+- A refresh reads both tables in full, on every write. That is the cost
+  `add_contact` already pays. It was not measured.
+
+### Proof / origin (amendment of 2026-10-13: every write)
+
+- The amendment above, its Out of scope, first item, and its Decision 2.
+- The probe above, run at `a704f95`. The pull request records the script
+  and its output.
