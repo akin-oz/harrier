@@ -733,6 +733,15 @@ times are not known yet.
   role step lost, where the role's comparison is what stops the request.
   In both the login role may run the read-back and the probe, so nothing
   else would.
+- `services/api/tests/test_hosted_requests.py::test_an_exhausted_pool_answers_500`:
+  Open decision 1 as taken. The 500 is Starlette's own, plain text, and
+  is sent outside the CORS layer, as every unhandled exception's is
+  hosted; a browser on another origin sees a failed request, not the
+  status. Reading it is spec 114's.
+- `services/api/tests/test_hosted_start.py::test_the_contract_is_the_same_with_the_store`:
+  the hosted `get_conn` and the middleware change no declaration, so the
+  hosted app on a store serves the committed contract (contract review
+  of this change).
 
 ### Mutations
 

@@ -606,6 +606,26 @@ def pool_handed_out(hosted: Hosted) -> int:
     return hosted.store.pool.handed_out()
 
 
+def test_an_exhausted_pool_answers_500(server: Server, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Open decision 1, as taken: a request that finds no free connection
+    within the pool's wait fails as any exception does, 500."""
+    create_probes(server)
+    one_connection(monkeypatch)
+    monkeypatch.setattr(hostedstore, "POOL_WAIT_SECONDS", 1.0)
+    with serving(monkeypatch, server.login_role().url) as hosted:
+        headers = hosted.headers(server.owner())
+        held = hosted.store.pool.lease()
+        try:
+            client = hosted.client(raise_server_exceptions=False)
+            exhausted = client.get("/probe/identity", headers=headers)
+        finally:
+            hosted.store.pool.release(held)
+        assert exhausted.status_code == 500
+        assert hosted.probes.entered == []
+        # Once the connection is free again, the next request is served.
+        assert hosted.client().get("/probe/identity", headers=headers).status_code == 200
+
+
 def test_a_refused_token_takes_nothing_from_the_pool(server: Server, hosted: Hosted) -> None:
     owner = server.owner()
     client = hosted.client()

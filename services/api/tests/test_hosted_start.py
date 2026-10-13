@@ -19,6 +19,7 @@ itself run the import as a process, as `tests/test_hosted_auth.py` does.
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import closing
@@ -40,6 +41,7 @@ from test_owner_policy import migrate_to
 
 import harrier.pgstore
 from harrier.connection import Connection, StoreVersionError
+from harrier.demo import repo_root
 from harrier.loginrole import (
     BYPASSRLS,
     CANNOT_SET_TENANT,
@@ -66,6 +68,8 @@ from harrier_api.hostedstore import (
     isolation_refusal,
     login_role_refusal,
 )
+
+CONTRACT = repo_root() / "packages" / "contract" / "openapi.json"
 
 
 @pytest.fixture(name="server")
@@ -109,6 +113,24 @@ def test_create_app_serves_a_complete_hosted_configuration_hosted(
         served = client.get("/jobs", headers=hosted.headers(server.owner()))
         assert (served.status_code, served.json()) == (200, [])
         assert hosted.store.pool.handed_out() == before + 1
+
+
+def test_the_contract_is_the_same_with_the_store(
+    server: Server, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The hosted `get_conn` and the transaction middleware change no route
+    declaration: the hosted app on a store serves the committed contract
+    (contract review of this change)."""
+    keys_served_here(monkeypatch)
+    hosted_environment(monkeypatch, server.login_role().url)
+    app = create_app()
+    try:
+        assert app.dependency_overrides  # the hosted get_conn is installed
+        served = json.dumps(app.openapi(), sort_keys=True)
+    finally:
+        app.state.request_store.close()
+    committed = json.loads(CONTRACT.read_text(encoding="utf-8"))
+    assert served == json.dumps(committed, sort_keys=True)
 
 
 def test_an_unreachable_store_refuses_the_start(monkeypatch: pytest.MonkeyPatch) -> None:
