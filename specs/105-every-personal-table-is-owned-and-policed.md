@@ -1862,3 +1862,14 @@ there is one; the CI criterion likewise.
 - Supabase, Restricting access on auth, storage and realtime schemas
   (2025-04-21), as cited by spec 115.
   https://supabase.com/changelog/34270-restricting-access-on-auth-storage-and-realtime-schemas-on-april-21-2025
+
+## Note (2026-10-13): spec 106's `run_records`
+
+Spec 106 is built, and its "Changes to approved specs" line for this spec
+is written here. The catalog gains `run_records`, migration 19, as an
+owned, policed, hosted-only table: `OWNED_TABLES` gains it, migration 10
+keeps its frozen list, and `HOSTED_ONLY_TABLES` declares it. The tenant
+role holds `SELECT`, `INSERT` and `UPDATE` on it, and no `DELETE`
+(`services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared`,
+`services/api/tests/test_owner_policy.py::test_owner_a_reads_nothing_of_owner_b`).
+Nothing else in this spec changes.
