@@ -1,8 +1,8 @@
 ---
 spec: 138
 title: A row moves between the industry and focused tracks
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M9
 depends: [079, 091, 092, 137]
 ---
