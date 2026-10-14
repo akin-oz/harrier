@@ -26,9 +26,6 @@ import "./EligibilityPanel.css";
 // The server keeps at most this many characters of an excerpt (spec 122).
 export const EXCERPT_LIMIT = 300;
 
-// A write that answered with no body refused the local token (spec 035).
-const TOKEN_REFUSED = "the local API token was not accepted";
-
 async function fetchHistory(
   jobId: number,
   slug: string | null,
@@ -215,7 +212,6 @@ function VerdictForm({ job }: { job: Job }) {
         },
       });
       if (error !== undefined) throw new Error(refusalMessage(error, "the verdict was refused"));
-      if (data === undefined) throw new Error(TOKEN_REFUSED);
       return data;
     },
     onSuccess: () => {

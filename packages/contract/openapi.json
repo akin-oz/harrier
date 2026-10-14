@@ -3161,7 +3161,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Draftanswers"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -3290,7 +3305,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Listartifacts"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -3411,7 +3441,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Readartifact"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -3526,7 +3571,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Getbrief"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -3661,7 +3721,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Putbrief"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -3785,7 +3860,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Draftcoverletter"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -3919,7 +4009,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Evaluateoffer"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -4054,7 +4159,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Tailorresume"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -4257,7 +4377,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Capturejob"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "409": {
             "content": {
@@ -4404,7 +4539,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Listconfig"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "503": {
             "content": {
@@ -4469,7 +4619,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Importconfig"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "409": {
             "content": {
@@ -4545,7 +4710,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Deleteconfig"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -4628,7 +4808,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Getconfig"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -4731,7 +4926,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Putconfig"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -4804,6 +5014,16 @@
             },
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the session is anonymous (hosted, spec 104)"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -4874,6 +5094,16 @@
               }
             },
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -4956,6 +5186,16 @@
             },
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the session is anonymous (hosted, spec 104)"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -5036,6 +5276,16 @@
               }
             },
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -5119,6 +5369,16 @@
             },
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the session is anonymous (hosted, spec 104)"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -5189,6 +5449,16 @@
               }
             },
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -5337,6 +5607,16 @@
             },
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the session is anonymous (hosted, spec 104)"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -5429,6 +5709,16 @@
             },
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the session is anonymous (hosted, spec 104)"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -5504,7 +5794,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Runmailwatch"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "409": {
             "content": {
@@ -5579,6 +5884,16 @@
             },
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the session is anonymous (hosted, spec 104)"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -5637,6 +5952,16 @@
               }
             },
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -5716,6 +6041,16 @@
               }
             },
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -5812,7 +6147,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Takebackup"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "409": {
             "content": {
@@ -5910,7 +6260,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Checkdata"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -6028,7 +6393,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Linkcontactids"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -6147,7 +6527,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Rundigest"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -6272,7 +6667,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Rundiscover"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -6410,7 +6820,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Reassesseligibility"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -6530,7 +6955,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Evaluateprospects"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -6658,7 +7098,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Backfillevents"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -6770,7 +7225,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Downloadcontactscsv"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -6872,7 +7342,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Downloadjobscsv"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -6947,7 +7432,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Checkfeeds"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "409": {
             "content": {
@@ -7026,7 +7526,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Prunedeadfeeds"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "409": {
             "content": {
@@ -7107,7 +7622,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Listprofiledocuments"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "503": {
             "content": {
@@ -7195,7 +7725,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Reconsider"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -7289,6 +7834,16 @@
             },
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the session is anonymous (hosted, spec 104)"
+          },
           "503": {
             "content": {
               "application/json": {
@@ -7363,7 +7918,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Exportscoringfeatures"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -7468,7 +8038,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Backfillposters"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "409": {
             "content": {
@@ -7548,7 +8133,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Listoutreachcontacts"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "503": {
             "content": {
@@ -7627,7 +8227,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Listoutreachdue"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -7736,7 +8351,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Syncoutreach"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -7860,7 +8490,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Setbestcontact"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -7979,7 +8624,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Listcandidates"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -8104,7 +8764,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Approvecandidate"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -8228,7 +8903,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Rejectcandidate"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -8353,7 +9043,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Draftoutreach"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -8488,7 +9193,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Findcontacts"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -8622,7 +9342,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Markoutreachreplied"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -8747,7 +9482,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Markoutreachsent"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -8871,7 +9621,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Snoozeoutreach"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -8958,6 +9723,16 @@
             },
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the session is anonymous (hosted, spec 104)"
+          },
           "503": {
             "content": {
               "application/json": {
@@ -9010,7 +9785,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Startrun"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "409": {
             "content": {
@@ -9096,6 +9886,16 @@
             },
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the session is anonymous (hosted, spec 104)"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -9171,7 +9971,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Cancelrun"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -9246,6 +10061,16 @@
               }
             },
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -9331,7 +10156,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Listbackups"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "503": {
             "content": {
@@ -9389,7 +10229,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Verifybackup"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -9476,7 +10331,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Listcommandplaces"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "503": {
             "content": {
@@ -9533,7 +10403,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Routefeeds"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "422": {
             "content": {
@@ -9590,7 +10475,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Gethostfacts"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "503": {
             "content": {
@@ -9667,7 +10567,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Addjob"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -9774,6 +10689,16 @@
               }
             },
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -9900,6 +10825,16 @@
             },
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the session is anonymous (hosted, spec 104)"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -10005,6 +10940,16 @@
               }
             },
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -10127,7 +11072,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Setjobeligibility"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -10245,6 +11205,16 @@
             },
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the session is anonymous (hosted, spec 104)"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -10358,7 +11328,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Recordcompanyoutcome"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -10472,7 +11457,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Rescorejob"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -10597,7 +11597,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Changejobstatus"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {
@@ -10685,6 +11700,16 @@
             },
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the session is anonymous (hosted, spec 104)"
+          },
           "503": {
             "content": {
               "application/json": {
@@ -10745,7 +11770,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Addtrack"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "409": {
             "content": {
@@ -10823,6 +11863,16 @@
             },
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the session is anonymous (hosted, spec 104)"
+          },
           "503": {
             "content": {
               "application/json": {
@@ -10879,7 +11929,22 @@
             "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
           },
           "403": {
-            "description": "missing or wrong local API token"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Archivetrack"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
           },
           "404": {
             "content": {

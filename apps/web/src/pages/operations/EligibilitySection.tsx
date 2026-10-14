@@ -5,7 +5,7 @@ import { useState } from "react";
 import { VERDICT_LABEL, VERDICT_ORDER } from "../../entities/job";
 import { api } from "../../shared/api/client";
 import { trackKey } from "../../shared/track";
-import { TOKEN_REFUSED, refusalMessage } from "./RunOutput";
+import { refusalMessage } from "./RunOutput";
 
 type Report = components["schemas"]["EligibilityReassessOut"];
 
@@ -27,7 +27,6 @@ export function EligibilitySection() {
     mutationFn: async (apply: boolean): Promise<Report> => {
       const { data, error } = await api.POST("/ops/eligibility-reassess", { body: { apply } });
       if (error !== undefined) throw new Error(refusalMessage(error, "reassessment was refused"));
-      if (data === undefined) throw new Error(TOKEN_REFUSED);
       return data;
     },
     onSuccess: (report) => {

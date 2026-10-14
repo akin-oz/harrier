@@ -274,9 +274,6 @@ export function JobActions({ job, track, onApply }: Props) {
       if (error !== undefined) {
         throw new Error(refusalMessage(error));
       }
-      if (data === undefined) {
-        throw new Error("the local API token was not accepted");
-      }
       return data;
     },
     onSuccess: settled,
@@ -297,7 +294,6 @@ export function JobActions({ job, track, onApply }: Props) {
         body: { code, note: null },
       });
       if (error !== undefined) throw new Error(refusalMessage(error));
-      if (data === undefined) throw new Error("the local API token was not accepted");
       return data;
     },
     onSuccess: settled,
@@ -319,7 +315,6 @@ export function JobActions({ job, track, onApply }: Props) {
         params: { path: { selector: String(job.id) }, query: trackQuery(slug) },
       });
       if (error !== undefined) throw new Error(refusalMessage(error));
-      if (data === undefined) throw new Error("the local API token was not accepted");
       return data;
     },
     onSuccess: (result) => {

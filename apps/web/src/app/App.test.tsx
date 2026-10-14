@@ -2,8 +2,19 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
+import { fake } from "../shared/testing/fakeSupabase";
 import { ACADEMIC_TRACK, INDUSTRY_TRACK } from "../shared/track/fixtures";
 import { App, queryClient } from "./App";
+
+// If the local app ever asked for a Supabase client it would get this one,
+// and the test below would see it.
+const loaded = vi.hoisted(() => ({ supabase: false }));
+vi.mock("@supabase/supabase-js", async () => {
+  // A mock's factory runs when the package is first imported, so this says
+  // whether the local app ever loaded it.
+  loaded.supabase = true;
+  return { createClient: (await import("../shared/testing/fakeSupabase")).fake.createClient };
+});
 
 /**
  * The shell follows the track the URL names (spec 094): it keys every cache
@@ -235,4 +246,39 @@ test("Settings is the last section, and the same on every track", async () => {
   // Install-wide reads name no track.
   const reads = asked.filter((path) => path.startsWith("/api/settings"));
   expect(reads.every((path) => !path.includes("track="))).toBe(true);
+});
+
+test("local mode never creates a Supabase client or sends a bearer token", async () => {
+  stubApi();
+  // Record what the app sends, on top of the stub that answers it.
+  const answer = globalThis.fetch;
+  const sent: { url: string; authorization: string | null; localToken: string | null }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(String(input), init);
+      sent.push({
+        url: new URL(request.url).pathname,
+        authorization: request.headers.get("Authorization"),
+        localToken: request.headers.get("X-Harrier-Token"),
+      });
+      return answer(request);
+    }),
+  );
+  const user = userEvent.setup();
+  render(<App />);
+  await screen.findByText("Example Co");
+  // A state-changing request, which is where the local token goes.
+  await user.click(screen.getByRole("button", { name: "Start demo run" }));
+  await waitFor(() => {
+    expect(sent.some((call) => call.url === "/api/runs")).toBe(true);
+  });
+
+  expect(sent.length).toBeGreaterThan(2);
+  expect(sent.every((call) => call.authorization === null)).toBe(true);
+  expect(sent.find((call) => call.url === "/api/runs")?.localToken).toBe("test-token");
+  expect(fake.createClient).not.toHaveBeenCalled();
+  expect(loaded.supabase).toBe(false);
+  // There is no session locally, so there is nothing to sign out of.
+  expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
 });
