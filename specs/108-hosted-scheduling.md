@@ -1523,3 +1523,96 @@ Two points belong to PR 2 and are recorded here for it:
   with `BYPASSRLS`, and may create and grant the role) still stand.
 - The line numbers cited above are not refreshed by this change; decision
   D9 leaves that to the change that implements the process.
+
+## Amendment (2026-10-14): the operator class is built here
+
+PR 2 builds `harrier operator scheduler` and `harrier operator
+schedule-report`. Neither can run on the store they exist for, because the
+CLI's Postgres gate has no operator class. This amendment records where
+that class is built. It is a decision for Akin, taken before PR 2's code,
+and it gates nothing until Akin agrees to it.
+
+### What the text says now
+
+- Scope item 8 and "The CLI on each store" say spec 112 carries the
+  operator class as its Amendment (2026-10-11).
+- Spec 112's Amendment (2026-10-11): split, owner and nesting, decision 4,
+  moved every gate class to spec 127.
+- Spec 127, Scope item 1, builds them only "when `harrier operator` has
+  the four subcommands of specs 108 and 111", and its problem statement
+  says no empty `harrier operator` group ships.
+- Spec 106's Amendment (2026-10-13), decision 1, broke the same cycle for
+  the run class: its runs could not start until spec 127 landed, and spec
+  127 waited for them. It moved the run class into spec 106.
+
+So spec 108 waits for a class that spec 127 builds after spec 108. Neither
+spec records the move that spec 106 recorded for the run class. On `main`
+at `0a5be39` a Postgres store refuses every command outside `harrier store`
+and the run class with `POSTGRES_NOT_YET`
+(`services/api/src/harrier_cli/main.py`, `main`), and the parser has no
+`operator` group, so PR 2's two commands would be refused on Postgres and
+unknown on SQLite.
+
+### The decision
+
+**PR 2 builds the operator class, as spec 106 built the run class.** In
+`services/api/src/harrier_cli/main.py`:
+
+- the `harrier operator` group, with `scheduler` and `schedule-report`;
+- the class "operator" in the Postgres gate: on a Postgres URL an operator
+  subcommand runs; every other command keeps the gate it has;
+- on a SQLite store, an operator subcommand is refused before anything
+  opens (no lease, no hand-over, no store), exit 1, with the text under
+  "The CLI on each store": `error: harrier operator <command> runs only
+  against a hosted store; locally the schedule is launchd (harrier
+  schedule)`, where `<command>` is the command and subcommand words only
+  (spec 061);
+- each subcommand's role declaration, beside the parser, where a walk
+  reads it. A subcommand declares the database role it runs as or that it
+  opens no database connection. A subcommand added without a declaration
+  fails the walk. `scheduler` and `schedule-report` declare
+  `harrier_scheduler`; spec 111's `invite` and `erase` declare theirs when
+  they are built;
+- an operator subcommand run with `HARRIER_RUN_OWNER` set is refused, as
+  every command outside the run class is (spec 106): a run is never an
+  operator.
+
+**Spec 127 keeps** the full class table beside the parser, the local-only
+and everything-else texts, the walk over every top-level command, the
+removal of `POSTGRES_NOT_YET`, and the two Gmail commands in the
+local-only class. Its sequencing is unchanged: it lands after specs 108
+and 111 build their commands. Its operator rows then describe a class
+that already exists, and its walk reads the declarations PR 2 adds. The
+spec 127 side of this decision is written into spec 127 as an amendment
+with its own commit.
+
+### Acceptance criteria changed by this amendment
+
+Two criteria of this spec cited tests that spec 127 owns. They are
+restated, and the walk over every command stays spec 127's:
+
+- [ ] `harrier operator scheduler` and `harrier operator schedule-report`
+      run on a Postgres URL, are refused on a SQLite store with the text
+      above before anything opens, and are refused with
+      `HARRIER_RUN_OWNER` set. No other command is an operator command
+      (planned test_the_operator_class_runs_only_on_postgres). This
+      replaces this spec's criterion "Every top-level command is in
+      exactly one Postgres refusal class, `operator` included", whose walk
+      over every command is spec 127's planned
+      test_every_command_has_a_postgres_refusal_class.
+- [ ] Every `harrier operator` subcommand declares a database role or that
+      it opens none, a subcommand added without one fails the walk, and
+      `scheduler` and `schedule-report` each declare `harrier_scheduler`
+      (planned test_every_operator_subcommand_declares_its_role). This
+      replaces the criterion that cited spec 112's planned
+      test_the_postgres_gate_has_operator_and_run_classes; spec 127's
+      planned test of that name keeps its run class clause and reads the
+      same declarations.
+
+### Honest limitations
+
+- Until spec 127 lands, a command outside `harrier store`, the run class
+  and the operator class still gets `POSTGRES_NOT_YET`, as spec 106's
+  amendment says.
+- This spec builds a group that spec 111 will extend. If spec 111 declares
+  a role another way, the walk is amended with it.
