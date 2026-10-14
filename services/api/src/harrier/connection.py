@@ -1047,6 +1047,9 @@ class _PostgresBackend:
         self.driver = driver
         self.claims = claims
         self.busy_timeout_ms = busy_timeout_ms
+        # Whether the open transaction took the tenant role without claims,
+        # by `transaction(tenant=True)`. Set as each one begins.
+        self.tenant = False
 
     def run(
         self, sql: str, statement: Statement, params: Sequence[object], *, in_block: bool
@@ -1095,9 +1098,10 @@ class _PostgresBackend:
             self.driver.execute(
                 f"SET LOCAL idle_in_transaction_session_timeout = '{idle}'".encode()
             )
+        self.tenant = self.claims is None and session.tenant
         if self.claims is not None:
             assume_identity(self.driver, self.claims)
-        elif session.tenant:
+        elif self.tenant:
             from harrier.tracker.schema import TENANT_ROLE
 
             self.driver.execute(f"SET LOCAL ROLE {TENANT_ROLE}".encode())
@@ -1106,8 +1110,13 @@ class _PostgresBackend:
         # Again before COMMIT: a statement since the start may have moved the
         # role or the claims, by a `set_config` no first word shows (spec
         # 112, amendment of 2026-10-14: the session).
+        # Every transaction that took the tenant role, an owner's or one begun
+        # with `tenant`, still has it; an owner's still has its claims too
+        # (review of PR #326).
         if self.claims is not None:
             read_back_identity(self.driver, self.claims)
+        elif self.tenant:
+            read_back_role(self.driver)
 
     def open_savepoint(self, name: str, *, immediate: bool) -> None:
         self.driver.execute(f"SAVEPOINT {name}".encode())
@@ -1224,6 +1233,23 @@ def assume_identity(driver: psycopg.Connection[Any], claims: Mapping[str, object
     except psycopg.Error as error:
         raise IdentityDidNotHold((step,)) from error
     read_back_identity(driver, claims)
+
+
+def read_back_role(driver: psycopg.Connection[Any]) -> None:
+    """Raise IdentityDidNotHold naming `role` unless `current_user` is
+    `harrier_tenant`: before a transaction begun with `transaction(tenant=
+    True)` on a connection without claims commits (spec 112, amendment of
+    2026-10-14: the session; review of PR #326)."""
+    import psycopg
+
+    from harrier.tracker.schema import TENANT_ROLE
+
+    try:
+        row = driver.execute(b"SELECT current_user::text").fetchone()
+    except psycopg.Error as error:
+        raise IdentityDidNotHold(("read-back",)) from error
+    if row is None or row[0] != TENANT_ROLE:
+        raise IdentityDidNotHold(("role",))
 
 
 def read_back_identity(driver: psycopg.Connection[Any], claims: Mapping[str, object]) -> None:

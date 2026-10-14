@@ -1103,6 +1103,26 @@ def test_a_statement_outside_a_block_cannot_return_another_owners_rows() -> None
             assert not conn.in_transaction
 
 
+def test_a_tenant_transaction_that_leaves_the_tenant_role_is_refused_at_commit(
+    migrated_postgres: str,
+) -> None:
+    """`tenant` takes the role on a connection without claims. A role moved
+    back since by a set_config no first word shows is refused before
+    COMMIT, as an owner's is (review of PR #326)."""
+    with closing(open_store({URL_VARIABLE: migrated_postgres})) as conn:
+        login = str(conn.execute("SELECT session_user::text").fetchone()[0])
+        with conn.transaction(tenant=True):
+            assert conn.execute("SELECT current_user::text").fetchone()[0] == TENANT_ROLE
+        with pytest.raises(IdentityDidNotHold) as refused, conn.transaction(tenant=True):
+            conn.execute("SELECT set_config('role', ?, true)", (login,))
+            assert conn.execute("SELECT current_user::text").fetchone()[0] == login
+        assert refused.value.differed == ("role",)
+        assert not conn.in_transaction
+        # A block that did not ask for the tenant role is not held to it.
+        with conn.transaction():
+            assert conn.execute("SELECT current_user::text").fetchone()[0] == login
+
+
 def test_the_session_options_belong_to_the_outermost_block(store: Store) -> None:
     conn = store.open()
     options: tuple[dict[str, Any], ...] = (

@@ -2413,6 +2413,16 @@ differed, as at the start. This catches what a first word cannot see:
 outside any block is its own transaction, so it is read back too, and
 its rows never reach the caller.
 
+**A transaction begun with `tenant` keeps the tenant role to its end.**
+On a connection without claims, a block begun with
+`transaction(tenant=True)` reads `current_user` again before `COMMIT`.
+When it is no longer `harrier_tenant`, the seam rolls back and raises
+`IdentityDidNotHold` naming `role`. So every transaction in which the
+seam took the tenant role, an owner's or one begun with `tenant`, still
+has it when it commits. A block that did not ask for the role is not
+held to it. (Review of PR #326: `run_start_checks` always rolls back,
+so nothing was exposed, but the option is general.)
+
 ### Failure modes (amendment of 2026-10-14: the session)
 
 - **A session statement through `execute()`.** Refused before the
@@ -2430,8 +2440,10 @@ its rows never reach the caller.
   naming `read-back`, as at the start, and the transaction rolls back.
 - **A block the store gave up on.** No read-back: it rolls back and
   raises `TRANSACTION_GIVEN_UP`, as the 2026-10-13 amendment says.
-- **A connection without claims.** No read-back: there is nothing to
-  compare. The first word refusal holds for it as for any connection.
+- **A connection without claims.** No read-back of claims: there are
+  none to compare. A block begun with `tenant` reads its role back
+  before commit, as above; any other block is not read back. The first
+  word refusal holds for it as for any connection.
 
 ### Acceptance criteria (amendment of 2026-10-14: the session)
 
@@ -2463,6 +2475,12 @@ synthetic owners and values only:
 - [ ] `transaction()` refuses `statement_timeout_ms`, `idle_timeout_ms`
       and `tenant` on a nested block and on SQLite with `ValueError`
       (`services/api/tests/test_seam_on_both_stores.py::test_the_session_options_belong_to_the_outermost_block`).
+- [ ] On a connection without claims, a block begun with `tenant` whose
+      role a `SELECT set_config('role', ...)` moved back is refused at
+      commit with `IdentityDidNotHold` naming `role`; a block that keeps
+      the role commits, and a later block without `tenant` is not held
+      to it (review of PR #326)
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_tenant_transaction_that_leaves_the_tenant_role_is_refused_at_commit`).
 - [ ] Spec 134's tests pass with `hostedstore.py` passing the options:
       `services/api/tests/test_hosted_requests.py::test_the_request_role_has_lock_and_statement_timeouts`,
       with its `/probe/plain-set` route making its session-level
