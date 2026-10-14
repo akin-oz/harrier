@@ -2796,6 +2796,80 @@
         "title": "TailorIn",
         "type": "object"
       },
+      "TelegramRefusalOut": {
+        "description": "Why a save was refused: a fixed sentence per `reason`, never the\ntoken, the chat id, or Telegram's own description.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "token_shape",
+              "chat_id_shape",
+              "token_rejected",
+              "chat_unreachable",
+              "telegram_unavailable"
+            ],
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail",
+          "reason"
+        ],
+        "title": "TelegramRefusalOut",
+        "type": "object"
+      },
+      "TelegramSettingsIn": {
+        "additionalProperties": false,
+        "description": "A bot token and a chat id. Both are plain strings to the schema, so a\nmalformed value reaches the handler's own check and is refused with a\nreason. Both are kept out of the model's repr, so a body that reaches a\nlog record or an error by `repr` carries neither.",
+        "properties": {
+          "bot_token": {
+            "format": "password",
+            "title": "Bot Token",
+            "type": "string",
+            "writeOnly": true
+          },
+          "chat_id": {
+            "title": "Chat Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bot_token",
+          "chat_id"
+        ],
+        "title": "TelegramSettingsIn",
+        "type": "object"
+      },
+      "TelegramSettingsOut": {
+        "description": "Whether the owner has a pair saved, and when. Never the pair.",
+        "properties": {
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "configured",
+          "updated_at"
+        ],
+        "title": "TelegramSettingsOut",
+        "type": "object"
+      },
       "TerminalCommandOut": {
         "properties": {
           "command": {
@@ -5475,6 +5549,225 @@
           }
         ],
         "summary": "Run Mail Watch"
+      }
+    },
+    "/notifications/telegram": {
+      "delete": {
+        "operationId": "delete_telegram_notifications_telegram_delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelegramSettingsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Telegram is configured in .env on the local product"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Delete Telegram Notifications Telegram Delete"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Delete Telegram"
+      },
+      "get": {
+        "operationId": "get_telegram_notifications_telegram_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelegramSettingsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Telegram is configured in .env on the local product"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Get Telegram Notifications Telegram Get"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get Telegram"
+      },
+      "put": {
+        "operationId": "put_telegram_notifications_telegram_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TelegramSettingsIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelegramSettingsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelegramRefusalOut"
+                }
+              }
+            },
+            "description": "the token or chat id is malformed, Telegram refused the token, or the bot cannot write to the chat; nothing is stored"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Telegram is configured in .env on the local product"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialRefusalOut"
+                }
+              }
+            },
+            "description": "a request the schema refuses, named by field and rule"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelegramRefusalOut"
+                }
+              }
+            },
+            "description": "Telegram could not be reached or did not answer in time; nothing is stored"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Put Telegram Notifications Telegram Put"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Put Telegram"
       }
     },
     "/ops/backup": {

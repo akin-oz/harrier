@@ -7,11 +7,18 @@ rides in the URL path per the Bot API; the URL is never logged.
 
 from __future__ import annotations
 
+import http.client
+import json
 import logging
 import os
+import re
+import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Callable, Mapping
+from typing import Any, Literal, cast, get_args
 
+from harrier.credentials import FIELD_MAX_BYTES
 from harrier.demo import is_demo_mode
 from harrier.runoutcome import RunOutcome
 from harrier.sources import scrub_secrets
@@ -75,6 +82,114 @@ def send_telegram_message(
         reason = redact_values(str(exc), token)
         logger.warning("telegram send failed: %s", scrub_secrets(reason))
         return 1
+
+
+# --- checking a bot and a chat before they are saved (spec 109) ---
+
+TELEGRAM_API = "https://api.telegram.org"
+# The one message harrier sends outside a run. It names nothing about the
+# owner or their search (spec 109, Saving).
+CONFIRMATION_TEXT = "harrier: Telegram notifications are connected for this account."
+# As `send_telegram_message` uses.
+BOT_API_TIMEOUT_SECONDS = 30
+# A Bot API answer is a few hundred bytes. Chosen, not measured: it bounds
+# what one answer can make the check read.
+BOT_API_ANSWER_LIMIT = 65_536
+
+TelegramReason = Literal[
+    "token_shape", "chat_id_shape", "token_rejected", "chat_unreachable", "telegram_unavailable"
+]
+TELEGRAM_REASONS: tuple[TelegramReason, ...] = get_args(TelegramReason)
+
+# The forms the Bot API documents, in ASCII only: `\d` would take any
+# Unicode digit, and `$` would take a trailing newline. A value is bounded
+# by the credential store's field rule, so a pair that passes here is one
+# the store accepts (spec 116).
+TOKEN_SHAPE = re.compile(r"[0-9]+:[A-Za-z0-9_-]+", re.ASCII)
+CHAT_ID_SHAPE = re.compile(r"-?[0-9]+", re.ASCII)
+
+# `urllib.request.urlopen`'s calling form, replaced by a fake in tests.
+Opener = Callable[..., Any]
+
+BotApiAnswer = Literal["ok", "refused", "unavailable"]
+
+
+def _within_bound(value: str) -> bool:
+    return len(value) <= FIELD_MAX_BYTES
+
+
+def _call_bot_api(
+    opener: Opener, token: str, method: str, fields: Mapping[str, str] | None
+) -> BotApiAnswer:
+    """One Bot API call. "refused" is Telegram saying `ok: false`: the
+    mapping reads that field, which the API documents, not `error_code`,
+    which it says is subject to change. Anything that is not an answer
+    about the token or the chat is "unavailable": a transport failure, a
+    timeout, an answer that is not a JSON object with an `ok` field, and a
+    5xx or 429 status, which speak for the service and not for the bot.
+
+    Nothing raised here is kept or logged: the URL holds the token."""
+    data = urllib.parse.urlencode(fields).encode("utf-8") if fields is not None else None
+    request = urllib.request.Request(
+        f"{TELEGRAM_API}/bot{token}/{method}",
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"} if data else {},
+        method="POST" if data is not None else "GET",
+    )
+    status = 0
+    body = b""
+    try:
+        try:
+            with opener(request, timeout=BOT_API_TIMEOUT_SECONDS) as response:
+                status = int(response.status)
+                body = response.read(BOT_API_ANSWER_LIMIT)
+        except urllib.error.HTTPError as error:
+            # The Bot API answers a refusal with a 4xx and a JSON body.
+            status = error.code
+            body = error.read(BOT_API_ANSWER_LIMIT)
+    except (OSError, ValueError, http.client.HTTPException):
+        return "unavailable"
+    if status >= 500 or status == 429:
+        return "unavailable"
+    try:
+        answer: object = json.loads(body)
+    except (ValueError, RecursionError):
+        return "unavailable"
+    ok = cast(dict[str, object], answer).get("ok") if isinstance(answer, dict) else None
+    if ok is True and 200 <= status < 300:
+        return "ok"
+    if ok is False:
+        return "refused"
+    return "unavailable"
+
+
+def check_telegram(
+    token: str, chat_id: str, *, opener: Opener | None = None
+) -> TelegramReason | None:
+    """None when `token` is a working bot and the bot can write to
+    `chat_id`, else the reason it is not (spec 109, Saving).
+
+    In order: the shapes, `getMe` with the token, then one `sendMessage` of
+    `CONFIRMATION_TEXT` to the chat. A call is made only when the one
+    before it passed, so a refused token never sends. The values are used
+    as given: the caller strips them. Used only by the save route; no run
+    calls it. Nothing is logged here, and no error text leaves this
+    function, because the token is in every URL it builds.
+    """
+    if not _within_bound(token) or not TOKEN_SHAPE.fullmatch(token):
+        return "token_shape"
+    if not _within_bound(chat_id) or not CHAT_ID_SHAPE.fullmatch(chat_id):
+        return "chat_id_shape"
+    send = opener if opener is not None else urllib.request.urlopen
+    got_me = _call_bot_api(send, token, "getMe", None)
+    if got_me != "ok":
+        return "token_rejected" if got_me == "refused" else "telegram_unavailable"
+    sent = _call_bot_api(
+        send, token, "sendMessage", {"chat_id": chat_id, "text": CONFIRMATION_TEXT}
+    )
+    if sent != "ok":
+        return "chat_unreachable" if sent == "refused" else "telegram_unavailable"
+    return None
 
 
 TELEGRAM_MESSAGE_LIMIT = 4096
