@@ -30,6 +30,7 @@ from harrier.screening import (
 from harrier.screening.config import load_candidate_config
 from harrier.screening.descriptions import cache_job_descriptions
 from harrier.screening.normalized import NormalizedJob
+from harrier.screening.pipeline import FocusedGates
 from harrier.screening.seen import load_seen, save_seen
 from harrier.sources import fetch_many, scrub_secrets
 from harrier.sources.apify_linkedin import (
@@ -169,9 +170,13 @@ def _run_source(
     *,
     dry_run: bool,
     extra: dict[str, object],
+    focused: SharedRun | None = None,
 ) -> dict[str, object]:
     """The old run_source_import, against the new store: screen, persist,
-    save seen state, write the per-source summary. Dry runs mutate nothing."""
+    save seen state, write the per-source summary. Dry runs mutate nothing.
+
+    `focused` makes the run shared (spec 139): each new row goes to the
+    track it was placed in, with the other track's verdict."""
     candidate_cfg = load_candidate_config(conn)
     hold_companies = load_hold_companies(conn)
     # Dedupe sees every track: url and external_key are unique across the
@@ -187,13 +192,19 @@ def _run_source(
         indexes=indexes,
         source_seen=source_seen,
         cache_descriptions=not dry_run,
+        focused=focused.gates if focused is not None else None,
     )
 
     persisted = 0
     if not dry_run:
-        for row, eligibility in zip(result.new_tracker_rows, result.new_eligibility, strict=True):
+        for row, eligibility, placement in zip(
+            result.new_tracker_rows, result.new_eligibility, result.placements, strict=True
+        ):
+            target = focused.scope if focused is not None and placement.kind == "focused" else scope
             try:
-                add_job(conn, row, scope=scope, eligibility=eligibility)
+                add_job(
+                    conn, row, scope=target, eligibility=eligibility, other_verdict=placement.other
+                )
                 persisted += 1
             except DuplicateJobError:
                 # The screen already deduped; a race with a concurrent add is
@@ -227,6 +238,49 @@ def _run_source(
     return summary
 
 
+@dataclass(frozen=True)
+class SharedRun:
+    """The focused track a shared discovery run places postings in (spec 139)."""
+
+    scope: Scope
+    gates: FocusedGates
+
+
+def shared_run(conn: Connection, scope: Scope) -> SharedRun | None:
+    """The run's focused track when the industry track has one that is
+    unarchived and configured, else None (spec 139). A focused track with no
+    screening document is warned about once, and the run goes on as an
+    industry run: a run never stops on this."""
+    from harrier.screening.focused import load_screening
+    from harrier.tracks import list_tracks
+
+    if scope.track.kind != "industry":
+        return None
+    for track in list_tracks(conn):
+        if track.kind != "focused" or track.archived:
+            continue
+        focused_scope = Scope(track=track)
+        document = load_screening(conn, focused_scope)
+        if document is None:
+            logger.warning(
+                "focused track %s has no screening configuration, so this run places "
+                "every posting in the industry track; harrier --track %s profile put "
+                "screening --file PATH",
+                track.slug,
+                track.slug,
+            )
+            return None
+        return SharedRun(
+            scope=focused_scope,
+            gates=FocusedGates(
+                document=document,
+                industry_track_id=scope.track.id,
+                focused_track_id=track.id,
+            ),
+        )
+    return None
+
+
 def run_discovery(
     conn: Connection,
     scope: Scope,
@@ -236,6 +290,8 @@ def run_discovery(
     def report(source: str, stage: str) -> None:
         if progress is not None:
             progress(source, stage)
+
+    focused = shared_run(conn, scope)
 
     summaries: list[dict[str, object]] = []
     skipped_sources: list[dict[str, object]] = []
@@ -299,6 +355,7 @@ def run_discovery(
                 jobs,
                 len(jobs),
                 dry_run=options.dry_run,
+                focused=focused,
                 extra={"board_urls": board_urls, "board_errors": board_errors},
             )
         )
@@ -327,6 +384,7 @@ def run_discovery(
                     remoteok_jobs,
                     len(remoteok_jobs),
                     dry_run=options.dry_run,
+                    focused=focused,
                     extra={},
                 )
             )
@@ -380,6 +438,7 @@ def run_discovery(
                         apify_jobs,
                         len(apify_jobs),
                         dry_run=options.dry_run,
+                        focused=focused,
                         extra={"count": count, "dataset_files": options.dataset_files},
                     )
                 )
@@ -407,6 +466,7 @@ def run_discovery(
                 wellfound_jobs,
                 len(wellfound_jobs),
                 dry_run=options.dry_run,
+                focused=focused,
                 extra={"input_files": options.wellfound_files},
             )
         )
@@ -423,6 +483,7 @@ def run_discovery(
                 wttj_jobs,
                 len(wttj_jobs),
                 dry_run=options.dry_run,
+                focused=focused,
                 extra={"input_files": options.wttj_files},
             )
         )

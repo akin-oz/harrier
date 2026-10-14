@@ -131,6 +131,9 @@ _PROMOTED_COLUMNS = ", ".join(f"{name} TEXT NOT NULL DEFAULT ''" for name in _OR
 _CONTACT_COLUMNS = ", ".join(f"{name} TEXT NOT NULL DEFAULT ''" for name in CONTACT_FIELDS)
 
 
+VERDICTS: tuple[str, ...] = ("pass", "reject")
+
+
 def _quoted_list(values: tuple[str, ...]) -> str:
     return ", ".join(f"'{value}'" for value in values)
 
@@ -151,6 +154,14 @@ _ELIGIBILITY_COLUMNS = f"""
     origin TEXT NOT NULL CHECK (origin IN ({_quoted_list(ELIGIBILITY_ORIGINS)})),
     version TEXT NOT NULL DEFAULT '',
     description_sha256 TEXT NOT NULL DEFAULT ''
+"""
+
+# A verdict's columns, the same text on both stores (spec 139).
+_VERDICT_COLUMNS = f"""
+    verdict TEXT NOT NULL CHECK (verdict IN ({_quoted_list(VERDICTS)})),
+    score TEXT NOT NULL DEFAULT '',
+    reasons TEXT NOT NULL DEFAULT '',
+    scoring_version TEXT NOT NULL DEFAULT ''
 """
 
 MIGRATIONS: list[tuple[int, list[str]]] = [
@@ -596,6 +607,34 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
             """,
         ],
     ),
+    (
+        21,
+        [
+            # The verdict a shared discovery run gave a posting for the track
+            # it did not go to (spec 139). One per job and track, written once
+            # in the transaction that appends the row, and never rewritten: a
+            # seen posting is not screened again. Written only by the tracker
+            # write path.
+            f"""
+            CREATE TABLE job_verdicts (
+                id INTEGER PRIMARY KEY,
+                job_id INTEGER NOT NULL REFERENCES jobs(id),
+                track_id INTEGER NOT NULL REFERENCES tracks(id),
+                {_VERDICT_COLUMNS},
+                at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                UNIQUE (job_id, track_id)
+            )
+            """,
+            """
+            CREATE TRIGGER job_verdicts_append_only_update BEFORE UPDATE ON job_verdicts
+            BEGIN SELECT RAISE(ABORT, 'job_verdicts is append-only'); END
+            """,
+            """
+            CREATE TRIGGER job_verdicts_append_only_delete BEFORE DELETE ON job_verdicts
+            BEGIN SELECT RAISE(ABORT, 'job_verdicts is append-only'); END
+            """,
+        ],
+    ),
 ]
 
 # --- Postgres (spec 103, ADR-013) ---
@@ -777,9 +816,11 @@ MIGRATION_10_OWNED_TABLES: tuple[str, ...] = (
 # Every table with an owner: migration 10's, and each table a later
 # migration created owned (spec 122's `job_eligibility`, migration 15; spec
 # 108's `schedule_state`, migration 17; spec 116's `credentials`,
-# migration 18; spec 106's `run_records`, migration 19).
+# migration 18; spec 106's `run_records`, migration 19; spec 139's
+# `job_verdicts`, migration 21).
 OWNED_TABLES: tuple[str, ...] = (
     "job_eligibility",
+    "job_verdicts",
     *MIGRATION_10_OWNED_TABLES,
     "schedule_state",
     "credentials",
@@ -835,6 +876,8 @@ OWNER_SCOPED_KEYS: dict[tuple[str, tuple[str, ...]], tuple[str, ...] | None] = {
     # What job_events references, so an event stays inside its job's owner.
     # SQLite has no owner to stay inside.
     ("jobs", ("owner_id", "id")): None,
+    # One verdict per job and track, per owner (spec 139, migration 21).
+    ("job_verdicts", ("owner_id", "job_id", "track_id")): ("job_id", "track_id"),
 }
 
 Dialect = Literal["sqlite", "postgres"]
@@ -942,7 +985,11 @@ MIGRATION_10_GLOBAL_ID_TABLES: tuple[str, ...] = (
     "user_config",
     "job_events",
 )
-GLOBAL_ID_TABLES: tuple[str, ...] = (*MIGRATION_10_GLOBAL_ID_TABLES, "job_eligibility")
+GLOBAL_ID_TABLES: tuple[str, ...] = (
+    *MIGRATION_10_GLOBAL_ID_TABLES,
+    "job_eligibility",
+    "job_verdicts",
+)
 _GLOBAL_ID_SEQUENCES = ", ".join(f"{table}_id_seq" for table in MIGRATION_10_GLOBAL_ID_TABLES)
 
 
@@ -1664,6 +1711,48 @@ POSTGRES_RUN_RECORDS: list[str] = [
     f"GRANT SELECT, INSERT, UPDATE ON run_records TO {TENANT_ROLE}",
 ]
 
+# Spec 139's job_verdicts: owned and policed as every personal table is
+# (spec 105), with the owner read the way migration 16 made every owned
+# table read it.
+POSTGRES_JOB_VERDICTS: list[str] = [
+    f"""
+    CREATE TABLE job_verdicts (
+        {_PG_ID},
+        job_id bigint NOT NULL,
+        track_id bigint NOT NULL,
+        {_VERDICT_COLUMNS.replace("TEXT", "text")},
+        at text NOT NULL DEFAULT {_PG_NOW_ISO},
+        owner_id uuid NOT NULL DEFAULT public.{OWNER_ID_FUNCTION} REFERENCES auth.users (id),
+        FOREIGN KEY (owner_id, job_id) REFERENCES jobs (owner_id, id),
+        FOREIGN KEY (owner_id, track_id) REFERENCES tracks (owner_id, id),
+        UNIQUE (owner_id, job_id, track_id)
+    )
+    """,
+    "CREATE INDEX idx_job_verdicts_owner ON job_verdicts(owner_id)",
+    """
+    CREATE TRIGGER job_verdicts_append_only_update BEFORE UPDATE ON job_verdicts
+    FOR EACH ROW EXECUTE FUNCTION harrier_refuse('job_verdicts is append-only')
+    """,
+    """
+    CREATE TRIGGER job_verdicts_append_only_delete BEFORE DELETE ON job_verdicts
+    FOR EACH ROW EXECUTE FUNCTION harrier_refuse('job_verdicts is append-only')
+    """,
+    """
+    CREATE TRIGGER job_verdicts_append_only_truncate BEFORE TRUNCATE ON job_verdicts
+    FOR EACH STATEMENT EXECUTE FUNCTION harrier_refuse('job_verdicts is append-only')
+    """,
+    "ALTER TABLE job_verdicts ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE job_verdicts FORCE ROW LEVEL SECURITY",
+    f"CREATE POLICY owner_only ON job_verdicts AS PERMISSIVE FOR ALL TO {TENANT_ROLE} "
+    f"USING ({_OWNER_IS_REQUEST}) WITH CHECK ({_OWNER_IS_REQUEST})",
+    # Stated, never inherited: the tenant role reads, and inserts every
+    # column but the global id, as on job_eligibility (migration 15).
+    f"REVOKE ALL ON job_verdicts FROM {_EVERY_GRANTEE}",
+    f"REVOKE ALL ON SEQUENCE job_verdicts_id_seq FROM {_EVERY_GRANTEE}",
+    f"GRANT SELECT ON job_verdicts TO {TENANT_ROLE}",
+    tenant_writes_all_but_id("job_verdicts", ("INSERT",)),
+]
+
 POSTGRES_MIGRATIONS: list[tuple[int, list[str]]] = [
     (POSTGRES_BASELINE_VERSION, POSTGRES_BASELINE),
     (10, POSTGRES_OWNERS),
@@ -1702,6 +1791,9 @@ POSTGRES_MIGRATIONS: list[tuple[int, list[str]]] = [
             """,
         ],
     ),
+    # Spec 139: SQLite's migration 21, owned and policed as every personal
+    # table is (spec 105), on the shape of migration 15's job_eligibility.
+    (21, POSTGRES_JOB_VERDICTS),
 ]
 
 

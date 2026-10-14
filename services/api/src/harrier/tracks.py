@@ -285,22 +285,28 @@ WRITE_OPERATIONS: frozenset[str] = frozenset(
 # empties as those specs land.
 HELD_OPERATIONS: dict[str, dict[str, str]] = {
     "focused": {
-        "discover": "spec 139",
-        # Reconsideration reopens what discovery rejected. On a focused track
-        # it would run the industry path over the industry seen state while
-        # reading the focused track's rows for human rejections, and clear an
-        # industry rejection a person made (spec 137, amendment 6).
-        "reconsider": "spec 139",
         "tailor": "spec 140",
         "cover-letter": "spec 140",
         "answers": "spec 140",
     },
 }
 
+# Operations a kind never runs on its own track, each with the sentence that
+# says where it runs instead. A focused track's postings are found by the
+# industry track's discovery run, which places each one (spec 139).
+ELSEWHERE_OPERATIONS: dict[str, dict[str, str]] = {
+    "focused": {
+        "discover": "the focused track is discovered by the shared run: harrier discover",
+    },
+}
+
 
 def held_refusal(kind: str, operation: str) -> str | None:
-    """Why a track of this kind may not run this operation yet, naming the
-    spec that opens it, or None (spec 137)."""
+    """Why a track of this kind may not run this operation, or None: either
+    the spec that opens it (spec 137) or where it runs instead (spec 139)."""
+    elsewhere = ELSEWHERE_OPERATIONS.get(kind, {}).get(operation)
+    if elsewhere is not None:
+        return elsewhere
     opened_by = HELD_OPERATIONS.get(kind, {}).get(operation)
     if opened_by is None:
         return None

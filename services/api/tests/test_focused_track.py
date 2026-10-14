@@ -259,8 +259,6 @@ def test_an_archived_focused_track_refuses_its_screening_document(
 
 
 HELD: list[tuple[list[str], str]] = [
-    (["discover"], "spec 139"),
-    (["reconsider", "--source", "remoteok", "--apply"], "spec 139"),
     (["tailor", "--job-id", "1"], "spec 140"),
     (["cover-letter", "--job-id", "1"], "spec 140"),
     (["answers", "--job-id", "1", "--question", "Why this role?"], "spec 140"),
@@ -274,6 +272,10 @@ def test_focused_refuses_what_later_specs_open(
         assert main(["--track", SLUG, *argv]) == 2, argv
         err = capsys.readouterr().err
         assert f"is not available on a focused track until {opened_by}" in err, (argv, err)
+    # Spec 139: the focused track is discovered by the industry track's run.
+    assert main(["--track", SLUG, "discover"]) == 2
+    err = capsys.readouterr().err
+    assert "the focused track is discovered by the shared run: harrier discover" in err
 
 
 # --- the migration -------------------------------------------------------------------
@@ -321,7 +323,8 @@ def test_the_kind_migration_keeps_every_track(
         assert _tracks(raw) == kept
         assert raw.execute("PRAGMA foreign_key_check").fetchall() == []
         assert raw.execute("PRAGMA integrity_check").fetchone() == ("ok",)
-        assert raw.execute("SELECT max(version) FROM schema_version").fetchone() == (20,)
+        version = raw.execute("SELECT max(version) FROM schema_version").fetchone()
+        assert version is not None and version[0] >= 20
         triggers = {
             row[0] for row in raw.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'")
         }

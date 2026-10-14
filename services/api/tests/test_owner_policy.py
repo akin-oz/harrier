@@ -99,6 +99,7 @@ EXPECTED_GRANTS: dict[str, frozenset[str]] = {
     "job_runs": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),
     "job_events": frozenset({"SELECT"}),
     "job_eligibility": frozenset({"SELECT"}),
+    "job_verdicts": frozenset({"SELECT"}),
     "tracks": frozenset({"SELECT", "INSERT", "UPDATE"}),
     "credentials": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),
     "schema_version": frozenset({"SELECT"}),
@@ -118,6 +119,7 @@ EXPECTED_COLUMN_GRANTS: dict[str, frozenset[str]] = {
     ),
     "job_events": frozenset({"INSERT"}),
     "job_eligibility": frozenset({"INSERT"}),
+    "job_verdicts": frozenset({"INSERT"}),
 }
 
 # Roles that must hold nothing on any harrier table, column or sequence.
@@ -161,7 +163,7 @@ DEFAULT_ACL_KINDS = {
 
 # The tables that name a job of their owner, filled in by `values_for`, and
 # that the tenant role may only read and insert: both are append-only.
-JOB_HISTORY_TABLES = frozenset({"job_events", "job_eligibility"})
+JOB_HISTORY_TABLES = frozenset({"job_events", "job_eligibility", "job_verdicts"})
 
 # The columns each owned table requires, with synthetic values. A job
 # event or assessment also names a job of its owner, filled in by
@@ -173,6 +175,8 @@ REQUIRED: dict[str, dict[str, object]] = {
         "checked_at": "2026-10-11T00:00:00Z",
         "origin": "rule",
     },
+    # Track 1 is every owner's own (migration 10).
+    "job_verdicts": {"track_id": 1, "verdict": "pass"},
     "jobs": {},
     "contacts": {},
     "profile_documents": {"kind": "truth", "name": "synthetic"},
@@ -1864,6 +1868,8 @@ def test_an_owner_cannot_choose_or_change_an_id(store: PgConnection) -> None:
     unused: dict[str, dict[str, object]] = {
         "profile_documents": {"name": "explicit-id"},
         "user_config": {"kind": "explicit-id"},
+        # `fill` gave each owner a verdict for track 1 and a second track.
+        "job_verdicts": {"track_id": 2},
     }
     due: dict[str, int] = {}
     for table in GLOBAL_ID_TABLES:
@@ -2381,6 +2387,7 @@ def test_a_bypassrls_role_sees_every_owner(store: PgConnection) -> None:
     [
         ("TRUNCATE job_events", "job_events is append-only"),
         ("TRUNCATE job_eligibility", "job_eligibility is append-only"),
+        ("TRUNCATE job_verdicts", "job_verdicts is append-only"),
         ("TRUNCATE tracks CASCADE", "tracks are archived, never deleted"),
     ],
 )
