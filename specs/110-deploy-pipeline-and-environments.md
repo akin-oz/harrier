@@ -1987,6 +1987,13 @@ stay unconfirmed until the first staging deploy, which the runbook lists:
       `services/api/tests/test_deploy_files.py::test_the_smoke_steps_fail_the_deploy`).
 - [ ] The staging deploy records the unconfirmed items under "What is and is
       not proved offline" as confirmed or refuted in its pull request.
+- [ ] A Data API probe that never reaches the endpoint fails the deploy: curl
+      prints `000` and exits non-zero, and the step's `bash -e` stops there.
+      No checkout leaves its token in `.git/config` for the steps after it:
+      each sets `persist-credentials: false`. Both came from CodeRabbit's
+      review of PR 329; the first was already true and is now pinned
+      (`services/api/tests/test_deploy_files.py::test_the_smoke_steps_fail_the_deploy`,
+      `services/api/tests/test_deploy_files.py::test_no_checkout_leaves_the_token_in_the_checkout`).
 
 ### Line numbers, refreshed (D9)
 

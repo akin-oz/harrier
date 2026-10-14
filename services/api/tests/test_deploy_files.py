@@ -623,6 +623,16 @@ def test_each_secret_reaches_only_the_steps_that_need_it() -> None:
     assert "FLY_STAGING_API_TOKEN" not in staging
 
 
+def test_no_checkout_leaves_the_token_in_the_checkout() -> None:
+    """Each checkout sets `persist-credentials: false`, so the token it used
+    is not left in `.git/config` for the package installs and CLIs that run
+    after it (CodeRabbit on PR #329). No step here pushes."""
+    for job, steps in workflow_jobs().items():
+        for step in steps:
+            if "actions/checkout@" in step.code:
+                assert "persist-credentials: false" in step.code, (job, step.name)
+
+
 def test_the_image_is_built_once_and_production_never_builds() -> None:
     production = "\n".join(step.code for step in environment_steps("production"))
     assert "docker build" not in production
@@ -773,6 +783,19 @@ def test_the_smoke_steps_fail_the_deploy(environment: str, tmp_path: Path) -> No
             tmp_path,
         )
         assert (done.returncode == 0) is passes, (revision, done.stderr)
+
+    # A probe that never reached the endpoint is not proof that the Data API
+    # is off: curl prints 000 and exits non-zero, and the step's `bash -e`
+    # stops there (CodeRabbit on PR #329).
+    for code in (6, 7, 28):
+        done = run_step(
+            environment,
+            "the Data API is off",
+            env,
+            {"curl": f'printf "000"\nexit {code}\n'},
+            tmp_path,
+        )
+        assert done.returncode != 0, code
 
     probe = 'printf "%s" "$STATUS"\n'
     for status, passes in (
