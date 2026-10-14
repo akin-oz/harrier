@@ -37,6 +37,13 @@ KINDS: tuple[str, ...] = (CREATED, DECISION, OUTCOME)
 UNCLASSIFIED = "unclassified"
 INTERVIEW_INVITED = "interview_invited"
 
+# The code a move between tracks records (spec 138). Kept out of
+# REASON_CODES: that table is the rejection and outcome codes, which the
+# command line offers to `reject` and the API publishes as RejectionCode, and
+# a move is neither. The event is the candidate's decision, and its status
+# does not change, so no label is read from it (`harrier.scoring.labels`).
+MOVED = "moved"
+
 # Code, its one actor, and how it reads on a row. Ordered by actor so the
 # command-line help lists them grouped.
 REASON_CODES: dict[str, tuple[str, str]] = {

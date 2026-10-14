@@ -213,6 +213,11 @@ COMMAND_PLACES: dict[str, Place] = {
         "Checks a track's resume content against the truth sources (spec 099). "
         "Added after this page was specified, and not routed yet."
     ),
+    # Spec 138 added this after spec 096 was approved, and named its place.
+    "move": TerminalOnly(
+        "Moves a row between an industry and a focused track (spec 138). "
+        "The browser has no move control yet."
+    ),
 }
 
 HostFact = Literal["schedule", "gmail_token", "model", "image", "database_owner", "profile"]
