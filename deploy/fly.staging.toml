@@ -28,7 +28,7 @@ kill_timeout = 30
   HARRIER_SUPABASE_URL = "__HARRIER_SUPABASE_URL__"
   HARRIER_SUPABASE_PUBLISHABLE_KEY = "__HARRIER_SUPABASE_PUBLISHABLE_KEY__"
   HARRIER_ALLOWED_HOSTS = "harrier-api-staging.fly.dev"
-  HARRIER_CORS_ORIGINS = "https://harrier-web-staging.vercel.app"
+  HARRIER_CORS_ORIGINS = "https://harrier-web-staging.akinoztorun.dev"
 
 # One machine, stopped when idle and started by the next request (hosting
 # budget, spec 110). Exactly one: a second needs fly-replay routing first

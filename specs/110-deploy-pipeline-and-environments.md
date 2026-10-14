@@ -2019,3 +2019,29 @@ record: spec 135 owns that text.
 Checked and unchanged: `.gitignore:2-4`, `.dockerignore:5-7`,
 `config/data-classification.json:6-7` and
 `services/api/src/harrier/resume/vocabulary.py:139`.
+
+## Amendment (2026-10-14): staging's SPA is served at a custom domain
+
+Akin's decision of 2026-10-14, during the first staging setup. It replaces the
+sentence "a custom domain is out of scope" in the amendment above, for staging
+only.
+
+- **The domain.** Staging's SPA is served at
+  `https://harrier-web-staging.akinoztorun.dev`, a CNAME at the domain's DNS
+  host to the target Vercel names. The Vercel project is the existing
+  `harrier`, not a new `harrier-web-staging`; the environments table already
+  says the names are the shape, not a commitment.
+- **What changes in the repository.** `HARRIER_CORS_ORIGINS` in
+  `deploy/fly.staging.toml` names that origin, and `docs/deploy.md` says how the
+  domain, the CORS origin and the Supabase URL settings move together.
+  `services/api/tests/test_deploy_files.py::test_the_fly_files_hold_no_secret_and_name_the_region`
+  still holds the value to an `https://` origin.
+- **Why.** The `harrier` project's deployment protection covers every
+  deployment except custom domains, so a `.vercel.app` host could ask a
+  visitor to sign in to Vercel. A custom domain is outside that setting.
+- **Production is unchanged.** `deploy/fly.production.toml` still names
+  `harrier-web-production.vercel.app` until production's project exists.
+- **The template sender.** Supabase lets an email template be edited only
+  with custom SMTP on. Staging sends through Google Workspace's SMTP server;
+  `docs/deploy.md` step 1 records it. No repository file holds the sender's
+  credentials.

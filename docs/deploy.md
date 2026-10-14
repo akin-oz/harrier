@@ -21,7 +21,7 @@ rotate that credential (see "Revoking a credential").
 | Supabase project | `harrier`, `eu-west-1` (exists) | `harrier-production`, `eu-west-1` (not created yet) |
 | Fly API app | `harrier-api-staging`, `ams` | `harrier-api-production`, `ams` |
 | Fly scheduler app | `harrier-scheduler-staging`, `ams` | `harrier-scheduler-production`, `ams` |
-| Vercel project | `harrier-web-staging` | `harrier-web-production` |
+| Vercel project | `harrier`, served at `harrier-web-staging.akinoztorun.dev` | `harrier-web-production` |
 | GitHub environment | `staging`, deployments from `main` only | `production`, deployments from `main` only, one required reviewer |
 
 The names are the shape, not a commitment. Another name goes in the Fly
@@ -134,7 +134,7 @@ Set each of these in the dashboard, once, and run its check:
 | Data API off ("Enable Data API"). With it off, none of the auto generated REST endpoints respond, regardless of grants or row security. | `curl -s -o /dev/null -w '%{http_code}\n' -H "apikey: $PUBLISHABLE_KEY" "$SUPABASE_URL/rest/v1/jobs"` prints a status that is not 2xx. The deploy runs the same probe at step 7. |
 | An asymmetric signing key current (the API refuses `HS256`). | `curl -s "$SUPABASE_URL/auth/v1/.well-known/jwks.json" \| jq '[.keys[].alg]'` lists asymmetric algorithms only. |
 | Anonymous sign-ins off, and public sign-up off until spec 111. | `HARRIER_SUPABASE_URL=... HARRIER_SUPABASE_PUBLISHABLE_KEY=... uv run --project services/api --no-dev harrier deploy check-auth-settings` prints `auth settings: invite only`. The deploy runs it at step 7. |
-| The email template carries `{{ .Token }}`, so sign-in sends a code rather than a link (spec 114), and a sender that reaches invited users. Supabase's built-in sender is not assumed to. | Invite one address you control (spec 111), ask for a sign-in code on the staging SPA, and read the code in the mail. |
+| The email template carries `{{ .Token }}`, so sign-in sends a code rather than a link (spec 114), and a sender that reaches invited users. Supabase's built-in sender is not assumed to. The dashboard lets a template be edited only once custom SMTP is on (Authentication, Emails, SMTP Settings); staging sends through Google Workspace's `smtp.gmail.com` on port 465 with an app password. | Invite one address you control (spec 111), ask for a sign-in code on the staging SPA, and read the code in the mail. |
 | Redirect URLs name only the environment's SPA origin. | The same sign-in, with a code, and no link to another origin. |
 
 The project's session pooler is the connection path for the migrator and for
@@ -288,6 +288,15 @@ stopped machine costs its root file system. The hosting budget is 5 USD a month
 (see "The monthly cost check").
 
 ### 4. The Vercel projects
+
+Staging reuses the existing project `harrier` and is served at the custom
+domain `harrier-web-staging.akinoztorun.dev`: a CNAME record at the domain's
+DNS host points it at the target Vercel shows when the domain is added. The
+API accepts browser calls only from the origin `HARRIER_CORS_ORIGINS` names in
+`deploy/fly.staging.toml`, so the SPA's domain and that value change together,
+and the Supabase Site URL and Redirect URLs name the same origin. The
+project's deployment protection is set to all deployments except custom
+domains, so the page at the custom domain needs no Vercel sign-in.
 
 Two projects, `harrier-web-staging` and `harrier-web-production`, each on the
 free Hobby plan, root directory `apps/web`, framework Vite, Node 22. They serve
