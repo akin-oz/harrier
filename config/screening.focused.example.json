@@ -1,0 +1,107 @@
+{
+  "targets": {
+    "titles": [
+      "Frontend Engineer",
+      "Frontend Developer",
+      "React Developer",
+      "Next.js Developer"
+    ],
+    "title_keywords_include": ["frontend", "front-end", "react", "next.js", "typescript", "ui"],
+    "title_keywords_exclude": ["manager", "head of", "director", "vp"]
+  },
+  "scoring": {
+    "base_score": 30,
+    "exact_title_bonus": 20,
+    "include_keyword_bonus": 6,
+    "include_keyword_bonus_cap": 18,
+    "remote_bonus": 10,
+    "preferred_region_bonus": 8
+  },
+  "bonuses": [
+    {
+      "name": "figma",
+      "phrases": ["figma", "design handoff", "pixel"],
+      "fields": ["description"],
+      "points": 8
+    },
+    {
+      "name": "accessibility",
+      "phrases": ["accessibility", "a11y", "wcag"],
+      "fields": ["description"],
+      "points": 6
+    },
+    {
+      "name": "performance",
+      "phrases": ["performance", "core web vitals", "lighthouse"],
+      "fields": ["description"],
+      "points": 6
+    },
+    {
+      "name": "level",
+      "phrases": ["junior", "mid", "medior", "intermediate"],
+      "fields": ["title"],
+      "points": 8
+    },
+    {
+      "name": "bounded-time",
+      "phrases": [
+        "part-time",
+        "4 days",
+        "four days",
+        "32 hours",
+        "freelance",
+        "contract",
+        "project-based"
+      ],
+      "fields": ["description"],
+      "points": 6
+    }
+  ],
+  "penalties": [
+    {
+      "name": "seniority",
+      "phrases": ["staff", "principal", "lead", "head"],
+      "fields": ["title"],
+      "points": 25
+    },
+    {
+      "name": "on-call",
+      "phrases": ["on-call", "on call", "pager duty"],
+      "fields": ["description"],
+      "points": 15
+    },
+    {
+      "name": "ownership",
+      "phrases": [
+        "end-to-end ownership",
+        "own the roadmap",
+        "full ownership",
+        "technical leadership"
+      ],
+      "fields": ["description"],
+      "points": 12
+    },
+    {
+      "name": "full-week",
+      "phrases": ["5 days a week", "five days a week", "40 hours"],
+      "fields": ["description"],
+      "points": 8
+    },
+    {
+      "name": "us-hours",
+      "phrases": ["pst", "est", "us hours", "us time zone"],
+      "fields": ["description"],
+      "points": 15
+    }
+  ],
+  "ownership": {
+    "broad_title_signals": ["staff", "principal", "lead", "head", "architect"],
+    "broad_description_signals": [
+      "end-to-end ownership",
+      "own the roadmap",
+      "technical leadership",
+      "lead a team",
+      "on-call"
+    ]
+  }
+}

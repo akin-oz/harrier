@@ -52,6 +52,7 @@ from harrier.tracker.schema import ELIGIBILITY_ROUTES, ELIGIBILITY_VERDICTS
 from harrier.tracker.store import EligibilityAssessment, TrackerError
 from harrier.tracks import (
     NON_DEFAULT_OPERATIONS,
+    TRACK_KINDS,
     WRITE_OPERATIONS,
     Scope,
     Track,
@@ -563,6 +564,8 @@ def _cmd_profile_put(args: argparse.Namespace) -> int:
         return 1
     with closing(connect()) as conn:
         scope = _scope(conn, args)
+        if args.kind == "screening":
+            return _put_screening(conn, scope, text)
         if args.kind == "application_profile":
             outcome = put_application_profile(conn, scope, path.suffix, text)
         else:
@@ -571,6 +574,28 @@ def _cmd_profile_put(args: argparse.Namespace) -> int:
     for line in outcome.lines:
         print(line, file=stream)
     return outcome.exit_code
+
+
+def _put_screening(conn: Connection, scope: Scope, text: str) -> int:
+    """`profile put screening` (spec 137): a focused track only, and a
+    document that parses; either refusal exits 2 and stores nothing."""
+    from harrier.screening.focused import ScreeningDocumentError, put_screening
+
+    slug = scope.track.slug
+    if scope.track.kind != "focused":
+        print(
+            f"profile put screening: track {slug} is {scope.track.kind}; "
+            "a screening document belongs to a focused track",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        put_screening(conn, scope, text)
+    except ScreeningDocumentError as error:
+        print(f"profile put screening refused at {error}", file=sys.stderr)
+        return 2
+    print(f"stored screening/screening.json for track {slug}")
+    return 0
 
 
 def _cmd_profile_check(args: argparse.Namespace) -> int:
@@ -1309,7 +1334,7 @@ def _check_track(args: argparse.Namespace) -> int | None:
     before the command reads a row. Returns an exit status to stop with, or
     None to go on.
     """
-    from harrier.tracks import DEFAULT_TRACK_ID, UnknownTrackError, resolve_scope
+    from harrier.tracks import DEFAULT_TRACK_ID, UnknownTrackError, held_refusal, resolve_scope
 
     slug = getattr(args, "track_slug", None)
     if slug is None:
@@ -1330,6 +1355,10 @@ def _check_track(args: argparse.Namespace) -> int | None:
             "it runs on the default track only",
             file=sys.stderr,
         )
+        return 2
+    held = held_refusal(scope.track.kind, name)
+    if held is not None:
+        print(f"harrier {name}: {held}", file=sys.stderr)
         return 2
     if scope.track.archived and name in TRACK_WRITES:
         print(
@@ -1497,6 +1526,10 @@ def _cmd_tracker_verb(args: argparse.Namespace) -> int:
                         break
             # duplicate and invalid are refusals, not crashes: the caller
             # asked to add something already tracked, or gave too little.
+            # A focused track with no screening document is a usage error
+            # (spec 137).
+            if result.status == "unconfigured":
+                return 2
             return 0 if result.status == "added" else 1
 
         if args.command == "reevaluate":
@@ -2843,10 +2876,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     profile_put = profile_sub.add_parser(
         "put",
-        help="store the track's resume framing or application profile (specs 099, 101)",
+        help="store the track's resume framing, application profile or screening document",
     )
     profile_put.add_argument(
-        "kind", choices=["resume_framing", "application_profile"], help="the document kind"
+        "kind",
+        choices=["resume_framing", "application_profile", "screening"],
+        help="the document kind; screening is a focused track's (spec 137)",
     )
     profile_put.add_argument(
         "--file",
@@ -3188,7 +3223,7 @@ def build_parser() -> argparse.ArgumentParser:
     tracks_sub.add_parser("list", help="every track: id, slug, kind, label, archived")
     tracks_add = tracks_sub.add_parser("add", help="create a track (spec 093)")
     tracks_add.add_argument("slug", type=_slug)
-    tracks_add.add_argument("--kind", required=True, choices=["industry", "academic"])
+    tracks_add.add_argument("--kind", required=True, choices=list(TRACK_KINDS))
     tracks_add.add_argument("--label", required=True)
     tracks_archive = tracks_sub.add_parser(
         "archive", help="archive a track: it still lists and reads, and refuses writes"

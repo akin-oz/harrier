@@ -74,7 +74,7 @@ def _config_fingerprint(candidate_cfg: CandidateConfig) -> dict[str, Any]:
     return deciding
 
 
-def _rule_fingerprint() -> dict[str, Any]:
+def rule_fingerprint() -> dict[str, Any]:
     """The tables compiled into the module rather than read from config.
 
     These are the ones a code change moves, and they decide as much as the
@@ -147,7 +147,7 @@ def policy_version(candidate_cfg: CandidateConfig, *, model: str | None = None) 
         model = active_model_identity()
     payload = {
         "config": _config_fingerprint(candidate_cfg),
-        "rules": _rule_fingerprint(),
+        "rules": rule_fingerprint(),
         "model": model,
     }
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=True, default=str)

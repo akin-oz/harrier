@@ -69,3 +69,7 @@ dist/
 # An operator's working copy of the academic searches (spec 097). The search
 # lives in the database; this name is ignored so a copy stays local.
 /config/academic-searches.json
+# An operator's working copy of a focused track's screening document (spec
+# 137). The document lives in the database; this name is ignored so a copy
+# stays local.
+/config/screening.focused.json

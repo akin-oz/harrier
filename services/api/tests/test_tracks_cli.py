@@ -561,3 +561,20 @@ def test_a_repeated_archive_is_its_own_refusal(academic: Path) -> None:
         assert not isinstance(refused.value, AlreadyArchivedError)
     finally:
         conn.close()
+
+
+def test_the_browser_cannot_add_a_focused_track(
+    data_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The focused kind is the command line's until a later spec opens it in
+    the browser (spec 137, amendment 3). A focused track still lists."""
+    client: TestClient = TestClient(create_app())
+    kinds = [k["kind"] for k in client.get("/tracks/kinds").json()]
+    assert kinds == ["industry", "academic"]
+    body = {"slug": "bounded", "kind": "focused", "label": "Bounded roles"}
+    assert client.post("/tracks", json=body, headers=auth()).status_code == 422
+
+    assert main(["tracks", "add", "bounded", "--kind", "focused", "--label", "Bounded"]) == 0
+    listed = {t["slug"]: t for t in client.get("/tracks").json()}
+    assert listed["bounded"]["kind"] == "focused"
+    assert listed["bounded"]["status_labels"] == dict(KIND_RULES["industry"].labels)

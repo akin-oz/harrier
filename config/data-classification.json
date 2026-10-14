@@ -37,7 +37,8 @@
       "config/story-seeds.json",
       "config/outreach-defaults.json",
       "config/application-brief.json",
-      "config/academic-searches.json"
+      "config/academic-searches.json",
+      "config/screening.focused.json"
     ]
   }
 }

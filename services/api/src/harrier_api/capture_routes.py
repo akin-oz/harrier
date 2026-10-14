@@ -35,7 +35,9 @@ from harrier_api.localauth import (
 
 capture_router = APIRouter(route_class=DatabaseRoute)
 
-_STATUS_CODES = {"added": 200, "invalid": 400, "duplicate": 409}
+# A focused track with no screening document is a refusal of the track's
+# state, as a duplicate is (spec 137).
+_STATUS_CODES = {"added": 200, "invalid": 400, "duplicate": 409, "unconfigured": 409}
 
 
 class CaptureIn(BaseModel):
