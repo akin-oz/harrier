@@ -5,7 +5,7 @@ import type { components } from "@harrier/contract";
 
 import type { RunOut, useRunStream } from "../../features/runs/useRunStream";
 import { api } from "../../shared/api/client";
-import { TOKEN_REFUSED, refusalMessage } from "./RunOutput";
+import { refusalMessage } from "./RunOutput";
 import { SOURCE_LABEL, isSource } from "./sources";
 import type { SourceName } from "./sources";
 
@@ -57,7 +57,6 @@ export function DiscoverySection({ stream }: { stream: ReturnType<typeof useRunS
         },
       });
       if (error !== undefined) throw new Error(refusalMessage(error, "discovery was refused"));
-      if (data === undefined) throw new Error(TOKEN_REFUSED);
       return data;
     },
     onSuccess: (data) => {

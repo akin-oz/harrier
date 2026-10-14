@@ -56,6 +56,11 @@ instances bounded.
    buffer, trivial to consume from the SPA, trivial to debug with curl. Fits the actual
    shape: the client sends commands rarely (REST) and receives events constantly.
 
+   **Amended (spec 114).** SSE stays the transport and `Last-Event-ID` replay stays
+   the reconnect. The SPA reads the stream with `fetch` and reconnects itself,
+   because the native `EventSource` cannot send the hosted API's bearer header
+   (spec 104, Open decision 4). The decision below is unchanged.
+
 ## Decision
 
 In-process run manager with subprocess execution. REST for commands:

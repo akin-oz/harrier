@@ -1,0 +1,44 @@
+.telegram-form {
+  display: grid;
+  gap: var(--space-2);
+  max-width: 420px;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+.telegram-form__state,
+.telegram-form__note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+.telegram-form__field {
+  display: grid;
+  gap: var(--space-1);
+  font-size: 13px;
+}
+.telegram-form__field input {
+  padding: 5px 8px;
+  font: inherit;
+  color: var(--color-text);
+  background: var(--color-bg-raised);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+}
+.telegram-form__field input:focus-visible,
+.telegram-form__actions button:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+.telegram-form__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+.telegram-form__problem {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-danger);
+  overflow-wrap: anywhere;
+}

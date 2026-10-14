@@ -52,9 +52,12 @@ export function HealthBadge() {
           held by host: {hold.subcommand} since {holdTime(hold.since)}
         </span>
       ) : (
-        <span>{health.job_count ?? 0} jobs</span>
+        // Hosted, the API reports no count (spec 104): say nothing, not 0.
+        health.job_count !== null && <span>{String(health.job_count)} jobs</span>
       )}
-      <span className="health-badge__dot" aria-hidden="true" />
+      {(hold || health.job_count !== null) && (
+        <span className="health-badge__dot" aria-hidden="true" />
+      )}
       <span
         className="health-badge__revision"
         title={stamped ? `built ${health.built_at}` : "not built from an image"}

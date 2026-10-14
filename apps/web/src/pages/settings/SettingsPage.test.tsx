@@ -6,6 +6,8 @@ import { afterEach, expect, test, vi } from "vitest";
 import { stubApi } from "../../shared/testing/stubApi";
 import type { ApiCall } from "../../shared/testing/stubApi";
 import { SettingsPage } from "./SettingsPage";
+import { installRunStreams } from "../../shared/testing/runStreams";
+import type { RunStreams } from "../../shared/testing/runStreams";
 
 /**
  * The Settings page (spec 096): its sections, the profile list, and backups,
@@ -90,29 +92,14 @@ function handler(options: Options) {
   };
 }
 
-class FakeEventSource {
-  static last: FakeEventSource | null = null;
-  onmessage: ((event: MessageEvent<string>) => void) | null = null;
-  onerror: (() => void) | null = null;
-  constructor(readonly url: string) {
-    FakeEventSource.last = this;
-  }
-  emit(payload: unknown): void {
-    this.onmessage?.({ data: JSON.stringify(payload) } as MessageEvent<string>);
-  }
-  close(): void {
-    /* nothing to release in a test */
-  }
-}
+let streams: RunStreams;
 
 function renderPage(): void {
-  FakeEventSource.last = null;
+  streams = installRunStreams();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <SettingsPage
-        createEventSource={(url) => new FakeEventSource(url) as unknown as EventSource}
-      />
+      <SettingsPage />
     </QueryClientProvider>,
   );
 }
@@ -165,10 +152,10 @@ test("a missing backups directory is said in words, and a backup can still be ta
   });
   // An empty body: an archive, and no older one deleted (spec 050).
   expect(calls.find((call) => call.path === "/api/ops/backup")?.body).toEqual({});
-  expect(FakeEventSource.last?.url).toBe("/api/runs/run7/events");
+  expect(streams.last.path).toBe("/api/runs/run7/events");
   act(() => {
-    FakeEventSource.last?.emit({ type: "log_line", line: `${ARCHIVE} (0.1 MiB, verified)` });
-    FakeEventSource.last?.emit({ type: "state_change", state: "succeeded", exit_code: 0 });
+    streams.last.emit({ type: "log_line", line: `${ARCHIVE} (0.1 MiB, verified)` });
+    streams.last.emit({ type: "state_change", state: "succeeded", exit_code: 0 });
   });
   expect(await screen.findByText(`${ARCHIVE} (0.1 MiB, verified)`)).toBeDefined();
 });
@@ -201,11 +188,11 @@ test("each listed archive can be verified by its name, and a failure is marked",
     );
   });
   act(() => {
-    FakeEventSource.last?.emit({
+    streams.last.emit({
       type: "log_line",
       line: `archive is not usable: ${ARCHIVE} is not a readable archive`,
     });
-    FakeEventSource.last?.emit({ type: "state_change", state: "failed", exit_code: 1 });
+    streams.last.emit({ type: "state_change", state: "failed", exit_code: 1 });
   });
   expect((await screen.findByRole("alert")).textContent).toContain("is not a readable archive");
 });
@@ -223,14 +210,14 @@ test("a failed backup says no archive was written", async () => {
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "Take a backup" }));
   await waitFor(() => {
-    expect(FakeEventSource.last).not.toBeNull();
+    expect(streams.connections.length).toBeGreaterThan(0);
   });
   act(() => {
-    FakeEventSource.last?.emit({
+    streams.last.emit({
       type: "log_line",
       line: "backup failed: archive verification disagreed",
     });
-    FakeEventSource.last?.emit({ type: "state_change", state: "failed", exit_code: 1 });
+    streams.last.emit({ type: "state_change", state: "failed", exit_code: 1 });
   });
   expect((await screen.findByRole("alert")).textContent).toBe(
     "The backup failed and no archive was written. backup failed: archive verification disagreed",
@@ -255,15 +242,18 @@ test("a refused backup is shown in the server's words, not as a token refusal", 
 });
 
 test("a backups list refused for its token says so", async () => {
-  // The list opens no database, so its one declared refusal is the token's
-  // 403, which has no body.
+  // The 403 is declared with the API's own sentence (spec 114), and the page
+  // shows it in those words.
+  const sentence =
+    "this request did not present the local API token. " +
+    "The UI sends it automatically; a page that is not the harrier UI cannot.";
   stubApi((call) =>
-    call.path === "/api/settings/backups" ? { status: 403, body: null } : handler({})(call),
+    call.path === "/api/settings/backups"
+      ? { status: 403, body: { detail: sentence } }
+      : handler({})(call),
   );
   renderPage();
-  expect((await screen.findByRole("alert")).textContent).toBe(
-    "refused: the local API token was not accepted",
-  );
+  expect((await screen.findByRole("alert")).textContent).toBe(sentence);
 });
 
 test("starting a backup clears a verification's refusal", async () => {
@@ -290,4 +280,21 @@ test("starting a backup clears a verification's refusal", async () => {
   await waitFor(() => {
     expect(screen.queryByText(/in the backups list/)).toBeNull();
   });
+});
+
+test("local settings show no credentials or Telegram section", async () => {
+  const calls = stubApi(handler({}));
+  renderPage();
+  await screen.findByRole("heading", { name: "Backups" });
+
+  expect(screen.queryByRole("heading", { name: "Credentials" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Telegram notifications" })).toBeNull();
+  // Locally both route families answer 404, so neither is asked.
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  expect(
+    calls.filter(
+      (call) =>
+        call.path.startsWith("/api/credentials") || call.path.startsWith("/api/notifications"),
+    ),
+  ).toEqual([]);
 });

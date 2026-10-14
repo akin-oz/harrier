@@ -2,9 +2,9 @@ import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { TERMINAL_STATES, useRunStream } from "../../features/runs/useRunStream";
-import type { EventSourceFactory, RunOut } from "../../features/runs/useRunStream";
+import type { RunOut } from "../../features/runs/useRunStream";
 import { api } from "../../shared/api/client";
-import { RunOutput, TOKEN_REFUSED, refusalMessage } from "./RunOutput";
+import { RunOutput, refusalMessage } from "./RunOutput";
 
 type Mode = "preview" | "send" | "resend";
 
@@ -14,8 +14,8 @@ type Mode = "preview" | "send" | "resend";
  * a separate button marked as sending. A day already delivered is refused
  * in the server's words, and sending it again is its own explicit request.
  */
-export function DigestSection({ createEventSource }: { createEventSource: EventSourceFactory }) {
-  const stream = useRunStream(createEventSource);
+export function DigestSection() {
+  const stream = useRunStream();
   const [day, setDay] = useState("");
   const [mode, setMode] = useState<Mode | null>(null);
   const [refusedDay, setRefusedDay] = useState<string | null>(null);
@@ -35,7 +35,6 @@ export function DigestSection({ createEventSource }: { createEventSource: EventS
         setRefusedDay(next === "send" ? day : null);
         throw new Error(refusalMessage(error, "the digest was refused"));
       }
-      if (data === undefined) throw new Error(TOKEN_REFUSED);
       return data;
     },
     onMutate: () => {

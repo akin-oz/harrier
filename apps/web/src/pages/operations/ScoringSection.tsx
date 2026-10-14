@@ -1,9 +1,9 @@
 import { useMutation } from "@tanstack/react-query";
 
 import { useRunStream } from "../../features/runs/useRunStream";
-import type { EventSourceFactory, RunOut } from "../../features/runs/useRunStream";
+import type { RunOut } from "../../features/runs/useRunStream";
 import { api } from "../../shared/api/client";
-import { RunOutput, TOKEN_REFUSED, refusalMessage } from "./RunOutput";
+import { RunOutput, refusalMessage } from "./RunOutput";
 
 /**
  * The learned score's export (`harrier scoring export`, spec 077), as a run
@@ -11,13 +11,12 @@ import { RunOutput, TOKEN_REFUSED, refusalMessage } from "./RunOutput";
  * Training needs scikit-learn, which the image does not install, so it runs
  * on the host.
  */
-export function ScoringSection({ createEventSource }: { createEventSource: EventSourceFactory }) {
-  const stream = useRunStream(createEventSource);
+export function ScoringSection() {
+  const stream = useRunStream();
   const start = useMutation({
     mutationFn: async (): Promise<RunOut> => {
       const { data, error } = await api.POST("/ops/scoring/export");
       if (error !== undefined) throw new Error(refusalMessage(error, "the export was refused"));
-      if (data === undefined) throw new Error(TOKEN_REFUSED);
       return data;
     },
     onSuccess: (data) => {
