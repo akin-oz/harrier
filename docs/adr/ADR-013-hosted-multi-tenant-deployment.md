@@ -131,6 +131,15 @@ Postgres hosted), and a JWT boundary the local product never had. Chosen.
    run is a CLI process. A run is bound to its owner by its parent, the API.
    Row-level policy then catches a bug in a run; it does not contain a
    compromised run, which can claim any owner (spec 106, The trust model).
+
+   **Amended (spec 108).** "The service role" for the scheduler is
+   `harrier_schedule_reader`, a harrier-owned role with no login, not
+   Supabase's `service_role`. Its only reach past the owner policy is
+   `EXECUTE` on one function, `harrier_schedule_inputs()`, which returns
+   each owner's schedule choice and scheduler state and nothing else.
+   Supabase's `service_role` would have read whole tables for every owner,
+   `user_config` included, whose other kinds hold an owner's searches and
+   watchlist. Column grants cannot narrow a read to one kind.
 5. **One write path, per dialect.** `harrier.tracker` stays the only writer
    (ADR-003, ADR-012 point 4). The schema keeps one definition in
    `services/api/src/harrier/tracker/schema.py`: each migration declares

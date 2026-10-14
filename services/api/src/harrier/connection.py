@@ -245,6 +245,12 @@ TRANSACTION_GIVEN_UP = "a statement failed inside this transaction, so the store
 TRANSACTION_CONTROL = (
     "a statement may not control the transaction: transaction() begins, commits and rolls back"
 )
+# The refusal of a statement that would change the session: its role, its
+# claims or its settings (spec 112, amendment of 2026-10-14: the session).
+SESSION_STATEMENT = (
+    "a statement may not change the session: "
+    "transaction() sets the role, the claims and the timeouts"
+)
 
 # The refusals of a statement whose placeholders the seam cannot read the
 # same way on both stores (spec 112, post-merge review of PR #288).
@@ -644,6 +650,27 @@ class _StoreCursor:
             yield row
 
 
+@dataclass(frozen=True)
+class Session:
+    """What a caller may ask of an outermost Postgres transaction beyond the
+    seam's own first statements: two timeouts in milliseconds, the tenant
+    role on a connection opened without an owner (spec 112, amendment of
+    2026-10-14: the session), and the schedule reader's role, which holds no
+    claims (amendment of 2026-10-14: the schedule reader). The seam sends
+    each as `SET LOCAL`, since `execute()` refuses a SET."""
+
+    statement_timeout_ms: int | None = None
+    idle_timeout_ms: int | None = None
+    tenant: bool = False
+    schedule_reader: bool = False
+
+    def asked(self) -> bool:
+        return self != _NO_SESSION
+
+
+_NO_SESSION = Session()
+
+
 class _Backend(Protocol):
     """What `Connection` asks of a driver. Every call may raise the
     driver's errors; `Connection` translates them."""
@@ -660,7 +687,9 @@ class _Backend(Protocol):
 
     def refuse_to_begin(self, *, immediate: bool) -> None: ...
 
-    def begin(self, *, immediate: bool) -> None: ...
+    def begin(self, *, immediate: bool, session: Session) -> None: ...
+
+    def verify_identity(self) -> None: ...
 
     def open_savepoint(self, name: str, *, immediate: bool) -> None: ...
 
@@ -773,6 +802,27 @@ def _first_words(sql: str, reading: Dialect) -> tuple[str, ...]:
     return tuple(words)
 
 
+_SESSION_WORDS = frozenset({"set", "reset", "discard"})
+# `SET TRANSACTION` sets what ends with its transaction, and touches neither
+# the role nor the claims.
+_SESSION_EXCEPTION = ("set", "transaction")
+
+
+def changes_the_session(sql: str) -> bool:
+    """Whether `sql` changes the session itself: its first word is SET,
+    RESET or DISCARD, on either reading, and its first two are not SET
+    TRANSACTION (spec 112, amendment of 2026-10-14: the session). Read as
+    `controls_the_transaction` reads, so a word inside a literal or after
+    the first is not. A `set_config` called from a SELECT is not seen here;
+    the read-back before commit sees what it did to the role or the claims.
+    """
+    for reading in _READINGS:
+        words = _first_words(sql, reading)
+        if words[:1] and words[0] in _SESSION_WORDS and words != _SESSION_EXCEPTION:
+            return True
+    return False
+
+
 def controls_the_transaction(sql: str) -> bool:
     """Whether `sql` begins, ends or marks a transaction itself (spec 112,
     amendment of 2026-10-13: transaction control).
@@ -880,7 +930,8 @@ class _SqliteBackend:
     def refuse_to_begin(self, *, immediate: bool) -> None:
         self._refuse_without_the_lock(immediate=immediate)
 
-    def begin(self, *, immediate: bool) -> None:
+    def begin(self, *, immediate: bool, session: Session) -> None:
+        # `transaction()` refuses every session option on SQLite.
         self.pending = []
         self.held = self.driver.in_transaction
         self.lost = False
@@ -918,6 +969,10 @@ class _SqliteBackend:
     def refuse_given_up(self) -> None:
         if self.given_up():
             raise StoreDatabaseError(TRANSACTION_GIVEN_UP)
+
+    def verify_identity(self) -> None:
+        # SQLite has no role and no claims.
+        return
 
     def end(self) -> None:
         self.pending = []
@@ -994,6 +1049,11 @@ class _PostgresBackend:
         self.driver = driver
         self.claims = claims
         self.busy_timeout_ms = busy_timeout_ms
+        # Whether the open transaction took the tenant role without claims,
+        # by `transaction(tenant=True)`. Set as each one begins.
+        self.tenant = False
+        # Likewise the schedule reader's role, by `schedule_reader=True`.
+        self.reader = False
 
     def run(
         self, sql: str, statement: Statement, params: Sequence[object], *, in_block: bool
@@ -1022,7 +1082,7 @@ class _PostgresBackend:
         if self.driver_in_transaction():
             raise StoreDatabaseError(POSTGRES_NOT_IDLE)
 
-    def begin(self, *, immediate: bool) -> None:
+    def begin(self, *, immediate: bool, session: Session) -> None:
         # `immediate` locks nothing here: the domain's write lock locks the
         # job rows a write depends on instead (`harrier.tracker.store`,
         # spec 126). SET LOCAL ends with the transaction, so nothing carries over
@@ -1030,8 +1090,46 @@ class _PostgresBackend:
         # means no limit, so "do not wait" is sent as 1 ms.
         self.driver.execute(b"BEGIN")
         self.driver.execute(f"SET LOCAL lock_timeout = '{max(self.busy_timeout_ms, 1)}ms'".encode())
+        # The settings a caller may ask of a transaction, sent by the seam
+        # itself: `execute()` refuses a SET (spec 112, amendment of
+        # 2026-10-14: the session).
+        if session.statement_timeout_ms is not None:
+            self.driver.execute(
+                f"SET LOCAL statement_timeout = '{session.statement_timeout_ms}ms'".encode()
+            )
+        if session.idle_timeout_ms is not None:
+            idle = f"{session.idle_timeout_ms}ms"
+            self.driver.execute(
+                f"SET LOCAL idle_in_transaction_session_timeout = '{idle}'".encode()
+            )
+        self.tenant = self.claims is None and session.tenant
+        self.reader = self.claims is None and session.schedule_reader
         if self.claims is not None:
             assume_identity(self.driver, self.claims)
+        elif self.tenant:
+            from harrier.tracker.schema import TENANT_ROLE
+
+            self.driver.execute(f"SET LOCAL ROLE {TENANT_ROLE}".encode())
+        elif self.reader:
+            from harrier.tracker.schema import SCHEDULE_READER_ROLE
+
+            self.driver.execute(f"SET LOCAL ROLE {SCHEDULE_READER_ROLE}".encode())
+
+    def verify_identity(self) -> None:
+        # Again before COMMIT: a statement since the start may have moved the
+        # role or the claims, by a `set_config` no first word shows (spec
+        # 112, amendment of 2026-10-14: the session).
+        # Every transaction that took the tenant role, an owner's or one begun
+        # with `tenant`, still has it; an owner's still has its claims too
+        # (review of PR #326).
+        if self.claims is not None:
+            read_back_identity(self.driver, self.claims)
+        elif self.tenant:
+            read_back_role(self.driver)
+        elif self.reader:
+            from harrier.tracker.schema import SCHEDULE_READER_ROLE
+
+            read_back_role(self.driver, SCHEDULE_READER_ROLE)
 
     def open_savepoint(self, name: str, *, immediate: bool) -> None:
         self.driver.execute(f"SAVEPOINT {name}".encode())
@@ -1138,7 +1236,6 @@ def assume_identity(driver: psycopg.Connection[Any], claims: Mapping[str, object
 
     from harrier.tracker.schema import TENANT_ROLE
 
-    sub = str(claims.get("sub", ""))
     step: IdentityPart = "role"
     try:
         driver.execute(f"SET LOCAL ROLE {TENANT_ROLE}".encode())
@@ -1146,14 +1243,52 @@ def assume_identity(driver: psycopg.Connection[Any], claims: Mapping[str, object
         driver.execute(
             b"SELECT set_config('request.jwt.claims', %s, true)", (json.dumps(dict(claims)),)
         )
-        step = "read-back"
+    except psycopg.Error as error:
+        raise IdentityDidNotHold((step,)) from error
+    read_back_identity(driver, claims)
+
+
+def read_back_role(driver: psycopg.Connection[Any], expected: str | None = None) -> None:
+    """Raise IdentityDidNotHold naming `role` unless `current_user` is
+    `expected`, `harrier_tenant` when none is given: before a transaction
+    begun with `transaction(tenant=True)` on a connection without claims
+    commits (spec 112, amendment of 2026-10-14: the session; review of PR
+    #326), and before one begun with `schedule_reader=True` does, with
+    `harrier_schedule_reader` (amendment of 2026-10-14: the schedule
+    reader)."""
+    import psycopg
+
+    from harrier.tracker.schema import TENANT_ROLE
+
+    wanted = TENANT_ROLE if expected is None else expected
+
+    try:
+        row = driver.execute(b"SELECT current_user::text").fetchone()
+    except psycopg.Error as error:
+        raise IdentityDidNotHold(("read-back",)) from error
+    if row is None or row[0] != wanted:
+        raise IdentityDidNotHold(("role",))
+
+
+def read_back_identity(driver: psycopg.Connection[Any], claims: Mapping[str, object]) -> None:
+    """Raise IdentityDidNotHold unless the open transaction acts as `claims`'
+    owner: `current_user` is `harrier_tenant`, and the `sub` of the claims
+    setting and `harrier_owner_id()` are the owner. One statement. Run at the
+    start of every owner transaction (`assume_identity`) and again before it
+    commits (spec 112, amendment of 2026-10-14: the session)."""
+    import psycopg
+
+    from harrier.tracker.schema import TENANT_ROLE
+
+    sub = str(claims.get("sub", ""))
+    try:
         row = driver.execute(
             b"SELECT current_user::text, "
             b"nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub', "
             b"public.harrier_owner_id()::text"
         ).fetchone()
     except psycopg.Error as error:
-        raise IdentityDidNotHold((step,)) from error
+        raise IdentityDidNotHold(("read-back",)) from error
     if row is None:
         raise IdentityDidNotHold(("read-back",))
     role, claimed, owner = tuple(row)
@@ -1166,6 +1301,25 @@ def assume_identity(driver: psycopg.Connection[Any], claims: Mapping[str, object
         differed.append("owner")
     if differed:
         raise IdentityDidNotHold(tuple(differed))
+
+
+def _check_session(session: Session, *, nested: bool, dialect: Dialect, claims: bool) -> None:
+    if nested:
+        raise ValueError("a session option belongs to the outermost transaction() block")
+    if dialect != "postgres":
+        raise ValueError("a session option applies to a Postgres store only")
+    if session.schedule_reader and session.tenant:
+        raise ValueError("a transaction takes one role: tenant or schedule_reader, not both")
+    if session.schedule_reader and claims:
+        # The reader holds no claims and acts for no owner (spec 112,
+        # amendment of 2026-10-14: the schedule reader).
+        raise ValueError("schedule_reader is for a connection opened without claims")
+    for name, value in (
+        ("statement_timeout_ms", session.statement_timeout_ms),
+        ("idle_timeout_ms", session.idle_timeout_ms),
+    ):
+        if value is not None and (isinstance(value, bool) or value < 0):
+            raise ValueError(f"{name} must be a whole number of 0 or more, not {value!r}")
 
 
 class Connection:
@@ -1242,7 +1396,10 @@ class Connection:
         first: before the placeholders, before the refusal in a block the
         store gave up on, and on Postgres before the statement's own transaction begins. No
         driver sees it, so the store has given nothing up, and a block that
-        catches it goes on.
+        catches it goes on. A statement that changes the session
+        (`changes_the_session`: SET, RESET or DISCARD, SET TRANSACTION
+        excepted) is refused the same way with `SESSION_STATEMENT` (spec
+        112, amendment of 2026-10-14: the session).
 
         On Postgres a statement outside `transaction()` runs in a
         transaction of its own, which begins as every transaction does, so
@@ -1252,6 +1409,8 @@ class Connection:
         """
         if controls_the_transaction(sql):
             raise StoreDatabaseError(TRANSACTION_CONTROL)
+        if changes_the_session(sql):
+            raise StoreDatabaseError(SESSION_STATEMENT)
         statement = _parameters_match(sql, params)
         if self._backend.dialect == "postgres" and self._depth == 0:
             with self.transaction():
@@ -1266,7 +1425,15 @@ class Connection:
         return _StoreCursor(cursor, self._backend.translate)
 
     @contextmanager
-    def transaction(self, *, immediate: bool = False) -> Generator[None, None, None]:
+    def transaction(
+        self,
+        *,
+        immediate: bool = False,
+        statement_timeout_ms: int | None = None,
+        idle_timeout_ms: int | None = None,
+        tenant: bool = False,
+        schedule_reader: bool = False,
+    ) -> Generator[None, None, None]:
         """Commit on success and roll back on any exception.
 
         The outermost block is the transaction. On SQLite it is what `with
@@ -1296,9 +1463,34 @@ class Connection:
         transaction the seam did not begin (`POSTGRES_NOT_IDLE`); on SQLite
         when `immediate` is asked inside a transaction begun without the
         write lock (`WRITE_LOCK_NOT_HELD`).
+
+        `statement_timeout_ms`, `idle_timeout_ms`, `tenant` and
+        `schedule_reader` belong to an outermost Postgres block: the seam
+        sends them as `SET LOCAL` after the lock timeout, since `execute()`
+        refuses a SET. `tenant` takes the tenant role on a connection opened
+        without an owner; on an owner's connection the role is the tenant's
+        already. `schedule_reader` takes `harrier_schedule_reader`, which
+        holds no claims: it is refused on a connection opened with claims,
+        and together with `tenant`. A block that took either role reads
+        `current_user` again before it commits. Raises ValueError, before
+        anything begins, for any of them on a nested block or on SQLite, and
+        for a timeout that is not a whole number of 0 or more (spec 112,
+        amendments of 2026-10-14: the session, and the schedule reader).
+
+        On a connection opened with claims, the identity is read back again
+        just before `COMMIT`. A role or claims that moved since the start
+        roll the transaction back and raise IdentityDidNotHold.
         """
+        session = Session(statement_timeout_ms, idle_timeout_ms, tenant, schedule_reader)
+        if session.asked():
+            _check_session(
+                session,
+                nested=self._depth > 0,
+                dialect=self._backend.dialect,
+                claims=getattr(self._backend, "claims", None) is not None,
+            )
         if self._depth == 0:
-            with self._outermost(immediate=immediate):
+            with self._outermost(immediate=immediate, session=session):
                 yield
             return
         name = f"harrier_savepoint_{self._depth}"
@@ -1319,12 +1511,12 @@ class Connection:
             self._guard(lambda: self._backend.control(f"RELEASE SAVEPOINT {name}"))
 
     @contextmanager
-    def _outermost(self, *, immediate: bool) -> Generator[None, None, None]:
+    def _outermost(self, *, immediate: bool, session: Session) -> Generator[None, None, None]:
         # Before the try: a transaction the seam may not begin on is left as
         # it was found, never rolled back.
         self._guard(lambda: self._backend.refuse_to_begin(immediate=immediate))
         try:
-            self._guard(lambda: self._backend.begin(immediate=immediate))
+            self._guard(lambda: self._backend.begin(immediate=immediate, session=session))
         except BaseException:
             self._quietly_roll_back()
             raise
@@ -1345,6 +1537,7 @@ class Connection:
             self._quietly_roll_back()
             raise StoreDatabaseError(TRANSACTION_GIVEN_UP)
         try:
+            self._backend.verify_identity()
             self._guard(self._backend.commit)
         except BaseException:
             self._quietly_roll_back()

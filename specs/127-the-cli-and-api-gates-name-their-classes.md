@@ -270,3 +270,38 @@ Until this spec lands, a command outside the store and run classes keeps
 spec 112's `POSTGRES_NOT_YET` (spec 106, Amendment (2026-10-13)). Scope
 item 1's sequencing stands: this spec is built after specs 106, 108 and
 111 build their commands.
+
+## Amendment (2026-10-14): the operator class moved to spec 108
+
+Spec 108 builds the operator class in its PR 2 (spec 108, Amendment
+(2026-10-14): the operator class is built here). It is a decision for
+Akin, as the move of the run class was. This spec depends on 108, and
+108's `scheduler` and `schedule-report` could not run on a Postgres store
+until this spec gave them a class, so neither could land first. Nothing
+else in this spec changes.
+
+**Moved to spec 108,** and built there:
+
+- the `harrier operator` group, as it has `scheduler` and
+  `schedule-report`, and spec 111 adds `invite` and `erase`;
+- the operator class in the Postgres gate: an operator subcommand runs on
+  a Postgres URL and is refused on SQLite with the text under Behavior,
+  before anything opens;
+- the role declaration of each operator subcommand, beside the parser, and
+  the check that a subcommand without one fails (spec 108's `services/api/tests/test_operator_class.py::test_every_operator_subcommand_declares_its_role`).
+
+**Kept here:**
+
+- the full class table beside the parser, with the operator row now
+  describing a class that exists;
+- the local-only and everything-else texts, and the walk over every
+  top-level command (planned test_every_command_has_a_postgres_refusal_class);
+- planned test_the_postgres_gate_has_operator_and_run_classes, whose
+  operator clause reads the declarations spec 108 builds;
+- `gmail-watch` and `gmail-oauth` in the local-only class, the removal of
+  `POSTGRES_NOT_YET`, and the documents.
+
+Scope item 1's sequencing stands: this spec is built after specs 106, 108
+and 111 build their commands. Where Scope item 1 says this spec is
+implemented only when `harrier operator` has the four subcommands, read
+that the group and its declarations already exist when this spec is built.

@@ -2413,6 +2413,16 @@ differed, as at the start. This catches what a first word cannot see:
 outside any block is its own transaction, so it is read back too, and
 its rows never reach the caller.
 
+**A transaction begun with `tenant` keeps the tenant role to its end.**
+On a connection without claims, a block begun with
+`transaction(tenant=True)` reads `current_user` again before `COMMIT`.
+When it is no longer `harrier_tenant`, the seam rolls back and raises
+`IdentityDidNotHold` naming `role`. So every transaction in which the
+seam took the tenant role, an owner's or one begun with `tenant`, still
+has it when it commits. A block that did not ask for the role is not
+held to it. (Review of PR #326: `run_start_checks` always rolls back,
+so nothing was exposed, but the option is general.)
+
 ### Failure modes (amendment of 2026-10-14: the session)
 
 - **A session statement through `execute()`.** Refused before the
@@ -2430,8 +2440,10 @@ its rows never reach the caller.
   naming `read-back`, as at the start, and the transaction rolls back.
 - **A block the store gave up on.** No read-back: it rolls back and
   raises `TRANSACTION_GIVEN_UP`, as the 2026-10-13 amendment says.
-- **A connection without claims.** No read-back: there is nothing to
-  compare. The first word refusal holds for it as for any connection.
+- **A connection without claims.** No read-back of claims: there are
+  none to compare. A block begun with `tenant` reads its role back
+  before commit, as above; any other block is not read back. The first
+  word refusal holds for it as for any connection.
 
 ### Acceptance criteria (amendment of 2026-10-14: the session)
 
@@ -2443,31 +2455,37 @@ synthetic owners and values only:
       request.jwt.claims = ...` and `SET statement_timeout = 0` are
       each refused with the text above, on both stores, inside a block
       and outside one, and the block then commits its own write
-      (planned test_a_session_statement_through_execute_is_refused).
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_session_statement_through_execute_is_refused`).
 - [ ] `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ` still runs
-      (planned test_set_transaction_is_not_a_session_statement).
+      (`services/api/tests/test_seam_on_both_stores.py::test_set_transaction_is_not_a_session_statement`).
 - [ ] On owner A's connection, a block that writes a row, runs `SELECT
       set_config('request.jwt.claims', <B's claims>, true)` and exits
       normally raises `IdentityDidNotHold` naming `claims` and `owner`,
       and the row is not in the store
-      (planned test_a_claims_change_is_refused_at_commit).
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_claims_change_is_refused_at_commit`).
 - [ ] The same with `SELECT set_config('role', 'harrier_migrator',
       true)` on the migrating login role, naming `role`
-      (planned test_a_role_change_is_refused_at_commit).
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_role_change_is_refused_at_commit`).
 - [ ] Outside any block, one statement that changes the claims and
       reads `contacts` raises `IdentityDidNotHold` and returns no rows
-      (planned test_a_statement_outside_a_block_cannot_return_another_owners_rows).
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_statement_outside_a_block_cannot_return_another_owners_rows`).
 - [ ] A hosted request whose route changes its claims through
       `set_config` answers 500 with the generic detail
-      (planned test_a_request_that_changes_its_claims_answers_500, in
-      `services/api/tests/test_hosted_requests.py`).
+      (`services/api/tests/test_hosted_requests.py::test_a_request_that_changes_its_claims_answers_500`).
 - [ ] `transaction()` refuses `statement_timeout_ms`, `idle_timeout_ms`
       and `tenant` on a nested block and on SQLite with `ValueError`
-      (planned test_the_session_options_belong_to_the_outermost_block).
+      (`services/api/tests/test_seam_on_both_stores.py::test_the_session_options_belong_to_the_outermost_block`).
+- [ ] On a connection without claims, a block begun with `tenant` whose
+      role a `SELECT set_config('role', ...)` moved back is refused at
+      commit with `IdentityDidNotHold` naming `role`; a block that keeps
+      the role commits, and a later block without `tenant` is not held
+      to it (review of PR #326)
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_tenant_transaction_that_leaves_the_tenant_role_is_refused_at_commit`).
 - [ ] Spec 134's tests pass with `hostedstore.py` passing the options:
       `services/api/tests/test_hosted_requests.py::test_the_request_role_has_lock_and_statement_timeouts`,
-      with its `/probe/plain-set` route running its `SET`s on the
-      driver beneath the seam, and the start checks in
+      with its `/probe/plain-set` route making its session-level
+      settings by `SELECT set_config(..., false)`, which the read-back
+      does not cover (Out of scope), and the start checks in
       `services/api/tests/test_hosted_start.py`.
 - [ ] Each new test fails with its part of the change reverted, and the
       pull request records what each reversion made fail.
@@ -2532,3 +2550,94 @@ All four as recommended.
 - The amendment above, its Out of scope and Honest limitations.
 - The probe behind the table above, run at `9be5778`, and the spy over
   the full suite. The pull request records each script and its output.
+
+## Amendment (2026-10-14): the schedule reader's role is the seam's
+
+Spec 108's scheduler lists every owner's schedule as
+`harrier_schedule_reader`, one transaction that reads one function
+(`harrier_schedule_inputs()`). The amendment above left the seam able to
+take one role only, `harrier_tenant`, by `transaction(tenant=True)`, and
+made `execute()` refuse `SET`. So the listing could not go through the seam.
+Spec 108's pull request (#327) sent it on the scheduler's own psycopg
+connection instead, and recorded the alternative as a decision for Akin.
+
+Akin decided in chat on 2026-10-14: add a reader-role option to the seam,
+not the raw connection, and do it in #327. This amendment is that
+option. It changes `transaction()` and its read-back in
+`services/api/src/harrier/connection.py`, and the scheduler's listing
+(`services/api/src/harrier/hostedschedule.py`, spec 108) moves onto it.
+Nothing else in this spec changes.
+
+### Behavior (amendment of 2026-10-14: the schedule reader)
+
+`Connection.transaction()` gains a keyword argument, `schedule_reader`,
+for the outermost block on Postgres. It is the second role the seam can
+take, the same way `tenant` takes the first:
+
+- **The role is taken inside the seam.** After `BEGIN`, the lock timeout
+  and the two timeouts when asked, the seam sends `SET LOCAL ROLE
+  harrier_schedule_reader`. `execute()` still refuses a `SET`.
+- **The timeouts apply the same way.** `statement_timeout_ms` and
+  `idle_timeout_ms` are sent before the role, as they are for `tenant`,
+  and the lock timeout always is. A reader block may ask for any of them.
+- **It is read back before it commits.** Before `COMMIT` the seam reads
+  `current_user` again, with the read-back a `tenant` block already has
+  (`read_back_role`, which now takes the role it expects). When it is not
+  `harrier_schedule_reader`, the seam rolls back and raises
+  `IdentityDidNotHold` naming `role`. So a transaction that took the reader
+  role cannot commit as any other role. A block that did not ask for it is
+  not held to it.
+- **It is Postgres only.** On SQLite, and on a nested block, it is refused
+  with `ValueError` before anything begins, as `tenant` is.
+- **It never mixes with claims.** The reader holds no claims, and acts for
+  no owner. On a connection opened with claims, `schedule_reader` is
+  refused with `ValueError` before anything begins, and so is asking for it
+  together with `tenant`: a block takes one role.
+
+The scheduler's listing, `list_inputs`, is then a `Connection` function
+again, and `transaction(schedule_reader=True)` its one block. Spec 108's
+scheduler opens no statement past the seam.
+
+### Failure modes (amendment of 2026-10-14: the schedule reader)
+
+- **The login role cannot set the reader.** The server refuses `SET LOCAL
+  ROLE`, and the block raises the store error for it, as for the tenant.
+- **A `set_config('role', ...)` moved the role back.** Refused at commit
+  with `IdentityDidNotHold` naming `role`; nothing commits.
+- **`schedule_reader` on an owner's connection, with `tenant`, nested, or on
+  SQLite.** `ValueError`, nothing begun.
+
+### Acceptance criteria (amendment of 2026-10-14: the schedule reader)
+
+In `services/api/tests/test_seam_on_both_stores.py`, on a store whose login
+role may set the reader, with synthetic values only:
+
+- [x] Inside `transaction(schedule_reader=True)`, `current_user` is
+      `harrier_schedule_reader` and no claims are set; after it, the login
+      role again (`services/api/tests/test_seam_on_both_stores.py::test_the_reader_option_takes_the_reader_role`).
+- [x] With `statement_timeout_ms` and `idle_timeout_ms`, the three timeouts
+      are the lock timeout the seam always sets and the two asked for
+      (`services/api/tests/test_seam_on_both_stores.py::test_the_reader_option_sets_the_timeouts`).
+- [x] A reader block whose role a `SELECT set_config('role', ...)` moved
+      back to the login role is refused at commit with `IdentityDidNotHold`
+      naming `role`, and its write is not in the store; a block that keeps
+      the role commits (`services/api/tests/test_seam_on_both_stores.py::test_a_reader_transaction_that_leaves_the_reader_role_is_refused_at_commit`).
+- [x] `schedule_reader` is refused with `ValueError` on SQLite and on a
+      nested block, with the other session options (the existing
+      `services/api/tests/test_seam_on_both_stores.py::test_the_session_options_belong_to_the_outermost_block`,
+      extended).
+- [x] `schedule_reader` is refused with `ValueError`, nothing begun, on a
+      connection opened with claims, and together with `tenant` (`services/api/tests/test_seam_on_both_stores.py::test_the_reader_option_refuses_claims_and_a_second_role`).
+- [x] Spec 108's tests pass with the listing on the seam, among them
+      `services/api/tests/test_hosted_schedule.py::test_only_the_reader_lists_schedules`
+      and `services/api/tests/test_hosted_scheduler.py::test_the_scheduler_acts_as_each_owner`.
+- [x] Each new test fails with its part of the change reverted, and the
+      pull request records what each reversion made fail.
+
+### Honest limitations (amendment of 2026-10-14: the schedule reader)
+
+- The seam names one more role. A third role the seam must take is a
+  further amendment, or the option becomes a role argument with an allow
+  list, which this amendment does not need.
+- The read-back compares `current_user` only. The reader holds `EXECUTE`
+  on one function and no claim, so there is nothing else to read.
