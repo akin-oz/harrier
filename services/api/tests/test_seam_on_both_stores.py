@@ -37,6 +37,9 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 from pg_support import fresh_database, new_owner
 from test_dialect_parity import PROBES, Probe
+from test_hosted_schedule import (
+    listing_store,  # noqa: F401  # pyright: ignore[reportUnusedImport]
+)
 
 import harrier.container
 import harrier.db
@@ -74,7 +77,7 @@ from harrier.connection import (
 from harrier.db import BUSY_TIMEOUT_MS, connect
 from harrier.logredact import identity_values
 from harrier.pgstore import migrate_postgres, postgres_connect
-from harrier.tracker.schema import TENANT_ROLE
+from harrier.tracker.schema import SCHEDULE_READER_ROLE, TENANT_ROLE
 from harrier.tracks import DuplicateTrackError, add_track
 
 if TYPE_CHECKING:
@@ -1129,6 +1132,7 @@ def test_the_session_options_belong_to_the_outermost_block(store: Store) -> None
         {"statement_timeout_ms": 1000},
         {"idle_timeout_ms": 1000},
         {"tenant": True},
+        {"schedule_reader": True},
     )
     if store.dialect == "sqlite":
         for option in options:
@@ -1149,6 +1153,96 @@ def test_the_session_options_belong_to_the_outermost_block(store: Store) -> None
         ):
             pass
     assert not conn.in_transaction
+
+
+# --- the schedule reader's role (spec 112, amendment of 2026-10-14) ---
+
+
+@pytest.fixture(name="reader_store")
+def reader_store_fixture(request: pytest.FixtureRequest) -> str:
+    """A migrated copy whose login role may set the schedule reader (spec
+    108's `listing_store`)."""
+    return cast(str, request.getfixturevalue("listing_store"))
+
+
+def test_the_reader_option_takes_the_reader_role(reader_store: str) -> None:
+    """`schedule_reader` takes `harrier_schedule_reader` inside the seam, with
+    no claims, for the block alone: the listing function answers in it, and
+    the login role is back after."""
+    with closing(open_store({URL_VARIABLE: reader_store})) as conn:
+        login = str(conn.execute("SELECT session_user::text").fetchone()[0])
+        with conn.transaction(schedule_reader=True):
+            assert conn.execute("SELECT current_user::text").fetchone()[0] == SCHEDULE_READER_ROLE
+            claims = conn.execute(
+                "SELECT nullif(current_setting('request.jwt.claims', true), '')"
+            ).fetchone()
+            assert claims[0] is None
+            assert conn.execute("SELECT count(*) FROM public.harrier_schedule_inputs()").fetchone()
+        assert not conn.in_transaction
+        with conn.transaction():
+            assert conn.execute("SELECT current_user::text").fetchone()[0] == login
+
+
+def test_the_reader_option_sets_the_timeouts(reader_store: str) -> None:
+    """The lock timeout the seam always sets, and the two timeouts a block
+    asks for, hold in a reader block as in any other, and end with it."""
+    settings = (
+        "SELECT setting FROM pg_settings WHERE name IN "
+        "('lock_timeout', 'statement_timeout', 'idle_in_transaction_session_timeout') "
+        "ORDER BY name"
+    )
+    with closing(open_store({URL_VARIABLE: reader_store})) as conn:
+        with conn.transaction(
+            schedule_reader=True, statement_timeout_ms=1234, idle_timeout_ms=5678
+        ):
+            held = [str(row[0]) for row in conn.execute(settings)]
+        assert held == ["5678", str(BUSY_TIMEOUT_MS), "1234"]
+        # Without them the block has the lock timeout alone.
+        with conn.transaction(schedule_reader=True):
+            held = [str(row[0]) for row in conn.execute(settings)]
+        assert held == ["0", str(BUSY_TIMEOUT_MS), "0"]
+
+
+def test_a_reader_transaction_that_leaves_the_reader_role_is_refused_at_commit(
+    reader_store: str,
+) -> None:
+    """A role moved back to the login role by a `set_config` no first word
+    shows is refused before COMMIT, as a tenant block's is; a block that
+    keeps the role commits, and a later block that did not ask for it is
+    not held to it."""
+    with closing(open_store({URL_VARIABLE: reader_store})) as conn:
+        login = str(conn.execute("SELECT session_user::text").fetchone()[0])
+        with conn.transaction(schedule_reader=True):
+            pass
+        with pytest.raises(IdentityDidNotHold) as refused, conn.transaction(schedule_reader=True):
+            conn.execute("SELECT set_config('role', ?, true)", (login,))
+            assert conn.execute("SELECT current_user::text").fetchone()[0] == login
+        assert refused.value.differed == ("role",)
+        assert not conn.in_transaction
+        with conn.transaction():
+            assert conn.execute("SELECT current_user::text").fetchone()[0] == login
+
+
+def test_the_reader_option_refuses_claims_and_a_second_role(reader_store: str) -> None:
+    """The reader holds no claims and acts for no owner: on a connection
+    opened with claims the option is refused, and so is asking for it
+    together with the tenant role, each before anything begins."""
+    with closing(postgres_connect(reader_store)) as admin:
+        owner = new_owner(admin)
+    with closing(open_store({URL_VARIABLE: reader_store}, owner=owner)) as conn:
+        with (
+            pytest.raises(ValueError, match="without claims"),
+            conn.transaction(schedule_reader=True),
+        ):
+            pass
+        assert not conn.in_transaction
+    with closing(open_store({URL_VARIABLE: reader_store})) as conn:
+        with (
+            pytest.raises(ValueError, match="one role"),
+            conn.transaction(tenant=True, schedule_reader=True),
+        ):
+            pass
+        assert not conn.in_transaction
 
 
 # --- the post-merge review of PR #288 ---

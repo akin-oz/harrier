@@ -2612,28 +2612,26 @@ scheduler opens no statement past the seam.
 In `services/api/tests/test_seam_on_both_stores.py`, on a store whose login
 role may set the reader, with synthetic values only:
 
-- [ ] Inside `transaction(schedule_reader=True)`, `current_user` is
+- [x] Inside `transaction(schedule_reader=True)`, `current_user` is
       `harrier_schedule_reader` and no claims are set; after it, the login
-      role again (planned test_the_reader_option_takes_the_reader_role).
-- [ ] With `statement_timeout_ms` and `idle_timeout_ms`, the three timeouts
+      role again (`services/api/tests/test_seam_on_both_stores.py::test_the_reader_option_takes_the_reader_role`).
+- [x] With `statement_timeout_ms` and `idle_timeout_ms`, the three timeouts
       are the lock timeout the seam always sets and the two asked for
-      (planned test_the_reader_option_sets_the_timeouts).
-- [ ] A reader block whose role a `SELECT set_config('role', ...)` moved
+      (`services/api/tests/test_seam_on_both_stores.py::test_the_reader_option_sets_the_timeouts`).
+- [x] A reader block whose role a `SELECT set_config('role', ...)` moved
       back to the login role is refused at commit with `IdentityDidNotHold`
       naming `role`, and its write is not in the store; a block that keeps
-      the role commits (planned
-      test_a_reader_transaction_that_leaves_the_reader_role_is_refused_at_commit).
-- [ ] `schedule_reader` is refused with `ValueError` on SQLite and on a
+      the role commits (`services/api/tests/test_seam_on_both_stores.py::test_a_reader_transaction_that_leaves_the_reader_role_is_refused_at_commit`).
+- [x] `schedule_reader` is refused with `ValueError` on SQLite and on a
       nested block, with the other session options (the existing
       `services/api/tests/test_seam_on_both_stores.py::test_the_session_options_belong_to_the_outermost_block`,
       extended).
-- [ ] `schedule_reader` is refused with `ValueError`, nothing begun, on a
-      connection opened with claims, and together with `tenant` (planned
-      test_the_reader_option_refuses_claims_and_a_second_role).
-- [ ] Spec 108's tests pass with the listing on the seam, among them
+- [x] `schedule_reader` is refused with `ValueError`, nothing begun, on a
+      connection opened with claims, and together with `tenant` (`services/api/tests/test_seam_on_both_stores.py::test_the_reader_option_refuses_claims_and_a_second_role`).
+- [x] Spec 108's tests pass with the listing on the seam, among them
       `services/api/tests/test_hosted_schedule.py::test_only_the_reader_lists_schedules`
       and `services/api/tests/test_hosted_scheduler.py::test_the_scheduler_acts_as_each_owner`.
-- [ ] Each new test fails with its part of the change reverted, and the
+- [x] Each new test fails with its part of the change reverted, and the
       pull request records what each reversion made fail.
 
 ### Honest limitations (amendment of 2026-10-14: the schedule reader)
