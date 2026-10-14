@@ -2443,31 +2443,31 @@ synthetic owners and values only:
       request.jwt.claims = ...` and `SET statement_timeout = 0` are
       each refused with the text above, on both stores, inside a block
       and outside one, and the block then commits its own write
-      (planned test_a_session_statement_through_execute_is_refused).
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_session_statement_through_execute_is_refused`).
 - [ ] `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ` still runs
-      (planned test_set_transaction_is_not_a_session_statement).
+      (`services/api/tests/test_seam_on_both_stores.py::test_set_transaction_is_not_a_session_statement`).
 - [ ] On owner A's connection, a block that writes a row, runs `SELECT
       set_config('request.jwt.claims', <B's claims>, true)` and exits
       normally raises `IdentityDidNotHold` naming `claims` and `owner`,
       and the row is not in the store
-      (planned test_a_claims_change_is_refused_at_commit).
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_claims_change_is_refused_at_commit`).
 - [ ] The same with `SELECT set_config('role', 'harrier_migrator',
       true)` on the migrating login role, naming `role`
-      (planned test_a_role_change_is_refused_at_commit).
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_role_change_is_refused_at_commit`).
 - [ ] Outside any block, one statement that changes the claims and
       reads `contacts` raises `IdentityDidNotHold` and returns no rows
-      (planned test_a_statement_outside_a_block_cannot_return_another_owners_rows).
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_statement_outside_a_block_cannot_return_another_owners_rows`).
 - [ ] A hosted request whose route changes its claims through
       `set_config` answers 500 with the generic detail
-      (planned test_a_request_that_changes_its_claims_answers_500, in
-      `services/api/tests/test_hosted_requests.py`).
+      (`services/api/tests/test_hosted_requests.py::test_a_request_that_changes_its_claims_answers_500`).
 - [ ] `transaction()` refuses `statement_timeout_ms`, `idle_timeout_ms`
       and `tenant` on a nested block and on SQLite with `ValueError`
-      (planned test_the_session_options_belong_to_the_outermost_block).
+      (`services/api/tests/test_seam_on_both_stores.py::test_the_session_options_belong_to_the_outermost_block`).
 - [ ] Spec 134's tests pass with `hostedstore.py` passing the options:
       `services/api/tests/test_hosted_requests.py::test_the_request_role_has_lock_and_statement_timeouts`,
-      with its `/probe/plain-set` route running its `SET`s on the
-      driver beneath the seam, and the start checks in
+      with its `/probe/plain-set` route making its session-level
+      settings by `SELECT set_config(..., false)`, which the read-back
+      does not cover (Out of scope), and the start checks in
       `services/api/tests/test_hosted_start.py`.
 - [ ] Each new test fails with its part of the change reverted, and the
       pull request records what each reversion made fail.

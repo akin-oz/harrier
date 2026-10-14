@@ -279,10 +279,23 @@ def add_probe_routes(app: FastAPI) -> Probes:
         return {"written": body}
 
     def plain_set(conn: Conn) -> dict[str, Any]:
+        # A session-level setting, which outlives the transaction. The seam
+        # refuses a SET; `set_config(..., false)` from a SELECT still makes
+        # one, and the read-back before commit covers only the role and the
+        # claims (spec 112, amendment of 2026-10-14: the session).
         for name in ("lock_timeout", "statement_timeout", "idle_in_transaction_session_timeout"):
-            conn.execute(f"SET {name} = 0")
+            conn.execute("SELECT set_config(?, '0', false)", (name,))
         row = conn.execute("SELECT pg_backend_pid()").fetchone()
         return {"pid": row[0]}
+
+    def borrowed(conn: Conn, body: str, sub: str) -> dict[str, Any]:
+        # Writes as its user, then takes another owner's claims by a
+        # set_config no first word shows (spec 112, amendment of 2026-10-14).
+        conn.execute(f"INSERT INTO {PROBE_ROWS} (body) VALUES (?)", (body,))
+        claims = json.dumps({"sub": sub, "role": "authenticated", "aud": "authenticated"})
+        conn.execute("SELECT set_config('request.jwt.claims', ?, true)", (claims,))
+        row = conn.execute("SELECT public.harrier_owner_id()::text").fetchone()
+        return {"owner": row[0]}
 
     def locked(conn: Conn, body: str) -> dict[str, Any]:
         conn.execute(f"INSERT INTO {PROBE_ROWS} (body) VALUES (?)", (body,))
@@ -318,6 +331,7 @@ def add_probe_routes(app: FastAPI) -> Probes:
     app.add_api_route("/probe/sequence", sequence, methods=["GET"])
     app.add_api_route("/probe/write", write, methods=["POST"])
     app.add_api_route("/probe/plain-set", plain_set, methods=["POST"])
+    app.add_api_route("/probe/borrowed", borrowed, methods=["POST"])
     app.add_api_route("/probe/locked", locked, methods=["POST"])
     app.add_api_route("/probe/idle", idle, methods=["GET"])
     app.add_api_route("/probe/track", track, methods=["POST"])
@@ -634,6 +648,20 @@ def test_concurrent_requests_keep_their_identities(server: Server, hosted: Hoste
     # Both were inside their transactions at once (the barrier), and each
     # saw its own owner before and after the other's statements.
     assert seen == {owner: (200, {"owners": [owner, owner]}) for owner in owners}
+
+
+def test_a_request_that_changes_its_claims_answers_500(server: Server, hosted: Hosted) -> None:
+    owner, other = server.owner(), server.owner()
+    client = hosted.client(raise_server_exceptions=False)
+    response = client.post(
+        "/probe/borrowed",
+        params={"body": "borrowed claims", "sub": other},
+        headers=hosted.headers(owner),
+    )
+    # The route answered 200 as the other owner; the read-back before
+    # commit refused it, and the client sees only the generic detail.
+    assert (response.status_code, response.json()) == (500, GENERIC)
+    assert probe_rows(server) == []
 
 
 def test_a_refused_request_commits_nothing(
