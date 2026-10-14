@@ -708,50 +708,50 @@ The store (PR 1)
 
 The process and the report (PR 2)
 
-- [ ] For a fixed clock and a timezone, the due slot of each hosted job
+- [x] For a fixed clock and a timezone, the due slot of each hosted job
       is the latest cadence instant at or before now in that zone,
       including a weekday job, a day the clocks go forward and a day
-      they go back (planned test_the_due_slot_is_local_to_the_owner).
-- [ ] A slot before the `schedule` row's `updated_at` is not due
-      (planned test_a_new_choice_starts_at_the_next_slot).
-- [ ] After a gap of several slots, only the latest slot of each job
-      starts (planned test_an_outage_starts_only_the_latest_slot).
-- [ ] Claiming one slot twice, from two connections as the same owner,
+      they go back (`services/api/tests/test_hosted_slots.py::test_the_due_slot_is_local_to_the_owner`).
+- [x] A slot before the `schedule` row's `updated_at` is not due
+      (`services/api/tests/test_hosted_slots.py::test_a_new_choice_starts_at_the_next_slot`).
+- [x] After a gap of several slots, only the latest slot of each job
+      starts (`services/api/tests/test_hosted_slots.py::test_an_outage_starts_only_the_latest_slot`).
+- [x] Claiming one slot twice, from two connections as the same owner,
       starts it once; a finish for an older slot leaves a newer claim
-      unchanged (planned test_a_slot_starts_once).
-- [ ] With a fake binding and four owners whose runs exit 3, exit 1,
+      unchanged (`services/api/tests/test_hosted_scheduler.py::test_a_slot_starts_once`).
+- [x] With a fake binding and four owners whose runs exit 3, exit 1,
       hang past the timeout, and exit 0, the fourth owner's run starts and
       finishes `ok` and the first three are recorded `failed`, `crashed`
       and `timed_out`; the hung child is no longer running
-      (planned test_one_owner_failing_does_not_stop_another).
-- [ ] A binding refusal for a missing credential is recorded
+      (`services/api/tests/test_hosted_scheduler.py::test_one_owner_failing_does_not_stop_another`).
+- [x] A binding refusal for a missing credential is recorded
       `not_configured`; any other refusal is `refused`
-      (planned test_a_refused_run_is_recorded).
-- [ ] No two scheduled runs of one owner run at once; a slot that waited
+      (`services/api/tests/test_hosted_scheduler.py::test_a_refused_run_is_recorded`).
+- [x] No two scheduled runs of one owner run at once; a slot that waited
       past the next slot is recorded `missed`
-      (planned test_one_owner_runs_one_scheduled_run_at_a_time).
-- [ ] With the lock held by another session, the scheduler starts
+      (`services/api/tests/test_hosted_scheduler.py::test_one_owner_runs_one_scheduled_run_at_a_time`).
+- [x] With the lock held by another session, the scheduler starts
       nothing; on acquiring it, `running` rows become `interrupted`
-      (planned test_a_second_scheduler_stands_by).
-- [ ] Every statement the scheduler runs outside the listing transaction
+      (`services/api/tests/test_hosted_scheduler.py::test_a_second_scheduler_stands_by`).
+- [x] Every statement the scheduler runs outside the listing transaction
       runs with `current_user` `harrier_tenant` and one owner's claims;
       the listing transaction sets no claims
-      (planned test_the_scheduler_acts_as_each_owner).
-- [ ] The scheduler refuses to start for each check under "The
+      (`services/api/tests/test_hosted_scheduler.py::test_the_scheduler_acts_as_each_owner`).
+- [x] The scheduler refuses to start for each check under "The
       scheduler's login", naming it
-      (planned test_the_scheduler_refuses_a_login_that_can_bypass).
-- [ ] The API refuses to start when its login is a member of
-      `harrier_schedule_reader` (planned test_the_api_login_cannot_list_schedules).
-- [ ] The child's environment carries the owner's `TZ`, and a child
+      (`services/api/tests/test_hosted_scheduler.py::test_the_scheduler_refuses_a_login_that_can_bypass`).
+- [x] The API refuses to start when its login is a member of
+      `harrier_schedule_reader` (`services/api/tests/test_hosted_scheduler.py::test_the_api_login_cannot_list_schedules`).
+- [x] The child's environment carries the owner's `TZ`, and a child
       started with it reads the owner's local hour, so the Apify gate
       opens on the owner's weekday mornings
-      (planned test_a_scheduled_run_reads_the_owners_clock).
-- [ ] No scheduler log line contains anything but the fields under Logs;
+      (`services/api/tests/test_hosted_scheduler.py::test_a_scheduled_run_reads_the_owners_clock`).
+- [x] No scheduler log line contains anything but the fields under Logs;
       a run's output appears in no log
-      (planned test_scheduler_logs_name_only_the_owner_id).
-- [ ] `schedule-report` exits 0 with nothing wrong, and 1 for each
+      (`services/api/tests/test_hosted_scheduler.py::test_scheduler_logs_name_only_the_owner_id`).
+- [x] `schedule-report` exits 0 with nothing wrong, and 1 for each
       problem under Behavior, naming it; `not_configured`, `interrupted`
-      and `missed` alone exit 0 (planned test_the_report_exits_one_on_each_problem).
+      and `missed` alone exit 0 (`services/api/tests/test_hosted_scheduler.py::test_the_report_exits_one_on_each_problem`).
 - [ ] Every top-level command is in exactly one Postgres refusal class,
       `operator` included; `harrier operator` on SQLite refuses with the
       text under Behavior (spec 112's planned
@@ -1200,16 +1200,15 @@ Spec 115's F3, recorded confirmed or refuted there:
 
 ### Acceptance criteria (hosting budget)
 
-- [ ] One start of `harrier operator scheduler`, with due slots for two
+- [x] One start of `harrier operator scheduler`, with due slots for two
       owners and a fake binding, starts both runs, waits for both,
       records both outcomes and exits 0; with nothing due it lists once
-      and exits 0 (planned test_one_scheduler_start_runs_one_tick_and_exits).
-- [ ] With the lock held by another session, a start lists nothing,
-      starts nothing and exits 0 (planned test_a_second_scheduler_stands_by,
+      and exits 0 (`services/api/tests/test_hosted_scheduler.py::test_one_scheduler_start_runs_one_tick_and_exits`).
+- [x] With the lock held by another session, a start lists nothing,
+      starts nothing and exits 0 (`services/api/tests/test_hosted_scheduler.py::test_a_second_scheduler_stands_by`,
       extended).
-- [ ] `schedule-report` with no tick running and no slot unclaimed prints
-      `scheduler: no tick running` and exits 0 (planned
-      test_the_report_exits_one_on_each_problem, extended).
+- [x] `schedule-report` with no tick running and no slot unclaimed prints
+      `scheduler: no tick running` and exits 0 (`services/api/tests/test_hosted_scheduler.py::test_the_report_exits_one_on_each_problem`, extended).
 - [ ] Spec 115's F3 is recorded confirmed or refuted before production
       schedules any owner, and a refuted item amends this section first.
 
@@ -1503,7 +1502,7 @@ Two points belong to PR 2 and are recorded here for it:
   HH:MM:SS`; `last_slot_at` is ISO 8601 with `T` and `Z`. Compared as
   text, a space sorts before `T`, so on one day the two order wrongly. PR
   2's "at or after the row's `updated_at`" parses both before comparing,
-  and its planned test_a_new_choice_starts_at_the_next_slot covers a
+  and its `services/api/tests/test_hosted_slots.py::test_a_new_choice_starts_at_the_next_slot` covers a
   choice made on the slot's own day.
 - **The zone database is the image's.** `tzdata` is a dependency on
   Windows only (`services/api/uv.lock`); the hosted image reads the
@@ -1591,11 +1590,11 @@ with its own commit.
 Two criteria of this spec cited tests that spec 127 owns. They are
 restated, and the walk over every command stays spec 127's:
 
-- [ ] `harrier operator scheduler` and `harrier operator schedule-report`
+- [x] `harrier operator scheduler` and `harrier operator schedule-report`
       run on a Postgres URL, are refused on a SQLite store with the text
       above before anything opens, and are refused with
       `HARRIER_RUN_OWNER` set. No other command is an operator command
-      (planned test_the_operator_class_runs_only_on_postgres). This
+      (`services/api/tests/test_operator_class.py::test_the_operator_class_runs_only_on_postgres`). This
       replaces this spec's criterion "Every top-level command is in
       exactly one Postgres refusal class, `operator` included", whose walk
       over every command is spec 127's planned
@@ -1603,7 +1602,7 @@ restated, and the walk over every command stays spec 127's:
 - [ ] Every `harrier operator` subcommand declares a database role or that
       it opens none, a subcommand added without one fails the walk, and
       `scheduler` and `schedule-report` each declare `harrier_scheduler`
-      (planned test_every_operator_subcommand_declares_its_role). This
+      (`services/api/tests/test_operator_class.py::test_every_operator_subcommand_declares_its_role`). This
       replaces the criterion that cited spec 112's planned
       test_the_postgres_gate_has_operator_and_run_classes; spec 127's
       planned test of that name keeps its run class clause and reads the
@@ -1616,3 +1615,166 @@ restated, and the walk over every command stays spec 127's:
   amendment says.
 - This spec builds a group that spec 111 will extend. If spec 111 declares
   a role another way, the walk is amended with it.
+
+## Amendment (2026-10-14): what building the scheduler found
+
+PR 2, the process and the report (Scope items 5 to 11), is built. Building
+it found the places below where the text was wrong or silent. Each is
+stated so the code and the spec agree; where the text above disagrees,
+this section holds.
+
+### Where the text was wrong
+
+- **"A whole slot passed unclaimed" could never be true.** "The operator's
+  report" called a slot unclaimed when "the job's latest slot is older than
+  its longest gap". Consecutive slots are at most the longest gap apart, so
+  the latest slot is never older than it. The rule is now: the latest slot
+  is later than `last_slot_at`, at or after the owner's choice, and passed
+  more than `UNCLAIMED_AFTER` ago, 3 hours
+  (`services/api/src/harrier/hostedschedule.py`). The figure is chosen, not
+  measured: a slot starts at the first hourly tick after it, and Fly
+  skipping a start that falls in a running tick makes about two hours the
+  worst case (Amendment (2026-10-12), "Timing, answered"), with an hour of
+  margin. It also shortens the delay "Honest limitations (hosting budget)"
+  gave for a scheduler that never starts, from one longest gap to 3 hours
+  (`services/api/tests/test_hosted_slots.py::test_a_slot_unclaimed_for_hours_is_a_problem`).
+- **The process cannot sit in `hostedschedule.py`.** Scope item 5 puts the
+  hosted job set, the due computation and the writes there, and they are.
+  The process (the checks, the lock, the queue, the children) uses spec
+  106's `harrier_api.runenv.bind_run`, and the domain may not import the
+  API (`pyproject.toml`, import-linter). It is
+  `services/api/src/harrier_api/hostedscheduler.py`. `harrier_cli` imports
+  it where the two operator commands run, the first place the CLI depends on
+  `harrier_api`.
+- **"No file under `services/api/src/harrier/` other than
+  `tracker/schema.py` names `owner_id`" is not true of `main`.**
+  `harrier/connection.py` names it in a constraint name and in comments.
+  What spec 108 means is ADR-013 decision 2: domain SQL names no tenant.
+  `harrier/hostedschedule.py` names no tenant column, and the statements
+  the scheduler sends are checked for it
+  (`services/api/tests/test_hosted_scheduler.py::test_the_scheduler_acts_as_each_owner`).
+  The listing is `SELECT *` from the function for that reason. The
+  criterion is left unticked as written.
+- **A hosted job's credentials.** "Finishing a run" has `not_configured`
+  when "the owner lacks a credential the job needs" and does not say which.
+  Spec 106's table gives `discovery` none, since the feed sources need no
+  token, so a `not_configured` discovery would never happen. The needs are
+  `JOB_NEEDS` in `hostedschedule.py`: `discovery` none, `academic-discovery`
+  an Apify token, which its source requires
+  (`services/api/tests/test_hosted_scheduler.py::test_the_real_binding_refuses_a_job_whose_credential_is_unset`).
+
+### Where the text was silent
+
+- **More start checks.** The scheduler binds runs, so it holds
+  `HARRIER_RUN_DATABASE_URL` and `HARRIER_CREDENTIALS_KEY` (spec 110,
+  Honest limitations). It refuses to start, exit 1 and naming the variable,
+  when either is missing or malformed, and when the run login fails spec
+  134's login role checks or is the scheduler's own login. It reads the
+  store's version as `harrier_tenant`, as the API does. Every check is a
+  case of
+  `services/api/tests/test_hosted_scheduler.py::test_the_scheduler_refuses_a_login_that_can_bypass`.
+- **The run login may not list schedules either.** Item 9 names the API's
+  login. The check is in `harrier.loginrole.login_role_problems`, which
+  the run login's start check calls too, so a run, the process that executes
+  domain code, is refused the reader as well. The scheduler's login calls it
+  with `lists_schedules=True`, which requires the reader's `SET` and does not
+  count the membership as a problem.
+- **A transaction pooler is detected by a probe.** After taking the lock,
+  the scheduler asks `pg_locks` whether its own backend holds it, in the next
+  statement. A pooler that moves the statement to another backend fails the
+  start. A pooler that happens to reuse the backend passes it (Honest
+  limitations). The same statement is the check, every 15 seconds, that the
+  lock is still held.
+- **The report's lock line asks one database.** `pg_locks` lists the whole
+  cluster; the question filters on the current database
+  (`services/api/tests/test_hosted_scheduler.py::test_a_lock_in_another_database_is_not_a_tick_here`).
+- **Connections.** The lock connection is the only one held through a run.
+  The listing, each claim, each finish and each sweep open a connection of
+  their own and close it, so an outcome is never written on a connection a
+  pooler dropped during an hour's run
+  (`services/api/tests/test_hosted_scheduler.py::test_no_connection_waits_open_while_runs_run`).
+- **Exit status.** 0 when the tick ran and every outcome was recorded, or
+  when another instance holds the lock. 1 when a start check refused, the
+  listing failed, the lock was lost, the process was stopped, or an outcome
+  could not be recorded (that row stays `running` and the next start marks
+  it `interrupted`).
+- **Stopping.** SIGINT and SIGTERM, which Fly sends a second apart when an
+  update replaces the machine (Amendment (2026-10-12)), stop the tick as a
+  lost lock does: the children are terminated and recorded `interrupted`, and
+  it logs `scheduler stopped`
+  (`services/api/tests/test_hosted_scheduler.py::test_a_stop_signal_ends_the_tick_like_a_lost_lock`).
+- **A spawn that fails** is recorded `crashed` with no exit status. A claim
+  that fails writes nothing, so the next start tries the slot again. A sweep
+  that fails leaves the owner's run in progress, so none of their slots
+  starts that tick
+  (`services/api/tests/test_hosted_scheduler.py::test_a_step_that_fails_for_one_owner_leaves_the_others`).
+- **Logs.** Besides the start and end lines, the scheduler logs
+  `scheduler standing by`, `scheduler lost its lock`, `scheduler stopped`,
+  `scheduled skip owner=<uuid> reason=<field>` and `scheduled step failed
+  owner=<uuid> [job=<name>] step=<step> error=<class>`. An exception's text
+  is added only for the classes whose text harrier writes (the store's
+  errors, the configuration's, spec 106's and 116's refusals); a driver's or
+  the library's error is logged by class, because its text can quote a row
+  or a path.
+- **Output.** A child's output goes to `/dev/null`, so a run that prints a
+  lot cannot block on a pipe nobody reads.
+- **Timing.** The loop looks at its children every second, terminates a run
+  at the timeout, kills it 5 seconds later (the run manager's grace) and
+  stops waiting for a killed child 5 seconds after that. A child leads a
+  process group of its own and the signals go to the group
+  (`services/api/tests/test_hosted_scheduler.py::test_a_timed_out_run_is_stopped_with_its_group`).
+- **The report.** It prints a line for a job the owner no longer chooses,
+  marked `(not chosen)`, and such a job is never a problem. An owner whose
+  row is invalid is printed with the field, and their jobs go overdue by
+  the usual rule; an invalid row with no state at all is shown and is not a
+  problem, since no job is known for it.
+- **Two other places that list every command.** Spec 074's
+  `COMMAND_CLASSES` classes both operator subcommands `host-only`, and spec
+  096's `COMMAND_PLACES` places them `TerminalOnly`; the walks in
+  `services/api/tests/test_delegation.py` and
+  `services/api/tests/test_ui_settings.py` fail on a command in neither.
+  The contract is unchanged.
+- **`schedule_state` is written by the scheduler,** so
+  `services/api/tests/test_domain_sql_on_both_stores.py` keeps leaving it out
+  of its insert check on Postgres; nothing there changes.
+
+### Tests the criteria did not name
+
+- `services/api/tests/test_hosted_slots.py::test_a_time_that_does_not_exist_or_occurs_twice_is_one_slot`:
+  a synthetic job at 02:30 on the days the clocks go forward and back.
+- `services/api/tests/test_hosted_slots.py::test_the_queue_is_ordered_by_slot_then_never_started_then_owner`
+  and
+  `services/api/tests/test_hosted_scheduler.py::test_the_queue_starts_never_started_owners_first`.
+- `services/api/tests/test_hosted_scheduler.py::test_a_lost_lock_stops_the_tick_and_keeps_true_outcomes`,
+  `services/api/tests/test_hosted_scheduler.py::test_a_connection_that_is_not_one_session_fails_the_start`,
+  `services/api/tests/test_hosted_scheduler.py::test_an_outcome_that_cannot_be_recorded_is_not_a_clean_tick`
+  and
+  `services/api/tests/test_hosted_scheduler.py::test_a_listing_that_fails_ends_the_tick_and_starts_nothing`.
+- `services/api/tests/test_hosted_scheduler.py::test_a_run_that_ignores_terminate_is_killed`.
+- `services/api/tests/test_operator_class.py::test_no_other_command_is_an_operator_command`.
+
+### Mutations
+
+Each new behavior was removed or changed in the code and the test that
+proves it was run. The list, with each result, is in the pull request.
+
+### Honest limitations (the scheduler)
+
+- **The queue is made once.** A schedule an owner deletes, or a job they
+  stop, after the tick listed it still runs if it was queued; the next
+  start does not.
+- **The pooler probe is a probe.** A pooler that gives the next statement
+  the same backend passes it, and the lock is then lost with the session at
+  the next statement that moves. The deploy names a direct or session-mode
+  connection (spec 110); this does not prove it.
+- **The scheduler holds every owner's decrypted credentials in memory** for
+  the length of a bind, and the key for the length of the tick (spec 110,
+  Honest limitations). Its trust is the API's.
+- **A SIGKILL, or a machine stop that outlasts the signals, leaves a run's
+  group alive** until the machine stops. The row stays `running` and the next
+  start marks it `interrupted`.
+- **Fly's schedule is not exercised.** Spec 115's F3 probed it; no test here
+  reaches Fly.
+- **`UNCLAIMED_AFTER` is a chosen figure.**
+- **The operator class is built for two subcommands.** Spec 111's `invite`
+  and `erase` join it with their own declarations.
