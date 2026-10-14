@@ -97,6 +97,14 @@ PROBLEM_OUTCOMES: frozenset[str] = frozenset({"failed", "crashed", "timed_out", 
 # (spec 108, Amendment (2026-10-14)).
 UNCLAIMED_AFTER = timedelta(hours=3)
 
+# How long the listing may run, in milliseconds. The scheduler holds its lock
+# while it lists, and the server's default is no limit, so a stalled
+# `harrier_schedule_inputs()` would hold every later start out. The figure is
+# a request's statement timeout (`harrier_api.hostedstore`), which the
+# function's one read of two small tables is well inside; it is chosen, not
+# measured (spec 108, Amendment (2026-10-14), local review of PR #327).
+LISTING_STATEMENT_TIMEOUT_MS = 30_000
+
 # --- time ---
 
 
@@ -199,11 +207,12 @@ def list_inputs(conn: Connection) -> list[OwnerView]:
     In one transaction that takes `harrier_schedule_reader` and no claims,
     `transaction(schedule_reader=True)`, and runs nothing else: the one read
     across owners. The seam takes the role, applies its lock timeout, and
-    reads `current_user` again before the transaction ends (spec 112,
+    reads `current_user` again before the transaction ends, and the
+    listing may run for `LISTING_STATEMENT_TIMEOUT_MS` at most (spec 112,
     amendment of 2026-10-14: the schedule reader). Owners are returned in id
     order.
     """
-    with conn.transaction(schedule_reader=True):
+    with conn.transaction(schedule_reader=True, statement_timeout_ms=LISTING_STATEMENT_TIMEOUT_MS):
         # Every column, in the order the function declares them (owner,
         # schedule, schedule_updated_at, job, last_slot_at, last_started_at,
         # last_finished_at, last_outcome, last_exit, last_ok_at), so this

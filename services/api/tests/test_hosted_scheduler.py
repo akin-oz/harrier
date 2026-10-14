@@ -1831,6 +1831,74 @@ def test_a_run_login_refusal_speaks_for_the_scheduler(
     assert "the scheduler's own login role" in err
 
 
+# --- what CodeRabbit found in PR 327 ---
+
+
+def test_a_run_terminated_for_its_timeout_stays_timed_out_when_the_tick_is_abandoned(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The scheduler terminates a run at its timeout, and the child exits
+    during the next sleep with the signal's status. A stop that arrives
+    before it is reaped must not record that status as `crashed` (nor the
+    abandon as `interrupted`): the run timed out, and that is what is
+    recorded wherever it is finally recorded (review of PR #327)."""
+    caplog.set_level(logging.INFO, logger=SCHEDULER_LOGGER)
+    stop = threading.Event()
+
+    class StopsAfterTheTerminate(FakeClock):
+        def sleep(self, seconds: float) -> None:
+            super().sleep(seconds)
+            # The terminate is sent at 60 seconds, the timeout; the stop
+            # comes at the very next look.
+            if (self.moment - START).total_seconds() >= 61:
+                stop.set()
+
+    clock = StopsAfterTheTerminate()
+    rig.clock = rig.fleet.clock = clock
+    owner = rig.owner()
+    rig.fleet.plans = {owner: HANGS}
+
+    assert rig.run(stop=stop, clock=clock) == 1
+
+    assert rig.outcomes() == {owner: "timed_out"}
+    row = rig.state()[(owner, "discovery")]
+    assert row["last_exit"] is None and row["last_ok_at"] is None
+    assert "scheduler stopped" in caplog.text
+
+
+def test_a_stalled_listing_gives_up_at_its_statement_timeout(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The scheduler holds its lock while it lists, and the server's default
+    statement timeout is none, so a stalled `harrier_schedule_inputs()` would
+    hold every later start out. The listing carries its own statement timeout:
+    here a table lock stalls it, and it gives up at the timeout, well before
+    the seam's lock timeout would have ended the wait, and the tick exits 1
+    having started nothing (review of PR #327)."""
+    import harrier.hostedschedule as module
+
+    caplog.set_level(logging.INFO, logger=SCHEDULER_LOGGER)
+    monkeypatch.setattr(module, "LISTING_STATEMENT_TIMEOUT_MS", 300)
+    rig.owner()
+    with closing(postgres_connect(rig.server.url)) as blocker:
+        blocker.execute(b"BEGIN")
+        blocker.execute(b"LOCK TABLE schedule_state IN ACCESS EXCLUSIVE MODE")
+        started = time.monotonic()
+        with (
+            closing(postgres_connect(rig.scheduler.url)) as driver,
+            pytest.raises(connection.StoreDatabaseError) as stalled,
+        ):
+            module.list_inputs(Connection.postgres(driver))
+        elapsed = time.monotonic() - started
+        assert rig.run() == 1
+        blocker.execute(b"ROLLBACK")
+    assert "statement timeout" in str(stalled.value)
+    # The seam's lock timeout is 5 seconds; the statement timeout is 0.3.
+    assert elapsed < 3
+    assert rig.fleet.spawned == [] and rig.state() == {}
+    assert "scheduler could not list schedules: StoreDatabaseError" in caplog.text
+
+
 # --- the operator's report ---
 
 

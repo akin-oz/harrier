@@ -1855,6 +1855,29 @@ each fix has a test that fails without it.
   API's, so the words are changed to the scheduler's
   (`services/api/tests/test_hosted_scheduler.py::test_a_run_login_refusal_speaks_for_the_scheduler`).
 
+### What CodeRabbit's review of PR 327 changed
+
+Two Minor findings, each reproduced before it was fixed:
+
+- **A run the scheduler terminated for its timeout could be recorded
+  `crashed`.** The terminate is sent at the timeout, and the child exits
+  with the signal's status during the next sleep. A lost lock or a stop that
+  arrived before the next look recorded that status, `crashed` with exit -15,
+  not `timed_out`. Every outcome is now recorded in one place, and a run
+  that was terminated for its timeout is `timed_out` with no exit status
+  there, whichever path reaches it
+  (`services/api/tests/test_hosted_scheduler.py::test_a_run_terminated_for_its_timeout_stays_timed_out_when_the_tick_is_abandoned`).
+- **The listing had no statement timeout.** The server's default is none,
+  and the scheduler holds its lock while it lists, so a stalled
+  `harrier_schedule_inputs()` would hold every later start out. The listing
+  now asks the seam for one, `LISTING_STATEMENT_TIMEOUT_MS` in
+  `services/api/src/harrier/hostedschedule.py`: 30 seconds, a request's
+  statement timeout. It is a constant, not one of the operator's settings:
+  this spec leaves to the operator only what a run may cost in machine time
+  (The scheduler's login). The figure is chosen, not measured. When it
+  fires, the tick exits 1 having started nothing, and the report exits 1
+  (`services/api/tests/test_hosted_scheduler.py::test_a_stalled_listing_gives_up_at_its_statement_timeout`).
+
 ### Tests the criteria did not name
 
 - `services/api/tests/test_hosted_slots.py::test_a_time_that_does_not_exist_or_occurs_twice_is_one_slot`:

@@ -629,6 +629,13 @@ class Scheduler:
     # --- recording ---
 
     def _finish(self, run: _Running, outcome: Outcome, exit_code: int | None) -> None:
+        """Record how `run` ended. A run the scheduler already terminated
+        for its timeout is `timed_out`, whatever ends the wait after: the
+        status a terminated child exits with is the scheduler's own signal,
+        and a lost lock or a stop that arrives before the child is reaped
+        does not make it `crashed` or `interrupted` (review of PR #327)."""
+        if run.terminated_at is not None:
+            outcome, exit_code = "timed_out", None
         self._running.remove(run)
         self._record(run.entry, outcome, exit_code)
 
