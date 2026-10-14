@@ -446,12 +446,12 @@ export interface paths {
             cookie?: never;
         };
         /** Get Telegram */
-        get: operations["get_telegram_notifications_telegram_get"];
+        get: operations["getTelegramSettings"];
         /** Put Telegram */
-        put: operations["put_telegram_notifications_telegram_put"];
+        put: operations["saveTelegramSettings"];
         post?: never;
         /** Delete Telegram */
-        delete: operations["delete_telegram_notifications_telegram_delete"];
+        delete: operations["clearTelegramSettings"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2797,18 +2797,20 @@ export interface components {
         };
         /**
          * TelegramSettingsIn
-         * @description A bot token and a chat id. Both are plain strings to the schema, so a
-         *     malformed value reaches the handler's own check and is refused with a
-         *     reason. Both are kept out of the model's repr, so a body that reaches a
-         *     log record or an error by `repr` carries neither.
+         * @description The owner's bot token and chat id. Both are secret and write-only.
          */
         TelegramSettingsIn: {
             /**
              * Bot Token
              * Format: password
+             * @description The bot's token from @BotFather. Secret.
              */
             bot_token: string;
-            /** Chat Id */
+            /**
+             * Chat Id
+             * Format: password
+             * @description The chat the bot writes to. Secret (decision D7), like the token.
+             */
             chat_id: string;
         };
         /**
@@ -4653,7 +4655,7 @@ export interface operations {
             };
         };
     };
-    get_telegram_notifications_telegram_get: {
+    getTelegramSettings: {
         parameters: {
             query?: never;
             header?: never;
@@ -4700,7 +4702,7 @@ export interface operations {
             };
         };
     };
-    put_telegram_notifications_telegram_put: {
+    saveTelegramSettings: {
         parameters: {
             query?: never;
             header?: never;
@@ -4778,7 +4780,7 @@ export interface operations {
             };
         };
     };
-    delete_telegram_notifications_telegram_delete: {
+    clearTelegramSettings: {
         parameters: {
             query?: never;
             header?: never;

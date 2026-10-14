@@ -7,7 +7,6 @@ rides in the URL path per the Bot API; the URL is never logged.
 
 from __future__ import annotations
 
-import http.client
 import json
 import logging
 import os
@@ -147,7 +146,10 @@ def _call_bot_api(
             # The Bot API answers a refusal with a 4xx and a JSON body.
             status = error.code
             body = error.read(BOT_API_ANSWER_LIMIT)
-    except (OSError, ValueError, http.client.HTTPException):
+    except Exception:
+        # Any exception type, as `send_telegram_message` catches: an error
+        # that escaped would reach a log with the URL, and the token, in its
+        # text. Not `BaseException`: a stop signal still stops.
         return "unavailable"
     if status >= 500 or status == 429:
         return "unavailable"

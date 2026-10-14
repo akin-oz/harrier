@@ -2824,17 +2824,21 @@
       },
       "TelegramSettingsIn": {
         "additionalProperties": false,
-        "description": "A bot token and a chat id. Both are plain strings to the schema, so a\nmalformed value reaches the handler's own check and is refused with a\nreason. Both are kept out of the model's repr, so a body that reaches a\nlog record or an error by `repr` carries neither.",
+        "description": "The owner's bot token and chat id. Both are secret and write-only.",
         "properties": {
           "bot_token": {
+            "description": "The bot's token from @BotFather. Secret.",
             "format": "password",
             "title": "Bot Token",
             "type": "string",
             "writeOnly": true
           },
           "chat_id": {
+            "description": "The chat the bot writes to. Secret (decision D7), like the token.",
+            "format": "password",
             "title": "Chat Id",
-            "type": "string"
+            "type": "string",
+            "writeOnly": true
           }
         },
         "required": [
@@ -5553,7 +5557,7 @@
     },
     "/notifications/telegram": {
       "delete": {
-        "operationId": "delete_telegram_notifications_telegram_delete",
+        "operationId": "clearTelegramSettings",
         "responses": {
           "200": {
             "content": {
@@ -5597,7 +5601,7 @@
                       "$ref": "#/components/schemas/AuthRefusalOut"
                     }
                   ],
-                  "title": "Response 503 Delete Telegram Notifications Telegram Delete"
+                  "title": "Response 503 Cleartelegramsettings"
                 }
               }
             },
@@ -5612,7 +5616,7 @@
         "summary": "Delete Telegram"
       },
       "get": {
-        "operationId": "get_telegram_notifications_telegram_get",
+        "operationId": "getTelegramSettings",
         "responses": {
           "200": {
             "content": {
@@ -5656,7 +5660,7 @@
                       "$ref": "#/components/schemas/AuthRefusalOut"
                     }
                   ],
-                  "title": "Response 503 Get Telegram Notifications Telegram Get"
+                  "title": "Response 503 Gettelegramsettings"
                 }
               }
             },
@@ -5671,7 +5675,7 @@
         "summary": "Get Telegram"
       },
       "put": {
-        "operationId": "put_telegram_notifications_telegram_put",
+        "operationId": "saveTelegramSettings",
         "requestBody": {
           "content": {
             "application/json": {
@@ -5755,7 +5759,7 @@
                       "$ref": "#/components/schemas/AuthRefusalOut"
                     }
                   ],
-                  "title": "Response 503 Put Telegram Notifications Telegram Put"
+                  "title": "Response 503 Savetelegramsettings"
                 }
               }
             },

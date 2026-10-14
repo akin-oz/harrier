@@ -101,7 +101,12 @@ from harrier_api.localauth import (
     require_token,
 )
 from harrier_api.mail_routes import mail_router
-from harrier_api.notify_routes import is_notify_route, notify_refusal_response, notify_router
+from harrier_api.notify_routes import (
+    is_notify_route,
+    notify_refusal_response,
+    notify_router,
+    notify_unreadable_body_response,
+)
 from harrier_api.ops_routes import ops_router
 from harrier_api.outreach_routes import outreach_router
 from harrier_api.runmodels import RUN_CONFLICT_RESPONSES, Manager, RunOut, run_out
@@ -1501,6 +1506,10 @@ def _app_with_routes(manager: RunManager) -> FastAPI:
         # with its status and headers. Any other detail is answered as
         # FastAPI answers it; a 422 has its own handler and never comes here
         # (spec 133). Typed `str` by Starlette; FastAPI's takes any value.
+        if error.status_code == 400 and is_notify_route(request.scope):
+            # FastAPI's own 400 for a body it cannot read. The Telegram
+            # routes send none of their own, so it is that (spec 109).
+            return notify_unreadable_body_response(request)
         detail = cast(object, error.detail)
         if isinstance(detail, str):
             error.detail = scrub_outbound(detail)

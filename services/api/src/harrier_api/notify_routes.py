@@ -28,7 +28,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from typing import Any, cast
+from dataclasses import dataclass, field
+from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -38,6 +39,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from harrier.credentials import credential_updates, delete_credential, put_credential
 from harrier.notify import TelegramReason, check_telegram
 from harrier_api.credentials_routes import (
+    CredentialProblemOut,
     CredentialRefusalOut,
     credential_refusal,
     request_key,
@@ -48,6 +50,7 @@ from harrier_api.deps import Conn, DatabaseRoute, ErrorOut
 logger = logging.getLogger(__name__)
 
 LOCAL_TEXT = "Telegram is configured in .env on the local product"
+UNREADABLE_BODY = "must be a JSON document UTF-8 can read"
 PREFIX = "/notifications"
 
 
@@ -66,15 +69,20 @@ notify_router = APIRouter(
 
 
 class TelegramSettingsIn(BaseModel):
-    """A bot token and a chat id. Both are plain strings to the schema, so a
-    malformed value reaches the handler's own check and is refused with a
-    reason. Both are kept out of the model's repr, so a body that reaches a
-    log record or an error by `repr` carries neither."""
+    """The owner's bot token and chat id. Both are secret and write-only."""
 
+    # Plain strings to the schema, no pattern or length, so a malformed value
+    # reaches the route's own check and is refused with a reason. Both are
+    # kept out of the model's repr, so a body that reaches a log record or an
+    # error by `repr` carries neither.
     model_config = ConfigDict(extra="forbid")
 
-    bot_token: SecretStr
-    chat_id: str = Field(repr=False)
+    bot_token: SecretStr = Field(description="The bot's token from @BotFather. Secret.")
+    chat_id: str = Field(
+        repr=False,
+        description="The chat the bot writes to. Secret (decision D7), like the token.",
+        json_schema_extra={"format": "password", "writeOnly": True},
+    )
 
 
 class TelegramSettingsOut(BaseModel):
@@ -170,10 +178,54 @@ def notify_refusal_response(request: Request, error: RequestValidationError) -> 
     return JSONResponse(status_code=422, content=body.model_dump())
 
 
+def notify_unreadable_body_response(request: Request) -> JSONResponse:
+    """A body FastAPI could not read at all, such as one that is not UTF-8:
+    it answers that with its own 400 before any validation, a body this
+    route's 400 does not declare. Answered as a body that is not JSON is:
+    the local 404, or hosted the 422 naming the body (contract review of
+    PR #325)."""
+    if not getattr(request.app.state, "hosted", False):
+        return JSONResponse(status_code=404, content=ErrorOut(detail=LOCAL_TEXT).model_dump())
+    body = CredentialRefusalOut(
+        detail=[CredentialProblemOut(field="body", problem=UNREADABLE_BODY)]
+    )
+    return JSONResponse(status_code=422, content=body.model_dump())
+
+
+# --- the check, before the request's transaction ---
+
+
+@dataclass(frozen=True)
+class CheckedPair:
+    """The stripped pair and what `check_telegram` made of it. Kept out of
+    the repr, so it carries neither value into a log or an error."""
+
+    token: str = field(repr=False)
+    chat_id: str = field(repr=False)
+    reason: TelegramReason | None
+
+
+def check_pair(request: Request, body: TelegramSettingsIn) -> CheckedPair:
+    """Check the pair against the Bot API as a dependency declared before
+    `Conn`, so the request's transaction opens after both calls end. Run
+    inside it, the check held a pooled connection for as long as Telegram
+    took, and ten slow saves would have held the pool (data integrity review
+    of PR #325).
+
+    The key and the owner are read first: a request that cannot be written
+    must not send the owner a confirmation. Stripped as the store strips
+    them, so the pair that is checked is the pair that is stored."""
+    request_key(request)
+    request_owner(request)
+    token = body.bot_token.get_secret_value().strip()
+    chat_id = body.chat_id.strip()
+    return CheckedPair(token, chat_id, check_telegram(token, chat_id))
+
+
 # --- routes ---
 
 
-@notify_router.get("/telegram", responses=LOCAL_RESPONSE)
+@notify_router.get("/telegram", operation_id="getTelegramSettings", responses=LOCAL_RESPONSE)
 def get_telegram(conn: Conn) -> TelegramSettingsOut:
     # `kind` and `updated_at` only: the ciphertext is never selected. Both
     # values live in the one row, so a row means both are stored.
@@ -181,17 +233,19 @@ def get_telegram(conn: Conn) -> TelegramSettingsOut:
     return TelegramSettingsOut(configured=written is not None, updated_at=written)
 
 
-@notify_router.put("/telegram", response_model=TelegramSettingsOut, responses=PUT_RESPONSES)
+@notify_router.put(
+    "/telegram",
+    operation_id="saveTelegramSettings",
+    response_model=TelegramSettingsOut,
+    responses=PUT_RESPONSES,
+)
 def put_telegram(
-    request: Request, body: TelegramSettingsIn, conn: Conn
+    request: Request, checked: Annotated[CheckedPair, Depends(check_pair)], conn: Conn
 ) -> TelegramSettingsOut | JSONResponse:
-    # Stripped as the store strips them, so the pair that is checked is the
-    # pair that is stored.
-    token = body.bot_token.get_secret_value().strip()
-    chat_id = body.chat_id.strip()
-    reason = check_telegram(token, chat_id)
-    if reason is not None:
-        return telegram_refusal(reason)
+    # `checked` is declared before `conn`: the check has ended when the
+    # transaction opens.
+    if checked.reason is not None:
+        return telegram_refusal(checked.reason)
     # Only a pair that passed the check is written. `check_telegram` holds
     # every value to the store's field rule, so the store does not refuse it.
     written = put_credential(
@@ -199,12 +253,12 @@ def put_telegram(
         request_key(request),
         request_owner(request),
         "telegram",
-        {"bot_token": token, "chat_id": chat_id},
+        {"bot_token": checked.token, "chat_id": checked.chat_id},
     )
     return TelegramSettingsOut(configured=True, updated_at=written)
 
 
-@notify_router.delete("/telegram", responses=LOCAL_RESPONSE)
+@notify_router.delete("/telegram", operation_id="clearTelegramSettings", responses=LOCAL_RESPONSE)
 def delete_telegram(conn: Conn) -> TelegramSettingsOut:
     delete_credential(conn, "telegram")
     return TelegramSettingsOut(configured=False, updated_at=None)

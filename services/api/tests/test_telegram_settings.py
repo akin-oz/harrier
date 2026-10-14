@@ -23,10 +23,12 @@ import http.client
 import io
 import json
 import logging
+import socket
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Generator, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from email.message import Message
 from pathlib import Path
@@ -50,17 +52,26 @@ from test_hosted_runs import (
     printed,
     run_to_end,
 )
-from test_tenant_notifications import AsEmitted, assert_holds_none_of, bot_token, chat_id
+from test_tenant_notifications import assert_holds_none_of, bot_token, chat_id
 
-from harrier.credentials import FIELD_MAX_BYTES, decrypt, stored_credentials
+from harrier.connection import StoreDatabaseError
+from harrier.credentials import (
+    FIELD_MAX_BYTES,
+    StoredCredential,
+    checked_fields,
+    decrypt,
+    stored_credentials,
+)
 from harrier.logredact import SECRET_REDACTION
 from harrier.notify import (
+    BOT_API_ANSWER_LIMIT,
     BOT_API_TIMEOUT_SECONDS,
     CONFIRMATION_TEXT,
     TELEGRAM_REASONS,
     TelegramReason,
     check_telegram,
 )
+from harrier_api import notify_routes
 from harrier_api.app import create_app
 from harrier_api.deps import get_conn
 from harrier_api.notify_routes import (
@@ -82,6 +93,8 @@ class Answer:
     status: int = 200
     body: bytes = b'{"ok": true, "result": {}}'
     error: BaseException | None = None
+    # The answer arrives and then fails while it is read.
+    read_error: BaseException | None = None
 
 
 OK = Answer()
@@ -97,20 +110,36 @@ def refused(status: int, *, error_code: int | None = None) -> Answer:
 
 
 class Response:
-    """The context manager `urlopen` returns."""
+    """The context manager `urlopen` returns. A real response can fail
+    partway through `read`, and must be closed either way."""
 
-    def __init__(self, status: int, body: bytes) -> None:
+    def __init__(self, status: int, body: bytes, read_error: BaseException | None = None) -> None:
         self.status = status
         self._body = body
+        self._read_error = read_error
+        self.closed = False
 
     def __enter__(self) -> Response:
         return self
 
     def __exit__(self, *exc: object) -> None:
-        return None
+        self.closed = True
 
     def read(self, limit: int = -1) -> bytes:
+        if self._read_error is not None:
+            raise self._read_error
         return self._body if limit < 0 else self._body[:limit]
+
+
+class FailingFile(io.BytesIO):
+    """An `HTTPError`'s body that fails when it is read."""
+
+    def __init__(self, error: BaseException) -> None:
+        super().__init__(b"")
+        self._error = error
+
+    def read(self, size: int | None = -1) -> bytes:
+        raise self._error
 
 
 @dataclass
@@ -129,10 +158,17 @@ class BotApi:
 
     script: dict[str, Answer] = field(default_factory=lambda: {"getMe": OK, "sendMessage": OK})
     calls: list[Call] = field(default_factory=lambda: [])
+    # Read at each call, to see what the process holds while Telegram is asked.
+    observe: Callable[[], object] | None = None
+    seen: list[object] = field(default_factory=lambda: [])
+    responses: list[Response] = field(default_factory=lambda: [])
 
     def __call__(self, request: urllib.request.Request, timeout: float | None = None) -> Response:
         url = request.full_url
-        assert url.startswith(TELEGRAM_HOST), f"not the Bot API: {url[:40]}"
+        if not url.startswith(TELEGRAM_HOST):
+            pytest.fail(f"not the Bot API: {url[:40]}")
+        if self.observe is not None:
+            self.seen.append(self.observe())
         method = url.rsplit("/", 1)[1]
         raw = request.data
         assert raw is None or isinstance(raw, bytes)
@@ -142,10 +178,11 @@ class BotApi:
         if answer.error is not None:
             raise answer.error
         if answer.status >= 400:
-            raise urllib.error.HTTPError(
-                url, answer.status, "synthetic", Message(), io.BytesIO(answer.body)
-            )
-        return Response(answer.status, answer.body)
+            body = FailingFile(answer.read_error) if answer.read_error else io.BytesIO(answer.body)
+            raise urllib.error.HTTPError(url, answer.status, "synthetic", Message(), body)
+        response = Response(answer.status, answer.body, answer.read_error)
+        self.responses.append(response)
+        return response
 
     @property
     def methods(self) -> list[str]:
@@ -157,9 +194,51 @@ def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[rep
     """A call that missed the fake would connect through `http.client`."""
 
     def no_network(*args: object, **kwargs: object) -> object:
-        raise AssertionError("this test reaches no network")
+        # Not an assertion: the check catches every `Exception`, and a miss
+        # must fail the test and not read as an unreachable Telegram.
+        pytest.fail("this test reaches no network")
 
     monkeypatch.setattr(http.client.HTTPConnection, "connect", no_network)
+    # A client that opens its own socket, as httpx or requests would.
+    monkeypatch.setattr(socket, "create_connection", no_network)
+
+
+class Emitted(logging.Handler):
+    """Every record as its logger emits it, before the root's handlers: the
+    root's scrub (spec 133) rewrites a record in place, so a record read from
+    `caplog` says nothing of what the code logged. Attached to the packages'
+    own loggers, so a line from any module of harrier is read."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.DEBUG)
+        self.records: list[logging.LogRecord] = []
+        self.texts: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+        self.texts.append(record.getMessage())
+        self.texts.append(str(record.exc_text or ""))
+
+
+@contextmanager
+def emitted_by_harrier() -> Generator[Emitted]:
+    handler = Emitted()
+    loggers = [logging.getLogger(name) for name in ("harrier", "harrier_api")]
+    levels = [logger.level for logger in loggers]
+    for logger in loggers:
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG)
+    try:
+        yield handler
+    finally:
+        for logger, level in zip(loggers, levels, strict=True):
+            logger.removeHandler(handler)
+            logger.setLevel(level)
+
+
+def everything(response: Any) -> str:
+    """A response as a client could read it: its body and every header."""
+    return response.text + json.dumps(dict(response.headers))
 
 
 def reason_cases() -> dict[str, tuple[TelegramReason, dict[str, Answer], list[str]]]:
@@ -290,6 +369,24 @@ def test_check_telegram_refuses_a_malformed_chat_id_without_a_call(case: str) ->
     assert fake.calls == []
 
 
+def test_the_length_bound_is_the_stores_and_holds_at_its_edge() -> None:
+    """A pair the check accepts is one the store accepts, so the write after
+    two network calls cannot be refused: the bound is exact."""
+    at_bound_token = "1:" + "a" * (FIELD_MAX_BYTES - 2)
+    over_token = "1:" + "a" * (FIELD_MAX_BYTES - 1)
+    fake = BotApi()
+    assert check_telegram(at_bound_token, "42", opener=fake) is None
+    assert fake.methods == ["getMe", "sendMessage"]
+    assert check_telegram(over_token, "42", opener=BotApi()) == "token_shape"
+    at_bound_chat = "9" * FIELD_MAX_BYTES
+    fake = BotApi()
+    assert check_telegram("1:valid", at_bound_chat, opener=fake) is None
+    assert fake.methods == ["getMe", "sendMessage"]
+    assert check_telegram("1:valid", at_bound_chat + "9", opener=BotApi()) == "chat_id_shape"
+    # What the check accepts, the store accepts.
+    assert checked_fields("telegram", {"bot_token": at_bound_token, "chat_id": at_bound_chat})
+
+
 def test_check_telegram_accepts_the_documented_shapes() -> None:
     # A group's chat id is negative; a token's secret may hold `_` and `-`.
     for chat in ("0", "123456789", "-1001234567890"):
@@ -322,6 +419,8 @@ def transport_failures() -> dict[str, BaseException]:
         "the server hung up": http.client.RemoteDisconnected("gone"),
         "a refused path": http.client.InvalidURL("URL can't contain control characters"),
         "a value error": ValueError("x"),
+        "an unexpected error type": RuntimeError("x"),
+        "a key error": KeyError("x"),
     }
 
 
@@ -332,6 +431,11 @@ def test_a_transport_failure_is_telegram_unavailable(case: str, method: str) -> 
         {"getMe": OK, "sendMessage": OK, method: Answer(error=transport_failures()[case])}
     )
     assert check_telegram("1:valid", "42", opener=fake) == "telegram_unavailable"
+    assert fake.methods == (["getMe"] if method == "getMe" else ["getMe", "sendMessage"])
+
+
+OVERSIZED_OK = b'{"ok": true, "padding": "' + b"x" * (BOT_API_ANSWER_LIMIT + 10) + b'"}'
+OVERSIZED_REFUSAL = b'{"ok": false, "padding": "' + b"x" * (BOT_API_ANSWER_LIMIT + 10) + b'"}'
 
 
 def unusable_answers() -> dict[str, Answer]:
@@ -350,6 +454,12 @@ def unusable_answers() -> dict[str, Answer]:
         "a 200 nested past the parser": Answer(200, b"[" * 100_000 + b"]" * 100_000),
         "a 4xx with no JSON": Answer(404, b"Not Found"),
         "a 4xx whose body says ok true": Answer(400, b'{"ok": true}'),
+        # Longer than the read limit, so the cut answer is not JSON. Read
+        # whole, the first would be a success and the second a refusal.
+        "an ok answer past the read limit": Answer(200, OVERSIZED_OK),
+        "a refusal past the read limit": Answer(401, OVERSIZED_REFUSAL),
+        "a read that fails": Answer(200, read_error=TimeoutError("timed out")),
+        "a refusal whose read fails": Answer(401, read_error=TimeoutError("timed out")),
     }
 
 
@@ -360,6 +470,19 @@ def test_an_answer_that_is_not_about_the_bot_is_telegram_unavailable(
 ) -> None:
     fake = BotApi({"getMe": OK, "sendMessage": OK, method: unusable_answers()[case]})
     assert check_telegram("1:valid", "42", opener=fake) == "telegram_unavailable"
+    assert fake.methods == (["getMe"] if method == "getMe" else ["getMe", "sendMessage"])
+
+
+def test_every_response_is_closed_whatever_happens_to_its_read() -> None:
+    answers = {
+        "ok": OK,
+        "a read that fails": Answer(200, read_error=TimeoutError("timed out")),
+    }
+    for case, answer in answers.items():
+        fake = BotApi({"getMe": answer, "sendMessage": OK})
+        check_telegram("1:valid", "42", opener=fake)
+        assert fake.responses, case
+        assert all(response.closed for response in fake.responses), case
 
 
 def test_the_mapping_reads_ok_and_not_error_code() -> None:
@@ -377,11 +500,23 @@ def test_an_error_that_quotes_the_token_leaves_nothing_of_it(
 ) -> None:
     caplog.set_level(logging.DEBUG)
     token, chat = bot_token(), chat_id()
-    quoting = http.client.InvalidURL(f"URL can't contain control characters. '/bot{token}/getMe'")
-    for method in ("getMe", "sendMessage"):
-        fake = BotApi({"getMe": OK, "sendMessage": OK, method: Answer(error=quoting)})
-        assert check_telegram(token, chat, opener=fake) == "telegram_unavailable"
+    quoting: list[BaseException] = [
+        http.client.InvalidURL(f"URL can't contain control characters. '/bot{token}/getMe'"),
+        # A type nobody expected, which would reach a log with its text.
+        RuntimeError(f"unexpected: https://api.telegram.org/bot{token}/getMe"),
+    ]
+    for error in quoting:
+        for method in ("getMe", "sendMessage"):
+            fake = BotApi({"getMe": OK, "sendMessage": OK, method: Answer(error=error)})
+            assert check_telegram(token, chat, opener=fake) == "telegram_unavailable"
     assert caplog.records == []
+
+
+def test_a_stop_signal_is_not_swallowed_by_the_check() -> None:
+    # `except Exception`, not `BaseException`: a stop still stops.
+    fake = BotApi({"getMe": Answer(error=KeyboardInterrupt()), "sendMessage": OK})
+    with pytest.raises(KeyboardInterrupt):
+        check_telegram("1:valid", "42", opener=fake)
 
 
 # --- the routes, hosted ---
@@ -430,6 +565,17 @@ def stored_pair(server: Server, owner: str) -> dict[str, str] | None:
         conn.close()
 
 
+def stored_row(server: Server, owner: str) -> StoredCredential | None:
+    """The owner's `telegram` row as the store holds it: nonce, ciphertext
+    and time. A rewrite changes the nonce, so an equal row was not written."""
+    conn = open_owner_store(server.url, owner)
+    try:
+        rows = [row for row in stored_credentials(conn) if row.kind == "telegram"]
+        return rows[0] if rows else None
+    finally:
+        conn.close()
+
+
 def telegram_rows(server: Server, owner: str) -> int:
     conn = open_owner_store(server.url, owner)
     try:
@@ -439,15 +585,23 @@ def telegram_rows(server: Server, owner: str) -> int:
 
 
 def test_saving_telegram_checks_the_bot_and_sends_one_confirmation(
-    server: Server, hosted: Hosted, bot_api: BotApi
+    server: Server, hosted: Hosted, bot_api: BotApi, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     owner = server.owner()
     token, chat = bot_token(), chat_id()
     assert get_state(hosted, owner) == {"configured": False, "updated_at": None}
 
     # Padded, as a paste can be: checked and stored stripped.
-    response = save(hosted, owner, f"  {token}\n", f"\t{chat} ")
+    with monkeypatch.context() as patch:
+        seen = record_statements(patch)
+        response = save(hosted, owner, f"  {token}\n", f"\t{chat} ")
     assert response.status_code == 200, response.text
+    # The save runs in the request with the values it carried: it decrypts no
+    # stored credential, and selects none (spec 109, Saving).
+    assert any("credentials" in sql for sql in seen), "the save did not write the store"
+    assert not [
+        sql for sql in seen if sql.lstrip().upper().startswith("SELECT") and "ciphertext" in sql
+    ]
     answer = response.json()
     assert set(answer) == {"configured", "updated_at"}
     assert answer["configured"] is True and isinstance(answer["updated_at"], str)
@@ -493,6 +647,8 @@ def test_a_refused_telegram_setting_stores_nothing(
     before_token, before_chat = bot_token(), chat_id()
     assert save(hosted, owner, before_token, before_chat).status_code == 200
     before = get_state(hosted, owner)
+    before_row = stored_row(server, owner)
+    assert before_row is not None
     bot_api.calls.clear()
 
     bot_api.script = {"getMe": OK, "sendMessage": OK, **script}
@@ -501,8 +657,10 @@ def test_a_refused_telegram_setting_stores_nothing(
     status, detail = REFUSALS[reason]
     assert (response.status_code, response.json()) == (status, {"detail": detail, "reason": reason})
     assert bot_api.methods == calls
-    # The earlier pair survives, unchanged and not rewritten.
+    # The earlier pair survives, unchanged and not rewritten: the same
+    # nonce, ciphertext and time.
     assert stored_pair(server, owner) == {"bot_token": before_token, "chat_id": before_chat}
+    assert stored_row(server, owner) == before_row
     assert get_state(hosted, owner) == before
 
     # An owner with no earlier pair has still none.
@@ -546,6 +704,10 @@ def malformed_bodies(token: str, chat: str) -> dict[str, bytes]:
         "a list": encode([token, chat]),
         "a string": encode(f"{token} {chat}"),
         "not JSON": f'{{"bot_token": "{token}", "chat_id": "{chat}"'.encode(),
+        # FastAPI answers this one with its own 400 before it validates.
+        "not UTF-8": f'{{"bot_token": "{token}\udcff", "chat_id": "{chat}"}}'.encode(
+            "utf-8", "surrogateescape"
+        ),
     }
 
 
@@ -556,15 +718,13 @@ def test_a_telegram_secret_never_reaches_a_body_or_a_log(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.DEBUG)
-    emitted = AsEmitted()
-    route_logger = logging.getLogger("harrier_api.notify_routes")
-    route_logger.addHandler(emitted)
     owner = server.owner()
     token, chat = bot_token(), chat_id()
     shown: list[str] = []
+    expected_refusals: list[str] = []
     client = hosted.client()
 
-    try:
+    with emitted_by_harrier() as emitted:
         # Every refusal, with the secrets in each, as the token a Bot API
         # error would quote it.
         quoting = http.client.InvalidURL(f"URL can't contain control chars '/bot{token}/getMe'")
@@ -582,11 +742,13 @@ def test_a_telegram_secret_never_reaches_a_body_or_a_log(
                 response = save(hosted, owner, token, chat)
             assert response.status_code in (400, 502), (case, response.text)
             assert response.json()["reason"] == reason
-            shown.append(response.text)
+            expected_refusals.append(reason)
+            shown.append(everything(response))
         bot_api.script = {"getMe": Answer(error=quoting), "sendMessage": OK}
         response = save(hosted, owner, token, chat)
         assert response.status_code == 502, response.text
-        shown.append(response.text)
+        expected_refusals.append("telegram_unavailable")
+        shown.append(everything(response))
         bot_api.script = {"getMe": OK, "sendMessage": OK}
 
         # Bodies the schema refuses: the field and the rule, never the input.
@@ -599,7 +761,7 @@ def test_a_telegram_secret_never_reaches_a_body_or_a_log(
             assert response.status_code == 422, (case, response.text)
             detail = response.json()["detail"]
             assert all(set(entry) == {"field", "problem"} for entry in detail), (case, detail)
-            shown.append(response.text)
+            shown.append(everything(response))
         # The unknown field is named by the route's own, not by the caller.
         response = client.put(
             "/notifications/telegram",
@@ -609,6 +771,7 @@ def test_a_telegram_secret_never_reaches_a_body_or_a_log(
         assert response.json()["detail"] == [
             {"field": "fields", "problem": "may only be bot_token, chat_id"}
         ]
+        shown.append(everything(response))
 
         # A good save, a read, a clear.
         for response in (
@@ -617,25 +780,106 @@ def test_a_telegram_secret_never_reaches_a_body_or_a_log(
             client.delete("/notifications/telegram", headers=hosted.headers(owner)),
         ):
             assert response.status_code == 200, response.text
-            shown.append(response.text)
-    finally:
-        route_logger.removeHandler(emitted)
+            shown.append(everything(response))
 
     # The models, by repr and str, hold neither.
     parsed = TelegramSettingsIn(bot_token=token, chat_id=chat)  # type: ignore[arg-type]
     shown += [repr(parsed), str(parsed)]
 
-    records = [record.getMessage() for record in caplog.records] + emitted.messages
-    records += [str(record.exc_text or "") for record in caplog.records]
-    # The log is not empty, so reading it proves something: each refusal
-    # logged its reason alone.
-    refusals = [m for m in emitted.messages if m.startswith("telegram settings refused")]
-    assert refusals
-    assert {m.rpartition(": ")[2] for m in refusals} <= set(TELEGRAM_REASONS)
+    records = [record.getMessage() for record in caplog.records]
+    records += [str(record.exc_text or "") for record in caplog.records] + emitted.texts
+    # The log is not empty, so reading it proves something: each refusal,
+    # and no other request, logged its reason alone, at INFO.
+    logged = [r for r in emitted.records if r.name == "harrier_api.notify_routes"]
+    assert [(r.levelname, r.getMessage()) for r in logged] == [
+        ("INFO", f"telegram settings refused: {reason}") for reason in expected_refusals
+    ]
     for text in shown + records:
         assert_holds_none_of(text, token, chat)
     # The confirmation text is the one thing sent, and it holds neither.
     assert_holds_none_of(CONFIRMATION_TEXT, token, chat)
+
+
+def open_transactions(server: Server, hosted: Hosted) -> int:
+    """How many transactions the API's login role has open on the store right
+    now, read by the server's superuser. A request's transaction is open
+    from its first statement to its commit."""
+    with server.superuser() as conn:
+        row = conn.execute(
+            "SELECT count(*) FROM pg_stat_activity "
+            "WHERE usename = %s AND state = 'idle in transaction'",
+            (hosted.store.role,),
+        ).fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+def test_the_bot_api_is_asked_while_the_request_holds_no_connection(
+    server: Server, hosted: Hosted, bot_api: BotApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The check runs before the request's transaction opens, so a slow
+    Telegram holds no pooled connection (data integrity review of PR #325).
+    The write, by contrast, runs inside one: the probe sees an open
+    transaction there, so it is not blind."""
+    owner = server.owner()
+    open_during_write: list[int] = []
+    real_put = notify_routes.put_credential
+
+    def observed_put(*args: Any, **kwargs: Any) -> str:
+        open_during_write.append(open_transactions(server, hosted))
+        return real_put(*args, **kwargs)
+
+    monkeypatch.setattr(notify_routes, "put_credential", observed_put)
+    bot_api.observe = lambda: open_transactions(server, hosted)
+    assert save(hosted, owner, bot_token(), chat_id()).status_code == 200
+    assert bot_api.seen == [0, 0]
+    assert open_during_write == [1]
+    assert open_transactions(server, hosted) == 0
+
+
+def test_a_request_that_cannot_be_written_sends_no_confirmation(
+    server: Server, hosted: Hosted, bot_api: BotApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The key is read before the check: a hosted app that holds none would
+    send the owner a message and then fail to store the pair."""
+    owner = server.owner()
+    monkeypatch.setattr(hosted.app.state, "credentials_key", None)
+    response = hosted.client(raise_server_exceptions=False).put(
+        "/notifications/telegram",
+        json={"bot_token": bot_token(), "chat_id": chat_id()},
+        headers=hosted.headers(owner),
+    )
+    assert response.status_code == 500
+    assert bot_api.calls == []
+
+
+def test_a_failed_write_after_a_passed_check_keeps_the_earlier_pair(
+    server: Server, hosted: Hosted, bot_api: BotApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The check sends its confirmation before the write, so a write that
+    fails leaves a message sent and nothing stored: a 500 with a fixed body,
+    and the earlier pair as it was."""
+    owner = server.owner()
+    before_token, before_chat = bot_token(), chat_id()
+    assert save(hosted, owner, before_token, before_chat).status_code == 200
+    before = get_state(hosted, owner)
+
+    def failing(*args: Any, **kwargs: Any) -> str:
+        raise StoreDatabaseError("synthetic store failure")
+
+    token, chat = bot_token(), chat_id()
+    with monkeypatch.context() as patch:
+        patch.setattr(notify_routes, "put_credential", failing)
+        response = hosted.client(raise_server_exceptions=False).put(
+            "/notifications/telegram",
+            json={"bot_token": token, "chat_id": chat},
+            headers=hosted.headers(owner),
+        )
+    assert response.status_code == 500
+    assert_holds_none_of(response.text, token, chat)
+    assert bot_api.methods[-2:] == ["getMe", "sendMessage"]
+    assert stored_pair(server, owner) == {"bot_token": before_token, "chat_id": before_chat}
+    assert get_state(hosted, owner) == before
 
 
 def test_the_response_to_a_good_save_is_not_the_pair(
@@ -654,6 +898,13 @@ def test_reading_and_clearing_telegram_settings(
     owner = server.owner()
     token, chat = bot_token(), chat_id()
     client = hosted.client()
+    # Another kind is stored, so `configured` cannot be "a row exists".
+    apify = {"token": "synthetic-apify-token"}
+    assert (
+        client.put("/credentials/apify", json=apify, headers=hosted.headers(owner)).status_code
+        == 200
+    )
+    assert get_state(hosted, owner) == {"configured": False, "updated_at": None}
     saved = save(hosted, owner, token, chat).json()
     bot_api.calls.clear()
 
@@ -736,15 +987,25 @@ def test_a_saved_pair_reaches_only_its_owners_run_and_never_the_event_stream(
     a, b = server.owner(), server.owner()
     token, chat = bot_token(), chat_id()
     assert save(hosted, a, token, chat).status_code == 200
+    # B has a credential of another kind, so their run has rows to read.
+    put = hosted.client().put(
+        "/credentials/apify", json={"token": "synthetic-apify-token"}, headers=hosted.headers(b)
+    )
+    assert put.status_code == 200
 
-    conn = open_owner_store(server.url, a)
-    try:
-        rows = stored_credentials(conn)
-    finally:
-        conn.close()
+    def rows_of(owner: str) -> list[StoredCredential]:
+        conn = open_owner_store(server.url, owner)
+        try:
+            return stored_credentials(conn)
+        finally:
+            conn.close()
+
+    rows_a, rows_b = rows_of(a), rows_of(b)
+    assert [row.kind for row in rows_a] == ["telegram"]
+    assert [row.kind for row in rows_b] == ["apify"]
     summary = json.dumps({"event": "summary", "chat": chat, "nested": [token]})
     script = PRINT_ENVIRONMENT + emit(f"sent with {token} to {chat}", "::harrier::" + summary)
-    run_host = hosted_manager(tmp_path, monkeypatch, script, {a: rows})
+    run_host = hosted_manager(tmp_path, monkeypatch, script, {a: rows_a, b: rows_b})
 
     mine = run_to_end(run_host.manager, a)
     assert mine.state == "succeeded"
@@ -790,6 +1051,7 @@ def test_telegram_routes_are_not_served_locally(monkeypatch: pytest.MonkeyPatch)
                 {"bot_token": 1},
                 None,
                 b'{"bot_token": ',
+                b'{"bot_token": "\xff\xfe"}',
             )
             for body in bodies:
                 if isinstance(body, bytes):
@@ -845,13 +1107,26 @@ def test_the_contract_declares_the_telegram_routes() -> None:
     body = put["requestBody"]["content"]["application/json"]["schema"]["$ref"]
     assert body.rpartition("/")[2] == "TelegramSettingsIn"
 
+    # Explicit and stable, as ADR-005 asks: the generated client names
+    # derive from them.
+    assert {method: path[method]["operationId"] for method in path} == {
+        "get": "getTelegramSettings",
+        "put": "saveTelegramSettings",
+        "delete": "clearTelegramSettings",
+    }
+
     settings_in = schemas["TelegramSettingsIn"]
     assert sorted(settings_in["required"]) == ["bot_token", "chat_id"]
-    # Plain strings to the schema: no pattern, so a malformed value reaches
-    # the handler's own check.
+    # Plain strings to the schema: no pattern or length, so a malformed value
+    # reaches the handler's own check. Both are marked secret and write-only,
+    # the chat id as well as the token (decision D7).
     for name in ("bot_token", "chat_id"):
-        assert settings_in["properties"][name]["type"] == "string"
-        assert "pattern" not in settings_in["properties"][name]
+        field_schema = settings_in["properties"][name]
+        assert field_schema["type"] == "string"
+        assert not {"pattern", "minLength", "maxLength"} & set(field_schema)
+        assert (field_schema["format"], field_schema["writeOnly"]) == ("password", True), name
+    # No implementation note in the published description.
+    assert "repr" not in settings_in["description"]
     assert sorted(schemas["TelegramSettingsOut"]["properties"]) == ["configured", "updated_at"]
     refusal = schemas["TelegramRefusalOut"]["properties"]
     assert sorted(refusal) == ["detail", "reason"]
