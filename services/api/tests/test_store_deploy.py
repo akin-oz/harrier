@@ -272,14 +272,15 @@ def test_a_grant_that_leaves_the_role_unable_to_set_it_is_not_reported_as_made(
     )
 
 
-def test_grant_tenant_refuses_a_store_that_is_not_at_the_target(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize("command", ["grant-tenant", "grant-schedule-reader"])
+def test_a_grant_command_refuses_a_store_that_is_not_at_the_target(
+    command: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     previous = max(v for v, _ in POSTGRES_MIGRATIONS if v < target_version())
     with fresh_database() as url:
         migrate_to(url, previous, monkeypatch)
         monkeypatch.setenv(URL_VARIABLE, url)
-        code, out, err = run(["store", "grant-tenant", "anyone"], capsys)
+        code, out, err = run(["store", command, "anyone"], capsys)
     assert (code, out) == (1, "")
     assert err == (
         f"error: the Postgres store is at version {previous}; this code needs "
@@ -304,7 +305,7 @@ def test_check_deploy_refuses_a_sqlite_store(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setenv(URL_VARIABLE, "")
-    assert run(["store", "check-deploy"], capsys) == (
+    assert run(["store", "check-deploy", "--login", "anyone"], capsys) == (
         1,
         "",
         "error: harrier store check-deploy needs a Postgres store\n",
@@ -405,6 +406,12 @@ def three_logins(server: Server, capsys: pytest.CaptureFixture[str]) -> tuple[st
     return api.name, run_login.name, scheduler.name
 
 
+def bare(server: Server) -> list[str]:
+    """`check-deploy` for one login role that passes, so the checks before and
+    after the login roles are what each test reads."""
+    return ["store", "check-deploy", "--login", server.login_role().name]
+
+
 def check_deploy_argv(api: str, run_login: str, scheduler: str) -> list[str]:
     return [
         "store",
@@ -484,7 +491,7 @@ def test_check_deploy_names_the_failed_check(
     with fresh_database() as url:
         migrate_to(url, previous, monkeypatch)
         monkeypatch.setenv(URL_VARIABLE, url)
-        printed, failure = failed_check(server, ["store", "check-deploy"], capsys)
+        printed, failure = failed_check(server, ["store", "check-deploy", "--login", "x"], capsys)
     assert printed == []
     assert failure == (
         f"check-deploy: store version: the Postgres store is at version {previous}; "
@@ -495,6 +502,40 @@ def test_check_deploy_names_the_failed_check(
 def public_select(server: Server) -> str:
     server.migrator("GRANT SELECT ON jobs TO PUBLIC")
     return "anon holds a privilege on table jobs (and 2 more)"
+
+
+def every_table_privilege(privilege: str) -> Callable[[Server], str]:
+    def grant(server: Server) -> str:
+        server.migrator(f"GRANT {privilege} ON jobs TO anon")
+        return "anon holds a privilege on table jobs"
+
+    grant.__name__ = f"table_{privilege.lower()}"
+    return grant
+
+
+def column_update(server: Server) -> str:
+    server.migrator("GRANT UPDATE (url) ON jobs TO authenticated")
+    return "authenticated holds a privilege on table jobs"
+
+
+def a_partitioned_table(server: Server) -> str:
+    server.migrator(
+        "CREATE TABLE harrier_probe_part (n integer) PARTITION BY RANGE (n)",
+        "GRANT SELECT ON harrier_probe_part TO anon",
+    )
+    return "anon holds a privilege on table harrier_probe_part"
+
+
+def sequence_privilege(privilege: str) -> Callable[[Server], str]:
+    def grant(server: Server) -> str:
+        server.migrator(
+            "CREATE SEQUENCE harrier_probe_seq",
+            f"GRANT {privilege} ON SEQUENCE harrier_probe_seq TO anon",
+        )
+        return "anon holds a privilege on sequence harrier_probe_seq"
+
+    grant.__name__ = f"sequence_{privilege.lower()}"
+    return grant
 
 
 def column_grant(server: Server) -> str:
@@ -529,6 +570,16 @@ def view_select(server: Server) -> str:
         function_execute,
         sequence_usage,
         view_select,
+        every_table_privilege("INSERT"),
+        every_table_privilege("UPDATE"),
+        every_table_privilege("DELETE"),
+        every_table_privilege("TRUNCATE"),
+        every_table_privilege("REFERENCES"),
+        every_table_privilege("TRIGGER"),
+        column_update,
+        a_partitioned_table,
+        sequence_privilege("SELECT"),
+        sequence_privilege("UPDATE"),
     ],
     ids=lambda case: case.__name__,
 )
@@ -536,7 +587,7 @@ def test_check_deploy_reads_the_data_api_roles_effective_privileges(
     case: Callable[[Server], str], server: Server, capsys: pytest.CaptureFixture[str]
 ) -> None:
     named = case(server)
-    _, failure = failed_check(server, ["store", "check-deploy"], capsys)
+    _, failure = failed_check(server, bare(server), capsys)
     assert failure == f"check-deploy: data api roles: {named}"
 
 
@@ -553,7 +604,7 @@ def test_check_deploy_leaves_supabases_own_event_trigger_function_alone(
     assert server.one(
         "SELECT has_function_privilege('anon', 'public.rls_auto_enable()', 'EXECUTE')"
     )
-    code, out, err = run(["store", "check-deploy"], capsys)
+    code, out, err = run(bare(server), capsys)
     assert (code, err) == (0, "")
     assert "data api roles: anon, authenticated, service_role hold nothing in public" in out
 
@@ -610,10 +661,7 @@ def test_check_deploy_names_a_login_role_that_reaches_another_role(
     # The scheduler's login holds the reader; the API's must not.
     server.sql(f"GRANT {SCHEDULE_READER_ROLE} TO {api}")
     _, failure = failed_check(server, argv_for(api), capsys)
-    assert failure == (
-        f"check-deploy: login role {api} is a member of {SCHEDULE_READER_ROLE}, "
-        "which the deploy did not grant"
-    )
+    assert failure == f"check-deploy: login role {api}: member of {SCHEDULE_READER_ROLE}"
     undo(SCHEDULE_READER_ROLE)
 
     # The run login is held to the same set.
@@ -652,7 +700,7 @@ def test_check_deploy_holds_run_and_scheduler_logins_to_their_roles(
     no_reader = server.login_role()
     _, failure = failed_check(server, check_deploy_argv(api, run_login, no_reader.name), capsys)
     assert failure == (
-        f"check-deploy: login role {no_reader.name} is not a member of {SCHEDULE_READER_ROLE}"
+        f"check-deploy: login role {no_reader.name}: cannot set role {SCHEDULE_READER_ROLE}"
     )
 
     # A scheduler login that fails a login role check.
@@ -676,13 +724,13 @@ def test_check_deploy_names_a_policy_on_storage_objects_that_is_not_harriers(
     server: Server, capsys: pytest.CaptureFixture[str]
 ) -> None:
     storage_objects(server, "harrier_files_owner_only")
-    code, out, err = run(["store", "check-deploy"], capsys)
+    code, out, err = run(bare(server), capsys)
     assert (code, err) == (0, "")
     assert out.splitlines()[-1] == "storage.objects: no policy but harrier_files_owner_only"
 
     server.sql("CREATE POLICY anyone_reads ON storage.objects FOR SELECT USING (true)")
     server.sql("CREATE POLICY another_one ON storage.objects FOR INSERT WITH CHECK (true)")
-    _, failure = failed_check(server, ["store", "check-deploy"], capsys)
+    _, failure = failed_check(server, bare(server), capsys)
     assert failure == (
         "check-deploy: storage policies: storage.objects carries another_one, anyone_reads"
     )
@@ -700,3 +748,61 @@ def test_check_deploy_writes_nothing(server: Server, monkeypatch: pytest.MonkeyP
     with pytest.raises(StoreDatabaseError, match="read-only transaction"):
         storedeploy.check_deploy(server.url, [], lambda _line: None)
     assert not server.one("SELECT to_regclass('public.harrier_check_deploy_wrote') IS NOT NULL")
+
+
+def test_check_deploy_refuses_to_run_with_no_login_role_to_check(
+    server: Server, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A deploy that names no login role would pass having checked none."""
+    code, out, err = run(["store", "check-deploy"], capsys)
+    assert (code, out) == (1, "")
+    assert (
+        err == "error: harrier store check-deploy needs at least one --login or --scheduler-login\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["store", "grant-tenant", "harrier_api"],
+        ["store", "grant-schedule-reader", "harrier_scheduler"],
+        ["store", "check-deploy", "--login", "harrier_api"],
+    ],
+    ids=lambda argv: argv[1],
+)
+def test_a_store_that_cannot_be_reached_is_reported_without_its_host(
+    argv: list[str], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """These run in a public log, where only the whole URL is masked: the
+    refusal names no host, port, user or driver text."""
+    monkeypatch.setenv(
+        URL_VARIABLE, "postgresql://synthetic_user:synthetic_pw@127.0.0.1:1/synthetic_db"
+    )
+    code, out, err = run(argv, capsys)
+    assert (code, out) == (1, "")
+    assert err == (
+        f"error: harrier store {argv[1]} could not connect to the store; check the migrator's URL\n"
+    )
+    for word in ("127.0.0.1", "synthetic", "5432", "refused"):
+        assert word not in err
+
+
+def test_the_scheduler_login_passes_every_deploy_it_holds_the_reader_through(
+    server: Server, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A second deploy runs `grant-tenant` for the scheduler's login again,
+    when it already holds the reader (spec 108's check refuses that for any
+    other login): it is granted nothing new and still passes."""
+    api, run_login, scheduler = three_logins(server, capsys)
+    for _ in range(2):
+        assert run(["store", "grant-tenant", scheduler], capsys) == (
+            0,
+            f"harrier_tenant already granted to {scheduler}\n",
+            "",
+        )
+        assert run(["store", "grant-schedule-reader", scheduler], capsys) == (
+            0,
+            f"harrier_schedule_reader already granted to {scheduler}\n",
+            "",
+        )
+        assert run(check_deploy_argv(api, run_login, scheduler), capsys)[0] == 0

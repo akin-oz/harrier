@@ -140,13 +140,14 @@ def _validate_holds(items: list[object]) -> list[HoldEntry]:
     return entries
 
 
-def _validate_schedule(value: object) -> dict[str, object]:
+def validate_schedule(value: object) -> dict[str, object]:
     """The `schedule` kind (spec 108): an object with exactly `timezone`, a
     zone `zoneinfo` loads, and `jobs`, distinct hosted job names. Empty
     `jobs` pauses the owner's schedule. Each refusal names the field and
     quotes nothing the owner wrote, not even an unknown field's name, and
     chains no exception that holds a value, so the scheduler may log a
-    refusal as it is, traceback included."""
+    refusal as it is, traceback included. Public because the scheduler
+    validates a stored row with the same rule as a write."""
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
     # Imported here, as the academic search module is: the hosted job set
@@ -212,7 +213,7 @@ def _validate(
     if kind not in kinds:
         raise ConfigError(f"unknown configuration kind {kind!r}; expected one of {kinds}")
     if kind == SCHEDULE:
-        return _validate_schedule(value)
+        return validate_schedule(value)
     if kind == ACADEMIC_SEARCHES:
         # Imported here: the search module reads the source's constants and
         # the slug rule, and this store sits below both.

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import calendar
+import http.client
 import json
 import re
 import urllib.error
@@ -22,7 +23,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
-from typing import cast
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 # --- the project's Auth settings ---
@@ -52,6 +53,17 @@ def needs(command: str, variable: str) -> DeployCheckFailed:
 Fetch = Callable[[str, str], tuple[int, bytes]]
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect is an answer, not somewhere to send the key: the `apikey`
+    header would follow it to whatever host it names."""
+
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def fetch_auth_settings(base_url: str, key: str) -> tuple[int, bytes]:
     """`GET <base_url>/auth/v1/settings` with the key as the `apikey` header,
     waiting at most 10 seconds. Returns the status and the body; raises
@@ -60,10 +72,10 @@ def fetch_auth_settings(base_url: str, key: str) -> tuple[int, bytes]:
         base_url.rstrip("/") + "/auth/v1/settings", headers={"apikey": key}
     )
     try:
-        with urllib.request.urlopen(request, timeout=AUTH_SETTINGS_TIMEOUT_SECONDS) as response:
+        with _OPENER.open(request, timeout=AUTH_SETTINGS_TIMEOUT_SECONDS) as response:
             return int(response.status), bytes(response.read())
     except urllib.error.HTTPError as error:
-        # An answer with a status: the caller names it.
+        # An answer with a status, a redirect included: the caller names it.
         return int(error.code), b""
 
 
@@ -72,19 +84,24 @@ def auth_settings_refusal(settings: Mapping[str, object]) -> str | None:
     `<field> is <value>`, or None.
 
     In order: `disable_signup` not `true` (false or missing: invite only
-    cannot be shown), `external.anonymous_users` true, then any other entry
-    of `external` that is true but `email` and `phone`, as
-    `external.<name>`.
+    cannot be shown), `external` not an object, `external.anonymous_users`
+    true, any entry of `external` that is not a boolean, then any other entry
+    that is true but `email` and `phone`, as `external.<name>`.
     """
     signup = settings.get("disable_signup")
     if signup is not True:
         return f"disable_signup is {_shown(signup, missing='missing')}"
     external = settings.get("external")
-    external_map: Mapping[str, object] = (
-        cast("Mapping[str, object]", external) if isinstance(external, dict) else {}
-    )
+    if not isinstance(external, dict):
+        # A project that does not say which providers are on cannot be shown
+        # to have none on.
+        return f"external is {'missing' if external is None else 'not an object'}"
+    external_map = cast("Mapping[str, object]", external)
     if external_map.get("anonymous_users") is True:
         return "external.anonymous_users is true"
+    for name in sorted(external_map):
+        if not isinstance(external_map[name], bool):
+            return f"external.{name} is not a boolean"
     for name in sorted(external_map):
         if name in NOT_A_PROVIDER:
             continue
@@ -125,7 +142,9 @@ def check_auth_settings(environ: Mapping[str, str], fetch: Fetch = fetch_auth_se
         )
     try:
         status, body = fetch(url, key)
-    except OSError as error:
+    except (OSError, ValueError, http.client.HTTPException) as error:
+        # The class only: a malformed port or header would quote the URL or
+        # the key.
         raise DeployCheckFailed(f"auth settings: no answer ({type(error).__name__})") from None
     if status != 200:
         raise DeployCheckFailed(f"auth settings: the project answered {status}")
@@ -188,7 +207,7 @@ def fill_fly_config(text: str, environ: Mapping[str, str]) -> str:
         value = environ.get(variable, "").strip()
         if not value:
             raise needs("fill-fly-config", variable)
-        if any(character in '"\\' or ord(character) < 32 for character in value):
+        if any(character in '"\\' or ord(character) in (*range(32), 127) for character in value):
             raise DeployCheckFailed(f"{variable} holds a quote, a backslash or a control character")
         if _holds_a_secret_key(value):
             raise DeployCheckFailed(f"{variable} holds a secret key; it takes the publishable key")

@@ -132,7 +132,7 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           DIGEST: ${{ steps.image.outputs.digest }}
-        run: fly deploy --image "registry.fly.io/$FLY_APP@$DIGEST" --config "$RUNNER_TEMP/fly.staging.toml"
+        run: fly deploy --ha=false --image "registry.fly.io/$FLY_APP@$DIGEST" --config "$RUNNER_TEMP/fly.staging.toml"
       - name: Count the API's machines
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
@@ -301,7 +301,7 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           DIGEST: ${{ steps.image.outputs.digest }}
-        run: fly deploy --image "registry.fly.io/$FLY_APP@$DIGEST" --config "$RUNNER_TEMP/fly.production.toml"
+        run: fly deploy --ha=false --image "registry.fly.io/$FLY_APP@$DIGEST" --config "$RUNNER_TEMP/fly.production.toml"
       - name: Count the API's machines
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

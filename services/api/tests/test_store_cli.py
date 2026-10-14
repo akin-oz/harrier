@@ -550,6 +550,11 @@ def test_a_remote_store_url_in_dotenv_is_refused(
         "postgresql://u:p@LOCALHOST.example.invalid/db",
         "postgresql://u:p@192.0.2.1:5432/db",
         "postgresql://u:p@[2001:db8::1]:5432/db",
+        # libpq refuses this one, so it is read by hand.
+        "postgresql://u:pw@db.example.invalid/db?sslmode",
+        # The host comes from a service file, which is not read here.
+        "postgresql://u:p@/db?service=production",
+        "postgresql://u:p@localhost/db?service=production",
     ],
 )
 @pytest.mark.dotenv_fallback
@@ -559,7 +564,63 @@ def test_every_remote_shape_in_dotenv_is_refused(
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv(URL_VARIABLE)
     (tmp_path / ".env").write_text(f"{URL_VARIABLE}={url}\n", encoding="utf-8")
+    with pytest.raises(StoreUrlError):
+        store_target()
+    # And the loader leaves it in the file, whatever refused it.
+    load_project_env()
+    assert URL_VARIABLE not in os.environ
+
+
+@pytest.mark.parametrize(
+    ("variable", "value"),
+    [("PGHOST", "db.example.invalid"), ("PGHOSTADDR", "203.0.113.7"), ("PGSERVICE", "production")],
+)
+@pytest.mark.dotenv_fallback
+def test_a_url_with_no_host_takes_it_from_the_environment_libpq_reads(
+    variable: str,
+    value: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv(URL_VARIABLE)
+    monkeypatch.setenv(variable, value)
+    (tmp_path / ".env").write_text(f"{URL_VARIABLE}=postgresql://u:p@/db\n", encoding="utf-8")
     with pytest.raises(StoreUrlError, match="names a remote store"):
+        store_target()
+    # Loopback there is this machine.
+    monkeypatch.delenv(variable)
+    monkeypatch.setenv("PGHOST", "localhost")
+    assert store_target().is_postgres
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql://u:p@localhost:5432,db.example.invalid:5432/db",
+        "postgresql://u:[pw]@db.example.invalid/db",
+        "postgresql://u:p@db.example.invalid/db?host=db2.example.invalid,localhost",
+    ],
+)
+@pytest.mark.dotenv_fallback
+def test_a_remote_host_is_found_without_the_driver(
+    url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """psycopg is not installed in the default local install. The authority is
+    split by hand, comma lists included, and a URL that cannot be read at all
+    is not copied into the environment, with a refusal rather than a crash."""
+    from harrier import connection
+
+    def unreadable(_url: str) -> dict[str, object] | None:
+        return None
+
+    monkeypatch.setattr(connection, "_libpq_parse", unreadable)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv(URL_VARIABLE)
+    (tmp_path / ".env").write_text(f"{URL_VARIABLE}={url}\n", encoding="utf-8")
+    load_project_env()
+    assert URL_VARIABLE not in os.environ
+    with pytest.raises(StoreUrlError):
         store_target()
 
 

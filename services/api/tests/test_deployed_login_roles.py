@@ -5,7 +5,9 @@ A recorded check, not a gate: `harrier store check-deploy` is the gate (spec
 039). It connects with the environment's migrator URL, which the operator
 exports as `HARRIER_DEPLOYED_MIGRATE_URL` in their shell and never in `.env`,
 and it writes nothing, so it runs against production as well as staging.
-Without the variable it skips, naming it, locally and in CI.
+Without the variable it skips, naming it, locally and in CI. A connection that
+fails is reported without its text and without a traceback, which would print the
+URL; run the module with `--tb=line`.
 
 It reads each login role's reach with the function `check-deploy` uses
 (`harrier.storedeploy.reached_roles`), so the CI tests of that function
@@ -25,7 +27,7 @@ from contextlib import closing
 
 import pytest
 
-from harrier.connection import Connection
+from harrier.connection import Connection, StoreError
 from harrier.pgstore import postgres_connect
 from harrier.storedeploy import SCHEDULER_LOGIN_ROLES, TENANT_LOGIN_ROLES, reached_roles
 from harrier.tracker.schema import TENANT_ROLE
@@ -80,7 +82,13 @@ def test_the_deployed_login_roles_reach_only_their_grants() -> None:
     if not url:
         pytest.skip(f"{URL_VARIABLE} is not set; the deployed project is not checked")
     checked: list[str] = []
-    with closing(postgres_connect(url)) as driver:
+    try:
+        driver = postgres_connect(url)
+    except StoreError:
+        # Not the error's own text and no traceback: pytest prints the
+        # arguments of every frame, and `postgres_connect`'s is the URL.
+        pytest.fail("could not connect to the deployed project", pytrace=False)
+    with closing(driver):
         conn = Connection.postgres(driver)
         with conn.transaction():
             conn.execute("SET TRANSACTION READ ONLY")
@@ -99,5 +107,8 @@ def test_the_deployed_login_roles_reach_only_their_grants() -> None:
                 # The tenant role is what a request becomes.
                 assert TENANT_ROLE in reached
                 checked.append(f"{login}: member of {', '.join(sorted(reached))}")
+    # A project whose login roles are named differently from these would pass
+    # having checked none.
+    assert checked, f"none of {sorted(EXPECTED)} exists on the project"
     # Role names only: the pull request records these lines.
     print("\n".join(checked))

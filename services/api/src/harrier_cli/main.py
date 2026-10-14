@@ -19,6 +19,7 @@ from harrier.connection import (
     RUN_OWNER_VARIABLE,
     URL_VARIABLE,
     Connection,
+    StoreConnectionError,
     StoreError,
     StoreLibraryTooOld,
     StoreUrlError,
@@ -63,6 +64,17 @@ if TYPE_CHECKING:
     from harrier.deploychecks import CostLine
 
 
+def _local_store_url(value: str) -> bool:
+    """Whether `value` is empty or a store URL `store_target` reads and finds
+    on this machine: the only kind of store URL `.env` may put into the
+    environment."""
+    try:
+        store_target({URL_VARIABLE: value})
+    except StoreUrlError:
+        return False
+    return not value.strip() or not names_a_remote_host(value)
+
+
 def load_project_env(path: Path | None = None) -> None:
     """Load .env from the working directory (spec 011; launchd wrappers rely
     on it). Existing environment variables are never overridden. A hosted
@@ -72,10 +84,11 @@ def load_project_env(path: Path | None = None) -> None:
     for key, value in read_env_file(path if path is not None else Path(".env")).items():
         if key in os.environ:
             continue
-        if key == URL_VARIABLE and names_a_remote_host(value):
+        if key == URL_VARIABLE and not _local_store_url(value):
             # Not copied into the environment, where it would look exported
             # and reach every child process. `store_target` reads `.env`
-            # itself and refuses it (spec 110).
+            # itself, and refuses what it cannot read or finds remote
+            # (spec 110).
             continue
         os.environ[key] = value
 
@@ -113,6 +126,80 @@ def run_class_refusal(command: str) -> str:
         f"harrier {command} runs on a Postgres store only as a hosted run, "
         "which the API starts for one owner (spec 106)"
     )
+
+
+# --- the operator class (spec 108, Amendment (2026-10-14)) ---
+
+# What an operator subcommand declares, beside the parser: the database role
+# it runs as, or that it opens no database connection. Specs 108 and 111
+# state each one. The declaration is the parser default `operator_role`, so
+# a subcommand cannot be added without answering (`_operator_subcommand`),
+# and `operator_roles` reads them for the walk that fails on a missing one.
+OPERATOR_ROLE = "operator_role"
+NO_DATABASE = "opens no database connection"
+# The login the scheduler and its report run as (spec 108, "The scheduler's
+# login"): a member of `harrier_tenant` and `harrier_schedule_reader` only.
+SCHEDULER_LOGIN = "harrier_scheduler"
+
+
+def operator_refusal(command: str) -> str:
+    """An operator subcommand beside SQLite. `command` is the command and
+    subcommand words only (spec 061)."""
+    return (
+        f"harrier {command} runs only against a hosted store; "
+        "locally the schedule is launchd (harrier schedule)"
+    )
+
+
+def _operator_subcommand(
+    group: argparse._SubParsersAction[argparse.ArgumentParser],  # pyright: ignore[reportPrivateUsage]
+    name: str,
+    *,
+    role: str,
+    func: Callable[[argparse.Namespace], int],
+    help: str,
+) -> argparse.ArgumentParser:
+    parser = group.add_parser(name, help=help)
+    parser.set_defaults(func=func, **{OPERATOR_ROLE: role})
+    return parser
+
+
+def operator_roles(parser: argparse.ArgumentParser) -> dict[str, str | None]:
+    """Each `harrier operator` subcommand and the role it declares, None for
+    one that declares nothing. argparse offers no public way to list a
+    parser's subcommands, so this reads its actions."""
+    roles: dict[str, str | None] = {}
+    top = _subparsers_of(parser)
+    group = _subparsers_of(top["operator"]) if "operator" in top else {}
+    for name, subparser in group.items():
+        declared = subparser.get_default(OPERATOR_ROLE)
+        roles[name] = declared if isinstance(declared, str) else None
+    return roles
+
+
+def undeclared_operator_subcommands(parser: argparse.ArgumentParser) -> list[str]:
+    """The `harrier operator` subcommands that declare no role. The walk
+    (`tests/test_operator_class.py`) fails unless this is empty."""
+    return sorted(name for name, role in operator_roles(parser).items() if role is None)
+
+
+def _subparsers_of(parser: argparse.ArgumentParser) -> dict[str, argparse.ArgumentParser]:
+    found: dict[str, argparse.ArgumentParser] = {}
+    for action in parser._actions:  # pyright: ignore[reportPrivateUsage]
+        if isinstance(action, argparse._SubParsersAction):  # pyright: ignore[reportPrivateUsage]
+            found.update(action.choices)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+    return found
+
+
+def operator_group(
+    parser: argparse.ArgumentParser,
+) -> argparse._SubParsersAction[argparse.ArgumentParser]:  # pyright: ignore[reportPrivateUsage]
+    """The action that holds `harrier operator`'s subcommands, where
+    `_operator_subcommand` adds one."""
+    for action in _subparsers_of(parser)["operator"]._actions:  # pyright: ignore[reportPrivateUsage]
+        if isinstance(action, argparse._SubParsersAction):  # pyright: ignore[reportPrivateUsage]
+            return action  # pyright: ignore[reportUnknownVariableType]
+    raise LookupError("harrier operator has no subcommands")
 
 
 def _open_store() -> Connection:
@@ -1641,6 +1728,23 @@ def _cmd_tracks(args: argparse.Namespace) -> int:
         return 0
 
 
+def _cmd_operator_scheduler(args: argparse.Namespace) -> int:
+    """One scheduler tick, then exit (spec 108)."""
+    from harrier_api.hostedscheduler import run_scheduler
+
+    # Hosted logging: stderr only, no local tracker opened (spec 135).
+    configure_logging(hosted=True)
+    return run_scheduler(os.environ, handle_signals=True)
+
+
+def _cmd_operator_schedule_report(args: argparse.Namespace) -> int:
+    """The hosted schedule, one line per owner and job (spec 108)."""
+    from harrier_api.hostedscheduler import run_report
+
+    configure_logging(hosted=True)
+    return run_report(os.environ)
+
+
 def _cmd_store(args: argparse.Namespace) -> int:
     """Migrate the store, or print its dialect and version (spec 103)."""
     from harrier.connection import StoreError
@@ -1648,7 +1752,18 @@ def _cmd_store(args: argparse.Namespace) -> int:
     try:
         target = store_target()
         if args.store_command in STORE_DEPLOY_COMMANDS:
-            return _store_deploy(args, target.url if target.is_postgres else "")
+            try:
+                return _store_deploy(args, target.url if target.is_postgres else "")
+            except StoreConnectionError:
+                # These run in a public log, where GitHub masks the whole URL
+                # and not its host or user: the failure says only that it
+                # could not connect (spec 110).
+                print(
+                    f"error: harrier store {args.store_command} could not connect to the "
+                    "store; check the migrator's URL",
+                    file=sys.stderr,
+                )
+                return 1
         if target.is_postgres:
             return _store_postgres(args.store_command, target.url)
         return _store_sqlite(args.store_command)
@@ -1690,6 +1805,12 @@ def _store_deploy(args: argparse.Namespace, url: str) -> int:
         return 0
     tenant_roles = cast("list[str]", args.login or [])
     scheduler_roles = cast("list[str]", args.scheduler_login or [])
+    if not tenant_roles and not scheduler_roles:
+        print(
+            "error: harrier store check-deploy needs at least one --login or --scheduler-login",
+            file=sys.stderr,
+        )
+        return 1
     logins = [Login(role) for role in tenant_roles]
     logins += [Login(role, SCHEDULER_LOGIN_ROLES) for role in scheduler_roles]
     check_deploy(url, logins, print)
@@ -1758,7 +1879,7 @@ def _cmd_deploy(args: argparse.Namespace) -> int:
         elif command == "check-scheduler-tick":
             print(
                 deploychecks.wait_for_tick(
-                    lambda: _machine_events(args.app, args.machine),
+                    lambda: machine_events(args.app, args.machine),
                     args.since,
                     args.machine,
                     now=time.time,
@@ -1777,7 +1898,7 @@ def _cmd_deploy(args: argparse.Namespace) -> int:
     return 0
 
 
-def _machine_events(app: str, machine: str) -> object:
+def machine_events(app: str, machine: str) -> object:
     """The events of one Fly machine, from `fly machine status --json`, or
     None when the command or its output fails: the wait asks again."""
     import subprocess
@@ -2539,6 +2660,10 @@ _PATH = CommandClass(HOST_PATH)
 COMMAND_CLASSES: dict[str, CommandClass] = {
     # Never open the live database.
     "gmail-oauth": _HOST,
+    # Operator commands run only on a Postgres store, which main() decides
+    # before delegation is asked, and refuse a SQLite store (spec 108).
+    "operator scheduler": _HOST,
+    "operator schedule-report": _HOST,
     "schedule install": _HOST,
     "schedule status": _HOST,
     "schedule uninstall": _HOST,
@@ -3145,6 +3270,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="one billed line, the month so far in USD; repeat per line",
     )
     deploy_cmd.set_defaults(func=_cmd_deploy)
+    # Operator commands run only on a Postgres store, each as the database
+    # role it declares (spec 108, Amendment (2026-10-14); spec 127 keeps the
+    # table of every class). A subcommand is added through
+    # `_operator_subcommand`, which asks for the declaration.
+    operator_cmd = sub.add_parser(
+        "operator", help="commands for the operator of a hosted deployment (spec 108)"
+    )
+    operator_sub = operator_cmd.add_subparsers(dest="operator_command", required=True)
+    _operator_subcommand(
+        operator_sub,
+        "scheduler",
+        role=SCHEDULER_LOGIN,
+        func=_cmd_operator_scheduler,
+        help="run one tick of the hosted schedule, then exit (spec 108)",
+    )
+    _operator_subcommand(
+        operator_sub,
+        "schedule-report",
+        role=SCHEDULER_LOGIN,
+        func=_cmd_operator_schedule_report,
+        help="one line per owner and job; exit 1 when anything needs the operator (spec 108)",
+    )
 
     scoring_cmd = sub.add_parser("scoring", help="the learned fit score (spec 077)")
     scoring_sub = scoring_cmd.add_subparsers(dest="scoring_command", required=True)
@@ -3434,13 +3581,18 @@ def main(argv: list[str] | None = None) -> int:
             # A run command needs the owner the API gives a hosted run.
             print(f"error: {run_class_refusal(subcommand_name(args))}", file=sys.stderr)
             return 1
-        # The store commands run on it, and so do the deploy's checks, which
-        # open no store (spec 110).
-        if args.command not in ("store", "deploy"):
+        # The store, operator and deploy classes run; each operator subcommand as
+        # the role it declares (spec 108), and the deploy checks open no store
+        # (spec 110).
+        if args.command not in ("store", "operator", "deploy"):
             print(f"error: {POSTGRES_NOT_YET}", file=sys.stderr)
             return 1
         ran: int = args.func(args)
         return ran
+    if args.command == "operator":
+        # Before the lease, the hand-over and any store (spec 108).
+        print(f"error: {operator_refusal(subcommand_name(args))}", file=sys.stderr)
+        return 1
     if running_in() == "host":
         # Before anything is decided, so a lease left by a crashed host
         # process stops refusing the container at the next host invocation

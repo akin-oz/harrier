@@ -1487,3 +1487,16 @@ this machine from `run_records` under the owner's policy, so they show an
 interrupted run instead of answering 404 for it
 (`services/api/tests/test_hosted_runs_on_postgres.py::test_a_run_cut_off_by_a_stop_reads_interrupted`).
 Nothing else in this spec changes.
+
+## Amendment (2026-10-14): the login role checks refuse the schedule reader
+
+Spec 108's scheduler lists every owner's schedule through
+`harrier_schedule_inputs()` as `harrier_schedule_reader` (spec 108, Scope
+item 9). A login role that is a member of that role, directly or through
+another role, could list them, so the login role checks take one more
+refusal: `member of harrier_schedule_reader`. It applies to the API's login
+and to the run login, which this spec's checks already cover
+(`services/api/src/harrier/loginrole.py`,
+`services/api/tests/test_hosted_scheduler.py::test_the_api_login_cannot_list_schedules`).
+The scheduler's own login is the one login that must hold the role, and
+asks for the check without the refusal. Nothing else in this spec changes.

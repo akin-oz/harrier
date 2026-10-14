@@ -22,7 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from harrier.connection import Connection
-from harrier.tracker.schema import TENANT_ROLE
+from harrier.tracker.schema import SCHEDULE_READER_ROLE, TENANT_ROLE
 
 # The checks, by the names a refusal prints.
 NO_SUCH_ROLE = "no such role"
@@ -34,6 +34,10 @@ CANNOT_LOG_IN = "cannot log in"
 INHERITS = "inherits"
 OWNS_A_TABLE_IN_PUBLIC = "owns a table in public"
 CANNOT_SET_TENANT = f"cannot set role {TENANT_ROLE}"
+# A login role that can list every owner's schedule (spec 108): refused for
+# the API and for runs, required of the scheduler.
+LISTS_SCHEDULES = f"member of {SCHEDULE_READER_ROLE}"
+CANNOT_SET_READER = f"cannot set role {SCHEDULE_READER_ROLE}"
 MEMBER_PAST_THE_POLICY = "member of a role past the policy"
 
 # Why a role the login role reaches is past the policy.
@@ -66,7 +70,9 @@ class LoginRoleProblem:
         return f"{self.check}: {self.reached} ({', '.join(self.why)})"
 
 
-def login_role_problems(conn: Connection, role: str) -> list[LoginRoleProblem]:
+def login_role_problems(
+    conn: Connection, role: str, *, lists_schedules: bool = False
+) -> list[LoginRoleProblem]:
     """Every check `role` fails on the store `conn` reaches, in a fixed order.
 
     - `superuser`, `bypassrls`, `cannot log in`, `inherits`: the role's own
@@ -85,6 +91,11 @@ def login_role_problems(conn: Connection, role: str) -> list[LoginRoleProblem]:
     - `cannot set role harrier_tenant`: no `SET` on the tenant role, or no
       tenant role. `grant-tenant`, which runs before the grant, expects this
       one.
+    - `member of harrier_schedule_reader`: the role could list every
+      owner's schedule through `harrier_schedule_inputs()` (spec 108, Scope
+      item 9). The API's login and the run login are refused it. The
+      hosted scheduler's login passes `lists_schedules=True`: it must be
+      able to set the reader, and the membership is not a problem.
 
     A superuser is reported as that alone: `pg_has_role` answers true for
     every role when asked about a superuser, so its memberships say nothing
@@ -121,6 +132,11 @@ def login_role_problems(conn: Connection, role: str) -> list[LoginRoleProblem]:
         problems.append(LoginRoleProblem(OWNS_A_TABLE_IN_PUBLIC))
     if not can_set_role(conn, role, TENANT_ROLE):
         problems.append(LoginRoleProblem(CANNOT_SET_TENANT))
+    if lists_schedules:
+        if not can_set_role(conn, role, SCHEDULE_READER_ROLE):
+            problems.append(LoginRoleProblem(CANNOT_SET_READER))
+    elif _is_member(conn, role, SCHEDULE_READER_ROLE):
+        problems.append(LoginRoleProblem(LISTS_SCHEDULES))
     return problems
 
 
@@ -152,6 +168,18 @@ def _memberships_past_the_policy(conn: Connection, role: str) -> list[LoginRoleP
         if why:
             problems.append(LoginRoleProblem(MEMBER_PAST_THE_POLICY, str(name), tuple(why)))
     return problems
+
+
+def _is_member(conn: Connection, role: str, target: str) -> bool:
+    """Whether `role` is a member of `target`, directly or through other
+    roles, whatever the grant's `INHERIT` and `SET` options say. False when
+    `target` does not exist."""
+    row = conn.execute(
+        "SELECT CASE WHEN to_regrole(?) IS NULL THEN false "
+        "ELSE pg_catalog.pg_has_role(?, ?, 'MEMBER') END",
+        (target, role, target),
+    ).fetchone()
+    return row is not None and bool(row[0])
 
 
 def can_set_role(conn: Connection, role: str, target: str) -> bool:

@@ -21,7 +21,13 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from harrier.connection import Connection, StoreDeployRefused, StoreError
-from harrier.loginrole import CANNOT_SET_TENANT, can_set_role, login_role_problems
+from harrier.loginrole import (
+    CANNOT_SET_READER,
+    CANNOT_SET_TENANT,
+    LISTS_SCHEDULES,
+    can_set_role,
+    login_role_problems,
+)
 from harrier.pgstore import check_postgres_version, postgres_connect
 from harrier.tracker.schema import OWNED_TABLES, SCHEDULE_READER_ROLE, TENANT_ROLE
 
@@ -46,6 +52,13 @@ class Login:
 
     role: str
     reaches: frozenset[str] = TENANT_LOGIN_ROLES
+
+    @property
+    def lists_schedules(self) -> bool:
+        """Whether this login is the scheduler's, which holds the schedule
+        reader: spec 108's `login_role_problems(..., lists_schedules=True)`
+        requires the right to set it and does not count the membership."""
+        return SCHEDULE_READER_ROLE in self.reaches
 
 
 def quote_identifier(name: str) -> str:
@@ -107,10 +120,16 @@ def _grant(conn: Connection, role: str, group: str, command: str) -> str:
     if group == SCHEDULE_READER_ROLE and not _role_exists(conn, group):
         raise StoreDeployRefused(f"{group} does not exist; spec 108's migration creates it")
     check_postgres_version(_store_version(conn))
-    problems = login_role_problems(conn, role)
-    if group == TENANT_ROLE:
-        # The check `harrier store grant-tenant` exists to satisfy.
-        problems = [problem for problem in problems if problem.check != CANNOT_SET_TENANT]
+    # The reader's grant is for the scheduler's login, which may hold it; the
+    # tenant grant is run for every kind of login, and `check-deploy` holds
+    # each kind to its own set (spec 108, spec 134).
+    problems = login_role_problems(conn, role, lists_schedules=group == SCHEDULE_READER_ROLE)
+    # What each grant exists to give, which the role cannot have before it.
+    expected = {
+        TENANT_ROLE: {CANNOT_SET_TENANT, LISTS_SCHEDULES},
+        SCHEDULE_READER_ROLE: {CANNOT_SET_READER},
+    }[group]
+    problems = [problem for problem in problems if problem.check not in expected]
     if problems:
         raise _refusal(command, role, problems)
     if can_set_role(conn, role, group):
@@ -247,7 +266,7 @@ def reached_roles(conn: Connection, role: str) -> set[str]:
 
 def _check_login(conn: Connection, login: Login) -> str:
     role = login.role
-    problems = login_role_problems(conn, role)
+    problems = login_role_problems(conn, role, lists_schedules=login.lists_schedules)
     if problems:
         raise StoreDeployRefused(
             f"check-deploy: login role {role}: " + "; ".join(map(str, problems))
@@ -258,11 +277,6 @@ def _check_login(conn: Connection, login: Login) -> str:
         raise StoreDeployRefused(
             f"check-deploy: login role {role} is a member of {', '.join(extra)}, "
             "which the deploy did not grant"
-        )
-    missing = sorted(login.reaches - reached)
-    if missing:
-        raise StoreDeployRefused(
-            f"check-deploy: login role {role} is not a member of {', '.join(missing)}"
         )
     return f"{role}: member of {', '.join(sorted(reached))}"
 

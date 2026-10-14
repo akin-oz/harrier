@@ -110,9 +110,20 @@ def set_project(monkeypatch: pytest.MonkeyPatch, url: str, key: str = SYNTHETIC_
         (INVITE_ONLY_SETTINGS, None),
         # email and phone may be on: invite only still holds.
         ({"disable_signup": True, "external": {"email": True, "phone": True}}, None),
-        ({"disable_signup": True}, None),
+        ({"disable_signup": True}, "external is missing"),
+        ({"disable_signup": True, "external": "garbage"}, "external is not an object"),
+        ({"disable_signup": True, "external": None}, "external is missing"),
+        (
+            {"disable_signup": True, "external": {"google": "true"}},
+            "external.google is not a boolean",
+        ),
+        (
+            {"disable_signup": True, "external": {"anonymous_users": 1}},
+            "external.anonymous_users is not a boolean",
+        ),
         ({"disable_signup": False}, "disable_signup is false"),
         ({"external": {}}, "disable_signup is missing"),
+        ({"disable_signup": True, "external": {}}, None),
         ({"disable_signup": "true"}, "disable_signup is not a boolean"),
         (
             {"disable_signup": True, "external": {"anonymous_users": True}},
@@ -416,7 +427,7 @@ def test_the_tick_check_through_the_cli(
         asked.append((app, machine_id))
         return [event("start", "flyd", (UPDATED + 60) * 1000)]
 
-    monkeypatch.setattr(cli, "_machine_events", fly_events)
+    monkeypatch.setattr(cli, "machine_events", fly_events)
     code, out, err = run(
         [
             "deploy",
@@ -440,7 +451,7 @@ def test_the_tick_check_through_the_cli(
     def no_events(_app: str, _machine: str) -> object:
         return []
 
-    monkeypatch.setattr(cli, "_machine_events", no_events)
+    monkeypatch.setattr(cli, "machine_events", no_events)
     code, out, err = run(
         [
             "deploy",
@@ -680,7 +691,7 @@ def test_project_cost_refuses_a_malformed_line(
         main(["deploy", "project-cost", *argv])
     assert refused.value.code == 2
     err = capsys.readouterr().err
-    assert named in err
+    assert f"argument {named}:" in err or f"arguments are required: {named}" in err
 
 
 def test_a_name_given_twice_is_named(capsys: pytest.CaptureFixture[str]) -> None:
@@ -729,3 +740,111 @@ def test_a_deploy_command_runs_whatever_store_the_environment_names(
     )
     assert (code, err) == (0, "")
     assert out.startswith("projected ")
+
+
+# --- reading Fly's machine events ---
+
+
+class _Completed:
+    def __init__(self, returncode: int, stdout: str) -> None:
+        self.returncode = returncode
+        self.stdout = stdout
+
+
+def test_themachine_events_come_from_fly_machine_status(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`fly machine status <id> --app <app> --json`, its `events`; a failed
+    command, output that is not a machine object, or no `fly` at all is
+    nothing yet, reported by class and never by text."""
+    import subprocess
+
+    asked: list[list[str]] = []
+    events = [event("start", "flyd", (UPDATED + 60) * 1000)]
+    reply: dict[str, object] = {"out": _Completed(0, json.dumps({"id": "m1", "events": events}))}
+
+    def fake_run(command: list[str], **_kwargs: object) -> object:
+        asked.append(command)
+        outcome = reply["out"]
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert cli.machine_events("app-x", "m1") == events
+    assert asked == [["fly", "machine", "status", "m1", "--app", "app-x", "--json"]]
+
+    # A machine object with no events field has none yet.
+    reply["out"] = _Completed(0, json.dumps({"id": "m1"}))
+    assert cli.machine_events("app-x", "m1") is None
+
+    # fly failing is not an answer, whatever it printed.
+    reply["out"] = _Completed(1, json.dumps({"id": "m1", "events": events}))
+    assert cli.machine_events("app-x", "m1") is None
+    capsys.readouterr()
+
+    reply["out"] = _Completed(0, "not json")
+    assert cli.machine_events("app-x", "m1") is None
+    reply["out"] = _Completed(0, "[]")
+    assert cli.machine_events("app-x", "m1") is None
+    reply["out"] = FileNotFoundError("synthetic-secret-path")
+    assert cli.machine_events("app-x", "m1") is None
+    err = capsys.readouterr().err
+    assert "FileNotFoundError" in err
+    assert "synthetic-secret-path" not in err and "app-x" not in err
+
+
+# --- what the Auth settings request may do ---
+
+
+def test_a_redirect_is_an_answer_and_the_key_is_not_sent_after_it(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class Redirecting(_Settings):
+        def do_GET(self) -> None:
+            type(self).seen.append((self.path, self.headers.get("apikey")))
+            self.send_response(302)
+            self.send_header("Location", "http://127.0.0.1:1/elsewhere")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Redirecting)
+    Redirecting.seen = []
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        set_project(monkeypatch, f"http://127.0.0.1:{server.server_address[1]}")
+        code, out, err = run(["deploy", "check-auth-settings"], capsys)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+    assert (code, out) == (1, "")
+    assert err == "error: auth settings: the project answered 302\n"
+    assert Redirecting.seen == [("/auth/v1/settings", SYNTHETIC_KEY)]
+
+
+@pytest.mark.parametrize(
+    ("url", "key"),
+    [
+        ("https://project.example.invalid:notaport", SYNTHETIC_KEY),
+        ("https://project.example.invalid", "key-with\nnewline"),
+    ],
+    ids=["a port that is not a number", "a key with a newline"],
+)
+def test_a_request_that_cannot_be_formed_is_named_by_class_only(
+    url: str, key: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    set_project(monkeypatch, url, key=key)
+    code, out, err = run(["deploy", "check-auth-settings"], capsys)
+    assert (code, out) == (1, "")
+    assert err.startswith("error: auth settings: no answer (")
+    assert "notaport" not in err and "newline" not in err
+
+
+def test_a_delete_character_cannot_be_filled_into_toml() -> None:
+    """TOML forbids U+007F in a string as it forbids the other control
+    characters."""
+    environ = {**PROJECT_ENV, "HARRIER_SUPABASE_PUBLISHABLE_KEY": "key\x7fvalue"}
+    with pytest.raises(DeployCheckFailed, match="control character"):
+        fill_fly_config(FLY_FILES[0].read_text(encoding="utf-8"), environ)

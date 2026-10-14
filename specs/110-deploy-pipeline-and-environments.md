@@ -1667,13 +1667,13 @@ cost check" and names both pages.
 ## Amendment (2026-10-14): what building it settled
 
 Building this spec, whole, as Akin decided on 2026-10-13, on `main` at
-`956fa73`. Specs 108's second part (PR #327) and 114 (PR #328) were still
-open pull requests. The scheduler steps are written from #327's command
-names (`harrier operator scheduler`, and the role `harrier_schedule_reader`,
-which is already on `main`) and the SPA step from #328's four `VITE_`
-names (`VITE_HARRIER_AUTH`, `VITE_SUPABASE_URL`,
-`VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_HARRIER_API_URL`, which the runbook
-sets in Vercel). This section states each place where the text above was
+`956fa73`, then merged with `main` at `0988574` once spec 108's second part
+(PR #327) landed. Spec 114 (PR #328) was still an open pull request. The
+scheduler steps are built against #327's real code (`harrier operator
+scheduler`, `login_role_problems(..., lists_schedules=True)`, which its own
+start calls) and the SPA step from #328's four `VITE_` names
+(`VITE_HARRIER_AUTH`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`,
+`VITE_HARRIER_API_URL`, which the runbook sets in Vercel). This section states each place where the text above was
 silent, wrong, or needed a choice, so the code and the spec agree. Nothing
 in it overrides an approved decision.
 
@@ -1713,6 +1713,24 @@ stay unconfirmed until the first staging deploy, which the runbook lists:
   migration says `harrier_schedule_reader does not exist; spec 108's
   migration creates it`. A role name is quoted as an identifier, which a
   test proves with a name holding a quote, a space and a semicolon.
+  Spec 108's check refuses an API or run login that holds the schedule
+  reader (`member of harrier_schedule_reader`) and requires the right to set
+  it of the scheduler's, so `grant-schedule-reader` runs the checks with
+  `lists_schedules=True`, `grant-tenant` expects neither of the two reader
+  checks (the role may be the scheduler's, already granted, on a second
+  deploy), and `check-deploy` holds each login to its own kind: the
+  scheduler's with `lists_schedules=True`, the others without. Since the
+  login role checks already require the right to set each group, a missing
+  membership is reported as `cannot set role <group>`, and `check-deploy`
+  has no separate "not a member" case.
+- **`check-deploy` needs a login to check.** With no `--login` and no
+  `--scheduler-login` it exits 1 (`error: harrier store check-deploy needs
+  at least one --login or --scheduler-login`), because a deploy that names
+  none would pass having checked none. The three deploy store steps, run in
+  a public Actions log where GitHub masks the whole URL and not its host or
+  user, report a store that cannot be reached as `error: harrier store
+  <command> could not connect to the store; check the migrator's URL`, with
+  no host, port, user or driver text (the privacy review of this change).
 - **`check-deploy` (Behavior, and "Amendment (2026-10-11): login roles
   reach no role past the policy").** The command takes `--login <role>`,
   repeated, for a login that must reach `harrier_tenant` and nothing else,
@@ -1759,8 +1777,15 @@ stay unconfirmed until the first staging deploy, which the runbook lists:
     escaping, a secret key (`sb_secret_` or a `service_role` JWT) and a
     placeholder left in the copy, naming the variable and never its value.
   - `check-auth-settings` also refuses a project URL that is not `https://`
-    unless its host is loopback, because the key travels in a header, and
-    names `no answer (<class>)` for a connection that fails. Exit 1 each.
+    unless its host is loopback, because the key travels in a header; does
+    not follow a redirect, which would send the key to the host it names, and
+    names a 3xx as `the project answered <status>`; names `no answer
+    (<class>)` for a connection or a request that cannot be formed (a port
+    that is not a number, a key with a newline), by class and never by text;
+    and fails closed on `external`: a response with no `external`, one that is
+    not an object, or one whose entry is not a boolean cannot be shown to be
+    invite only (`external is missing`, `external is not an object`,
+    `external.<name> is not a boolean`). Exit 1 each.
 - **The Fly files.** The spec puts `HARRIER_SUPABASE_URL` and
   `HARRIER_SUPABASE_PUBLISHABLE_KEY` in `[env]`, and says the project's
   reference is written into no spec because the repository is public. The
@@ -1790,6 +1815,10 @@ stay unconfirmed until the first staging deploy, which the runbook lists:
   - **The gate.** A job with no environment, `staging-ran`, checks the
     `sha`'s shape and that GitHub holds a successful `staging` deployment of
     it, before the `production` environment's secrets are released.
+  - **One machine.** Both `fly deploy` commands pass `--ha=false`, since a
+    first deploy of an app with no machine otherwise creates two, and the
+    machine count check would then fail after the deploy had already run
+    (the test integrity review of this change).
   - **The scheduler machine.** The deploy lists the scheduler app's
     machines and requires exactly one, moves it to the digest with `fly
     machine update ... --yes`, never `--skip-start`, and records the machine
@@ -1804,6 +1833,18 @@ stay unconfirmed until the first staging deploy, which the runbook lists:
     environment, none secret. The secrets are `HARRIER_MIGRATE_DATABASE_URL`,
     `FLY_API_TOKEN`, `FLY_SCHEDULER_API_TOKEN`, `VERCEL_TOKEN` and, in
     production, `FLY_STAGING_API_TOKEN`.
+  - **What the gate reads.** GitHub records a deployment against
+    `GITHUB_SHA`, which for a deploy that follows a CI run is the head of
+    `main` when the deploy started. That is the CI run's own commit unless a
+    newer commit landed first, in which case the older commit has no
+    deployment record and production refuses it; deploy the newer one.
+  - **A failed step stops the job.** No step is conditional, none continues
+    on error, and no secret sits in a job's own `env`, which every step would
+    receive; a test holds the workflow to each, and runs the gate and the two
+    smoke scripts under bash with stub `gh` and `curl`
+    (`services/api/tests/test_deploy_files.py::test_a_failed_step_stops_the_job`,
+    `services/api/tests/test_deploy_files.py::test_the_production_gate_refuses_what_staging_never_deployed`,
+    `services/api/tests/test_deploy_files.py::test_the_smoke_steps_fail_the_deploy`).
   - **The first run.** The scheduler machine is made once, from the image
     the first run pushes, so the first run fails at the scheduler step after
     the API is deployed. The runbook says so.
@@ -1815,7 +1856,19 @@ stay unconfirmed until the first staging deploy, which the runbook lists:
   libpq reads them: the authority's host and the `host` and `hostaddr`
   query parameters, which override it, each possibly a comma separated
   list. A Unix socket directory (a name starting with `/`) is this machine.
-  `localhost`, `127.0.0.1` and `::1` are loopback.
+  `localhost`, `127.0.0.1` and `::1` are loopback. Two further shapes take
+  the host from outside the URL, and count as remote: a `service` parameter,
+  whose file nothing here reads, and a URL with no host while `PGSERVICE`, or
+  `PGHOST` or `PGHOSTADDR` naming anything but loopback, is set. When psycopg
+  is missing or libpq refuses the URL, the authority and the query are split
+  by hand. The CLI loader copies a URL into the environment only when
+  `store_target` reads it and finds it local, so one that is malformed,
+  remote or unreadable stays in the file and is refused there, with a
+  refusal and not a traceback.
+- **The SPA's rewrite.** `apps/web/vercel.json` serves the index for every
+  path but one under `/api/`, so a call that reached the SPA's host by mistake
+  gets a 404 and not the index page with a 200 (the contract review).
+  Static assets are served before rewrites.
 - **Classification.** Spec 114 hands this spec `apps/web/.env.local`, which
   `.env.local` in the table does not cover, because the coverage test
   matches whole repository relative paths. `config/data-classification.json`
@@ -1824,6 +1877,13 @@ stay unconfirmed until the first staging deploy, which the runbook lists:
   bakes `VITE_` values into a bundle. `.dockerignore` carries `.vercel/` and
   `**/.vercel/`, because a docker ignore rule matches at the root only.
 
+- **After the merge with `main` (spec 108's second part).** The command
+  places of `harrier operator` and of this spec's commands sit in the same
+  table, and `harrier operator` joins `store` and `deploy` as the commands
+  that run beside a Postgres store. The scheduler needs, beside what the
+  runbook sets, a session mode `HARRIER_DATABASE_URL` and a run login that
+  is not its own (`services/api/src/harrier_api/hostedscheduler.py`,
+  `read_settings` and `run_scheduler`); the runbook says so.
 - **Places for the new commands (spec 096).** Every CLI subcommand has
   exactly one place in the browser's command list
   (`services/api/tests/test_ui_settings.py::test_every_cli_subcommand_has_exactly_one_place`).
@@ -1847,15 +1907,28 @@ stay unconfirmed until the first staging deploy, which the runbook lists:
 - **A backup of the hosted store**, which the hosting budget's Honest
   limitations leave open. The runbook says plainly that none exists, and
   that nothing backs up `harrier-files`.
+- **A storage check that proves less than it reads.** `check-deploy` fails
+  on a policy on `storage.objects` other than harrier's, as the Amendment of
+  2026-10-11 says. It does not require harrier's own policy to exist or row
+  security to be on, so a bucket with neither passes, and a project with no
+  `storage.objects` table passes with a line saying so. Spec 107 owns the
+  bucket and its policy; a criterion there should say what a deploy must find.
+- **Other store URLs in `.env`.** Only `HARRIER_DATABASE_URL` is refused there.
+  A remote `HARRIER_RUN_DATABASE_URL`, `HARRIER_DEPLOYED_MIGRATE_URL` or the
+  operator's URL written in `.env` is still copied into the environment and,
+  through compose's `env_file`, into the local container. The runbook says they
+  never go there, and nothing enforces it; spec 106 owns the run login's URL
+  and its isolation, and a criterion there should cover it (the privacy review).
+- **Actions logs show the non-secret variables.** GitHub prints each step's
+  environment, so the role names, app names and Supabase URL and publishable
+  key, which are public in the SPA bundle, appear in a public run's log. The
+  Vercel organization and project ids appear there too, though
+  `.vercel/project.json` is kept out of git for holding them (the privacy
+  review).
 - **An older commit's deploy after a newer one.** A CI run that finishes
   after a newer commit's deploy would deploy over it. The concurrency group
   serializes deploys and does not order them. The store would then be ahead
   of the running release, and the runbook says to deploy forward.
-- **Spec 108's second part (#327).** `login_role_problems` gains
-  `lists_schedules` there, and its API and run logins are refused the
-  schedule reader. When it lands, `grant-schedule-reader` and `check-deploy`
-  pass the scheduler's login with `lists_schedules=True`; this change cannot
-  write that against `main`.
 
 ### Changes to approved specs (this amendment)
 
@@ -1893,6 +1966,25 @@ stay unconfirmed until the first staging deploy, which the runbook lists:
       `.vercel/**`, `apps/web/.vercel/**`, `apps/web/.env` and
       `apps/web/.env.local`
       (`services/api/tests/test_deploy_files.py::test_the_classification_names_what_a_vercel_or_fly_cli_writes_into_a_checkout`).
+- [ ] `check-deploy` refuses to run with no login role to check, and the three
+      deploy store steps report an unreachable store without its host
+      (`services/api/tests/test_store_deploy.py::test_check_deploy_refuses_to_run_with_no_login_role_to_check`,
+      `services/api/tests/test_store_deploy.py::test_a_store_that_cannot_be_reached_is_reported_without_its_host`).
+- [ ] The scheduler's login passes a second deploy, while an API or run login
+      holding the schedule reader is refused
+      (`services/api/tests/test_store_deploy.py::test_the_scheduler_login_passes_every_deploy_it_holds_the_reader_through`,
+      `services/api/tests/test_store_deploy.py::test_check_deploy_names_a_login_role_that_reaches_another_role`).
+- [ ] The Auth settings check fails closed on a missing or malformed
+      `external`, does not follow a redirect, and names a request it cannot
+      form by class only
+      (`services/api/tests/test_deploy_checks.py::test_the_deploy_refuses_open_sign_up`,
+      `services/api/tests/test_deploy_checks.py::test_a_redirect_is_an_answer_and_the_key_is_not_sent_after_it`,
+      `services/api/tests/test_deploy_checks.py::test_a_request_that_cannot_be_formed_is_named_by_class_only`).
+- [ ] A step that fails stops the deploy, and the production gate and the smoke
+      checks fail when they should
+      (`services/api/tests/test_deploy_files.py::test_a_failed_step_stops_the_job`,
+      `services/api/tests/test_deploy_files.py::test_the_production_gate_refuses_what_staging_never_deployed`,
+      `services/api/tests/test_deploy_files.py::test_the_smoke_steps_fail_the_deploy`).
 - [ ] The staging deploy records the unconfirmed items under "What is and is
       not proved offline" as confirmed or refuted in its pull request.
 

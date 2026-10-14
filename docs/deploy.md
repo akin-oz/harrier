@@ -156,10 +156,12 @@ run's, the scheduler's, and the operator's. Each of the first three is
 `LOGIN NOINHERIT`, and the deploy's grant steps give each only what it needs;
 the operator's login is a separate role, never one of the three.
 
-Export the migrator's URL for this shell only, never in `.env`:
+Read the migrator's URL into this shell only, never into `.env` and never as a
+typed command, which the shell's history would keep:
 
 ```
-export HARRIER_DATABASE_URL='<the postgres role, session pooler, port 5432>'
+read -rs HARRIER_DATABASE_URL   # paste the postgres role's session pooler URL, port 5432
+export HARRIER_DATABASE_URL
 psql "$HARRIER_DATABASE_URL"
 ```
 
@@ -230,7 +232,12 @@ scheduled run start decrypts an owner's credentials: read it once into a shell
 variable and set it on both apps. No `TELEGRAM_` or `GMAIL_` variable is set
 anywhere: the hosted API refuses to start with one (spec 109).
 
-The scheduler's secrets:
+The scheduler's secrets. Its `HARRIER_DATABASE_URL` is a session mode URL (the
+session pooler on port 5432, or a direct connection), never the transaction
+pooler on port 6543: it holds a session advisory lock for the whole tick and
+refuses to start without one. `harrier_run` must not be the scheduler's own
+login, and neither the scheduler's environment nor the API's may hold a
+service role key.
 
 ```
 fly secrets set --stage --app harrier-scheduler-staging \
@@ -362,7 +369,8 @@ it until a spec owns the fix:
   `SET ROLE service_role`, and the Auth settings.
 - `services/api/tests/test_deployed_login_roles.py` against the project, with the
   migrator URL exported as `HARRIER_DEPLOYED_MIGRATE_URL` in the shell only:
-  `uv run --project services/api pytest -s services/api/tests/test_deployed_login_roles.py`.
+  `uv run --project services/api pytest -s --tb=line services/api/tests/test_deployed_login_roles.py`
+  (`--tb=line`, so a failed connection prints no URL).
   Record its output, role names only.
 
 ## A deploy that fails halfway
@@ -380,6 +388,12 @@ harrier has no down migrations (spec 090): a bad migration is fixed forward.
 | The Auth settings check | Sign-up or anonymous sign-ins or a provider is on. | Turn it off in the dashboard, re-run. |
 | The SPA step | The API is new and the SPA old. | Re-run the job. |
 | The scheduler tick check | The scheduler machine did not start within 70 minutes of the update. | `fly machine start <id> --app <scheduler app>` (it runs one tick), then confirm it ticked. |
+
+The production gate asks GitHub for a successful `staging` deployment of the
+commit. For a deploy that follows a CI run, GitHub records the deployment against
+the head of `main` when the deploy started, which is the CI run's own commit
+unless a newer commit landed first; an older commit then has no record and
+production refuses it. Deploy the newer one.
 
 Two deploys of one environment never interleave (a concurrency group per
 environment), and two migrations are serialized by an advisory lock in any case.

@@ -18,6 +18,7 @@ reason (`tests/test_container.py`).
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -189,6 +190,18 @@ def test_the_hosted_image_copies_what_the_runtime_reads_and_no_personal_path() -
     assert not copied & {"data", "secrets", "apps", ".env"}
 
 
+def test_the_hosted_image_serves_the_port_fly_forwards_to() -> None:
+    """The command listens on the `internal_port` of both Fly files, on every
+    interface, as the API."""
+    command = next(line for line in lines_of("hosted") if line.startswith("CMD "))
+    assert '"harrier_api.app:app"' in command and '"0.0.0.0"' in command
+    ports = {fly(environment)["http_service"]["internal_port"] for environment in FLY}
+    assert len(ports) == 1
+    assert f'"--port", "{ports.pop()}"' in command
+    exposed = [line for line in lines_of("hosted") if line.startswith("EXPOSE ")]
+    assert exposed == ["EXPOSE 8000"]
+
+
 def test_the_hosted_image_says_which_revision_it_is() -> None:
     """The deploy compares `GET /health`'s `revision` with the commit it built
     (spec 110, step 6)."""
@@ -333,8 +346,16 @@ def test_staging_has_the_same_settings_as_production() -> None:
 def test_the_spa_is_deployed_by_the_workflow_only() -> None:
     config = json.loads(VERCEL.read_text(encoding="utf-8"))
     assert config["git"]["deploymentEnabled"] is False
-    # The SPA's routes are served by its index.
-    assert {"source": "/(.*)", "destination": "/index.html"} in config["rewrites"]
+    # The SPA's routes are served by its index, and a path under `/api/` is
+    # not one: a call that reached this host by mistake gets a 404, not the
+    # index page with a 200.
+    (rewrite,) = config["rewrites"]
+    assert rewrite["destination"] == "/index.html"
+    source = re.compile(rewrite["source"])
+    for path in ("/", "/inbox", "/tracker/12", "/apiary", "/assets/app.js"):
+        assert source.fullmatch(path), path
+    for path in ("/api/health", "/api/jobs", "/api/"):
+        assert not source.fullmatch(path), path
 
 
 # --- the workflow ---
@@ -356,8 +377,9 @@ class Step:
         """The step's `run` script, without comment lines, or ''."""
         lines = self.text.splitlines()
         for number, line in enumerate(lines):
-            if re.match(r"^\s{8}run:", line):
-                body = [line.split("run:", 1)[1], *lines[number + 1 :]]
+            if re.match(r"^(\s{8}|\s{6}- )run:", line):
+                first = line.split("run:", 1)[1]
+                body = ["" if first.strip() in ("|", ">") else first, *lines[number + 1 :]]
                 return "\n".join(
                     part for part in body if part.strip() and not part.lstrip().startswith("#")
                 )
@@ -448,7 +470,9 @@ def test_the_deploy_workflow_migrates_before_it_deploys(environment: str) -> Non
         position(steps, f'{STORE} grant-schedule-reader "$SCHEDULER_LOGIN"'),
         # 4. check.
         position(steps, f"{STORE} check-deploy"),
-        # 5. deploy the API, then count its machines.
+        # 5. the project's values into a copy, then deploy the API from it,
+        #    then count its machines.
+        position(steps, "fill-fly-config"),
         position(steps, "fly deploy"),
         position(steps, "check-machine-count"),
         # The scheduler machine moves to the same image.
@@ -473,11 +497,20 @@ def test_the_deploy_checks_name_what_they_check(environment: str) -> None:
     assert '--scheduler-login "$SCHEDULER_LOGIN"' in check
 
     deploy = steps[position(steps, "fly deploy")].code
-    # The image by digest, never a rebuild, and this environment's file.
+    # The image by digest, never a rebuild, one machine, and the copy this
+    # environment's file was filled into, not the file as committed.
     assert re.search(r'--image "registry\.fly\.io/\$FLY_APP@\$DIGEST"', deploy)
-    assert f"fly.{environment}.toml" in deploy
+    assert "--ha=false" in deploy
+    assert f'--config "$RUNNER_TEMP/fly.{environment}.toml"' in deploy
+    assert f"deploy/fly.{environment}" not in deploy
     fill = steps[position(steps, "fill-fly-config")].code
-    assert f"deploy/fly.{environment}.toml" in fill
+    assert f"--config deploy/fly.{environment}.toml" in fill
+    assert f'--out "$RUNNER_TEMP/fly.{environment}.toml"' in fill
+    # The machines counted are the API app's; the revision asked of this
+    # environment's own host, never staging's from production.
+    count = steps[position(steps, "check-machine-count")].code
+    assert 'fly machines list --app "$FLY_APP" --json' in count
+    assert '"https://$FLY_APP.fly.dev/health"' in steps[position(steps, "/health")].code
 
     smoke = steps[position(steps, "/health")].code
     assert ".revision == $sha" in smoke  # equals the commit
@@ -516,6 +549,9 @@ def test_production_checks_that_the_scheduler_ticked_and_staging_does_not() -> N
     # The machine and the update time come from the update's own step.
     update = production[position(production, "fly machine update")]
     assert "machine=" in update.code and "updated_at=" in update.code
+    # The time is taken after the update, so the update's own start is not a
+    # tick after it.
+    assert update.code.index("fly machine update") < update.code.index("updated_at=")
     # Staging's scheduler machine has no schedule, so there is nothing to wait for.
     assert not any("check-scheduler-tick" in s.code for s in environment_steps("staging"))
 
@@ -594,6 +630,164 @@ def test_the_image_is_built_once_and_production_never_builds() -> None:
     staging = "\n".join(step.code for step in environment_steps("staging"))
     assert staging.count("docker build") == 1
     assert '--build-arg HARRIER_REVISION="$SHA"' in staging
+
+
+def test_a_failed_step_stops_the_job() -> None:
+    """The contract at the top of the workflow: a step that exits 1 stops the
+    deploy. Nothing may make a step, or the production job, run on after a
+    failure, or take a secret into every step."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+    assert "continue-on-error" not in code
+    assert not re.search(r"always\(\)|failure\(\)|cancelled\(\)", code)
+    assert not re.search(r"\|\|\s*(true|:|echo)|set \+e", code)
+    for steps in workflow_jobs().values():
+        for step in steps:
+            # No step runs conditionally: each runs, or the job has stopped.
+            assert not re.search(r"^\s{8}if:", step.code, re.MULTILINE), step.name
+    # Only the jobs' own `if:` select which trigger runs which job.
+    assert "if:" not in job_header("production")
+    assert "if:" in job_header("staging") and "if:" in job_header("staging-ran")
+    # No secret in a job's own `env:`, which every step, and every action,
+    # would receive.
+    for job in ("staging", "staging-ran", "production"):
+        assert "secrets." not in job_header(job), job
+
+
+def test_the_workflow_reader_sees_a_run_written_either_way() -> None:
+    """The reader behind the checks above finds a `run:` on a step line of
+    its own and one written `- run:`, so a script moved to the other form is
+    still read."""
+    separate = Step(0, '      - name: a\n        run: echo "${{ inputs.sha }}"', "")
+    inline = Step(1, '      - run: echo "${{ inputs.sha }}"', "")
+    assert "${{" in separate.run and "${{" in inline.run
+
+
+def run_step(
+    job: str, name_part: str, env: dict[str, str], stubs: dict[str, str], tmp_path: Path
+) -> subprocess.CompletedProcess[str]:
+    """One workflow step's script, run under bash with stub commands first on
+    PATH: what the step decides, not what it says."""
+    step = next(s for s in environment_steps(job) if name_part in s.name)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    for command, body in stubs.items():
+        path = bin_dir / command
+        path.write_text("#!/bin/bash\n" + body, encoding="utf-8")
+        path.chmod(0o755)
+    environment = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "HOME": str(tmp_path),
+        "GITHUB_REPOSITORY": "owner/repo",
+        **env,
+    }
+    return subprocess.run(
+        ["bash", "-eo", "pipefail", "-c", step.run],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+GOOD_SHA = "a" * 40
+# What the gate asks GitHub: the deployments of an environment and sha, then
+# one deployment's statuses.
+GH_STUB = """
+case "$*" in
+  *"/deployments?environment=staging"*"$EXPECT_SHA"*) printf '%s' "$DEPLOYMENTS" | tr ',' '\\n' ;;
+  *"/statuses"*) printf '%s\\n' "$STATE" ;;
+  *) echo "unexpected gh call: $*" >&2; exit 9 ;;
+esac
+"""
+
+
+@pytest.mark.parametrize(
+    ("sha", "deployments", "state", "passes"),
+    [
+        (GOOD_SHA, "11", "success", True),
+        (GOOD_SHA, "11,12", "success", True),
+        (GOOD_SHA, "11", "failure", False),
+        (GOOD_SHA, "11", "in_progress", False),
+        (GOOD_SHA, "11", "", False),
+        (GOOD_SHA, "", "success", False),
+        ("abc123", "11", "success", False),
+        (GOOD_SHA.upper(), "11", "success", False),
+        (GOOD_SHA + "a", "11", "success", False),
+        ("", "11", "success", False),
+    ],
+    ids=[
+        "deployed",
+        "one of two",
+        "failed",
+        "not finished",
+        "no status",
+        "never deployed",
+        "short sha",
+        "upper case",
+        "too long",
+        "empty",
+    ],
+)
+def test_the_production_gate_refuses_what_staging_never_deployed(
+    sha: str, deployments: str, state: str, passes: bool, tmp_path: Path
+) -> None:
+    """The gate's script, run with a stub `gh`: exit 0 only for a commit with
+    a successful staging deployment."""
+    done = run_step(
+        "staging-ran",
+        "Refuse a commit",
+        {
+            "GH_TOKEN": "synthetic",
+            "SHA": sha,
+            "EXPECT_SHA": sha,
+            "DEPLOYMENTS": deployments,
+            "STATE": state,
+        },
+        {"gh": GH_STUB},
+        tmp_path,
+    )
+    assert (done.returncode == 0) is passes, (done.stdout, done.stderr)
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_the_smoke_steps_fail_the_deploy(environment: str, tmp_path: Path) -> None:
+    """The revision and the Data API probe, run with a stub `curl`: a machine
+    still on another revision, and a 2xx from the REST endpoint, exit 1."""
+    if shutil.which("jq") is None:
+        pytest.skip("jq is not installed; the smoke step is not run")
+    env = {
+        "SHA": GOOD_SHA,
+        "FLY_APP": "synthetic-app",
+        "HARRIER_SUPABASE_URL": "https://project.example.invalid",
+        "HARRIER_SUPABASE_PUBLISHABLE_KEY": "not-a-real-key-not-a-real-key",
+    }
+    health = 'printf \'{"revision": "%s"}\' "$REVISION"\n'
+    for revision, passes in ((GOOD_SHA, True), ("b" * 40, False), ("unknown", False)):
+        done = run_step(
+            environment,
+            "the API answers as the commit built",
+            {**env, "REVISION": revision},
+            {"curl": health},
+            tmp_path,
+        )
+        assert (done.returncode == 0) is passes, (revision, done.stderr)
+
+    probe = 'printf "%s" "$STATUS"\n'
+    for status, passes in (
+        ("404", True),
+        ("401", True),
+        ("403", True),
+        ("200", False),
+        ("204", False),
+    ):
+        done = run_step(
+            environment, "the Data API is off", {**env, "STATUS": status}, {"curl": probe}, tmp_path
+        )
+        assert (done.returncode == 0) is passes, (status, done.stderr)
+        if not passes:
+            assert "turn it off" in done.stdout
 
 
 # --- the compose file ---

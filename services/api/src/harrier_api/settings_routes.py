@@ -79,6 +79,10 @@ _STORE = (
     "Store upkeep (spec 103): they apply or report the store's schema migrations, "
     "which an operator runs deliberately."
 )
+_OPERATOR = (
+    "Hosted operator command (spec 108): it runs only against a Postgres store, as the "
+    "operator's own database login."
+)
 
 _DEPLOY_STORE = (
     "Deploy steps (spec 110): they check a login role, grant it, or check the store as the "
@@ -213,6 +217,10 @@ COMMAND_PLACES: dict[str, Place] = {
     "deploy check-scheduler-tick": TerminalOnly(_DEPLOY),
     "deploy fill-fly-config": TerminalOnly(_DEPLOY),
     "deploy project-cost": TerminalOnly(_DEPLOY),
+    # Spec 108 added these: the hosted operator's commands, which run only
+    # against a Postgres store.
+    "operator scheduler": TerminalOnly(_OPERATOR),
+    "operator schedule-report": TerminalOnly(_OPERATOR),
     # Spec 098 added this after spec 096 was approved, and named its place.
     "profile split-resume": TerminalOnly(
         "A one-time migration of the stored resume into facts and a framing (spec 098)."
