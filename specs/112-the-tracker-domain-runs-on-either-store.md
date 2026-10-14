@@ -2413,6 +2413,16 @@ differed, as at the start. This catches what a first word cannot see:
 outside any block is its own transaction, so it is read back too, and
 its rows never reach the caller.
 
+**A transaction begun with `tenant` keeps the tenant role to its end.**
+On a connection without claims, a block begun with
+`transaction(tenant=True)` reads `current_user` again before `COMMIT`.
+When it is no longer `harrier_tenant`, the seam rolls back and raises
+`IdentityDidNotHold` naming `role`. So every transaction in which the
+seam took the tenant role, an owner's or one begun with `tenant`, still
+has it when it commits. A block that did not ask for the role is not
+held to it. (Review of PR #326: `run_start_checks` always rolls back,
+so nothing was exposed, but the option is general.)
+
 ### Failure modes (amendment of 2026-10-14: the session)
 
 - **A session statement through `execute()`.** Refused before the
@@ -2430,8 +2440,10 @@ its rows never reach the caller.
   naming `read-back`, as at the start, and the transaction rolls back.
 - **A block the store gave up on.** No read-back: it rolls back and
   raises `TRANSACTION_GIVEN_UP`, as the 2026-10-13 amendment says.
-- **A connection without claims.** No read-back: there is nothing to
-  compare. The first word refusal holds for it as for any connection.
+- **A connection without claims.** No read-back of claims: there are
+  none to compare. A block begun with `tenant` reads its role back
+  before commit, as above; any other block is not read back. The first
+  word refusal holds for it as for any connection.
 
 ### Acceptance criteria (amendment of 2026-10-14: the session)
 
@@ -2443,31 +2455,37 @@ synthetic owners and values only:
       request.jwt.claims = ...` and `SET statement_timeout = 0` are
       each refused with the text above, on both stores, inside a block
       and outside one, and the block then commits its own write
-      (planned test_a_session_statement_through_execute_is_refused).
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_session_statement_through_execute_is_refused`).
 - [ ] `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ` still runs
-      (planned test_set_transaction_is_not_a_session_statement).
+      (`services/api/tests/test_seam_on_both_stores.py::test_set_transaction_is_not_a_session_statement`).
 - [ ] On owner A's connection, a block that writes a row, runs `SELECT
       set_config('request.jwt.claims', <B's claims>, true)` and exits
       normally raises `IdentityDidNotHold` naming `claims` and `owner`,
       and the row is not in the store
-      (planned test_a_claims_change_is_refused_at_commit).
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_claims_change_is_refused_at_commit`).
 - [ ] The same with `SELECT set_config('role', 'harrier_migrator',
       true)` on the migrating login role, naming `role`
-      (planned test_a_role_change_is_refused_at_commit).
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_role_change_is_refused_at_commit`).
 - [ ] Outside any block, one statement that changes the claims and
       reads `contacts` raises `IdentityDidNotHold` and returns no rows
-      (planned test_a_statement_outside_a_block_cannot_return_another_owners_rows).
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_statement_outside_a_block_cannot_return_another_owners_rows`).
 - [ ] A hosted request whose route changes its claims through
       `set_config` answers 500 with the generic detail
-      (planned test_a_request_that_changes_its_claims_answers_500, in
-      `services/api/tests/test_hosted_requests.py`).
+      (`services/api/tests/test_hosted_requests.py::test_a_request_that_changes_its_claims_answers_500`).
 - [ ] `transaction()` refuses `statement_timeout_ms`, `idle_timeout_ms`
       and `tenant` on a nested block and on SQLite with `ValueError`
-      (planned test_the_session_options_belong_to_the_outermost_block).
+      (`services/api/tests/test_seam_on_both_stores.py::test_the_session_options_belong_to_the_outermost_block`).
+- [ ] On a connection without claims, a block begun with `tenant` whose
+      role a `SELECT set_config('role', ...)` moved back is refused at
+      commit with `IdentityDidNotHold` naming `role`; a block that keeps
+      the role commits, and a later block without `tenant` is not held
+      to it (review of PR #326)
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_tenant_transaction_that_leaves_the_tenant_role_is_refused_at_commit`).
 - [ ] Spec 134's tests pass with `hostedstore.py` passing the options:
       `services/api/tests/test_hosted_requests.py::test_the_request_role_has_lock_and_statement_timeouts`,
-      with its `/probe/plain-set` route running its `SET`s on the
-      driver beneath the seam, and the start checks in
+      with its `/probe/plain-set` route making its session-level
+      settings by `SELECT set_config(..., false)`, which the read-back
+      does not cover (Out of scope), and the start checks in
       `services/api/tests/test_hosted_start.py`.
 - [ ] Each new test fails with its part of the change reverted, and the
       pull request records what each reversion made fail.

@@ -52,6 +52,7 @@ from harrier.connection import (
     NUMBERED_PLACEHOLDER,
     OWNER_NEEDS_POSTGRES,
     POSTGRES_NOT_IDLE,
+    SESSION_STATEMENT,
     TRANSACTION_CONTROL,
     TRANSACTION_GIVEN_UP,
     UNKNOWN_TRACK,
@@ -59,6 +60,7 @@ from harrier.connection import (
     URL_VARIABLE,
     WRITE_LOCK_NOT_HELD,
     Connection,
+    IdentityDidNotHold,
     StoreBusyError,
     StoreConflictError,
     StoreDatabaseError,
@@ -536,14 +538,16 @@ def test_a_stuck_writer_reports_busy_on_both_stores(store: Store) -> None:
     table = new_table(holder, "id INTEGER PRIMARY KEY, body TEXT")
     with holder.transaction():
         holder.execute(f"INSERT INTO {table} (id, body) VALUES (?, ?)", (1, "first"))
-    if store.dialect == "postgres":
-        # Were the seam to send lock_timeout 0, which on Postgres means no
-        # limit, the test would fail here after five seconds, not hang.
-        blocked.execute("SET statement_timeout = '5s'")
+    # Were the seam to send lock_timeout 0, which on Postgres means no limit,
+    # the test would fail here after five seconds, not hang.
+    guard = 5000 if store.dialect == "postgres" else None
 
     def blocked_write() -> float:
         started = time.monotonic()
-        with pytest.raises(StoreBusyError), blocked.transaction(immediate=True):
+        with (
+            pytest.raises(StoreBusyError),
+            blocked.transaction(immediate=True, statement_timeout_ms=guard),
+        ):
             blocked.execute(f"UPDATE {table} SET body = ? WHERE id = ?", ("blocked", 1))
         return time.monotonic() - started
 
@@ -1001,6 +1005,150 @@ def test_identity_values_leaves_a_pending_sqlite_write_alone(tmp_path: Path) -> 
         assert identity_values(conn) == set(IDENTITY_CONTACT)
         assert conn.in_transaction
         assert other.execute("SELECT person_name FROM contacts").fetchall() == []
+
+
+# --- the session is the seam's alone (spec 112, amendment of 2026-10-14) ---
+
+SESSION_STATEMENTS = (
+    "SET ROLE harrier_migrator",
+    "SET LOCAL ROLE harrier_tenant",
+    "RESET ROLE",
+    "RESET ALL",
+    "SET SESSION AUTHORIZATION harrier_migrator",
+    "DISCARD ALL",
+    "SET LOCAL request.jwt.claims = '{}'",
+    "SET statement_timeout = 0",
+    "set statement_timeout = 0",
+    "  /* a comment */ SET lock_timeout = 0",
+    "-- a comment\nRESET statement_timeout",
+)
+
+
+def test_a_session_statement_through_execute_is_refused(store: Store) -> None:
+    conn = store.open()
+    table = new_table(conn, "id INTEGER PRIMARY KEY")
+    for number, sql in enumerate(SESSION_STATEMENTS):
+        with pytest.raises(StoreDatabaseError) as outside:
+            conn.execute(sql)
+        assert str(outside.value) == SESSION_STATEMENT, sql
+        assert not conn.in_transaction
+        with conn.transaction():
+            conn.execute(f"INSERT INTO {table} (id) VALUES (?)", (number,))
+            with pytest.raises(StoreDatabaseError) as inside:
+                conn.execute(sql)
+            assert type(inside.value) is StoreDatabaseError
+            assert str(inside.value) == SESSION_STATEMENT, sql
+        # Refused before the driver saw it: the block committed its row.
+    assert ids(store.open(), table) == list(range(len(SESSION_STATEMENTS)))
+
+
+def test_set_transaction_is_not_a_session_statement(migrated_postgres: str) -> None:
+    with closing(open_store({URL_VARIABLE: migrated_postgres})) as conn, conn.transaction():
+        conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        row = conn.execute("SELECT current_setting('transaction_isolation')").fetchone()
+        assert row[0] == "repeatable read"
+
+
+def _two_owners(url: str) -> tuple[str, str]:
+    """Owners A and B, each holding one synthetic contact."""
+    with closing(raw(url)) as admin:
+        first, second = new_owner(admin), new_owner(admin)
+    for owner, name in ((first, "Synthetic Owner A"), (second, "Synthetic Owner B")):
+        with closing(open_store({URL_VARIABLE: url}, owner=owner)) as conn:
+            conn.execute(INSERT_CONTACT, (name, f"{owner}@example.test"))
+    return first, second
+
+
+def test_a_claims_change_is_refused_at_commit() -> None:
+    with fresh_database() as url:
+        migrate_postgres(url)
+        first, second = _two_owners(url)
+        borrowed = json.dumps(owner_claims(second))
+        with closing(open_store({URL_VARIABLE: url}, owner=first)) as conn:
+            with pytest.raises(IdentityDidNotHold) as refused, conn.transaction():
+                conn.execute(INSERT_CONTACT, ("Synthetic Owner A Again", "again@example.test"))
+                conn.execute("SELECT set_config('request.jwt.claims', ?, true)", (borrowed,))
+                seen = [str(row[0]) for row in conn.execute("SELECT person_name FROM contacts")]
+                # What the read-back exists for: the policy now answers as B.
+                assert seen == ["Synthetic Owner B"]
+            assert set(refused.value.differed) == {"claims", "owner"}
+            assert not conn.in_transaction
+        assert _contacts(url, first) == ["Synthetic Owner A"]
+
+
+def test_a_role_change_is_refused_at_commit() -> None:
+    with fresh_database() as url:
+        migrate_postgres(url)
+        first, _ = _two_owners(url)
+        with closing(open_store({URL_VARIABLE: url}, owner=first)) as conn:
+            with pytest.raises(IdentityDidNotHold) as refused, conn.transaction():
+                conn.execute(INSERT_CONTACT, ("Synthetic Owner A Again", "again@example.test"))
+                conn.execute("SELECT set_config('role', 'harrier_migrator', true)")
+            assert "role" in refused.value.differed
+        assert _contacts(url, first) == ["Synthetic Owner A"]
+
+
+def test_a_statement_outside_a_block_cannot_return_another_owners_rows() -> None:
+    with fresh_database() as url:
+        migrate_postgres(url)
+        first, second = _two_owners(url)
+        borrowed = json.dumps(owner_claims(second))
+        with closing(open_store({URL_VARIABLE: url}, owner=first)) as conn:
+            with pytest.raises(IdentityDidNotHold):
+                conn.execute(
+                    "SELECT set_config('request.jwt.claims', ?, true), "
+                    "(SELECT array_agg(person_name) FROM contacts)",
+                    (borrowed,),
+                )
+            assert not conn.in_transaction
+
+
+def test_a_tenant_transaction_that_leaves_the_tenant_role_is_refused_at_commit(
+    migrated_postgres: str,
+) -> None:
+    """`tenant` takes the role on a connection without claims. A role moved
+    back since by a set_config no first word shows is refused before
+    COMMIT, as an owner's is (review of PR #326)."""
+    with closing(open_store({URL_VARIABLE: migrated_postgres})) as conn:
+        login = str(conn.execute("SELECT session_user::text").fetchone()[0])
+        with conn.transaction(tenant=True):
+            assert conn.execute("SELECT current_user::text").fetchone()[0] == TENANT_ROLE
+        with pytest.raises(IdentityDidNotHold) as refused, conn.transaction(tenant=True):
+            conn.execute("SELECT set_config('role', ?, true)", (login,))
+            assert conn.execute("SELECT current_user::text").fetchone()[0] == login
+        assert refused.value.differed == ("role",)
+        assert not conn.in_transaction
+        # A block that did not ask for the tenant role is not held to it.
+        with conn.transaction():
+            assert conn.execute("SELECT current_user::text").fetchone()[0] == login
+
+
+def test_the_session_options_belong_to_the_outermost_block(store: Store) -> None:
+    conn = store.open()
+    options: tuple[dict[str, Any], ...] = (
+        {"statement_timeout_ms": 1000},
+        {"idle_timeout_ms": 1000},
+        {"tenant": True},
+    )
+    if store.dialect == "sqlite":
+        for option in options:
+            with pytest.raises(ValueError, match="Postgres"), conn.transaction(**option):
+                pass
+        return
+    for option in options:
+        with (
+            conn.transaction(),
+            pytest.raises(ValueError, match="outermost"),
+            conn.transaction(**option),
+        ):
+            pass
+    for bad in (-1, True):
+        with (
+            pytest.raises(ValueError, match="whole number"),
+            conn.transaction(statement_timeout_ms=bad),
+        ):
+            pass
+    assert not conn.in_transaction
 
 
 # --- the post-merge review of PR #288 ---
