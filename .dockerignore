@@ -5,6 +5,13 @@
 .env
 .env.*
 !.env.example
+# The SPA's own env files: Vite bakes their VITE_ values into the bundle
+# (spec 114), and the web stage copies apps/web (spec 110).
+apps/web/.env
+apps/web/.env.*
+# What `vercel link` and `vercel pull` write (spec 110), at any depth.
+.vercel/
+**/.vercel/
 secrets/
 data/
 tracker/

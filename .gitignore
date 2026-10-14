@@ -4,6 +4,10 @@
 !.env.example
 secrets/
 
+# What `vercel link` and `vercel pull` write into a checkout: project ids and
+# the pulled environment's values (spec 110).
+.vercel/
+
 # All personal data lives in the local database and local files (ADR-008).
 # Anchored to the repo root: unanchored patterns would also ignore nested dirs
 # like .ai/state/ (which bit CI once) or a future apps/web/src/state.
