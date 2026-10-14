@@ -501,6 +501,181 @@ def test_the_first_line_for_the_url_wins_in_dotenv(
     assert run(["store", "status"], capsys) == (0, "sqlite 0\n", "")
 
 
+# --- a remote store URL in `.env` (spec 110) ---
+
+REMOTE_URL = "postgresql://synthetic_user:synthetic_pw@db.example.invalid:5432/postgres"
+DOTENV_REMOTE_REFUSAL = (
+    "error: HARRIER_DATABASE_URL in .env names a remote store; a hosted store's URL is a "
+    "credential, so export it in the shell for the command that needs it\n"
+)
+
+
+@pytest.mark.dotenv_fallback
+def test_a_remote_store_url_in_dotenv_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A hosted store's URL is a credential. In `.env` it would reach the
+    local container through `env_file` and every run subprocess through the
+    CLI's loader, so `store_target` refuses it there, whoever reads it."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv(URL_VARIABLE)
+    (tmp_path / ".env").write_text(f"{URL_VARIABLE}={REMOTE_URL}\n", encoding="utf-8")
+
+    # The function, which the API calls.
+    with pytest.raises(StoreUrlError) as refused:
+        store_target()
+    assert f"error: {refused.value}\n" == DOTENV_REMOTE_REFUSAL
+    with pytest.raises(StoreUrlError):
+        create_app()
+
+    # Through the CLI, whose loader reads the same file: exit 1 and the text,
+    # with nothing of the URL, and the loader did not copy it into the
+    # environment either.
+    code, out, err = run(["store", "status"], capsys)
+    assert (code, out, err) == (1, "", DOTENV_REMOTE_REFUSAL)
+    assert "synthetic_pw" not in out + err
+    assert URL_VARIABLE not in os.environ
+    assert not default_db_path().exists()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        REMOTE_URL,
+        # libpq lets a query parameter override the authority's host, so a
+        # loopback host in front of it does not make the URL local.
+        "postgresql://u:p@localhost/db?host=db.example.invalid",
+        "postgresql://u:p@127.0.0.1/db?hostaddr=203.0.113.7",
+        "postgresql://u:p@localhost/db?host=localhost,db.example.invalid",
+        "postgresql://u:p@LOCALHOST.example.invalid/db",
+        "postgresql://u:p@192.0.2.1:5432/db",
+        "postgresql://u:p@[2001:db8::1]:5432/db",
+        # libpq refuses this one, so it is read by hand.
+        "postgresql://u:pw@db.example.invalid/db?sslmode",
+        # The host comes from a service file, which is not read here.
+        "postgresql://u:p@/db?service=production",
+        "postgresql://u:p@localhost/db?service=production",
+    ],
+)
+@pytest.mark.dotenv_fallback
+def test_every_remote_shape_in_dotenv_is_refused(
+    url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv(URL_VARIABLE)
+    (tmp_path / ".env").write_text(f"{URL_VARIABLE}={url}\n", encoding="utf-8")
+    with pytest.raises(StoreUrlError):
+        store_target()
+    # And the loader leaves it in the file, whatever refused it.
+    load_project_env()
+    assert URL_VARIABLE not in os.environ
+
+
+@pytest.mark.parametrize(
+    ("variable", "value"),
+    [("PGHOST", "db.example.invalid"), ("PGHOSTADDR", "203.0.113.7"), ("PGSERVICE", "production")],
+)
+@pytest.mark.dotenv_fallback
+def test_a_url_with_no_host_takes_it_from_the_environment_libpq_reads(
+    variable: str,
+    value: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv(URL_VARIABLE)
+    monkeypatch.setenv(variable, value)
+    (tmp_path / ".env").write_text(f"{URL_VARIABLE}=postgresql://u:p@/db\n", encoding="utf-8")
+    with pytest.raises(StoreUrlError, match="names a remote store"):
+        store_target()
+    # Loopback there is this machine.
+    monkeypatch.delenv(variable)
+    monkeypatch.setenv("PGHOST", "localhost")
+    assert store_target().is_postgres
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql://u:p@localhost:5432,db.example.invalid:5432/db",
+        "postgresql://u:[pw]@db.example.invalid/db",
+        "postgresql://u:p@db.example.invalid/db?host=db2.example.invalid,localhost",
+    ],
+)
+@pytest.mark.dotenv_fallback
+def test_a_remote_host_is_found_without_the_driver(
+    url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """psycopg is not installed in the default local install. The authority is
+    split by hand, comma lists included, and a URL that cannot be read at all
+    is not copied into the environment, with a refusal rather than a crash."""
+    from harrier import connection
+
+    def unreadable(_url: str) -> dict[str, object] | None:
+        return None
+
+    monkeypatch.setattr(connection, "_libpq_parse", unreadable)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv(URL_VARIABLE)
+    (tmp_path / ".env").write_text(f"{URL_VARIABLE}={url}\n", encoding="utf-8")
+    load_project_env()
+    assert URL_VARIABLE not in os.environ
+    with pytest.raises(StoreUrlError):
+        store_target()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql://u:p@localhost:5432/db",
+        "postgresql://u:p@127.0.0.1:55432/db",
+        "postgresql://u:p@[::1]:5432/db",
+        "postgresql://u:p@localhost/db?host=127.0.0.1",
+        "postgresql://u:p@localhost/db?host=/var/run/postgresql",
+        "postgresql:///db",
+    ],
+)
+@pytest.mark.dotenv_fallback
+def test_a_loopback_store_url_in_dotenv_is_accepted(
+    url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A test server on this machine is what `.env` may name."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv(URL_VARIABLE)
+    (tmp_path / ".env").write_text(f"{URL_VARIABLE}={url}\n", encoding="utf-8")
+    assert store_target().is_postgres
+
+
+def test_the_same_remote_url_exported_is_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An exported URL is the operator's to give: the shell, for the command
+    that needs it. Even with `.env` naming it too, the exported value wins
+    and is not the file's."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(f"{URL_VARIABLE}={REMOTE_URL}\n", encoding="utf-8")
+    monkeypatch.setenv(URL_VARIABLE, REMOTE_URL)
+    assert store_target().is_postgres
+
+
+@pytest.mark.dotenv_fallback
+def test_the_loader_copies_a_loopback_url_and_never_a_remote_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Once copied into the environment a URL looks exported, so the loader
+    leaves a remote one in the file for `store_target` to refuse."""
+    monkeypatch.chdir(tmp_path)
+    env_file = tmp_path / ".env"
+    monkeypatch.delenv(URL_VARIABLE)
+    env_file.write_text(f"{URL_VARIABLE}={REMOTE_URL}\n", encoding="utf-8")
+    load_project_env(env_file)
+    assert URL_VARIABLE not in os.environ
+
+    env_file.write_text(f"{URL_VARIABLE}={UNREACHABLE_URL}\n", encoding="utf-8")
+    load_project_env(env_file)
+    assert os.environ[URL_VARIABLE] == UNREACHABLE_URL
+
+
 # What the net in conftest.py runs against: a test that drops the pin and
 # calls main(), whose `.env` loader writes the URL back, so the variable is
 # set again by the time the test ends. Run in its own pytest process, with

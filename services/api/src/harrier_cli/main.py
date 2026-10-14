@@ -7,21 +7,24 @@ import json
 import os
 import sqlite3
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from harrier.connection import (
     POSTGRES_NOT_YET,
     RUN_OWNER_VARIABLE,
+    URL_VARIABLE,
     Connection,
+    StoreConnectionError,
     StoreError,
     StoreLibraryTooOld,
     StoreUrlError,
     in_a_hosted_run,
+    names_a_remote_host,
     open_store,
     store_target,
 )
@@ -59,6 +62,18 @@ from harrier.tracks import (
 
 if TYPE_CHECKING:
     from harrier.academic.discovery import AcademicOptions
+    from harrier.deploychecks import CostLine
+
+
+def _local_store_url(value: str) -> bool:
+    """Whether `value` is empty or a store URL `store_target` reads and finds
+    on this machine: the only kind of store URL `.env` may put into the
+    environment."""
+    try:
+        store_target({URL_VARIABLE: value})
+    except StoreUrlError:
+        return False
+    return not value.strip() or not names_a_remote_host(value)
 
 
 def load_project_env(path: Path | None = None) -> None:
@@ -68,8 +83,15 @@ def load_project_env(path: Path | None = None) -> None:
     from harrier.envfile import read_env_file
 
     for key, value in read_env_file(path if path is not None else Path(".env")).items():
-        if key not in os.environ:
-            os.environ[key] = value
+        if key in os.environ:
+            continue
+        if key == URL_VARIABLE and not _local_store_url(value):
+            # Not copied into the environment, where it would look exported
+            # and reach every child process. `store_target` reads `.env`
+            # itself, and refuses what it cannot read or finds remote
+            # (spec 110).
+            continue
+        os.environ[key] = value
 
 
 # --- a hosted run (spec 106) ---
@@ -1807,6 +1829,19 @@ def _cmd_store(args: argparse.Namespace) -> int:
 
     try:
         target = store_target()
+        if args.store_command in STORE_DEPLOY_COMMANDS:
+            try:
+                return _store_deploy(args, target.url if target.is_postgres else "")
+            except StoreConnectionError:
+                # These run in a public log, where GitHub masks the whole URL
+                # and not its host or user: the failure says only that it
+                # could not connect (spec 110).
+                print(
+                    f"error: harrier store {args.store_command} could not connect to the "
+                    "store; check the migrator's URL",
+                    file=sys.stderr,
+                )
+                return 1
         if target.is_postgres:
             return _store_postgres(args.store_command, target.url)
         return _store_sqlite(args.store_command)
@@ -1814,6 +1849,155 @@ def _cmd_store(args: argparse.Namespace) -> int:
         # Built from host, port and database only, never the URL (spec 035).
         print(f"error: {error}", file=sys.stderr)
         return 1
+
+
+# The deploy's store steps (spec 110): they run as the migrator on a Postgres
+# store, and refuse a SQLite one.
+STORE_DEPLOY_COMMANDS = ("grant-tenant", "grant-schedule-reader", "check-deploy")
+
+
+def _store_deploy(args: argparse.Namespace, url: str) -> int:
+    """`harrier store grant-tenant`, `grant-schedule-reader` and `check-deploy`.
+
+    A refusal, or a check that fails, is a `StoreDeployRefused`, which
+    `_cmd_store` prints as one line and exits 1. None of the three prints the
+    URL.
+    """
+    from harrier.storedeploy import (
+        SCHEDULER_LOGIN_ROLES,
+        Login,
+        check_deploy,
+        grant_schedule_reader,
+        grant_tenant,
+    )
+
+    command: str = args.store_command
+    if not url:
+        print(f"error: harrier store {command} needs a Postgres store", file=sys.stderr)
+        return 1
+    if command == "grant-tenant":
+        print(grant_tenant(url, args.role))
+        return 0
+    if command == "grant-schedule-reader":
+        print(grant_schedule_reader(url, args.role))
+        return 0
+    tenant_roles = cast("list[str]", args.login or [])
+    scheduler_roles = cast("list[str]", args.scheduler_login or [])
+    if not tenant_roles and not scheduler_roles:
+        print(
+            "error: harrier store check-deploy needs at least one --login or --scheduler-login",
+            file=sys.stderr,
+        )
+        return 1
+    logins = [Login(role) for role in tenant_roles]
+    logins += [Login(role, SCHEDULER_LOGIN_ROLES) for role in scheduler_roles]
+    check_deploy(url, logins, print)
+    return 0
+
+
+def _as_of(text: str) -> date:
+    from harrier.deploychecks import parse_as_of
+
+    try:
+        return parse_as_of(text)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from None
+
+
+class _CostLineAction(argparse.Action):
+    """`--line <name>=<usd>`, repeated. A malformed line and a name given
+    twice are usage errors, exit 2."""
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: str | Sequence[object] | None,
+        option_string: str | None = None,
+    ) -> None:
+        from harrier.deploychecks import parse_cost_line
+
+        try:
+            line = parse_cost_line(str(values))
+        except ValueError as error:
+            raise argparse.ArgumentError(self, str(error)) from None
+        given = cast("list[CostLine]", getattr(namespace, self.dest, None) or [])
+        if any(earlier.name == line.name for earlier in given):
+            raise argparse.ArgumentError(self, f"{line.name} is given twice")
+        setattr(namespace, self.dest, [*given, line])
+
+
+def _cmd_deploy(args: argparse.Namespace) -> int:
+    """The deploy's checks that need no store: no database is opened (spec 110)."""
+    import time
+
+    from harrier import deploychecks
+
+    command: str = args.deploy_command
+    try:
+        if command == "check-auth-settings":
+            print(deploychecks.check_auth_settings(os.environ))
+        elif command == "fill-fly-config":
+            try:
+                text = args.config.read_text(encoding="utf-8")
+            except OSError as error:
+                raise deploychecks.DeployCheckFailed(
+                    f"cannot read the configuration ({type(error).__name__})"
+                ) from None
+            filled = deploychecks.fill_fly_config(text, os.environ)
+            try:
+                args.out.write_text(filled, encoding="utf-8")
+            except OSError as error:
+                raise deploychecks.DeployCheckFailed(
+                    f"cannot write the copy ({type(error).__name__})"
+                ) from None
+            print(f"wrote {args.out}")
+        elif command == "check-machine-count":
+            print(deploychecks.check_machine_count(sys.stdin.read()))
+        elif command == "check-scheduler-tick":
+            print(
+                deploychecks.wait_for_tick(
+                    lambda: machine_events(args.app, args.machine),
+                    args.since,
+                    args.machine,
+                    now=time.time,
+                    sleep=time.sleep,
+                )
+            )
+        else:
+            projection = deploychecks.project_cost(args.as_of, args.lines)
+            print(projection.report())
+            if projection.over_budget:
+                print(f"over the {deploychecks.BUDGET_USD} USD budget")
+                return 1
+    except deploychecks.DeployCheckFailed as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def machine_events(app: str, machine: str) -> object:
+    """The events of one Fly machine, from `fly machine status --json`, or
+    None when the command or its output fails: the wait asks again."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["fly", "machine", "status", machine, "--app", app, "--json"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        parsed: object = json.loads(result.stdout) if result.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError, ValueError) as error:
+        # The class only: a message could quote the app or the machine.
+        print(f"fly machine status failed: {type(error).__name__}", file=sys.stderr)
+        return None
+    if not isinstance(parsed, dict):
+        print("fly machine status failed: no machine object", file=sys.stderr)
+        return None
+    return cast("dict[str, object]", parsed).get("events")
 
 
 def _store_postgres(command: str, url: str) -> int:
@@ -2629,6 +2813,18 @@ COMMAND_CLASSES: dict[str, CommandClass] = {
     # Postgres main() runs them before any of this is asked (spec 103).
     "store migrate": _DB,
     "store status": _DB,
+    # The deploy's steps (spec 110) never open the local database: on
+    # SQLite they refuse, on Postgres they run as the migrator.
+    "store grant-tenant": _HOST,
+    "store grant-schedule-reader": _HOST,
+    "store check-deploy": _HOST,
+    # Read no database: the project's Auth settings, a Fly listing on stdin,
+    # Fly's events and figures typed in (spec 110).
+    "deploy check-auth-settings": _HOST,
+    "deploy fill-fly-config": _HOST,
+    "deploy check-machine-count": _HOST,
+    "deploy check-scheduler-tick": _HOST,
+    "deploy project-cost": _HOST,
     # The export reads the tracker, so it runs where the database lives. The
     # trainer reads only the export and needs scikit-learn, which the image
     # does not install, so it runs here (spec 077).
@@ -3094,8 +3290,74 @@ def build_parser() -> argparse.ArgumentParser:
         "migrate", help="apply pending migrations and print the version before and after"
     )
     store_sub.add_parser("status", help="print the store's dialect and schema version")
+    grant_tenant_cmd = store_sub.add_parser(
+        "grant-tenant",
+        help="check a login role and grant it harrier_tenant, as the migrator (spec 110)",
+    )
+    grant_tenant_cmd.add_argument("role", help="the login role the hosted API connects as")
+    grant_reader_cmd = store_sub.add_parser(
+        "grant-schedule-reader",
+        help="check a login role and grant it harrier_schedule_reader, as the migrator (spec 110)",
+    )
+    grant_reader_cmd.add_argument("role", help="the scheduler's login role")
+    check_deploy_cmd = store_sub.add_parser(
+        "check-deploy",
+        help="check, as the migrator, what a deploy must find before the new API serves (spec 110)",
+    )
+    check_deploy_cmd.add_argument(
+        "--login",
+        action="append",
+        metavar="ROLE",
+        help="a login role that must reach harrier_tenant and no other role; repeat per role",
+    )
+    check_deploy_cmd.add_argument(
+        "--scheduler-login",
+        action="append",
+        metavar="ROLE",
+        help="the scheduler's login role: harrier_tenant and harrier_schedule_reader, no other",
+    )
     store_cmd.set_defaults(func=_cmd_store)
 
+    deploy_cmd = sub.add_parser("deploy", help="the deploy's checks that need no store (spec 110)")
+    deploy_sub = deploy_cmd.add_subparsers(dest="deploy_command", required=True)
+    deploy_sub.add_parser(
+        "check-auth-settings",
+        help="fail unless the Supabase project's Auth settings are invite only",
+    )
+    deploy_sub.add_parser(
+        "check-machine-count",
+        help="fail unless a `fly machines list --json` on stdin holds one API machine",
+    )
+    fill_cmd = deploy_sub.add_parser(
+        "fill-fly-config",
+        help="write a copy of a Fly configuration with the Supabase project's values in it",
+    )
+    fill_cmd.add_argument("--config", required=True, type=Path, help="deploy/fly.<env>.toml")
+    fill_cmd.add_argument("--out", required=True, type=Path, help="where the copy is written")
+    tick_cmd = deploy_sub.add_parser(
+        "check-scheduler-tick",
+        help="wait for the scheduler machine's first tick after an update (spec 108)",
+    )
+    tick_cmd.add_argument("--app", required=True, help="the Fly app holding the machine")
+    tick_cmd.add_argument("--machine", required=True, help="the scheduler machine's id")
+    tick_cmd.add_argument(
+        "--since", required=True, type=float, help="the update's time, epoch seconds"
+    )
+    cost_cmd = deploy_sub.add_parser(
+        "project-cost", help="project the month's hosting cost from the figures typed in"
+    )
+    cost_cmd.add_argument(
+        "--as-of", required=True, type=_as_of, help="the last day the figures cover, YYYY-MM-DD"
+    )
+    cost_cmd.add_argument(
+        "--line",
+        required=True,
+        action=_CostLineAction,
+        dest="lines",
+        metavar="NAME=USD",
+        help="one billed line, the month so far in USD; repeat per line",
+    )
+    deploy_cmd.set_defaults(func=_cmd_deploy)
     # Operator commands run only on a Postgres store, each as the database
     # role it declares (spec 108, Amendment (2026-10-14); spec 127 keeps the
     # table of every class). A subcommand is added through
@@ -3407,9 +3669,10 @@ def main(argv: list[str] | None = None) -> int:
             # A run command needs the owner the API gives a hosted run.
             print(f"error: {run_class_refusal(subcommand_name(args))}", file=sys.stderr)
             return 1
-        # The store and operator classes run; each operator subcommand as
-        # the role it declares (spec 108).
-        if args.command not in ("store", "operator"):
+        # The store, operator and deploy classes run; each operator subcommand as
+        # the role it declares (spec 108), and the deploy checks open no store
+        # (spec 110).
+        if args.command not in ("store", "operator", "deploy"):
             print(f"error: {POSTGRES_NOT_YET}", file=sys.stderr)
             return 1
         ran: int = args.func(args)
@@ -3434,7 +3697,7 @@ def main(argv: list[str] | None = None) -> int:
         # thing that changes it (review finding on PR #110). Nor `store`: that
         # open would apply pending migrations before `store migrate` read the
         # version it started from (spec 103).
-        if args.command not in ("doctor", "store"):
+        if args.command not in ("doctor", "store", "deploy"):
             configure_logging()
         try:
             refused = _check_track(args)

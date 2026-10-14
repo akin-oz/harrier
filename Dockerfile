@@ -1,6 +1,17 @@
 # syntax=docker/dockerfile:1
 #
-# One image for the API and the built SPA (spec 051, ADR-010).
+# Two images from one file (spec 051, ADR-010 for the local one; spec 110,
+# ADR-013 for the hosted one).
+#
+#   docker build .                     the local image: the API, the built SPA
+#                                      and the `claude` CLI, for one person
+#   docker build --target hosted .     the hosted image: the API for many
+#                                      owners, with no CLI and no SPA
+#
+# The local image is the last stage, so it stays the default target and a
+# build with no `--target` is the build it always was. The hosted image shares
+# the base stage with it (Python, Chromium, poppler and the PDF dependencies),
+# which a separate Dockerfile would have repeated.
 #
 # One container rather than two, because the API already serves
 # apps/web/dist at / when the directory exists
@@ -14,7 +25,7 @@
 # /app/data and /app/config resolve. Flattening it and setting HARRIER_DATA_DIR
 # would move the data directory and leave config/ resolving somewhere else.
 
-# --- the SPA -----------------------------------------------------------------
+# --- the SPA (the local image only) ------------------------------------------
 FROM node:22-bookworm-slim AS web
 WORKDIR /build
 RUN corepack enable
@@ -30,8 +41,8 @@ COPY packages/contract packages/contract
 COPY apps/web apps/web
 RUN pnpm --filter @harrier/web build
 
-# --- the service -------------------------------------------------------------
-FROM python:3.12-slim-bookworm AS runtime
+# --- what both images share ----------------------------------------------------
+FROM python:3.12-slim-bookworm AS base
 COPY --from=ghcr.io/astral-sh/uv:0.9.9 /uv /usr/local/bin/uv
 
 WORKDIR /app
@@ -41,16 +52,91 @@ WORKDIR /app
 COPY LICENSE ./LICENSE
 COPY services/api/pyproject.toml services/api/uv.lock services/api/
 
+# `pdf` backs resume and cover letter generation, whose artifact gate is
+# PDF-or-failure, and it is the group Chromium below needs: Playwright is its
+# one dependency. Both images install it. Each image then adds its own groups
+# on top of this layer.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    cd services/api && uv sync --frozen --no-install-project --no-dev --group pdf
+
+# Chromium renders the PDF and `pdfinfo` counts its pages. Both are needed for
+# `harrier tailor` to reach a validated artifact rather than an error.
+#
+# The browser path is pinned rather than left to default. The container runs as
+# the host user's uid with no passwd entry, so HOME is unset and resolves to
+# `/`, and Playwright looked for its browser under `/.cache/ms-playwright`,
+# which is neither writable at build time nor where the download went. A fixed
+# world-readable location makes the lookup independent of which uid runs it.
+#
+# This is the largest thing in the image by far. It is here because the
+# alternative is an artifact run that fails in the UI with a message telling
+# the operator to run an install command inside a container.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN /app/services/api/.venv/bin/playwright install --with-deps chromium \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends poppler-utils \
+    && rm -rf /var/lib/apt/lists/* \
+    && chmod -R a+rX /ms-playwright
+
+# --- the hosted image (spec 110) -----------------------------------------------
+#
+# The API for many owners, on Fly. The dependency groups it needs are `pdf`
+# (above), `postgres` for the store and `hosted` for the bearer tokens. It
+# installs no `gmail` group (spec 109 offers no hosted Gmail), carries no
+# `claude` CLI (ADR-013 decision 8: the hosted deployment offers the API LLM
+# providers only) and no SPA (ADR-013 decision 7: Vercel serves it).
+#
+# `dev` stays out of it, as of the local image. Nothing personal is in either
+# image: config/, data/ and secrets/ arrive through `.dockerignore`, and a
+# hosted machine keeps its data in Supabase.
+FROM base AS hosted
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    cd services/api && uv sync --frozen --no-install-project --no-dev \
+        --group pdf --group postgres --group hosted
+
+COPY services/api services/api
+COPY config config
+COPY templates templates
+COPY fixtures fixtures
+COPY docs docs
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    cd services/api && uv sync --frozen --no-dev \
+        --group pdf --group postgres --group hosted
+
+# What this image is, readable at `GET /health`: the deploy compares `revision`
+# with the commit it built, so a machine still running an older image is seen
+# (spec 110, step 6). The deploy passes both; a build without them reports
+# "unknown" rather than claiming a revision it does not have.
+ARG HARRIER_REVISION=unknown
+ARG HARRIER_BUILT_AT=unknown
+ENV HARRIER_REVISION=${HARRIER_REVISION} \
+    HARRIER_BUILT_AT=${HARRIER_BUILT_AT} \
+    PATH="/app/services/api/.venv/bin:${PATH}" \
+    PYTHONUNBUFFERED=1
+
+EXPOSE 8000
+
+# Fly's proxy reaches the machine on its private network, so the process
+# listens on every interface; the trusted-host check of spec 104
+# (HARRIER_ALLOWED_HOSTS) decides which names it answers to.
+CMD ["uvicorn", "harrier_api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# --- the local image: the last stage, so the default target ----------------------
+FROM base AS runtime
+
+# Every non-dev dependency group the local product's UI can reach. Optional on
+# a laptop means "install it when you want that feature"; in an image it means
+# the feature is missing and the operator cannot install it.
+# `gmail` backs the mail watch run that `POST /mail/watch` starts. It was
+# absent from the first image and failed the way `pdf` did: a run that dies on
+# a lazy import telling the operator to run an install command, inside a
+# container. `postgres` and `hosted` are the hosted image's (spec 110): the
+# local container runs on SQLite.
+#
 # Dependencies as their own layer: the project itself is installed after the
 # source arrives, so editing a module does not reinstall FastAPI.
-# Every non-dev dependency group, because the UI can reach every feature.
-# Optional on a laptop means "install it when you want that feature"; in an
-# image it means the feature is missing and the operator cannot install it.
-# `pdf` backs resume and cover letter generation, whose artifact gate is
-# PDF-or-failure. `gmail` backs the mail watch run that `POST /mail/watch`
-# starts. Both were absent from the first image and both fail identically:
-# a run that dies on a lazy import telling the operator to run an install
-# command, inside a container.
 RUN --mount=type=cache,target=/root/.cache/uv \
     cd services/api && uv sync --frozen --no-install-project --no-dev --group pdf --group gmail
 
@@ -79,25 +165,6 @@ COPY --from=web /build/apps/web/dist apps/web/dist
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     cd services/api && uv sync --frozen --no-dev --group pdf --group gmail
-
-# Chromium renders the PDF and `pdfinfo` counts its pages. Both are needed for
-# `harrier tailor` to reach a validated artifact rather than an error.
-#
-# The browser path is pinned rather than left to default. The container runs as
-# the host user's uid with no passwd entry, so HOME is unset and resolves to
-# `/`, and Playwright looked for its browser under `/.cache/ms-playwright`,
-# which is neither writable at build time nor where the download went. A fixed
-# world-readable location makes the lookup independent of which uid runs it.
-#
-# This is the largest thing in the image by far. It is here because the
-# alternative is an artifact run that fails in the UI with a message telling
-# the operator to run an install command inside a container.
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-RUN /app/services/api/.venv/bin/playwright install --with-deps chromium \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends poppler-utils \
-    && rm -rf /var/lib/apt/lists/* \
-    && chmod -R a+rX /ms-playwright
 
 # The `claude` CLI, for the same reason as Chromium above: AI_PROVIDER selects
 # it, the UI can reach every feature that calls it, and the container could not
