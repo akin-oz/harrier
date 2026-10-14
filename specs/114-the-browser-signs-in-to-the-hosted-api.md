@@ -138,14 +138,18 @@ One pure function, `readAppMode(env)` in
 `apps/web/src/shared/config/mode.ts`, turns these into either
 `{ kind: "local" }` or `{ kind: "hosted", supabaseUrl, publishableKey,
 apiUrl }`, or throws naming the variable. `vite.config.ts` calls it with
-`loadEnv(mode, process.cwd(), "VITE_")`, so `pnpm build` and `pnpm dev`
-refuse a bad hosted configuration before bundling. The app calls it again
-at start with `import.meta.env`; a throw there renders a configuration
-error page and makes no request.
+`loadEnv(mode, <the directory of the config file>, "VITE_")`, so `pnpm build`
+and `pnpm dev` refuse a bad hosted configuration before bundling. The app
+calls it again at start with the four variables read by name, never
+`import.meta.env` as a whole, which Vite copies into the bundle with every
+`VITE_` variable in the build's environment; a throw there renders a
+configuration error page and makes no request.
 
 The key check refuses a value beginning `sb_secret_`, and a JWT whose
 payload `role` is `service_role`, naming the variable and never printing
-the value. Supabase says a secret key must never be in a browser and
+the value, in either mode: Vite puts the key variable's value in the
+bundle whether or not the local app reads it. Supabase says a secret key
+must never be in a browser and
 answers 401 to one used from a browser user agent (API keys guide), but a
 secret key in a bundle is already leaked to everyone who loads the page,
 so the build refuses it before it ships.
@@ -240,7 +244,7 @@ Spec 104's refusals carry `reason` in `AuthRefusalOut`. The middleware's
 | Response | What the SPA does |
 |---|---|
 | 401 `expired`, first time for this request | `refreshSession()`; if it yields a token, re-sends the cloned request once with it and returns that response |
-| 401 `expired` after the retry, or refresh fails | `endSession("expired")` |
+| 401 `expired` after the retry, or refresh fails | `endSession("expired")`. When the refresh token is refused, supabase-js removes the session and fires `SIGNED_OUT` itself before `refreshSession` returns, so the notice is set before the refresh is called |
 | 401 `missing` or `invalid` | `endSession("invalid")` |
 | 403 `anonymous` | `endSession("refused")` |
 | 503 `keys_unavailable` | nothing extra; the caller shows the detail as any refusal; the session stays |
@@ -405,7 +409,7 @@ start from:
   fails naming the variable.
 - **A secret key in the build.** `VITE_SUPABASE_PUBLISHABLE_KEY` begins
   `sb_secret_`, or is a JWT whose `role` is `service_role`: the build
-  fails naming the variable, never printing the value.
+  fails naming the variable, never printing the value, in local mode too.
 - **A bundle built with a bad configuration anyway.** The start-up check
   throws; the app renders "This build of harrier is misconfigured:" and
   the variable's name, and sends no request.
@@ -477,7 +481,8 @@ Local mode:
       local token (Amendment of 2026-10-14, item 2).
 - [x] Local mode never imports or creates a Supabase client and never
       sends `Authorization`: "local mode never creates a Supabase client or
-      sends a bearer token" in `App.test.tsx`.
+      sends a bearer token" in `App.test.tsx`, which also sees that the
+      package's mock factory, which runs on import, never ran.
 - [x] `just demo` serves the built SPA from the API, as before, and the
       local stream route is called at `/api/runs/{id}/events`: checked by
       hand (Amendment of 2026-10-14, item 13), and the path is asserted by
@@ -491,7 +496,10 @@ Configuration:
       build" with its text, and no message contains a key value: "a hosted
       build refuses each bad variable" in `mode.test.ts`, one case each.
       "local mode reads nothing but the switch" in `mode.test.ts` proves
-      that hosted variables in a local build are ignored.
+      that hosted variables in a local build are ignored, and "a secret key
+      is refused in a local build too" in `mode.test.ts` that a secret key
+      is not. No unrelated `VITE_` variable reaches the bundle, checked by
+      hand with real builds (Amendment of 2026-10-14, item 11).
 - [x] `pnpm build` with `VITE_HARRIER_AUTH=supabase` and no other hosted
       variable exits non-zero naming `VITE_SUPABASE_URL`: "a hosted build
       with no other hosted variable stops before it bundles" in
@@ -509,7 +517,11 @@ Sign-in and session:
       `shouldCreateUser: false`; an unknown address and a known one show
       the same sentence; a rate limit shows its own: `SignInForm.test.tsx`:
       "the code request never says whether an account exists" and "a rate
-      limit and a network failure each say so".
+      limit and a network failure each say so". The sentences are written
+      out in the test, not imported, and a code check that gets no answer
+      says so: "a code check that gets no answer says so" in
+      `SignInForm.test.tsx`. supabase-js returns a request that got no answer
+      as an error with status 0, and the fake does the same.
 - [x] A wrong code shows the refusal sentence: "a wrong code shows the
       refusal sentence" in `SignInForm.test.tsx`. A right one renders the
       shell: "a verified code opens the app" in `App.hosted.test.tsx`.
@@ -529,18 +541,26 @@ The token:
       `Authorization: Bearer <token>`, none carries `X-Harrier-Token`,
       `GET /session` is never requested, and no request URL contains the
       token: "hosted calls carry the bearer token and nothing else" in
-      `client.test.ts`. The whole app does the same walk through its pages:
-      "the hosted app sends the bearer token on every request it makes" in
-      `App.hosted.test.tsx`.
+      `client.test.ts`. The whole app does the same for what it loads and
+      one run with its stream: "the hosted app sends the bearer token on
+      every request it makes" in `App.hosted.test.tsx`. The tracker and
+      operations writes are covered by the first test only.
 - [x] Hosted requests go to `VITE_HARRIER_API_URL`, not the page origin
       (the same two tests).
 - [x] A 401 `expired` refreshes once and retries once, and the retried
       request carries the new token; a second 401 ends the session: "an
       expired token is refreshed once and retried" in `client.test.ts`.
       Concurrent refusals share the one refresh: "concurrent expired
-      refusals share one refresh" in `client.test.ts`. A failed refresh
-      ends the session with no retry: "a failed refresh ends the session
-      without a retry" in `client.test.ts`.
+      refusals share one refresh" in `client.test.ts`. A refresh the
+      server refuses ends the session with no retry, and the page says why:
+      `client.test.ts`: "a refresh the server refuses ends the session
+      without a retry" and "a refresh that gets no answer ends the session
+      without a retry"; and "a refresh token the server refuses ends the
+      session with its sentence" in `App.hosted.test.tsx`. The retry is a
+      copy made before the first attempt, so a write carries its body
+      again: "a retried write carries its body again" in `client.test.ts`.
+      A retry that gets no answer says so: "a retry that gets no answer says
+      so" in `client.test.ts`.
 - [x] A 401 `invalid`, a 401 `missing` and a 403 `anonymous` each end the
       session with no retry and show their sentence: "a refused token ends
       the session" in `App.hosted.test.tsx`, one case each, and "a refused
@@ -566,7 +586,9 @@ The token:
       no diff.
 - [x] A request that gets no answer, which is what the browser sees of an
       unhandled hosted 500, says so, and an aborted request is left alone:
-      "a request that gets no answer says so" in `client.test.ts`.
+      "a request that gets no answer says so" in `client.test.ts`. A page
+      shows the sentence, and the person stays signed in: "a request that
+      gets no answer shows the sentence for it" in `App.hosted.test.tsx`.
 
 The stream:
 
@@ -590,7 +612,10 @@ The stream:
       in `RunPanel.test.tsx`, which holds the retry timer rather than
       faking the clock. An end after events reconnects at once: "a stream
       that delivered something is reconnected at once" in
-      `RunPanel.test.tsx`.
+      `RunPanel.test.tsx`. A stream that failed is not reopened once the run
+      is over, and an event that is not JSON is skipped: `RunPanel.test.tsx`:
+      "a stream that failed is not reopened once the run is over" and "an
+      event that is not JSON is skipped, and the stream carries on".
 - [x] After a network error the hook shows `disconnected`, refetches the
       run, retries after the delay, and clears `disconnected` on the first
       event of the new connection: "a recovered stream stops saying it is
@@ -607,11 +632,13 @@ Sign-out and users:
       code opens the app" in `App.hosted.test.tsx` and "local mode never
       creates a Supabase client or sends a bearer token" in `App.test.tsx`.
 - [x] Sign-out calls `signOut({ scope: "local" })`, aborts open streams,
-      empties the query cache, and shows the sign-in page, in that order:
+      empties the query cache, in that order, and shows the sign-in page:
       "sign-out forgets the person's data" in `App.hosted.test.tsx`.
 - [x] A `SIGNED_IN` for a different user id clears the cache before the
       shell renders: "a different user never sees the previous user's
-      cache" in `App.hosted.test.tsx`.
+      cache" in `App.hosted.test.tsx`, which runs again under StrictMode,
+      as production does: "a different user never sees the previous user's
+      cache under StrictMode" in `App.hosted.test.tsx`.
 
 Health:
 
@@ -636,7 +663,15 @@ Gates:
 - [x] `pnpm type-check`, `pnpm lint` and `pnpm test` pass in
       `apps/web`.
 - [x] `just contract` leaves no diff.
-- [ ] `just check` passes.
+- [x] `just check` passes, run as its recipes. `check-python`: ruff,
+      format, pyright, lint-imports and the whole of pytest against the test
+      Postgres, 3819 passed and 29 skipped on the second run. The first run
+      had five failures, all
+      `test_a_failed_migration_leaves_no_trace_of_itself`, whose catalog
+      fingerprint includes cluster-wide role memberships, and the
+      difference was other sessions' `harrier_t_*` roles on the shared
+      server; the test passes alone. `check-ts`, `contract`, `aie-check` and
+      `spec-structure` were run on their own and pass.
 
 ## Honest limitations
 
@@ -645,6 +680,11 @@ Gates:
   is a stolen session. React escapes rendered text and the SPA loads no
   third-party script, but this spec adds no Content Security Policy; the
   response headers Vercel sends are spec 110's.
+- The session `supabase-js` stores holds the signed-in user object, which
+  carries the person's email address. harrier's own code never writes the
+  address anywhere, but the library's `localStorage` entry does, readable by
+  the same scripts and until sign-out. The tests fake the client, so they
+  cannot show this either way (privacy review of PR #328).
 - Sign-out does not stop the access token working at the API until it
   expires, one hour by default (sessions guide, spec 104).
 - The neutral sign-in sentence hides account existence from the page, not
@@ -976,7 +1016,9 @@ families answer 404 (specs 116 and 109).
       shows its field and problem, never its value". Each kind sends its
       own fields, and removing asks first: `CredentialForm.test.tsx`: "each
       kind sends its own fields" and "removing a credential asks first,
-      then deletes it".
+      then deletes it". A request that gets no answer says so and leaves
+      the form usable: `CredentialForm.test.tsx`: "a save or a removal that
+      gets no answer says so and leaves the form usable".
 - [x] The Telegram form sends `PUT /notifications/telegram`, shows the
       `detail` for each refusal reason, clears both fields after any
       answer, and neither the bot token nor the chat id appears in
@@ -987,7 +1029,9 @@ families answer 404 (specs 116 and 109).
       422, and `refusalMessage` does not throw on either: "the Telegram form
       reads the refusals these routes send" in `TelegramForm.test.tsx` and
       "a credential refusal reads as its field and problem" in
-      `refusal.test.ts`.
+      `refusal.test.ts`. A save that gets no answer says so, clears the
+      secrets and leaves the form usable: "a save that gets no answer says
+      so, clears the secrets and stays usable" in `TelegramForm.test.tsx`.
 - [x] Locally neither section renders and no request goes to
       `/credentials` or `/notifications/telegram`: "local settings show no
       credentials or Telegram section" in `SettingsPage.test.tsx`.
@@ -1082,6 +1126,55 @@ numbers are refreshed to it (decision D9).
     `waitFor` and `userEvent` keep their clock. Fake timers were planned and
     would have stopped both.
 
+11. **A secret in any `VITE_` variable reached the bundle.** The first build
+    passed `import.meta.env` whole to `readAppMode`, and Vite copies a whole
+    `import.meta.env` into the bundle, so every `VITE_` variable in the build's
+    environment shipped, and the secret-key refusal ran only on one variable in
+    hosted mode (privacy review of PR #328, reproduced with real builds). The
+    app now reads the four variables by name, and `readAppMode` refuses a
+    secret key in either mode. Checked by hand: an unrelated `VITE_` variable
+    is in neither bundle, and a secret key in the key variable stops a local
+    build. The `vite.config.ts` of this change loads the environment from the
+    config file's own directory, not `process.cwd()`.
+12. **A refresh the server refuses lost its notice.** supabase-js removes the
+    session and fires `SIGNED_OUT` before `refreshSession` returns, so the
+    sign-in page showed nothing and the first fake, which did not do this,
+    hid it (test integrity review of PR #328). The notice is now set before
+    the refresh, and the fake behaves as the library does.
+13. **A form could stick.** Neither credentials nor Telegram form handled a
+    request that got no answer, so the button stayed disabled until a reload
+    and the Telegram secrets stayed in the fields (fsd review of PR #328).
+    Both now report it and stay usable.
+14. **The retry.** A retry's own network failure said "Failed to fetch"
+    instead of the sentence for it, and no test showed that a retried write
+    reads its body again. Both are fixed and tested.
+15. **Test isolation.** `vitest.config.ts` sets `envDir: false`, so a
+    developer's `apps/web/.env.local` cannot decide a local test's mode, and
+    the config tests state all four variables themselves.
+
+### The local reviews of PR 328
+
+Four local reviews ran on the draft (contract, fsd, privacy, test integrity).
+Each finding was read against the code, and the ones that reproduced are
+items 11 to 15 above, with a test that fails without the fix. What was
+declined or recorded elsewhere:
+
+- **Declined.** The stream's uncapped retry on a 403, 422 or 5xx (fsd 3): it is
+  what Behavior specifies, and is listed under "noticed and left". The render
+  phase clear in `AuthGate` (fsd 2) is idempotent and now has a test under
+  StrictMode, so it stays. `shared/README.md` (fsd 6) and the duplicate
+  `UNREACHABLE` name (fsd 7, renamed) are not behavior.
+- **Recorded, not changed.** `Last-Event-ID` as an undeclared header, the hosted
+  500 body, the generated operation ids, and the hand-typed `GET /session`
+  (contract B, C, D, F), all under "noticed and left". The email in
+  supabase-js's own stored session (privacy 2) is under Honest limitations.
+- **Fixed by wording.** Two citations claimed more than their tests prove (test
+  integrity 8), and the criterion about the order of sign-out now says what
+  the test asserts.
+- **Kept, with the reason.** Four negative checks wait a fixed time (test
+  integrity 9); a condition to wait for does not exist for "nothing was
+  asked". Listed under "noticed and left".
+
 ### Decisions the text left open
 
 - **Reconnecting.** After a clean end, the hook reconnects at once. It waits
@@ -1125,5 +1218,25 @@ numbers are refreshed to it (decision D9).
 
 - `apps/web/.env.local` and `apps/web/.env.*` are in no classification entry
   (spec 110).
+- `Last-Event-ID` is sent through free-form `headers` and is not a declared
+  header parameter of `streamRunEvents`, though the API reads it and CORS
+  allows it. Declaring it is a contract change to a route, for the spec that
+  next changes that route.
+- The hosted API's own 500, `COULD_NOT_RUN_AS_USER`, is a `{"detail": ...}`
+  body that passes CORS and is declared on no route but one (spec 134
+  owns the 500s).
+- Six credentials operations carry FastAPI's generated operation ids, which
+  ADR-005 says should be explicit (spec 116's routes, from before this
+  change).
+- `GET /session` is typed by hand in `shared/api/client.ts`, as it was before
+  this change, because the local-token middleware cannot call itself.
+- `shared/README.md` still describes `shared` as the client wrapper and the
+  UI kit, and does not name `auth/`, `config/`, `testing/` and `track/`.
+- The stream hook retries without a cap on any status but 401 and 404, which
+  is what Behavior says ("until the run is terminal ... a new run begins, or
+  the component unmounts"). A 403, 422 or 5xx on the stream is retried every
+  3 seconds until then.
+- Four tests check that nothing happened by waiting a fixed 30 to 50
+  milliseconds. A request that landed later would go unseen on a slow runner.
 - The `OperationsPage.test.tsx` assertion that the old token sentence is
   absent can no longer fail, since nothing renders it. It is left alone.
