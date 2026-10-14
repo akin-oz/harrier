@@ -306,14 +306,30 @@ before routing against the project's published ES256 or RS256 keys and
 answers a refusal with `AuthRefusalOut`: 401, 403 for an anonymous
 session, or 503 while the keys cannot be fetched. It trusts only the
 configured host names and sends CORS headers only to the configured
-origins. The contract declares the 401 and the bearer scheme on every
-route that needs the token
+origins. The contract declares the 401, the 403 for an anonymous session
+(spec 114, `services/api/tests/test_hosted_auth.py::test_the_contract_declares_the_anonymous_refusal`)
+and the bearer scheme on every route that needs the token
 (`services/api/tests/test_hosted_auth.py::test_the_contract_declares_every_auth_refusal`),
 in both modes, so there is one document
 (`services/api/tests/test_hosted_auth.py::test_the_contract_is_the_same_in_both_modes`).
 Hosted, spec 035's local token is not read: the bearer token serves its
 purpose
 (`services/api/tests/test_hosted_auth.py::test_the_local_token_is_not_read_hosted`).
+The SPA has the same two modes, chosen when it is built (spec 114).
+`VITE_HARRIER_AUTH=supabase` builds the hosted app, which needs
+`VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` and
+`VITE_HARRIER_API_URL`; unset or empty builds the local app and ignores the
+other three. `pnpm build` and `pnpm dev` refuse a bad hosted configuration,
+and a secret key, naming the variable
+(`apps/web/src/shared/config/viteConfig.test.ts`,
+`apps/web/src/shared/config/mode.test.ts`). Hosted, a person signs in with
+an emailed one-time code through `supabase-js`, loaded only in hosted mode,
+and the generated client sends the session's access token as the bearer
+token and never the local one
+(`apps/web/src/shared/api/client.test.ts`). The run stream is read with
+`fetch` through that client and reconnects with `Last-Event-ID`
+(`apps/web/src/features/runs/RunPanel.test.tsx`). Signing out empties the
+query cache (`apps/web/src/app/App.hosted.test.tsx`).
 The hosted API serves the Postgres store, and only it does: without
 hosted mode a Postgres URL is refused at start
 (`services/api/tests/test_hosted_start.py::test_the_api_serves_postgres_only_in_hosted_mode`,
