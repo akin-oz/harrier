@@ -288,8 +288,7 @@ else in this spec changes.
   a Postgres URL and is refused on SQLite with the text under Behavior,
   before anything opens;
 - the role declaration of each operator subcommand, beside the parser, and
-  the check that a subcommand without one fails (spec 108's planned
-  test_every_operator_subcommand_declares_its_role).
+  the check that a subcommand without one fails (spec 108's `services/api/tests/test_operator_class.py::test_every_operator_subcommand_declares_its_role`).
 
 **Kept here:**
 
