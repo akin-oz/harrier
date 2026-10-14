@@ -1724,6 +1724,51 @@ def _track_line(track: Track) -> str:
     return f"{line}  archived" if track.archived else line
 
 
+def _cmd_move(args: argparse.Namespace) -> int:
+    """`move <id> --to <slug>` (spec 138): refusals of the rules exit 2, a
+    row that is not on the track or changed underneath exits 1."""
+    from harrier.tracker.store import (
+        JobNotFoundError,
+        MoveConflictError,
+        MoveRefusedError,
+        move_job,
+    )
+    from harrier.tracks import UnknownTrackError, resolve_scope
+
+    with closing(connect()) as conn:
+        scope = _scope(conn, args)
+        source = scope.track.slug
+        try:
+            destination = resolve_scope(conn, args.to)
+        except UnknownTrackError as error:
+            print(f"harrier move: {error}", file=sys.stderr)
+            return 2
+        try:
+            result = move_job(conn, scope, args.job_id, destination)
+        except MoveRefusedError as error:
+            print(f"harrier move: {error}", file=sys.stderr)
+            return 2
+        except JobNotFoundError:
+            print(f"harrier move: no job {args.job_id} on track {source}", file=sys.stderr)
+            return 1
+        except MoveConflictError as error:
+            print(f"harrier move: {error}", file=sys.stderr)
+            return 1
+    line = (
+        f"moved {args.job_id} from {source} to {destination.track.slug}, "
+        f"score {result.previous} to {result.current}"
+    )
+    if result.not_rescored:
+        line = f"{line}; {result.not_rescored}"
+    print(line)
+    if result.gate:
+        print(
+            f"warning: job {args.job_id} fails a {destination.track.slug} gate: {result.gate}",
+            file=sys.stderr,
+        )
+    return 0
+
+
 def _cmd_tracks(args: argparse.Namespace) -> int:
     """The search tracks: list (spec 091), add and archive (spec 093)."""
     from harrier.tracks import (
@@ -2788,6 +2833,7 @@ COMMAND_CLASSES: dict[str, CommandClass] = {
     "reevaluate": _DB,
     "applied": _DB,
     "reject": _DB,
+    "move": _DB,
     "add": _DB,
     "next": _DB,
     "review": _DB,
@@ -3159,6 +3205,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="why, as a reason code (spec 079); inferred from the reason when omitted",
     )
     reject_cmd.set_defaults(func=_cmd_tracker_verb)
+
+    move_cmd = sub.add_parser(
+        "move", help="move a job between an industry and a focused track (spec 138)"
+    )
+    move_cmd.add_argument("job_id", type=int, help="the job's id")
+    move_cmd.add_argument("--to", required=True, type=_slug, help="the destination track")
+    move_cmd.set_defaults(func=_cmd_move)
 
     outcome_cmd = sub.add_parser(
         "company-outcome",

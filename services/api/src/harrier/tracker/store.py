@@ -31,6 +31,7 @@ from harrier.tracker.reasons import (
     CREATED,
     DECISION,
     INTERVIEW_INVITED,
+    MOVED,
     OUTCOME,
     SYSTEM,
     ReasonError,
@@ -48,8 +49,15 @@ from harrier.tracker.schema import (
     STATUSES,
     TRACKER_FIELDS,
 )
+from harrier.tracker.score import score_fields
 from harrier.tracker.transitions import check_transition, fields_a_move_clears
-from harrier.tracks import ArchivedTrackError, Scope, refuse_if_archived, rules_for
+from harrier.tracks import (
+    ArchivedTrackError,
+    Scope,
+    refuse_archived_track,
+    refuse_if_archived,
+    rules_for,
+)
 
 
 class TrackerError(Exception):
@@ -539,6 +547,161 @@ def update_fields(
                 [*[str(v) for v in fields.values()], store_now(), job_id, scope.track.id],
             )
     return get_job(conn, scope, job_id)
+
+
+# --- moving a row between tracks (spec 138) ------------------------------------
+
+# A move is between one industry track and one focused track. An academic row
+# carries a deadline and no score, and its queue and labels differ.
+MOVABLE_KINDS: frozenset[str] = frozenset({"industry", "focused"})
+
+
+class MoveRefusedError(TrackerError):
+    """A move the rules refuse: the same track, a pair that is not one
+    industry and one focused track, an archived track, or a focused
+    destination with no screening document (spec 138)."""
+
+
+class MoveConflictError(TrackerError):
+    """The row changed track, or went away, between the read and the write."""
+
+
+@dataclass(frozen=True)
+class _Rescored:
+    score: int
+    reasons: list[str]
+    version: str
+    gate: str
+
+
+@dataclass(frozen=True)
+class MoveResult:
+    job: dict[str, str]
+    previous: str
+    current: str
+    # Empty when the row was rescored; otherwise why it kept its score.
+    not_rescored: str
+    # The first destination gate the row fails, or empty.
+    gate: str
+
+
+NOT_RESCORED = "not rescored: no cached description"
+
+
+def _rescore_for(conn: Connection, destination: Scope, row: Mapping[str, str]) -> _Rescored | None:
+    """The destination kind's score for the row, from its cached description,
+    and the first destination gate it fails. None when no description is
+    cached. Imported here because the screening package imports the tracker."""
+    from harrier.scoring.model import fit_score_for
+    from harrier.screening.config import load_candidate_config
+    from harrier.screening.descriptions import load_cached_description
+    from harrier.screening.focused import failed_gate, focused_score, load_screening
+    from harrier.screening.normalized import make_normalized_job
+    from harrier.screening.rules import remote_region_allowed, title_allowed
+
+    document = None
+    if destination.track.kind == "focused":
+        document = load_screening(conn, destination)
+        if document is None:
+            slug = destination.track.slug
+            raise MoveRefusedError(
+                f"track {slug} has no screening configuration; "
+                f"harrier --track {slug} profile put screening --file PATH"
+            )
+    description = load_cached_description(row["url"]) if row["url"] else ""
+    if not description:
+        return None
+    job = make_normalized_job(
+        source=row["source"] or "manual",
+        company=row["company"],
+        title=row["title"],
+        location=row["location"],
+        url=row["url"],
+        description=description,
+    )
+    candidate_cfg = load_candidate_config(conn)
+    if document is not None:
+        scored = focused_score(job, document)
+        gate = failed_gate(job, document, candidate_cfg) or ""
+        reasons = [*scored.reasons, *([f"gate={gate}"] if gate else [])]
+        return _Rescored(scored.score, reasons, scored.version, gate)
+    fit = fit_score_for(job, candidate_cfg)
+    if not title_allowed(job["title"], candidate_cfg):
+        gate = "title"
+    else:
+        allowed, reason = remote_region_allowed(job, candidate_cfg)
+        gate = "" if allowed else reason
+    return _Rescored(fit.score, list(fit.reasons), fit.version, gate)
+
+
+def move_job(conn: Connection, scope: Scope, job_id: int, destination: Scope) -> MoveResult:
+    """Move one row from the scope's track to `destination` (spec 138).
+
+    The row keeps its status, dates, notes, outreach fields and events. It is
+    rescored with the destination kind's scorer from its cached description,
+    and one `decision` event records the move. The track change, the score
+    and the event commit together or not at all. A destination gate the row
+    fails does not stop the move: the operator chose it.
+    """
+    source = scope.track
+    target = destination.track
+    if target.id == source.id:
+        raise MoveRefusedError(f"job {job_id} is already on track {source.slug}")
+    if frozenset({source.kind, target.kind}) != MOVABLE_KINDS:
+        raise MoveRefusedError(
+            f"a move is between an industry and a focused track; "
+            f"{source.slug} is {source.kind} and {target.slug} is {target.kind}"
+        )
+    for track_id in (source.id, target.id):
+        try:
+            refuse_archived_track(conn, track_id)
+        except ArchivedTrackError as error:
+            raise MoveRefusedError(str(error)) from error
+    before = get_job(conn, scope, job_id)
+    rescored = _rescore_for(conn, destination, before)
+    previous = before.get("fit_score", "").strip() or "-"
+    text = f"moved from {source.slug} to {target.slug}"
+    if rescored is None:
+        text = f"{text}; {NOT_RESCORED}"
+        fields: dict[str, str] = {}
+        current = previous
+        score, version = before.get("fit_score", ""), before.get("scoring_version", "")
+    else:
+        if rescored.gate:
+            text = f"{text}; failed gate: {rescored.gate}"
+        fields = score_fields(rescored.score, rescored.reasons, rescored.version)
+        current = str(rescored.score)
+        score, version = current, rescored.version
+    assignments = "".join(f", {name} = ?" for name in fields)
+    with _write_lock(conn, scope, job_id):
+        moved = conn.execute(
+            f"UPDATE jobs SET track_id = ?{assignments}, updated_at = ? "
+            "WHERE id = ? AND track_id = ?",
+            [target.id, *fields.values(), store_now(), job_id, source.id],
+        )
+        if moved.rowcount != 1:
+            # Raised inside the transaction, so nothing it wrote is kept.
+            raise MoveConflictError(f"job {job_id} changed while moving; run it again")
+        _append_event(
+            conn,
+            job_id=job_id,
+            kind=DECISION,
+            actor=CANDIDATE,
+            from_status=before["status"],
+            to_status=before["status"],
+            reason_code=MOVED,
+            reason_text=text,
+            fit_score=score,
+            scoring_version=version,
+            description_sha256=_description_sha256(before["url"]),
+        )
+    return MoveResult(
+        job=get_job(conn, destination, job_id),
+        previous=previous,
+        current=current,
+        not_rescored="" if rescored is not None else NOT_RESCORED,
+        gate=rescored.gate if rescored is not None else "",
+    )
 
 
 # --- decision history (spec 079) ----------------------------------------------

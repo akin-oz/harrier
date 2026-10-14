@@ -257,6 +257,8 @@ NON_DEFAULT_OPERATIONS: frozenset[str] = frozenset(
         "tailor",
         "cover-letter",
         "answers",
+        # Spec 138: a row moves between an industry and a focused track.
+        "move",
     }
 )
 
@@ -273,6 +275,7 @@ WRITE_OPERATIONS: frozenset[str] = frozenset(
         "profile put",
         # Spec 079: a CV that passes its gate moves the row.
         "tailor",
+        "move",
     }
 )
 
