@@ -5,6 +5,12 @@
     "patterns": [
       ".env",
       ".env.local",
+      ".env.staging",
+      ".env.production",
+      "apps/web/.env",
+      "apps/web/.env.local",
+      ".vercel/**",
+      "apps/web/.vercel/**",
       "secrets/**",
       "data/**",
       "tracker/**",

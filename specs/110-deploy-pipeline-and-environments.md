@@ -393,28 +393,28 @@ holds the URL and its password.
 
 - [ ] `docker build --target hosted` produces an image that installs the
       `postgres` and `hosted` groups and `pdf`, holds no `claude` binary and
-      no `apps/web/dist` (planned test_the_hosted_image_installs_the_store_and_auth_groups,
-      planned test_the_hosted_image_carries_no_cli_provider_and_no_spa),
+      no `apps/web/dist` (`services/api/tests/test_deploy_files.py::test_the_hosted_image_installs_the_store_and_auth_groups`,
+      `services/api/tests/test_deploy_files.py::test_the_hosted_image_carries_no_cli_provider_and_no_spa`),
       and the local image's tests in `services/api/tests/test_container.py`
       pass unchanged, including
       `services/api/tests/test_container.py::test_the_image_installs_every_feature_dependency_group`.
 - [ ] Both Fly files set `primary_region = "ams"`, `HARRIER_AUTH =
       "supabase"` in `[env]`, an HTTP health check on `/health` with a Host
       header from that file's `HARRIER_ALLOWED_HOSTS`, and no secret
-      (planned test_the_fly_files_hold_no_secret_and_name_the_region).
+      (`services/api/tests/test_deploy_files.py::test_the_fly_files_hold_no_secret_and_name_the_region`).
 - [ ] `apps/web/vercel.json` sets `git.deploymentEnabled` to `false`.
 - [ ] `harrier store grant-tenant` refuses each case under Behavior, one
       test each, grants once, and reports an existing grant
-      (planned test_grant_tenant_refuses_a_role_that_can_bypass,
-      planned test_grant_tenant_grants_once).
+      (`services/api/tests/test_store_deploy.py::test_grant_tenant_refuses_a_role_that_can_bypass`,
+      `services/api/tests/test_store_deploy.py::test_grant_tenant_grants_once`).
 - [ ] `harrier store check-deploy` fails, naming the check, for a store
       behind, a grant to `anon`, a table without forced row security, and
       a login role outside `harrier_tenant`, and passes on a migrated,
-      granted store (planned test_check_deploy_names_the_failed_check).
+      granted store (`services/api/tests/test_store_deploy.py::test_check_deploy_names_the_failed_check`).
 - [ ] `deploy.yml` runs migrate, grant, check, API deploy, smoke and SPA
       deploy in that order; production takes a SHA, refuses one without a
       successful staging deploy, and names the `production` environment
-      (planned test_the_deploy_workflow_migrates_before_it_deploys, which
+      (`services/api/tests/test_deploy_files.py::test_the_deploy_workflow_migrates_before_it_deploys`, which
       reads the workflow file; Open decision 7 says why a file read is the
       proof here).
 - [ ] The staging environment is deployed once by the workflow: the pull
@@ -429,10 +429,10 @@ holds the URL and its password.
       pass with them.
 - [ ] With `HARRIER_DATABASE_URL` and `HARRIER_AUTH` set in `.env`, the
       compose file still hands the container empty values
-      (planned test_the_local_container_never_takes_a_store_from_dotenv).
+      (`services/api/tests/test_deploy_files.py::test_the_local_container_never_takes_a_store_from_dotenv`).
 - [ ] A remote Postgres URL in `.env` is refused with the text under
       Behavior; the same URL exported is accepted; a loopback URL in
-      `.env` is accepted (planned test_a_remote_store_url_in_dotenv_is_refused).
+      `.env` is accepted (`services/api/tests/test_store_cli.py::test_a_remote_store_url_in_dotenv_is_refused`).
 - [ ] Hosted, `configure_logging` opens no SQLite file and adds no file
       handler (planned test_hosted_logging_opens_no_database_and_no_file).
       Superseded 2026-10-13: spec 135 owns hosted logs (Amendment
@@ -450,8 +450,7 @@ holds the URL and its password.
       set, naming it (planned test_hosted_start_refuses_prompt_logging).
       Superseded 2026-10-13: spec 135 owns hosted logs (Amendment
       (2026-10-13), decision 2).
-- [ ] No error reporting SDK is a dependency (planned
-      test_no_error_reporter_is_installed).
+- [ ] No error reporting SDK is a dependency (`services/api/tests/test_deploy_files.py::test_no_error_reporter_is_installed`).
 - [ ] `docs/deploy.md` covers the one-time setup of each environment, each
       Supabase setting with its check, every secret's home from the table,
       a failed deploy after a migration, and revoking each credential.
@@ -973,35 +972,31 @@ check stops the dependent spec until a spec owns the fix.
 - [ ] Both Fly files set `HARRIER_SUPABASE_PUBLISHABLE_KEY` in `[env]`
       and name no `TELEGRAM_` or `GMAIL_` variable; their auto-stop
       settings are the hosting budget's criterion below, which replaced
-      `auto_stop_machines = "off"` on 2026-10-11 (planned
-      test_the_fly_files_run_one_api_machine_that_stops_when_idle).
+      `auto_stop_machines = "off"` on 2026-10-11 (`services/api/tests/test_deploy_files.py::test_the_fly_files_run_one_api_machine_that_stops_when_idle`).
 - [ ] The runbook's scheduler machine runs `harrier operator scheduler`
       on `--schedule hourly` with restart policy `no`, no service, and
       `HARRIER_SCHEDULER_CONCURRENCY` and
       `HARRIER_SCHEDULED_RUN_TIMEOUT_SECONDS` set; the always-on process
       group this criterion first named is superseded by the hosting
       budget. The deploy moves the machine to the API's image digest with
-      `fly machine update` (planned
-      test_the_deploy_workflow_migrates_before_it_deploys, extended).
+      `fly machine update` (`services/api/tests/test_deploy_files.py::test_the_deploy_workflow_migrates_before_it_deploys`, extended).
 - [ ] `deploy.yml` grants `harrier_tenant` to `harrier_api`, `harrier_run`
       and `harrier_scheduler`, and `harrier_schedule_reader` to
       `harrier_scheduler`, before `check-deploy`; counts the API machines,
       started or stopped, after `fly deploy`; and reads the Auth settings
       in the smoke step
-      (planned test_the_deploy_workflow_migrates_before_it_deploys,
+      (`services/api/tests/test_deploy_files.py::test_the_deploy_workflow_migrates_before_it_deploys`,
       extended).
 - [ ] `check-deploy` fails, naming the check, when `harrier_run` or
       `harrier_scheduler` fails a login role check or lacks
       `harrier_tenant`, when `harrier_scheduler` lacks
       `harrier_schedule_reader`, and when `storage.objects` carries a
-      policy other than `harrier_files_owner_only` (planned
-      test_check_deploy_names_the_failed_check, extended).
+      policy other than `harrier_files_owner_only` (`services/api/tests/test_store_deploy.py::test_check_deploy_names_the_failed_check`, extended).
 - [ ] The Auth settings check fails on `disable_signup` false, on
       `external.anonymous_users` true and on an OAuth provider turned on,
       and passes on invite-only settings, against a fake settings response
-      (planned test_the_deploy_refuses_open_sign_up).
-- [ ] The hosted image installs no `gmail` group (planned
-      test_the_hosted_image_installs_no_gmail_group).
+      (`services/api/tests/test_deploy_checks.py::test_the_deploy_refuses_open_sign_up`).
+- [ ] The hosted image installs no `gmail` group (`services/api/tests/test_deploy_files.py::test_the_hosted_image_installs_no_gmail_group`).
 - [ ] `docs/deploy.md` covers creating `harrier_run`, `harrier_scheduler`
       and the operator login, every secret in the table above with its
       home, and the statement on what backs up `harrier-files`.
@@ -1202,8 +1197,7 @@ and recorded confirmed or refuted there:
 - [ ] Both Fly files set, for the API's HTTP service,
       `auto_stop_machines = "stop"`, `auto_start_machines = true` and
       `min_machines_running = 0`, a shared-cpu-1x 1GB machine, no
-      `[mounts]`, and nothing that allocates a dedicated IPv4 (planned
-      test_the_fly_files_run_one_api_machine_that_stops_when_idle).
+      `[mounts]`, and nothing that allocates a dedicated IPv4 (`services/api/tests/test_deploy_files.py::test_the_fly_files_run_one_api_machine_that_stops_when_idle`).
 - [ ] `docs/deploy.md` allocates a shared IPv4 and no dedicated one,
       creates no volume, creates the production scheduler machine with
       `--schedule hourly --restart no` and the staging one without a
@@ -1211,8 +1205,7 @@ and recorded confirmed or refuted there:
       non-commercial constraint stated.
 - [ ] A monthly cost check projects the month as spent so far / days
       elapsed × days in the month and reports when the projection exceeds
-      5 USD, naming the largest line (planned
-      test_the_cost_projection_reports_a_month_over_budget), and
+      5 USD, naming the largest line (`services/api/tests/test_deploy_checks.py::test_the_cost_projection_reports_a_month_over_budget`), and
       `docs/deploy.md` says where its usage figures come from.
 - [ ] Spec 115's F1 to F4 are recorded confirmed or refuted before the
       first production deploy, and a refuted one stops that deploy until
@@ -1321,7 +1314,7 @@ project can show: which roles each login role actually reaches there.
   printed.
 - **A read-only check of the deployed project.** A new module,
   `services/api/tests/test_deployed_login_roles.py`, holds one test
-  (planned test_the_deployed_login_roles_reach_only_their_grants). It
+  (`services/api/tests/test_deployed_login_roles.py::test_the_deployed_login_roles_reach_only_their_grants`). It
   connects with the environment's migrator URL, exported as
   `HARRIER_DEPLOYED_MIGRATE_URL` in the operator's shell and never in
   `.env`, writes nothing, and asserts for each login role above that
@@ -1370,10 +1363,10 @@ project can show: which roles each login role actually reaches there.
       `BYPASSRLS` that owns a table in `public`, and of a role that
       bypasses nothing; it passes on a migrated, granted store and prints
       each login role's memberships
-      (planned test_check_deploy_names_a_login_role_that_reaches_another_role).
+      (`services/api/tests/test_store_deploy.py::test_check_deploy_names_a_login_role_that_reaches_another_role`).
 - [ ] The deployed-project check exists as above and skips, naming
       `HARRIER_DEPLOYED_MIGRATE_URL`, when it is unset
-      (planned test_the_deployed_login_roles_reach_only_their_grants).
+      (`services/api/tests/test_deployed_login_roles.py::test_the_deployed_login_roles_reach_only_their_grants`).
 - [ ] The pull request that first deploys staging records that check's
       output against the staging project, passing, with role names and no
       URL, host, project reference or password; the first production
@@ -1436,7 +1429,7 @@ points to spec 135.
 | Fly keeps logs 7 days | A fact about Fly; stays in Honest limitations, where "Hosted logs carry no text arguments" now reads as what spec 135 keeps out |
 
 Scope item 11, "No error reporter", stays here with its criterion
-(planned test_no_error_reporter_is_installed). Its sentence that a later
+(`services/api/tests/test_deploy_files.py::test_no_error_reporter_is_installed`). Its sentence that a later
 reporter must "apply the hosted log rule to what it sends" now means spec
 135's rule.
 
@@ -1455,7 +1448,7 @@ in or is not `NOINHERIT`, and that these are spec 104's start checks,
 This amends spec 134's start checks, which then refuse both. Spec 134's
 "Amendment (2026-10-13): the login role must log in and must not inherit"
 records that half, with its criterion. This spec's
-planned test_grant_tenant_refuses_a_role_that_can_bypass covers both
+`services/api/tests/test_store_deploy.py::test_grant_tenant_refuses_a_role_that_can_bypass` covers both
 cases for `grant-tenant`, one case each, as its criterion already says.
 
 ### Line numbers, refreshed (D9)
@@ -1496,7 +1489,7 @@ of scope are records of their dates and are not changed.
     `login_role_problems` returns anything; otherwise runs `GRANT
     harrier_schedule_reader TO <role>`, the name quoted as an identifier,
     and prints `harrier_schedule_reader granted to <role>`, or `already
-    granted` when it was (planned test_grant_schedule_reader_grants_once).
+    granted` when it was (`services/api/tests/test_store_deploy.py::test_grant_schedule_reader_grants_once`).
     It waits for spec 108 (Decision 1). Alternative: one command,
     `harrier store grant <group role> <login role>`, accepting only
     `harrier_tenant` and `harrier_schedule_reader`.
@@ -1512,7 +1505,7 @@ of scope are records of their dates and are not changed.
       fails (`disable_signup`, `external.anonymous_users`, or
       `external.<provider>`), or 0 printing `auth settings: invite only`.
       The decision is a function of the parsed response, so
-      planned test_the_deploy_refuses_open_sign_up runs against a fake
+      `services/api/tests/test_deploy_checks.py::test_the_deploy_refuses_open_sign_up` runs against a fake
       response with no network. Deploy step 6 runs it as the store steps
       run theirs.
     - `harrier deploy project-cost --as-of <date> --line <name>=<usd>`,
@@ -1521,7 +1514,7 @@ of scope are records of their dates and are not changed.
       usage page, so no Fly or Vercel token joins the pipeline. It prints
       the projection, spent so far / days elapsed × days in the month,
       names the largest line, and exits 1 when the projection exceeds 5
-      USD (planned test_the_cost_projection_reports_a_month_over_budget,
+      USD (`services/api/tests/test_deploy_checks.py::test_the_cost_projection_reports_a_month_over_budget`,
       with fixed figures and date). `docs/deploy.md` names both pages.
 
     Alternative: a `curl` and `jq` step in `deploy.yml` for the Auth
@@ -1559,7 +1552,7 @@ of scope are records of their dates and are not changed.
 - [ ] `harrier store grant-tenant` refuses a role with `NOLOGIN`, naming
       `cannot log in`, and a role with `INHERIT`, naming `inherits`,
       through `login_role_problems`
-      (planned test_grant_tenant_refuses_a_role_that_can_bypass, extended).
+      (`services/api/tests/test_store_deploy.py::test_grant_tenant_refuses_a_role_that_can_bypass`, extended).
 - [ ] The change that builds this spec builds none of the four hosted log
       criteria marked superseded, and changes `harrier.logsetup` only as
       spec 135 says.
@@ -1647,27 +1640,408 @@ cost check" and names both pages.
 #### Acceptance criteria (Open decisions 11 and 12)
 
 - [ ] `harrier store grant-schedule-reader` grants once and reports an
-      existing grant (planned test_grant_schedule_reader_grants_once),
+      existing grant (`services/api/tests/test_store_deploy.py::test_grant_schedule_reader_grants_once`),
       and refuses a SQLite store, a store without
       `harrier_schedule_reader`, and a login role that
       `login_role_problems` names, each with its text and never the URL
-      (planned test_grant_schedule_reader_refuses_what_it_cannot_grant).
+      (`services/api/tests/test_store_deploy.py::test_grant_schedule_reader_refuses_what_it_cannot_grant`).
 - [ ] `deploy.yml` runs `grant-schedule-reader` for `harrier_scheduler`
       after that role's `grant-tenant` and before `check-deploy`, and runs
-      `harrier deploy check-auth-settings` in step 6 (planned
-      test_the_deploy_workflow_migrates_before_it_deploys, extended).
+      `harrier deploy check-auth-settings` in step 6 (`services/api/tests/test_deploy_files.py::test_the_deploy_workflow_migrates_before_it_deploys`, extended).
 - [ ] `harrier deploy check-auth-settings` fails on `disable_signup`
       false or missing, on `external.anonymous_users` true and on an OAuth
       provider turned on, and passes on invite-only settings, against a
-      fake response (planned test_the_deploy_refuses_open_sign_up); and
+      fake response (`services/api/tests/test_deploy_checks.py::test_the_deploy_refuses_open_sign_up`); and
       fails naming a missing variable, a status other than 200 and a body
       that is not a JSON object, never printing the key
-      (planned test_check_auth_settings_refuses_what_it_cannot_read).
+      (`services/api/tests/test_deploy_checks.py::test_check_auth_settings_refuses_what_it_cannot_read`).
 - [ ] `harrier deploy project-cost` reports a month over budget with its
       largest line and exits 1, and exits 0 under it, with fixed figures
-      and date (planned test_the_cost_projection_reports_a_month_over_budget);
+      and date (`services/api/tests/test_deploy_checks.py::test_the_cost_projection_reports_a_month_over_budget`);
       and refuses each malformed argument above with exit 2
-      (planned test_project_cost_refuses_a_malformed_line).
+      (`services/api/tests/test_deploy_checks.py::test_project_cost_refuses_a_malformed_line`).
 - [ ] `docs/deploy.md` names the `grant-schedule-reader` step and runs
       `project-cost` monthly, naming Fly's Cost Explorer and Vercel's
       usage page.
+
+## Amendment (2026-10-14): what building it settled
+
+Building this spec, whole, as Akin decided on 2026-10-13, on `main` at
+`956fa73`, then merged with `main` at `0988574` once spec 108's second part
+(PR #327) landed. Spec 114 (PR #328) was still an open pull request. The
+scheduler steps are built against #327's real code (`harrier operator
+scheduler`, `login_role_problems(..., lists_schedules=True)`, which its own
+start calls) and the SPA step from #328's four `VITE_` names
+(`VITE_HARRIER_AUTH`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`,
+`VITE_HARRIER_API_URL`, which the runbook sets in Vercel). This section states each place where the text above was
+silent, wrong, or needed a choice, so the code and the spec agree. Nothing
+in it overrides an approved decision.
+
+### What is and is not proved offline
+
+Everything in this change that can run without Fly, Vercel or Supabase has
+a test, and each test failed against a mutation of the code it covers (the
+pull request records each result). Three things cannot be proved here and
+stay unconfirmed until the first staging deploy, which the runbook lists:
+
+- The workflow itself. `services/api/tests/test_deploy_files.py` reads the
+  file, as Open decision 7 says; no runner executes it here. The `hosted`
+  Dockerfile target was built and inspected by hand for this change (`psycopg`,
+  `jwt` and `playwright` import; no `claude` binary, no `apps` directory, no
+  `googleapiclient`; the revision build argument reaches `build_revision()`),
+  and the local image was built again with the claude CLI, the SPA and the
+  `gmail` group in place.
+- `fly machine status --json`'s event format. `harrier deploy
+  check-scheduler-tick` reads an event's `timestamp` as epoch milliseconds
+  or an ISO 8601 time, and its `type` and `source`.
+- That a copy between two Fly registries with `skopeo copy
+  --preserve-digests` keeps the digest, and that an app deploy token may
+  push to its own registry.
+
+### Where the text left a choice
+
+- **`grant-tenant` and `grant-schedule-reader` (Behavior, Open decision
+  11).** "Already granted" means the role may `SET ROLE` the group, not
+  that a membership row exists, so a grant made `WITH SET FALSE` is granted
+  again and reported as a grant. If the role still cannot set the group
+  after the `GRANT`, the command exits 1 saying so, and does not print
+  `granted`. A refusal prints `error: harrier store <command> refuses
+  <role>: <check>; <check>`, each check by its name in
+  `services/api/src/harrier/loginrole.py`. The store's version is checked
+  first, then the login role. `grant-schedule-reader` looks for the role
+  before it checks the version, so a store from before spec 108's
+  migration says `harrier_schedule_reader does not exist; spec 108's
+  migration creates it`. A role name is quoted as an identifier, which a
+  test proves with a name holding a quote, a space and a semicolon.
+  Spec 108's check refuses an API or run login that holds the schedule
+  reader (`member of harrier_schedule_reader`) and requires the right to set
+  it of the scheduler's, so `grant-schedule-reader` runs the checks with
+  `lists_schedules=True`, `grant-tenant` expects neither of the two reader
+  checks (the role may be the scheduler's, already granted, on a second
+  deploy), and `check-deploy` holds each login to its own kind: the
+  scheduler's with `lists_schedules=True`, the others without. Since the
+  login role checks already require the right to set each group, a missing
+  membership is reported as `cannot set role <group>`, and `check-deploy`
+  has no separate "not a member" case.
+- **`check-deploy` needs a login to check.** With no `--login` and no
+  `--scheduler-login` it exits 1 (`error: harrier store check-deploy needs
+  at least one --login or --scheduler-login`), because a deploy that names
+  none would pass having checked none. The three deploy store steps, run in
+  a public Actions log where GitHub masks the whole URL and not its host or
+  user, report a store that cannot be reached as `error: harrier store
+  <command> could not connect to the store; check the migrator's URL`, with
+  no host, port, user or driver text (the privacy review of this change).
+- **`check-deploy` (Behavior, and "Amendment (2026-10-11): login roles
+  reach no role past the policy").** The command takes `--login <role>`,
+  repeated, for a login that must reach `harrier_tenant` and nothing else,
+  and `--scheduler-login <role>` for the one that must reach
+  `harrier_tenant` and `harrier_schedule_reader` and nothing else. The role
+  names are the operator's; the workflow passes the API's, the run's and the
+  scheduler's. It prints one line per check as the check passes and then,
+  on failure, `error: check-deploy: <check>: <what>` on one line, so the
+  lines printed before the failure are the checks that passed. Its checks,
+  in order: the store version; the Data API roles' effective privileges
+  (`has_table_privilege`, `has_any_column_privilege`,
+  `has_sequence_privilege` and `has_function_privilege` for `anon`,
+  `authenticated` and `service_role`, so a grant to `PUBLIC` counts) on
+  every table, view, sequence and function in `public`, leaving out
+  extension members and functions that return `event_trigger`, which is how
+  Supabase's own `rls_auto_enable()` is left alone (spec 115, N2); row
+  security enabled and forced on every table of `OWNED_TABLES`; each login
+  role's problems and its exact set of reached roles; and the policies on
+  `storage.objects`. A project with no `storage.objects` table passes that
+  check with the line `storage.objects: absent, no policy to check`; every
+  Supabase project has one. Its transaction is `READ ONLY`, set before its
+  first read, so "it writes nothing" is the server's refusal and not a
+  promise. The set of reached roles is read by
+  `harrier.storedeploy.reached_roles`, which
+  `services/api/tests/test_deployed_login_roles.py` shares.
+- **`harrier deploy` gains three commands**: `fill-fly-config`,
+  `check-machine-count` and `check-scheduler-tick`, each for a step the text
+  named without a command, and each a function of data a test can supply, as
+  Open decision 12 chose for the Auth settings.
+  - `check-machine-count` reads `fly machines list --json` on standard
+    input and counts the machines of the `app` process group that are not
+    destroyed, started or stopped; exit 1 unless exactly one (Amendment
+    (2026-10-11), "The API app").
+  - `check-scheduler-tick --app <app> --machine <id> --since <epoch
+    seconds>` runs `fly machine status --json` every minute for at most 70
+    minutes and passes on a `start` event from source `flyd` later than the
+    update (spec 108, Amendment (2026-10-12)). A start by hand does not
+    count, nor one at the update's own second. The clock and the reader are
+    arguments, so the test uses a fake clock.
+  - `fill-fly-config --config <file> --out <file>` writes a copy of a Fly
+    configuration with `HARRIER_SUPABASE_URL` and
+    `HARRIER_SUPABASE_PUBLISHABLE_KEY` filled from the environment (see "The
+    Fly files" below). It refuses a missing variable, a value that needs TOML
+    escaping, a secret key (`sb_secret_` or a `service_role` JWT) and a
+    placeholder left in the copy, naming the variable and never its value.
+  - `check-auth-settings` also refuses a project URL that is not `https://`
+    unless its host is loopback, because the key travels in a header; does
+    not follow a redirect, which would send the key to the host it names, and
+    names a 3xx as `the project answered <status>`; names `no answer
+    (<class>)` for a connection or a request that cannot be formed (a port
+    that is not a number, a key with a newline), by class and never by text;
+    and fails closed on `external`: a response with no `external`, one that is
+    not an object, or one whose entry is not a boolean cannot be shown to be
+    invite only (`external is missing`, `external is not an object`,
+    `external.<name> is not a boolean`). Exit 1 each.
+- **The Fly files.** The spec puts `HARRIER_SUPABASE_URL` and
+  `HARRIER_SUPABASE_PUBLISHABLE_KEY` in `[env]`, and says the project's
+  reference is written into no spec because the repository is public. The
+  files carry a placeholder for each, `__HARRIER_SUPABASE_URL__` and
+  `__HARRIER_SUPABASE_PUBLISHABLE_KEY__`, and the deploy fills a copy from
+  the GitHub environment variables before `fly deploy`, so the repository
+  names no project and a fork deploys its own from the same file. Both files
+  also set `kill_signal = "SIGTERM"` and `kill_timeout = 30`, the values
+  spec 115's F2 probe confirmed. `HARRIER_CORS_ORIGINS` names the Vercel
+  projects' default `.vercel.app` hosts, which are the names the
+  environments table gives; a custom domain is out of scope.
+- **The workflow (Behavior, "one deploy"; Open decision 10).**
+  - **Triggers.** Staging is a `workflow_run` of the `CI` workflow on
+    `main`, run only for a successful push; production is a
+    `workflow_dispatch` with a `sha` input. No job runs on a pull request.
+  - **How production gets the image staging ran.** Staging builds the
+    `hosted` target on the runner, pushes it to its API app's registry, and
+    copies that image by digest to its scheduler app's registry. Production
+    builds nothing: it resolves the tag `<sha>` in the staging API app's
+    registry to a digest and copies that image, with `skopeo copy
+    --preserve-digests`, to its own API app's and scheduler app's
+    registries, then deploys by digest. That needs one more secret in the
+    `production` environment than "where each secret lives" lists,
+    `FLY_STAGING_API_TOKEN`, a deploy token for the staging API app, which
+    can only read what staging pushed. The scheduler app's own deploy token
+    is `FLY_SCHEDULER_API_TOKEN` (Open decision 10), in each environment.
+  - **The gate.** A job with no environment, `staging-ran`, checks the
+    `sha`'s shape and that GitHub holds a successful `staging` deployment of
+    it, before the `production` environment's secrets are released.
+  - **One machine.** Both `fly deploy` commands pass `--ha=false`, since a
+    first deploy of an app with no machine otherwise creates two, and the
+    machine count check would then fail after the deploy had already run
+    (the test integrity review of this change).
+  - **The scheduler machine.** The deploy lists the scheduler app's
+    machines and requires exactly one, moves it to the digest with `fly
+    machine update ... --yes`, never `--skip-start`, and records the machine
+    id and the update's time for the production tick check, which is the
+    last step of the production job and holds it open for at most 70
+    minutes.
+  - **Variables.** `FLY_APP`, `FLY_SCHEDULER_APP`, `FLY_STAGING_APP`
+    (production), `HARRIER_API_LOGIN`, `HARRIER_RUN_LOGIN`,
+    `HARRIER_SCHEDULER_LOGIN`, `HARRIER_SUPABASE_URL`,
+    `HARRIER_SUPABASE_PUBLISHABLE_KEY`, `VERCEL_ORG_ID` and
+    `VERCEL_PROJECT_ID` are GitHub environment variables, each per
+    environment, none secret. The secrets are `HARRIER_MIGRATE_DATABASE_URL`,
+    `FLY_API_TOKEN`, `FLY_SCHEDULER_API_TOKEN`, `VERCEL_TOKEN` and, in
+    production, `FLY_STAGING_API_TOKEN`.
+  - **What the gate reads.** GitHub records a deployment against
+    `GITHUB_SHA`, which for a deploy that follows a CI run is the head of
+    `main` when the deploy started. That is the CI run's own commit unless a
+    newer commit landed first, in which case the older commit has no
+    deployment record and production refuses it; deploy the newer one.
+  - **A failed step stops the job.** No step is conditional, none continues
+    on error, and no secret sits in a job's own `env`, which every step would
+    receive; a test holds the workflow to each, and runs the gate and the two
+    smoke scripts under bash with stub `gh` and `curl`
+    (`services/api/tests/test_deploy_files.py::test_a_failed_step_stops_the_job`,
+    `services/api/tests/test_deploy_files.py::test_the_production_gate_refuses_what_staging_never_deployed`,
+    `services/api/tests/test_deploy_files.py::test_the_smoke_steps_fail_the_deploy`).
+  - **The first run.** The scheduler machine is made once, from the image
+    the first run pushes, so the first run fails at the scheduler step after
+    the API is deployed. The runbook says so.
+- **`.env` and a remote store URL (Open decision 5).** The CLI's loader
+  copied `.env` into the process environment before `store_target` ran, so
+  a URL read from the file looked exported and the refusal could not tell.
+  `load_project_env` no longer copies a remote `HARRIER_DATABASE_URL`; the
+  file is left for `store_target` to read, and refuse. Hosts are read as
+  libpq reads them: the authority's host and the `host` and `hostaddr`
+  query parameters, which override it, each possibly a comma separated
+  list. A Unix socket directory (a name starting with `/`) is this machine.
+  `localhost`, `127.0.0.1` and `::1` are loopback. Two further shapes take
+  the host from outside the URL, and count as remote: a `service` parameter,
+  whose file nothing here reads, and a URL with no host while `PGSERVICE`, or
+  `PGHOST` or `PGHOSTADDR` naming anything but loopback, is set. When psycopg
+  is missing or libpq refuses the URL, the authority and the query are split
+  by hand. The CLI loader copies a URL into the environment only when
+  `store_target` reads it and finds it local, so one that is malformed,
+  remote or unreadable stays in the file and is refused there, with a
+  refusal and not a traceback.
+- **The SPA's rewrite.** `apps/web/vercel.json` serves the index for every
+  path but one under `/api/`, so a call that reached the SPA's host by mistake
+  gets a 404 and not the index page with a 200 (the contract review).
+  Static assets are served before rewrites.
+- **Classification.** Spec 114 hands this spec `apps/web/.env.local`, which
+  `.env.local` in the table does not cover, because the coverage test
+  matches whole repository relative paths. `config/data-classification.json`
+  also lists `apps/web/.env` and `apps/web/.env.local`, and `.dockerignore`
+  excludes `apps/web/.env*`, since the web stage copies `apps/web` and Vite
+  bakes `VITE_` values into a bundle. `.dockerignore` carries `.vercel/` and
+  `**/.vercel/`, because a docker ignore rule matches at the root only.
+
+- **After the merge with `main` (spec 108's second part).** The command
+  places of `harrier operator` and of this spec's commands sit in the same
+  table, and `harrier operator` joins `store` and `deploy` as the commands
+  that run beside a Postgres store. The scheduler needs, beside what the
+  runbook sets, a session mode `HARRIER_DATABASE_URL` and a run login that
+  is not its own (`services/api/src/harrier_api/hostedscheduler.py`,
+  `read_settings` and `run_scheduler`); the runbook says so.
+- **Places for the new commands (spec 096).** Every CLI subcommand has
+  exactly one place in the browser's command list
+  (`services/api/tests/test_ui_settings.py::test_every_cli_subcommand_has_exactly_one_place`).
+  The eight new subcommands are placed terminal only, with a reason each, in
+  `services/api/src/harrier_api/settings_routes.py`. The contract does not
+  change: the list is data in one response, not a schema.
+- **The store error.** `StoreDeployRefused` is defined in
+  `services/api/src/harrier/connection.py`, where the store errors live
+  (`services/api/tests/test_connection.py::test_store_neutral_names_live_in_connection`).
+
+### What this change leaves
+
+- **Hosted logs, the prompt logging refusal and the access line's query
+  string** are spec 135's (Decision 2, Open decision 13). `harrier.logsetup`
+  is unchanged.
+- **A Content Security Policy and other response headers for the SPA**, and
+  Supabase's email template and redirect URLs, which spec 114 hands to this
+  spec. The runbook lists the template and the redirect URLs as Supabase
+  settings with a check each, since the sign-in needs them; no header is
+  configured, and no spec says which. Each needs its own spec.
+- **A backup of the hosted store**, which the hosting budget's Honest
+  limitations leave open. The runbook says plainly that none exists, and
+  that nothing backs up `harrier-files`.
+- **A storage check that proves less than it reads.** `check-deploy` fails
+  on a policy on `storage.objects` other than harrier's, as the Amendment of
+  2026-10-11 says. It does not require harrier's own policy to exist or row
+  security to be on, so a bucket with neither passes, and a project with no
+  `storage.objects` table passes with a line saying so. Spec 107 owns the
+  bucket and its policy; a criterion there should say what a deploy must find.
+- **Other store URLs in `.env`.** Only `HARRIER_DATABASE_URL` is refused there.
+  A remote `HARRIER_RUN_DATABASE_URL`, `HARRIER_DEPLOYED_MIGRATE_URL` or the
+  operator's URL written in `.env` is still copied into the environment and,
+  through compose's `env_file`, into the local container. The runbook says they
+  never go there, and nothing enforces it; spec 106 owns the run login's URL
+  and its isolation, and a criterion there should cover it (the privacy review).
+- **Actions logs show the non-secret variables.** GitHub prints each step's
+  environment, so the role names, app names and Supabase URL and publishable
+  key, which are public in the SPA bundle, appear in a public run's log. The
+  Vercel organization and project ids appear there too, though
+  `.vercel/project.json` is kept out of git for holding them (the privacy
+  review).
+- **An older commit's deploy after a newer one.** A CI run that finishes
+  after a newer commit's deploy would deploy over it. The concurrency group
+  serializes deploys and does not order them. The store would then be ahead
+  of the running release, and the runbook says to deploy forward.
+
+### Changes to approved specs (this amendment)
+
+- **Spec 108:** two criteria of its Amendment (2026-10-12) cite the tests
+  this change wrote, `test_the_deploy_workflow_migrates_before_it_deploys`
+  and `test_the_scheduler_ticks_after_a_deploy`, instead of marking them
+  planned, as the citation check requires once a test exists. No behavior
+  changes.
+- **Spec 134:** the same for
+  `test_the_login_role_must_log_in_and_must_not_inherit`.
+
+### Acceptance criteria (2026-10-14)
+
+- [ ] `harrier store check-deploy` names the first failed check on one line
+      and prints each passed check before it, reads the Data API roles'
+      effective privileges, leaves a function that returns `event_trigger`
+      alone, and holds each login role to its exact set of reached roles
+      (`services/api/tests/test_store_deploy.py::test_check_deploy_names_the_failed_check`,
+      `services/api/tests/test_store_deploy.py::test_check_deploy_leaves_supabases_own_event_trigger_function_alone`,
+      `services/api/tests/test_store_deploy.py::test_check_deploy_holds_run_and_scheduler_logins_to_their_roles`).
+- [ ] `harrier store check-deploy` runs in a read only transaction
+      (`services/api/tests/test_store_deploy.py::test_check_deploy_writes_nothing`).
+- [ ] `harrier deploy check-machine-count`, `check-scheduler-tick` and
+      `fill-fly-config` do what "Where the text left a choice" says
+      (`services/api/tests/test_deploy_checks.py::test_the_api_app_holds_exactly_one_machine`,
+      `services/api/tests/test_deploy_checks.py::test_the_wait_passes_when_a_tick_appears_and_names_the_machine_when_none_does`,
+      `services/api/tests/test_deploy_checks.py::test_the_fly_configuration_is_not_filled_from_a_bad_value`).
+- [ ] A remote store URL in `.env` is refused in every shape libpq reads a
+      host from, a loopback one is accepted, and the loader does not copy a
+      remote one into the environment
+      (`services/api/tests/test_store_cli.py::test_every_remote_shape_in_dotenv_is_refused`,
+      `services/api/tests/test_store_cli.py::test_a_loopback_store_url_in_dotenv_is_accepted`,
+      `services/api/tests/test_store_cli.py::test_the_loader_copies_a_loopback_url_and_never_a_remote_one`).
+- [ ] The classification names `.env.staging`, `.env.production`,
+      `.vercel/**`, `apps/web/.vercel/**`, `apps/web/.env` and
+      `apps/web/.env.local`
+      (`services/api/tests/test_deploy_files.py::test_the_classification_names_what_a_vercel_or_fly_cli_writes_into_a_checkout`).
+- [ ] `check-deploy` refuses to run with no login role to check, and the three
+      deploy store steps report an unreachable store without its host
+      (`services/api/tests/test_store_deploy.py::test_check_deploy_refuses_to_run_with_no_login_role_to_check`,
+      `services/api/tests/test_store_deploy.py::test_a_store_that_cannot_be_reached_is_reported_without_its_host`).
+- [ ] The scheduler's login passes a second deploy, while an API or run login
+      holding the schedule reader is refused
+      (`services/api/tests/test_store_deploy.py::test_the_scheduler_login_passes_every_deploy_it_holds_the_reader_through`,
+      `services/api/tests/test_store_deploy.py::test_check_deploy_names_a_login_role_that_reaches_another_role`).
+- [ ] The Auth settings check fails closed on a missing or malformed
+      `external`, does not follow a redirect, and names a request it cannot
+      form by class only
+      (`services/api/tests/test_deploy_checks.py::test_the_deploy_refuses_open_sign_up`,
+      `services/api/tests/test_deploy_checks.py::test_a_redirect_is_an_answer_and_the_key_is_not_sent_after_it`,
+      `services/api/tests/test_deploy_checks.py::test_a_request_that_cannot_be_formed_is_named_by_class_only`).
+- [ ] A step that fails stops the deploy, and the production gate and the smoke
+      checks fail when they should
+      (`services/api/tests/test_deploy_files.py::test_a_failed_step_stops_the_job`,
+      `services/api/tests/test_deploy_files.py::test_the_production_gate_refuses_what_staging_never_deployed`,
+      `services/api/tests/test_deploy_files.py::test_the_smoke_steps_fail_the_deploy`).
+- [ ] The staging deploy records the unconfirmed items under "What is and is
+      not proved offline" as confirmed or refuted in its pull request.
+- [ ] A Data API probe that never reaches the endpoint fails the deploy: curl
+      prints `000` and exits non-zero, and the step's `bash -e` stops there.
+      No checkout leaves its token in `.git/config` for the steps after it:
+      each sets `persist-credentials: false`. Both came from CodeRabbit's
+      review of PR 329; the first was already true and is now pinned
+      (`services/api/tests/test_deploy_files.py::test_the_smoke_steps_fail_the_deploy`,
+      `services/api/tests/test_deploy_files.py::test_no_checkout_leaves_the_token_in_the_checkout`).
+
+### Line numbers, refreshed (D9)
+
+On `main` at `956fa73` with this change. The hosted logs rows are kept for the
+record: spec 135 owns that text.
+
+| Citation | Was (2026-10-13) | Now |
+|---|---|---|
+| `postgres_connect` | `pgstore.py:117-153` | `services/api/src/harrier/pgstore.py:117-153` |
+| `target_version()` | `pgstore.py:156-160` | `services/api/src/harrier/pgstore.py:156-160` |
+| identity values loaded in `configure_logging` | `logsetup.py:105-106` | `services/api/src/harrier/logsetup.py:138` |
+| `_load_identity_values` | `logsetup.py:166-186` | `services/api/src/harrier/logsetup.py:213-245` |
+| the rotating file handler | `logsetup.py:120-133` | `services/api/src/harrier/logsetup.py:155-163` |
+| `connect()` in logging | `logsetup.py:183` | `services/api/src/harrier/logsetup.py:239` |
+| `store_target` reading `.env` | `connection.py:1298-1304` | `services/api/src/harrier/connection.py:1742-1755` |
+| the redaction refresh at the write path | `store.py:954-957` | `services/api/src/harrier/tracker/store.py:954-957` |
+| `_log_call` | `providers.py:46-54` | `services/api/src/harrier/llm/providers.py:46-54` |
+| prompt logging's debug switch | `llm/config.py:161-169` | `services/api/src/harrier/llm/config.py:199-206` |
+| `_create_tenant_role` | `schema.py:867-882` | `services/api/src/harrier/tracker/schema.py:911-926` |
+| the compose file's `env_file` | `docker-compose.yml:51-53` | `docker-compose.yml:51-53` |
+| the compose file's `environment` | `docker-compose.yml:72-76` | `docker-compose.yml:72-84` |
+
+Checked and unchanged: `.gitignore:2-4`, `.dockerignore:5-7`,
+`config/data-classification.json:6-7` and
+`services/api/src/harrier/resume/vocabulary.py:139`.
+
+## Amendment (2026-10-14): staging's SPA is served at a custom domain
+
+Akin's decision of 2026-10-14, during the first staging setup. It replaces the
+sentence "a custom domain is out of scope" in the amendment above, for staging
+only.
+
+- **The domain.** Staging's SPA is served at
+  `https://harrier-web-staging.akinoztorun.dev`, a CNAME at the domain's DNS
+  host to the target Vercel names. The Vercel project is the existing
+  `harrier`, not a new `harrier-web-staging`; the environments table already
+  says the names are the shape, not a commitment.
+- **What changes in the repository.** `HARRIER_CORS_ORIGINS` in
+  `deploy/fly.staging.toml` names that origin, and `docs/deploy.md` says how the
+  domain, the CORS origin and the Supabase URL settings move together.
+  `services/api/tests/test_deploy_files.py::test_the_fly_files_hold_no_secret_and_name_the_region`
+  still holds the value to an `https://` origin.
+- **Why.** The `harrier` project's deployment protection covers every
+  deployment except custom domains, so a `.vercel.app` host could ask a
+  visitor to sign in to Vercel. A custom domain is outside that setting.
+- **Production is unchanged.** `deploy/fly.production.toml` still names
+  `harrier-web-production.vercel.app` until production's project exists.
+- **The template sender.** Supabase lets an email template be edited only
+  with custom SMTP on. Staging sends through Google Workspace's SMTP server;
+  `docs/deploy.md` step 1 records it. No repository file holds the sender's
+  credentials.

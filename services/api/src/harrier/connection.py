@@ -124,6 +124,14 @@ class StoreServerError(StoreError):
     """
 
 
+class StoreDeployRefused(StoreError):
+    """A deploy step refused, or a deploy check failed (spec 110).
+
+    The text names the check and the role, never the URL, a host or a
+    password.
+    """
+
+
 class StoreMigrationRefused(StoreError):
     """A migration's own precheck refused this store (spec 105).
 
@@ -1765,6 +1773,7 @@ def store_target(environ: Mapping[str, str] | None = None) -> StoreTarget:
     made the CLI refuse while the API served SQLite (review of PR #207).
     An exported value, even an empty one, wins over the file.
     """
+    from_dotenv = False
     if environ is None:
         if URL_VARIABLE in os.environ or in_a_hosted_run():
             # A hosted run reads no `.env`, so a file in its working
@@ -1774,6 +1783,7 @@ def store_target(environ: Mapping[str, str] | None = None) -> StoreTarget:
             from harrier.envfile import read_env_file
 
             raw = read_env_file(Path(".env")).get(URL_VARIABLE, "")
+            from_dotenv = True
     else:
         raw = environ.get(URL_VARIABLE, "")
     if not raw.strip():
@@ -1804,7 +1814,86 @@ def store_target(environ: Mapping[str, str] | None = None) -> StoreTarget:
     # the port (review of PR #218).
     if not parses or not _libpq_parses(raw):
         raise refused
+    if from_dotenv and names_a_remote_host(raw):
+        # A hosted store's URL is a credential: in `.env` it would reach the
+        # local container's environment and every run subprocess (spec 110).
+        raise StoreUrlError(DOTENV_REMOTE_REFUSAL)
     return StoreTarget("postgres", raw)
+
+
+DOTENV_REMOTE_REFUSAL = (
+    f"{URL_VARIABLE} in .env names a remote store; a hosted store's URL is a credential, "
+    "so export it in the shell for the command that needs it"
+)
+
+# The hosts `.env` may name: this machine's loopback.
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def names_a_remote_host(url: str) -> bool:
+    """Whether libpq would connect to a host that is not loopback.
+
+    Read as libpq reads the URL: the authority's host, and the `host` and
+    `hostaddr` query parameters, which override it, each possibly a comma
+    separated list. A Unix socket directory (a name starting with `/`) is
+    this machine. A `service` parameter names a file this reads nothing of,
+    and a URL with no host takes one from `PGHOST`, `PGHOSTADDR` or
+    `PGSERVICE` when they are set: each counts as remote unless it names
+    loopback. A URL this cannot read is remote, since nothing known about it
+    shows it is not. Without psycopg, or when libpq refuses the URL, the
+    authority is split by hand, comma lists included.
+    """
+    names: list[str] = []
+    try:
+        read = _libpq_parse(url)
+        if read is not None:
+            for key in ("host", "hostaddr"):
+                value = read.get(key)
+                if value:
+                    names += str(value).split(",")
+            service = read.get("service")
+        else:
+            names, service = _hosts_read_by_hand(url)
+    except ValueError:
+        return True
+    if service:
+        return True
+    if not names:
+        names = [
+            part
+            for variable in ("PGHOST", "PGHOSTADDR")
+            for part in os.environ.get(variable, "").split(",")
+        ]
+        if os.environ.get("PGSERVICE", "").strip():
+            return True
+    return any(
+        name.strip().lower() not in _LOOPBACK_HOSTS
+        for name in names
+        if name.strip() and not name.strip().startswith("/")
+    )
+
+
+def _hosts_read_by_hand(url: str) -> tuple[list[str], str]:
+    """The hosts a URL names, from its authority and its `host` and
+    `hostaddr` parameters, and its `service`, with no driver."""
+    rest = url.split("://", 1)[1]
+    authority = re.split(r"[/?#]", rest, maxsplit=1)[0].rsplit("@", 1)[-1]
+    names: list[str] = []
+    for entry in authority.split(","):
+        entry = entry.strip()
+        if entry.startswith("["):
+            entry = entry[1 : entry.index("]")]
+        elif entry.count(":") == 1:
+            entry = entry.split(":", 1)[0]
+        if entry:
+            names.append(entry)
+    service = ""
+    for key, value in parse_qsl(urlsplit(url).query, keep_blank_values=True):
+        if key in ("host", "hostaddr") and value:
+            names += value.split(",")
+        if key == "service":
+            service = value
+    return names, service
 
 
 def _has_raw_space_or_control(url: str) -> bool:

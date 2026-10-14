@@ -72,8 +72,16 @@ services:
     # Set here rather than in .env: `environment` wins over `env_file`, so a
     # host path for the host CLI cannot reach the container, where HOME is `/`
     # and the default would be /Backups/harrier (spec 064).
+    #
+    # HARRIER_DATABASE_URL and HARRIER_AUTH are set empty for the same reason:
+    # the local container runs on its SQLite file in local mode whatever
+    # `.env` says, so a hosted store's URL written there can never become a
+    # credential in this container's environment, where every run subprocess
+    # would inherit it (spec 110, ADR-013 decision 9).
     environment:
       HARRIER_BACKUP_DIR: /app/backups
+      HARRIER_DATABASE_URL: ""
+      HARRIER_AUTH: ""
 
     healthcheck:
       # python rather than curl: the slim image has no curl, and a healthcheck

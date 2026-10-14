@@ -84,6 +84,15 @@ _OPERATOR = (
     "operator's own database login."
 )
 
+_DEPLOY_STORE = (
+    "Deploy steps (spec 110): they check a login role, grant it, or check the store as the "
+    "migrator, which the deploy workflow and an operator run deliberately."
+)
+_DEPLOY = (
+    "Deploy checks (spec 110): the deploy workflow runs them, and the operator runs the cost "
+    "projection once a month from a shell."
+)
+
 # Every CLI subcommand, by the name `harrier_cli.main.subcommand_name` gives
 # it, in exactly one place. A dictionary, so a command cannot be in two; and
 # `tests/test_ui_settings.py::test_every_cli_subcommand_has_exactly_one_place`
@@ -200,6 +209,14 @@ COMMAND_PLACES: dict[str, Place] = {
     # Spec 103 added these after spec 096 was approved; placed on merging it.
     "store migrate": TerminalOnly(_STORE),
     "store status": TerminalOnly(_STORE),
+    "store grant-tenant": TerminalOnly(_DEPLOY_STORE),
+    "store grant-schedule-reader": TerminalOnly(_DEPLOY_STORE),
+    "store check-deploy": TerminalOnly(_DEPLOY_STORE),
+    "deploy check-auth-settings": TerminalOnly(_DEPLOY),
+    "deploy check-machine-count": TerminalOnly(_DEPLOY),
+    "deploy check-scheduler-tick": TerminalOnly(_DEPLOY),
+    "deploy fill-fly-config": TerminalOnly(_DEPLOY),
+    "deploy project-cost": TerminalOnly(_DEPLOY),
     # Spec 108 added these: the hosted operator's commands, which run only
     # against a Postgres store.
     "operator scheduler": TerminalOnly(_OPERATOR),

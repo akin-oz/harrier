@@ -1,8 +1,8 @@
 ---
 spec: 139
 title: Discovery places each posting by the ownership it demands
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M9
 depends: [011, 033, 092, 097, 105, 112, 137, 138]
 ---
