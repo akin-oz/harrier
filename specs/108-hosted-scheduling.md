@@ -1528,8 +1528,9 @@ Two points belong to PR 2 and are recorded here for it:
 PR 2 builds `harrier operator scheduler` and `harrier operator
 schedule-report`. Neither can run on the store they exist for, because the
 CLI's Postgres gate has no operator class. This amendment records where
-that class is built. It is a decision for Akin, taken before PR 2's code,
-and it gates nothing until Akin agrees to it.
+that class is built. It is a decision for Akin, taken before PR 2's code.
+Akin decided it in chat on 2026-10-14: the operator class is built inside
+this spec, and the amendments to specs 108 and 127 stand.
 
 ### What the text says now
 
@@ -1631,11 +1632,11 @@ this section holds.
   the latest slot is never older than it. The rule is now: the latest slot
   is later than `last_slot_at`, at or after the owner's choice, and passed
   more than `UNCLAIMED_AFTER` ago, 3 hours
-  (`services/api/src/harrier/hostedschedule.py`). The figure is chosen, not
-  measured: a slot starts at the first hourly tick after it, and Fly
-  skipping a start that falls in a running tick makes about two hours the
-  worst case (Amendment (2026-10-12), "Timing, answered"), with an hour of
-  margin. It also shortens the delay "Honest limitations (hosting budget)"
+  (`services/api/src/harrier/hostedschedule.py`). Akin decided the 3 hours
+  in chat on 2026-10-14. It is a decision, not a measurement: a slot starts
+  at the first hourly tick after it, and Fly skipping a start that falls in
+  a running tick makes about two hours the worst case (Amendment
+  (2026-10-12), "Timing, answered"), with an hour of margin. It also shortens the delay "Honest limitations (hosting budget)"
   gave for a scheduler that never starts, from one longest gap to 3 hours
   (`services/api/tests/test_hosted_slots.py::test_a_slot_unclaimed_for_hours_is_a_problem`).
 - **The process cannot sit in `hostedschedule.py`.** Scope item 5 puts the
@@ -1698,6 +1699,12 @@ this section holds.
   listing failed, the lock was lost, the process was stopped, or an outcome
   could not be recorded (that row stays `running` and the next start marks
   it `interrupted`).
+- **A limit below 1 never reaches the loop.** `read_settings` refuses a
+  concurrency or timeout that is missing, not a whole number or below 1, and
+  it is the one way production builds the settings. A `Scheduler` built
+  another way with a limit of 0 would queue slots it never starts and wait for
+  ever, so it refuses to be built
+  (`services/api/tests/test_hosted_scheduler.py::test_a_scheduler_with_no_room_to_run_is_never_built`).
 - **Stopping.** SIGINT and SIGTERM, which Fly sends a second apart when an
   update replaces the machine (Amendment (2026-10-12)), stop the tick as a
   lost lock does: the children are terminated and recorded `interrupted`, and
@@ -1775,6 +1782,7 @@ proves it was run. The list, with each result, is in the pull request.
   start marks it `interrupted`.
 - **Fly's schedule is not exercised.** Spec 115's F3 probed it; no test here
   reaches Fly.
-- **`UNCLAIMED_AFTER` is a chosen figure.**
+- **`UNCLAIMED_AFTER` is not measured.** Akin set it at 3 hours; no data
+  from a running deployment supports or refutes it yet.
 - **The operator class is built for two subcommands.** Spec 111's `invite`
   and `erase` join it with their own declarations.

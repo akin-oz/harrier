@@ -373,6 +373,13 @@ class Scheduler:
     _running: list[_Running] = field(default_factory=lambda: list[_Running](), init=False)
     _unrecorded: int = field(default=0, init=False)
 
+    def __post_init__(self) -> None:
+        # `read_settings` is the one way production builds `Settings`, and it
+        # refuses a limit below 1. A scheduler built another way with a limit
+        # of 0 would queue slots it never starts and wait for ever.
+        if self.settings.concurrency < 1 or self.settings.timeout_seconds < 1:
+            raise ValueError("the scheduler's concurrency and run timeout must be at least 1")
+
     def tick(self) -> int:
         """Run one tick and return the process's exit status: 0 when every
         outcome was recorded, 1 when the listing failed, the lock was lost,

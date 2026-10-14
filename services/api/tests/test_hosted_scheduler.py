@@ -1306,6 +1306,27 @@ def test_the_scheduler_refuses_a_login_that_can_bypass(
     assert owner not in err
 
 
+@pytest.mark.parametrize(("concurrency", "timeout"), [(0, 60), (-1, 60), (2, 0)])
+def test_a_scheduler_with_no_room_to_run_is_never_built(
+    rig: Rig, concurrency: int, timeout: int
+) -> None:
+    """`read_settings` refuses a limit below 1, and is the one way production
+    builds the settings. A scheduler built another way with a limit of 0 would
+    queue slots it never starts and wait for ever, so it is refused when it is
+    built, not left to hang."""
+    key = parse_key(rig.key_text)
+    assert key is not None
+    settings = hostedscheduler.Settings(concurrency, timeout, rig.run_login.url, key)
+    with pytest.raises(ValueError, match="at least 1"):
+        Scheduler(
+            connect=lambda: postgres_connect(rig.scheduler.url),
+            jobs=rig.jobs,
+            settings=settings,
+            server_env=rig.environ(),
+            root=rig.tmp_path,
+        )
+
+
 def test_a_clean_login_passes_every_check(rig: Rig) -> None:
     """The refusals above are not an environment that refuses everything:
     the rig's own login and limits start."""

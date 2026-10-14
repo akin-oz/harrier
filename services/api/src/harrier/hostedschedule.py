@@ -93,8 +93,9 @@ PROBLEM_OUTCOMES: frozenset[str] = frozenset({"failed", "crashed", "timed_out", 
 # an hourly cycle it calls approximate, and skips a start that falls while a
 # tick runs, so a slot may start about two hours late (spec 108, Amendment
 # (2026-10-12), "Timing, answered"). A slot still unclaimed this long after
-# its time is the scheduler not keeping up or not running. Chosen, with an
-# hour of margin on the two; not measured (spec 108, Amendment (2026-10-14)).
+# its time is the scheduler not keeping up or not running. Akin decided the
+# 3 hours on 2026-10-14, an hour of margin on the two; it is not measured
+# (spec 108, Amendment (2026-10-14)).
 UNCLAIMED_AFTER = timedelta(hours=3)
 
 # --- time ---
