@@ -25,6 +25,7 @@ from harrier.tracks import (
 )
 from harrier_api.demo import demo_db_path, is_demo_mode
 from harrier_api.hostedauth import (
+    ANONYMOUS_403_DESCRIPTION,
     AUTH_401_DESCRIPTION,
     BEARER_SCHEME_NAME,
     KEYS_UNAVAILABLE_DESCRIPTION,
@@ -243,6 +244,28 @@ EITHER_503_RESPONSES: dict[int | str, dict[str, Any]] = {
 BEARER_SECURITY: list[dict[str, list[str]]] = [{BEARER_SCHEME_NAME: []}]
 
 
+def declare_403(own: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The one 403 of a route the hosted API serves with a token (spec 114).
+
+    Hosted, an anonymous session is refused 403 with `AuthRefusalOut`. A route
+    that also takes spec 035's local token refuses a missing or wrong one 403
+    with `ErrorOut`'s body, the `detail` sentence of its `HTTPException`, and
+    names that cause in its own declaration, which has no model. The one
+    status has one body, so the two causes are joined and the body admits
+    both, as `EITHER_503_RESPONSES` does for the 503.
+    """
+    if own is None:
+        return {"model": AuthRefusalOut, "description": ANONYMOUS_403_DESCRIPTION}
+    if own.get("model") is not None:
+        raise ValueError("a route's own 403 names no body model: the route class declares it")
+    causes = [str(own.get("description", "")), ANONYMOUS_403_DESCRIPTION]
+    return {
+        **own,
+        "model": ErrorOut | AuthRefusalOut,
+        "description": CAUSE_JOIN.join(cause for cause in causes if cause),
+    }
+
+
 def _needs_token(path: str, methods: object) -> bool:
     # APIRoute's own default when a route names no method.
     named = cast(Sequence[str], methods) if methods else ("GET",)
@@ -287,6 +310,7 @@ class DatabaseRoute(APIRoute):
         opens_database = depends_on_conn(path, endpoint, kwargs.get("dependencies"))
         if _needs_token(path, kwargs.get("methods")):
             declared.update(AUTH_REFUSAL_RESPONSES)
+            declared[403] = declare_403(own.pop(403, None))
             declared.update(EITHER_503_RESPONSES if opens_database else KEYS_UNAVAILABLE_RESPONSES)
             extra: dict[str, Any] = dict(kwargs.get("openapi_extra") or {})
             extra["security"] = BEARER_SECURITY

@@ -5,6 +5,8 @@ import { afterEach, expect, test, vi } from "vitest";
 
 import type { Job } from "../../entities/job";
 import { INDUSTRY_TRACK } from "../../shared/track/fixtures";
+import { installRunStreams } from "../../shared/testing/runStreams";
+import type { RunStreams } from "../../shared/testing/runStreams";
 
 import { ApplyPage } from "./ApplyPage";
 
@@ -118,32 +120,14 @@ function stubApi(options: {
   return calls;
 }
 
-class FakeEventSource {
-  static last: FakeEventSource | null = null;
-  onmessage: ((event: MessageEvent<string>) => void) | null = null;
-  onerror: (() => void) | null = null;
-  constructor() {
-    FakeEventSource.last = this;
-  }
-  emit(payload: unknown): void {
-    this.onmessage?.({ data: JSON.stringify(payload) } as MessageEvent<string>);
-  }
-  close(): void {
-    /* nothing to release in a test */
-  }
-}
+let streams: RunStreams;
 
 function renderPage(): void {
-  FakeEventSource.last = null;
+  streams = installRunStreams();
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={queryClient}>
-      <ApplyPage
-        job={JOB}
-        track={INDUSTRY_TRACK}
-        onBack={() => undefined}
-        createEventSource={() => new FakeEventSource() as unknown as EventSource}
-      />
+      <ApplyPage job={JOB} track={INDUSTRY_TRACK} onBack={() => undefined} />
     </QueryClientProvider>,
   );
 }
@@ -218,20 +202,20 @@ test("a gate's refusal on a failed run is shown, not swallowed", async () => {
 
   await user.click(screen.getByRole("button", { name: "Run tailoring" }));
   await waitFor(() => {
-    expect(FakeEventSource.last).not.toBeNull();
+    expect(streams.connections.length).toBeGreaterThan(0);
   });
 
   // This is how a truth-gate or PDF-gate refusal actually arrives: not as a
   // status code on the start request, but as the last line a failed run
   // printed. Swallowing it would leave the operator with "failed" and no
   // reason (spec 047).
-  const source = FakeEventSource.last;
+  const source = streams.last;
   await act(async () => {
-    source?.emit({
+    source.emit({
       type: "log_line",
       line: "tailor failed: resume claims an unverified achievement",
     });
-    source?.emit({ type: "state_change", state: "failed", exit_code: 1 });
+    source.emit({ type: "state_change", state: "failed", exit_code: 1 });
     await Promise.resolve();
   });
 

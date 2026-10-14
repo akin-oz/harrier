@@ -4,11 +4,13 @@ import type { components } from "@harrier/contract";
 
 import { ConfigSection } from "../../features/config";
 import { CommandList, HostPanel } from "../../features/host-commands";
-import type { EventSourceFactory } from "../../features/runs/useRunStream";
 import { api } from "../../shared/api/client";
 import { refusalMessage } from "../../shared/api/refusal";
+import { appMode } from "../../shared/config/appMode";
 import { BackupsSection } from "./BackupsSection";
+import { CredentialsSection } from "./CredentialsSection";
 import { ExportSection } from "./ExportSection";
+import { TelegramSection } from "./TelegramSection";
 import "./SettingsPage.css";
 
 type ProfileDocument = components["schemas"]["ProfileDocumentOut"];
@@ -19,7 +21,6 @@ async function fetchProfile(): Promise<readonly ProfileDocument[]> {
   if (error !== undefined) {
     throw new Error(refusalMessage(error, "could not list the profile documents"));
   }
-  if (data === undefined) throw new Error("refused: the local API token was not accepted");
   return data;
 }
 
@@ -30,11 +31,10 @@ async function fetchProfile(): Promise<readonly ProfileDocument[]> {
  * Everything here belongs to the install rather than to a search track, so
  * the page is the same on every track.
  */
-export function SettingsPage({
-  createEventSource = (url: string) => new EventSource(url),
-}: {
-  createEventSource?: EventSourceFactory;
-} = {}) {
+export function SettingsPage() {
+  // Hosted only: locally credentials and Telegram live in `.env`, and the
+  // routes answer 404 (spec 114, amendment of 2026-10-11).
+  const hosted = appMode().kind === "hosted";
   const profile = useQuery({ queryKey: ["settings", "profile"], queryFn: fetchProfile });
 
   return (
@@ -51,6 +51,24 @@ export function SettingsPage({
         </h3>
         <ConfigSection />
       </section>
+
+      {hosted && (
+        <>
+          <section className="settings-section" aria-labelledby="settings-credentials">
+            <h3 id="settings-credentials" className="settings-section__heading">
+              Credentials
+            </h3>
+            <CredentialsSection />
+          </section>
+
+          <section className="settings-section" aria-labelledby="settings-telegram">
+            <h3 id="settings-telegram" className="settings-section__heading">
+              Telegram notifications
+            </h3>
+            <TelegramSection />
+          </section>
+        </>
+      )}
 
       <section className="settings-section" aria-labelledby="settings-profile">
         <h3 id="settings-profile" className="settings-section__heading">
@@ -99,7 +117,7 @@ export function SettingsPage({
         <h3 id="settings-backups" className="settings-section__heading">
           Backups
         </h3>
-        <BackupsSection createEventSource={createEventSource} />
+        <BackupsSection />
         <p className="settings-muted">
           Restoring an archive stays in the terminal: it replaces the live database.
         </p>

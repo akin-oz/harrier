@@ -32,6 +32,10 @@ from them.
    and schemas are looked up by string literal, so an invented endpoint or field fails
    `tsc` exactly as required. SSE endpoints are consumed with native `EventSource`
    using generated event payload types.
+
+   **Amended (spec 114).** SSE endpoints are read through the generated client with
+   `parseAs: "stream"`, not with native `EventSource`, so the bearer middleware
+   applies to them like every other call. The decision is unchanged.
 2. **orval**: generates per-endpoint functions plus TanStack Query hooks. Attractive,
    but the generated hook layer couples codegen output to a specific query library
    version and produces much more generated surface to check in and re-review.

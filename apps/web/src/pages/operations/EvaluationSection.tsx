@@ -4,9 +4,9 @@ import { useState } from "react";
 import type { components } from "@harrier/contract";
 
 import { useRunStream } from "../../features/runs/useRunStream";
-import type { EventSourceFactory, RunOut } from "../../features/runs/useRunStream";
+import type { RunOut } from "../../features/runs/useRunStream";
 import { api } from "../../shared/api/client";
-import { RunOutput, TOKEN_REFUSED, countIn, refusalMessage } from "./RunOutput";
+import { RunOutput, countIn, refusalMessage } from "./RunOutput";
 
 type Options = components["schemas"]["EvaluateProspectsIn"];
 
@@ -17,12 +17,8 @@ type Options = components["schemas"]["EvaluateProspectsIn"];
  * each rejection is recorded as the system's decision (spec 079), which the
  * operator can reopen.
  */
-export function EvaluationSection({
-  createEventSource,
-}: {
-  createEventSource: EventSourceFactory;
-}) {
-  const stream = useRunStream(createEventSource);
+export function EvaluationSection() {
+  const stream = useRunStream();
   const [threshold, setThreshold] = useState("");
   const [limit, setLimit] = useState("");
   const [refresh, setRefresh] = useState(false);
@@ -35,7 +31,6 @@ export function EvaluationSection({
     mutationFn: async (body: Options): Promise<RunOut> => {
       const { data, error } = await api.POST("/ops/evaluate-prospects", { body });
       if (error !== undefined) throw new Error(refusalMessage(error, "evaluation was refused"));
-      if (data === undefined) throw new Error(TOKEN_REFUSED);
       return data;
     },
     onSuccess: (data, body) => {

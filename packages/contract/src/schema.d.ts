@@ -2954,12 +2954,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description no job matched the selector; or the track parameter named no track */
             404: {
@@ -3040,12 +3042,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description no job matched the selector; or the track parameter named no track */
             404: {
@@ -3118,12 +3122,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description no such job, artifact kind, or the artifact is not produced yet; or the track parameter named no track */
             404: {
@@ -3195,12 +3201,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the selector named no job, or more than one; or no brief is stored for the job; or the track parameter named no track */
             404: {
@@ -3287,12 +3295,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the selector named no job, or more than one; or the track parameter named no track */
             404: {
@@ -3368,12 +3378,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description no job matched the selector; or the track parameter named no track */
             404: {
@@ -3458,12 +3470,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description no job matched the selector; or the track parameter named no track */
             404: {
@@ -3548,12 +3562,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description no job matched the selector; or the track parameter named no track */
             404: {
@@ -3678,12 +3694,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description already in tracker */
             409: {
@@ -3817,12 +3835,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
@@ -3871,12 +3891,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description no configuration file was found */
             409: {
@@ -3927,12 +3949,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description No such configuration kind. */
             404: {
@@ -4005,12 +4029,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description No such configuration kind. */
             404: {
@@ -4070,12 +4096,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description No such configuration kind. */
             404: {
@@ -4133,6 +4161,15 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
+            /** @description the session is anonymous (hosted, spec 104) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description credentials are read from .env on the local API */
             404: {
                 headers: {
@@ -4177,6 +4214,15 @@ export interface operations {
             };
             /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
+            /** @description the session is anonymous (hosted, spec 104) */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4244,6 +4290,15 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
+            /** @description the session is anonymous (hosted, spec 104) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description credentials are read from .env on the local API */
             404: {
                 headers: {
@@ -4304,6 +4359,15 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
+            /** @description the session is anonymous (hosted, spec 104) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description credentials are read from .env on the local API */
             404: {
                 headers: {
@@ -4346,6 +4410,15 @@ export interface operations {
         responses: {
             /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
+            /** @description the session is anonymous (hosted, spec 104) */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4404,6 +4477,15 @@ export interface operations {
             };
             /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
+            /** @description the session is anonymous (hosted, spec 104) */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4492,6 +4574,15 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
+            /** @description the session is anonymous (hosted, spec 104) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description the track parameter named no track */
             404: {
                 headers: {
@@ -4543,6 +4634,15 @@ export interface operations {
             };
             /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
+            /** @description the session is anonymous (hosted, spec 104) */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4610,12 +4710,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read */
             409: {
@@ -4682,6 +4784,15 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
+            /** @description the session is anonymous (hosted, spec 104) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description Telegram is configured in .env on the local product */
             404: {
                 headers: {
@@ -4735,6 +4846,15 @@ export interface operations {
             };
             /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
+            /** @description the session is anonymous (hosted, spec 104) */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4807,6 +4927,15 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
+            /** @description the session is anonymous (hosted, spec 104) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description Telegram is configured in .env on the local product */
             404: {
                 headers: {
@@ -4858,12 +4987,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read */
             409: {
@@ -4933,12 +5064,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the track parameter named no track */
             404: {
@@ -5012,12 +5145,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the track parameter named no track */
             404: {
@@ -5091,12 +5226,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the track parameter named no track */
             404: {
@@ -5179,12 +5316,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the track parameter named no track */
             404: {
@@ -5276,12 +5415,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the track parameter named no track */
             404: {
@@ -5355,12 +5496,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the track parameter named no track */
             404: {
@@ -5443,12 +5586,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the track parameter named no track */
             404: {
@@ -5527,12 +5672,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the track parameter named no track */
             404: {
@@ -5602,12 +5749,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the track parameter named no track */
             404: {
@@ -5665,12 +5814,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read */
             409: {
@@ -5732,12 +5883,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the request needs its explicit field; or refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read */
             409: {
@@ -5804,12 +5957,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
@@ -5856,12 +6011,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the track parameter named no track */
             404: {
@@ -5937,6 +6094,15 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
+            /** @description the session is anonymous (hosted, spec 104) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
@@ -5978,12 +6144,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the track parameter named no track */
             404: {
@@ -6063,12 +6231,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read */
             409: {
@@ -6135,12 +6305,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
@@ -6183,12 +6355,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the track parameter named no track */
             404: {
@@ -6258,12 +6432,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the track parameter named no track */
             404: {
@@ -6339,12 +6515,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the selector named no job, or more than one; or the track parameter named no track */
             404: {
@@ -6416,12 +6594,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the selector named no job, or more than one; or the track parameter named no track */
             404: {
@@ -6497,12 +6677,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the selector named no job, or more than one; or the candidate was never staged; or the track parameter named no track */
             404: {
@@ -6578,12 +6760,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the selector named no job, or more than one; or the candidate was never staged; or the track parameter named no track */
             404: {
@@ -6659,12 +6843,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the selector named no job, or more than one; or the track parameter named no track */
             404: {
@@ -6749,12 +6935,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the selector named no job, or more than one; or the track parameter named no track */
             404: {
@@ -6839,12 +7027,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the selector named no job, or more than one; or the track parameter named no track */
             404: {
@@ -6920,12 +7110,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the selector named no job, or more than one; or the track parameter named no track */
             404: {
@@ -7001,12 +7193,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the selector named no job, or more than one; or the track parameter named no track */
             404: {
@@ -7073,6 +7267,15 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
+            /** @description the session is anonymous (hosted, spec 104) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
@@ -7115,12 +7318,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read */
             409: {
@@ -7189,6 +7394,15 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
+            /** @description the session is anonymous (hosted, spec 104) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description the run id names no run this server holds */
             404: {
                 headers: {
@@ -7247,12 +7461,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the run id names no run this server holds */
             404: {
@@ -7305,6 +7521,15 @@ export interface operations {
             };
             /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
+            /** @description the session is anonymous (hosted, spec 104) */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -7388,12 +7613,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the hosted API cannot fetch its signing keys (spec 104) */
             503: {
@@ -7435,12 +7662,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description no archive of that name in the listing */
             404: {
@@ -7516,12 +7745,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the hosted API cannot fetch its signing keys (spec 104) */
             503: {
@@ -7565,12 +7796,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -7619,12 +7852,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the hosted API cannot fetch its signing keys (spec 104) */
             503: {
@@ -7671,12 +7906,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the track parameter named no track */
             404: {
@@ -7748,6 +7985,15 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
+            /** @description the session is anonymous (hosted, spec 104) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description the track parameter named no track */
             404: {
                 headers: {
@@ -7809,6 +8055,15 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
+            /** @description the session is anonymous (hosted, spec 104) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description the track parameter named no track */
             404: {
                 headers: {
@@ -7863,6 +8118,15 @@ export interface operations {
             };
             /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
+            /** @description the session is anonymous (hosted, spec 104) */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -7944,12 +8208,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the selector named no job, or more than one; or the track parameter named no track */
             404: {
@@ -8014,6 +8280,15 @@ export interface operations {
             };
             /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
+            /** @description the session is anonymous (hosted, spec 104) */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8086,12 +8361,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the selector named no job, or more than one; or the track parameter named no track */
             404: {
@@ -8163,12 +8440,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the selector named no job, or more than one; or the track parameter named no track */
             404: {
@@ -8244,12 +8523,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description the selector named no job, or more than one; or the track parameter named no track */
             404: {
@@ -8316,6 +8597,15 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
+            /** @description the session is anonymous (hosted, spec 104) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
@@ -8358,12 +8648,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description a duplicate slug, or a kind the rules refuse */
             409: {
@@ -8421,6 +8713,15 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
+            /** @description the session is anonymous (hosted, spec 104) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
             /** @description the hosted API cannot fetch its signing keys (spec 104) */
             503: {
                 headers: {
@@ -8461,12 +8762,14 @@ export interface operations {
                     "application/json": components["schemas"]["AuthRefusalOut"];
                 };
             };
-            /** @description missing or wrong local API token */
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
             };
             /** @description no track has that slug */
             404: {

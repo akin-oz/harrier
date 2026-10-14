@@ -5,8 +5,9 @@ import { useEffect, useState } from "react";
 import type { components } from "@harrier/contract";
 
 import { TERMINAL_STATES, useRunStream } from "../../features/runs/useRunStream";
-import type { EventSourceFactory, RunOut } from "../../features/runs/useRunStream";
+import type { RunOut } from "../../features/runs/useRunStream";
 import { api } from "../../shared/api/client";
+import { refusalMessage } from "../../shared/api/refusal";
 import { trackKey, useSelectedSlug } from "../../shared/track";
 import "./InboxPage.css";
 
@@ -35,25 +36,23 @@ function refused(error: unknown, fallback: string): string {
 }
 
 async function fetchEvents(): Promise<MailEvents> {
-  // This route declares no refusal response, so the generated `error` is
-  // `never` and only the body can be absent.
-  const { data } = await api.GET("/mail/events", { params: { query: {} } });
-  if (data === undefined) throw new Error("could not read the mail archive");
+  // The route declares 401, 403, 422, 501 and 503. Hosted, the 501 says Gmail
+  // watch is not offered there (spec 109), and that sentence is the page's
+  // answer rather than a generic one.
+  const { data, error } = await api.GET("/mail/events", { params: { query: {} } });
+  if (error !== undefined)
+    throw new Error(refusalMessage(error, "could not read the mail archive"));
   return data;
 }
 
-export function InboxPage({
-  createEventSource = (url: string) => new EventSource(url),
-}: {
-  createEventSource?: EventSourceFactory;
-} = {}) {
+export function InboxPage() {
   const queryClient = useQueryClient();
   const slug = useSelectedSlug();
   const [dryRun, setDryRun] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
   const events = useQuery({ queryKey: trackKey(slug, "mail", "events"), queryFn: fetchEvents });
-  const stream = useRunStream(createEventSource);
+  const stream = useRunStream();
   const { run, lines, lastLogLine, disconnected, failed } = stream;
   const active = run !== null && !TERMINAL_STATES.has(run.state);
 
@@ -73,7 +72,6 @@ export function InboxPage({
     mutationFn: async (): Promise<RunOut> => {
       const { data, error } = await api.POST("/mail/watch", { body: { dry_run: dryRun } });
       if (error !== undefined) throw new Error(refused(error, "could not start the watch"));
-      if (data === undefined) throw new Error("refused: the local API token was not accepted");
       return data;
     },
     onSuccess: (data) => {

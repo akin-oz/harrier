@@ -1128,7 +1128,7 @@ test("a tracker refusal is read through the contract's types", () => {
   // runs, `expectTypeOf` does nothing. A reader that took `unknown` again,
   // or a tracker write whose 404 or 409 lost its declared body, does not
   // compile. It takes the shared `Refusal`, the hosted token refusal
-  // included (spec 104).
+  // included (spec 104), and the credential and Telegram refusals (spec 114).
   expectTypeOf(refusalMessage)
     .parameter(0)
     .toEqualTypeOf<
@@ -1136,6 +1136,8 @@ test("a tracker refusal is read through the contract's types", () => {
       | components["schemas"]["DatabaseHeldOut"]
       | components["schemas"]["HTTPValidationError"]
       | components["schemas"]["AuthRefusalOut"]
+      | components["schemas"]["CredentialRefusalOut"]
+      | components["schemas"]["TelegramRefusalOut"]
     >();
   expectTypeOf<
     Declared<operations["changeJobStatus"]["responses"][404]>

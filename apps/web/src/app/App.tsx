@@ -20,6 +20,7 @@ import {
 import type { Track } from "../shared/track";
 import "../shared/ui/tokens.css";
 import { Header } from "../widgets/header/Header";
+import { AuthGate } from "./AuthGate";
 import "./App.css";
 
 // Exported so a test can read the cache the app itself fills, and check that
@@ -49,7 +50,9 @@ type Section = (typeof SECTIONS)[number]["id"] | "tracks";
 export function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <Shell />
+      <AuthGate>
+        <Shell />
+      </AuthGate>
     </QueryClientProvider>
   );
 }

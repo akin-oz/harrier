@@ -6,7 +6,7 @@ import { StatusPill } from "../../entities/job";
 import { ArtifactList } from "../../features/apply/ArtifactList";
 import { BriefPanel } from "../../features/brief/BriefPanel";
 import { TERMINAL_STATES, useRunStream } from "../../features/runs/useRunStream";
-import type { EventSourceFactory, RunOut } from "../../features/runs/useRunStream";
+import type { RunOut } from "../../features/runs/useRunStream";
 import { api } from "../../shared/api/client";
 import { statusLabel, trackKey, useSelectedSlug } from "../../shared/track";
 import type { Track } from "../../shared/track";
@@ -109,13 +109,6 @@ function refusalMessage(error: unknown, operation: Operation): string {
   return `could not start ${operation}: ${JSON.stringify(error)}`;
 }
 
-function started(data: RunOut | undefined): RunOut {
-  if (data === undefined) {
-    throw new Error("refused: the local API token was not accepted");
-  }
-  return data;
-}
-
 /**
  * Each operation posts its own body shape, typed by the contract.
  *
@@ -136,7 +129,7 @@ async function startOperation(
       body: { jd_text: text, no_ai: noAi },
     });
     if (error !== undefined) throw new Error(refusalMessage(error, operation));
-    return started(data);
+    return data;
   }
   if (operation === "cover-letter") {
     const { data, error } = await api.POST("/apply/{selector}/cover-letter", {
@@ -144,7 +137,7 @@ async function startOperation(
       body: { notes: text },
     });
     if (error !== undefined) throw new Error(refusalMessage(error, operation));
-    return started(data);
+    return data;
   }
   if (operation === "answers") {
     const { data, error } = await api.POST("/apply/{selector}/answers", {
@@ -152,27 +145,17 @@ async function startOperation(
       body: { questions: text },
     });
     if (error !== undefined) throw new Error(refusalMessage(error, operation));
-    return started(data);
+    return data;
   }
   const { data, error } = await api.POST("/apply/{selector}/evaluate", {
     params: { path },
     body: { jd_text: text },
   });
   if (error !== undefined) throw new Error(refusalMessage(error, operation));
-  return started(data);
+  return data;
 }
 
-export function ApplyPage({
-  job,
-  track,
-  onBack,
-  createEventSource = (url: string) => new EventSource(url),
-}: {
-  job: Job;
-  track: Track;
-  onBack: () => void;
-  createEventSource?: EventSourceFactory;
-}) {
+export function ApplyPage({ job, track, onBack }: { job: Job; track: Track; onBack: () => void }) {
   const queryClient = useQueryClient();
   const slug = useSelectedSlug();
   const [operation, setOperation] = useState<Operation>("resume");
@@ -180,7 +163,7 @@ export function ApplyPage({
   const [noAi, setNoAi] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
-  const stream = useRunStream(createEventSource);
+  const stream = useRunStream();
   const { run, lines, lastLogLine, progress, disconnected, failed } = stream;
   const active = run !== null && !TERMINAL_STATES.has(run.state);
 

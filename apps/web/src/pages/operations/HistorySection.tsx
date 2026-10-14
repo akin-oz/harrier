@@ -2,17 +2,17 @@ import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { useRunStream } from "../../features/runs/useRunStream";
-import type { EventSourceFactory, RunOut } from "../../features/runs/useRunStream";
+import type { RunOut } from "../../features/runs/useRunStream";
 import { api } from "../../shared/api/client";
-import { RunOutput, TOKEN_REFUSED, countIn, refusalMessage } from "./RunOutput";
+import { RunOutput, countIn, refusalMessage } from "./RunOutput";
 
 /**
  * Decision history backfill (`harrier events backfill`, spec 079). A dry
  * run first, which prints the counts and writes nothing; writing is a
  * separate action that names the count the dry run printed.
  */
-export function HistorySection({ createEventSource }: { createEventSource: EventSourceFactory }) {
-  const stream = useRunStream(createEventSource);
+export function HistorySection() {
+  const stream = useRunStream();
   const [wrote, setWrote] = useState<boolean | null>(null);
 
   const start = useMutation({
@@ -21,7 +21,6 @@ export function HistorySection({ createEventSource }: { createEventSource: Event
         body: { dry_run: dryRun },
       });
       if (error !== undefined) throw new Error(refusalMessage(error, "the backfill was refused"));
-      if (data === undefined) throw new Error(TOKEN_REFUSED);
       return data;
     },
     onSuccess: (data, dryRun) => {
