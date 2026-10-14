@@ -39,10 +39,16 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
-from typing import Literal, cast, get_args
+from typing import Any, Literal, cast, get_args
 from zoneinfo import ZoneInfo
 
-from harrier.connection import Connection, StoreIntegrityError, update_or_insert
+from harrier.connection import (
+    Connection,
+    StoreIntegrityError,
+    is_driver_error,
+    store_error_from_postgres,
+    update_or_insert,
+)
 from harrier.credentials import CredentialKind
 from harrier.paths import repo_root
 from harrier.schedule import (
@@ -193,21 +199,35 @@ class OwnerView:
     states: dict[str, JobState] = field(default_factory=lambda: dict[str, JobState]())
 
 
-def list_inputs(conn: Connection) -> list[OwnerView]:
+def list_inputs(driver: Any) -> list[OwnerView]:
     """Every owner's schedule choice and scheduler state, through
     `harrier_schedule_inputs()` (spec 108, "A tick", step 1).
 
     In a transaction that runs `SET LOCAL ROLE harrier_schedule_reader`
     first and sets no claims, and runs nothing else: the one read across
     owners. Owners are returned in id order.
+
+    `driver` is the scheduler's own psycopg connection, not a `Connection`:
+    the seam's `execute()` refuses a statement that changes the session, and
+    its `transaction()` can take the tenant role and no other (spec 112,
+    amendment of 2026-10-14: the session). This is the one statement
+    sequence the scheduler sends past the seam, the reader's role switch and
+    the listing, in one transaction that is rolled back since it writes
+    nothing (spec 108, Amendment (2026-10-14): the session). A driver error
+    is raised as the seam would raise it.
     """
-    with conn.transaction():
-        conn.execute(f"SET LOCAL ROLE {SCHEDULE_READER_ROLE}")
-        # Every column, in the order the function declares them (owner,
-        # schedule, schedule_updated_at, job, last_slot_at, last_started_at,
-        # last_finished_at, last_outcome, last_exit, last_ok_at), so this
-        # module's SQL names no tenant column.
-        rows = conn.execute("SELECT * FROM public.harrier_schedule_inputs()").fetchall()
+    try:
+        with driver.transaction(force_rollback=True):
+            driver.execute(f"SET LOCAL ROLE {SCHEDULE_READER_ROLE}".encode())
+            # Every column, in the order the function declares them (owner,
+            # schedule, schedule_updated_at, job, last_slot_at,
+            # last_started_at, last_finished_at, last_outcome, last_exit,
+            # last_ok_at), so this module's SQL names no tenant column.
+            rows = driver.execute(b"SELECT * FROM public.harrier_schedule_inputs()").fetchall()
+    except Exception as error:
+        if is_driver_error(error):
+            raise store_error_from_postgres(cast(Any, error)) from error
+        raise
     views: dict[str, OwnerView] = {}
     for row in rows:
         owner = str(row[0])
@@ -243,7 +263,10 @@ def read_choice(text: str) -> Choice:
 
     try:
         parsed: object = json.loads(text)
-    except json.JSONDecodeError:
+    except (ValueError, RecursionError):
+        # A value nested past the parser's depth raises RecursionError, and
+        # one with too many digits ValueError; neither is a reason to stop
+        # the tick for every other owner.
         raise ConfigError("schedule is not valid JSON") from None
     value = validate_schedule(parsed)
     return Choice(timezone=str(value["timezone"]), jobs=tuple(cast("list[str]", value["jobs"])))
@@ -285,6 +308,71 @@ def _zone(name: str) -> ZoneInfo | None:
         return None
 
 
+def _due_for(view: OwnerView, jobs: Mapping[str, ScheduleJob], now: datetime) -> list[DueSlot]:
+    """One owner's due slots (`due_slots`)."""
+    from harrier.userconfig.store import ConfigError
+
+    due: list[DueSlot] = []
+    if view.schedule is None:
+        return due
+    try:
+        choice = read_choice(view.schedule)
+    except ConfigError as error:
+        logger.warning("scheduled skip owner=%s reason=%s", view.owner, error)
+        return due
+    zone = _zone(choice.timezone)
+    if zone is None:
+        logger.warning(
+            "scheduled skip owner=%s reason=schedule.timezone is not a zone this server can load",
+            view.owner,
+        )
+        return due
+    if any(state.last_outcome == "running" for state in view.states.values()):
+        return due
+    chosen_at = (
+        None if view.schedule_updated_at is None else parse_instant(view.schedule_updated_at)
+    )
+    if view.schedule_updated_at is not None and chosen_at is None:
+        logger.warning(
+            "scheduled skip owner=%s reason=schedule_updated_at is not a time", view.owner
+        )
+        return due
+    for name in choice.jobs:
+        job = jobs.get(name)
+        if job is None:
+            continue
+        slot = latest_slot(job, zone, now)
+        if slot is None:
+            continue
+        # A slot before the owner's choice is not theirs: enabling a
+        # job at 15:00 starts nothing until 16:00.
+        if chosen_at is not None and slot < chosen_at:
+            continue
+        state = view.states.get(name)
+        if state is not None:
+            claimed = parse_instant(state.last_slot_at)
+            if claimed is None:
+                logger.warning(
+                    "scheduled skip owner=%s job=%s reason=schedule_state.last_slot_at "
+                    "is not a time",
+                    view.owner,
+                    name,
+                )
+                continue
+            if claimed >= slot:
+                continue
+        due.append(
+            DueSlot(
+                view.owner,
+                name,
+                slot,
+                choice.timezone,
+                None if state is None else state.last_started_at,
+            )
+        )
+    return due
+
+
 def due_slots(
     views: Iterable[OwnerView], jobs: Mapping[str, ScheduleJob], now: datetime
 ) -> list[DueSlot]:
@@ -298,62 +386,18 @@ def due_slots(
     A row that fails validation is skipped and logged with the owner's id
     and the field, never the value.
     """
-    from harrier.userconfig.store import ConfigError
-
     due: list[DueSlot] = []
     for view in views:
-        if view.schedule is None:
-            continue
         try:
-            choice = read_choice(view.schedule)
-        except ConfigError as error:
-            logger.warning("scheduled skip owner=%s reason=%s", view.owner, error)
-            continue
-        zone = _zone(choice.timezone)
-        if zone is None:
+            due.extend(_due_for(view, jobs, now))
+        except Exception as error:
+            # Every per-owner step catches every exception (spec 108,
+            # "Isolation"): a row nothing foresaw starts nothing for its
+            # owner and stops nobody else. Logged by class, never text.
             logger.warning(
-                "scheduled skip owner=%s reason=schedule.timezone is not a zone this server "
-                "can load",
+                "scheduled skip owner=%s reason=schedule could not be read: %s",
                 view.owner,
-            )
-            continue
-        if any(state.last_outcome == "running" for state in view.states.values()):
-            continue
-        chosen_at = (
-            None if view.schedule_updated_at is None else parse_instant(view.schedule_updated_at)
-        )
-        for name in choice.jobs:
-            job = jobs.get(name)
-            if job is None:
-                continue
-            slot = latest_slot(job, zone, now)
-            if slot is None:
-                continue
-            # A slot before the owner's choice is not theirs: enabling a
-            # job at 15:00 starts nothing until 16:00.
-            if chosen_at is not None and slot < chosen_at:
-                continue
-            state = view.states.get(name)
-            if state is not None:
-                claimed = parse_instant(state.last_slot_at)
-                if claimed is None:
-                    logger.warning(
-                        "scheduled skip owner=%s job=%s reason=schedule_state.last_slot_at "
-                        "is not a time",
-                        view.owner,
-                        name,
-                    )
-                    continue
-                if claimed >= slot:
-                    continue
-            due.append(
-                DueSlot(
-                    view.owner,
-                    name,
-                    slot,
-                    choice.timezone,
-                    None if state is None else state.last_started_at,
-                )
+                type(error).__name__,
             )
     return sorted(due, key=DueSlot.order)
 
@@ -374,23 +418,37 @@ def claim_slot(
     the slot is someone else's, and nothing starts (spec 108, "Claiming and
     starting a run as its owner", step 2).
 
-    `running` is the claim before a start. `missed` records a slot that
-    waited past the next one: it was never started, so it has no start, and
-    it is finished as it is claimed.
+    `running` is the claim before a start; `started_at` is its start.
+    `missed` records a slot that waited past the next one: it was never
+    started, so it changes no start, and it is finished at `started_at` as it
+    is claimed.
     """
-    started = started_at if outcome == "running" else None
-    finished = started_at if outcome == "missed" else None
     try:
-        update_or_insert(
-            conn,
-            "UPDATE schedule_state SET last_slot_at = ?, last_started_at = ?, "
-            "last_finished_at = ?, last_outcome = ?, last_exit = NULL "
-            "WHERE job = ? AND last_slot_at < ?",
-            (slot, started, finished, outcome, job, slot),
-            "INSERT INTO schedule_state (job, last_slot_at, last_started_at, last_finished_at, "
-            "last_outcome) VALUES (?, ?, ?, ?, ?)",
-            (job, slot, started, finished, outcome),
-        )
+        if outcome == "missed":
+            # Nothing started, so `last_started_at` stays what it was: the
+            # queue orders owners by it, and a missed slot must not make an
+            # owner look never-started.
+            update_or_insert(
+                conn,
+                "UPDATE schedule_state SET last_slot_at = ?, last_finished_at = ?, "
+                "last_outcome = 'missed', last_exit = NULL "
+                "WHERE job = ? AND last_slot_at < ?",
+                (slot, started_at, job, slot),
+                "INSERT INTO schedule_state (job, last_slot_at, last_finished_at, last_outcome) "
+                "VALUES (?, ?, ?, 'missed')",
+                (job, slot, started_at),
+            )
+        else:
+            update_or_insert(
+                conn,
+                "UPDATE schedule_state SET last_slot_at = ?, last_started_at = ?, "
+                "last_finished_at = NULL, last_outcome = 'running', last_exit = NULL "
+                "WHERE job = ? AND last_slot_at < ?",
+                (slot, started_at, job, slot),
+                "INSERT INTO schedule_state (job, last_slot_at, last_started_at, last_outcome) "
+                "VALUES (?, ?, ?, 'running')",
+                (job, slot, started_at),
+            )
     except StoreIntegrityError as error:
         if error.kind != "unique":
             raise
@@ -499,6 +557,61 @@ def _problems(
     return found
 
 
+def _report_for(
+    view: OwnerView, jobs: Mapping[str, ScheduleJob], now: datetime
+) -> list[ReportLine]:
+    """One owner's report lines (`report_lines`)."""
+    from harrier.userconfig.store import ConfigError
+
+    lines: list[ReportLine] = []
+    chosen_at = (
+        None if view.schedule_updated_at is None else parse_instant(view.schedule_updated_at)
+    )
+    choice: Choice | None = None
+    invalid = ""
+    if view.schedule is not None:
+        try:
+            choice = read_choice(view.schedule)
+        except ConfigError as error:
+            invalid = str(error)
+    zone = None if choice is None else _zone(choice.timezone)
+    # An invalid row names no jobs, so the jobs its owner has state for
+    # stand in for them: they become overdue, as the spec says.
+    chosen: set[str] = set()
+    if choice is not None:
+        chosen = set(choice.jobs)
+    elif invalid:
+        chosen = set(view.states)
+    if invalid and not view.states:
+        lines.append(ReportLine(view.owner, "-", f"{view.owner} - schedule invalid: {invalid}", ""))
+    for name in sorted(chosen | set(view.states)):
+        job = jobs.get(name)
+        state = view.states.get(name)
+        cadence = "-" if job is None else describe_cadence(job)
+        outcome = "none" if state is None else state.last_outcome
+        exit_text = "-" if state is None or state.last_exit is None else str(state.last_exit)
+        slot_text = "-" if state is None else state.last_slot_at
+        ok_text = "-" if state is None or not state.last_ok_at else state.last_ok_at
+        text = (
+            f"{view.owner} {name} cadence={cadence!r} slot={slot_text} "
+            f"outcome={outcome} exit={exit_text} ok={ok_text}"
+        )
+        problems: list[str] = []
+        if name not in chosen:
+            text += " (not chosen)"
+        elif job is not None:
+            problems = _problems(job, state, chosen_at, zone, now)
+        if invalid:
+            text += f" (schedule invalid: {invalid})"
+        problem = "; ".join(problems)
+        lines.append(
+            ReportLine(
+                view.owner, name, f"{text}  PROBLEM: {problem}" if problem else text, problem
+            )
+        )
+    return lines
+
+
 def report_lines(
     views: Iterable[OwnerView], jobs: Mapping[str, ScheduleJob], now: datetime
 ) -> list[ReportLine]:
@@ -514,55 +627,19 @@ def report_lines(
     owner has chosen can be a problem, so an owner who stopped a job is not
     reported for its last failure.
     """
-    from harrier.userconfig.store import ConfigError
-
     lines: list[ReportLine] = []
     for view in views:
-        chosen_at = (
-            None if view.schedule_updated_at is None else parse_instant(view.schedule_updated_at)
-        )
-        choice: Choice | None = None
-        invalid = ""
-        if view.schedule is not None:
-            try:
-                choice = read_choice(view.schedule)
-            except ConfigError as error:
-                invalid = str(error)
-        zone = None if choice is None else _zone(choice.timezone)
-        # An invalid row names no jobs, so the jobs its owner has state for
-        # stand in for them: they become overdue, as the spec says.
-        chosen: set[str] = set()
-        if choice is not None:
-            chosen = set(choice.jobs)
-        elif invalid:
-            chosen = set(view.states)
-        if invalid and not view.states:
-            lines.append(
-                ReportLine(view.owner, "-", f"{view.owner} - schedule invalid: {invalid}", "")
-            )
-        for name in sorted(chosen | set(view.states)):
-            job = jobs.get(name)
-            state = view.states.get(name)
-            cadence = "-" if job is None else describe_cadence(job)
-            outcome = "none" if state is None else state.last_outcome
-            exit_text = "-" if state is None or state.last_exit is None else str(state.last_exit)
-            slot_text = "-" if state is None else state.last_slot_at
-            ok_text = "-" if state is None or not state.last_ok_at else state.last_ok_at
-            text = (
-                f"{view.owner} {name} cadence={cadence!r} slot={slot_text} "
-                f"outcome={outcome} exit={exit_text} ok={ok_text}"
-            )
-            problems: list[str] = []
-            if name not in chosen:
-                text += " (not chosen)"
-            elif job is not None:
-                problems = _problems(job, state, chosen_at, zone, now)
-            if invalid:
-                text += f" (schedule invalid: {invalid})"
-            problem = "; ".join(problems)
+        try:
+            lines.extend(_report_for(view, jobs, now))
+        except Exception as error:
+            # The report is how an operator finds a row the scheduler
+            # cannot read, so it shows one it cannot read either.
             lines.append(
                 ReportLine(
-                    view.owner, name, f"{text}  PROBLEM: {problem}" if problem else text, problem
+                    view.owner,
+                    "-",
+                    f"{view.owner} - schedule could not be read: {type(error).__name__}",
+                    "",
                 )
             )
     return lines

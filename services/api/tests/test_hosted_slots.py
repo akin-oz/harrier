@@ -285,6 +285,61 @@ def test_a_row_that_is_not_json_or_names_an_unloadable_zone_is_skipped(
     assert secret not in caplog.text
 
 
+def test_a_value_the_parser_cannot_hold_is_an_invalid_row() -> None:
+    """Nested past the parser's depth, or with a number past its digit limit,
+    JSON raises RecursionError or ValueError, not a decode error: each is an
+    invalid choice, so one owner's row cannot stop the tick (local review of
+    PR 327)."""
+    from harrier.hostedschedule import read_choice
+    from harrier.userconfig.store import ConfigError
+
+    for text in ("[" * 100_000, '{"timezone": ' + "9" * 5_000 + "}"):
+        with pytest.raises(ConfigError, match="schedule is not valid JSON"):
+            read_choice(text)
+
+
+def test_a_row_nothing_foresaw_is_skipped_and_reported(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every per-owner step catches every exception (spec 108,
+    "Isolation"): an owner whose row raises something the code did not
+    foresee starts nothing and appears in the report, and the next owner is
+    served."""
+    import harrier.hostedschedule as module
+
+    broken, fine = sorted((new_owner(), new_owner()))
+    original = module.read_choice
+
+    def read(text: str) -> object:
+        if json.loads(text)["jobs"] == ["academic-discovery"]:
+            raise RuntimeError("the secret text of the row")
+        return original(text)
+
+    monkeypatch.setattr(module, "read_choice", read)
+    views = [
+        OwnerView(broken, choice("UTC", "academic-discovery"), "2026-01-01 00:00:00"),
+        view(fine),
+    ]
+    caplog.set_level("WARNING")
+    assert [(s.owner, s.job) for s in due_slots(views, jobs(), NOW)] == [(fine, "discovery")]
+    lines = report_lines(views, jobs(), REPORT_NOW)
+    assert [line.owner for line in lines] == [broken, fine]
+    assert lines[0].problem == ""
+    assert lines[0].text == f"{broken} - schedule could not be read: RuntimeError"
+    assert [r.getMessage() for r in caplog.records] == [
+        f"scheduled skip owner={broken} reason=schedule could not be read: RuntimeError"
+    ]
+    assert "secret" not in caplog.text + lines[0].text
+
+
+def test_an_unparseable_choice_time_starts_nothing() -> None:
+    """A `schedule_updated_at` that is not a time cannot gate a slot, so the
+    owner is skipped and logged, not started on every slot (local review of
+    PR 327)."""
+    owner = new_owner()
+    assert due(view(owner, updated_at="garbage")) == []
+
+
 def test_a_hosted_job_the_committed_file_cannot_run_is_skipped(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -418,6 +473,25 @@ def test_a_job_is_overdue_after_twice_its_longest_gap() -> None:
     )
     [(_, weekly_problem)] = report(view(owner, names=("academic-discovery",), states=weekly))
     assert weekly_problem == "overdue: last ok 15d2h ago"
+
+
+def test_the_overdue_limit_is_exclusive() -> None:
+    """Twice the longest gap, 26 hours for discovery: a last ok exactly that
+    old is not overdue, a second older is."""
+    owner = new_owner()
+    exactly = healthy(last_ok_at="2026-10-13T10:00:00Z")
+    assert report(view(owner, states=exactly)) == [("discovery", "")]
+    older = healthy(last_ok_at="2026-10-13T09:59:59Z")
+    assert report(view(owner, states=older))[0][1].startswith("overdue: last ok")
+
+
+def test_a_slot_at_the_instant_of_the_choice_can_be_unclaimed() -> None:
+    """A choice made at the slot's own instant owns that slot, so left
+    unclaimed it is a problem like any other."""
+    owner = new_owner()
+    chosen = view(owner, updated_at="2026-10-14 09:00:00")
+    [(_, problem)] = report(chosen, now=instant("2026-10-14T12:30:00Z"))
+    assert problem == "a whole slot passed unclaimed: 2026-10-14T09:00:00Z"
 
 
 def test_a_job_never_ok_is_overdue_once_chosen_long_enough_ago() -> None:

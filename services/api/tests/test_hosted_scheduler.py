@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import re
+import signal
 import sys
 import threading
 import time
@@ -112,9 +113,18 @@ class FakeProcess:
     end it, as signals end a child, unless it ignores terminate."""
 
     def __init__(
-        self, clock: FakeClock, seconds: float | None, code: int, *, ignores_terminate: bool
+        self,
+        clock: FakeClock,
+        seconds: float | None,
+        code: int,
+        *,
+        ignores_terminate: bool,
+        survives_kill: bool = False,
     ) -> None:
         self.clock = clock
+        self.survives_kill = survives_kill
+        # When terminate was called, on the clock's monotonic scale.
+        self.terminated_at: float | None = None
         self.started = clock.monotonic()
         self.seconds = seconds
         self.code = code
@@ -123,7 +133,7 @@ class FakeProcess:
         self.killed = False
 
     def poll(self) -> int | None:
-        if self.killed:
+        if self.killed and not self.survives_kill:
             return -9
         if self.terminated and not self.ignores_terminate:
             return -15
@@ -133,6 +143,8 @@ class FakeProcess:
 
     def terminate(self) -> None:
         self.terminated = True
+        if self.terminated_at is None:
+            self.terminated_at = self.clock.monotonic()
 
     def kill(self) -> None:
         self.killed = True
@@ -145,6 +157,9 @@ class Plan:
     seconds: float | None = 5
     code: int = 0
     ignores_terminate: bool = False
+    # A process nothing can end, as one outside its group is: kill is sent
+    # and it still runs.
+    survives_kill: bool = False
 
 
 HANGS = Plan(seconds=None)
@@ -200,7 +215,11 @@ class Fleet:
         owner = env["OWNER"]
         plan = self.plans.get(owner, self.default)
         process = FakeProcess(
-            self.clock, plan.seconds, plan.code, ignores_terminate=plan.ignores_terminate
+            self.clock,
+            plan.seconds,
+            plan.code,
+            ignores_terminate=plan.ignores_terminate,
+            survives_kill=plan.survives_kill,
         )
         live = [s for s in self.spawned if s.process.poll() is None]
         entry = Spawned(
@@ -1019,7 +1038,13 @@ def test_a_lost_lock_stops_the_tick_and_keeps_true_outcomes(
     a time")."""
     caplog.set_level(logging.INFO, logger=SCHEDULER_LOGGER)
     finishes, hangs = sorted(rig.owner() for _ in range(2))
-    rig.fleet.plans = {finishes: Plan(seconds=3, code=3), hangs: HANGS}
+    # The first child exits at the very second the lock check runs, so its
+    # exit is first seen inside the abandon, before it is reaped. The second
+    # ignores terminate, so it must be killed.
+    rig.fleet.plans = {
+        finishes: Plan(seconds=hostedscheduler.LOCK_CHECK_SECONDS, code=3),
+        hangs: Plan(seconds=None, ignores_terminate=True),
+    }
 
     def lose_the_lock(spawned: Spawned) -> None:
         if len(rig.fleet.spawned) == 2:
@@ -1031,7 +1056,9 @@ def test_a_lost_lock_stops_the_tick_and_keeps_true_outcomes(
     assert rig.run() == 1
 
     assert rig.outcomes() == {finishes: "failed", hangs: "interrupted"}
-    assert rig.fleet.spawned[1].process.terminated
+    first, second = rig.fleet.spawned[0].process, rig.fleet.spawned[1].process
+    assert not first.terminated and not first.killed
+    assert second.terminated and second.killed
     assert "scheduler lost its lock" in [r.getMessage() for r in caplog.records]
     # The lock is not held by anyone after the tick.
     assert lock_pids(rig) == []
@@ -1097,8 +1124,36 @@ def test_the_scheduler_acts_as_each_owner(rig: Rig, monkeypatch: pytest.MonkeyPa
     first = rig.owner(jobs=("discovery", "academic-discovery"), apify=True)
     second = rig.owner()
     rig.fleet.refusals = {}
+
+    class ProbingDriver:
+        """The scheduler's connection for the listing, which goes past the seam
+        (the seam's `execute()` refuses the reader's `SET LOCAL ROLE`): the role
+        and claims in force are read just before the listing runs."""
+
+        def __init__(self, driver: Any) -> None:
+            self.driver = driver
+
+        def transaction(self, **kwargs: Any) -> Any:
+            return self.driver.transaction(**kwargs)
+
+        def execute(self, query: bytes) -> Any:
+            if b"harrier_schedule_inputs" in query:
+                row = self.driver.execute(
+                    b"SELECT current_user::text, "
+                    b"nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'"
+                ).fetchone()
+                listed.append((row[0], row[1]))
+            return self.driver.execute(query)
+
+    listed: list[tuple[str, str | None]] = []
+    original_listing = hostedscheduler.list_inputs
+
+    def probed_listing(driver: Any) -> Any:
+        return original_listing(ProbingDriver(driver))
+
     with monkeypatch.context() as patched:
         patched.setattr(backend, "run", probing)
+        patched.setattr(hostedscheduler, "list_inputs", probed_listing)
         scheduler = Scheduler(
             connect=lambda: postgres_connect(rig.scheduler.url),
             jobs=rig.jobs,
@@ -1111,13 +1166,13 @@ def test_the_scheduler_acts_as_each_owner(rig: Rig, monkeypatch: pytest.MonkeyPa
         )
         assert scheduler.tick() == 0
 
-    switch = f"SET LOCAL ROLE {SCHEDULE_READER_ROLE}"
-    listing = [entry for entry in seen if "harrier_schedule_inputs" in entry[0]]
-    assert len(listing) == 1
-    assert listing[0][1:] == (SCHEDULE_READER_ROLE, None)
-    # The switch itself runs before the role has changed, as the login.
-    others = [entry for entry in seen if entry not in listing and entry[0] != switch]
+    # The listing ran once, as the reader, with no claims.
+    assert listed == [(SCHEDULE_READER_ROLE, None)]
+    # Every other statement went through the seam, as an owner, and none of
+    # them is a session statement the seam now refuses.
+    others = list(seen)
     assert others, "the tick ran no statement as an owner"
+    assert not any(sql.lstrip().upper().startswith(("SET ", "RESET ")) for sql, _, _ in seen)
     assert {(role, owner) for _, role, owner in others} == {
         ("harrier_tenant", first),
         ("harrier_tenant", second),
@@ -1211,6 +1266,27 @@ def refuse_old_store(rig: Rig) -> dict[str, str | None]:
     return {}
 
 
+def refuse_no_function(rig: Rig) -> dict[str, str | None]:
+    rig.server.sql("DROP FUNCTION public.harrier_schedule_inputs()")
+    return {}
+
+
+def refuse_skipped_version(rig: Rig) -> dict[str, str | None]:
+    # A declared migration below the newest, never recorded: the runner skips
+    # it for ever, so the store is refused (spec 103).
+    rig.sql("DELETE FROM schema_version WHERE version = 12")
+    return {}
+
+
+def refuse_reader_without_set(rig: Rig) -> dict[str, str | None]:
+    # Postgres 16 split the right to set a role from membership.
+    if int(rig.sql("SHOW server_version_num")[0][0]) < 160000:
+        pytest.skip("GRANT ... WITH SET FALSE needs Postgres 16")
+    login = scheduler_login(rig.server, reader=False)
+    rig.server.sql(f"GRANT {SCHEDULE_READER_ROLE} TO {login.name} WITH SET FALSE")
+    return {URL_VARIABLE: login.url}
+
+
 def refuse_run_login_with_the_reader(rig: Rig) -> dict[str, str | None]:
     return {RUN_DATABASE_URL_VARIABLE: scheduler_login(rig.server).url}
 
@@ -1277,6 +1353,18 @@ REFUSALS: tuple[tuple[str, Callable[[Rig], dict[str, str | None]], str], ...] = 
         "a malformed key",
         lambda _rig: {CREDENTIALS_KEY_VARIABLE: "not-a-key"},
         CREDENTIALS_KEY_VARIABLE,
+    ),
+    (
+        "a run login that is not a postgres url",
+        lambda _rig: {RUN_DATABASE_URL_VARIABLE: "mysql://run@127.0.0.1/db"},
+        f"{RUN_DATABASE_URL_VARIABLE} is missing or not a postgresql:// URL",
+    ),
+    ("a store without the listing function", refuse_no_function, "does not exist"),
+    ("a store that skipped a migration", refuse_skipped_version, "version this code needs"),
+    (
+        "a login that is a member of the reader and cannot set it",
+        refuse_reader_without_set,
+        "cannot set role harrier_schedule_reader",
     ),
 )
 
@@ -1387,7 +1475,9 @@ def test_a_scheduled_run_reads_the_owners_clock(rig: Rig, monkeypatch: pytest.Mo
         "from datetime import datetime\n"
         "from harrier.discovery import apify_allowed_now\n"
         "now = datetime.now()\n"
-        "open(sys.argv[1], 'w').write(f'{now.hour} {apify_allowed_now(now)}')\n"
+        # A relative path: the file lands in the child's working directory,
+        # which must be its owner's run directory.
+        "open('result', 'w').write(f'{now.hour} {apify_allowed_now(now)}')\n"
     )
     zones = ("Pacific/Kiritimati", "Pacific/Pago_Pago")
     owners = {rig.owner(timezone=zone): zone for zone in zones}
@@ -1395,8 +1485,7 @@ def test_a_scheduled_run_reads_the_owners_clock(rig: Rig, monkeypatch: pytest.Mo
     real_env = {"PATH": os.environ.get("PATH", "")}
 
     def spawn(argv: Sequence[str], env: Mapping[str, str], cwd: Path) -> Process:
-        result = cwd / "result"
-        return spawn_group([sys.executable, "-c", script, str(result)], {**real_env, **env}, cwd)
+        return spawn_group([sys.executable, "-c", script], {**real_env, **env}, cwd)
 
     before = {zone: datetime.now(ZoneInfo(zone)) for zone in zones}
     assert rig.run(clock=RealTimeClock(), spawn=spawn) == 0
@@ -1486,6 +1575,286 @@ def test_scheduler_logs_name_only_the_owner_id(rig: Rig, caplog: pytest.LogCaptu
     started = [m for m in messages if m.startswith("scheduled start")]
     ended = [m for m in messages if m.startswith("scheduled end")]
     assert len(started) == 2 and len(ended) == 4
+
+
+# --- what the local reviews of PR 327 found ---
+
+
+@pytest.mark.parametrize("number", [signal.SIGINT, signal.SIGTERM])
+def test_a_real_signal_stops_the_tick(rig: Rig, number: signal.Signals) -> None:
+    """Fly sends SIGINT and SIGTERM, a second apart, when an update replaces
+    the machine under a running tick. Sent for real to this process, each ends
+    the tick as a stop does: the children are terminated and recorded
+    `interrupted`, the exit status is 1, and the process's own handlers are
+    back after (spec 108, Amendment (2026-10-12))."""
+    owner = rig.owner()
+    rig.fleet.plans = {owner: HANGS}
+    rig.fleet.on_spawn = lambda _spawned: signal.raise_signal(number)
+    before = signal.getsignal(number)
+
+    assert rig.run(handle_signals=True) == 1
+
+    assert rig.outcomes() == {owner: "interrupted"}
+    assert rig.fleet.spawned[0].process.terminated
+    assert signal.getsignal(number) == before
+
+
+def test_a_run_nothing_can_end_does_not_hold_the_tick_for_ever(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A process that outlives terminate and kill, as one outside its group
+    would, is given up on after the grace: the row says `timed_out`, the
+    scheduler logs that it could not confirm the end, and the tick finishes
+    and lets go of the lock, where waiting for ever would make Fly skip every
+    later start. The same on a stop (spec 108, "Finishing a run")."""
+    caplog.set_level(logging.INFO, logger=SCHEDULER_LOGGER)
+    unkillable = Plan(seconds=None, ignores_terminate=True, survives_kill=True)
+    owner = rig.owner()
+    rig.fleet.plans = {owner: unkillable}
+    assert rig.run() == 0
+    assert rig.outcomes() == {owner: "timed_out"}
+    assert rig.fleet.spawned[0].process.killed
+    assert f"scheduled step failed owner={owner} job=discovery step=kill error=not reaped" in (
+        caplog.text
+    )
+
+    rig.sql("DELETE FROM schedule_state")
+    stop = threading.Event()
+    rig.fleet.spawned.clear()
+    rig.fleet.on_spawn = lambda _spawned: stop.set()
+    assert rig.run(stop=stop) == 1
+    assert rig.outcomes() == {owner: "interrupted"}
+    assert rig.fleet.spawned[0].process.killed
+
+
+def test_a_hung_run_is_terminated_at_the_timeout_and_not_a_second_later(rig: Rig) -> None:
+    owner = rig.owner()
+    rig.fleet.plans = {owner: HANGS}
+    assert rig.run() == 0
+    process = rig.fleet.spawned[0].process
+    assert process.terminated_at is not None
+    assert process.terminated_at - process.started == 60
+
+
+def test_the_lock_check_sees_only_this_session(rig: Rig) -> None:
+    """`held()` asks `pg_locks` whether this backend holds the lock. While
+    another session holds it, a fresh connection is told it does not: behind
+    a transaction pooler the statement runs on a backend that does not, and
+    the start is refused. The holder is told it does (spec 108, "One
+    scheduler at a time")."""
+    holder = hold_the_lock(rig)
+    try:
+        assert hostedscheduler.AdvisoryLock(Connection.postgres(holder)).held() is True
+        with closing(postgres_connect(rig.scheduler.url)) as fresh:
+            assert hostedscheduler.AdvisoryLock(Connection.postgres(fresh)).held() is False
+    finally:
+        holder.close()
+
+
+def test_a_runs_output_reaches_no_stream_of_the_scheduler(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """On Fly the scheduler's own stdout and stderr are the log, so a child
+    that inherited them would put its output there: nothing a run prints
+    reaches the scheduler's streams (spec 108, Open decision 6)."""
+    monkeypatch.setattr(hostedscheduler, "POLL_SECONDS", 0.05)
+    marker = f"OUTPUT-{uuid.uuid4().hex}"
+    script = f"import sys; print({marker!r}); print({marker!r}, file=sys.stderr)"
+    owner = rig.owner()
+
+    def spawn(argv: Sequence[str], env: Mapping[str, str], cwd: Path) -> Process:
+        return spawn_group([sys.executable, "-c", script], env, cwd)
+
+    assert rig.run(clock=RealTimeClock(), spawn=spawn) == 0
+    assert rig.outcomes() == {owner: "ok"}
+    captured = capfd.readouterr()
+    assert marker not in captured.out and marker not in captured.err
+
+
+def test_a_sweep_marks_only_running_rows(rig: Rig) -> None:
+    """The sweep turns `running` into `interrupted` and touches nothing else:
+    a failed run that is not due keeps its outcome and exit status, so the
+    report still shows it."""
+    owner = rig.owner(jobs=("discovery", "academic-discovery"), apify=True)
+    rig.put_state(owner, "discovery", last_outcome="running", last_exit=None)
+    rig.put_state(
+        owner,
+        "academic-discovery",
+        last_slot_at=ACADEMIC_SLOT,
+        last_outcome="failed",
+        last_exit=3,
+        last_finished_at="2026-10-12T09:45:00Z",
+        last_ok_at="2026-10-05T09:50:00Z",
+    )
+    assert rig.run() == 0
+    state = rig.state()
+    kept = state[(owner, "academic-discovery")]
+    assert (kept["last_outcome"], kept["last_exit"]) == ("failed", 3)
+    assert kept["last_finished_at"] == "2026-10-12T09:45:00Z"
+    assert state[(owner, "discovery")]["last_outcome"] == "interrupted"
+    assert rig.fleet.spawned == []
+
+
+def test_a_report_refuses_a_function_that_would_list_no_owner(
+    rig: Rig, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A `harrier_schedule_inputs()` owned by a role that cannot bypass row
+    security lists nobody, and the scheduler refuses to start. The report
+    must say so, not print an empty schedule and exit 0: a scheduler that
+    never starts is seen through it (spec 108, Failure modes, and Hosting
+    budget). Built as the fault is, with a function owner that may read the
+    tables and does not bypass the policy."""
+    rig.owner(updated_at="2026-10-01 00:00:00")
+    owner_role = rig.server.role("NOLOGIN")
+    rig.server.sql(
+        f"GRANT SELECT ON user_config, schedule_state TO {owner_role}",
+        f"ALTER FUNCTION public.harrier_schedule_inputs() OWNER TO {owner_role}",
+    )
+    out = io.StringIO()
+    code = run_report(rig.environ(), clock=FakeClock(), jobs=rig.jobs, out=out)
+    assert code == 1
+    assert out.getvalue() == ""
+    assert "owned by a role that does not bypass row security" in capsys.readouterr().err
+
+
+def test_a_report_exits_one_when_it_cannot_list(
+    rig: Rig, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A login that cannot take the reader's role cannot list, and the report
+    says so with exit 1."""
+    login = scheduler_login(rig.server, reader=False)
+    out = io.StringIO()
+    code = run_report(
+        rig.environ(**{URL_VARIABLE: login.url}), clock=FakeClock(), jobs=rig.jobs, out=out
+    )
+    assert code == 1 and out.getvalue() == ""
+    assert capsys.readouterr().err.startswith("error: ")
+
+
+def test_a_store_error_is_logged_without_a_secret(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A store error's text is scrubbed before it is logged."""
+    secret = f"hunter-{uuid.uuid4().hex}"
+    text = hostedscheduler.describe(
+        connection.StoreDatabaseError(f"failed at postgresql://someone:{secret}@db.example/x")
+    )
+    assert secret not in text and text.startswith("StoreDatabaseError: ")
+
+
+def test_one_unreadable_row_stops_neither_the_tick_nor_the_report(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A `schedule` row that reaches the store another way and breaks the
+    JSON parser itself (nested past its depth) is skipped and logged with the
+    owner's id; the other owner's run starts, and the report shows the row
+    instead of crashing on it (spec 108, "A tick", "Isolation")."""
+    caplog.set_level(logging.INFO, logger="harrier.hostedschedule")
+    good = rig.owner()
+    poisoned = rig.owner()
+    rig.sql(
+        "UPDATE user_config SET value = %s WHERE kind = 'schedule' AND owner_id = %s",
+        ("[" * 100_000, poisoned),
+    )
+
+    assert rig.run() == 0
+
+    assert rig.outcomes() == {good: "ok"}
+    assert [m for m in (r.getMessage() for r in caplog.records) if "scheduled skip" in m] == [
+        f"scheduled skip owner={poisoned} reason=schedule is not valid JSON"
+    ]
+    code, text = report(rig, now=START + timedelta(minutes=10))
+    assert code == 0, text
+    assert f"{poisoned} - schedule invalid: schedule is not valid JSON" in text
+
+
+def test_a_missed_slot_keeps_the_last_start(rig: Rig) -> None:
+    """A slot recorded `missed` never started, so it leaves `last_started_at`
+    alone: the queue orders owners by it, and an owner just marked missed must
+    not jump ahead of owners who never started (spec 108, "A tick", step 3)."""
+    owner = rig.server.owner()
+    rig.put_state(
+        owner,
+        "discovery",
+        last_slot_at="2026-10-11T20:00:00Z",
+        last_started_at="2026-10-11T20:05:00Z",
+    )
+    with closing(postgres_connect(rig.scheduler.url)) as driver:
+        conn = Connection.postgres(driver, claims=owner_claims(owner))
+        assert claimed(conn, "discovery", SLOT, outcome="missed") is True
+    row = rig.state()[(owner, "discovery")]
+    assert (row["last_slot_at"], row["last_outcome"]) == (SLOT, "missed")
+    assert row["last_started_at"] == "2026-10-11T20:05:00Z"
+    assert row["last_ok_at"] == SLOT
+
+
+def test_an_outcome_no_row_holds_is_not_a_clean_tick(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The owner's row was deleted while the run ran, as erasing an owner
+    does: the finish changes no row, so nothing recorded the outcome. It is
+    logged and the tick exits 1, as for a finish the store refused."""
+    caplog.set_level(logging.INFO, logger=SCHEDULER_LOGGER)
+    owner = rig.owner()
+
+    def erase(_spawned: Spawned) -> None:
+        rig.sql("DELETE FROM schedule_state")
+
+    rig.fleet.on_spawn = erase
+    assert rig.run() == 1
+    assert rig.state() == {}
+    assert f"scheduled step failed owner={owner} job=discovery step=finish error=LookupError" in (
+        caplog.text
+    )
+    assert "scheduled end" not in caplog.text
+
+
+def test_a_log_or_a_repr_never_carries_the_passwords_or_the_key(rig: Rig) -> None:
+    """The settings and the scheduler hold both database URLs and the
+    credentials key in their fields; none of it is in their text, so a log
+    line, a `%r` or a crash report that shows one carries no secret."""
+    environ = rig.environ()
+    key = parse_key(rig.key_text)
+    assert key is not None
+    settings = read_settings(environ)
+    scheduler = Scheduler(
+        connect=lambda: postgres_connect(rig.scheduler.url),
+        jobs=rig.jobs,
+        settings=settings,
+        server_env=environ,
+        root=rig.tmp_path,
+    )
+    secrets = [rig.scheduler.password, rig.run_login.password, rig.key_text.split(":")[1]]
+    for text in (repr(settings), repr(scheduler), str(settings)):
+        assert not any(secret in text for secret in secrets), text
+
+
+def test_an_unreadable_credential_is_logged_with_its_key_id(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An operator needs the key id to see a replaced key (spec 106 logs it
+    the same way); the value is never in the line."""
+    caplog.set_level(logging.INFO, logger=SCHEDULER_LOGGER)
+    owner = rig.owner()
+    rig.fleet.refusals = {owner: CredentialUnreadable("apify", "old-key-id")}
+    assert rig.run() == 0
+    assert rig.outcomes() == {owner: "refused"}
+    assert (
+        f"scheduled step failed owner={owner} job=discovery step=bind "
+        "error=CredentialUnreadable: your apify credential cannot be read; set it again "
+        "key_id=old-key-id"
+    ) in caplog.text
+
+
+def test_a_run_login_refusal_speaks_for_the_scheduler(
+    rig: Rig, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The check is the API's; the words an operator reads name the
+    scheduler, not the hosted API."""
+    assert rig.run(rig.environ(**{RUN_DATABASE_URL_VARIABLE: rig.scheduler.url})) == 1
+    err = capsys.readouterr().err
+    assert "hosted API" not in err and "API's own" not in err
+    assert "the scheduler's own login role" in err
 
 
 # --- the operator's report ---

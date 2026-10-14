@@ -78,7 +78,6 @@ from harrier.loginrole import login_role_problems
 from harrier.pgstore import check_no_skipped_versions, check_postgres_version, postgres_connect
 from harrier.schedule import ScheduleJob
 from harrier.sources import scrub_secrets
-from harrier.tracker.schema import TENANT_ROLE
 from harrier.userconfig.store import ConfigError
 from harrier_api.hostedauth import (
     RUN_DATABASE_URL_VARIABLE,
@@ -204,7 +203,9 @@ def spawn_group(argv: Sequence[str], env: Mapping[str, str], cwd: Path) -> Proce
 class Settings:
     concurrency: int
     timeout_seconds: int
-    run_database_url: str
+    # Kept out of the repr: a settings object that reaches a log record
+    # carries no password (as `BoundRun` keeps its environment out).
+    run_database_url: str = field(repr=False)
     key: CredentialsKey
 
 
@@ -244,15 +245,11 @@ def read_settings(environ: Mapping[str, str]) -> Settings:
     return Settings(concurrency, timeout, run_url, key)
 
 
-def check_store(conn: Connection) -> str:
-    """The checks that need the store, on the scheduler's own login, in the
-    order spec 108 lists them (The scheduler's login). Returns the login
-    role's name. Raises `StartRefused` naming the first that fails."""
-    row = conn.execute("SELECT current_user::text").fetchone()
-    role = str(row[0]) if row else ""
-    problems = login_role_problems(conn, role, lists_schedules=True)
-    if problems:
-        raise StartRefused(f"its login role {role} fails: " + "; ".join(map(str, problems)))
+def check_function_owner(conn: Connection) -> None:
+    """Raise `StartRefused` unless the owner of `harrier_schedule_inputs()`
+    bypasses row security: a function owned by a role that does not would
+    list no owner, so nothing would ever be due, and the report would show
+    an empty schedule instead of the fault (spec 108, Failure modes)."""
     owner = conn.execute(
         "SELECT r.rolsuper OR r.rolbypassrls FROM pg_catalog.pg_proc p "
         "JOIN pg_catalog.pg_roles r ON r.oid = p.proowner "
@@ -265,10 +262,21 @@ def check_store(conn: Connection) -> str:
             "harrier_schedule_inputs() is owned by a role that does not bypass row security; "
             "it would list no owner"
         )
+
+
+def check_store(conn: Connection) -> str:
+    """The checks that need the store, on the scheduler's own login, in the
+    order spec 108 lists them (The scheduler's login). Returns the login
+    role's name. Raises `StartRefused` naming the first that fails."""
+    row = conn.execute("SELECT current_user::text").fetchone()
+    role = str(row[0]) if row else ""
+    problems = login_role_problems(conn, role, lists_schedules=True)
+    if problems:
+        raise StartRefused(f"its login role {role} fails: " + "; ".join(map(str, problems)))
+    check_function_owner(conn)
     # Read as the tenant role, which may read the version: the login role
     # holds no grant of its own (spec 134).
-    with conn.transaction():
-        conn.execute(f"SET LOCAL ROLE {TENANT_ROLE}")
+    with conn.transaction(tenant=True):
         versions = {int(r[0]) for r in conn.execute("SELECT version FROM public.schema_version")}
     try:
         check_postgres_version(max(versions, default=0))
@@ -362,7 +370,9 @@ class Scheduler:
     connect: Callable[[], Any]
     jobs: Mapping[str, ScheduleJob]
     settings: Settings
-    server_env: Mapping[str, str]
+    # The scheduler's whole environment: both database URLs and the
+    # credentials key. Never in the repr.
+    server_env: Mapping[str, str] = field(repr=False)
     root: Path
     clock: Clock = field(default_factory=SystemClock)
     spawn: Spawn = spawn_group
@@ -386,7 +396,7 @@ class Scheduler:
         the process was stopped, or an outcome could not be recorded."""
         try:
             with closing(self.connect()) as driver:
-                views = list_inputs(Connection.postgres(driver))
+                views = list_inputs(driver)
         except Exception as error:
             # The next start lists again (spec 108, "Isolation").
             logger.error("scheduler could not list schedules: %s", describe(error))
@@ -468,9 +478,6 @@ class Scheduler:
             self._launch(entry)
 
     def _enqueue(self, entry: DueSlot) -> None:
-        taken = [e for e in (*self._queue, *(r.entry for r in self._running))]
-        if any(e.owner == entry.owner and e.job == entry.job for e in taken):
-            return
         self._queue.append(entry)
         self._queue.sort(key=DueSlot.order)
 
@@ -528,11 +535,17 @@ class Scheduler:
             self._record(entry, "not_configured", None)
             return
         except Exception as error:
+            # An unreadable credential also names its key id, as spec 106
+            # logs it: an operator needs it to see a replaced key. The key
+            # id is plain text, never a value.
+            detail = describe(error)
+            if isinstance(error, CredentialUnreadable):
+                detail += f" key_id={error.key_id}"
             logger.error(
                 "scheduled step failed owner=%s job=%s step=bind error=%s",
                 entry.owner,
                 entry.job,
-                describe(error),
+                detail,
             )
             self._record(entry, "refused", None)
             return
@@ -623,7 +636,7 @@ class Scheduler:
         now = instant_text(self.clock.now())
         try:
             with self._as_owner(entry.owner) as conn:
-                finish_slot(
+                changed = finish_slot(
                     conn,
                     entry.job,
                     entry.text,
@@ -632,6 +645,10 @@ class Scheduler:
                     finished_at=now,
                     ok_at=now if outcome == "ok" else None,
                 )
+            if not changed:
+                # The owner's row is gone, or holds a newer slot: nothing
+                # recorded this outcome, so the tick is not a clean one.
+                raise LookupError("no schedule_state row holds this slot")
         except Exception as error:
             self._unrecorded += 1
             logger.error(
@@ -691,7 +708,12 @@ def run_scheduler(
             try:
                 check_run_login_role(settings.run_database_url, role)
             except HostedStartRefused as refused:
-                raise StartRefused(str(refused)) from None
+                # The check is the API's; the words are the scheduler's.
+                raise StartRefused(
+                    str(refused)
+                    .replace("the hosted API", "the scheduler")
+                    .replace("the API's own login role", "the scheduler's own login role")
+                ) from None
             lock = AdvisoryLock(Connection.postgres(locker))
             if not lock.try_acquire():
                 logger.info("scheduler standing by: another instance holds the lock")
@@ -754,10 +776,13 @@ def run_report(
     try:
         with closing(postgres_connect(environ.get(URL_VARIABLE, ""))) as driver:
             conn = Connection.postgres(driver)
-            views = list_inputs(conn)
+            # A listing that would silently be empty is the fault the report
+            # exists to show, so it is refused, not printed as a quiet one.
+            check_function_owner(conn)
+            views = list_inputs(driver)
             row = conn.execute(SQL_LOCK_IS_HELD).fetchone()
             running = row is not None and bool(row[0])
-    except StoreError as error:
+    except (StartRefused, StoreError) as error:
         return _refuse(error)
     now = (clock if clock is not None else SystemClock()).now()
     lines = report_lines(views, jobs if jobs is not None else load_hosted_jobs(), now)
