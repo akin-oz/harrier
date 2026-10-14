@@ -61,6 +61,16 @@ its ownership demand. Spec 140 gives the kind its documents.
   with the track's screening document.
 - `services/api/src/harrier_cli/main.py`: `profile put screening`, and the
   per-kind refusals below.
+- `services/api/src/harrier_api/tracks_routes.py`: the browser's kind list
+  leaves the focused kind out (amendment 3).
+- `services/api/src/harrier_api/capture_routes.py`: a capture on a focused
+  track with no screening document answers 409 (amendment 4).
+- `services/api/src/harrier/screening/policy.py`: the rule fingerprint the
+  focused version digests becomes public (amendment 4).
+- `config/data-classification.json`, `.gitignore` and `.dockerignore`: the
+  example's real name, `config/screening.focused.json`, is never-in-git and
+  never in the image (amendment 5). A guarded path; approved under this
+  spec.
 - `config/screening.focused.example.json` (new, public, synthetic): the
   document's shape and the proposed defaults.
 - `.ai/rules/product-invariants.md`: the remote-only sentence names the
@@ -127,25 +137,33 @@ non-empty subset of `title` and `description`. An unknown key is refused.
 
 On a focused track, `add` (and spec 139's discovery) runs:
 
-1. **The industry gates, unchanged.** Remote-only and EMEA scope on
-   location signals, as `harrier.screening.rules` applies them, and the
-   title excludes from the screening document's `title_keywords_exclude`.
-   A posting that fails a gate is refused by `add` with the gate's reason,
-   as on the industry track.
+1. **The industry gates, unchanged.** The title rule over the screening
+   document's targets, then remote-only and EMEA scope on location signals,
+   as `harrier.screening.rules` applies them, with the regions of the
+   shared candidate configuration. A manual `add` lands whatever its gates
+   say, as it does on the industry track, and the first failed gate is
+   named in the row's `signals` as `gate=<reason>` (amendment 1). The gates
+   filter discovery (spec 139).
 2. **The score.** `base_score`, plus `exact_title_bonus` on an exact title
-   match, plus `include_keyword_bonus` per title keyword up to its cap,
-   plus `remote_bonus` and `preferred_region_bonus` as the industry score
-   applies them. Then each bonus group adds its `points` once if any of its
-   phrases appears in its fields. Each penalty group subtracts its `points`
-   once if any of its phrases appears in its fields. The result is floored
-   at 0. Phrases match case-insensitively on whole words.
+   match, plus `include_keyword_bonus` per title keyword found in the title
+   up to its cap, plus `remote_bonus` and `preferred_region_bonus` as the
+   industry score applies them. Then each bonus group adds its `points`
+   once if any of its phrases appears in its fields. Each penalty group
+   subtracts its `points` once if any of its phrases appears in its fields.
+   The result is floored at 0. Phrases and title keywords match
+   case-insensitively on whole words.
+3. **Blockers.** A posting with a blocker (specs 078, 081, 088) loses the
+   blocker penalty derived from the screening document, so it ranks below
+   every posting without one, as on the industry track. Its `signals`
+   names each blocker (amendment 2).
 
 Penalties rank and never reject. The industry rule that keeps negative
 hints to the location field governs rejection. It is not changed, and a
 penalty phrase in a description never removes a posting.
 
 The row's `signals` names each group that fired, as
-`scorer=focused|bonus=<name>|penalty=<name>`. `scoring_version` is the
+`scorer=focused|bonus=<name>|penalty=<name>`, followed by any
+`blocker=<kind> "<phrase>"` and `gate=<reason>`. `scoring_version` is the
 policy digest of the screening document, so a changed weight changes the
 version (spec 079).
 
@@ -215,35 +233,81 @@ owner to confirm. They are proposals, not measured values.
 ## Acceptance criteria
 
 - [ ] `harrier tracks add f --kind focused --label F` then `tracks list`
-  prints the new track with kind `focused` (planned
-  test_a_focused_track_can_be_added).
-- [ ] A second unarchived focused track exits 2 and adds no row (planned
-  test_a_second_focused_track_is_refused).
+  prints the new track with kind `focused` (`services/api/tests/test_focused_track.py::test_a_focused_track_can_be_added`).
+- [ ] A second unarchived focused track exits 2 and adds no row (`services/api/tests/test_focused_track.py::test_a_second_focused_track_is_refused`).
 - [ ] A posting with the title "Junior Frontend Developer", a remote EMEA
   location and "Figma" in its description is added to a focused track with
   a score that includes the `level` and `figma` bonuses, and its `signals`
-  names both (planned test_focused_add_scores_with_the_tracks_document).
+  names both (`services/api/tests/test_focused_track.py::test_focused_add_scores_with_the_tracks_document`).
 - [ ] The same posting with "on-call rotation" in its description scores
-  15 lower and is still added (planned
-  test_a_penalty_ranks_and_never_rejects).
-- [ ] A posting with an onsite location is refused on a focused track with
-  the industry gate's reason (planned test_focused_keeps_the_remote_gate).
+  15 lower and is still added (`services/api/tests/test_focused_track.py::test_a_penalty_ranks_and_never_rejects`).
+- [ ] A posting with an onsite location is added to a focused track, and
+  its `signals` names the industry gate's reason (amendment 1;
+  `services/api/tests/test_focused_track.py::test_focused_add_names_a_failed_gate`).
+- [ ] A posting with a blocker scores below the least an unblocked posting
+  can score, and its signals name the blocker (amendment 2;
+  `services/api/tests/test_focused_track.py::test_a_blocked_posting_ranks_below_every_unblocked_one`).
+- [ ] The browser's kind list does not offer the focused kind, and a track
+  of that kind still lists over the API (amendment 3;
+  `services/api/tests/test_tracks_cli.py::test_the_browser_cannot_add_a_focused_track`).
 - [ ] `add` on a focused track with no screening document exits 2 and adds
-  no row (planned test_focused_add_without_configuration_is_refused).
+  no row (`services/api/tests/test_focused_track.py::test_focused_add_without_configuration_is_refused`).
 - [ ] `profile put screening` with a negative `points` exits 2 naming the
-  field and stores nothing (planned test_a_malformed_screening_document_is_refused).
-- [ ] `profile put screening` on the industry track exits 2 (planned
-  test_screening_is_owned_by_a_focused_track_only).
+  field and stores nothing (`services/api/tests/test_focused_track.py::test_a_malformed_screening_document_is_refused`).
+- [ ] `profile put screening` on the industry track exits 2 (`services/api/tests/test_focused_track.py::test_screening_is_owned_by_a_focused_track_only`).
 - [ ] `discover`, `tailor`, `cover-letter` and `answers` on a focused track
-  exit 2 naming specs 139 and 140 (planned
-  test_focused_refuses_what_later_specs_open).
+  exit 2 naming specs 139 and 140 (`services/api/tests/test_focused_track.py::test_focused_refuses_what_later_specs_open`).
 - [ ] The migration on a database holding an academic and an archived
-  track keeps every track row equal, in both dialects (planned
-  test_the_kind_migration_keeps_every_track).
+  track keeps every track row equal, in both dialects (`services/api/tests/test_focused_track.py::test_the_kind_migration_keeps_every_track`).
 - [ ] With a focused track present, every industry-track command prints
   what it printed before, and an industry `add` stores the same score and
-  `scoring_version` (planned test_the_industry_track_is_unchanged_by_a_focused_track).
+  `scoring_version` (`services/api/tests/test_focused_track.py::test_the_industry_track_is_unchanged_by_a_focused_track`).
 - [ ] `just check` passes.
+
+## Amendments found while implementing (2026-10-14)
+
+Each was put to the owner and answered before it was built.
+
+1. **A manual add is not refused by a gate.** This spec said a focused
+   `add` refuses a posting that fails a gate "as on the industry track".
+   The industry track does no such thing: `add_captured_job`
+   (`services/api/src/harrier/capture.py`) lands every manual add as a
+   prospect, because a person chose it. The owner chose to match the
+   industry track. The focused `add` lands the row and names the first
+   failed gate in `signals`. The acceptance criterion for an onsite posting
+   changed with it.
+2. **Blockers rank last on the focused track too.** The industry score
+   subtracts a derived penalty for a blocker (specs 078, 081). The formula
+   above left it out, so a posting the candidate cannot take could rank
+   high. The owner chose to include it.
+3. **The browser keeps its two kinds.** `GET /tracks/kinds` listed every
+   kind in `TRACK_KINDS`, so adding the focused kind would have offered it
+   in the browser's add form, which Out of scope rules out. The route now
+   lists every kind but the focused one. `TrackIn.kind` already refused it,
+   and `TrackOut.kind` is a string, so the API contract does not change.
+4. **Two seams the scope list missed.** The capture routes map each capture
+   status to an HTTP status; the new `unconfigured` status maps to 409,
+   which the routes already declare. The focused policy version digests the
+   same rule tables as the industry one, through `rule_fingerprint` in
+   `services/api/src/harrier/screening/policy.py`, renamed from
+   `_rule_fingerprint` so a second module can read it.
+
+5. **The example's real name is classified.** Every `config/*.example.*`
+   names a file an operator may create beside it, and
+   `services/api/tests/test_classification_coverage.py::test_every_example_config_has_its_real_name_classified`
+   requires that name to be never-in-git. `config/screening.focused.json`
+   joins the never-in-git list, `.gitignore` and `.dockerignore`, as
+   `config/academic-searches.json` did under spec 097
+   (`services/api/tests/test_container.py::test_every_never_in_git_path_is_kept_out_of_the_image`
+   holds the image to the list). The Migration
+   section's advice to keep the copy outside the repository still holds;
+   this stops a copy made beside the example from being staged.
+
+The migration's order is recorded in its comment in
+`services/api/src/harrier/tracker/schema.py`. A rebuild into a new table
+and a rename, the usual shape, fails on SQLite twice: the rename on the
+`jobs` triggers that name `tracks`, and the commit on the foreign key
+violations the drop deferred.
 
 ## Proof / origin
 

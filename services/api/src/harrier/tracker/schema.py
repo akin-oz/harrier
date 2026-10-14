@@ -102,6 +102,10 @@ CONTACT_FIELDS: tuple[str, ...] = (
 
 _STATUS_LIST = ", ".join(f"'{s}'" for s in STATUSES)
 _TRACK_KIND_LIST = ", ".join(f"'{kind}'" for kind in TRACK_KINDS)
+# The kinds migration 8 and the Postgres baseline were written with. Frozen:
+# an applied migration's text never changes, and migration 20 widens the
+# CHECK to TRACK_KINDS (spec 137).
+_FIRST_TRACK_KIND_LIST = "'industry', 'academic'"
 _JOB_TEXT_COLUMNS = ", ".join(
     f"{name} TEXT NOT NULL DEFAULT ''" for name in TRACKER_FIELDS if name != "status"
 )
@@ -346,8 +350,8 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
         [
             # Search tracks (spec 091, ADR-012). A track is a second kind of
             # search by the same person; a tenant is a second person and is a
-            # store boundary, never a column. The kind list derives from
-            # TRACK_KINDS the way the status CHECK derives from STATUSES.
+            # store boundary, never a column. The kind list is the two kinds
+            # there were; migration 20 widens it to TRACK_KINDS (spec 137).
             f"""
             CREATE TABLE tracks (
                 id INTEGER PRIMARY KEY,
@@ -356,7 +360,7 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
                     AND slug GLOB '[a-z]*'
                     AND slug NOT GLOB '*[^a-z0-9-]*'
                 ),
-                kind TEXT NOT NULL CHECK (kind IN ({_TRACK_KIND_LIST})),
+                kind TEXT NOT NULL CHECK (kind IN ({_FIRST_TRACK_KIND_LIST})),
                 label TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 archived_at TEXT
@@ -530,6 +534,61 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
     # Postgres only (spec 106): the per-owner run records. The run journal
     # file keeps the local equivalent. Empty on purpose, and declared so.
     (19, []),
+    (
+        20,
+        [
+            # The focused kind (spec 137): the `tracks.kind` CHECK widens to
+            # TRACK_KINDS. SQLite cannot alter a CHECK, so the table is
+            # rebuilt in this migration's one transaction (spec 090), keeping
+            # every row's id, slug, kind, label, created_at and archived_at.
+            #
+            # The order is deliberate. Dropping `tracks` with foreign keys on
+            # deletes every row as far as profile_documents' reference sees
+            # it, and the runner cannot turn foreign keys off inside its
+            # transaction, so the check is deferred to the commit. A deferred
+            # violation is cleared only by inserting into the parent table by
+            # its own name: rows copied into a new table that is then renamed
+            # never clear it, and the rename also fails on the jobs triggers
+            # that name `tracks`. So the rows wait in a temporary table, and
+            # `tracks` is created again under its own name, which leaves the
+            # jobs triggers untouched. The two triggers on `tracks` go with
+            # the drop and are made again. Proved by
+            # tests/test_focused_track.py::test_the_kind_migration_keeps_every_track.
+            "PRAGMA defer_foreign_keys = ON",
+            """
+            CREATE TEMP TABLE tracks_before AS
+            SELECT id, slug, kind, label, created_at, archived_at FROM tracks
+            """,
+            "DROP TABLE tracks",
+            f"""
+            CREATE TABLE tracks (
+                id INTEGER PRIMARY KEY,
+                slug TEXT NOT NULL UNIQUE CHECK (
+                    length(slug) BETWEEN 1 AND 32
+                    AND slug GLOB '[a-z]*'
+                    AND slug NOT GLOB '*[^a-z0-9-]*'
+                ),
+                kind TEXT NOT NULL CHECK (kind IN ({_TRACK_KIND_LIST})),
+                label TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                archived_at TEXT
+            )
+            """,
+            """
+            INSERT INTO tracks (id, slug, kind, label, created_at, archived_at)
+            SELECT id, slug, kind, label, created_at, archived_at FROM tracks_before
+            """,
+            "DROP TABLE tracks_before",
+            """
+            CREATE TRIGGER tracks_are_never_deleted BEFORE DELETE ON tracks
+            BEGIN SELECT RAISE(ABORT, 'tracks are archived, never deleted'); END
+            """,
+            """
+            CREATE TRIGGER tracks_keep_their_id BEFORE UPDATE OF id ON tracks
+            BEGIN SELECT RAISE(ABORT, 'a track id never changes'); END
+            """,
+        ],
+    ),
 ]
 
 # --- Postgres (spec 103, ADR-013) ---
@@ -580,7 +639,7 @@ POSTGRES_BASELINE: list[str] = [
     CREATE TABLE tracks (
         {_PG_ID},
         slug text NOT NULL UNIQUE CHECK (slug ~ '^[a-z][a-z0-9-]{{0,31}}$'),
-        kind text NOT NULL CHECK (kind IN ({_TRACK_KIND_LIST})),
+        kind text NOT NULL CHECK (kind IN ({_FIRST_TRACK_KIND_LIST})),
         label text NOT NULL,
         created_at text NOT NULL DEFAULT {_PG_NOW},
         archived_at text
@@ -1615,6 +1674,19 @@ POSTGRES_MIGRATIONS: list[tuple[int, list[str]]] = [
     (17, POSTGRES_SCHEDULE_STATE),
     (18, POSTGRES_CREDENTIALS),
     (19, POSTGRES_RUN_RECORDS),
+    # Spec 137: SQLite's migration 20, without its rebuild. Postgres replaces
+    # the CHECK in place; the baseline's inline CHECK is named
+    # tracks_kind_check by Postgres's own rule.
+    (
+        20,
+        [
+            "ALTER TABLE tracks DROP CONSTRAINT tracks_kind_check",
+            (
+                "ALTER TABLE tracks ADD CONSTRAINT tracks_kind_check "
+                f"CHECK (kind IN ({_TRACK_KIND_LIST}))"
+            ),
+        ],
+    ),
 ]
 
 

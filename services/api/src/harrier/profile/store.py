@@ -31,7 +31,13 @@ INTERVIEW_PREP_DIR = "interview-prep"
 # The kinds a track owns (specs 099, 101). Every other kind is shared by every
 # track. The write path holds this rule rather than a CHECK, so a later spec
 # can widen it without rebuilding the table.
-TRACK_OWNED_KINDS: frozenset[str] = frozenset({"resume_framing", "application_profile"})
+TRACK_OWNED_KINDS: frozenset[str] = frozenset(
+    {"resume_framing", "application_profile", "screening"}
+)
+
+# Owned kinds that only a track of one kind may own (spec 137): a screening
+# document configures the focused kind's score, and no other kind reads one.
+OWNING_TRACK_KIND: dict[str, str] = {"screening": "focused"}
 
 
 class ProfileDocumentError(ValueError):
@@ -67,6 +73,12 @@ def _upsert(
         raise ProfileDocumentError(f"{kind} is owned by a track; it cannot be shared")
     if kind not in TRACK_OWNED_KINDS and track_id is not None:
         raise ProfileDocumentError(f"{kind} is shared by every track; it cannot be owned")
+    owner_kind = OWNING_TRACK_KIND.get(kind)
+    if owner_kind is not None and track_id is not None:
+        row = conn.execute("SELECT slug, kind FROM tracks WHERE id = ?", (track_id,)).fetchone()
+        if row is None or row[1] != owner_kind:
+            named = f"track {row[0]} is {row[1]}" if row is not None else f"no track {track_id}"
+            raise ProfileDocumentError(f"{kind} is owned by a {owner_kind} track only; {named}")
     now = store_now()
     if track_id is None:
         update_or_insert(

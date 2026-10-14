@@ -16,7 +16,8 @@ rewrite. Changing any of them requires an explicit spec.
   returns it. Filtering, scoring, remote-only enforcement, EMEA scoping, dedupe, and
   tracker append happen once, in the shared screening path. No per-source scoring
   logic, ever.
-- **Remote-only and EMEA scope are enforced on the industry kind.** Hybrid
+- **Remote-only and EMEA scope are enforced on the industry and focused
+  kinds.** Hybrid
   and onsite are rejected on location signals; the deliberate scoping of
   negative hints to the location field (not descriptions) is documented in
   harrier.screening.rules and pinned by

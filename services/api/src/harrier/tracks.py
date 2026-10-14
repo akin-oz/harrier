@@ -20,18 +20,19 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from harrier import voices
 from harrier.connection import Connection, Row, StoreIntegrityError, store_now
 
-TrackKind = Literal["industry", "academic"]
+TrackKind = Literal["industry", "academic", "focused"]
 
-# The kinds that have a policy. The `tracks.kind` CHECK in migration 8 derives
-# from this tuple the way the status CHECK derives from STATUSES; adding a
-# kind is a migration plus the code that kind needs, never a runtime insert.
-TRACK_KINDS: tuple[TrackKind, ...] = ("industry", "academic")
+# The kinds that have a policy. The `tracks.kind` CHECK derives from this
+# tuple the way the status CHECK derives from STATUSES, in the latest
+# migration to widen it (20, spec 137); adding a kind is a migration plus the
+# code that kind needs, never a runtime insert.
+TRACK_KINDS: tuple[TrackKind, ...] = ("industry", "academic", "focused")
 
 # Seeded by migration 8. Its slug and label are rows, not constants; only its
 # id is fixed, because every row that existed before tracks lands in it.
@@ -215,6 +216,12 @@ KIND_RULES: dict[str, KindRules] = {
         letter_max_words=None,
     ),
 }
+# A search for roles with a bounded scope, split from the industry search by
+# the ownership a posting demands (spec 137). It reads its rows as the
+# industry kind does: the same labels, next actions, follow-up and queue. Its
+# own score comes from the screening document the track owns, and its
+# documents arrive with spec 140.
+KIND_RULES["focused"] = replace(KIND_RULES["industry"])
 
 
 # What a non-default track may run, by operation name (spec 093, moved here by
@@ -270,6 +277,28 @@ WRITE_OPERATIONS: frozenset[str] = frozenset(
 )
 
 
+# Operations a kind may not run yet, each with the spec that opens it
+# (spec 137). The allowlist above is per track; this is per kind, and it
+# empties as those specs land.
+HELD_OPERATIONS: dict[str, dict[str, str]] = {
+    "focused": {
+        "discover": "spec 139",
+        "tailor": "spec 140",
+        "cover-letter": "spec 140",
+        "answers": "spec 140",
+    },
+}
+
+
+def held_refusal(kind: str, operation: str) -> str | None:
+    """Why a track of this kind may not run this operation yet, naming the
+    spec that opens it, or None (spec 137)."""
+    opened_by = HELD_OPERATIONS.get(kind, {}).get(operation)
+    if opened_by is None:
+        return None
+    return f"{operation} is not available on a {kind} track until {opened_by}"
+
+
 def operation_refusal(scope: Scope, operation: str) -> str | None:
     """Why this scope may not run this operation, or None when it may.
 
@@ -278,6 +307,9 @@ def operation_refusal(scope: Scope, operation: str) -> str | None:
     """
     if scope.track.id != DEFAULT_TRACK_ID and operation not in NON_DEFAULT_OPERATIONS:
         return f"{operation} is not available on track {scope.track.slug}"
+    held = held_refusal(scope.track.kind, operation)
+    if held is not None:
+        return held
     if scope.track.archived and operation in WRITE_OPERATIONS:
         return f"track {scope.track.slug} is archived"
     return None
@@ -382,7 +414,8 @@ def add_track(conn: Connection, slug: str, kind: str, label: str) -> Track:
 
     A second industry track is refused: it would share the one candidate
     configuration and the one watchlist, which is the same search twice. That
-    refusal lifts once configuration is per track.
+    refusal lifts once configuration is per track. A second unarchived
+    focused track is refused for the same reason (spec 137).
     """
     validate_slug(slug)
     refusal = kind_refusal(kind)
@@ -393,12 +426,27 @@ def add_track(conn: Connection, slug: str, kind: str, label: str) -> Track:
         raise TrackRefusedError("a track needs a label")
     try:
         with conn.transaction():
+            if kind == "focused":
+                _refuse_a_second_focused_track(conn)
             conn.execute(
                 "INSERT INTO tracks (slug, kind, label) VALUES (?, ?, ?)", (slug, kind, label)
             )
     except StoreIntegrityError as error:
         raise DuplicateTrackError(f"a track with slug {slug!r} already exists") from error
     return resolve_scope(conn, slug).track
+
+
+def _refuse_a_second_focused_track(conn: Connection) -> None:
+    """One install has one bounded-role search, as it has one industry search
+    (spec 137). An archived focused track does not count. Read inside the
+    insert's transaction."""
+    row = conn.execute(
+        "SELECT slug FROM tracks WHERE kind = 'focused' AND archived_at IS NULL ORDER BY id"
+    ).fetchone()
+    if row is not None:
+        raise TrackRefusedError(
+            f"a second focused track is not supported: track {row[0]} is the focused track"
+        )
 
 
 def archive_track(conn: Connection, slug: str) -> Track:

@@ -21,6 +21,12 @@ from harrier.screening.descriptions import (
     save_description_cache,
 )
 from harrier.screening.eligibility import assess_eligibility
+from harrier.screening.focused import (
+    ScreeningDocument,
+    failed_gate,
+    focused_score,
+    load_screening,
+)
 from harrier.screening.normalized import make_normalized_job, normalize
 from harrier.screening.pipeline import build_tracker_row
 from harrier.tracker import DuplicateJobError, add_job
@@ -30,7 +36,8 @@ logger = logging.getLogger(__name__)
 
 MAX_DESCRIPTION_CHARS = 4000
 
-CaptureStatus = Literal["added", "duplicate", "invalid"]
+# `unconfigured`: a focused track with no screening document (spec 137).
+CaptureStatus = Literal["added", "duplicate", "invalid", "unconfigured"]
 
 
 @dataclass
@@ -71,6 +78,19 @@ def add_captured_job(
             description=description,
             deadline=deadline.strip(),
         )
+    document: ScreeningDocument | None = None
+    if scope.track.kind == "focused":
+        # Never the committed example: a demo weight would rank real rows.
+        document = load_screening(conn, scope)
+        if document is None:
+            slug = scope.track.slug
+            return CaptureResult(
+                status="unconfigured",
+                message=(
+                    f"track {slug} has no screening configuration; "
+                    f"harrier --track {slug} profile put screening --file PATH"
+                ),
+            )
     candidate_cfg = load_candidate_config(conn)
     job = make_normalized_job(
         source=source,
@@ -93,8 +113,18 @@ def add_captured_job(
     if enrich:
         job = enrich_job_description_for_scoring(job)
         description = job["description"]
-    fit = fit_score_for(job, candidate_cfg)
-    row = build_tracker_row(job, fit.score, fit.reasons, fit.version)
+    if document is None:
+        fit = fit_score_for(job, candidate_cfg)
+        row = build_tracker_row(job, fit.score, fit.reasons, fit.version)
+    else:
+        # The track's own score (spec 137). A manual add lands whatever its
+        # gates say, as on the industry track; a failed gate is named.
+        focused = focused_score(job, document)
+        reasons = list(focused.reasons)
+        gate = failed_gate(job, document, candidate_cfg)
+        if gate is not None:
+            reasons.append(f"gate={gate}")
+        row = build_tracker_row(job, focused.score, reasons, focused.version)
     row["notes"] = f"{row['notes']}; manual_added={datetime.now(UTC).date().isoformat()}"
     if deadline.strip():
         row["deadline"] = deadline.strip()

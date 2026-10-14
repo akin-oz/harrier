@@ -90,11 +90,16 @@ def get_tracks(conn: Conn) -> list[TrackOut]:
     return [_out(track) for track in list_tracks(conn)]
 
 
+# The kinds the browser may add. The focused kind is the command line's
+# until a later spec opens it here (spec 137); `TrackIn.kind` refuses it.
+BROWSER_KINDS: tuple[str, ...] = tuple(kind for kind in TRACK_KINDS if kind != "focused")
+
+
 @tracks_router.get("/tracks/kinds", operation_id="listTrackKinds")
 def get_track_kinds() -> list[TrackKindOut]:
     """Each kind a track can have, and whether a new one may be added now."""
     out: list[TrackKindOut] = []
-    for kind in TRACK_KINDS:
+    for kind in BROWSER_KINDS:
         refusal = kind_refusal(kind)
         out.append(TrackKindOut(kind=kind, available=refusal is None, reason=refusal or ""))
     return out
