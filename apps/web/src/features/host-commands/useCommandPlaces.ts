@@ -10,18 +10,18 @@ export type HostFacts = components["schemas"]["HostFactsOut"];
 export type HostFact = components["schemas"]["HostPanelRowOut"]["fact"];
 export type Schedule = components["schemas"]["ScheduleOut"];
 
-// Neither route declares a refusal with a body, so the generated `error` is
-// `never` and only the body can be absent: a 403 for a missing token, or a
-// 503 while a host process holds the database.
 async function fetchPlaces(): Promise<CommandPlaces> {
-  const { data } = await api.GET("/settings/commands");
-  if (data === undefined) throw new Error("could not read the command list");
+  const { data, error } = await api.GET("/settings/commands");
+  if (error !== undefined)
+    throw new Error(refusalMessage(error, "could not read the command list"));
   return data;
 }
 
 async function fetchHostFacts(): Promise<HostFacts> {
-  const { data } = await api.GET("/settings/host");
-  if (data === undefined) throw new Error("could not read what the container can see");
+  const { data, error } = await api.GET("/settings/host");
+  if (error !== undefined) {
+    throw new Error(refusalMessage(error, "could not read what the container can see"));
+  }
   return data;
 }
 

@@ -88,3 +88,22 @@ test("an unheld database shows the job count", async () => {
   });
   expect(screen.queryByText(/held by host/)).toBeNull();
 });
+
+// Hosted, the API reports no count (spec 104), and "0 jobs" would be a lie
+// told on every page (spec 114).
+test("no job count is shown when the API reports none", async () => {
+  vi.stubGlobal("fetch", healthResponse({ job_count: null, database: "postgres" }));
+  renderBadge();
+  await waitFor(() => {
+    expect(screen.getByText("postgres")).toBeDefined();
+  });
+  expect(screen.queryByText(/jobs/)).toBeNull();
+  expect(screen.queryByText(/^0/)).toBeNull();
+  // Locally the count is a number and is shown, zero included.
+  cleanup();
+  vi.stubGlobal("fetch", healthResponse({ job_count: 0 }));
+  renderBadge();
+  await waitFor(() => {
+    expect(screen.getByText("0 jobs")).toBeDefined();
+  });
+});

@@ -1,6 +1,5 @@
 import { RunPanel } from "../../features/runs/RunPanel";
 import { useRunStream } from "../../features/runs/useRunStream";
-import type { EventSourceFactory } from "../../features/runs/useRunStream";
 import { DataChecksSection } from "./DataChecksSection";
 import { DigestSection } from "./DigestSection";
 import { DiscoverySection } from "./DiscoverySection";
@@ -26,29 +25,25 @@ import { ScoringSection } from "./ScoringSection";
  * Configuration, backups and the list of commands with no button are on the
  * Settings page (spec 096), not here.
  */
-export function OperationsPage({
-  createEventSource = (url: string) => new EventSource(url),
-}: {
-  createEventSource?: EventSourceFactory;
-} = {}) {
+export function OperationsPage() {
   // One stream for discovery: a run started with options streams on the
   // Runs panel, and the panel's own buttons share its lock state.
-  const discovery = useRunStream(createEventSource);
+  const discovery = useRunStream();
   return (
     <div className="ops-page">
       <h2 className="ops-page__heading">Operations</h2>
       <ScheduleSection />
       <DiscoverySection stream={discovery} />
       {/* Discovery runs: the panel the Tracker page has, not a second one. */}
-      <RunPanel createEventSource={createEventSource} stream={discovery} />
-      <FeedsSection createEventSource={createEventSource} />
-      <ReconsiderSection createEventSource={createEventSource} />
+      <RunPanel stream={discovery} />
+      <FeedsSection />
+      <ReconsiderSection />
       <EligibilitySection />
-      <DigestSection createEventSource={createEventSource} />
+      <DigestSection />
       <DataChecksSection />
-      <HistorySection createEventSource={createEventSource} />
-      <EvaluationSection createEventSource={createEventSource} />
-      <ScoringSection createEventSource={createEventSource} />
+      <HistorySection />
+      <EvaluationSection />
+      <ScoringSection />
     </div>
   );
 }

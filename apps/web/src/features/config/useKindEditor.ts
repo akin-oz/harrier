@@ -12,15 +12,11 @@ export type ConfigEntry = components["schemas"]["ConfigOut"];
 // per-track configuration out of scope), so its key carries no track.
 export const CONFIG_KEY = ["config"] as const;
 
-// A 403 carries no body the contract describes, so it arrives as no data.
-export const REFUSED_TOKEN = "refused: the local API token was not accepted";
-
 async function fetchConfig(): Promise<readonly ConfigEntry[]> {
   const { data, error } = await api.GET("/config");
   if (error !== undefined) {
     throw new Error(refusalMessage(error, "could not read the configuration"));
   }
-  if (data === undefined) throw new Error(REFUSED_TOKEN);
   return data;
 }
 
@@ -64,7 +60,6 @@ export function useKindEditor<D>(
         body: { value: fromDraft(draft) },
       });
       if (error !== undefined) throw new Error(refusalMessage(error, "the value was not saved"));
-      if (data === undefined) throw new Error(REFUSED_TOKEN);
       return data;
     },
     onMutate: () => {
@@ -83,7 +78,6 @@ export function useKindEditor<D>(
       });
       if (error !== undefined)
         throw new Error(refusalMessage(error, "the stored value was not removed"));
-      if (data === undefined) throw new Error(REFUSED_TOKEN);
       return data;
     },
     onMutate: () => {

@@ -47,7 +47,6 @@ export function ArchiveTrack({
         params: { path: { slug: track.slug } },
       });
       if (error !== undefined) throw new Error(detailOf(error, "the track was not archived"));
-      if (data === undefined) throw new Error("the local API token was not accepted");
       return data;
     },
     onSuccess: (archived) => {

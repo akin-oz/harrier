@@ -4,11 +4,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { components } from "@harrier/contract";
 
 import { api } from "../../shared/api/client";
+import { StreamRefused, readRunEvents } from "../../shared/api/stream";
 
 export type RunOut = components["schemas"]["RunOut"];
 type RunEventPayload = components["schemas"]["RunEventOut"];
 
-export type EventSourceFactory = (url: string) => EventSource;
+// How long to wait before opening the stream again after it failed, or after
+// the server keeps ending it at once. A chosen value, not a measured one
+// (spec 114, Honest limitations).
+export const RETRY_DELAY_MS = 3000;
 
 export const TERMINAL_STATES = new Set<RunOut["state"]>(["succeeded", "failed", "cancelled"]);
 
@@ -40,15 +44,37 @@ async function fetchRun(runId: string): Promise<RunOut> {
   return data;
 }
 
+/** Resolves after `ms`, or at once when `signal` aborts. */
+function pause(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+}
+
 /**
  * Watching one run: its state, its log lines, its progress.
  *
  * Extracted from RunPanel when the Apply page needed the same thing for a
- * per-job run (spec 047). A second copy of the SSE handling is exactly the
+ * per-job run (spec 047). A second copy of the stream handling is exactly the
  * "second implementation" that spec names as a failure mode, and the two
  * would have drifted on reconnect handling first.
+ *
+ * The stream is read with `fetch` through the generated client (spec 114), so
+ * the hosted API's bearer token reaches it. Unlike the browser's own
+ * event-source reader it does not reconnect itself, so this hook does: with
+ * `Last-Event-ID` set to the last event it received, when the server ends the
+ * stream before the run is terminal (hosted, the token expired), and after a
+ * failure.
  */
-export function useRunStream(createEventSource: EventSourceFactory) {
+export function useRunStream() {
   const queryClient = useQueryClient();
   const [runId, setRunId] = useState<string | null>(null);
   const [lines, setLines] = useState<readonly string[]>([]);
@@ -59,11 +85,13 @@ export function useRunStream(createEventSource: EventSourceFactory) {
   const [lastLogLine, setLastLogLine] = useState<string | null>(null);
   const [progress, setProgress] = useState<ProgressState | null>(null);
   const [disconnected, setDisconnected] = useState(false);
-  const sourceRef = useRef<EventSource | null>(null);
+  // The open connection and everything that follows it. Aborting it is how a
+  // new run, an unmount and a terminal state each end the old one.
+  const openRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     return () => {
-      sourceRef.current?.close();
+      openRef.current?.abort();
     };
   }, []);
 
@@ -74,52 +102,97 @@ export function useRunStream(createEventSource: EventSourceFactory) {
   });
   const run = runQuery.data ?? null;
 
-  const subscribe = useCallback(
-    (id: string) => {
-      sourceRef.current?.close();
-      const source = createEventSource(`/api/runs/${id}/events`);
-      source.onmessage = (message: MessageEvent<string>) => {
-        const payload = JSON.parse(message.data) as RunEventPayload;
-        setLines((existing) => [...existing, describeEvent(payload)]);
-        if (payload.type === "log_line" && (payload.line ?? "") !== "") {
-          setLastLogLine(payload.line ?? "");
-        }
-        if (payload.type === "progress") {
-          setProgress({ step: payload.step ?? null, total: payload.total ?? null });
-        }
-        if (payload.type === "state_change" && payload.state != null) {
-          const state = payload.state;
-          queryClient.setQueryData<RunOut>(["run", id], (existing) =>
-            existing ? { ...existing, state, exit_code: payload.exit_code ?? null } : existing,
-          );
-          if (TERMINAL_STATES.has(state)) {
-            source.close();
+  const follow = useCallback(
+    async (id: string, controller: AbortController) => {
+      const signal = controller.signal;
+      // A function, so each read is of the signal as it is now: the checks
+      // below come after awaits, during which it may have aborted.
+      const stopped = (): boolean => signal.aborted;
+      const terminal = (): boolean => {
+        const known = queryClient.getQueryData<RunOut>(["run", id]);
+        return known !== undefined && TERMINAL_STATES.has(known.state);
+      };
+      let lastEventId = 0;
+      // Attempts in a row that ended cleanly having delivered nothing.
+      let emptyEnds = 0;
+      while (!stopped()) {
+        let delivered = false;
+        try {
+          for await (const message of readRunEvents(id, { lastEventId, signal })) {
+            const eventId = Number(message.lastEventId);
+            // The server replays from the id it was given, so an event at or
+            // before the last one is not shown again.
+            if (Number.isFinite(eventId) && eventId > 0 && eventId <= lastEventId) continue;
+            let payload: RunEventPayload;
+            try {
+              payload = JSON.parse(message.data) as RunEventPayload;
+            } catch {
+              continue;
+            }
+            if (stopped()) return;
+            delivered = true;
+            if (Number.isFinite(eventId) && eventId > lastEventId) lastEventId = eventId;
+            // A reconnect that delivers an event is a stream that recovered.
+            setDisconnected(false);
+            setLines((existing) => [...existing, describeEvent(payload)]);
+            if (payload.type === "log_line" && (payload.line ?? "") !== "") {
+              setLastLogLine(payload.line ?? "");
+            }
+            if (payload.type === "progress") {
+              setProgress({ step: payload.step ?? null, total: payload.total ?? null });
+            }
+            if (payload.type === "state_change" && payload.state != null) {
+              const state = payload.state;
+              queryClient.setQueryData<RunOut>(["run", id], (existing) =>
+                existing ? { ...existing, state, exit_code: payload.exit_code ?? null } : existing,
+              );
+              if (TERMINAL_STATES.has(state)) {
+                controller.abort();
+                return;
+              }
+            }
           }
+          // The server ended the stream before the run did.
+          emptyEnds = delivered ? 0 : emptyEnds + 1;
+          if (terminal()) return;
+          if (emptyEnds >= 2) await pause(RETRY_DELAY_MS, signal);
+        } catch (error) {
+          if (stopped()) return;
+          // The run is gone, or another owner's (spec 104 answers 404 for
+          // both): nothing to follow. A 401 is the middleware's, which has
+          // ended the session and unmounts this with the shell.
+          if (error instanceof StreamRefused && (error.status === 404 || error.status === 401)) {
+            void queryClient.invalidateQueries({ queryKey: ["run", id] });
+            return;
+          }
+          // The stream dropping is not the run failing: say so, and refetch
+          // server truth rather than leaving the panel looking stuck.
+          emptyEnds = 0;
+          setDisconnected(true);
+          void queryClient.invalidateQueries({ queryKey: ["run", id] });
+          await pause(RETRY_DELAY_MS, signal);
+          if (terminal()) return;
         }
-      };
-      source.onerror = () => {
-        // The stream dropping is not the run failing: say so, and refetch
-        // server truth rather than leaving the panel looking stuck.
-        setDisconnected(true);
-        void queryClient.invalidateQueries({ queryKey: ["run", id] });
-      };
-      sourceRef.current = source;
+      }
     },
-    [createEventSource, queryClient],
+    [queryClient],
   );
 
   /** Adopt a freshly started run and begin streaming it. */
   const begin = useCallback(
     (started: RunOut) => {
+      openRef.current?.abort();
+      const open = new AbortController();
+      openRef.current = open;
       setLines([]);
       setLastLogLine(null);
       setProgress(null);
       setDisconnected(false);
       setRunId(started.id);
       queryClient.setQueryData<RunOut>(["run", started.id], started);
-      subscribe(started.id);
+      void follow(started.id, open);
     },
-    [queryClient, subscribe],
+    [queryClient, follow],
   );
 
   const active = run !== null && !TERMINAL_STATES.has(run.state);

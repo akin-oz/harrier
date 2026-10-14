@@ -4,6 +4,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 
 import { InboxPage } from "./InboxPage";
+import { installRunStreams } from "../../shared/testing/runStreams";
+import type { RunStreams } from "../../shared/testing/runStreams";
 
 /**
  * The Inbox page over the archived events (spec 049).
@@ -45,6 +47,8 @@ function stubApi(options: {
   hasRun?: boolean;
   atCap?: boolean;
   runState?: string;
+  // What the archive route answers instead of the archive.
+  refusal?: { status: number; body: unknown };
 }): Call[] {
   const calls: Call[] = [];
   vi.stubGlobal(
@@ -71,6 +75,9 @@ function stubApi(options: {
         );
 
       if (url.pathname === "/api/session") return reply(200, { token: "test-token" });
+      if (url.pathname === "/api/mail/events" && options.refusal !== undefined) {
+        return reply(options.refusal.status, options.refusal.body);
+      }
       if (url.pathname === "/api/mail/events") {
         return reply(200, {
           events: options.events ?? [],
@@ -106,27 +113,14 @@ function stubApi(options: {
   return calls;
 }
 
-class FakeEventSource {
-  static last: FakeEventSource | null = null;
-  onmessage: ((event: MessageEvent<string>) => void) | null = null;
-  onerror: (() => void) | null = null;
-  constructor() {
-    FakeEventSource.last = this;
-  }
-  emit(payload: unknown): void {
-    this.onmessage?.({ data: JSON.stringify(payload) } as MessageEvent<string>);
-  }
-  close(): void {
-    /* nothing to release in a test */
-  }
-}
+let streams: RunStreams;
 
 function renderPage(): void {
-  FakeEventSource.last = null;
+  streams = installRunStreams();
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={queryClient}>
-      <InboxPage createEventSource={() => new FakeEventSource() as unknown as EventSource} />
+      <InboxPage />
     </QueryClientProvider>,
   );
 }
@@ -222,16 +216,16 @@ test("a failed watch shows the reason the process printed", async () => {
 
   await user.click(screen.getByRole("button", { name: "Run the watch" }));
   await waitFor(() => {
-    expect(FakeEventSource.last).not.toBeNull();
+    expect(streams.connections.length).toBeGreaterThan(0);
   });
 
-  const source = FakeEventSource.last;
+  const source = streams.last;
   await act(async () => {
-    source?.emit({
+    source.emit({
       type: "log_line",
       line: "gmail watch failed: missing Gmail OAuth token file: /x/token.json. Run: harrier gmail-oauth",
     });
-    source?.emit({ type: "state_change", state: "failed", exit_code: 1 });
+    source.emit({ type: "state_change", state: "failed", exit_code: 1 });
     await Promise.resolve();
   });
 
@@ -253,4 +247,16 @@ test("reading the archive carries no token, unlike the artifact and contact read
   // content here to protect (spec 049).
   expect(read?.method).toBe("GET");
   expect(read?.token).toBeNull();
+});
+
+test("a hosted inbox says Gmail watch is not offered", async () => {
+  // The hosted API answers 501 for the archive and says why (spec 109); the
+  // page shows those words, not "could not read the mail archive".
+  const detail = "Gmail watch is not offered on the hosted service (spec 109)";
+  stubApi({ refusal: { status: 501, body: { detail } } });
+  renderPage();
+
+  const alert = await screen.findByRole("alert");
+  expect(alert.textContent).toContain(detail);
+  expect(screen.queryByText(/could not read the mail archive/)).toBeNull();
 });

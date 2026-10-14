@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import type { components } from "@harrier/contract";
 
 import { TERMINAL_STATES, useRunStream } from "../../features/runs/useRunStream";
-import type { EventSourceFactory, RunOut } from "../../features/runs/useRunStream";
+import type { RunOut } from "../../features/runs/useRunStream";
 import { api } from "../../shared/api/client";
 import { refusalMessage } from "../../shared/api/refusal";
 
@@ -20,10 +20,8 @@ const VERIFICATION: Record<NonNullable<Archive["verification"]>, string> = {
 };
 
 async function fetchBackups(): Promise<Backups> {
-  // The list opens no database, so its one declared refusal is the token's,
-  // which has no body: no body is that refusal, said as such.
-  const { data } = await api.GET("/settings/backups");
-  if (data === undefined) throw new Error("refused: the local API token was not accepted");
+  const { data, error } = await api.GET("/settings/backups");
+  if (error !== undefined) throw new Error(refusalMessage(error, "could not read the backups"));
   return data;
 }
 
@@ -37,10 +35,10 @@ function size(bytes: number): string {
  * the CLI's own verbs; the archive is named, never located. `restore` has no
  * button: it replaces the live database (spec 042).
  */
-export function BackupsSection({ createEventSource }: { createEventSource: EventSourceFactory }) {
+export function BackupsSection() {
   const queryClient = useQueryClient();
   const backups = useQuery({ queryKey: BACKUPS_KEY, queryFn: fetchBackups });
-  const stream = useRunStream(createEventSource);
+  const stream = useRunStream();
   const { run, lastLogLine, failed, active } = stream;
 
   useEffect(() => {
@@ -61,7 +59,6 @@ export function BackupsSection({ createEventSource }: { createEventSource: Event
       // A run conflict (409) or a held database (503) in the server's words;
       // only an answer with no body at all is the token refusal.
       if (error !== undefined) throw new Error(refusalMessage(error, "no backup was started"));
-      if (data === undefined) throw new Error("refused: the local API token was not accepted");
       return data;
     },
     onSuccess: (started) => {
@@ -80,7 +77,6 @@ export function BackupsSection({ createEventSource }: { createEventSource: Event
       });
       if (error !== undefined)
         throw new Error(refusalMessage(error, "the archive was not verified"));
-      if (data === undefined) throw new Error("refused: the local API token was not accepted");
       return data;
     },
     onSuccess: (started) => {

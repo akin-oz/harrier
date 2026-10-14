@@ -45,6 +45,21 @@ export default tseslint.config(
     },
   },
   {
+    // One implementation of the run stream, on the generated client, so the
+    // hosted API's bearer token reaches it (spec 114). The browser's own
+    // event-source reader cannot send that header.
+    files: ["src/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-globals": [
+        "error",
+        {
+          name: "EventSource",
+          message: "Read a run's events with readRunEvents in shared/api/stream.ts (spec 114).",
+        },
+      ],
+    },
+  },
+  {
     files: ["**/*.test.{ts,tsx}", "vite.config.ts", "vitest.config.ts"],
     rules: {
       "@typescript-eslint/no-floating-promises": "off",

@@ -1,0 +1,43 @@
+.sign-in-form {
+  display: grid;
+  gap: var(--space-3);
+  max-width: 360px;
+}
+.sign-in-form__label {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+.sign-in-form input {
+  padding: 6px 8px;
+  font: inherit;
+  color: var(--color-text);
+  background: var(--color-bg-raised);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+}
+.sign-in-form input:focus-visible,
+.sign-in-form button:focus-visible,
+.sign-out-button:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+.sign-in-form__again {
+  justify-self: start;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-accent-text);
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: 13px;
+}
+.sign-in-form__message {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+.sign-out-button {
+  padding: 4px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}

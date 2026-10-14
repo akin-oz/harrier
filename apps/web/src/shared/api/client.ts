@@ -1,13 +1,33 @@
 import createClient from "openapi-fetch";
+import type { Middleware } from "openapi-fetch";
 
-import type { paths } from "@harrier/contract";
+import type { components, paths } from "@harrier/contract";
+
+import { accessToken, endSession, refreshSession } from "../auth/session";
+import type { EndReason } from "../auth/session";
+import { appMode, configError } from "../config/appMode";
+import type { AppMode } from "../config/mode";
 
 // The only way the web app talks to the API: typed by the generated contract
-// (ADR-005). The Vite dev server proxies /api to the FastAPI service.
+// (ADR-005). Two modes, fixed when the bundle is built (spec 114):
+//
+// - Local: the API shares the page's origin, the Vite dev server proxies /api
+//   to the FastAPI service, and a state-changing request carries the local
+//   token of spec 035.
+// - Hosted: the API is at VITE_HARRIER_API_URL, and every request carries the
+//   signed-in person's Supabase access token as a bearer token. The local
+//   token is never sent and `GET /session` is never requested.
+//
 // The base URL is absolute (resolved against the page origin) because Node's
 // Request, used by vitest/jsdom, rejects relative URLs; fetch resolves at
 // request time (not client creation) so test stubs apply.
-const baseUrl = new URL("/api", globalThis.location.href).toString();
+//
+// A build whose configuration is refused renders a page that says so and sends
+// nothing, so it gets the local shape here only so this module can exist.
+const mode: AppMode = configError() === null ? appMode() : { kind: "local" };
+
+const baseUrl =
+  mode.kind === "hosted" ? mode.apiUrl : new URL("/api", globalThis.location.href).toString();
 
 export const TOKEN_HEADER = "X-Harrier-Token";
 
@@ -67,12 +87,7 @@ async function localToken(): Promise<string> {
   return token;
 }
 
-export const api = createClient<paths>({
-  baseUrl,
-  fetch: (input) => globalThis.fetch(input),
-});
-
-api.use({
+const localMiddleware: Middleware = {
   async onRequest({ request }) {
     // Only where it is required. Adding it to every read would send it for no
     // gain and make it that much easier to leak.
@@ -81,6 +96,95 @@ api.use({
     if (token) request.headers.set(TOKEN_HEADER, token);
     return request;
   },
+};
+
+type AuthRefusal = components["schemas"]["AuthRefusalOut"];
+type AuthReason = AuthRefusal["reason"];
+
+// What each refusal that ends the session ends it as. Keyed by the contract's
+// own reasons, so one the API adds or drops fails the type check here (spec
+// 114). `expired` is handled apart, because a refresh can still save it, and
+// `keys_unavailable` is the API's trouble, not the person's session.
+const ENDS_SESSION: Record<Exclude<AuthReason, "expired" | "keys_unavailable">, EndReason> = {
+  missing: "invalid",
+  invalid: "invalid",
+  anonymous: "refused",
+};
+
+export const UNREACHABLE =
+  "The harrier API did not answer. It may be down, or it may have failed on this request.";
+
+async function reasonOf(response: Response): Promise<AuthReason | null> {
+  try {
+    const body = (await response.clone().json()) as Partial<AuthRefusal>;
+    return body.reason ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function endingFor(reason: AuthReason | null): EndReason {
+  if (reason === "expired") return "expired";
+  if (reason === null || reason === "keys_unavailable") return "invalid";
+  return ENDS_SESSION[reason];
+}
+
+function hostedMiddleware(): Middleware {
+  // A copy of each request as it left, kept for the one retry after a refresh.
+  const sent = new WeakMap<Request, Request>();
+  return {
+    async onRequest({ request }) {
+      const token = await accessToken();
+      // With no session the request goes without the header, and the API's
+      // 401 `missing` ends the session below.
+      if (token !== null) request.headers.set("Authorization", `Bearer ${token}`);
+      sent.set(request, request.clone());
+      return request;
+    },
+    async onResponse({ request, response }) {
+      if (response.status === 401) {
+        const reason = await reasonOf(response);
+        if (reason !== "expired") {
+          await endSession(endingFor(reason));
+          return undefined;
+        }
+        const retry = sent.get(request);
+        const token = retry === undefined ? null : await refreshSession();
+        if (retry === undefined || token === null) {
+          await endSession("expired");
+          return undefined;
+        }
+        retry.headers.set("Authorization", `Bearer ${token}`);
+        const second = await globalThis.fetch(retry);
+        // A second refusal is final: no further retry.
+        if (second.status === 401) await endSession(endingFor(await reasonOf(second)));
+        else if (second.status === 403 && (await reasonOf(second)) === "anonymous") {
+          await endSession("refused");
+        }
+        return second;
+      }
+      if (response.status === 403 && (await reasonOf(response)) === "anonymous") {
+        await endSession("refused");
+      }
+      return undefined;
+    },
+    onError({ error }) {
+      // A request that got no answer rejects with a TypeError. That includes
+      // the 500 of an unhandled server error, which carries no CORS headers
+      // and so reaches the browser as a failed request, not as a status
+      // (spec 134). An aborted stream rejects with an AbortError and is left
+      // alone.
+      if (error instanceof Error && error.name === "TypeError") return new Error(UNREACHABLE);
+      return undefined;
+    },
+  };
+}
+
+export const api = createClient<paths>({
+  baseUrl,
+  fetch: (input) => globalThis.fetch(input),
 });
+
+api.use(mode.kind === "hosted" ? hostedMiddleware() : localMiddleware);
 
 export type ApiClient = typeof api;

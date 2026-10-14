@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 
 import { api } from "../../shared/api/client";
+import { refusalMessage } from "../../shared/api/refusal";
 import { TRACKS_KEY } from "../../shared/track";
 import type { Track, TrackKind } from "../../shared/track";
 import { detailOf } from "./detail";
@@ -15,9 +16,8 @@ type KindName = components["schemas"]["TrackIn"]["kind"];
 const KINDS_KEY = ["track-kinds"] as const;
 
 async function fetchKinds(): Promise<readonly TrackKind[]> {
-  // The route declares no error answer; a failed request rejects instead.
-  const { data } = await api.GET("/tracks/kinds");
-  if (data === undefined) throw new Error("listTrackKinds answered nothing");
+  const { data, error } = await api.GET("/tracks/kinds");
+  if (error !== undefined) throw new Error(refusalMessage(error, "could not read the track kinds"));
   return data;
 }
 
@@ -61,7 +61,6 @@ export function AddTrack({ onOpen }: { onOpen: (track: Track) => void }) {
         body: { slug, label: label.trim(), kind: chosen as KindName },
       });
       if (error !== undefined) throw new Error(detailOf(error, "the track was not added"));
-      if (data === undefined) throw new Error("the local API token was not accepted");
       return data;
     },
     onSuccess: (track) => {

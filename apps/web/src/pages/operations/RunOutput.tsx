@@ -20,10 +20,6 @@ export function countIn(lines: readonly string[], pattern: RegExp): number | nul
   return null;
 }
 
-// A route that answered with no body refused the local token; that is the
-// only declared outcome without one (spec 035).
-export const TOKEN_REFUSED = "refused: the local API token was not accepted";
-
 /**
  * One section's run: its state, the line it failed on, and its whole log.
  *

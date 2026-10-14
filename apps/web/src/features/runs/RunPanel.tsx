@@ -8,17 +8,13 @@ import { refusalMessage } from "../../shared/api/refusal";
 import "../../shared/ui/run.css";
 import "./RunPanel.css";
 import { TERMINAL_STATES, useRunStream } from "./useRunStream";
-import type { EventSourceFactory, RunOut } from "./useRunStream";
+import type { RunOut } from "./useRunStream";
 
 type RunKind = components["schemas"]["StartRunIn"]["kind"];
 
-export type { EventSourceFactory };
-
 export function RunPanel({
-  createEventSource = (url: string) => new EventSource(url),
   stream: shared,
 }: {
-  createEventSource?: EventSourceFactory;
   // A stream the caller also starts runs on, so a discovery started with
   // options elsewhere on the page streams here, on this panel (spec 095).
   stream?: ReturnType<typeof useRunStream>;
@@ -30,7 +26,7 @@ export function RunPanel({
   const [expanded, setExpanded] = useState(false);
   const logRef = useRef<HTMLPreElement | null>(null);
 
-  const own = useRunStream(createEventSource);
+  const own = useRunStream();
   const stream = shared ?? own;
   const { run, lines, progress, disconnected, failed } = stream;
 
@@ -54,12 +50,6 @@ export function RunPanel({
         // in words (review of PR #208); show them, not the JSON.
         throw new Error(refusalMessage(error, `start failed: ${JSON.stringify(error)}`));
       }
-      // The contract now declares 403, so a refusal is a shape the caller has
-      // to handle rather than one it can assume away (spec 035). A missing
-      // body here means the API refused without an error payload.
-      if (data === undefined) {
-        throw new Error("start refused: the local API token was not accepted");
-      }
       return data;
     },
     onSuccess: (data) => {
@@ -75,9 +65,6 @@ export function RunPanel({
       });
       if (error !== undefined) {
         throw new Error(`cancel failed: ${JSON.stringify(error)}`);
-      }
-      if (data === undefined) {
-        throw new Error("cancel refused: the local API token was not accepted");
       }
       return data;
     },
