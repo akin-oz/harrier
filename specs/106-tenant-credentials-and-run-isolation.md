@@ -270,9 +270,10 @@ writes an input file or spawns anything:
 3. The lock key is `(owner, kind, target)`. A request repeats only its own
    owner's active run. Another owner's active run of the same kind and
    target is invisible to it, so it starts its own.
-4. The route has read the owner's ciphertexts inside its request
-   transaction, as the owner, and passes them to `start`. `start`
-   decrypts them with the key. A kind's required credential that is unset
+4. `start` reads the owner's ciphertexts, binds the run and inserts its
+   `run_records` row in a transaction of its own, as the owner, which
+   commits before anything is spawned (Amendment (2026-10-13,
+   implementation), item 1). It decrypts them with the key. A kind's required credential that is unset
    is refused with 409 `this run needs your <kind> credential; set it
    under credentials`. A stored credential that does not decrypt is
    refused with 409 `your <kind> credential cannot be read; set it again`,
@@ -284,8 +285,8 @@ writes an input file or spawns anything:
 
 Decrypted values live in the child's environment mapping and in the run's
 scrub set, both in memory only. The journal records the owner (spec 104)
-and never a value. The scrub set is dropped when the run reaches a terminal
-state.
+and never a value. The scrub set is dropped when the process is reaped
+(Amendment (2026-10-13, implementation), item 5).
 
 ### The child's environment
 
@@ -974,7 +975,7 @@ record lives in Supabase instead, in a new hosted-only owned table:
 
 ```sql
 CREATE TABLE run_records (
-    owner_id uuid NOT NULL DEFAULT auth.uid() REFERENCES auth.users (id),
+    owner_id uuid NOT NULL DEFAULT public.harrier_owner_id() REFERENCES auth.users (id),
     run_id TEXT NOT NULL,
     kind TEXT NOT NULL,
     target TEXT NOT NULL,
@@ -1007,8 +1008,10 @@ CREATE TABLE run_records (
 
 Writes, each as the run's owner:
 
-1. **Start.** `RunManager.start` inserts the row in the route's request
-   transaction, before it spawns anything.
+1. **Start.** `RunManager.start` reads the owner's ciphertexts, binds the
+   run and inserts the row in its own owner-scoped transaction, which
+   commits before it spawns anything (Amendment (2026-10-13,
+   implementation), item 1).
 2. **Each state change.** The run manager opens a transaction on the
    API's login with `SET LOCAL ROLE harrier_tenant` and the run's owner's
    claims, read back as spec 104's request transaction does, and updates
