@@ -1125,35 +1125,8 @@ def test_the_scheduler_acts_as_each_owner(rig: Rig, monkeypatch: pytest.MonkeyPa
     second = rig.owner()
     rig.fleet.refusals = {}
 
-    class ProbingDriver:
-        """The scheduler's connection for the listing, which goes past the seam
-        (the seam's `execute()` refuses the reader's `SET LOCAL ROLE`): the role
-        and claims in force are read just before the listing runs."""
-
-        def __init__(self, driver: Any) -> None:
-            self.driver = driver
-
-        def transaction(self, **kwargs: Any) -> Any:
-            return self.driver.transaction(**kwargs)
-
-        def execute(self, query: bytes) -> Any:
-            if b"harrier_schedule_inputs" in query:
-                row = self.driver.execute(
-                    b"SELECT current_user::text, "
-                    b"nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'"
-                ).fetchone()
-                listed.append((row[0], row[1]))
-            return self.driver.execute(query)
-
-    listed: list[tuple[str, str | None]] = []
-    original_listing = hostedscheduler.list_inputs
-
-    def probed_listing(driver: Any) -> Any:
-        return original_listing(ProbingDriver(driver))
-
     with monkeypatch.context() as patched:
         patched.setattr(backend, "run", probing)
-        patched.setattr(hostedscheduler, "list_inputs", probed_listing)
         scheduler = Scheduler(
             connect=lambda: postgres_connect(rig.scheduler.url),
             jobs=rig.jobs,
@@ -1166,11 +1139,12 @@ def test_the_scheduler_acts_as_each_owner(rig: Rig, monkeypatch: pytest.MonkeyPa
         )
         assert scheduler.tick() == 0
 
-    # The listing ran once, as the reader, with no claims.
-    assert listed == [(SCHEDULE_READER_ROLE, None)]
-    # Every other statement went through the seam, as an owner, and none of
-    # them is a session statement the seam now refuses.
-    others = list(seen)
+    # The listing went through the seam like every other statement, once, as
+    # the reader, with no claims; the seam sent the role, so no statement
+    # of the scheduler's is a session statement.
+    listing = [entry for entry in seen if "harrier_schedule_inputs" in entry[0]]
+    assert [(role, owner) for _, role, owner in listing] == [(SCHEDULE_READER_ROLE, None)]
+    others = [entry for entry in seen if entry not in listing]
     assert others, "the tick ran no statement as an owner"
     assert not any(sql.lstrip().upper().startswith(("SET ", "RESET ")) for sql, _, _ in seen)
     assert {(role, owner) for _, role, owner in others} == {

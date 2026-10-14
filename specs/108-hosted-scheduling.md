@@ -1761,24 +1761,23 @@ session statements:
   uses `transaction(tenant=True)`
   (`services/api/src/harrier_api/hostedscheduler.py`, `check_store`).
 - **The listing** switches to `harrier_schedule_reader`, a role the seam
-  cannot take. `list_inputs` therefore takes the scheduler's own psycopg
-  connection, not a `Connection`, and runs `SET LOCAL ROLE
-  harrier_schedule_reader` and the listing in one transaction that is rolled
-  back, since it writes nothing. It is the one sequence the scheduler sends
-  past the seam, which spec 112's amendment lists as outside the seam by
-  design ("Statements on the raw driver"). A driver error is raised as the
-  seam raises it (`store_error_from_postgres`). The listing has no lock or
-  statement timeout and no identity read-back; it is a function call that
-  takes no locks, and the test records the role and the claims in force when
-  it runs
-  (`services/api/tests/test_hosted_scheduler.py::test_the_scheduler_acts_as_each_owner`).
+  could not take. Akin decided on 2026-10-14 to add a reader-role option to
+  the seam, not to send the listing past it, and to do it in this pull
+  request. Spec 112's Amendment (2026-10-14), "the schedule reader's role is
+  the seam's", is that option: `transaction(schedule_reader=True)` sends
+  `SET LOCAL ROLE harrier_schedule_reader` inside the seam, applies the same
+  lock and statement timeouts, reads `current_user` again before it commits,
+  and is refused on SQLite, on a nested block, with claims and with `tenant`.
+  `list_inputs` is a `Connection` function again, and its one block is that
+  transaction. The scheduler sends no statement past the seam. A first
+  version of this pull request listed on the raw psycopg connection while
+  the option did not exist; that is gone
+  (`services/api/tests/test_seam_on_both_stores.py::test_the_reader_option_takes_the_reader_role`,
+  `services/api/tests/test_hosted_scheduler.py::test_the_scheduler_acts_as_each_owner`).
 
 Every other statement is a `SELECT`, `INSERT` or `UPDATE` through the seam
-as an owner, and the same test holds that none of them starts with `SET` or
-`RESET`. **A decision for Akin:** the alternative is a seam option for the
-reader role, a change to spec 112's `transaction()` and its read-back, which
-would put the listing under the seam's checks. Not done here, since it is
-spec 112's file and an amendment of its own.
+as an owner, and the same test holds that none of the scheduler's statements
+starts with `SET` or `RESET`, the listing's included.
 
 ### What the local reviews of PR 327 changed
 

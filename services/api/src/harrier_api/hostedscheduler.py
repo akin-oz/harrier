@@ -396,7 +396,7 @@ class Scheduler:
         the process was stopped, or an outcome could not be recorded."""
         try:
             with closing(self.connect()) as driver:
-                views = list_inputs(driver)
+                views = list_inputs(Connection.postgres(driver))
         except Exception as error:
             # The next start lists again (spec 108, "Isolation").
             logger.error("scheduler could not list schedules: %s", describe(error))
@@ -779,7 +779,7 @@ def run_report(
             # A listing that would silently be empty is the fault the report
             # exists to show, so it is refused, not printed as a quiet one.
             check_function_owner(conn)
-            views = list_inputs(driver)
+            views = list_inputs(conn)
             row = conn.execute(SQL_LOCK_IS_HELD).fetchone()
             running = row is not None and bool(row[0])
     except (StartRefused, StoreError) as error:

@@ -459,8 +459,11 @@ Its login, `harrier_scheduler`, is a member of `harrier_tenant` and of
 `harrier_schedule_reader` and nothing else, and the start refuses a login
 that can step past the policy
 (`services/api/tests/test_hosted_scheduler.py::test_the_scheduler_refuses_a_login_that_can_bypass`).
-The one read across owners is `harrier_schedule_inputs()`, in a transaction
-as the reader that sets no claims; every other transaction runs as
+The one read across owners is `harrier_schedule_inputs()`, in a seam
+transaction that takes the reader's role and no claims
+(`transaction(schedule_reader=True)`, read back before it commits;
+`services/api/tests/test_seam_on_both_stores.py::test_a_reader_transaction_that_leaves_the_reader_role_is_refused_at_commit`);
+every other transaction runs as
 `harrier_tenant` with one owner's claims
 (`services/api/tests/test_hosted_scheduler.py::test_the_scheduler_acts_as_each_owner`).
 The API and the run login refuse to start as a member of the reader

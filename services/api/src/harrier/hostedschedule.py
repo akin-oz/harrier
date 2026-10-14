@@ -39,16 +39,10 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
-from typing import Any, Literal, cast, get_args
+from typing import Literal, cast, get_args
 from zoneinfo import ZoneInfo
 
-from harrier.connection import (
-    Connection,
-    StoreIntegrityError,
-    is_driver_error,
-    store_error_from_postgres,
-    update_or_insert,
-)
+from harrier.connection import Connection, StoreIntegrityError, update_or_insert
 from harrier.credentials import CredentialKind
 from harrier.paths import repo_root
 from harrier.schedule import (
@@ -59,7 +53,6 @@ from harrier.schedule import (
     load_schedule,
     longest_gap,
 )
-from harrier.tracker.schema import SCHEDULE_READER_ROLE
 
 logger = logging.getLogger(__name__)
 
@@ -199,35 +192,23 @@ class OwnerView:
     states: dict[str, JobState] = field(default_factory=lambda: dict[str, JobState]())
 
 
-def list_inputs(driver: Any) -> list[OwnerView]:
+def list_inputs(conn: Connection) -> list[OwnerView]:
     """Every owner's schedule choice and scheduler state, through
     `harrier_schedule_inputs()` (spec 108, "A tick", step 1).
 
-    In a transaction that runs `SET LOCAL ROLE harrier_schedule_reader`
-    first and sets no claims, and runs nothing else: the one read across
-    owners. Owners are returned in id order.
-
-    `driver` is the scheduler's own psycopg connection, not a `Connection`:
-    the seam's `execute()` refuses a statement that changes the session, and
-    its `transaction()` can take the tenant role and no other (spec 112,
-    amendment of 2026-10-14: the session). This is the one statement
-    sequence the scheduler sends past the seam, the reader's role switch and
-    the listing, in one transaction that is rolled back since it writes
-    nothing (spec 108, Amendment (2026-10-14): the session). A driver error
-    is raised as the seam would raise it.
+    In one transaction that takes `harrier_schedule_reader` and no claims,
+    `transaction(schedule_reader=True)`, and runs nothing else: the one read
+    across owners. The seam takes the role, applies its lock timeout, and
+    reads `current_user` again before the transaction ends (spec 112,
+    amendment of 2026-10-14: the schedule reader). Owners are returned in id
+    order.
     """
-    try:
-        with driver.transaction(force_rollback=True):
-            driver.execute(f"SET LOCAL ROLE {SCHEDULE_READER_ROLE}".encode())
-            # Every column, in the order the function declares them (owner,
-            # schedule, schedule_updated_at, job, last_slot_at,
-            # last_started_at, last_finished_at, last_outcome, last_exit,
-            # last_ok_at), so this module's SQL names no tenant column.
-            rows = driver.execute(b"SELECT * FROM public.harrier_schedule_inputs()").fetchall()
-    except Exception as error:
-        if is_driver_error(error):
-            raise store_error_from_postgres(cast(Any, error)) from error
-        raise
+    with conn.transaction(schedule_reader=True):
+        # Every column, in the order the function declares them (owner,
+        # schedule, schedule_updated_at, job, last_slot_at, last_started_at,
+        # last_finished_at, last_outcome, last_exit, last_ok_at), so this
+        # module's SQL names no tenant column.
+        rows = conn.execute("SELECT * FROM public.harrier_schedule_inputs()").fetchall()
     views: dict[str, OwnerView] = {}
     for row in rows:
         owner = str(row[0])
