@@ -124,6 +124,14 @@ class StoreServerError(StoreError):
     """
 
 
+class StoreDeployRefused(StoreError):
+    """A deploy step refused, or a deploy check failed (spec 110).
+
+    The text names the check and the role, never the URL, a host or a
+    password.
+    """
+
+
 class StoreMigrationRefused(StoreError):
     """A migration's own precheck refused this store (spec 105).
 
@@ -1731,6 +1739,7 @@ def store_target(environ: Mapping[str, str] | None = None) -> StoreTarget:
     made the CLI refuse while the API served SQLite (review of PR #207).
     An exported value, even an empty one, wins over the file.
     """
+    from_dotenv = False
     if environ is None:
         if URL_VARIABLE in os.environ or in_a_hosted_run():
             # A hosted run reads no `.env`, so a file in its working
@@ -1740,6 +1749,7 @@ def store_target(environ: Mapping[str, str] | None = None) -> StoreTarget:
             from harrier.envfile import read_env_file
 
             raw = read_env_file(Path(".env")).get(URL_VARIABLE, "")
+            from_dotenv = True
     else:
         raw = environ.get(URL_VARIABLE, "")
     if not raw.strip():
@@ -1770,7 +1780,50 @@ def store_target(environ: Mapping[str, str] | None = None) -> StoreTarget:
     # the port (review of PR #218).
     if not parses or not _libpq_parses(raw):
         raise refused
+    if from_dotenv and names_a_remote_host(raw):
+        # A hosted store's URL is a credential: in `.env` it would reach the
+        # local container's environment and every run subprocess (spec 110).
+        raise StoreUrlError(DOTENV_REMOTE_REFUSAL)
     return StoreTarget("postgres", raw)
+
+
+DOTENV_REMOTE_REFUSAL = (
+    f"{URL_VARIABLE} in .env names a remote store; a hosted store's URL is a credential, "
+    "so export it in the shell for the command that needs it"
+)
+
+# The hosts `.env` may name: this machine's loopback.
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def names_a_remote_host(url: str) -> bool:
+    """Whether libpq would connect to a host that is not loopback.
+
+    Read as libpq reads the URL: the authority's host, and the `host` and
+    `hostaddr` query parameters, which override it, each possibly a comma
+    separated list. A Unix socket directory (a name starting with `/`) is
+    this machine. Without psycopg the parse falls back to urlsplit's host
+    and the query's own, which is the same set for a URL that parsed.
+    """
+    names: list[str] = []
+    read = _libpq_parse(url)
+    if read is not None:
+        for key in ("host", "hostaddr"):
+            value = read.get(key)
+            if value:
+                names += str(value).split(",")
+    else:
+        parts = urlsplit(url)
+        if parts.hostname:
+            names.append(parts.hostname)
+        for key, value in parse_qsl(parts.query, keep_blank_values=True):
+            if key in ("host", "hostaddr") and value:
+                names += value.split(",")
+    return any(
+        name.strip().lower() not in _LOOPBACK_HOSTS
+        for name in names
+        if name.strip() and not name.strip().startswith("/")
+    )
 
 
 def _has_raw_space_or_control(url: str) -> bool:
