@@ -653,14 +653,16 @@ class _StoreCursor:
 @dataclass(frozen=True)
 class Session:
     """What a caller may ask of an outermost Postgres transaction beyond the
-    seam's own first statements: two timeouts in milliseconds, and the
-    tenant role on a connection opened without an owner (spec 112,
-    amendment of 2026-10-14: the session). The seam sends each as `SET
-    LOCAL`, since `execute()` refuses a SET."""
+    seam's own first statements: two timeouts in milliseconds, the tenant
+    role on a connection opened without an owner (spec 112, amendment of
+    2026-10-14: the session), and the schedule reader's role, which holds no
+    claims (amendment of 2026-10-14: the schedule reader). The seam sends
+    each as `SET LOCAL`, since `execute()` refuses a SET."""
 
     statement_timeout_ms: int | None = None
     idle_timeout_ms: int | None = None
     tenant: bool = False
+    schedule_reader: bool = False
 
     def asked(self) -> bool:
         return self != _NO_SESSION
@@ -1050,6 +1052,8 @@ class _PostgresBackend:
         # Whether the open transaction took the tenant role without claims,
         # by `transaction(tenant=True)`. Set as each one begins.
         self.tenant = False
+        # Likewise the schedule reader's role, by `schedule_reader=True`.
+        self.reader = False
 
     def run(
         self, sql: str, statement: Statement, params: Sequence[object], *, in_block: bool
@@ -1099,12 +1103,17 @@ class _PostgresBackend:
                 f"SET LOCAL idle_in_transaction_session_timeout = '{idle}'".encode()
             )
         self.tenant = self.claims is None and session.tenant
+        self.reader = self.claims is None and session.schedule_reader
         if self.claims is not None:
             assume_identity(self.driver, self.claims)
         elif self.tenant:
             from harrier.tracker.schema import TENANT_ROLE
 
             self.driver.execute(f"SET LOCAL ROLE {TENANT_ROLE}".encode())
+        elif self.reader:
+            from harrier.tracker.schema import SCHEDULE_READER_ROLE
+
+            self.driver.execute(f"SET LOCAL ROLE {SCHEDULE_READER_ROLE}".encode())
 
     def verify_identity(self) -> None:
         # Again before COMMIT: a statement since the start may have moved the
@@ -1117,6 +1126,10 @@ class _PostgresBackend:
             read_back_identity(self.driver, self.claims)
         elif self.tenant:
             read_back_role(self.driver)
+        elif self.reader:
+            from harrier.tracker.schema import SCHEDULE_READER_ROLE
+
+            read_back_role(self.driver, SCHEDULE_READER_ROLE)
 
     def open_savepoint(self, name: str, *, immediate: bool) -> None:
         self.driver.execute(f"SAVEPOINT {name}".encode())
@@ -1235,20 +1248,25 @@ def assume_identity(driver: psycopg.Connection[Any], claims: Mapping[str, object
     read_back_identity(driver, claims)
 
 
-def read_back_role(driver: psycopg.Connection[Any]) -> None:
+def read_back_role(driver: psycopg.Connection[Any], expected: str | None = None) -> None:
     """Raise IdentityDidNotHold naming `role` unless `current_user` is
-    `harrier_tenant`: before a transaction begun with `transaction(tenant=
-    True)` on a connection without claims commits (spec 112, amendment of
-    2026-10-14: the session; review of PR #326)."""
+    `expected`, `harrier_tenant` when none is given: before a transaction
+    begun with `transaction(tenant=True)` on a connection without claims
+    commits (spec 112, amendment of 2026-10-14: the session; review of PR
+    #326), and before one begun with `schedule_reader=True` does, with
+    `harrier_schedule_reader` (amendment of 2026-10-14: the schedule
+    reader)."""
     import psycopg
 
     from harrier.tracker.schema import TENANT_ROLE
+
+    wanted = TENANT_ROLE if expected is None else expected
 
     try:
         row = driver.execute(b"SELECT current_user::text").fetchone()
     except psycopg.Error as error:
         raise IdentityDidNotHold(("read-back",)) from error
-    if row is None or row[0] != TENANT_ROLE:
+    if row is None or row[0] != wanted:
         raise IdentityDidNotHold(("role",))
 
 
@@ -1285,11 +1303,17 @@ def read_back_identity(driver: psycopg.Connection[Any], claims: Mapping[str, obj
         raise IdentityDidNotHold(tuple(differed))
 
 
-def _check_session(session: Session, *, nested: bool, dialect: Dialect) -> None:
+def _check_session(session: Session, *, nested: bool, dialect: Dialect, claims: bool) -> None:
     if nested:
         raise ValueError("a session option belongs to the outermost transaction() block")
     if dialect != "postgres":
         raise ValueError("a session option applies to a Postgres store only")
+    if session.schedule_reader and session.tenant:
+        raise ValueError("a transaction takes one role: tenant or schedule_reader, not both")
+    if session.schedule_reader and claims:
+        # The reader holds no claims and acts for no owner (spec 112,
+        # amendment of 2026-10-14: the schedule reader).
+        raise ValueError("schedule_reader is for a connection opened without claims")
     for name, value in (
         ("statement_timeout_ms", session.statement_timeout_ms),
         ("idle_timeout_ms", session.idle_timeout_ms),
@@ -1408,6 +1432,7 @@ class Connection:
         statement_timeout_ms: int | None = None,
         idle_timeout_ms: int | None = None,
         tenant: bool = False,
+        schedule_reader: bool = False,
     ) -> Generator[None, None, None]:
         """Commit on success and roll back on any exception.
 
@@ -1439,22 +1464,31 @@ class Connection:
         when `immediate` is asked inside a transaction begun without the
         write lock (`WRITE_LOCK_NOT_HELD`).
 
-        `statement_timeout_ms`, `idle_timeout_ms` and `tenant` belong to an
-        outermost Postgres block: the seam sends them as `SET LOCAL` after
-        the lock timeout, since `execute()` refuses a SET. `tenant` takes
-        the tenant role on a connection opened without an owner; on an
-        owner's connection the role is the tenant's already. Raises
-        ValueError, before anything begins, for any of them on a nested
-        block or on SQLite, and for a timeout that is not a whole number of
-        0 or more (spec 112, amendment of 2026-10-14: the session).
+        `statement_timeout_ms`, `idle_timeout_ms`, `tenant` and
+        `schedule_reader` belong to an outermost Postgres block: the seam
+        sends them as `SET LOCAL` after the lock timeout, since `execute()`
+        refuses a SET. `tenant` takes the tenant role on a connection opened
+        without an owner; on an owner's connection the role is the tenant's
+        already. `schedule_reader` takes `harrier_schedule_reader`, which
+        holds no claims: it is refused on a connection opened with claims,
+        and together with `tenant`. A block that took either role reads
+        `current_user` again before it commits. Raises ValueError, before
+        anything begins, for any of them on a nested block or on SQLite, and
+        for a timeout that is not a whole number of 0 or more (spec 112,
+        amendments of 2026-10-14: the session, and the schedule reader).
 
         On a connection opened with claims, the identity is read back again
         just before `COMMIT`. A role or claims that moved since the start
         roll the transaction back and raise IdentityDidNotHold.
         """
-        session = Session(statement_timeout_ms, idle_timeout_ms, tenant)
+        session = Session(statement_timeout_ms, idle_timeout_ms, tenant, schedule_reader)
         if session.asked():
-            _check_session(session, nested=self._depth > 0, dialect=self._backend.dialect)
+            _check_session(
+                session,
+                nested=self._depth > 0,
+                dialect=self._backend.dialect,
+                claims=getattr(self._backend, "claims", None) is not None,
+            )
         if self._depth == 0:
             with self._outermost(immediate=immediate, session=session):
                 yield

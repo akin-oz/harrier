@@ -106,6 +106,80 @@ def run_class_refusal(command: str) -> str:
     )
 
 
+# --- the operator class (spec 108, Amendment (2026-10-14)) ---
+
+# What an operator subcommand declares, beside the parser: the database role
+# it runs as, or that it opens no database connection. Specs 108 and 111
+# state each one. The declaration is the parser default `operator_role`, so
+# a subcommand cannot be added without answering (`_operator_subcommand`),
+# and `operator_roles` reads them for the walk that fails on a missing one.
+OPERATOR_ROLE = "operator_role"
+NO_DATABASE = "opens no database connection"
+# The login the scheduler and its report run as (spec 108, "The scheduler's
+# login"): a member of `harrier_tenant` and `harrier_schedule_reader` only.
+SCHEDULER_LOGIN = "harrier_scheduler"
+
+
+def operator_refusal(command: str) -> str:
+    """An operator subcommand beside SQLite. `command` is the command and
+    subcommand words only (spec 061)."""
+    return (
+        f"harrier {command} runs only against a hosted store; "
+        "locally the schedule is launchd (harrier schedule)"
+    )
+
+
+def _operator_subcommand(
+    group: argparse._SubParsersAction[argparse.ArgumentParser],  # pyright: ignore[reportPrivateUsage]
+    name: str,
+    *,
+    role: str,
+    func: Callable[[argparse.Namespace], int],
+    help: str,
+) -> argparse.ArgumentParser:
+    parser = group.add_parser(name, help=help)
+    parser.set_defaults(func=func, **{OPERATOR_ROLE: role})
+    return parser
+
+
+def operator_roles(parser: argparse.ArgumentParser) -> dict[str, str | None]:
+    """Each `harrier operator` subcommand and the role it declares, None for
+    one that declares nothing. argparse offers no public way to list a
+    parser's subcommands, so this reads its actions."""
+    roles: dict[str, str | None] = {}
+    top = _subparsers_of(parser)
+    group = _subparsers_of(top["operator"]) if "operator" in top else {}
+    for name, subparser in group.items():
+        declared = subparser.get_default(OPERATOR_ROLE)
+        roles[name] = declared if isinstance(declared, str) else None
+    return roles
+
+
+def undeclared_operator_subcommands(parser: argparse.ArgumentParser) -> list[str]:
+    """The `harrier operator` subcommands that declare no role. The walk
+    (`tests/test_operator_class.py`) fails unless this is empty."""
+    return sorted(name for name, role in operator_roles(parser).items() if role is None)
+
+
+def _subparsers_of(parser: argparse.ArgumentParser) -> dict[str, argparse.ArgumentParser]:
+    found: dict[str, argparse.ArgumentParser] = {}
+    for action in parser._actions:  # pyright: ignore[reportPrivateUsage]
+        if isinstance(action, argparse._SubParsersAction):  # pyright: ignore[reportPrivateUsage]
+            found.update(action.choices)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+    return found
+
+
+def operator_group(
+    parser: argparse.ArgumentParser,
+) -> argparse._SubParsersAction[argparse.ArgumentParser]:  # pyright: ignore[reportPrivateUsage]
+    """The action that holds `harrier operator`'s subcommands, where
+    `_operator_subcommand` adds one."""
+    for action in _subparsers_of(parser)["operator"]._actions:  # pyright: ignore[reportPrivateUsage]
+        if isinstance(action, argparse._SubParsersAction):  # pyright: ignore[reportPrivateUsage]
+            return action  # pyright: ignore[reportUnknownVariableType]
+    raise LookupError("harrier operator has no subcommands")
+
+
 def _open_store() -> Connection:
     """The store a run class command opens: the local SQLite file, or, in a
     hosted run, the Postgres store as the run's owner, every transaction
@@ -1632,6 +1706,23 @@ def _cmd_tracks(args: argparse.Namespace) -> int:
         return 0
 
 
+def _cmd_operator_scheduler(args: argparse.Namespace) -> int:
+    """One scheduler tick, then exit (spec 108)."""
+    from harrier_api.hostedscheduler import run_scheduler
+
+    # Hosted logging: stderr only, no local tracker opened (spec 135).
+    configure_logging(hosted=True)
+    return run_scheduler(os.environ, handle_signals=True)
+
+
+def _cmd_operator_schedule_report(args: argparse.Namespace) -> int:
+    """The hosted schedule, one line per owner and job (spec 108)."""
+    from harrier_api.hostedscheduler import run_report
+
+    configure_logging(hosted=True)
+    return run_report(os.environ)
+
+
 def _cmd_store(args: argparse.Namespace) -> int:
     """Migrate the store, or print its dialect and version (spec 103)."""
     from harrier.connection import StoreError
@@ -2385,6 +2476,10 @@ _PATH = CommandClass(HOST_PATH)
 COMMAND_CLASSES: dict[str, CommandClass] = {
     # Never open the live database.
     "gmail-oauth": _HOST,
+    # Operator commands run only on a Postgres store, which main() decides
+    # before delegation is asked, and refuse a SQLite store (spec 108).
+    "operator scheduler": _HOST,
+    "operator schedule-report": _HOST,
     "schedule install": _HOST,
     "schedule status": _HOST,
     "schedule uninstall": _HOST,
@@ -2913,6 +3008,29 @@ def build_parser() -> argparse.ArgumentParser:
     store_sub.add_parser("status", help="print the store's dialect and schema version")
     store_cmd.set_defaults(func=_cmd_store)
 
+    # Operator commands run only on a Postgres store, each as the database
+    # role it declares (spec 108, Amendment (2026-10-14); spec 127 keeps the
+    # table of every class). A subcommand is added through
+    # `_operator_subcommand`, which asks for the declaration.
+    operator_cmd = sub.add_parser(
+        "operator", help="commands for the operator of a hosted deployment (spec 108)"
+    )
+    operator_sub = operator_cmd.add_subparsers(dest="operator_command", required=True)
+    _operator_subcommand(
+        operator_sub,
+        "scheduler",
+        role=SCHEDULER_LOGIN,
+        func=_cmd_operator_scheduler,
+        help="run one tick of the hosted schedule, then exit (spec 108)",
+    )
+    _operator_subcommand(
+        operator_sub,
+        "schedule-report",
+        role=SCHEDULER_LOGIN,
+        func=_cmd_operator_schedule_report,
+        help="one line per owner and job; exit 1 when anything needs the operator (spec 108)",
+    )
+
     scoring_cmd = sub.add_parser("scoring", help="the learned fit score (spec 077)")
     scoring_sub = scoring_cmd.add_subparsers(dest="scoring_command", required=True)
     scoring_sub.add_parser("export", help="write the labelled feature export the trainer reads")
@@ -3201,11 +3319,17 @@ def main(argv: list[str] | None = None) -> int:
             # A run command needs the owner the API gives a hosted run.
             print(f"error: {run_class_refusal(subcommand_name(args))}", file=sys.stderr)
             return 1
-        if args.command != "store":
+        # The store and operator classes run; each operator subcommand as
+        # the role it declares (spec 108).
+        if args.command not in ("store", "operator"):
             print(f"error: {POSTGRES_NOT_YET}", file=sys.stderr)
             return 1
         ran: int = args.func(args)
         return ran
+    if args.command == "operator":
+        # Before the lease, the hand-over and any store (spec 108).
+        print(f"error: {operator_refusal(subcommand_name(args))}", file=sys.stderr)
+        return 1
     if running_in() == "host":
         # Before anything is decided, so a lease left by a crashed host
         # process stops refusing the container at the next host invocation
