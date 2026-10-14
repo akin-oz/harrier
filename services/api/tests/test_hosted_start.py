@@ -51,7 +51,9 @@ from harrier.connection import Connection, StoreVersionError
 from harrier.demo import repo_root
 from harrier.loginrole import (
     BYPASSRLS,
+    CANNOT_LOG_IN,
     CANNOT_SET_TENANT,
+    INHERITS,
     MEMBER_PAST_THE_POLICY,
     NO_SUCH_ROLE,
     OWNS_A_TABLE_IN_PUBLIC,
@@ -177,6 +179,22 @@ def member_of_service_role(server: Server) -> tuple[LoginRole, list[LoginRolePro
     return login, [reached]
 
 
+def inherits(server: Server) -> tuple[LoginRole, list[LoginRoleProblem]]:
+    """Otherwise passing, but with `INHERIT`: it would hold `harrier_tenant`'s
+    grants on its own connection (spec 134, amendment of 2026-10-13)."""
+    login = server.login_role()
+    server.sql(f"ALTER ROLE {login.name} INHERIT")
+    return login, [LoginRoleProblem(INHERITS)]
+
+
+def cannot_log_in(server: Server) -> tuple[LoginRole, list[LoginRoleProblem]]:
+    """Seen by `grant-tenant` and `check-deploy`, never at the API's start:
+    a start runs as a role that has logged in."""
+    login = server.login_role()
+    server.sql(f"ALTER ROLE {login.name} NOLOGIN")
+    return login, [LoginRoleProblem(CANNOT_LOG_IN)]
+
+
 def cannot_set_tenant(server: Server) -> tuple[LoginRole, list[LoginRoleProblem]]:
     return server.login_role(tenant="none"), [LoginRoleProblem(CANNOT_SET_TENANT)]
 
@@ -254,12 +272,16 @@ def granted_without_set(server: Server) -> tuple[LoginRole, list[LoginRoleProble
 BYPASS_CASES: dict[str, SetUp] = {
     "a superuser": superuser,
     "bypassrls": bypassrls,
+    "inherit": inherits,
     "a member of service_role": member_of_service_role,
     "cannot set the tenant role": cannot_set_tenant,
     "a member of the tenant role without set": tenant_without_set,
     "owns a table in public": owns_a_public_table,
     "owns a partitioned table in public": owns_a_partitioned_public_table,
 }
+
+# Checked through `login_role_problems` as another role, not by a start.
+CHECK_ONLY_CASES: dict[str, SetUp] = {"nologin": cannot_log_in}
 
 SET_ROLE_CASES: dict[str, SetUp] = {
     "through a noinherit role, a bypassrls role": through_a_noinherit_role(
@@ -339,7 +361,10 @@ def test_hosted_start_refuses_a_login_role_that_can_set_role_past_the_policy(
 
 
 def test_the_login_role_checks_name_each_failure(server: Server) -> None:
-    built = {case: set_up(server) for case, set_up in {**BYPASS_CASES, **SET_ROLE_CASES}.items()}
+    built = {
+        case: set_up(server)
+        for case, set_up in {**BYPASS_CASES, **CHECK_ONLY_CASES, **SET_ROLE_CASES}.items()
+    }
     passing = server.login_role()
     with closing(postgres_connect(server.url)) as driver:
         conn = Connection.postgres(driver)
@@ -352,6 +377,45 @@ def test_the_login_role_checks_name_each_failure(server: Server) -> None:
     # Names only: no case's text carries a password.
     for case, (login, _) in built.items():
         assert login.password not in "; ".join(map(str, found[case]))
+
+
+def test_the_login_role_must_log_in_and_must_not_inherit(
+    server: Server, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec 134, amendment of 2026-10-13, and spec 110's decision 3: the
+    shared function reads `NOLOGIN` and `INHERIT`, each in its place."""
+    passing = server.login_role()
+    login, _ = inherits(server)
+    nologin, _ = cannot_log_in(server)
+    # All three, with BYPASSRLS before them and no tenant grant after them:
+    # the order is the attributes' (bypassrls, cannot log in, inherits),
+    # then memberships, then the tenant role.
+    every = server.login_role("BYPASSRLS", tenant="none")
+    server.sql(f"ALTER ROLE {every.name} NOLOGIN INHERIT")
+    with closing(postgres_connect(server.url)) as driver:
+        conn = Connection.postgres(driver)
+        found = {
+            "passing": login_role_problems(conn, passing.name),
+            "inherit": login_role_problems(conn, login.name),
+            "nologin": login_role_problems(conn, nologin.name),
+            "all": login_role_problems(conn, every.name),
+        }
+    assert found["passing"] == []
+    assert found["inherit"] == [LoginRoleProblem(INHERITS)]
+    assert found["nologin"] == [LoginRoleProblem(CANNOT_LOG_IN)]
+    assert found["all"] == [
+        LoginRoleProblem(BYPASSRLS),
+        LoginRoleProblem(CANNOT_LOG_IN),
+        LoginRoleProblem(INHERITS),
+        LoginRoleProblem(CANNOT_SET_TENANT),
+    ]
+    # The start refuses the one that inherits, naming the check and nothing
+    # of the URL or the password (`refused_start` checks both), and starts
+    # on the `LOGIN NOINHERIT` role the tests make.
+    refused = refused_start(server, monkeypatch, login)
+    assert str(refused) == "the hosted API refuses its login role: inherits"
+    with serving(monkeypatch, passing.url) as hosted:
+        assert hosted.store is hosted.app.state.request_store
 
 
 # --- the store's default isolation ---

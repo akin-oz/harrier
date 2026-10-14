@@ -28,6 +28,10 @@ from harrier.tracker.schema import TENANT_ROLE
 NO_SUCH_ROLE = "no such role"
 SUPERUSER = "superuser"
 BYPASSRLS = "bypassrls"
+# A login role must log in, and must not inherit (spec 134, amendment of
+# 2026-10-13: the login role must log in and must not inherit).
+CANNOT_LOG_IN = "cannot log in"
+INHERITS = "inherits"
 OWNS_A_TABLE_IN_PUBLIC = "owns a table in public"
 CANNOT_SET_TENANT = f"cannot set role {TENANT_ROLE}"
 MEMBER_PAST_THE_POLICY = "member of a role past the policy"
@@ -65,7 +69,11 @@ class LoginRoleProblem:
 def login_role_problems(conn: Connection, role: str) -> list[LoginRoleProblem]:
     """Every check `role` fails on the store `conn` reaches, in a fixed order.
 
-    - `superuser`, `bypassrls`: the role's own attributes.
+    - `superuser`, `bypassrls`, `cannot log in`, `inherits`: the role's own
+      attributes, `NOLOGIN` and `INHERIT` being the last two. `cannot log
+      in` is seen only by a caller that checks another role than the one
+      it connected as (`grant-tenant`, `check-deploy`): the API's start
+      runs as the login role, which has logged in.
     - `member of a role past the policy`, once per role reached: membership,
       directly or through other roles, of a role that is a superuser, has
       `BYPASSRLS`, owns a table in `public`, owns a table with row security
@@ -86,7 +94,9 @@ def login_role_problems(conn: Connection, role: str) -> list[LoginRoleProblem]:
     may call it.
     """
     found = conn.execute(
-        "SELECT rolsuper, rolbypassrls FROM pg_catalog.pg_roles WHERE rolname = ?", (role,)
+        "SELECT rolsuper, rolbypassrls, rolcanlogin, rolinherit "
+        "FROM pg_catalog.pg_roles WHERE rolname = ?",
+        (role,),
     ).fetchone()
     if found is None:
         return [LoginRoleProblem(NO_SUCH_ROLE)]
@@ -95,6 +105,10 @@ def login_role_problems(conn: Connection, role: str) -> list[LoginRoleProblem]:
     problems: list[LoginRoleProblem] = []
     if found[1]:
         problems.append(LoginRoleProblem(BYPASSRLS))
+    if not found[2]:
+        problems.append(LoginRoleProblem(CANNOT_LOG_IN))
+    if found[3]:
+        problems.append(LoginRoleProblem(INHERITS))
     problems += _memberships_past_the_policy(conn, role)
     owns = conn.execute(
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class c "
@@ -105,7 +119,7 @@ def login_role_problems(conn: Connection, role: str) -> list[LoginRoleProblem]:
     ).fetchone()
     if owns is not None and owns[0]:
         problems.append(LoginRoleProblem(OWNS_A_TABLE_IN_PUBLIC))
-    if not _can_set_tenant(conn, role):
+    if not can_set_role(conn, role, TENANT_ROLE):
         problems.append(LoginRoleProblem(CANNOT_SET_TENANT))
     return problems
 
@@ -140,15 +154,16 @@ def _memberships_past_the_policy(conn: Connection, role: str) -> list[LoginRoleP
     return problems
 
 
-def _can_set_tenant(conn: Connection, role: str) -> bool:
-    """Whether `role` may `SET ROLE harrier_tenant`. Postgres 16 split the
-    right to set a role from membership; before it, membership was the
-    right."""
+def can_set_role(conn: Connection, role: str, target: str) -> bool:
+    """Whether `role` may `SET ROLE target`. Postgres 16 split the right to
+    set a role from membership; before it, membership was the right. False
+    when `target` does not exist. Spec 110's grant commands read it to tell
+    a grant made from one to make."""
     row = conn.execute(
         "SELECT CASE WHEN to_regrole(?) IS NULL THEN false "
         "WHEN current_setting('server_version_num')::int >= 160000 "
         "THEN pg_catalog.pg_has_role(?, ?, 'SET') "
         "ELSE pg_catalog.pg_has_role(?, ?, 'MEMBER') END",
-        (TENANT_ROLE, role, TENANT_ROLE, role, TENANT_ROLE),
+        (target, role, target, role, target),
     ).fetchone()
     return row is not None and bool(row[0])
