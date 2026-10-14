@@ -1305,21 +1305,19 @@ and so how often this happens.
 ### Changes to approved specs (this amendment)
 
 - **Spec 110:** its deploy carries the update rule and the check above,
-  under its Amendment (2026-10-11), "The scheduler", and its planned
-  test_the_deploy_workflow_migrates_before_it_deploys. Not written into
+  under its Amendment (2026-10-11), "The scheduler", and its `services/api/tests/test_deploy_files.py::test_the_deploy_workflow_migrates_before_it_deploys`. Not written into
   spec 110 here; Akin approves it with this amendment.
 
 ### Acceptance criteria (the scheduler machine after an update)
 
 - [ ] The deploy's `fly machine update` of the scheduler machine carries
       no `--skip-start`, or is followed by `fly machine start` of the
-      same machine before the next step (spec 110's planned
-      test_the_deploy_workflow_migrates_before_it_deploys, extended).
+      same machine before the next step (spec 110's `services/api/tests/test_deploy_files.py::test_the_deploy_workflow_migrates_before_it_deploys`, extended).
 - [ ] The check after the update passes on an event list holding a
       `start` from `flyd` later than the update, and exits 1 naming the
       machine id on one holding only the update, or a start from before
       it, once 70 minutes have passed, against a fake event list and a
-      fake clock (planned test_the_scheduler_ticks_after_a_deploy).
+      fake clock (`services/api/tests/test_deploy_checks.py::test_the_scheduler_ticks_after_a_deploy`).
 - [ ] The first production deploy that updates the scheduler machine
       records the check's output in its pull request, with no token,
       organization id or private hostname.
