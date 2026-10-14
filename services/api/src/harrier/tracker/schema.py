@@ -587,6 +587,13 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
             CREATE TRIGGER tracks_keep_their_id BEFORE UPDATE OF id ON tracks
             BEGIN SELECT RAISE(ABORT, 'a track id never changes'); END
             """,
+            # One unarchived focused track (spec 137), held by the store as
+            # well as by `add_track`'s check, which two adds can race past
+            # (review of PR #332).
+            """
+            CREATE UNIQUE INDEX idx_tracks_one_active_focused
+            ON tracks (kind) WHERE kind = 'focused' AND archived_at IS NULL
+            """,
         ],
     ),
 ]
@@ -823,6 +830,8 @@ OWNER_SCOPED_KEYS: dict[tuple[str, tuple[str, ...]], tuple[str, ...] | None] = {
     ("profile_documents", ("owner_id", "track_id", "kind", "name")): ("track_id", "kind", "name"),
     ("job_runs", ("owner_id", "job")): ("job",),
     ("tracks", ("owner_id", "id")): ("id",),
+    # One unarchived focused track, per owner (spec 137, migration 20).
+    ("tracks", ("owner_id", "kind")): ("kind",),
     # What job_events references, so an event stays inside its job's owner.
     # SQLite has no owner to stay inside.
     ("jobs", ("owner_id", "id")): None,
@@ -1685,6 +1694,12 @@ POSTGRES_MIGRATIONS: list[tuple[int, list[str]]] = [
                 "ALTER TABLE tracks ADD CONSTRAINT tracks_kind_check "
                 f"CHECK (kind IN ({_TRACK_KIND_LIST}))"
             ),
+            # One unarchived focused track per owner, as every per-owner key
+            # leads with owner_id (spec 105).
+            """
+            CREATE UNIQUE INDEX idx_tracks_one_active_focused
+            ON tracks (owner_id, kind) WHERE kind = 'focused' AND archived_at IS NULL
+            """,
         ],
     ),
 ]

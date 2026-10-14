@@ -213,7 +213,9 @@ owner to confirm. They are proposals, not measured values.
 ## Failure modes
 
 - **A second focused track.** `tracks add --kind focused` exits 2 naming
-  the existing one. The database is not touched.
+  the existing one. The database is not touched. Two adds that race past
+  the check are refused by the store: migration 20 adds a partial unique
+  index on the unarchived focused track (amendment 7).
 - **No screening document.** `add` on a focused track exits 2 with
   "track <slug> has no screening configuration; `harrier --track <slug>
   profile put screening --file PATH`". It never falls back to the
@@ -234,7 +236,10 @@ owner to confirm. They are proposals, not measured values.
 
 - [ ] `harrier tracks add f --kind focused --label F` then `tracks list`
   prints the new track with kind `focused` (`services/api/tests/test_focused_track.py::test_a_focused_track_can_be_added`).
-- [ ] A second unarchived focused track exits 2 and adds no row (`services/api/tests/test_focused_track.py::test_a_second_focused_track_is_refused`).
+- [ ] A second unarchived focused track exits 2 and adds no row
+  (`services/api/tests/test_focused_track.py::test_a_second_focused_track_is_refused`),
+  and two racing adds leave one (amendment 7;
+  `services/api/tests/test_focused_track.py::test_two_racing_focused_adds_leave_one`).
 - [ ] A posting with the title "Junior Frontend Developer", a remote EMEA
   location and "Figma" in its description is added to a focused track with
   a score that includes the `level` and `figma` bonuses, and its `signals`
@@ -311,6 +316,22 @@ Each was put to the owner and answered before it was built.
    rejected, and discovery on the kind is spec 139's, so `reconsider` is
    refused on the kind until then
    (`services/api/tests/test_focused_track.py::test_focused_refuses_what_later_specs_open`).
+
+7. **The store holds one unarchived focused track.** The local review and
+   CodeRabbit's review of PR #332 both found that `add_track` checks before
+   it inserts, so two adds with different slugs can both pass the check and
+   both commit; Postgres reads at read committed. Migration 20 now also
+   creates `idx_tracks_one_active_focused`, a partial unique index on the
+   unarchived focused track (per owner on Postgres). A second insert the
+   index refuses is reported as the focused-track refusal, and a slug clash
+   stays a duplicate
+   (`services/api/tests/test_focused_track.py::test_two_racing_focused_adds_leave_one`,
+   on both stores).
+8. **The version digests the parsed document.** CodeRabbit's review of PR
+   #332 found that the policy version hashed the raw document while the
+   parser strips surrounding spaces, so a whitespace-only edit moved the
+   version of the same policy. It now digests the parsed values
+   (`services/api/tests/test_focused_track.py::test_a_whitespace_edit_keeps_the_policy_version`).
 
 The migration's order is recorded in its comment in
 `services/api/src/harrier/tracker/schema.py`. A rebuild into a new table

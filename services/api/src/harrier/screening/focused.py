@@ -181,6 +181,15 @@ def _groups(value: object, path: str) -> tuple[PhraseGroup, ...]:
     return tuple(groups)
 
 
+def _group_fingerprint(group: PhraseGroup) -> dict[str, Any]:
+    return {
+        "name": group.name,
+        "phrases": list(group.phrases),
+        "fields": list(group.fields),
+        "points": group.points,
+    }
+
+
 def parse_screening(raw: object) -> ScreeningDocument:
     """The document, or `ScreeningDocumentError` naming the first bad field.
 
@@ -191,20 +200,41 @@ def parse_screening(raw: object) -> ScreeningDocument:
     targets = _object(top["targets"], "targets", _TARGET_KEYS)
     scoring_raw = _object(top["scoring"], "scoring", _SCORING_KEYS)
     ownership = _object(top["ownership"], "ownership", _OWNERSHIP_KEYS)
+    titles = _strings(targets["titles"], "targets.titles")
+    include = _strings(targets["title_keywords_include"], "targets.title_keywords_include")
+    exclude = _strings(targets["title_keywords_exclude"], "targets.title_keywords_exclude")
+    scoring = {key: _integer(scoring_raw[key], f"scoring.{key}") for key in _SCORING_KEYS}
+    bonuses = _groups(top["bonuses"], "bonuses")
+    penalties = _groups(top["penalties"], "penalties")
+    broad_titles = _strings(ownership["broad_title_signals"], "ownership.broad_title_signals")
+    broad_descriptions = _strings(
+        ownership["broad_description_signals"], "ownership.broad_description_signals"
+    )
     document = ScreeningDocument(
-        titles=_strings(targets["titles"], "targets.titles"),
-        include=_strings(targets["title_keywords_include"], "targets.title_keywords_include"),
-        exclude=_strings(targets["title_keywords_exclude"], "targets.title_keywords_exclude"),
-        scoring={key: _integer(scoring_raw[key], f"scoring.{key}") for key in _SCORING_KEYS},
-        bonuses=_groups(top["bonuses"], "bonuses"),
-        penalties=_groups(top["penalties"], "penalties"),
-        broad_title_signals=_strings(
-            ownership["broad_title_signals"], "ownership.broad_title_signals"
-        ),
-        broad_description_signals=_strings(
-            ownership["broad_description_signals"], "ownership.broad_description_signals"
-        ),
-        fingerprint=cast("dict[str, Any]", raw),
+        titles=titles,
+        include=include,
+        exclude=exclude,
+        scoring=scoring,
+        bonuses=bonuses,
+        penalties=penalties,
+        broad_title_signals=broad_titles,
+        broad_description_signals=broad_descriptions,
+        # The parsed values, not the raw document: a stripped space is the
+        # same policy, so it must be the same version (review of PR #332).
+        fingerprint={
+            "targets": {
+                "titles": list(titles),
+                "title_keywords_include": list(include),
+                "title_keywords_exclude": list(exclude),
+            },
+            "scoring": dict(scoring),
+            "bonuses": [_group_fingerprint(group) for group in bonuses],
+            "penalties": [_group_fingerprint(group) for group in penalties],
+            "ownership": {
+                "broad_title_signals": list(broad_titles),
+                "broad_description_signals": list(broad_descriptions),
+            },
+        },
     )
     return document
 

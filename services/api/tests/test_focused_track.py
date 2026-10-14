@@ -25,6 +25,7 @@ from harrier.profile.store import ProfileDocumentError, put_document
 from harrier.screening.focused import (
     ScreeningDocumentError,
     blocker_penalty,
+    focused_policy_version,
     focused_score,
     parse_screening,
     score_bounds,
@@ -423,3 +424,60 @@ def test_focused_rows_stay_in_their_own_track(configured: Path) -> None:
         assert len(list_jobs(conn, resolve_scope(conn, SLUG))) == 1
     finally:
         conn.close()
+
+
+# --- review of PR #332 ---------------------------------------------------------
+
+
+def test_a_whitespace_edit_keeps_the_policy_version() -> None:
+    """The version digests the parsed document, so a space the parser strips
+    changes nothing it scores with and nothing it is versioned as."""
+    padded = example()
+    targets = padded["targets"]
+    bonuses = padded["bonuses"]
+    assert isinstance(targets, dict) and isinstance(bonuses, list)
+    targets["titles"] = [f" {title} " for title in targets["titles"]]
+    bonuses[0]["phrases"] = [f"{phrase}  " for phrase in bonuses[0]["phrases"]]
+    bonuses[0]["name"] = f" {bonuses[0]['name']}"
+    assert focused_policy_version(parse_screening(padded)) == focused_policy_version(
+        parse_screening(example())
+    )
+    weighted = example()
+    weighted_bonuses = weighted["bonuses"]
+    assert isinstance(weighted_bonuses, list)
+    weighted_bonuses[0]["points"] = 9
+    assert focused_policy_version(parse_screening(weighted)) != focused_policy_version(
+        parse_screening(example())
+    )
+
+
+def test_two_racing_focused_adds_leave_one(
+    store: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two adds that both pass the check before either inserts: the store's
+    partial index refuses the second, and the refusal is the focused-track
+    one, not a duplicate slug. On both stores."""
+    import harrier.tracks as tracks_module
+    from harrier.tracks import DuplicateTrackError, TrackRefusedError, add_track
+
+    add_track(store, "first", "focused", "First")
+    real = tracks_module._refuse_a_second_focused_track  # pyright: ignore[reportPrivateUsage]
+    calls: list[int] = []
+
+    def raced(conn: Connection) -> None:
+        # The first call is the check the other add raced past; later calls
+        # are the refusal after the store's own constraint fired.
+        calls.append(1)
+        if len(calls) > 1:
+            real(conn)
+
+    monkeypatch.setattr(tracks_module, "_refuse_a_second_focused_track", raced)
+    with pytest.raises(TrackRefusedError) as refused:
+        add_track(store, "second", "focused", "Second")
+    assert not isinstance(refused.value, DuplicateTrackError)
+    assert "track first is the focused track" in str(refused.value)
+    active = [t.slug for t in list_tracks(store) if t.kind == "focused" and not t.archived]
+    assert active == ["first"]
+    # A slug clash is still a duplicate, whatever kind asked for it.
+    with pytest.raises(DuplicateTrackError):
+        add_track(store, "first", "academic", "Again")
