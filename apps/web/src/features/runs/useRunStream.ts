@@ -44,18 +44,26 @@ async function fetchRun(runId: string): Promise<RunOut> {
   return data;
 }
 
-/** Resolves after `ms`, or at once when `signal` aborts. */
-function pause(ms: number, signal: AbortSignal): Promise<void> {
+/**
+ * Resolves after `ms`, or at once when `signal` aborts. A pause that ends on
+ * its timer takes its abort listener with it, so a long run that reconnects
+ * many times does not leave one on the signal per attempt.
+ */
+export function pause(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        resolve();
-      },
-      { once: true },
-    );
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
   });
 }
 

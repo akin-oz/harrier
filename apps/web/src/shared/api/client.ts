@@ -135,31 +135,51 @@ function isNoAnswer(error: unknown): boolean {
   return error instanceof Error && error.name === "TypeError";
 }
 
+interface Sent {
+  // A copy of the request as it left, kept for the one retry after a refresh.
+  readonly copy: Request;
+  // The token it carried, or null when it went without one.
+  readonly token: string | null;
+}
+
 function hostedMiddleware(): Middleware {
-  // A copy of each request as it left, kept for the one retry after a refresh.
-  const sent = new WeakMap<Request, Request>();
+  const sent = new WeakMap<Request, Sent>();
+
+  // A refusal ends only the session whose token was refused. A session that
+  // has moved on since the request left (refreshed, or signed out and in
+  // again) is not the one the API refused (CodeRabbit on PR #328).
+  async function refuse(response: Response, token: string | null): Promise<void> {
+    const reason = await reasonOf(response);
+    if (response.status === 403 && reason !== "anonymous") return;
+    if ((await accessToken()) !== token) return;
+    await endSession(endingFor(reason));
+  }
+
   return {
     async onRequest({ request }) {
       const token = await accessToken();
       // With no session the request goes without the header, and the API's
       // 401 `missing` ends the session below.
       if (token !== null) request.headers.set("Authorization", `Bearer ${token}`);
-      sent.set(request, request.clone());
+      sent.set(request, { copy: request.clone(), token });
       return request;
     },
     async onResponse({ request, response }) {
+      const first = sent.get(request);
       if (response.status === 401) {
-        const reason = await reasonOf(response);
-        if (reason !== "expired") {
-          await endSession(endingFor(reason));
+        if ((await reasonOf(response)) !== "expired" || first === undefined) {
+          await refuse(response, first?.token ?? null);
           return undefined;
         }
-        const retry = sent.get(request);
-        const token = retry === undefined ? null : await refreshSession();
-        if (retry === undefined || token === null) {
-          await endSession("expired");
+        // The session already holds another token when a refresh ran for an
+        // earlier refusal, so that token is used and no second refresh runs.
+        const current = await accessToken();
+        const token = current !== first.token ? current : await refreshSession();
+        if (token === null) {
+          if (current === first.token) await endSession("expired");
           return undefined;
         }
+        const retry = first.copy;
         retry.headers.set("Authorization", `Bearer ${token}`);
         // openapi-fetch does not pass an error thrown here to `onError`, so the
         // retry gives the no-answer sentence itself.
@@ -167,15 +187,10 @@ function hostedMiddleware(): Middleware {
           throw isNoAnswer(error) ? new Error(UNREACHABLE) : error;
         });
         // A second refusal is final: no further retry.
-        if (second.status === 401) await endSession(endingFor(await reasonOf(second)));
-        else if (second.status === 403 && (await reasonOf(second)) === "anonymous") {
-          await endSession("refused");
-        }
+        if (second.status === 401 || second.status === 403) await refuse(second, token);
         return second;
       }
-      if (response.status === 403 && (await reasonOf(response)) === "anonymous") {
-        await endSession("refused");
-      }
+      if (response.status === 403) await refuse(response, first?.token ?? null);
       return undefined;
     },
     onError({ error }) {

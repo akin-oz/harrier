@@ -5,7 +5,7 @@ import { afterEach, expect, test, vi } from "vitest";
 
 import { installRunStreams } from "../../shared/testing/runStreams";
 import type { RunStreams } from "../../shared/testing/runStreams";
-import { useRunStream } from "./useRunStream";
+import { pause, useRunStream } from "./useRunStream";
 import type { RunOut } from "./useRunStream";
 
 afterEach(() => {
@@ -111,4 +111,32 @@ test("a stream is aborted when it is no longer watched", async () => {
   unmount();
   expect(third.closed).toBe(true);
   expect(streams.connections).toHaveLength(3);
+});
+
+test("a pause that ends on its timer leaves no listener on the signal", async () => {
+  vi.useFakeTimers();
+  try {
+    const signal = new AbortController().signal;
+    const added = vi.spyOn(signal, "addEventListener");
+    const removed = vi.spyOn(signal, "removeEventListener");
+
+    const paused = pause(3000, signal);
+    await vi.advanceTimersByTimeAsync(3000);
+    await paused;
+
+    expect(added).toHaveBeenCalledTimes(1);
+    expect(removed).toHaveBeenCalledWith("abort", added.mock.calls[0]?.[1]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("a pause on an aborted signal ends at once and listens for nothing", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const added = vi.spyOn(controller.signal, "addEventListener");
+
+  await pause(60_000, controller.signal);
+
+  expect(added).not.toHaveBeenCalled();
 });

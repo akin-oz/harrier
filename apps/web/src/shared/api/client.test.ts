@@ -13,7 +13,7 @@ vi.mock("@supabase/supabase-js", async () => ({
   createClient: (await import("../testing/fakeSupabase")).fake.createClient,
 }));
 
-import { SESSION_A, fake } from "../testing/fakeSupabase";
+import { SESSION_A, SESSION_B, fake } from "../testing/fakeSupabase";
 import { installRunStreams } from "../testing/runStreams";
 import { UNREACHABLE, api } from "./client";
 import { readRunEvents } from "./stream";
@@ -156,6 +156,43 @@ test("concurrent expired refusals share one refresh", async () => {
   expect(seen.slice(2).map((call) => call.authorization)).toEqual([
     "Bearer refreshed-token",
     "Bearer refreshed-token",
+  ]);
+});
+
+test("a refusal of a token the session no longer holds ends nothing", async () => {
+  // The person signed out and in again while the request was out: the API
+  // refused the old token, not the session that holds the new one.
+  for (const refusal of [json(401, REFUSAL.invalid), json(403, REFUSAL.anonymous)]) {
+    fake.reset();
+    fake.signIn(SESSION_A);
+    stubFetch(() => {
+      fake.signIn(SESSION_B);
+      return refusal.clone();
+    });
+
+    const { error } = await api.GET("/tracks");
+
+    expect(error).toBeDefined();
+    expect(fake.log).toEqual([]);
+    expect(fake.session).toEqual(SESSION_B);
+  }
+});
+
+test("an expired token the session has replaced is retried without a refresh", async () => {
+  // A refresh for an earlier refusal already gave the session a new token.
+  stubFetch((calls) => {
+    if (calls.length > 1) return json(200, []);
+    fake.signIn({ ...SESSION_A, access_token: "token-a-later" });
+    return json(401, REFUSAL.expired);
+  });
+
+  const { error } = await api.GET("/tracks");
+
+  expect(error).toBeUndefined();
+  expect(fake.log).toEqual([]);
+  expect(seen.map((call) => call.authorization)).toEqual([
+    "Bearer token-a",
+    "Bearer token-a-later",
   ]);
 });
 

@@ -1175,6 +1175,40 @@ declined or recorded elsewhere:
   integrity 9); a condition to wait for does not exist for "nothing was
   asked". Listed under "noticed and left".
 
+### CodeRabbit's review of PR 328
+
+CodeRabbit reviewed the draft at `9ef3438`. Each finding was read against the
+code. Items 16 to 18 are each proved by a test that fails without the fix.
+
+16. **A refusal ends only the session it refused.** The middleware ended
+    whatever session was current when a refusal arrived. A request sent before
+    the person signed out and in again could end the new session with the old
+    token's refusal. The middleware now keeps the token each request carried.
+    A 401 or 403 ends the session only when the session still holds that
+    token; otherwise the caller gets the refusal and the session stays. This
+    changes the table under "When the API refuses the token": each row that
+    ends the session applies to a refusal of the session's current token
+    ("a refusal of a token the session no longer holds ends nothing" in
+    `client.test.ts`).
+17. **No second refresh for a token already replaced.** A 401 `expired` whose
+    token the session has since replaced, because a refresh for an earlier
+    refusal finished first, is retried once with the session's current token
+    and does not refresh again. The table's first row is otherwise unchanged:
+    one retry, and a second refusal is final ("an expired token the session
+    has replaced is retried without a refresh" in `client.test.ts`).
+18. **The stream's pause.** A pause that ended on its timer left its abort
+    listener on the signal, one for each reconnect of a long run. It now
+    removes it, and a pause on a signal that has already aborted ends at once
+    (`useRunStream.test.tsx`: "a pause that ends on its timer leaves no
+    listener on the signal" and "a pause on an aborted signal ends at once
+    and listens for nothing").
+- **Declined: the env directory.** CodeRabbit asked `vite.config.ts` to find
+  its own directory with `fileURLToPath` instead of decoding the URL's path,
+  which gives a wrong path on Windows. On macOS and Linux, where harrier is
+  built and run, both give the same path. `node:url` has no types in
+  `apps/web` (`pnpm type-check` fails on the import), so the change would
+  add `@types/node` for a platform nothing here builds on.
+
 ### Decisions the text left open
 
 - **Reconnecting.** After a clean end, the hook reconnects at once. It waits
