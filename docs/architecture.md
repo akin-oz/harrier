@@ -260,8 +260,9 @@ creates, in `public` and in every schema. No migration creates them, and
 migration 10 refuses a store without the roles and the auth objects.
 
 The hosted API is the one path an owner reaches their rows by (below):
-the CLI admits a Postgres URL only for `harrier store` and for the hosted
-runs the API starts (spec 106), until spec 127. A
+the CLI admits a Postgres URL only for `harrier store`, for the hosted
+runs the API starts (spec 106) and for `harrier operator` (spec 108),
+until spec 127. A
 role with `BYPASSRLS`, such as Supabase's `service_role`, sees every owner's
 rows
 (`services/api/tests/test_owner_policy.py::test_a_bypassrls_role_sees_every_owner`);
@@ -442,6 +443,46 @@ operating system user on one machine, so a hostile run can claim any owner
 in the database and can likely read its siblings' environments. The
 environment allowlist keeps secrets out of logs and child tools; it is not
 a sandbox. Hosted harrier treats its own code and dependencies as trusted.
+
+The hosted schedule is `harrier operator scheduler` (spec 108,
+`services/api/src/harrier_api/hostedscheduler.py`; its rules and writes are
+`services/api/src/harrier/hostedschedule.py`). An owner's choice of jobs and
+timezone is the `schedule` kind of their configuration, and every owner
+shares the committed cadence in `config/schedule.json`. A Fly scheduled
+machine starts the command on an hourly cycle; each start takes a session
+advisory lock or stands by, lists every owner's choice and state, claims each
+due slot as its owner, starts the run through spec 106's binding with the
+owner's `TZ`, waits, records how each ended in `schedule_state`, and exits
+(`services/api/tests/test_hosted_scheduler.py::test_one_scheduler_start_runs_one_tick_and_exits`,
+`services/api/tests/test_hosted_scheduler.py::test_a_second_scheduler_stands_by`).
+Its login, `harrier_scheduler`, is a member of `harrier_tenant` and of
+`harrier_schedule_reader` and nothing else, and the start refuses a login
+that can step past the policy
+(`services/api/tests/test_hosted_scheduler.py::test_the_scheduler_refuses_a_login_that_can_bypass`).
+The one read across owners is `harrier_schedule_inputs()`, in a transaction
+as the reader that sets no claims; every other transaction runs as
+`harrier_tenant` with one owner's claims
+(`services/api/tests/test_hosted_scheduler.py::test_the_scheduler_acts_as_each_owner`).
+The API and the run login refuse to start as a member of the reader
+(`services/api/tests/test_hosted_scheduler.py::test_the_api_login_cannot_list_schedules`).
+A slot is an instant in the owner's zone
+(`services/api/tests/test_hosted_slots.py::test_the_due_slot_is_local_to_the_owner`),
+starts at most once even when two connections claim it
+(`services/api/tests/test_hosted_scheduler.py::test_a_slot_starts_once`),
+and after an outage only the latest slot of each job starts
+(`services/api/tests/test_hosted_scheduler.py::test_an_outage_starts_each_jobs_latest_slot_once`).
+One owner's failing, hanging or refused run is recorded for that owner and
+the loop goes on
+(`services/api/tests/test_hosted_scheduler.py::test_one_owner_failing_does_not_stop_another`).
+`harrier operator schedule-report` prints one line per owner and job and
+exits 1 on a problem
+(`services/api/tests/test_hosted_scheduler.py::test_the_report_exits_one_on_each_problem`).
+`harrier operator` is one command group that runs only on Postgres, each
+subcommand declaring its database role
+(`services/api/tests/test_operator_class.py::test_the_operator_class_runs_only_on_postgres`,
+`services/api/tests/test_operator_class.py::test_every_operator_subcommand_declares_its_role`).
+The scheduler and the API are one image; the machine and its limits are spec
+110's.
 
 Gmail watch is local only (spec 109). A hosted watch would store and
 transmit restricted Gmail data on servers, which Google allows only after
