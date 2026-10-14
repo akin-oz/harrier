@@ -40,10 +40,10 @@ the first hosted release. Telegram is offered: each owner brings a bot.
 - One bot and one chat for the whole install. `send_telegram_message`
   takes the token and chat id from its arguments, else from
   `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`
-  (`services/api/src/harrier/notify.py:53-54`). Those two lines are the
+  (`services/api/src/harrier/notify.py:52-53`). Those two lines are the
   only reads of either variable under `services/api/src` (`grep -rn
   'getenv("TELEGRAM' services/api/src`). Without either it logs a warning
-  and returns 2 (`notify.py:55-60`).
+  and returns 2 (`notify.py:54-59`).
 - Every caller relies on that fallback. `send_telegram_message` is called
   at three sites (`services/api/src/harrier/discovery.py:497`,
   `services/api/src/harrier/academic/discovery.py:260`, `:349`) and is the
@@ -57,12 +57,12 @@ the first hosted release. Telegram is offered: each owner brings a bot.
   build from its owner's credentials.
 - A failed send is logged with the exception text, unscrubbed
   (`notify.py:57-58` before part 1; scrubbed since, at
-  `notify.py:78-83`). `scrub_secrets` exists for exactly this shape: its
+  `notify.py:77-82`). `scrub_secrets` exists for exactly this shape: its
   docstring names `http.client.InvalidURL`, whose message embeds the
   request path, and the path here is `/bot<token>/sendMessage`
   (`services/api/src/harrier/sources/__init__.py:83-95`). Hosted, logs
   leave the machine (spec 110, privacy 5).
-- Demo mode never sends (`notify.py:46-52`,
+- Demo mode never sends (`notify.py:45-51`,
   `services/api/tests/test_demo.py::test_demo_never_sends_telegram_even_with_credentials_present`).
 
 ### Gmail today
@@ -234,7 +234,7 @@ The save runs in the request, with the values the request carried. The
 API does not decrypt a stored credential for it, which keeps spec 116's
 rule that stored credentials are decrypted only at run start (spec 106).
 Each Bot API call has a timeout of 30 seconds, as `send_telegram_message`
-uses (`notify.py:73`).
+uses (`notify.py:72`).
 
 The confirmation is the one message harrier sends outside a run. It is a
 Telegram message to the owner's own chat, caused by the owner's own
@@ -993,12 +993,13 @@ small edits in `harrier_api`, the regenerated contract and the tests.
 ### What part 2 found
 
 1. **Two modules join the diff list.** The route module must be registered
-   and its 422 chosen, which only `harrier_api/app.py` does (one
-   `include_router`, one branch in the validation handler). The route also
-   needs the request's owner and the app's key, which spec 116's module held
-   as private helpers; `harrier_api/credentials_routes.py` now names them
-   `request_owner` and `request_key`. No behavior of a credentials route
-   changes. The diff criterion lists both.
+   and its refusals chosen, which only `harrier_api/app.py` does (one
+   `include_router`, and two branches in the exception handlers, items 6
+   and 7). The route also needs the request's owner and the app's key, which
+   spec 116's module held as private helpers;
+   `harrier_api/credentials_routes.py` now names them `request_owner` and
+   `request_key`. No behavior of a credentials route changes. The diff
+   criterion lists both.
 2. **A value is stripped, then checked, then stored.** The store strips
    every field (spec 116), so the pair that is checked is the stripped one:
    a paste with a trailing newline saves
@@ -1006,26 +1007,33 @@ small edits in `harrier_api`, the regenerated contract and the tests.
 3. **The shapes are ASCII and anchored.** The patterns in Behavior are read
    as `[0-9]` and a whole-string match: `\d` takes any Unicode digit, and
    `$` takes a trailing newline. Each value is also held to the credential
-   store's 4096-byte bound, so a pair that passes the check is a pair the
-   store accepts, and the write after two network calls cannot be refused
+   store's 4096-byte bound, exactly, so a pair that passes the check is a
+   pair the store accepts, and the write after two network calls cannot be
+   refused
    (`services/api/tests/test_telegram_settings.py::test_check_telegram_refuses_a_malformed_token_without_a_call`,
-   `services/api/tests/test_telegram_settings.py::test_check_telegram_refuses_a_malformed_chat_id_without_a_call`).
+   `services/api/tests/test_telegram_settings.py::test_check_telegram_refuses_a_malformed_chat_id_without_a_call`,
+   `services/api/tests/test_telegram_settings.py::test_the_length_bound_is_the_stores_and_holds_at_its_edge`).
 4. **What the Bot API's answer maps to, beyond the table.** `ok: false`
    from `getMe` is `token_rejected` and from `sendMessage` is
    `chat_unreachable`, whatever `error_code` says. An HTTP 5xx or 429 is
    `telegram_unavailable` whatever the body says, because those speak for
    the service and not for the bot. So is an answer that is not a JSON
-   object, one with no boolean `ok`, a 4xx whose body says `ok: true`, and
-   any transport failure or timeout
+   object, one with no boolean `ok`, one longer than 64 KiB (the read is
+   cut, and a cut answer is not JSON), a 4xx whose body says `ok: true`, and
+   any failure to send, read or close, of any exception type
    (`services/api/tests/test_telegram_settings.py::test_check_telegram_maps_each_answer_to_one_reason`,
    `services/api/tests/test_telegram_settings.py::test_an_answer_that_is_not_about_the_bot_is_telegram_unavailable`,
    `services/api/tests/test_telegram_settings.py::test_a_transport_failure_is_telegram_unavailable`).
 5. **`check_telegram` returns `None` on success** and the reason otherwise,
    from `TelegramReason`, the closed set. It takes an `opener`, `urlopen`'s
    calling form, and uses `urllib.request.urlopen` when given none. A call
-   is made only when the one before it passed. It logs nothing, and no error
-   text leaves it, because the token is in every URL it builds
-   (`services/api/tests/test_telegram_settings.py::test_an_error_that_quotes_the_token_leaves_nothing_of_it`).
+   is made only when the one before it passed. It logs nothing, and it
+   catches `Exception`, as `send_telegram_message` does, so no error text
+   leaves it: the token is in every URL it builds, and an error of a type
+   nobody expected would carry the URL to a log. A stop signal
+   (`BaseException`) still stops
+   (`services/api/tests/test_telegram_settings.py::test_an_error_that_quotes_the_token_leaves_nothing_of_it`,
+   `services/api/tests/test_telegram_settings.py::test_a_stop_signal_is_not_swallowed_by_the_check`).
 6. **The 422 is spec 116's body.** `TelegramSettingsIn` forbids extra fields
    and a schema refusal (a number for the chat id, a missing field, a body
    that is not JSON) is answered with `CredentialRefusalOut`: the field and
@@ -1036,35 +1044,122 @@ small edits in `harrier_api`, the regenerated contract and the tests.
    (`services/api/tests/test_telegram_settings.py::test_a_telegram_secret_never_reaches_a_body_or_a_log`,
    `services/api/tests/test_telegram_settings.py::test_telegram_routes_are_not_served_locally`).
    `chat_id` is a `str`, as Behavior says, kept out of the model's `repr`;
-   `bot_token` is a `SecretStr`.
-7. **A refusal is logged as `telegram settings refused: <reason>`** at INFO,
-   and nothing else of the request is logged.
-8. **Line numbers are refreshed** (decision D9) against `main` at
-   `0a5be39` plus this change's `notify.py`. Where a cite described the
-   code before part 1, it says so (Telegram today, the failed send).
-9. **The six planned tests are built** under the names the criteria now
-   cite, in `services/api/tests/test_telegram_settings.py`, with the
-   criteria ticked. One more test reads the row the route wrote through
-   spec 106's run start: the owner's run holds the pair, another owner's
-   holds neither, and a run that prints both leaves neither in an event
-   (`services/api/tests/test_telegram_settings.py::test_a_saved_pair_reaches_only_its_owners_run_and_never_the_event_stream`).
+   `bot_token` is a `SecretStr`. Both are strings with no pattern or length
+   in the schema, and both are marked `format: password` and `writeOnly`,
+   the chat id as well as the token (decision D7), so a client built from
+   the contract treats neither as readable. A chat id sent as a JSON number
+   is a 422, not `chat_id_shape`: Behavior types it `str`, and the form of
+   spec 114 sends text.
+7. **A body FastAPI cannot read at all gets the same answer.** A body that
+   is not UTF-8 is answered by FastAPI with its own 400 before it validates
+   anything, and the 400 this route declares has a `reason`. The exception
+   handler in `harrier_api/app.py` answers that 400 on a Telegram route as
+   it answers a body that is not JSON: the local 404, or hosted the 422
+   naming the body. The credentials routes (spec 116) have the same gap and
+   answer FastAPI's 400; part 2 does not change them, and records it for
+   spec 116's owner here
+   (`services/api/tests/test_telegram_settings.py::test_a_telegram_secret_never_reaches_a_body_or_a_log`).
+8. **The check ends before the request's transaction opens.** It is a
+   dependency, `check_pair`, declared before `Conn`, so a slow Telegram
+   holds no pooled connection. Run inside the transaction it would have,
+   for both calls, and ten saves stuck on a slow Telegram would have held
+   the pool and made every other owner's request wait for a lease. The key
+   and the owner are read before the check, so a request that cannot be
+   written sends no confirmation
+   (`services/api/tests/test_telegram_settings.py::test_the_bot_api_is_asked_while_the_request_holds_no_connection`,
+   `services/api/tests/test_telegram_settings.py::test_a_request_that_cannot_be_written_sends_no_confirmation`).
+9. **A write can still fail after the confirmation.** The confirmation goes
+   out before the write, so a store failure, a lock timeout or a failed
+   commit leaves a message sent and nothing stored: a 500 with a fixed body,
+   and the earlier pair as it was
+   (`services/api/tests/test_telegram_settings.py::test_a_failed_write_after_a_passed_check_keeps_the_earlier_pair`).
+   The window is inherent to checking before storing.
+10. **`configured` means a row exists.** `GET` reads `kind` and `updated_at`
+    and decrypts nothing, as `GET /credentials` does, so a pair that no
+    longer decrypts (the key was replaced) reads `configured: true` and a
+    run that needs it is refused with spec 106's 409. The route says what is
+    stored, not that it works (Honest limitations already says the same of
+    the confirmation).
+11. **A refusal is logged as `telegram settings refused: <reason>`** at INFO,
+    once per refusal, and nothing else of the request is logged.
+12. **The operations have explicit ids** (ADR-005): `getTelegramSettings`,
+    `saveTelegramSettings` and `clearTelegramSettings`, so the generated
+    client's names do not depend on the path.
+13. **Line numbers are refreshed** (decision D9) against `main` at
+    `0a5be39` plus this change's `notify.py`. Where a cite described the
+    code before part 1, it says so (Telegram today, the failed send).
+14. **The six planned tests are built** under the names the criteria now
+    cite, in `services/api/tests/test_telegram_settings.py`, with the
+    criteria ticked. One more test reads each owner's rows from the store
+    and hands them to spec 106's run binding: the owner's run holds the pair
+    under the variable names, another owner's holds neither, and a run that
+    prints both leaves neither in an event
+    (`services/api/tests/test_telegram_settings.py::test_a_saved_pair_reaches_only_its_owners_run_and_never_the_event_stream`).
+    It binds in memory; the run start itself, on Postgres, is spec 106's
+    (`services/api/tests/test_hosted_runs_on_postgres.py`).
 
 ### Added to Honest limitations
 
-- **A save holds a pooled connection while it calls Telegram.** The save
-  runs inside the request's transaction (spec 134), so the connection stays
-  leased for both Bot API calls. Each call's 30 seconds is `urllib`'s
-  timeout for one socket operation, not a deadline for the call, so the
-  worst ordinary case is about 60 seconds, under the 120 seconds the
-  transaction may sit idle (`REQUEST_IDLE_TIMEOUT_MS`,
-  `services/api/src/harrier_api/hostedstore.py`). A server that drips bytes
-  could outlast that: the transaction then ends, the save answers 500, and
-  nothing is stored. The pool holds ten connections, so ten saves stuck on a
-  slow Telegram would hold it. Not measured, and nothing here bounds it
-  further.
+- **A save holds a worker thread while it calls Telegram, and nothing
+  limits how often.** The check no longer holds a database connection
+  (item 8), but it is a blocking call on a thread of the server's shared
+  pool, and each call's 30 seconds is `urllib`'s timeout for one socket
+  operation, not a deadline for the call: connecting, the handshake, the
+  headers and each read are timed one by one, and name resolution not at
+  all. A degraded Telegram can hold a thread for much longer than 60
+  seconds. There is no throttle on `PUT`: one owner looping on junk tokens,
+  or on a valid bot, spends the API's one egress address against Telegram's
+  limits and can make other owners' saves answer `telegram_unavailable`. A
+  per-owner limit is a later spec; none is invented here.
 - **`check_telegram` has no demo gate.** It is reachable only through the
   hosted `PUT`, and spec 104 refuses demo mode hosted
   (`send_telegram_message` keeps its own gate).
+
+### The local reviews of part 2
+
+Privacy, data integrity, contract and test integrity reviews of PR #325.
+Each fix carries a test that fails without it; the pull request records the
+mutations.
+
+- **Privacy: nothing leaked.** No path was found to a body, header, log
+  record, repr, schema or event. Two hardening points were taken: the check
+  catches every `Exception` (item 5), and the chat id is marked secret in
+  the schema (item 6).
+- **Data integrity: the check held a pooled connection (fixed, item 8).**
+  Also fixed: the key and owner are read before the confirmation. Recorded:
+  the confirmation can precede a failed write (item 9), `configured` is not
+  proof the pair decrypts (item 10), and a save has no throttle (limitations).
+  Declined: accepting a numeric `chat_id` (item 6).
+- **Contract: an unreadable body had an undeclared 400 (fixed, item 7).**
+  Also fixed: explicit operation ids (item 12), the chat id marked secret,
+  and implementation notes out of the published description. Declined: the
+  `DatabaseHeldOut` half of the 503 and the undeclared 500 stay, as on the
+  credentials routes; the declaration comes from the route class for every
+  route that opens the store.
+- **Test integrity: eleven mutations survived the first tests (fixed).** The
+  run test now reads each owner's rows from the store and gives the second
+  owner a credential of another kind; `GET` is read while another kind is
+  stored; refusal headers are read; a refused save leaves the same nonce,
+  ciphertext and time; the save is shown to select no ciphertext; the 64 KiB
+  read limit, a read that fails and a response left open are tested; the
+  length bound is tested at its edge; logs are read from the packages' own
+  loggers before the root's scrub, with their level and count; and the
+  no-network guard fails the test and cannot be read as an unreachable
+  Telegram.
+
+### Recorded for the web (contract review of PR #325)
+
+Spec 114's Telegram form is the first reader of these routes. Its error
+reader, `refusalMessage` in `apps/web/src/shared/api/refusal.ts`, knows
+FastAPI's 422 (`loc` and `msg`) and not the two bodies these routes send.
+Nothing in `apps/web` reads them yet, so part 2 changes none of it. The
+change that builds the form takes this criterion:
+
+- [ ] The Telegram form shows `TelegramRefusalOut.detail` on a 400 or 502,
+      chosen by its `reason`, and the `field` and `problem` of
+      `CredentialRefusalOut` on a 422, and `refusalMessage` does not throw on
+      either (planned web test "the Telegram form reads the refusals these
+      routes send").
 
 ### Recorded for spec 108
 
