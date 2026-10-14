@@ -164,7 +164,7 @@ shared imports only shared.
 | Path | Layer | Holds |
 |---|---|---|
 | `shared/config/mode.ts` | shared | `readAppMode`, the variable checks |
-| `shared/auth/session.ts` | shared | the Supabase client (hosted only), `accessToken()`, `refreshSession()`, `endSession(reason)`, `requestCode(email)`, `verifyCode(email, code)`, and `useSession()` for components |
+| `shared/auth/session.ts` | shared | the Supabase client (hosted only), `activeSession()`, `accessToken()`, `refreshSession()`, `endSession(reason)`, `requestCode(email)`, `verifyCode(email, code)`, and `useSession()` for components |
 | `shared/api/client.ts` | shared | base URL by mode; the local-token middleware (local) or the bearer middleware (hosted) |
 | `shared/api/stream.ts` | shared | `readRunEvents(runId, { lastEventId, signal })` and the event-stream parser |
 | `shared/api/refusal.ts` | shared | `Refusal` gains `AuthRefusalOut` from the generated types |
@@ -1195,7 +1195,13 @@ code. Items 16 to 18 are each proved by a test that fails without the fix.
     refusal finished first, is retried once with the session's current token
     and does not refresh again. The table's first row is otherwise unchanged:
     one retry, and a second refusal is final ("an expired token the session
-    has replaced is retried without a refresh" in `client.test.ts`).
+    has replaced is retried without a refresh" in `client.test.ts`). A
+    request is retried only as the person who sent it: the middleware keeps
+    the user id each request was sent for, and when another person has
+    signed in by the time the 401 `expired` arrives, the refusal goes back to
+    the caller with no refresh and no retry. CodeRabbit raised this in reply
+    to the first fix ("an expired request is never retried as someone else"
+    in `client.test.ts`).
 18. **The stream's pause.** A pause that ended on its timer left its abort
     listener on the signal, one for each reconnect of a long run. It now
     removes it, and a pause on a signal that has already aborted ends at once

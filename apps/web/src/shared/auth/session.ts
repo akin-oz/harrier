@@ -94,14 +94,26 @@ export function useSession(): SessionState {
   return useSyncExternalStore(subscribe, () => state);
 }
 
-/** The access token to send, refreshed first if it is about to expire. */
-export async function accessToken(): Promise<string | null> {
+/** Who is signed in, and the access token to send for them. */
+export interface ActiveSession {
+  readonly userId: string;
+  readonly token: string;
+}
+
+/** The session as it is now, its token refreshed first if about to expire. */
+export async function activeSession(): Promise<ActiveSession | null> {
   try {
     const { data } = await (await client()).auth.getSession();
-    return data.session?.access_token ?? null;
+    const session = data.session;
+    return session === null ? null : { userId: session.user.id, token: session.access_token };
   } catch {
     return null;
   }
+}
+
+/** The access token to send, refreshed first if it is about to expire. */
+export async function accessToken(): Promise<string | null> {
+  return (await activeSession())?.token ?? null;
 }
 
 // Refresh tokens are single use, so concurrent callers share one refresh.

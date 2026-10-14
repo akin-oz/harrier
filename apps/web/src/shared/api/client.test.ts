@@ -178,6 +178,25 @@ test("a refusal of a token the session no longer holds ends nothing", async () =
   }
 });
 
+test("an expired request is never retried as someone else", async () => {
+  // Person B signed in while person A's request was out. A's write must not
+  // be sent again with B's token, and B's session stays.
+  stubFetch(() => {
+    fake.signIn(SESSION_B);
+    return json(401, REFUSAL.expired);
+  });
+
+  const { error } = await api.POST("/tracker/{selector}/status", {
+    params: { path: { selector: "1" }, query: {} },
+    body: { verb: "shortlist", reason: null },
+  });
+
+  expect(error).toBeDefined();
+  expect(seen.map((call) => call.authorization)).toEqual(["Bearer token-a"]);
+  expect(fake.log).toEqual([]);
+  expect(fake.session).toEqual(SESSION_B);
+});
+
 test("an expired token the session has replaced is retried without a refresh", async () => {
   // A refresh for an earlier refusal already gave the session a new token.
   stubFetch((calls) => {

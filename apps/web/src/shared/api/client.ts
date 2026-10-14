@@ -3,8 +3,8 @@ import type { Middleware } from "openapi-fetch";
 
 import type { components, paths } from "@harrier/contract";
 
-import { accessToken, endSession, refreshSession } from "../auth/session";
-import type { EndReason } from "../auth/session";
+import { accessToken, activeSession, endSession, refreshSession } from "../auth/session";
+import type { ActiveSession, EndReason } from "../auth/session";
 import { appMode, configError } from "../config/appMode";
 import type { AppMode } from "../config/mode";
 
@@ -138,8 +138,8 @@ function isNoAnswer(error: unknown): boolean {
 interface Sent {
   // A copy of the request as it left, kept for the one retry after a refresh.
   readonly copy: Request;
-  // The token it carried, or null when it went without one.
-  readonly token: string | null;
+  // The session it was sent for, or null when it went without a token.
+  readonly session: ActiveSession | null;
 }
 
 function hostedMiddleware(): Middleware {
@@ -155,30 +155,42 @@ function hostedMiddleware(): Middleware {
     await endSession(endingFor(reason));
   }
 
+  // The token to retry an expired request with: the session's own, when a
+  // refresh for an earlier refusal already replaced it, or a new one. Null
+  // when the request is not to be retried. A request is only ever retried as
+  // the person who sent it: after someone else signs in, the refusal goes
+  // back to its caller (CodeRabbit on PR #328).
+  async function retryToken(first: ActiveSession): Promise<string | null> {
+    const now = await activeSession();
+    if (now === null || now.userId !== first.userId) return null;
+    if (now.token !== first.token) return now.token;
+    const token = await refreshSession();
+    if (token === null) {
+      await endSession("expired");
+      return null;
+    }
+    return (await activeSession())?.userId === first.userId ? token : null;
+  }
+
   return {
     async onRequest({ request }) {
-      const token = await accessToken();
+      const session = await activeSession();
       // With no session the request goes without the header, and the API's
       // 401 `missing` ends the session below.
-      if (token !== null) request.headers.set("Authorization", `Bearer ${token}`);
-      sent.set(request, { copy: request.clone(), token });
+      if (session !== null) request.headers.set("Authorization", `Bearer ${session.token}`);
+      sent.set(request, { copy: request.clone(), session });
       return request;
     },
     async onResponse({ request, response }) {
       const first = sent.get(request);
+      const firstToken = first?.session?.token ?? null;
       if (response.status === 401) {
-        if ((await reasonOf(response)) !== "expired" || first === undefined) {
-          await refuse(response, first?.token ?? null);
+        if ((await reasonOf(response)) !== "expired" || first?.session == null) {
+          await refuse(response, firstToken);
           return undefined;
         }
-        // The session already holds another token when a refresh ran for an
-        // earlier refusal, so that token is used and no second refresh runs.
-        const current = await accessToken();
-        const token = current !== first.token ? current : await refreshSession();
-        if (token === null) {
-          if (current === first.token) await endSession("expired");
-          return undefined;
-        }
+        const token = await retryToken(first.session);
+        if (token === null) return undefined;
         const retry = first.copy;
         retry.headers.set("Authorization", `Bearer ${token}`);
         // openapi-fetch does not pass an error thrown here to `onError`, so the
@@ -190,7 +202,7 @@ function hostedMiddleware(): Middleware {
         if (second.status === 401 || second.status === 403) await refuse(second, token);
         return second;
       }
-      if (response.status === 403) await refuse(response, first?.token ?? null);
+      if (response.status === 403) await refuse(response, firstToken);
       return undefined;
     },
     onError({ error }) {
