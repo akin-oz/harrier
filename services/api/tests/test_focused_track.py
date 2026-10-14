@@ -259,6 +259,7 @@ def test_an_archived_focused_track_refuses_its_screening_document(
 
 HELD: list[tuple[list[str], str]] = [
     (["discover"], "spec 139"),
+    (["reconsider", "--source", "remoteok", "--apply"], "spec 139"),
     (["tailor", "--job-id", "1"], "spec 140"),
     (["cover-letter", "--job-id", "1"], "spec 140"),
     (["answers", "--job-id", "1", "--question", "Why this role?"], "spec 140"),

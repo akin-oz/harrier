@@ -283,6 +283,11 @@ WRITE_OPERATIONS: frozenset[str] = frozenset(
 HELD_OPERATIONS: dict[str, dict[str, str]] = {
     "focused": {
         "discover": "spec 139",
+        # Reconsideration reopens what discovery rejected. On a focused track
+        # it would run the industry path over the industry seen state while
+        # reading the focused track's rows for human rejections, and clear an
+        # industry rejection a person made (spec 137, amendment 6).
+        "reconsider": "spec 139",
         "tailor": "spec 140",
         "cover-letter": "spec 140",
         "answers": "spec 140",

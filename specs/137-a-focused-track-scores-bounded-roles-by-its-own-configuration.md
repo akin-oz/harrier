@@ -173,7 +173,7 @@ version (spec 079).
 on a focused track with exit 2 and a message naming the spec that opens
 them:
 
-- `discover`: spec 139.
+- `discover`, `reconsider`: spec 139 (`reconsider` by amendment 6).
 - `tailor`, `cover-letter`, `answers`: spec 140.
 
 `profile put screening` joins the allowed operations and the write
@@ -255,8 +255,8 @@ owner to confirm. They are proposals, not measured values.
 - [ ] `profile put screening` with a negative `points` exits 2 naming the
   field and stores nothing (`services/api/tests/test_focused_track.py::test_a_malformed_screening_document_is_refused`).
 - [ ] `profile put screening` on the industry track exits 2 (`services/api/tests/test_focused_track.py::test_screening_is_owned_by_a_focused_track_only`).
-- [ ] `discover`, `tailor`, `cover-letter` and `answers` on a focused track
-  exit 2 naming specs 139 and 140 (`services/api/tests/test_focused_track.py::test_focused_refuses_what_later_specs_open`).
+- [ ] `discover`, `reconsider`, `tailor`, `cover-letter` and `answers` on a
+  focused track exit 2 naming specs 139 and 140 (`services/api/tests/test_focused_track.py::test_focused_refuses_what_later_specs_open`).
 - [ ] The migration on a database holding an academic and an archived
   track keeps every track row equal, in both dialects (`services/api/tests/test_focused_track.py::test_the_kind_migration_keeps_every_track`).
 - [ ] With a focused track present, every industry-track command prints
@@ -302,6 +302,15 @@ Each was put to the owner and answered before it was built.
    holds the image to the list). The Migration
    section's advice to keep the copy outside the repository still holds;
    this stops a copy made beside the example from being staged.
+
+6. **`reconsider` is held with `discover`.** The local review of PR #332
+   found that `reconsider` passes a focused track's allowlist and falls
+   through to the industry path: it read the industry seen state and the
+   focused track's rows for human rejections, so it cleared an industry
+   rejection a person had made. Reconsideration reopens what discovery
+   rejected, and discovery on the kind is spec 139's, so `reconsider` is
+   refused on the kind until then
+   (`services/api/tests/test_focused_track.py::test_focused_refuses_what_later_specs_open`).
 
 The migration's order is recorded in its comment in
 `services/api/src/harrier/tracker/schema.py`. A rebuild into a new table
