@@ -876,7 +876,7 @@ never the URL or the password, exit 1.
       and `inherits` for an `INHERIT` one, each in its place in the order
       above, and neither for the `LOGIN NOINHERIT` login role the tests
       create, which still starts
-      (planned test_the_login_role_must_log_in_and_must_not_inherit).
+      (`services/api/tests/test_hosted_start.py::test_the_login_role_must_log_in_and_must_not_inherit`).
 
 ### Honest limitations (login and inherit)
 

@@ -1,0 +1,374 @@
+# The hosted deploy (spec 110, ADR-013). One image, migrated store first.
+#
+# Staging deploys on every push to main whose CI run passed. Production
+# deploys a commit staging already ran, by hand, after Akin approves it in the
+# `production` environment. Each environment's secrets reach only the job that
+# names it, and only after that environment's rules pass (docs/deploy.md lists
+# every secret and variable, and the one-time setup that makes them exist).
+#
+# The order of each job is the contract, and it is the point of this file:
+#
+#   1. the image, built once for staging and promoted by digest to production
+#   2. migrate   (as the migrator; a refusal stops the deploy, the API untouched)
+#   3. grant     (the login roles the API, its runs and the scheduler use)
+#   4. check     (what the new API must find; exit 1 stops the deploy)
+#   5. deploy the API (each new machine runs spec 104's start checks)
+#   6. smoke     (revision, the Data API off, the Auth settings invite only)
+#   7. deploy the SPA (last, so a new SPA never talks to an old API)
+#
+# A pull request from a fork runs CI and never this file: it is triggered by a
+# push to main that passed CI, or by hand.
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "The commit to deploy to production: a full 40 character id staging already deployed"
+        required: true
+        type: string
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  staging:
+    name: Staging
+    # Only a push to main whose CI run succeeded.
+    if: >-
+      github.event_name == 'workflow_run'
+      && github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    environment: staging
+    # Two deploys of one environment never interleave (two migrations would be
+    # serialized by spec 103's advisory lock anyway).
+    concurrency:
+      group: deploy-staging
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    env:
+      SHA: ${{ github.event.workflow_run.head_sha }}
+      FLY_APP: ${{ vars.FLY_APP }}
+      FLY_SCHEDULER_APP: ${{ vars.FLY_SCHEDULER_APP }}
+      API_LOGIN: ${{ vars.HARRIER_API_LOGIN }}
+      RUN_LOGIN: ${{ vars.HARRIER_RUN_LOGIN }}
+      SCHEDULER_LOGIN: ${{ vars.HARRIER_SCHEDULER_LOGIN }}
+      HARRIER_SUPABASE_URL: ${{ vars.HARRIER_SUPABASE_URL }}
+      HARRIER_SUPABASE_PUBLISHABLE_KEY: ${{ vars.HARRIER_SUPABASE_PUBLISHABLE_KEY }}
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+      - uses: superfly/flyctl-actions/setup-flyctl@1.5
+      - name: Install skopeo
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends skopeo
+
+      - name: Build the hosted image once
+        run: |
+          docker build --target hosted \
+            --build-arg HARRIER_REVISION="$SHA" \
+            --build-arg HARRIER_BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --tag "registry.fly.io/$FLY_APP:$SHA" .
+      - name: Push the image to the API app's registry, then to the scheduler app's
+        id: image
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          FLY_SCHEDULER_API_TOKEN: ${{ secrets.FLY_SCHEDULER_API_TOKEN }}
+        run: |
+          echo "$FLY_API_TOKEN" | docker login registry.fly.io --username x --password-stdin
+          docker push "registry.fly.io/$FLY_APP:$SHA" | tee push.log
+          digest="$(sed -n 's/.*digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' push.log | tail -n 1)"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::the push printed no digest"; exit 1; }
+          # The scheduler machine lives in an app of its own and pulls from
+          # that app's registry. A copy keeps the digest: the same image.
+          skopeo copy --preserve-digests \
+            --src-creds "x:$FLY_API_TOKEN" --dest-creds "x:$FLY_SCHEDULER_API_TOKEN" \
+            "docker://registry.fly.io/$FLY_APP@$digest" \
+            "docker://registry.fly.io/$FLY_SCHEDULER_APP:$SHA"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Migrate the store
+        env:
+          HARRIER_DATABASE_URL: ${{ secrets.HARRIER_MIGRATE_DATABASE_URL }}
+        run: uv run --project services/api --no-dev --group postgres harrier store migrate
+      - name: Grant harrier_tenant to the API's login role
+        env:
+          HARRIER_DATABASE_URL: ${{ secrets.HARRIER_MIGRATE_DATABASE_URL }}
+        run: uv run --project services/api --no-dev --group postgres harrier store grant-tenant "$API_LOGIN"
+      - name: Grant harrier_tenant to the run login role
+        env:
+          HARRIER_DATABASE_URL: ${{ secrets.HARRIER_MIGRATE_DATABASE_URL }}
+        run: uv run --project services/api --no-dev --group postgres harrier store grant-tenant "$RUN_LOGIN"
+      - name: Grant harrier_tenant to the scheduler's login role
+        env:
+          HARRIER_DATABASE_URL: ${{ secrets.HARRIER_MIGRATE_DATABASE_URL }}
+        run: uv run --project services/api --no-dev --group postgres harrier store grant-tenant "$SCHEDULER_LOGIN"
+      - name: Grant harrier_schedule_reader to the scheduler's login role
+        env:
+          HARRIER_DATABASE_URL: ${{ secrets.HARRIER_MIGRATE_DATABASE_URL }}
+        run: uv run --project services/api --no-dev --group postgres harrier store grant-schedule-reader "$SCHEDULER_LOGIN"
+      - name: Check what the new API must find
+        env:
+          HARRIER_DATABASE_URL: ${{ secrets.HARRIER_MIGRATE_DATABASE_URL }}
+        run: |
+          uv run --project services/api --no-dev --group postgres harrier store check-deploy \
+            --login "$API_LOGIN" --login "$RUN_LOGIN" --scheduler-login "$SCHEDULER_LOGIN"
+
+      - name: Write the project's values into a copy of the Fly configuration
+        run: |
+          uv run --project services/api --no-dev harrier deploy fill-fly-config \
+            --config deploy/fly.staging.toml --out "$RUNNER_TEMP/fly.staging.toml"
+      - name: Deploy the API
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: fly deploy --ha=false --image "registry.fly.io/$FLY_APP@$DIGEST" --config "$RUNNER_TEMP/fly.staging.toml"
+      - name: Count the API's machines
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          fly machines list --app "$FLY_APP" --json \
+            | uv run --project services/api --no-dev harrier deploy check-machine-count
+      - name: Move the scheduler machine to the same image
+        id: scheduler
+        env:
+          FLY_SCHEDULER_API_TOKEN: ${{ secrets.FLY_SCHEDULER_API_TOKEN }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          export FLY_API_TOKEN="$FLY_SCHEDULER_API_TOKEN"
+          machine="$(fly machines list --app "$FLY_SCHEDULER_APP" --json \
+            | jq -er 'if length == 1 then .[0].id else error("the scheduler app must hold exactly one machine") end')"
+          # Never --skip-start: an update with it leaves a scheduled machine
+          # without ticks until it is started once (spec 108, amendment of
+          # 2026-10-12).
+          fly machine update "$machine" --app "$FLY_SCHEDULER_APP" \
+            --image "registry.fly.io/$FLY_SCHEDULER_APP@$DIGEST" --yes
+          echo "machine=$machine" >> "$GITHUB_OUTPUT"
+          echo "updated_at=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke, the API answers as the commit built
+        run: |
+          curl --fail --silent --show-error --retry 6 --retry-delay 10 --retry-all-errors \
+            "https://$FLY_APP.fly.dev/health" \
+            | jq -e --arg sha "$SHA" '.revision == $sha'
+      - name: Smoke, the Data API is off
+        run: |
+          status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            --header "apikey: $HARRIER_SUPABASE_PUBLISHABLE_KEY" \
+            "$HARRIER_SUPABASE_URL/rest/v1/jobs")"
+          echo "GET /rest/v1/jobs answered $status"
+          if [[ "$status" == 2* ]]; then
+            echo "::error::the Data API answered $status; turn it off in the project's settings"
+            exit 1
+          fi
+      - name: Smoke, sign-up is invite only
+        run: uv run --project services/api --no-dev harrier deploy check-auth-settings
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Deploy the SPA
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          npm install --global vercel@64.0.2
+          vercel pull --yes --environment=production
+          vercel build --prod
+          vercel deploy --prebuilt --prod
+
+  staging-ran:
+    name: Production needs a staging deploy of this commit
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    # No environment: this runs before the production environment's secrets
+    # are released, so a commit staging never ran is refused without them.
+    permissions:
+      contents: read
+      deployments: read
+    steps:
+      - name: Refuse a commit staging did not deploy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ inputs.sha }}
+        run: |
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::sha must be a full 40 character commit id"; exit 1; }
+          ids="$(gh api "repos/$GITHUB_REPOSITORY/deployments?environment=staging&sha=$SHA&per_page=100" --jq '.[].id')"
+          for id in $ids; do
+            state="$(gh api "repos/$GITHUB_REPOSITORY/deployments/$id/statuses?per_page=1" --jq '.[0].state // empty')"
+            if [ "$state" = success ]; then
+              echo "staging deployed $SHA (deployment $id)"
+              exit 0
+            fi
+          done
+          echo "::error::no successful staging deployment of $SHA"
+          exit 1
+
+  production:
+    name: Production
+    needs: staging-ran
+    runs-on: ubuntu-latest
+    # Akin approves here, as the required reviewer of this environment.
+    environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    env:
+      SHA: ${{ inputs.sha }}
+      FLY_APP: ${{ vars.FLY_APP }}
+      FLY_STAGING_APP: ${{ vars.FLY_STAGING_APP }}
+      FLY_SCHEDULER_APP: ${{ vars.FLY_SCHEDULER_APP }}
+      API_LOGIN: ${{ vars.HARRIER_API_LOGIN }}
+      RUN_LOGIN: ${{ vars.HARRIER_RUN_LOGIN }}
+      SCHEDULER_LOGIN: ${{ vars.HARRIER_SCHEDULER_LOGIN }}
+      HARRIER_SUPABASE_URL: ${{ vars.HARRIER_SUPABASE_URL }}
+      HARRIER_SUPABASE_PUBLISHABLE_KEY: ${{ vars.HARRIER_SUPABASE_PUBLISHABLE_KEY }}
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+      - uses: superfly/flyctl-actions/setup-flyctl@1.5
+      - name: Install skopeo
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends skopeo
+
+      - name: Promote the image staging ran, by digest, with no rebuild
+        id: image
+        env:
+          FLY_STAGING_API_TOKEN: ${{ secrets.FLY_STAGING_API_TOKEN }}
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          FLY_SCHEDULER_API_TOKEN: ${{ secrets.FLY_SCHEDULER_API_TOKEN }}
+        run: |
+          source_image="docker://registry.fly.io/$FLY_STAGING_APP"
+          digest="$(skopeo inspect --creds "x:$FLY_STAGING_API_TOKEN" --format '{{.Digest}}' "$source_image:$SHA")"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::staging holds no image tagged $SHA"; exit 1; }
+          # A copy between registries keeps the digest: the same image staging
+          # ran, in this environment's apps.
+          skopeo copy --preserve-digests \
+            --src-creds "x:$FLY_STAGING_API_TOKEN" --dest-creds "x:$FLY_API_TOKEN" \
+            "$source_image@$digest" "docker://registry.fly.io/$FLY_APP:$SHA"
+          skopeo copy --preserve-digests \
+            --src-creds "x:$FLY_STAGING_API_TOKEN" --dest-creds "x:$FLY_SCHEDULER_API_TOKEN" \
+            "$source_image@$digest" "docker://registry.fly.io/$FLY_SCHEDULER_APP:$SHA"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Migrate the store
+        env:
+          HARRIER_DATABASE_URL: ${{ secrets.HARRIER_MIGRATE_DATABASE_URL }}
+        run: uv run --project services/api --no-dev --group postgres harrier store migrate
+      - name: Grant harrier_tenant to the API's login role
+        env:
+          HARRIER_DATABASE_URL: ${{ secrets.HARRIER_MIGRATE_DATABASE_URL }}
+        run: uv run --project services/api --no-dev --group postgres harrier store grant-tenant "$API_LOGIN"
+      - name: Grant harrier_tenant to the run login role
+        env:
+          HARRIER_DATABASE_URL: ${{ secrets.HARRIER_MIGRATE_DATABASE_URL }}
+        run: uv run --project services/api --no-dev --group postgres harrier store grant-tenant "$RUN_LOGIN"
+      - name: Grant harrier_tenant to the scheduler's login role
+        env:
+          HARRIER_DATABASE_URL: ${{ secrets.HARRIER_MIGRATE_DATABASE_URL }}
+        run: uv run --project services/api --no-dev --group postgres harrier store grant-tenant "$SCHEDULER_LOGIN"
+      - name: Grant harrier_schedule_reader to the scheduler's login role
+        env:
+          HARRIER_DATABASE_URL: ${{ secrets.HARRIER_MIGRATE_DATABASE_URL }}
+        run: uv run --project services/api --no-dev --group postgres harrier store grant-schedule-reader "$SCHEDULER_LOGIN"
+      - name: Check what the new API must find
+        env:
+          HARRIER_DATABASE_URL: ${{ secrets.HARRIER_MIGRATE_DATABASE_URL }}
+        run: |
+          uv run --project services/api --no-dev --group postgres harrier store check-deploy \
+            --login "$API_LOGIN" --login "$RUN_LOGIN" --scheduler-login "$SCHEDULER_LOGIN"
+
+      - name: Write the project's values into a copy of the Fly configuration
+        run: |
+          uv run --project services/api --no-dev harrier deploy fill-fly-config \
+            --config deploy/fly.production.toml --out "$RUNNER_TEMP/fly.production.toml"
+      - name: Deploy the API
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: fly deploy --ha=false --image "registry.fly.io/$FLY_APP@$DIGEST" --config "$RUNNER_TEMP/fly.production.toml"
+      - name: Count the API's machines
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          fly machines list --app "$FLY_APP" --json \
+            | uv run --project services/api --no-dev harrier deploy check-machine-count
+      - name: Move the scheduler machine to the same image
+        id: scheduler
+        env:
+          FLY_SCHEDULER_API_TOKEN: ${{ secrets.FLY_SCHEDULER_API_TOKEN }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          export FLY_API_TOKEN="$FLY_SCHEDULER_API_TOKEN"
+          machine="$(fly machines list --app "$FLY_SCHEDULER_APP" --json \
+            | jq -er 'if length == 1 then .[0].id else error("the scheduler app must hold exactly one machine") end')"
+          # Never --skip-start: an update with it leaves a scheduled machine
+          # without ticks until it is started once (spec 108, amendment of
+          # 2026-10-12).
+          fly machine update "$machine" --app "$FLY_SCHEDULER_APP" \
+            --image "registry.fly.io/$FLY_SCHEDULER_APP@$DIGEST" --yes
+          echo "machine=$machine" >> "$GITHUB_OUTPUT"
+          echo "updated_at=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke, the API answers as the commit built
+        run: |
+          curl --fail --silent --show-error --retry 6 --retry-delay 10 --retry-all-errors \
+            "https://$FLY_APP.fly.dev/health" \
+            | jq -e --arg sha "$SHA" '.revision == $sha'
+      - name: Smoke, the Data API is off
+        run: |
+          status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            --header "apikey: $HARRIER_SUPABASE_PUBLISHABLE_KEY" \
+            "$HARRIER_SUPABASE_URL/rest/v1/jobs")"
+          echo "GET /rest/v1/jobs answered $status"
+          if [[ "$status" == 2* ]]; then
+            echo "::error::the Data API answered $status; turn it off in the project's settings"
+            exit 1
+          fi
+      - name: Smoke, sign-up is invite only
+        run: uv run --project services/api --no-dev harrier deploy check-auth-settings
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Deploy the SPA
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          npm install --global vercel@64.0.2
+          vercel pull --yes --environment=production
+          vercel build --prod
+          vercel deploy --prebuilt --prod
+
+      # Production's scheduler machine fires hourly, so the update is followed
+      # by a tick; staging's has no schedule, so this is production only. It
+      # holds the job open for up to 70 minutes (spec 108, amendment of
+      # 2026-10-12).
+      - name: The scheduler ticks after the update
+        timeout-minutes: 80
+        env:
+          FLY_SCHEDULER_API_TOKEN: ${{ secrets.FLY_SCHEDULER_API_TOKEN }}
+          MACHINE: ${{ steps.scheduler.outputs.machine }}
+          UPDATED_AT: ${{ steps.scheduler.outputs.updated_at }}
+        run: |
+          export FLY_API_TOKEN="$FLY_SCHEDULER_API_TOKEN"
+          uv run --project services/api --no-dev harrier deploy check-scheduler-tick \
+            --app "$FLY_SCHEDULER_APP" --machine "$MACHINE" --since "$UPDATED_AT"

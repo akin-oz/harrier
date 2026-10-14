@@ -539,6 +539,51 @@ Locally the routes answer 404 and Telegram stays in `.env`. A failed
 Telegram send logs the scrubbed reason, never the token
 (`services/api/tests/test_tenant_notifications.py::test_a_telegram_failure_log_never_holds_the_token`).
 
+The deploy pipeline is spec 110, and `docs/deploy.md` is its runbook. One
+image, the `hosted` target of the `Dockerfile`, carries the `pdf`, `postgres`
+and `hosted` dependency groups and no `gmail` group, no `claude` CLI and no SPA,
+and the local image stays the default target
+(`services/api/tests/test_deploy_files.py::test_the_hosted_image_installs_the_store_and_auth_groups`,
+`services/api/tests/test_deploy_files.py::test_the_hosted_image_carries_no_cli_provider_and_no_spa`,
+`services/api/tests/test_deploy_files.py::test_the_local_image_is_still_the_default_target`).
+Fly runs one machine per environment in `ams`, stopped when idle, with no
+volume and no dedicated address, and its configuration holds no secret
+(`services/api/tests/test_deploy_files.py::test_the_fly_files_hold_no_secret_and_name_the_region`,
+`services/api/tests/test_deploy_files.py::test_the_fly_files_run_one_api_machine_that_stops_when_idle`).
+Vercel serves the SPA and deploys only from the workflow
+(`services/api/tests/test_deploy_files.py::test_the_spa_is_deployed_by_the_workflow_only`).
+`.github/workflows/deploy.yml` migrates, grants, checks, deploys the API,
+smokes and deploys the SPA, in that order, and production deploys by digest the
+image staging ran, after a reviewer approves it
+(`services/api/tests/test_deploy_files.py::test_the_deploy_workflow_migrates_before_it_deploys`,
+`services/api/tests/test_deploy_files.py::test_production_takes_a_sha_and_refuses_one_staging_never_deployed`).
+Three steps of it are `harrier store` subcommands that run as the migrator:
+`grant-tenant` and `grant-schedule-reader` check a login role with the same
+`login_role_problems` the API's start calls, which also refuses a role that
+cannot log in or that inherits, and grant it once; `check-deploy` reads the live
+catalog and writes nothing
+(`services/api/tests/test_store_deploy.py::test_grant_tenant_refuses_a_role_that_can_bypass`,
+`services/api/tests/test_store_deploy.py::test_grant_tenant_grants_once`,
+`services/api/tests/test_store_deploy.py::test_check_deploy_names_the_failed_check`,
+`services/api/tests/test_store_deploy.py::test_check_deploy_writes_nothing`).
+`harrier deploy` holds the checks that need no store: the project's Auth
+settings, the API app's machine count, the scheduler's first tick after an
+update, and the month's cost projection
+(`services/api/tests/test_deploy_checks.py::test_the_deploy_refuses_open_sign_up`,
+`services/api/tests/test_deploy_checks.py::test_the_api_app_holds_exactly_one_machine`,
+`services/api/tests/test_deploy_checks.py::test_the_scheduler_ticks_after_a_deploy`,
+`services/api/tests/test_deploy_checks.py::test_the_cost_projection_reports_a_month_over_budget`).
+A hosted store's URL never enters `.env`: the local container's compose file
+sets `HARRIER_DATABASE_URL` and `HARRIER_AUTH` empty, and `store_target` refuses
+a remote URL read from the file
+(`services/api/tests/test_deploy_files.py::test_the_local_container_never_takes_a_store_from_dotenv`,
+`services/api/tests/test_store_cli.py::test_a_remote_store_url_in_dotenv_is_refused`).
+No error reporter is a dependency of either package
+(`services/api/tests/test_deploy_files.py::test_no_error_reporter_is_installed`).
+Nothing in the pipeline has run against a real Fly, Vercel or Supabase
+project from this repository's tests: the first staging deploy settles what the
+runbook marks unconfirmed.
+
 No other hosted component exists yet. Specs 103 to 112 sequence the build:
 the Postgres store (103, approved), API authentication (104), row-level
 policy (105, approved), tenant credentials and run isolation (106),
