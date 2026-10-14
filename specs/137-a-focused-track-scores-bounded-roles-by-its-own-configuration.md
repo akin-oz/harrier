@@ -1,8 +1,8 @@
 ---
 spec: 137
 title: A focused track scores bounded roles by its own configuration
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M9
 depends: [033, 091, 092, 093, 097, 099, 112]
 ---
