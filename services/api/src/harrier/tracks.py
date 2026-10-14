@@ -440,6 +440,13 @@ def add_track(conn: Connection, slug: str, kind: str, label: str) -> Track:
                 "INSERT INTO tracks (slug, kind, label) VALUES (?, ?, ?)", (slug, kind, label)
             )
     except StoreIntegrityError as error:
+        # Two constraints can refuse the insert: the slug's, and the one
+        # unarchived focused track's partial index (migration 20), which
+        # holds when two adds race past the check above (review of PR #332).
+        # Told apart by what the store holds now, never by the message.
+        taken = conn.execute("SELECT 1 FROM tracks WHERE slug = ?", (slug,)).fetchone()
+        if kind == "focused" and taken is None:
+            _refuse_a_second_focused_track(conn)
         raise DuplicateTrackError(f"a track with slug {slug!r} already exists") from error
     return resolve_scope(conn, slug).track
 
