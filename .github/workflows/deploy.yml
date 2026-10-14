@@ -71,6 +71,10 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@v5
       - uses: superfly/flyctl-actions/setup-flyctl@1.5
+      # The action installs the binary as `flyctl` only. The steps below, and
+      # `harrier deploy check-scheduler-tick`, call it `fly`.
+      - name: Name flyctl as fly
+        run: ln -s "$(command -v flyctl)" "$(dirname "$(command -v flyctl)")/fly"
       - name: Install skopeo
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends skopeo
 
@@ -245,6 +249,10 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@v5
       - uses: superfly/flyctl-actions/setup-flyctl@1.5
+      # The action installs the binary as `flyctl` only. The steps below, and
+      # `harrier deploy check-scheduler-tick`, call it `fly`.
+      - name: Name flyctl as fly
+        run: ln -s "$(command -v flyctl)" "$(dirname "$(command -v flyctl)")/fly"
       - name: Install skopeo
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends skopeo
 
