@@ -500,10 +500,24 @@ settings are per owner: the hosted API refuses to start while its
 environment holds `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` or any `GMAIL_`
 variable, naming it and never its value
 (`services/api/tests/test_tenant_notifications.py::test_hosted_start_refuses_operator_notification_settings`).
-The routes that store each owner's bot token and chat id wait for spec
-116's credential store, and a run receives them through spec 106's run
-environment. A failed Telegram send logs the scrubbed reason, never the
-token
+An owner brings a bot and saves its token and their chat id with `PUT
+/notifications/telegram` (`services/api/src/harrier_api/notify_routes.py`).
+The save checks the pair before it stores anything: the shapes, the Bot
+API's `getMe`, then one fixed confirmation message to the chat, the one
+message harrier sends outside a run (`harrier.notify.check_telegram`,
+`services/api/tests/test_telegram_settings.py::test_saving_telegram_checks_the_bot_and_sends_one_confirmation`).
+A refused save stores nothing and keeps an earlier pair
+(`services/api/tests/test_telegram_settings.py::test_a_refused_telegram_setting_stores_nothing`).
+Both values are stored encrypted as spec 116's `telegram` credential, and
+`GET` and `DELETE` on the same path read and clear the pair without
+returning either value
+(`services/api/tests/test_telegram_settings.py::test_reading_and_clearing_telegram_settings`).
+No response body and no log record holds the token or the chat id
+(`services/api/tests/test_telegram_settings.py::test_a_telegram_secret_never_reaches_a_body_or_a_log`),
+and a run receives the pair through spec 106's run environment
+(`services/api/tests/test_telegram_settings.py::test_a_saved_pair_reaches_only_its_owners_run_and_never_the_event_stream`).
+Locally the routes answer 404 and Telegram stays in `.env`. A failed
+Telegram send logs the scrubbed reason, never the token
 (`services/api/tests/test_tenant_notifications.py::test_a_telegram_failure_log_never_holds_the_token`).
 
 No other hosted component exists yet. Specs 103 to 112 sequence the build:

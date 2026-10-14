@@ -101,6 +101,12 @@ from harrier_api.localauth import (
     require_token,
 )
 from harrier_api.mail_routes import mail_router
+from harrier_api.notify_routes import (
+    is_notify_route,
+    notify_refusal_response,
+    notify_router,
+    notify_unreadable_body_response,
+)
 from harrier_api.ops_routes import ops_router
 from harrier_api.outreach_routes import outreach_router
 from harrier_api.runmodels import RUN_CONFLICT_RESPONSES, Manager, RunOut, run_out
@@ -1500,6 +1506,10 @@ def _app_with_routes(manager: RunManager) -> FastAPI:
         # with its status and headers. Any other detail is answered as
         # FastAPI answers it; a 422 has its own handler and never comes here
         # (spec 133). Typed `str` by Starlette; FastAPI's takes any value.
+        if error.status_code == 400 and is_notify_route(request.scope):
+            # FastAPI's own 400 for a body it cannot read. The Telegram
+            # routes send none of their own, so it is that (spec 109).
+            return notify_unreadable_body_response(request)
         detail = cast(object, error.detail)
         if isinstance(detail, str):
             error.detail = scrub_outbound(detail)
@@ -1509,9 +1519,12 @@ def _app_with_routes(manager: RunManager) -> FastAPI:
     async def refused_body(request: Request, error: RequestValidationError) -> Response:  # pyright: ignore[reportUnusedFunction]
         # FastAPI's own 422 echoes the submitted input. On the credentials
         # routes the input is a secret, so the body names the field and the
-        # rule only (spec 116). Every other route answers as FastAPI does.
+        # rule only (spec 116); so it does on the Telegram routes (spec
+        # 109). Every other route answers as FastAPI does.
         if is_credentials_route(request.scope):
             return credentials_refusal_response(request, error)
+        if is_notify_route(request.scope):
+            return notify_refusal_response(request, error)
         return await request_validation_exception_handler(request, error)
 
     @app.exception_handler(RunsNotHosted)
@@ -1550,6 +1563,7 @@ def _app_with_routes(manager: RunManager) -> FastAPI:
     app.include_router(tracks_router)
     app.include_router(settings_router)
     app.include_router(credentials_router)
+    app.include_router(notify_router)
 
     # The route class applies the bearer scheme to each route that needs a
     # token; the document names the scheme once (spec 104).

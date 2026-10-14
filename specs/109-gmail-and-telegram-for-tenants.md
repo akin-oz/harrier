@@ -40,14 +40,14 @@ the first hosted release. Telegram is offered: each owner brings a bot.
 - One bot and one chat for the whole install. `send_telegram_message`
   takes the token and chat id from its arguments, else from
   `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`
-  (`services/api/src/harrier/notify.py:32-33`). Those two lines are the
+  (`services/api/src/harrier/notify.py:52-53`). Those two lines are the
   only reads of either variable under `services/api/src` (`grep -rn
   'getenv("TELEGRAM' services/api/src`). Without either it logs a warning
-  and returns 2 (`notify.py:34-39`).
+  and returns 2 (`notify.py:54-59`).
 - Every caller relies on that fallback. `send_telegram_message` is called
-  at three sites (`services/api/src/harrier/discovery.py:481`,
+  at three sites (`services/api/src/harrier/discovery.py:497`,
   `services/api/src/harrier/academic/discovery.py:260`, `:349`) and is the
-  default sender at two more (`services/api/src/harrier/digest.py:341`,
+  default sender at two more (`services/api/src/harrier/digest.py:366`,
   `services/api/src/harrier/mail/run.py:68`). Counted with `grep -rn
   send_telegram_message services/api/src`, leaving out the import lines and
   the definition. None of the five passes a token.
@@ -56,12 +56,13 @@ the first hosted release. Telegram is offered: each owner brings a bot.
   a hosted send happens in a run, and a run's environment is spec 106's to
   build from its owner's credentials.
 - A failed send is logged with the exception text, unscrubbed
-  (`notify.py:57-58`). `scrub_secrets` exists for exactly this shape: its
+  (`notify.py:57-58` before part 1; scrubbed since, at
+  `notify.py:77-82`). `scrub_secrets` exists for exactly this shape: its
   docstring names `http.client.InvalidURL`, whose message embeds the
   request path, and the path here is `/bot<token>/sendMessage`
-  (`services/api/src/harrier/sources/__init__.py:27-43`). Hosted, logs
+  (`services/api/src/harrier/sources/__init__.py:83-95`). Hosted, logs
   leave the machine (spec 110, privacy 5).
-- Demo mode never sends (`notify.py:25-31`,
+- Demo mode never sends (`notify.py:45-51`,
   `services/api/tests/test_demo.py::test_demo_never_sends_telegram_even_with_credentials_present`).
 
 ### Gmail today
@@ -72,21 +73,21 @@ the first hosted release. Telegram is offered: each owner brings a bot.
   file (`watch.py:643-645`).
 - The grant is obtained by `harrier gmail-oauth`, which runs Google's
   installed-app flow with a browser and a loopback server on the operator's
-  machine (`services/api/src/harrier_cli/main.py:914-953`). Inside the
+  machine (`services/api/src/harrier_cli/main.py:1023-1062`). Inside the
   container `secrets/` is read only, so the CLI refreshes the token on the
-  host before it delegates a watch (`main.py:3012-3030`).
+  host before it delegates a watch (`main.py:3110-3128`).
 - Its state is two files in the data directory: `seen_messages.json` and
   `events.jsonl` under `gmail-watch/` (`watch.py:163-172`). Spec 040 made
   the first written atomically and refused when damaged (`watch.py:448-460`)
   and the second redacted and bounded (`watch.py:472-523`). The digest
-  reads the second (`digest.py:171-172`), and `GET /mail/events` serves it
-  without a token (`services/api/src/harrier_api/mail_routes.py:93-108`).
+  reads the second (`digest.py:175-176`), and `GET /mail/events` serves it
+  without a token (`services/api/src/harrier_api/mail_routes.py:111-128`).
 - `POST /mail/watch` starts a run of kind `gmail-watch`
-  (`mail_routes.py:111-125`, `services/api/src/harrier_api/runs.py:117-121`).
+  (`mail_routes.py:131-149`, `services/api/src/harrier_api/runs.py:128-132`).
 - The schedule runs the watch every 300 seconds (`config/schedule.json`,
   job `gmail-watch`), and the digest's schedule health names the
   `mail-watch` job among the three it always lists
-  (`digest.py:290`, `services/api/src/harrier/runoutcome.py:40`).
+  (`digest.py:298`, `services/api/src/harrier/runoutcome.py:41`).
 
 Every one of these is one person's: one token file, one data directory,
 one events file. Hosted, a data directory belongs to a Fly machine, not to
@@ -98,7 +99,7 @@ covers a mailbox grant.
 - `gmail.readonly` is restricted. So are `gmail.metadata` and every other
   Gmail scope that reads messages; `gmail.labels` is the only Gmail scope
   listed as non-sensitive (scopes page). The classifier reads subject and
-  body (`watch.py:373-376`), so no narrower scope serves it.
+  body (`watch.py:375-377`), so no narrower scope serves it.
 - A restricted scope needs restricted scope verification, and an app that
   accesses restricted data "from or through a third-party server" needs an
   annual security assessment by an independent assessor that Google
@@ -233,7 +234,7 @@ The save runs in the request, with the values the request carried. The
 API does not decrypt a stored credential for it, which keeps spec 116's
 rule that stored credentials are decrypted only at run start (spec 106).
 Each Bot API call has a timeout of 30 seconds, as `send_telegram_message`
-uses (`notify.py:52`).
+uses (`notify.py:72`).
 
 The confirmation is the one message harrier sends outside a run. It is a
 Telegram message to the owner's own chat, caused by the owner's own
@@ -392,8 +393,8 @@ findings are not lost:
 - **Token revoked in @BotFather, or the owner blocks the bot, after
   saving.** Runs keep sending and fail: `send_telegram_message` returns 1
   and logs the scrubbed reason. Discovery still records its result
-  (`discovery.py:484`, outside the send); the digest does not record success on a failed
-  send (`digest.py:347-355`), so its health line ages, which is spec 029's
+  (`discovery.py:500`, outside the send); the digest does not record success on a failed
+  send (`digest.py:370-380`), so its health line ages, which is spec 029's
   signal. The owner saves a new pair.
 - **Owner never saved Telegram.** Runs find no variables and get 2, as a
   local install without `.env` values does today
@@ -426,23 +427,25 @@ Telegram, hosted (Postgres tests with spec 104's hosted app and spec 116's
 store; the Bot API is a fake injected into `check_telegram`, and no test
 reaches the network):
 
-- [ ] A save with a valid token and chat id calls `getMe`, then sends
+- [x] A save with a valid token and chat id calls `getMe`, then sends
       exactly one message with the fixed text, stores both values for the
       request's owner, and answers 200 `configured: true`
-      (planned test_saving_telegram_checks_the_bot_and_sends_one_confirmation).
-- [ ] Each refusal in the saving table answers its status and reason, and
+      (`services/api/tests/test_telegram_settings.py::test_saving_telegram_checks_the_bot_and_sends_one_confirmation`).
+- [x] Each refusal in the saving table answers its status and reason, and
       stores nothing, and an earlier pair survives a refused save
-      (planned test_a_refused_telegram_setting_stores_nothing, one case per
-      reason).
-- [ ] No response body and no log record captured during the Telegram
-      route tests contains the token or the chat id
-      (planned test_a_telegram_secret_never_reaches_a_body_or_a_log).
-- [ ] `GET` returns `configured` and `updated_at` and no other field;
+      (`services/api/tests/test_telegram_settings.py::test_a_refused_telegram_setting_stores_nothing`,
+      one case per reason).
+- [x] No response body and no log record captured during the Telegram
+      route tests contains the token or the chat id, and nor does an event
+      of a run that prints them
+      (`services/api/tests/test_telegram_settings.py::test_a_telegram_secret_never_reaches_a_body_or_a_log`,
+      `services/api/tests/test_telegram_settings.py::test_a_saved_pair_reaches_only_its_owners_run_and_never_the_event_stream`).
+- [x] `GET` returns `configured` and `updated_at` and no other field;
       `DELETE` removes both values and answers `configured: false`
-      (planned test_reading_and_clearing_telegram_settings).
-- [ ] Owner B's `GET` after owner A's save answers `configured: false`, and
+      (`services/api/tests/test_telegram_settings.py::test_reading_and_clearing_telegram_settings`).
+- [x] Owner B's `GET` after owner A's save answers `configured: false`, and
       B's `DELETE` leaves A's pair
-      (planned test_telegram_settings_are_per_owner).
+      (`services/api/tests/test_telegram_settings.py::test_telegram_settings_are_per_owner`).
 - [ ] A hosted run of owner A has A's `TELEGRAM_BOT_TOKEN` and
       `TELEGRAM_CHAT_ID`, a run of owner B with none saved has neither, and
       no run has a `GMAIL_` variable. Moved to spec 106 by its Amendment
@@ -458,10 +461,11 @@ Telegram, both modes:
 - [ ] A send whose exception text holds `/bot<token>` logs
       `/botREDACTED` and returns 1
       (`services/api/tests/test_tenant_notifications.py::test_a_telegram_failure_log_never_holds_the_token`).
-- [ ] Locally, the three Telegram routes answer 404 with the local detail,
+- [x] Locally, the three Telegram routes answer 404 with the local detail,
       and `services/api/tests/test_demo.py::test_demo_never_sends_telegram_even_with_credentials_present`
       and `services/api/tests/test_mail.py::test_live_run_sends_actionable_and_stops_on_send_failure`
-      pass unchanged (planned test_telegram_routes_are_not_served_locally).
+      pass unchanged
+      (`services/api/tests/test_telegram_settings.py::test_telegram_routes_are_not_served_locally`).
 
 Gmail:
 
@@ -490,10 +494,11 @@ Gmail:
 
 Contract and documents:
 
-- [ ] `packages/contract/openapi.json` declares the three Telegram routes
+- [x] `packages/contract/openapi.json` declares the three Telegram routes
       with `TelegramSettingsIn`, `TelegramSettingsOut` and
       `TelegramRefusalOut`, and the 501 on both mail routes; `just
-      contract` leaves no diff after the regenerated files are committed.
+      contract` leaves no diff after the regenerated files are committed
+      (`services/api/tests/test_telegram_settings.py::test_the_contract_declares_the_telegram_routes`).
 - [ ] ADR-013's Honest limitations line on Gmail carries "Decided (spec
       109)" with this outcome, and no other ADR-013 line changes.
 - [ ] `docs/architecture.md`'s hosted section says Telegram is per owner
@@ -507,8 +512,10 @@ Contract and documents:
       `harrier_api/notify_routes.py`, `harrier/notify.py`,
       `harrier/digest.py`, `harrier_api/runs.py`,
       `harrier_api/mail_routes.py`, `harrier_cli/main.py`, the module that
-      holds spec 104's start-up checks, and the module that holds spec
-      106's run environment allowlist.
+      holds spec 104's start-up checks, the module that holds spec
+      106's run environment allowlist, and, added by Amendment
+      (2026-10-14), `harrier_api/app.py` and
+      `harrier_api/credentials_routes.py`.
 
 Gates:
 
@@ -706,8 +713,10 @@ The text above says where each changed it.
   `services/api/src/harrier_api/runs.py`,
   `services/api/src/harrier_cli/main.py`,
   `services/api/src/harrier/sources/__init__.py`, `config/schedule.json`,
-  `.env.example`. Line numbers are from `main` at `44ac0d7`, except the
-  `harrier_cli/main.py` ones, refreshed to `main` at `a7b9998`.
+  `.env.example`. Line numbers were from `main` at `44ac0d7`, except the
+  `harrier_cli/main.py` ones, refreshed to `main` at `a7b9998`; part 2
+  refreshed every one against `main` at `0a5be39` plus its own change
+  (decision D9, Amendment (2026-10-14)).
 
 Vendor facts, each read 2026-10-10:
 
@@ -969,3 +978,195 @@ expects this spec's detail from `POST /mail/watch` and no call to `start`.
 The two citations above that named a test that no longer exists, or one
 still marked planned, now cite the tests as built. Nothing else in this
 spec changes.
+
+## Amendment (2026-10-14): part 2, the Telegram routes
+
+Written in the change that builds part 2: Scope items 1 and 2, the three
+Telegram routes and `check_telegram`, with their contract and tests, the
+architecture line that they exist, and the refreshed line numbers (decision
+D9). The text above stands except where this section says otherwise. Spec
+116's credential store (PR #310) and spec 106's run environment (PR #316)
+are on `main`, so nothing part 2 needs is missing. The size is one
+reviewable change: one new route module, one function in `notify.py`, two
+small edits in `harrier_api`, the regenerated contract and the tests.
+
+### What part 2 found
+
+1. **Two modules join the diff list.** The route module must be registered
+   and its refusals chosen, which only `harrier_api/app.py` does (one
+   `include_router`, and two branches in the exception handlers, items 6
+   and 7). The route also needs the request's owner and the app's key, which
+   spec 116's module held as private helpers;
+   `harrier_api/credentials_routes.py` now names them `request_owner` and
+   `request_key`. No behavior of a credentials route changes. The diff
+   criterion lists both.
+2. **A value is stripped, then checked, then stored.** The store strips
+   every field (spec 116), so the pair that is checked is the stripped one:
+   a paste with a trailing newline saves
+   (`services/api/tests/test_telegram_settings.py::test_saving_telegram_checks_the_bot_and_sends_one_confirmation`).
+3. **The shapes are ASCII and anchored.** The patterns in Behavior are read
+   as `[0-9]` and a whole-string match: `\d` takes any Unicode digit, and
+   `$` takes a trailing newline. Each value is also held to the credential
+   store's 4096-byte bound, exactly, so a pair that passes the check is a
+   pair the store accepts, and the write after two network calls cannot be
+   refused
+   (`services/api/tests/test_telegram_settings.py::test_check_telegram_refuses_a_malformed_token_without_a_call`,
+   `services/api/tests/test_telegram_settings.py::test_check_telegram_refuses_a_malformed_chat_id_without_a_call`,
+   `services/api/tests/test_telegram_settings.py::test_the_length_bound_is_the_stores_and_holds_at_its_edge`).
+4. **What the Bot API's answer maps to, beyond the table.** `ok: false`
+   from `getMe` is `token_rejected` and from `sendMessage` is
+   `chat_unreachable`, whatever `error_code` says. An HTTP 5xx or 429 is
+   `telegram_unavailable` whatever the body says, because those speak for
+   the service and not for the bot. So is an answer that is not a JSON
+   object, one with no boolean `ok`, one longer than 64 KiB (the read is
+   cut, and a cut answer is not JSON), a 4xx whose body says `ok: true`, and
+   any failure to send, read or close, of any exception type
+   (`services/api/tests/test_telegram_settings.py::test_check_telegram_maps_each_answer_to_one_reason`,
+   `services/api/tests/test_telegram_settings.py::test_an_answer_that_is_not_about_the_bot_is_telegram_unavailable`,
+   `services/api/tests/test_telegram_settings.py::test_a_transport_failure_is_telegram_unavailable`).
+5. **`check_telegram` returns `None` on success** and the reason otherwise,
+   from `TelegramReason`, the closed set. It takes an `opener`, `urlopen`'s
+   calling form, and uses `urllib.request.urlopen` when given none. A call
+   is made only when the one before it passed. It logs nothing, and it
+   catches `Exception`, as `send_telegram_message` does, so no error text
+   leaves it: the token is in every URL it builds, and an error of a type
+   nobody expected would carry the URL to a log. A stop signal
+   (`BaseException`) still stops
+   (`services/api/tests/test_telegram_settings.py::test_an_error_that_quotes_the_token_leaves_nothing_of_it`,
+   `services/api/tests/test_telegram_settings.py::test_a_stop_signal_is_not_swallowed_by_the_check`).
+6. **The 422 is spec 116's body.** `TelegramSettingsIn` forbids extra fields
+   and a schema refusal (a number for the chat id, a missing field, a body
+   that is not JSON) is answered with `CredentialRefusalOut`: the field and
+   the rule, a field the route does not take reported as `fields`, never the
+   input, as spec 116's amendment of 2026-10-13 asks of a route outside its
+   router. The Telegram `PUT` declares it. Locally a body that is not JSON
+   gets the Telegram 404, not the 422
+   (`services/api/tests/test_telegram_settings.py::test_a_telegram_secret_never_reaches_a_body_or_a_log`,
+   `services/api/tests/test_telegram_settings.py::test_telegram_routes_are_not_served_locally`).
+   `chat_id` is a `str`, as Behavior says, kept out of the model's `repr`;
+   `bot_token` is a `SecretStr`. Both are strings with no pattern or length
+   in the schema, and both are marked `format: password` and `writeOnly`,
+   the chat id as well as the token (decision D7), so a client built from
+   the contract treats neither as readable. A chat id sent as a JSON number
+   is a 422, not `chat_id_shape`: Behavior types it `str`, and the form of
+   spec 114 sends text.
+7. **A body FastAPI cannot read at all gets the same answer.** A body that
+   is not UTF-8 is answered by FastAPI with its own 400 before it validates
+   anything, and the 400 this route declares has a `reason`. The exception
+   handler in `harrier_api/app.py` answers that 400 on a Telegram route as
+   it answers a body that is not JSON: the local 404, or hosted the 422
+   naming the body. The credentials routes (spec 116) have the same gap and
+   answer FastAPI's 400; part 2 does not change them, and records it for
+   spec 116's owner here
+   (`services/api/tests/test_telegram_settings.py::test_a_telegram_secret_never_reaches_a_body_or_a_log`).
+8. **The check ends before the request's transaction opens.** It is a
+   dependency, `check_pair`, declared before `Conn`, so a slow Telegram
+   holds no pooled connection. Run inside the transaction it would have,
+   for both calls, and ten saves stuck on a slow Telegram would have held
+   the pool and made every other owner's request wait for a lease. The key
+   and the owner are read before the check, so a request that cannot be
+   written sends no confirmation
+   (`services/api/tests/test_telegram_settings.py::test_the_bot_api_is_asked_while_the_request_holds_no_connection`,
+   `services/api/tests/test_telegram_settings.py::test_a_request_that_cannot_be_written_sends_no_confirmation`).
+9. **A write can still fail after the confirmation.** The confirmation goes
+   out before the write, so a store failure, a lock timeout or a failed
+   commit leaves a message sent and nothing stored: a 500 with a fixed body,
+   and the earlier pair as it was
+   (`services/api/tests/test_telegram_settings.py::test_a_failed_write_after_a_passed_check_keeps_the_earlier_pair`).
+   The window is inherent to checking before storing.
+10. **`configured` means a row exists.** `GET` reads `kind` and `updated_at`
+    and decrypts nothing, as `GET /credentials` does, so a pair that no
+    longer decrypts (the key was replaced) reads `configured: true` and a
+    run that needs it is refused with spec 106's 409. The route says what is
+    stored, not that it works (Honest limitations already says the same of
+    the confirmation).
+11. **A refusal is logged as `telegram settings refused: <reason>`** at INFO,
+    once per refusal, and nothing else of the request is logged.
+12. **The operations have explicit ids** (ADR-005): `getTelegramSettings`,
+    `saveTelegramSettings` and `clearTelegramSettings`, so the generated
+    client's names do not depend on the path.
+13. **Line numbers are refreshed** (decision D9) against `main` at
+    `0a5be39` plus this change's `notify.py`. Where a cite described the
+    code before part 1, it says so (Telegram today, the failed send).
+14. **The six planned tests are built** under the names the criteria now
+    cite, in `services/api/tests/test_telegram_settings.py`, with the
+    criteria ticked. One more test reads each owner's rows from the store
+    and hands them to spec 106's run binding: the owner's run holds the pair
+    under the variable names, another owner's holds neither, and a run that
+    prints both leaves neither in an event
+    (`services/api/tests/test_telegram_settings.py::test_a_saved_pair_reaches_only_its_owners_run_and_never_the_event_stream`).
+    It binds in memory; the run start itself, on Postgres, is spec 106's
+    (`services/api/tests/test_hosted_runs_on_postgres.py`).
+
+### Added to Honest limitations
+
+- **A save holds a worker thread while it calls Telegram, and nothing
+  limits how often.** The check no longer holds a database connection
+  (item 8), but it is a blocking call on a thread of the server's shared
+  pool, and each call's 30 seconds is `urllib`'s timeout for one socket
+  operation, not a deadline for the call: connecting, the handshake, the
+  headers and each read are timed one by one, and name resolution not at
+  all. A degraded Telegram can hold a thread for much longer than 60
+  seconds. There is no throttle on `PUT`: one owner looping on junk tokens,
+  or on a valid bot, spends the API's one egress address against Telegram's
+  limits and can make other owners' saves answer `telegram_unavailable`. A
+  per-owner limit is a later spec; none is invented here.
+- **`check_telegram` has no demo gate.** It is reachable only through the
+  hosted `PUT`, and spec 104 refuses demo mode hosted
+  (`send_telegram_message` keeps its own gate).
+
+### The local reviews of part 2
+
+Privacy, data integrity, contract and test integrity reviews of PR #325.
+Each fix carries a test that fails without it; the pull request records the
+mutations.
+
+- **Privacy: nothing leaked.** No path was found to a body, header, log
+  record, repr, schema or event. Two hardening points were taken: the check
+  catches every `Exception` (item 5), and the chat id is marked secret in
+  the schema (item 6).
+- **Data integrity: the check held a pooled connection (fixed, item 8).**
+  Also fixed: the key and owner are read before the confirmation. Recorded:
+  the confirmation can precede a failed write (item 9), `configured` is not
+  proof the pair decrypts (item 10), and a save has no throttle (limitations).
+  Declined: accepting a numeric `chat_id` (item 6).
+- **Contract: an unreadable body had an undeclared 400 (fixed, item 7).**
+  Also fixed: explicit operation ids (item 12), the chat id marked secret,
+  and implementation notes out of the published description. Declined: the
+  `DatabaseHeldOut` half of the 503 and the undeclared 500 stay, as on the
+  credentials routes; the declaration comes from the route class for every
+  route that opens the store.
+- **Test integrity: eleven mutations survived the first tests (fixed).** The
+  run test now reads each owner's rows from the store and gives the second
+  owner a credential of another kind; `GET` is read while another kind is
+  stored; refusal headers are read; a refused save leaves the same nonce,
+  ciphertext and time; the save is shown to select no ciphertext; the 64 KiB
+  read limit, a read that fails and a response left open are tested; the
+  length bound is tested at its edge; logs are read from the packages' own
+  loggers before the root's scrub, with their level and count; and the
+  no-network guard fails the test and cannot be read as an unreachable
+  Telegram.
+
+### Recorded for the web (contract review of PR #325)
+
+Spec 114's Telegram form is the first reader of these routes. Its error
+reader, `refusalMessage` in `apps/web/src/shared/api/refusal.ts`, knows
+FastAPI's 422 (`loc` and `msg`) and not the two bodies these routes send.
+Nothing in `apps/web` reads them yet, so part 2 changes none of it. The
+change that builds the form takes this criterion:
+
+- [ ] The Telegram form shows `TelegramRefusalOut.detail` on a 400 or 502,
+      chosen by its `reason`, and the `field` and `problem` of
+      `CredentialRefusalOut` on a 422, and `refusalMessage` does not throw on
+      either (planned web test "the Telegram form reads the refusals these
+      routes send").
+
+### Recorded for spec 108
+
+Spec 108 owns `HOSTED_JOBS` and the digest's schedule health. Part 1
+recorded that a Postgres digest lists a `digest` health line while `digest`
+is not a hosted job, and that spec 108 adds it once owners can save
+Telegram settings. They now can. Nothing in part 2 touches
+`services/api/src/harrier/hostedschedule.py` or its docstring, which still
+says `gmail-watch` joins "when a hosted Gmail spec exists" (that is spec
+118).

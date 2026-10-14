@@ -53,7 +53,6 @@ from harrier.pgstore import (
     postgres_connect,
     transaction_failed,
 )
-from harrier.tracker.schema import TENANT_ROLE
 
 if TYPE_CHECKING:
     from harrier.loginrole import LoginRoleProblem
@@ -192,14 +191,17 @@ class _CheckedNothingWritten(Exception):
 
 
 def run_start_checks(pool: RequestPool) -> str:
-    """Spec 134's start checks, in one transaction that is rolled back.
+    """Spec 134's start checks, in two transactions that are rolled back.
 
     As the login role: `login_role_problems`, then the store's default
-    isolation. Then `SET LOCAL ROLE harrier_tenant`, which is also the check
-    that the login role can set it, and the version, read as the tenant
-    role: the login role holds no grant of its own, and the tenant may read
-    `schema_version` (spec 105). Requests do not read the version again. Returns the login role's
-    name, which spec 106's run login must not share.
+    isolation. Then, in a transaction the seam begins as the tenant role
+    (`transaction(tenant=True)`, which is also the check that the login role
+    can set it), the version: the login role holds no grant of its own, and
+    the tenant may read `schema_version` (spec 105). Two transactions,
+    because `execute()` refuses a SET, so the role is taken as a transaction
+    begins (spec 112, amendment of 2026-10-14: the session). Requests do not
+    read the version again. Returns the login role's name, which spec 106's
+    run login must not share.
     """
     driver = pool.lease()
     check = "login role"
@@ -207,7 +209,7 @@ def run_start_checks(pool: RequestPool) -> str:
     role = ""
     try:
         conn = Connection.postgres(cast(Any, driver))
-        with conn.transaction():
+        with suppress(_CheckedNothingWritten), conn.transaction():
             row = conn.execute("SELECT current_user::text").fetchone()
             role = str(row[0]) if row else ""
             problems = login_role_problems(conn, role)
@@ -218,13 +220,12 @@ def run_start_checks(pool: RequestPool) -> str:
             isolation = str(row[0]) if row else ""
             if isolation != ISOLATION_NEEDED:
                 raise HostedStartRefused(isolation_refusal(isolation))
-            check = "store version"
-            conn.execute(f"SET LOCAL ROLE {TENANT_ROLE}")
+            raise _CheckedNothingWritten
+        check = "store version"
+        with suppress(_CheckedNothingWritten), conn.transaction(tenant=True):
             check_postgres_version(_store_version(conn))
             check_no_skipped_versions(_store_versions(conn))
             raise _CheckedNothingWritten
-    except _CheckedNothingWritten:
-        pass
     except StoreDatabaseError as error:
         failed = str(error)
     finally:
@@ -328,8 +329,8 @@ class RequestTransaction:
 
     def begin(self, pool: RequestPool, claims: Mapping[str, object]) -> Connection:
         """Lease a connection and open the request's transaction on it:
-        `BEGIN`, `lock_timeout`, the role, the claims and the read-back
-        (the seam), then the other two timeouts. Raises IdentityDidNotHold
+        `BEGIN`, `lock_timeout`, the other two timeouts, the role, the
+        claims and the read-back, all sent by the seam. Raises IdentityDidNotHold
         when the read-back differs; the seam has rolled back."""
         if self.driver is not None:
             raise RuntimeError("the request's transaction is already open")
@@ -338,13 +339,14 @@ class RequestTransaction:
         self.lease = _Lease(self.driver)
         conn = Connection.postgres(cast(Any, self.lease), claims=claims)
         conn.busy_timeout_ms = REQUEST_LOCK_TIMEOUT_MS
-        block = conn.transaction()
+        # The seam sends both timeouts as the transaction begins: `execute()`
+        # refuses a SET (spec 112, amendment of 2026-10-14: the session).
+        block = conn.transaction(
+            statement_timeout_ms=REQUEST_STATEMENT_TIMEOUT_MS,
+            idle_timeout_ms=REQUEST_IDLE_TIMEOUT_MS,
+        )
         block.__enter__()
         self.block = block
-        conn.execute(f"SET LOCAL statement_timeout = '{REQUEST_STATEMENT_TIMEOUT_MS}ms'")
-        conn.execute(
-            f"SET LOCAL idle_in_transaction_session_timeout = '{REQUEST_IDLE_TIMEOUT_MS}ms'"
-        )
         return conn
 
     def end(self, *, commit: bool) -> bool:

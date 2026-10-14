@@ -2301,3 +2301,252 @@ All four as recommended.
   that logged transaction control and second statements. It found one
   control caller (`services/api/tests/test_seam_on_both_stores.py:453`,
   on both stores) and two SQLite triggers whose bodies hold `;`.
+
+## Amendment (2026-10-14): the session is the seam's alone
+
+The amendment above ("transaction control is the seam's alone") measured
+that session statements break the promises it protects, and names them
+in its Out of scope as a change of their own. This is that change.
+
+### Problem (amendment of 2026-10-14: the session)
+
+The 2026-10-11 amendment promises that every Postgres statement on an
+owner's connection runs as `harrier_tenant`, with the owner's claims,
+under the row policy that limits it to the owner's rows ("The owner's
+identity (decision 2)"). The seam sets the role and the claims at the
+start of each outermost transaction and reads them back once
+(`assume_identity`, `services/api/src/harrier/connection.py`). A
+statement run later through `Connection.execute()` can change either,
+and the seam does not see it.
+
+Measured on 2026-10-14 at `9be5778`, on Postgres 17.11, with two
+synthetic owners A and B holding one contact each. Each statement ran
+inside a block on A's connection, followed by a read of `contacts`:
+
+| Statement | Migrating login role | Hosted login role |
+|---|---|---|
+| `RESET ROLE` | reads A's and B's rows; exits normally | permission denied; the block raises |
+| `SET ROLE harrier_migrator`, `SET LOCAL ROLE ...` | reads A's and B's rows; exits normally | refused; the block raises |
+| `SET SESSION AUTHORIZATION harrier_migrator` | reads A's and B's rows; exits normally | refused; the block raises |
+| `SELECT set_config('request.jwt.claims', <B>, true)` | reads B's rows only; exits normally | reads B's rows only; exits normally |
+| the same with `false` | reads B's rows only; exits normally | reads B's rows only; exits normally |
+| `SET LOCAL request.jwt.claims = <B>` | reads B's rows only; exits normally | reads B's rows only; exits normally |
+| `RESET ALL` | reads nothing (no claims); exits normally | reads nothing; exits normally |
+| `DISCARD ALL` | refused by the server inside a transaction | the same |
+
+The migrating login role (`harrier_migrator`, `BYPASSRLS`) is what the
+local and test setups open an owner's connection with. The hosted login
+role is `NOINHERIT` and holds only `harrier_tenant` (spec 134,
+`login_role_problems`). In every case the next block had A's identity
+again, because the seam sets it per transaction.
+
+So a claims change reads another owner's rows on either login role, and
+the block commits as if nothing happened. A role change does the same on
+the migrating role, and fails loudly on the hosted one. No code under
+`services/api/src` does either today: the domain is trusted code, and
+isolation rests on it (Honest limitations of the post-merge review of PR
+#288). This amendment stops resting on it.
+
+Where session statements reach a `Connection.execute()` today. A spy on
+`execute` over the full suite at `9be5778` (3664 passed) logged them:
+
+- `services/api/src/harrier_api/hostedstore.py`: each request
+  transaction runs `SET LOCAL statement_timeout` and `SET LOCAL
+  idle_in_transaction_session_timeout` (spec 134). The start check runs
+  `SET LOCAL ROLE harrier_tenant` on a connection opened without an
+  owner, to read the store version as the tenant.
+- `services/api/tests/test_hosted_requests.py::test_the_request_role_has_lock_and_statement_timeouts`:
+  its `/probe/plain-set` route runs three session-level `SET`s, on
+  purpose, to prove the next request sets its own values again.
+- `services/api/tests/test_seam_on_both_stores.py`: `SET TRANSACTION
+  ISOLATION LEVEL REPEATABLE READ` in
+  `test_a_stale_snapshot_is_a_conflict_not_a_busy_lock` and
+  `test_the_seam_reads_a_first_word_as_either_store_would`, and a
+  session-level `SET statement_timeout` in
+  `test_a_stuck_writer_reports_busy_on_both_stores`.
+
+SQLite has no roles and no claims. The `PRAGMA` statements the spy saw
+run only in tests, and every `PRAGMA` under `services/api/src` runs on a
+raw `sqlite3` connection (`harrier/db.py`, `harrier/doctor.py`,
+`harrier/backup.py`).
+
+### Behavior (amendment of 2026-10-14: the session)
+
+**`execute()` refuses a session statement.** A statement whose first
+word is `SET`, `RESET` or `DISCARD` raises `StoreDatabaseError` with the
+text `a statement may not change the session: transaction() sets the
+role, the claims and the timeouts`, as a constant `SESSION_STATEMENT`
+beside `TRANSACTION_CONTROL`. One exception: `SET TRANSACTION`, whose
+setting ends with its transaction and touches neither the role nor the
+claims. The first word is read as `controls_the_transaction` reads it,
+on both readings, and the check runs with it: first, on both stores,
+inside a block and outside one, before any driver sees the statement.
+A refused statement gives nothing up, so a block that catches the
+refusal goes on and commits, as with `TRANSACTION_CONTROL`.
+
+**The settings spec 134 needs move into `transaction()`.**
+`Connection.transaction()` gains three keyword arguments for the
+outermost block on Postgres:
+
+- `statement_timeout_ms` and `idle_timeout_ms`, each sent as `SET LOCAL
+  statement_timeout` and `SET LOCAL
+  idle_in_transaction_session_timeout` right after the lock timeout, in
+  milliseconds, by the seam itself;
+- `tenant`, which on a connection opened without an owner sends `SET
+  LOCAL ROLE harrier_tenant` after them. On an owner's connection the
+  role is already the tenant's, and `tenant` changes nothing.
+
+Each is refused with `ValueError` on a nested block, and on SQLite. The
+request transaction (`RequestTransaction.begin`) and the start check
+(`run_start_checks`, `services/api/src/harrier_api/hostedstore.py`)
+pass them instead of running `SET LOCAL` themselves. What spec 134 sees
+does not change: the same three settings, in the same transaction, with
+the same values.
+
+**An owner's transaction is read back before it commits.** On a
+connection opened with claims, the outermost block runs the read-back
+`assume_identity` runs at its start again, just before `COMMIT`. When
+the role, the claims or the owner differ from what the block began
+with, the seam rolls back and raises `IdentityDidNotHold`, naming what
+differed, as at the start. This catches what a first word cannot see:
+`set_config` called from a `SELECT`, or from a function. A statement
+outside any block is its own transaction, so it is read back too, and
+its rows never reach the caller.
+
+**A transaction begun with `tenant` keeps the tenant role to its end.**
+On a connection without claims, a block begun with
+`transaction(tenant=True)` reads `current_user` again before `COMMIT`.
+When it is no longer `harrier_tenant`, the seam rolls back and raises
+`IdentityDidNotHold` naming `role`. So every transaction in which the
+seam took the tenant role, an owner's or one begun with `tenant`, still
+has it when it commits. A block that did not ask for the role is not
+held to it. (Review of PR #326: `run_start_checks` always rolls back,
+so nothing was exposed, but the option is general.)
+
+### Failure modes (amendment of 2026-10-14: the session)
+
+- **A session statement through `execute()`.** Refused before the
+  driver sees it, on both stores. The block is unchanged.
+- **A claims or role change the first word cannot see.** The rows read
+  before the commit were already returned to the caller. The commit is
+  refused: `IdentityDidNotHold`, and nothing the block wrote is kept.
+  Hosted, the request transaction ends at the response's start, so spec
+  134's middleware answers 500 with the generic detail and the rows read
+  never leave the server (`RequestTransactionMiddleware`). Anywhere
+  else, such as a spec 106 run or a CLI command, whatever the caller did
+  with the rows before the commit stays done.
+- **The read-back before commit is refused** (a lost connection, the
+  tenant without `EXECUTE` on `harrier_owner_id()`). `IdentityDidNotHold`
+  naming `read-back`, as at the start, and the transaction rolls back.
+- **A block the store gave up on.** No read-back: it rolls back and
+  raises `TRANSACTION_GIVEN_UP`, as the 2026-10-13 amendment says.
+- **A connection without claims.** No read-back of claims: there are
+  none to compare. A block begun with `tenant` reads its role back
+  before commit, as above; any other block is not read back. The first
+  word refusal holds for it as for any connection.
+
+### Acceptance criteria (amendment of 2026-10-14: the session)
+
+In `services/api/tests/test_seam_on_both_stores.py` unless named, with
+synthetic owners and values only:
+
+- [ ] `SET ROLE`, `SET LOCAL ROLE`, `RESET ROLE`, `RESET ALL`, `SET
+      SESSION AUTHORIZATION`, `DISCARD ALL`, `SET LOCAL
+      request.jwt.claims = ...` and `SET statement_timeout = 0` are
+      each refused with the text above, on both stores, inside a block
+      and outside one, and the block then commits its own write
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_session_statement_through_execute_is_refused`).
+- [ ] `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ` still runs
+      (`services/api/tests/test_seam_on_both_stores.py::test_set_transaction_is_not_a_session_statement`).
+- [ ] On owner A's connection, a block that writes a row, runs `SELECT
+      set_config('request.jwt.claims', <B's claims>, true)` and exits
+      normally raises `IdentityDidNotHold` naming `claims` and `owner`,
+      and the row is not in the store
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_claims_change_is_refused_at_commit`).
+- [ ] The same with `SELECT set_config('role', 'harrier_migrator',
+      true)` on the migrating login role, naming `role`
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_role_change_is_refused_at_commit`).
+- [ ] Outside any block, one statement that changes the claims and
+      reads `contacts` raises `IdentityDidNotHold` and returns no rows
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_statement_outside_a_block_cannot_return_another_owners_rows`).
+- [ ] A hosted request whose route changes its claims through
+      `set_config` answers 500 with the generic detail
+      (`services/api/tests/test_hosted_requests.py::test_a_request_that_changes_its_claims_answers_500`).
+- [ ] `transaction()` refuses `statement_timeout_ms`, `idle_timeout_ms`
+      and `tenant` on a nested block and on SQLite with `ValueError`
+      (`services/api/tests/test_seam_on_both_stores.py::test_the_session_options_belong_to_the_outermost_block`).
+- [ ] On a connection without claims, a block begun with `tenant` whose
+      role a `SELECT set_config('role', ...)` moved back is refused at
+      commit with `IdentityDidNotHold` naming `role`; a block that keeps
+      the role commits, and a later block without `tenant` is not held
+      to it (review of PR #326)
+      (`services/api/tests/test_seam_on_both_stores.py::test_a_tenant_transaction_that_leaves_the_tenant_role_is_refused_at_commit`).
+- [ ] Spec 134's tests pass with `hostedstore.py` passing the options:
+      `services/api/tests/test_hosted_requests.py::test_the_request_role_has_lock_and_statement_timeouts`,
+      with its `/probe/plain-set` route making its session-level
+      settings by `SELECT set_config(..., false)`, which the read-back
+      does not cover (Out of scope), and the start checks in
+      `services/api/tests/test_hosted_start.py`.
+- [ ] Each new test fails with its part of the change reverted, and the
+      pull request records what each reversion made fail.
+
+### Out of scope (amendment of 2026-10-14: the session)
+
+- **SQLite's `PRAGMA`.** SQLite has no roles or claims to change, and
+  the tests rely on `PRAGMA` through the seam (`max_page_count`,
+  `table_info`). A `PRAGMA` that changes the seam's own state, such as
+  `busy_timeout`, is a question for another amendment.
+- **Settings the read-back does not cover.** `set_config('search_path',
+  ...)` or `set_config('statement_timeout', ...)` from a `SELECT` passes
+  both checks. Each fails loudly or only slows a statement; neither reads
+  another owner's rows.
+- **Statements on the raw driver** (`sqlite_driver`, or a psycopg
+  connection beneath the seam). They are outside the seam by design.
+- **Undoing a read.** Rows returned before the commit is refused stay
+  returned. Only the hosted path keeps them from leaving the server.
+
+### Decisions (Akin, in chat, 2026-10-14: the session)
+
+All four as recommended.
+
+1. **The first word refusal.** Taken: `SET`, `RESET` and
+   `DISCARD`, except `SET TRANSACTION`. It stops every measured role and
+   claims change spelled as a statement, before it runs. Weighed instead
+   was refusing only `SET ROLE`, `RESET ROLE`, `SET SESSION AUTHORIZATION` and
+   a `SET` of `request.jwt.claims`. That is narrower, but any other `SET`
+   left open is a setting the seam must reason about one by one.
+2. **The read-back before commit.** Taken: yes. It is the only
+   check that sees `set_config` inside a `SELECT`, and on the hosted path
+   it keeps another owner's rows from leaving the server. It costs one
+   query per owner transaction. Weighed instead was relying on the first
+   word refusal alone, and recording `set_config` as a limitation.
+3. **Where spec 134's settings go.** Taken: keyword arguments on
+   `transaction()`, as Behavior says. The settings belong to the
+   transaction, and the seam already begins it. Weighed instead was
+   `Connection.set_local(name, value)` with an allow list. It is one more
+   way to send a setting, and its list would need to follow spec 134.
+4. **`hostedstore.py` in this change.** Taken: yes. This
+   amendment names the file, and spec 134's observable behavior does not
+   change, so spec 134 needs no amendment of its own. Its tests are the
+   proof (Acceptance criteria). Weighed instead was splitting the change:
+   first the options on `transaction()`, then the refusal once spec 134
+   uses them.
+
+### Honest limitations (amendment of 2026-10-14: the session)
+
+- The read-back compares what it can read: the role, the claims and
+  `harrier_owner_id()`. A policy that reads anything else is not
+  covered.
+- Outside a hosted request, a claims change through `set_config` still
+  lets the caller see another owner's rows before its commit is refused.
+  Spec 106's runs open an owner's connection on the shared store, with
+  no response to replace, so what a run does with those rows before the
+  commit is not undone. The first word refusal does not see a
+  `set_config` inside a `SELECT`; the read-back sees it only at the end.
+- The two login roles were measured on Postgres 17.11 only.
+
+### Proof / origin (amendment of 2026-10-14: the session)
+
+- The amendment above, its Out of scope and Honest limitations.
+- The probe behind the table above, run at `9be5778`, and the spy over
+  the full suite. The pull request records each script and its output.
