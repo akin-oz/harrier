@@ -228,7 +228,9 @@ def credentials_refusal_response(request: Request, error: RequestValidationError
 # --- routes ---
 
 
-def _owner(request: Request) -> str:
+def request_owner(request: Request) -> str:
+    """The verified `sub` of a hosted request. Spec 109's Telegram route
+    reads it too."""
     state = cast(dict[str, object], request.scope.get("state") or {})
     claims = state.get("claims")
     sub = cast(dict[str, object], claims).get("sub") if isinstance(claims, dict) else None
@@ -239,7 +241,9 @@ def _owner(request: Request) -> str:
     return sub
 
 
-def _key(request: Request) -> CredentialsKey:
+def request_key(request: Request) -> CredentialsKey:
+    """The key the hosted app encrypts with. Spec 109's Telegram route uses
+    it too."""
     key = getattr(request.app.state, "credentials_key", None)
     if not isinstance(key, CredentialsKey):
         raise HTTPException(status_code=500, detail="the hosted API holds no credentials key")
@@ -259,7 +263,7 @@ def list_credentials(conn: Conn) -> CredentialsOut:
 def _put(
     request: Request, conn: Conn, kind: CredentialKind, fields: dict[str, str | None]
 ) -> CredentialStatusOut:
-    written = put_credential(conn, _key(request), _owner(request), kind, fields)
+    written = put_credential(conn, request_key(request), request_owner(request), kind, fields)
     return _status(kind, written)
 
 

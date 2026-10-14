@@ -438,6 +438,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/notifications/telegram": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Telegram */
+        get: operations["getTelegramSettings"];
+        /** Put Telegram */
+        put: operations["saveTelegramSettings"];
+        post?: never;
+        /** Delete Telegram */
+        delete: operations["clearTelegramSettings"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ops/backup": {
         parameters: {
             query?: never;
@@ -2762,6 +2781,48 @@ export interface components {
              */
             no_ai?: boolean;
         };
+        /**
+         * TelegramRefusalOut
+         * @description Why a save was refused: a fixed sentence per `reason`, never the
+         *     token, the chat id, or Telegram's own description.
+         */
+        TelegramRefusalOut: {
+            /** Detail */
+            detail: string;
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "token_shape" | "chat_id_shape" | "token_rejected" | "chat_unreachable" | "telegram_unavailable";
+        };
+        /**
+         * TelegramSettingsIn
+         * @description The owner's bot token and chat id. Both are secret and write-only.
+         */
+        TelegramSettingsIn: {
+            /**
+             * Bot Token
+             * Format: password
+             * @description The bot's token from @BotFather. Secret.
+             */
+            bot_token: string;
+            /**
+             * Chat Id
+             * Format: password
+             * @description The chat the bot writes to. Secret (decision D7), like the token.
+             */
+            chat_id: string;
+        };
+        /**
+         * TelegramSettingsOut
+         * @description Whether the owner has a pair saved, and when. Never the pair.
+         */
+        TelegramSettingsOut: {
+            /** Configured */
+            configured: boolean;
+            /** Updated At */
+            updated_at: string | null;
+        };
         /** TerminalCommandOut */
         TerminalCommandOut: {
             /** Command */
@@ -4590,6 +4651,178 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
+        };
+    };
+    getTelegramSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TelegramSettingsOut"];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
+            /** @description Telegram is configured in .env on the local product */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
+                };
+            };
+        };
+    };
+    saveTelegramSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TelegramSettingsIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TelegramSettingsOut"];
+                };
+            };
+            /** @description the token or chat id is malformed, Telegram refused the token, or the bot cannot write to the chat; nothing is stored */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TelegramRefusalOut"];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
+            /** @description Telegram is configured in .env on the local product */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description a request the schema refuses, named by field and rule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialRefusalOut"];
+                };
+            };
+            /** @description Telegram could not be reached or did not answer in time; nothing is stored */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TelegramRefusalOut"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
+                };
+            };
+        };
+    };
+    clearTelegramSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TelegramSettingsOut"];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
+            /** @description Telegram is configured in .env on the local product */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
                 };
             };
         };
