@@ -975,6 +975,69 @@ def test_the_contract_declares_every_auth_refusal(hosted: Hosted) -> None:
         assert declared == answers_401
 
 
+def test_the_contract_declares_the_anonymous_refusal(hosted: Hosted) -> None:
+    """Spec 114 declares the 403 that spec 104 left out of the contract.
+
+    Hosted, an anonymous session is refused 403 with `AuthRefusalOut` on every
+    route that needs a token. A route that also takes spec 035's local token
+    refuses a missing or wrong one 403 with `ErrorOut`'s body, so its one 403
+    admits both. The generated client reads the declaration, so the browser
+    knows the status is a refusal with a body.
+    """
+    anonymous = {"$ref": "#/components/schemas/AuthRefusalOut"}
+    local = {"$ref": "#/components/schemas/ErrorOut"}
+    token = hosted.token(is_anonymous=True)
+
+    # What the hosted app answers an anonymous session, route by route.
+    answers_403 = {
+        (method.lower(), route.path)
+        for route in api_routes(hosted.app.routes)
+        for method in route.methods or ()
+        if hosted.client.request(method, concrete(route.path), headers=bearer(token)).status_code
+        == 403
+    }
+    assert len(answers_403) > 40, "the walk is not finding the routes"
+
+    takes_local = {
+        (method.lower(), route.path)
+        for route in api_routes(hosted.app.routes)
+        for method in route.methods or ()
+        if require_token in dependency_calls(route.dependant)
+    }
+    assert len(takes_local) > 40, "the walk is not finding the routes"
+
+    committed = json.loads(CONTRACT.read_text(encoding="utf-8"))
+    for document in (committed, hosted.app.openapi()):
+        declared: set[tuple[str, str]] = set()
+        for path, operations in document["paths"].items():
+            for method, operation in operations.items():
+                responses = operation["responses"]
+                # A route that needs a token declares its 401 (spec 104); a
+                # route that does not may still declare its own 403.
+                if "401" not in responses:
+                    continue
+                declared.add((method, path))
+                answer = responses["403"]
+                schema = answer["content"]["application/json"]["schema"]
+                bodies = schema.get("anyOf", [schema])
+                assert anonymous in bodies, (method, path)
+                # Decided by what the route depends on, not by what its own
+                # declaration says, so a route that takes the local token and
+                # forgot to declare the refusal fails here.
+                takes_local_token = (method, path) in takes_local
+                assert (local in bodies) == takes_local_token, (method, path)
+                assert len(bodies) == (2 if takes_local_token else 1), (method, path)
+                assert ("local API token" in answer["description"]) == takes_local_token
+        assert declared == answers_403
+        # Both shapes exist, so the test would notice losing either.
+        assert any(
+            "local API token" in o["responses"]["403"]["description"]
+            for ops in document["paths"].values()
+            for o in ops.values()
+            if "401" in o["responses"]
+        )
+
+
 def dependency_calls(dependant: Any) -> list[object]:
     calls: list[object] = [dependant.call]
     for child in dependant.dependencies:

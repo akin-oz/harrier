@@ -4,6 +4,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 
 import { OperationsPage } from "./OperationsPage";
+import { installRunStreams } from "../../shared/testing/runStreams";
+import type { RunStreams } from "../../shared/testing/runStreams";
 
 /**
  * The Operations page (spec 050, as amended by spec 096).
@@ -154,35 +156,18 @@ function stubApi(
   return calls;
 }
 
-class FakeEventSource {
-  static all: FakeEventSource[] = [];
-  onmessage: ((event: MessageEvent<string>) => void) | null = null;
-  onerror: (() => void) | null = null;
-  constructor(readonly url: string) {
-    FakeEventSource.all.push(this);
-  }
-  emit(payload: unknown): void {
-    this.onmessage?.({ data: JSON.stringify(payload) } as MessageEvent<string>);
-  }
-  close(): void {
-    /* nothing to release in a test */
-  }
-}
+let streams: RunStreams;
 
-function lastSource(): FakeEventSource {
-  const source = FakeEventSource.all.at(-1);
-  if (source === undefined) throw new Error("no run was streamed");
-  return source;
+function lastSource() {
+  return streams.last;
 }
 
 function renderPage(): QueryClient {
-  FakeEventSource.all = [];
+  streams = installRunStreams();
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={queryClient}>
-      <OperationsPage
-        createEventSource={(url) => new FakeEventSource(url) as unknown as EventSource}
-      />
+      <OperationsPage />
     </QueryClientProvider>,
   );
   return queryClient;
@@ -272,7 +257,7 @@ test("no boards configured reaches the operator in the CLI's words", async () =>
 
   await user.click(await screen.findByRole("button", { name: "Check feeds" }));
   await waitFor(() => {
-    expect(FakeEventSource.all.length).toBeGreaterThan(0);
+    expect(streams.connections.length).toBeGreaterThan(0);
   });
   act(() => {
     lastSource().emit({ type: "log_line", line: "no boards configured" });
@@ -320,7 +305,7 @@ test("the report keeps the CLI's words, so the two zero outcomes stay apart", as
 
   await user.click(await screen.findByRole("button", { name: "Report what would be cleared" }));
   await waitFor(() => {
-    expect(FakeEventSource.all.length).toBeGreaterThan(0);
+    expect(streams.connections.length).toBeGreaterThan(0);
   });
   const perSource =
     "greenhouse: 3 recorded, 0 under older rules, 0 now eligible again, 3 still rejected, 0 left alone because you rejected them";
@@ -393,7 +378,7 @@ test("a digest produced and not delivered is told apart from one never produced"
 
   await user.click(await screen.findByRole("button", { name: "Send to Telegram" }));
   await waitFor(() => {
-    expect(FakeEventSource.all.length).toBeGreaterThan(0);
+    expect(streams.connections.length).toBeGreaterThan(0);
   });
   act(() => {
     lastSource().emit({ type: "progress", step: 1, total: 2, message: "digest produced" });
@@ -407,7 +392,7 @@ test("a digest produced and not delivered is told apart from one never produced"
   renderPage();
   await user.click(await screen.findByRole("button", { name: "Send to Telegram" }));
   await waitFor(() => {
-    expect(FakeEventSource.all.length).toBeGreaterThan(0);
+    expect(streams.connections.length).toBeGreaterThan(0);
   });
   act(() => {
     lastSource().emit({ type: "log_line", line: "Traceback (most recent call last):" });
@@ -423,7 +408,7 @@ test("a delivered digest says so", async () => {
 
   await user.click(await screen.findByRole("button", { name: "Send to Telegram" }));
   await waitFor(() => {
-    expect(FakeEventSource.all.length).toBeGreaterThan(0);
+    expect(streams.connections.length).toBeGreaterThan(0);
   });
   act(() => {
     lastSource().emit({ type: "progress", step: 1, total: 2, message: "digest produced" });

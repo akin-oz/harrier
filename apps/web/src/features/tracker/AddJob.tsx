@@ -42,7 +42,6 @@ export function AddJob({ track }: { track: Track }) {
       // A refusal reads in the domain's words: "track ... is archived" when
       // another tab archived it, rather than the raw response body.
       if (error !== undefined) throw new Error(refusalMessage(error));
-      if (data === undefined) throw new Error("the local API token was not accepted");
       return data;
     },
     onSuccess: (result) => {

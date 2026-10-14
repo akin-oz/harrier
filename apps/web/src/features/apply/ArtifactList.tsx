@@ -42,11 +42,6 @@ async function fetchArtifacts(jobId: number): Promise<readonly ArtifactRow[]> {
   if (error !== undefined) {
     throw new Error(`artifacts failed: ${JSON.stringify(error)}`);
   }
-  // The contract declares 403, so an absent body is a refusal rather than a
-  // shape this can assume away (spec 035).
-  if (data === undefined) {
-    throw new Error("refused: the local API token was not accepted");
-  }
   return data;
 }
 
@@ -66,7 +61,7 @@ async function openArtifact(jobId: number, kind: string, filename: string): Prom
   if (error !== undefined) {
     throw new Error(`could not open ${kind}: ${JSON.stringify(error)}`);
   }
-  const url = URL.createObjectURL(data as Blob);
+  const url = URL.createObjectURL(data);
   try {
     // An anchor rather than window.open: it carries the filename the API
     // reported, and a popup blocker does not eat it.

@@ -2,9 +2,9 @@ import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { useRunStream } from "../../features/runs/useRunStream";
-import type { EventSourceFactory, RunOut } from "../../features/runs/useRunStream";
+import type { RunOut } from "../../features/runs/useRunStream";
 import { api } from "../../shared/api/client";
-import { RunOutput, TOKEN_REFUSED, refusalMessage } from "./RunOutput";
+import { RunOutput, refusalMessage } from "./RunOutput";
 import { SOURCE_LABEL, isSource } from "./sources";
 import type { SourceName } from "./sources";
 
@@ -14,12 +14,8 @@ import type { SourceName } from "./sources";
  * offered only after a report has finished, so the operator has read the
  * count before anything changes.
  */
-export function ReconsiderSection({
-  createEventSource,
-}: {
-  createEventSource: EventSourceFactory;
-}) {
-  const stream = useRunStream(createEventSource);
+export function ReconsiderSection() {
+  const stream = useRunStream();
   const [source, setSource] = useState<SourceName | null>(null);
   // What the last run did and for which source, so "clear" acts on the
   // report the operator read rather than on a selection changed since.
@@ -31,7 +27,6 @@ export function ReconsiderSection({
       if (error !== undefined) {
         throw new Error(refusalMessage(error, "reconsideration was refused"));
       }
-      if (data === undefined) throw new Error(TOKEN_REFUSED);
       return data;
     },
     onSuccess: (data, request) => {

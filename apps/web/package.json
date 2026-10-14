@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@harrier/contract": "workspace:*",
+    "@supabase/supabase-js": "^2.117.3",
     "@tanstack/react-query": "^5.101.4",
     "openapi-fetch": "^0.17.0",
     "react": "^19.0.0",

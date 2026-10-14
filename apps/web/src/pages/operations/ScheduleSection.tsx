@@ -3,13 +3,14 @@ import { useQuery } from "@tanstack/react-query";
 import type { components } from "@harrier/contract";
 
 import { api } from "../../shared/api/client";
+import { refusalMessage } from "../../shared/api/refusal";
 
 type Schedule = components["schemas"]["ScheduleOut"];
 type ScheduledJob = components["schemas"]["ScheduledJobOut"];
 
 async function fetchSchedule(): Promise<Schedule> {
-  const { data } = await api.GET("/ops/schedule");
-  if (data === undefined) throw new Error("could not read the schedule");
+  const { data, error } = await api.GET("/ops/schedule");
+  if (error !== undefined) throw new Error(refusalMessage(error, "could not read the schedule"));
   return data;
 }
 

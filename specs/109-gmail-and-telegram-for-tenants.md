@@ -948,15 +948,16 @@ This spec builds nothing in `apps/web` (Scope; the browser's half is spec
 first serves the inbox to a hosted owner, whose spec takes this
 criterion:
 
-- [ ] On a hosted 501 from `GET /mail/events`, the inbox page shows the
+- [x] On a hosted 501 from `GET /mail/events`, the inbox page shows the
       API's `detail`, `Gmail watch is not offered on the hosted service
       (spec 109)`, read through `refusalMessage` in
       `apps/web/src/shared/api/refusal.ts`, not the generic "could not
       read the mail archive"; and the comment in
       `apps/web/src/pages/inbox/InboxPage.tsx` that says the route
       "declares no refusal response" is corrected, since the route
-      declares 401, 422, 503 and 501 (planned web test "a hosted inbox
-      says Gmail watch is not offered").
+      declares 401, 422, 503 and 501. Built by spec 114:
+      `InboxPage.test.tsx`: "a hosted inbox says Gmail watch is not
+      offered".
 
 Under `services/api/src` part 1 touches `harrier/notify.py`,
 `harrier/digest.py`, `harrier_api/runs.py`, `harrier_api/mail_routes.py`
@@ -1155,11 +1156,11 @@ FastAPI's 422 (`loc` and `msg`) and not the two bodies these routes send.
 Nothing in `apps/web` reads them yet, so part 2 changes none of it. The
 change that builds the form takes this criterion:
 
-- [ ] The Telegram form shows `TelegramRefusalOut.detail` on a 400 or 502,
+- [x] The Telegram form shows `TelegramRefusalOut.detail` on a 400 or 502,
       chosen by its `reason`, and the `field` and `problem` of
       `CredentialRefusalOut` on a 422, and `refusalMessage` does not throw on
-      either (planned web test "the Telegram form reads the refusals these
-      routes send").
+      either. Built by spec 114: `TelegramForm.test.tsx`: "the Telegram form
+      reads the refusals these routes send".
 
 ### Recorded for spec 108
 

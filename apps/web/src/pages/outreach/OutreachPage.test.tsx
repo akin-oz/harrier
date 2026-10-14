@@ -401,7 +401,14 @@ test("an outreach refusal is read through the contract's types", () => {
   // token refusal joins it (spec 104).
   expectTypeOf(refusalMessage)
     .parameter(0)
-    .toEqualTypeOf<ErrorOut | DatabaseHeldOut | HTTPValidationError | AuthRefusalOut>();
+    .toEqualTypeOf<
+      | ErrorOut
+      | DatabaseHeldOut
+      | HTTPValidationError
+      | AuthRefusalOut
+      | components["schemas"]["CredentialRefusalOut"]
+      | components["schemas"]["TelegramRefusalOut"]
+    >();
 
   expectTypeOf<
     Declared<operations["listOutreachDue"]["responses"][404]>

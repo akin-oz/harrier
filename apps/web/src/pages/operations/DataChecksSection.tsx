@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { components } from "@harrier/contract";
 
 import { api } from "../../shared/api/client";
-import { TOKEN_REFUSED, refusalMessage } from "./RunOutput";
+import { refusalMessage } from "./RunOutput";
 
 type DataCheck = components["schemas"]["DataCheckOut"];
 type Linked = components["schemas"]["LinkContactsOut"];
@@ -14,7 +14,6 @@ const KEY = ["ops", "check"] as const;
 async function fetchCheck(): Promise<DataCheck> {
   const { data, error } = await api.GET("/ops/check");
   if (error !== undefined) throw new Error(refusalMessage(error, "the data check was refused"));
-  if (data === undefined) throw new Error(TOKEN_REFUSED);
   return data;
 }
 
@@ -35,7 +34,6 @@ export function DataChecksSection() {
         body: { confirm: true },
       });
       if (error !== undefined) throw new Error(refusalMessage(error, "linking was refused"));
-      if (data === undefined) throw new Error(TOKEN_REFUSED);
       return data;
     },
     onSuccess: () => {

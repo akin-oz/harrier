@@ -123,7 +123,7 @@ export function BriefPanel({ jobId }: { jobId: number }) {
       // No brief yet is an empty form, not a failure.
       if (response.status === 404) return null;
       if (error !== undefined) throw new Error(refusalMessage(error, "could not read the brief"));
-      return data ?? null;
+      return data;
     },
   });
 
@@ -139,7 +139,6 @@ export function BriefPanel({ jobId }: { jobId: number }) {
         body,
       });
       if (error !== undefined) throw new Error(refusalMessage(error, "the brief was refused"));
-      if (data === undefined) throw new Error("refused: the local API token was not accepted");
       return data;
     },
     onSuccess: (data) => {

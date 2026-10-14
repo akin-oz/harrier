@@ -2,9 +2,9 @@ import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { useRunStream } from "../../features/runs/useRunStream";
-import type { EventSourceFactory, RunOut } from "../../features/runs/useRunStream";
+import type { RunOut } from "../../features/runs/useRunStream";
 import { api } from "../../shared/api/client";
-import { RunOutput, TOKEN_REFUSED, refusalMessage } from "./RunOutput";
+import { RunOutput, refusalMessage } from "./RunOutput";
 
 /**
  * Feed health (spec 025). Checking probes every configured board and
@@ -12,15 +12,14 @@ import { RunOutput, TOKEN_REFUSED, refusalMessage } from "./RunOutput";
  * never a checkbox on the check, because it removes boards from the stored
  * watchlist; its log names each removed URL.
  */
-export function FeedsSection({ createEventSource }: { createEventSource: EventSourceFactory }) {
-  const stream = useRunStream(createEventSource);
+export function FeedsSection() {
+  const stream = useRunStream();
   const [confirming, setConfirming] = useState(false);
 
   const check = useMutation({
     mutationFn: async (): Promise<RunOut> => {
       const { data, error } = await api.POST("/ops/feeds");
       if (error !== undefined) throw new Error(refusalMessage(error, "the check was refused"));
-      if (data === undefined) throw new Error(TOKEN_REFUSED);
       return data;
     },
     onSuccess: (data) => {
@@ -32,7 +31,6 @@ export function FeedsSection({ createEventSource }: { createEventSource: EventSo
     mutationFn: async (): Promise<RunOut> => {
       const { data, error } = await api.POST("/ops/feeds/prune", { body: { confirm: true } });
       if (error !== undefined) throw new Error(refusalMessage(error, "the prune was refused"));
-      if (data === undefined) throw new Error(TOKEN_REFUSED);
       return data;
     },
     onSuccess: (data) => {
