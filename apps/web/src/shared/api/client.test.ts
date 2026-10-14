@@ -23,6 +23,8 @@ interface Seen {
   url: string;
   authorization: string | null;
   localToken: string | null;
+  // The body as this attempt read it, which a retry must be able to do again.
+  body: string;
 }
 
 let seen: Seen[] = [];
@@ -32,15 +34,17 @@ function stubFetch(reply: (seen: Seen[]) => Response): void {
   seen = [];
   vi.stubGlobal(
     "fetch",
-    vi.fn((input: RequestInfo | URL) => {
+    vi.fn(async (input: RequestInfo | URL) => {
       const request = input instanceof Request ? input : new Request(String(input));
       seen.push({
         method: request.method,
         url: request.url,
         authorization: request.headers.get("Authorization"),
         localToken: request.headers.get("X-Harrier-Token"),
+        // Read the way a real fetch reads it: once, and for good.
+        body: await request.text(),
       });
-      return Promise.resolve(reply(seen));
+      return reply(seen);
     }),
   );
 }
@@ -170,14 +174,59 @@ test("the Supabase client is made from the project's URL and key", async () => {
   ]);
 });
 
-test("a failed refresh ends the session without a retry", async () => {
+test("a refresh the server refuses ends the session without a retry", async () => {
+  // supabase-js removes the session itself, and fires the sign-out, before
+  // refreshSession returns, so the app has nothing more to sign out of.
   fake.refreshTo = null;
   stubFetch(() => json(401, REFUSAL.expired));
 
   await api.GET("/tracks");
 
   expect(seen).toHaveLength(1);
+  expect(fake.log).toEqual(["refreshSession"]);
+});
+
+test("a refresh that gets no answer ends the session without a retry", async () => {
+  fake.refreshUnreachable = true;
+  stubFetch(() => json(401, REFUSAL.expired));
+
+  await api.GET("/tracks");
+
+  expect(seen).toHaveLength(1);
   expect(fake.log).toEqual(["refreshSession", "signOut:local"]);
+});
+
+test("a retried write carries its body again", async () => {
+  // A request's body can be read once. The retry is the copy made before the
+  // first attempt, so the second attempt reads its own.
+  stubFetch((calls) => (calls.length === 1 ? json(401, REFUSAL.expired) : json(200, {})));
+
+  await api.POST("/tracker/{selector}/status", {
+    params: { path: { selector: "1" }, query: {} },
+    body: { verb: "shortlist", reason: null },
+  });
+
+  expect(seen).toHaveLength(2);
+  expect(seen.map((call) => call.body)).toEqual([
+    '{"verb":"shortlist","reason":null}',
+    '{"verb":"shortlist","reason":null}',
+  ]);
+  expect(seen[1]?.authorization).toBe("Bearer refreshed-token");
+});
+
+test("a retry that gets no answer says so", async () => {
+  let attempts = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => {
+      attempts += 1;
+      return attempts === 1
+        ? Promise.resolve(json(401, REFUSAL.expired))
+        : Promise.reject(new TypeError("Failed to fetch"));
+    }),
+  );
+
+  await expect(api.GET("/tracks")).rejects.toThrow(UNREACHABLE);
 });
 
 test("three concurrent refusals sign the person out once", async () => {

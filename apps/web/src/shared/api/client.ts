@@ -129,6 +129,12 @@ function endingFor(reason: AuthReason | null): EndReason {
   return ENDS_SESSION[reason];
 }
 
+// A request that got no answer rejects with a TypeError. An aborted one
+// rejects with an AbortError and is not this.
+function isNoAnswer(error: unknown): boolean {
+  return error instanceof Error && error.name === "TypeError";
+}
+
 function hostedMiddleware(): Middleware {
   // A copy of each request as it left, kept for the one retry after a refresh.
   const sent = new WeakMap<Request, Request>();
@@ -155,7 +161,11 @@ function hostedMiddleware(): Middleware {
           return undefined;
         }
         retry.headers.set("Authorization", `Bearer ${token}`);
-        const second = await globalThis.fetch(retry);
+        // openapi-fetch does not pass an error thrown here to `onError`, so the
+        // retry gives the no-answer sentence itself.
+        const second = await globalThis.fetch(retry).catch((error: unknown) => {
+          throw isNoAnswer(error) ? new Error(UNREACHABLE) : error;
+        });
         // A second refusal is final: no further retry.
         if (second.status === 401) await endSession(endingFor(await reasonOf(second)));
         else if (second.status === 403 && (await reasonOf(second)) === "anonymous") {
@@ -174,8 +184,7 @@ function hostedMiddleware(): Middleware {
       // and so reaches the browser as a failed request, not as a status
       // (spec 134). An aborted stream rejects with an AbortError and is left
       // alone.
-      if (error instanceof Error && error.name === "TypeError") return new Error(UNREACHABLE);
-      return undefined;
+      return isNoAnswer(error) ? new Error(UNREACHABLE) : undefined;
     },
   };
 }

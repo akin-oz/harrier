@@ -57,6 +57,15 @@ export default tseslint.config(
           message: "Read a run's events with readRunEvents in shared/api/stream.ts (spec 114).",
         },
       ],
+      // The same reader by its other names.
+      "no-restricted-properties": [
+        "error",
+        ...["window", "globalThis", "self"].map((object) => ({
+          object,
+          property: "EventSource",
+          message: "Read a run's events with readRunEvents in shared/api/stream.ts (spec 114).",
+        })),
+      ],
     },
   },
   {

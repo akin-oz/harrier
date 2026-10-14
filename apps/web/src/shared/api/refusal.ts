@@ -8,7 +8,9 @@ import type { components } from "@harrier/contract";
 // or 502 (spec 109).
 // Named from the generated types, so a body the contract changes fails the
 // type check here rather than reaching the operator as the fallback (spec
-// 082's pattern).
+// 082's pattern). `ConfigErrorOut` and `SettingsErrorOut` are not named: each
+// is `{ detail: string }` and is read as `ErrorOut` by shape, so a field added
+// to either would not fail here.
 export type Refusal =
   | components["schemas"]["ErrorOut"]
   | components["schemas"]["DatabaseHeldOut"]

@@ -6,10 +6,10 @@ import "./auth.css";
 
 // What the page says, never more than this about an address (spec 114): it
 // does not say whether the address has an account.
-export const CODE_SENT = "If this address has an account, a sign-in code is on its way.";
-export const RATE_LIMITED = "Too many requests. Wait before asking for another code.";
-export const UNREACHABLE = "Could not reach the sign-in service.";
-export const WRONG_CODE = "That code is wrong or has expired.";
+const CODE_SENT = "If this address has an account, a sign-in code is on its way.";
+const RATE_LIMITED = "Too many requests. Wait before asking for another code.";
+const SERVICE_UNREACHABLE = "Could not reach the sign-in service.";
+const WRONG_CODE = "That code is wrong or has expired.";
 
 /**
  * The two steps of an emailed one-time code: the address, then the code.
@@ -37,7 +37,7 @@ export function SignInForm() {
       setStep("code");
       setMessage(CODE_SENT);
     } else {
-      setMessage(answer === "rate-limited" ? RATE_LIMITED : UNREACHABLE);
+      setMessage(answer === "rate-limited" ? RATE_LIMITED : SERVICE_UNREACHABLE);
     }
   }
 
@@ -48,7 +48,7 @@ export function SignInForm() {
     setBusy(false);
     // On success the session event replaces this form; nothing to show.
     if (answer === "refused") setMessage(WRONG_CODE);
-    if (answer === "unreachable") setMessage(UNREACHABLE);
+    if (answer === "unreachable") setMessage(SERVICE_UNREACHABLE);
   }
 
   return (

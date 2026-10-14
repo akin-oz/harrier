@@ -41,6 +41,19 @@ test("local mode reads nothing but the switch", () => {
   ).toEqual({ kind: "local" });
 });
 
+test("a secret key is refused in a local build too", () => {
+  // The local app does not read the key, but Vite still puts it in the bundle.
+  for (const key of [SERVICE_SIDE, jwt({ role: "service_role" })]) {
+    const error = refusal({ VITE_SUPABASE_PUBLISHABLE_KEY: key });
+    expect(error.variable).toBe("VITE_SUPABASE_PUBLISHABLE_KEY");
+    expect(error.message).not.toContain(key);
+  }
+  // A key that is public is not refused, and is ignored.
+  expect(readAppMode({ VITE_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_synthetic" })).toEqual({
+    kind: "local",
+  });
+});
+
 test("a complete hosted configuration is read as it is written", () => {
   expect(readAppMode(HOSTED)).toEqual({
     kind: "hosted",

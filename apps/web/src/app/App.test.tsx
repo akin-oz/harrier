@@ -8,9 +8,13 @@ import { App, queryClient } from "./App";
 
 // If the local app ever asked for a Supabase client it would get this one,
 // and the test below would see it.
-vi.mock("@supabase/supabase-js", async () => ({
-  createClient: (await import("../shared/testing/fakeSupabase")).fake.createClient,
-}));
+const loaded = vi.hoisted(() => ({ supabase: false }));
+vi.mock("@supabase/supabase-js", async () => {
+  // A mock's factory runs when the package is first imported, so this says
+  // whether the local app ever loaded it.
+  loaded.supabase = true;
+  return { createClient: (await import("../shared/testing/fakeSupabase")).fake.createClient };
+});
 
 /**
  * The shell follows the track the URL names (spec 094): it keys every cache
@@ -274,6 +278,7 @@ test("local mode never creates a Supabase client or sends a bearer token", async
   expect(sent.every((call) => call.authorization === null)).toBe(true);
   expect(sent.find((call) => call.url === "/api/runs")?.localToken).toBe("test-token");
   expect(fake.createClient).not.toHaveBeenCalled();
+  expect(loaded.supabase).toBe(false);
   // There is no session locally, so there is nothing to sign out of.
   expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
 });

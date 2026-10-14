@@ -107,12 +107,21 @@ export async function accessToken(): Promise<string | null> {
 // Refresh tokens are single use, so concurrent callers share one refresh.
 let refreshing: Promise<string | null> | null = null;
 
-/** A new access token from the refresh token, or null when there is none. */
+/**
+ * A new access token from the refresh token, or null when there is none.
+ *
+ * Called when the API said the token expired. If the refresh is refused,
+ * supabase-js removes the session and fires `SIGNED_OUT` itself, before this
+ * returns, so the notice for that sign-out is set first.
+ */
 export function refreshSession(): Promise<string | null> {
   refreshing ??= (async () => {
+    pendingNotice = "expired";
     try {
       const { data, error } = await (await client()).auth.refreshSession();
-      return error === null ? (data.session?.access_token ?? null) : null;
+      const token = error === null ? (data.session?.access_token ?? null) : null;
+      if (token !== null) pendingNotice = null;
+      return token;
     } catch {
       return null;
     }

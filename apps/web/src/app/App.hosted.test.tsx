@@ -1,5 +1,6 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { StrictMode } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 // The hosted build (spec 114). A hosted bundle is fixed when it is built, so
@@ -270,8 +271,17 @@ test("sign-out forgets the person's data", async () => {
   expect(screen.queryByText("Example Co")).toBeNull();
 });
 
-test("a different user never sees the previous user's cache", async () => {
-  render(<App />);
+// Production runs the app under StrictMode, which renders twice.
+async function swapUsers(strict: boolean): Promise<void> {
+  render(
+    strict ? (
+      <StrictMode>
+        <App />
+      </StrictMode>
+    ) : (
+      <App />
+    ),
+  );
   await screen.findByText("Example Co");
 
   // Another tab signs in as someone else; their rows are slow to arrive.
@@ -292,4 +302,43 @@ test("a different user never sees the previous user's cache", async () => {
   release();
   expect(await screen.findByText("Other Co")).toBeDefined();
   expect(screen.queryByText("Example Co")).toBeNull();
+}
+
+test("a different user never sees the previous user's cache", async () => {
+  await swapUsers(false);
+});
+
+test("a different user never sees the previous user's cache under StrictMode", async () => {
+  await swapUsers(true);
+});
+
+test("a refresh token the server refuses ends the session with its sentence", async () => {
+  // supabase-js removes the session itself and fires the sign-out before the
+  // refresh returns; the page must still say why.
+  fake.refreshTo = null;
+  override = (path) =>
+    path === "/tracks"
+      ? reply({ reason: "expired", detail: "The bearer token has expired." }, 401)
+      : undefined;
+  render(<App />);
+
+  expect((await screen.findByRole("alert")).textContent).toBe("Your session ended. Sign in again.");
+  expect(screen.getByLabelText("Email address")).toBeDefined();
+  expect(fake.log).toEqual(["refreshSession"]);
+});
+
+test("a request that gets no answer shows the sentence for it", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))),
+  );
+  render(<App />);
+
+  const alert = await screen.findByRole("alert");
+  expect(alert.textContent).toContain(
+    "The harrier API did not answer. It may be down, or it may have failed on this request.",
+  );
+  // Still signed in: a failed request is not a refused token.
+  expect(screen.getByRole("button", { name: "Sign out" })).toBeDefined();
+  expect(fake.log).toEqual([]);
 });

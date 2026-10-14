@@ -23,10 +23,23 @@ export interface FakeAuthError {
 
 type Listener = (event: string, session: FakeSession | null) => void;
 
+/** What supabase-js returns, rather than throws, when a request gets no answer. */
+export const UNREACHABLE_ERROR: FakeAuthError = {
+  name: "AuthRetryableFetchError",
+  status: 0,
+  message: "Failed to fetch",
+};
+
 export class FakeSupabase {
   session: FakeSession | null = null;
-  /** The token the next refresh yields; null makes the refresh fail. */
+  /**
+   * The token the next refresh yields. Null is a refresh token the server
+   * refuses: supabase-js then removes the session and fires `SIGNED_OUT`
+   * itself, before `refreshSession` returns, as auth-js does.
+   */
   refreshTo: string | null = "refreshed-token";
+  /** The next refresh gets no answer: an error is returned, the session stays. */
+  refreshUnreachable = false;
   /** What the next code request answers instead of success. */
   otpError: FakeAuthError | null = null;
   otpThrows = false;
@@ -69,7 +82,12 @@ export class FakeSupabase {
     getSession: vi.fn(() => Promise.resolve({ data: { session: this.session }, error: null })),
     refreshSession: vi.fn(() => {
       this.log.push("refreshSession");
+      if (this.refreshUnreachable) {
+        return Promise.resolve({ data: { session: null }, error: UNREACHABLE_ERROR });
+      }
       if (this.refreshTo === null || this.session === null) {
+        this.session = null;
+        this.emit("SIGNED_OUT", null);
         return Promise.resolve({
           data: { session: null },
           error: { name: "AuthApiError", status: 400, code: "refresh_token_already_used" },
@@ -123,6 +141,7 @@ export class FakeSupabase {
   /** Forget the calls and the settings, keeping the listeners a module made. */
   reset(): void {
     this.refreshTo = "refreshed-token";
+    this.refreshUnreachable = false;
     this.otpError = null;
     this.otpThrows = false;
     this.verifyError = null;

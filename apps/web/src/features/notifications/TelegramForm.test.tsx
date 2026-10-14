@@ -38,10 +38,10 @@ async function fillAndSave(user: ReturnType<typeof userEvent.setup>): Promise<vo
   await user.click(screen.getByRole("button", { name: "Save Telegram settings" }));
 }
 
-function expectNoTrace(calls: { path: string }[]): void {
+function expectNoTrace(calls: { url: string }[]): void {
   const everywhere = [
     document.body.textContent,
-    ...calls.map((call) => call.path),
+    ...calls.map((call) => call.url),
     ...Object.keys(localStorage).map((key) => `${key}=${localStorage.getItem(key) ?? ""}`),
     JSON.stringify(consoleCalls),
   ].join("\n");
@@ -155,4 +155,33 @@ test("clearing the Telegram settings asks the API to forget them", async () => {
   await waitFor(() => {
     expect(changes).toEqual([NOT_SET]);
   });
+});
+
+test("a save that gets no answer says so, clears the secrets and stays usable", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))),
+  );
+  const user = userEvent.setup();
+  render(<TelegramForm status={SET} onChanged={() => undefined} />);
+
+  await fillAndSave(user);
+
+  expect((await screen.findByRole("alert")).textContent).toBe("Failed to fetch");
+  expect(screen.getByLabelText<HTMLInputElement>("Bot token").value).toBe("");
+  expect(screen.getByLabelText<HTMLInputElement>("Chat id").value).toBe("");
+  expect(screen.getByRole("button", { name: "Save Telegram settings" })).toHaveProperty(
+    "disabled",
+    false,
+  );
+
+  await user.click(screen.getByRole("button", { name: "Clear Telegram settings" }));
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: "Clear Telegram settings" })).toHaveProperty(
+      "disabled",
+      false,
+    );
+  });
+  expect(document.body.textContent).not.toContain(BOT_TOKEN);
+  expect(document.body.textContent).not.toContain(CHAT_ID);
 });

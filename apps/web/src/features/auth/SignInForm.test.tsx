@@ -13,8 +13,15 @@ vi.mock("@supabase/supabase-js", async () => ({
   createClient: (await import("../../shared/testing/fakeSupabase")).fake.createClient,
 }));
 
-import { fake } from "../../shared/testing/fakeSupabase";
-import { CODE_SENT, RATE_LIMITED, SignInForm, UNREACHABLE, WRONG_CODE } from "./SignInForm";
+import { UNREACHABLE_ERROR, fake } from "../../shared/testing/fakeSupabase";
+import { SignInForm } from "./SignInForm";
+
+// The sentences spec 114 fixes, written out so a change to the page's words
+// fails here and does not pass by importing them.
+const CODE_SENT = "If this address has an account, a sign-in code is on its way.";
+const RATE_LIMITED = "Too many requests. Wait before asking for another code.";
+const UNREACHABLE = "Could not reach the sign-in service.";
+const WRONG_CODE = "That code is wrong or has expired.";
 
 // Synthetic: an address on a reserved domain, belonging to no one.
 const EMAIL = "person@example.invalid";
@@ -96,11 +103,25 @@ test("a rate limit and a network failure each say so", async () => {
   expect(screen.getByLabelText("Email address")).toBeDefined();
   limited.unmount();
 
-  fake.otpError = null;
-  fake.otpThrows = true;
+  // supabase-js returns a request that got no answer as an error with status 0.
+  fake.otpError = UNREACHABLE_ERROR;
   render(<SignInForm />);
   await askForCode(user);
   expect((await screen.findByRole("status")).textContent).toBe(UNREACHABLE);
+});
+
+test("a code check that gets no answer says so", async () => {
+  const user = userEvent.setup();
+  render(<SignInForm />);
+  await askForCode(user);
+  await screen.findByLabelText("Sign-in code");
+
+  fake.verifyError = UNREACHABLE_ERROR;
+  await user.type(screen.getByLabelText("Sign-in code"), "123456");
+  await user.click(screen.getByRole("button", { name: "Sign in" }));
+  await waitFor(() => {
+    expect(screen.getByRole("status").textContent).toBe(UNREACHABLE);
+  });
 });
 
 test("a wrong code shows the refusal sentence", async () => {

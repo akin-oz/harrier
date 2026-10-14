@@ -37,10 +37,10 @@ const SAVED = (kind: FormKind): CredentialStatus => ({
 });
 
 /** Nothing the person typed is anywhere it should not be. */
-function expectNoTrace(calls: { path: string }[], values: string[]): void {
+function expectNoTrace(calls: { url: string }[], values: string[]): void {
   const everywhere = [
     document.body.textContent,
-    ...calls.map((call) => call.path),
+    ...calls.map((call) => call.url),
     ...Object.keys(localStorage).map((key) => `${key}=${localStorage.getItem(key) ?? ""}`),
     JSON.stringify(consoleCalls),
   ].join("\n");
@@ -153,4 +153,28 @@ test("removing a credential asks first, then deletes it", async () => {
   await waitFor(() => {
     expect(changes).toEqual([UNSET("ai")]);
   });
+});
+
+test("a save or a removal that gets no answer says so and leaves the form usable", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))),
+  );
+  const user = userEvent.setup();
+  render(<CredentialForm kind="hunter" status={SAVED("hunter")} onChanged={() => undefined} />);
+
+  await user.type(screen.getByLabelText("Key"), SECRET);
+  await user.click(screen.getByRole("button", { name: "Save hunter key" }));
+  expect((await screen.findByRole("alert")).textContent).toBe("Failed to fetch");
+  // Not stuck: the button works again, without a reload.
+  expect(screen.getByRole("button", { name: "Save hunter key" })).toHaveProperty("disabled", false);
+
+  await user.click(screen.getByRole("button", { name: "Remove" }));
+  await user.click(screen.getByRole("button", { name: "Yes, remove" }));
+  await waitFor(() => {
+    expect(screen.queryByRole("group")).toBeNull();
+  });
+  expect(screen.getByRole("alert").textContent).toBe("Failed to fetch");
+  expect(screen.getByRole("button", { name: "Save hunter key" })).toHaveProperty("disabled", false);
+  expect(document.body.textContent).not.toContain(SECRET);
 });

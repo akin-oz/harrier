@@ -72,27 +72,35 @@ function jwtRole(key: string): string | null {
 }
 
 /**
- * The project's public client key. A secret key in a bundle is already leaked
- * to everyone who loads the page, so the build refuses one before it ships:
- * Supabase's `sb_secret_` keys, and the legacy `service_role` JWT. The two
- * shapes are all this knows; a future secret format would pass it (spec 114,
- * Honest limitations).
+ * A secret key in a bundle is already leaked to everyone who loads the page,
+ * so the build refuses one before it ships: Supabase's `sb_secret_` keys, and
+ * the legacy `service_role` JWT. The two shapes are all this knows; a future
+ * secret format would pass it (spec 114, Honest limitations). Refused in
+ * either mode: Vite puts the key variable's value in the bundle whether or not
+ * the local app reads it.
  */
-function publishableKey(env: Env): string {
+function refuseSecretKey(env: Env): void {
   const value = env[KEY];
-  if (value === undefined || value === "") {
-    throw new ConfigError(KEY, `${KEY} is required when ${AUTH}=supabase`);
-  }
+  if (value === undefined || value === "") return;
   if (value.startsWith("sb_secret_") || jwtRole(value) === "service_role") {
     throw new ConfigError(
       KEY,
       `${KEY} holds a secret key. A browser build takes the publishable key or the anon key only`,
     );
   }
+}
+
+/** The project's public client key. */
+function publishableKey(env: Env): string {
+  const value = env[KEY];
+  if (value === undefined || value === "") {
+    throw new ConfigError(KEY, `${KEY} is required when ${AUTH}=supabase`);
+  }
   return value;
 }
 
 export function readAppMode(env: Env): AppMode {
+  refuseSecretKey(env);
   const auth = env[AUTH] ?? "";
   if (auth === "") return { kind: "local" };
   if (auth !== "supabase") {

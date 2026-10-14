@@ -334,3 +334,39 @@ test("a run the stream does not know stops the reconnecting", async () => {
   expect(streams.requests).toBe(1);
   expect(screen.queryByRole("status")).toBeNull();
 });
+
+test("a stream that failed is not reopened once the run is over", async () => {
+  stubStartResponse();
+  const timers = holdTimers(RETRY_DELAY_MS);
+  renderPanel();
+  await startRun();
+
+  // The run finished while the stream was down: the refetch says so.
+  streams.fallback = () => Promise.resolve(answer({ ...RUN, state: "succeeded", exit_code: 0 }));
+  streams.last.fail();
+  await waitFor(() => {
+    expect(screen.getByText("succeeded")).toBeDefined();
+  });
+  await waitFor(() => {
+    expect(timers.waiting).toBe(1);
+  });
+
+  timers.release();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(streams.connections).toHaveLength(1);
+});
+
+test("an event that is not JSON is skipped, and the stream carries on", async () => {
+  stubStartResponse();
+  renderPanel();
+  await startRun();
+
+  streams.last.raw("id: 1\ndata: this is not json\n\n");
+  streams.last.emit({ type: "log_line", line: "after the bad one" });
+
+  await waitFor(() => {
+    expect(screen.getByText("after the bad one")).toBeDefined();
+  });
+  // Not read as the stream dropping.
+  expect(screen.queryByRole("status")).toBeNull();
+});

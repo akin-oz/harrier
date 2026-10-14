@@ -998,6 +998,14 @@ def test_the_contract_declares_the_anonymous_refusal(hosted: Hosted) -> None:
     }
     assert len(answers_403) > 40, "the walk is not finding the routes"
 
+    takes_local = {
+        (method.lower(), route.path)
+        for route in api_routes(hosted.app.routes)
+        for method in route.methods or ()
+        if require_token in dependency_calls(route.dependant)
+    }
+    assert len(takes_local) > 40, "the walk is not finding the routes"
+
     committed = json.loads(CONTRACT.read_text(encoding="utf-8"))
     for document in (committed, hosted.app.openapi()):
         declared: set[tuple[str, str]] = set()
@@ -1013,9 +1021,13 @@ def test_the_contract_declares_the_anonymous_refusal(hosted: Hosted) -> None:
                 schema = answer["content"]["application/json"]["schema"]
                 bodies = schema.get("anyOf", [schema])
                 assert anonymous in bodies, (method, path)
-                takes_local_token = "local API token" in answer["description"]
+                # Decided by what the route depends on, not by what its own
+                # declaration says, so a route that takes the local token and
+                # forgot to declare the refusal fails here.
+                takes_local_token = (method, path) in takes_local
                 assert (local in bodies) == takes_local_token, (method, path)
                 assert len(bodies) == (2 if takes_local_token else 1), (method, path)
+                assert ("local API token" in answer["description"]) == takes_local_token
         assert declared == answers_403
         # Both shapes exist, so the test would notice losing either.
         assert any(

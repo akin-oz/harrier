@@ -36,30 +36,41 @@ export function TelegramForm({
     event.preventDefault();
     setBusy(true);
     setProblem(null);
-    const { data, error } = await api.PUT("/notifications/telegram", {
-      body: { bot_token: botToken, chat_id: chatId },
-    });
-    setBusy(false);
-    // Whatever the answer, the secrets are not kept in the page.
-    setBotToken("");
-    setChatId("");
-    if (error !== undefined) {
-      setProblem(refusalMessage(error, "Telegram settings were refused"));
-      return;
+    try {
+      const { data, error } = await api.PUT("/notifications/telegram", {
+        body: { bot_token: botToken, chat_id: chatId },
+      });
+      if (error !== undefined) {
+        setProblem(refusalMessage(error, "Telegram settings were refused"));
+        return;
+      }
+      onChanged(data);
+    } catch (error) {
+      // No answer at all: the page says so and the form stays usable.
+      setProblem(error instanceof Error ? error.message : "Telegram settings were not saved");
+    } finally {
+      // Whatever the answer, or none, the secrets are not kept in the page.
+      setBotToken("");
+      setChatId("");
+      setBusy(false);
     }
-    onChanged(data);
   }
 
   async function clear(): Promise<void> {
     setBusy(true);
     setProblem(null);
-    const { data, error } = await api.DELETE("/notifications/telegram");
-    setBusy(false);
-    if (error !== undefined) {
-      setProblem(refusalMessage(error, "Telegram settings were not cleared"));
-      return;
+    try {
+      const { data, error } = await api.DELETE("/notifications/telegram");
+      if (error !== undefined) {
+        setProblem(refusalMessage(error, "Telegram settings were not cleared"));
+        return;
+      }
+      onChanged(data);
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : "Telegram settings were not cleared");
+    } finally {
+      setBusy(false);
     }
-    onChanged(data);
   }
 
   return (

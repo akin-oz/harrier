@@ -10,6 +10,9 @@ import { vi } from "vitest";
 export interface ApiCall {
   method: string;
   path: string;
+  // The whole address, query string included, for a test that says a value
+  // is in no URL.
+  url: string;
   body: unknown;
   token: string | null;
 }
@@ -29,6 +32,7 @@ export function stubApi(handler: (call: ApiCall) => ApiReply): ApiCall[] {
       const call: ApiCall = {
         method: request.method,
         path,
+        url: request.url,
         body: raw === "" ? null : (JSON.parse(raw) as unknown),
         token: request.headers.get("X-Harrier-Token"),
       };

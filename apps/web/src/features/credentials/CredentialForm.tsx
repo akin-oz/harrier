@@ -53,40 +53,54 @@ export function CredentialForm({
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
 
+  // A request that gets no answer rejects, so the page says so and the form
+  // stays usable; it does not wait for a reload.
   async function save(event: SyntheticEvent): Promise<void> {
     event.preventDefault();
     setBusy(true);
     setProblem(null);
-    const result =
-      kind === "ai"
-        ? await api.PUT("/credentials/ai", {
-            body: { provider, key: secret, ...(model.trim() === "" ? {} : { model }) },
-          })
-        : kind === "apify"
-          ? await api.PUT("/credentials/apify", { body: { token: secret } })
-          : await api.PUT("/credentials/hunter", { body: { key: secret } });
-    setBusy(false);
-    if (result.error !== undefined) {
-      setProblem(refusalMessage(result.error, "the credential was refused"));
-      return;
+    try {
+      const result =
+        kind === "ai"
+          ? await api.PUT("/credentials/ai", {
+              body: { provider, key: secret, ...(model.trim() === "" ? {} : { model }) },
+            })
+          : kind === "apify"
+            ? await api.PUT("/credentials/apify", { body: { token: secret } })
+            : await api.PUT("/credentials/hunter", { body: { key: secret } });
+      if (result.error !== undefined) {
+        setProblem(refusalMessage(result.error, "the credential was refused"));
+        return;
+      }
+      setSecret("");
+      setModel("");
+      setProvider("openai-api");
+      onChanged(result.data);
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : "the credential was not saved");
+    } finally {
+      setBusy(false);
     }
-    setSecret("");
-    setModel("");
-    setProvider("openai-api");
-    onChanged(result.data);
   }
 
   async function remove(): Promise<void> {
     setBusy(true);
     setProblem(null);
-    const { data, error } = await api.DELETE("/credentials/{kind}", { params: { path: { kind } } });
-    setBusy(false);
-    setConfirming(false);
-    if (error !== undefined) {
-      setProblem(refusalMessage(error, "the credential was not removed"));
-      return;
+    try {
+      const { data, error } = await api.DELETE("/credentials/{kind}", {
+        params: { path: { kind } },
+      });
+      if (error !== undefined) {
+        setProblem(refusalMessage(error, "the credential was not removed"));
+        return;
+      }
+      onChanged(data);
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : "the credential was not removed");
+    } finally {
+      setBusy(false);
+      setConfirming(false);
     }
-    onChanged(data);
   }
 
   return (
