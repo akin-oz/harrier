@@ -2550,3 +2550,96 @@ All four as recommended.
 - The amendment above, its Out of scope and Honest limitations.
 - The probe behind the table above, run at `9be5778`, and the spy over
   the full suite. The pull request records each script and its output.
+
+## Amendment (2026-10-14): the schedule reader's role is the seam's
+
+Spec 108's scheduler lists every owner's schedule as
+`harrier_schedule_reader`, one transaction that reads one function
+(`harrier_schedule_inputs()`). The amendment above left the seam able to
+take one role only, `harrier_tenant`, by `transaction(tenant=True)`, and
+made `execute()` refuse `SET`. So the listing could not go through the seam.
+Spec 108's pull request (#327) sent it on the scheduler's own psycopg
+connection instead, and recorded the alternative as a decision for Akin.
+
+Akin decided in chat on 2026-10-14: add a reader-role option to the seam,
+not the raw connection, and do it in #327. This amendment is that
+option. It changes `transaction()` and its read-back in
+`services/api/src/harrier/connection.py`, and the scheduler's listing
+(`services/api/src/harrier/hostedschedule.py`, spec 108) moves onto it.
+Nothing else in this spec changes.
+
+### Behavior (amendment of 2026-10-14: the schedule reader)
+
+`Connection.transaction()` gains a keyword argument, `schedule_reader`,
+for the outermost block on Postgres. It is the second role the seam can
+take, the same way `tenant` takes the first:
+
+- **The role is taken inside the seam.** After `BEGIN`, the lock timeout
+  and the two timeouts when asked, the seam sends `SET LOCAL ROLE
+  harrier_schedule_reader`. `execute()` still refuses a `SET`.
+- **The timeouts apply the same way.** `statement_timeout_ms` and
+  `idle_timeout_ms` are sent before the role, as they are for `tenant`,
+  and the lock timeout always is. A reader block may ask for any of them.
+- **It is read back before it commits.** Before `COMMIT` the seam reads
+  `current_user` again, with the read-back a `tenant` block already has
+  (`read_back_role`, which now takes the role it expects). When it is not
+  `harrier_schedule_reader`, the seam rolls back and raises
+  `IdentityDidNotHold` naming `role`. So a transaction that took the reader
+  role cannot commit as any other role. A block that did not ask for it is
+  not held to it.
+- **It is Postgres only.** On SQLite, and on a nested block, it is refused
+  with `ValueError` before anything begins, as `tenant` is.
+- **It never mixes with claims.** The reader holds no claims, and acts for
+  no owner. On a connection opened with claims, `schedule_reader` is
+  refused with `ValueError` before anything begins, and so is asking for it
+  together with `tenant`: a block takes one role.
+
+The scheduler's listing, `list_inputs`, is then a `Connection` function
+again, and `transaction(schedule_reader=True)` its one block. Spec 108's
+scheduler opens no statement past the seam.
+
+### Failure modes (amendment of 2026-10-14: the schedule reader)
+
+- **The login role cannot set the reader.** The server refuses `SET LOCAL
+  ROLE`, and the block raises the store error for it, as for the tenant.
+- **A `set_config('role', ...)` moved the role back.** Refused at commit
+  with `IdentityDidNotHold` naming `role`; nothing commits.
+- **`schedule_reader` on an owner's connection, with `tenant`, nested, or on
+  SQLite.** `ValueError`, nothing begun.
+
+### Acceptance criteria (amendment of 2026-10-14: the schedule reader)
+
+In `services/api/tests/test_seam_on_both_stores.py`, on a store whose login
+role may set the reader, with synthetic values only:
+
+- [ ] Inside `transaction(schedule_reader=True)`, `current_user` is
+      `harrier_schedule_reader` and no claims are set; after it, the login
+      role again (planned test_the_reader_option_takes_the_reader_role).
+- [ ] With `statement_timeout_ms` and `idle_timeout_ms`, the three timeouts
+      are the lock timeout the seam always sets and the two asked for
+      (planned test_the_reader_option_sets_the_timeouts).
+- [ ] A reader block whose role a `SELECT set_config('role', ...)` moved
+      back to the login role is refused at commit with `IdentityDidNotHold`
+      naming `role`, and its write is not in the store; a block that keeps
+      the role commits (planned
+      test_a_reader_transaction_that_leaves_the_reader_role_is_refused_at_commit).
+- [ ] `schedule_reader` is refused with `ValueError` on SQLite and on a
+      nested block, with the other session options (the existing
+      `services/api/tests/test_seam_on_both_stores.py::test_the_session_options_belong_to_the_outermost_block`,
+      extended).
+- [ ] `schedule_reader` is refused with `ValueError`, nothing begun, on a
+      connection opened with claims, and together with `tenant` (planned
+      test_the_reader_option_refuses_claims_and_a_second_role).
+- [ ] Spec 108's tests pass with the listing on the seam, among them
+      `services/api/tests/test_hosted_schedule.py::test_only_the_reader_lists_schedules`
+      and `services/api/tests/test_hosted_scheduler.py::test_the_scheduler_acts_as_each_owner`.
+- [ ] Each new test fails with its part of the change reverted, and the
+      pull request records what each reversion made fail.
+
+### Honest limitations (amendment of 2026-10-14: the schedule reader)
+
+- The seam names one more role. A third role the seam must take is a
+  further amendment, or the option becomes a role argument with an allow
+  list, which this amendment does not need.
+- The read-back compares `current_user` only. The reader holds `EXECUTE`
+  on one function and no claim, so there is nothing else to read.
