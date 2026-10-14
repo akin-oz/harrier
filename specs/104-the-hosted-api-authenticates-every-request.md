@@ -1487,3 +1487,23 @@ this machine from `run_records` under the owner's policy, so they show an
 interrupted run instead of answering 404 for it
 (`services/api/tests/test_hosted_runs_on_postgres.py::test_a_run_cut_off_by_a_stop_reads_interrupted`).
 Nothing else in this spec changes.
+
+## Note (2026-10-14): spec 114 built the browser's half
+
+Spec 114 is built, and takes the three things "Honest limitations (part A, as
+built)" left to it.
+
+- **The 403 for an anonymous session is in the contract.** Every route that
+  needs a token declares a 403 body: `AuthRefusalOut`, or `ErrorOut` or
+  `AuthRefusalOut` where the route also takes spec 035's local token
+  (`services/api/tests/test_hosted_auth.py::test_the_contract_declares_the_anonymous_refusal`).
+  The web call sites that read an absent body as the local token's refusal
+  are rewritten, which was the reason the declaration was held back.
+- **The routes hosted never serves stay undeclared.** The hosted SPA never
+  requests `GET /session`, and no web code calls the other two. Spec 114,
+  Amendment (2026-10-14), item 3, gives the reason.
+- **A 500 outside CORS reads as a failed request.** Spec 134 handed it over;
+  the hosted client says so in one sentence and leaves an aborted request
+  alone (spec 114, item 4).
+
+Nothing else in this spec changes.
