@@ -385,6 +385,7 @@ REFUSALS: dict[AuthReason, _RefusalShape] = {
 
 AUTH_401_DESCRIPTION = "the bearer token is missing, invalid or expired (hosted, spec 104)"
 KEYS_UNAVAILABLE_DESCRIPTION = "the hosted API cannot fetch its signing keys (spec 104)"
+ANONYMOUS_403_DESCRIPTION = "the session is anonymous (hosted, spec 104)"
 BEARER_SCHEME_NAME = "bearer"
 BEARER_SECURITY_SCHEME: dict[str, str] = {
     "type": "http",
