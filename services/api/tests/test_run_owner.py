@@ -1,9 +1,11 @@
 """Hosted runs know their owner (spec 132).
 
 Hosted, a run belongs to the verified `sub` of the request that started it,
-and every run route answers only that owner. Until spec 106 no run starts
-hosted, so the runs these tests look at are started the other ways the
-spec names: by the test, while the process is local, or from a journal.
+and every run route answers only that owner. The apps here are built with
+no store, so no run is bound to an owner here (spec 106's hosted runs are
+`tests/test_hosted_runs.py`'s); the runs these tests look at are started
+the other ways the spec names: by the test, while the process is local, or
+from a journal.
 Then `HARRIER_AUTH=supabase` makes the process hosted, and the hosted app,
 built as `tests/test_hosted_auth.py` builds it, answers with tokens made
 here. No test reaches the network or a database server.
@@ -54,10 +56,14 @@ from harrier.tracker.store import add_job
 from harrier.tracks import default_scope
 from harrier_api.app import create_app, create_hosted_app
 from harrier_api.hostedauth import HOSTED_APP_REFUSAL, HostedConfigError
-from harrier_api.runmodels import TOKEN_EXPIRED_LINE, OwnedRuns, get_runs
+from harrier_api.runmodels import (
+    RUN_NOT_HOSTED_DESCRIPTION,
+    TOKEN_EXPIRED_LINE,
+    OwnedRuns,
+    get_runs,
+)
 from harrier_api.runs import (
     GMAIL_NOT_HOSTED_DETAIL,
-    RUNS_NOT_HOSTED_DETAIL,
     TERMINAL_STATES,
     Run,
     RunManager,
@@ -296,6 +302,8 @@ def test_a_backup_verification_is_its_owners(
 class StartCase:
     method: str
     path: str
+    # The run kind the route starts.
+    kind: str
     # What the request sends, beyond the bearer token.
     send: dict[str, Any]
     # Whether the route writes an input file before it calls `start`.
@@ -304,60 +312,106 @@ class StartCase:
     # the mail watch is refused hosted for good (spec 109).
     own_refusal: str = ""
 
-    @property
-    def detail(self) -> str:
-        return self.own_refusal or RUNS_NOT_HOSTED_DETAIL
-
 
 # Every route that can start a run, with a request each would accept, so
 # the refusal is the only thing in its way. `{job}` is a job in the store
 # and `{archive}` an archive in the backups list.
 START_CASES: tuple[StartCase, ...] = (
-    StartCase("POST", "/runs", {"json": {"kind": "demo"}}),
+    StartCase("POST", "/runs", "demo", {"json": {"kind": "demo"}}),
     StartCase(
-        "POST", "/apply/{job}/resume", {"json": {"jd_text": "a pasted job description"}}, True
+        "POST",
+        "/apply/{job}/resume",
+        "tailor",
+        {"json": {"jd_text": "a pasted job description"}},
+        True,
     ),
     StartCase(
-        "POST", "/apply/{job}/cover-letter", {"json": {"notes": "notes for the letter"}}, True
+        "POST",
+        "/apply/{job}/cover-letter",
+        "cover-letter",
+        {"json": {"notes": "notes for the letter"}},
+        True,
     ),
-    StartCase("POST", "/apply/{job}/answers", {"json": {"questions": "why this role?"}}, True),
-    StartCase("POST", "/apply/{job}/evaluate", {"json": {"jd_text": "an offer to weigh"}}, True),
-    StartCase("POST", "/outreach/{job}/find-contacts", {"json": {}}),
-    StartCase("POST", "/outreach/{job}/draft", {"json": {"tone": "direct"}}, True),
-    StartCase("POST", "/outreach/backfill-posters", {"json": {}}),
-    StartCase("POST", "/mail/watch", {"json": {}}, own_refusal=GMAIL_NOT_HOSTED_DETAIL),
-    StartCase("POST", "/ops/feeds", {}),
-    StartCase("POST", "/ops/feeds/prune", {"json": {"confirm": True}}),
-    StartCase("POST", "/ops/reconsider", {"json": {}}),
-    StartCase("POST", "/ops/backup", {"json": {}}),
-    StartCase("POST", "/ops/digest", {"json": {}}),
-    StartCase("POST", "/ops/events/backfill", {"json": {}}),
-    StartCase("POST", "/ops/evaluate-prospects", {"json": {}}),
-    StartCase("POST", "/ops/scoring/export", {}),
+    StartCase(
+        "POST", "/apply/{job}/answers", "answers", {"json": {"questions": "why this role?"}}, True
+    ),
+    StartCase(
+        "POST",
+        "/apply/{job}/evaluate",
+        "evaluate",
+        {"json": {"jd_text": "an offer to weigh"}},
+        True,
+    ),
+    StartCase("POST", "/outreach/{job}/find-contacts", "find-contacts", {"json": {}}),
+    StartCase(
+        "POST", "/outreach/{job}/draft", "outreach-draft", {"json": {"tone": "direct"}}, True
+    ),
+    StartCase("POST", "/outreach/backfill-posters", "backfill-posters", {"json": {}}),
+    StartCase(
+        "POST", "/mail/watch", "gmail-watch", {"json": {}}, own_refusal=GMAIL_NOT_HOSTED_DETAIL
+    ),
+    StartCase("POST", "/ops/feeds", "check-feeds", {}),
+    StartCase("POST", "/ops/feeds/prune", "check-feeds", {"json": {"confirm": True}}),
+    StartCase("POST", "/ops/reconsider", "reconsider", {"json": {}}),
+    StartCase("POST", "/ops/backup", "backup", {"json": {}}),
+    StartCase("POST", "/ops/digest", "digest", {"json": {}}),
+    StartCase("POST", "/ops/events/backfill", "events-backfill", {"json": {}}),
+    StartCase("POST", "/ops/evaluate-prospects", "evaluate-prospects", {"json": {}}),
+    StartCase("POST", "/ops/scoring/export", "scoring-export", {}),
     StartCase(
         "POST",
         "/ops/discover",
+        "discovery",
         {"files": {"dataset_file": ("jobs.json", b"[]", "application/json")}},
         True,
     ),
-    StartCase("POST", "/settings/backups/{archive}/verify", {}),
+    StartCase("POST", "/settings/backups/{archive}/verify", "verify-backup", {}),
 )
 
+# Spec 106's table, "Which kinds run hosted", written out here rather than
+# read from the code: each refused kind's detail. A kind not listed runs.
+SPEC_REFUSALS: dict[str, str] = {
+    **{
+        kind: f"{kind} runs are not available on the hosted API until spec 107"
+        for kind in (
+            "tailor",
+            "cover-letter",
+            "answers",
+            "evaluate",
+            "outreach-draft",
+            "find-contacts",
+            "backfill-posters",
+            "scoring-export",
+        )
+    },
+    # Spec 109's text, which its own refusal answers (spec 106, Amendment
+    # (2026-10-13, implementation), item 9).
+    "gmail-watch": GMAIL_NOT_HOSTED_DETAIL,
+    "backup": "backup runs are local only",
+    "verify-backup": "verify-backup runs are local only",
+}
 
-def route_of(case: StartCase) -> tuple[str, str]:
-    """The route as the contract names it."""
-    return (
-        case.method.lower(),
-        case.path.replace("{job}", "{selector}").replace("{archive}", "{name}"),
-    )
+# The routes whose kind spec 106's table refuses hosted, and the others.
+REFUSED_CASES = tuple(case for case in START_CASES if case.kind in SPEC_REFUSALS)
+OFFERED_CASES = tuple(case for case in START_CASES if case.kind not in SPEC_REFUSALS)
+
+# The routes as the contract names them.
+START_ROUTES = {
+    (case.method.lower(), case.path.replace("{job}", "{selector}").replace("{archive}", "{name}"))
+    for case in START_CASES
+}
 
 
-@pytest.mark.parametrize("case", START_CASES, ids=lambda case: f"{case.method} {case.path}")
-def test_starting_a_run_hosted_is_refused_until_spec_106(
+@pytest.mark.parametrize("case", REFUSED_CASES, ids=lambda case: f"{case.method} {case.path}")
+def test_a_kind_not_offered_hosted_answers_501_naming_its_spec(
     case: StartCase,
     hosted_process: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """Spec 106, "Which kinds run hosted": every route whose kind the table
+    refuses answers 501 with the kind's detail, which names the spec that
+    will offer it or says it is local only, and leaves no input file, no
+    journal entry, no run and no process."""
     monkeypatch = hosted_process
     # A job and an archive, so each route reaches the run it would start.
     conn = connect()
@@ -404,7 +458,7 @@ def test_starting_a_run_hosted_is_refused_until_spec_106(
             case.method, path, headers=hosted.as_owner(caller), **case.send
         )
         assert response.status_code == 501, response.text
-        assert response.json() == {"detail": case.detail}
+        assert response.json() == {"detail": SPEC_REFUSALS[case.kind]}
     # A route that writes its input, or refuses on its own, is refused
     # there, before `start`; every other route reached `start` with the
     # caller as the run's owner.
@@ -415,6 +469,51 @@ def test_starting_a_run_hosted_is_refused_until_spec_106(
     assert not journal.exists()
     assert manager.list_runs() == []
     assert spawned == []
+
+
+@pytest.mark.parametrize("case", OFFERED_CASES, ids=lambda case: f"{case.method} {case.path}")
+def test_a_kind_offered_hosted_reaches_its_start(
+    case: StartCase,
+    hosted_process: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Spec 106: a route whose kind the table offers is not refused hosted.
+    It writes its input, if it has one, and reaches `start` with its kind
+    and the caller as owner; binding the run is the store's, which these
+    apps do not have, so `start` is replaced here (test integrity review of
+    PR #316)."""
+    monkeypatch = hosted_process
+    conn = connect()
+    job = add_job(
+        conn,
+        {
+            "company": "Northwind Labs",
+            "title": "Senior Engineer",
+            "url": "https://boards.example.com/northwind/1",
+            "source": "greenhouse",
+            "location": "Remote, Europe",
+        },
+        scope=default_scope(conn),
+    )
+    conn.close()
+    manager = hosted_manager(tmp_path)
+    given: list[tuple[str, str]] = []
+
+    async def start(kind: str, params: Any = None, *, owner: str = "") -> Run:
+        given.append((kind, owner))
+        for path in () if params is None else params.files:
+            path.unlink(missing_ok=True)
+        return Run(id="offered", kind=kind, command=[], owner=owner)
+
+    monkeypatch.setattr(manager, "start", start)
+    caller = new_owner()
+    with owners(monkeypatch, manager) as hosted:
+        path = case.path.replace("{job}", str(job))
+        response = hosted.client.request(
+            case.method, path, headers=hosted.as_owner(caller), **case.send
+        )
+        assert response.status_code == 200, response.text
+    assert given == [(case.kind, caller)]
 
 
 def test_the_contract_declares_the_hosted_run_refusal() -> None:
@@ -431,22 +530,16 @@ def test_the_contract_declares_the_hosted_run_refusal() -> None:
                 if refusal is None:
                     continue
                 assert refusal["content"]["application/json"]["schema"] == error_out
-                detail = (
-                    GMAIL_NOT_HOSTED_DETAIL
-                    if GMAIL_NOT_HOSTED_DETAIL in refusal["description"]
-                    else RUNS_NOT_HOSTED_DETAIL
-                )
-                assert detail in refusal["description"], (method, path)
-                declared.setdefault(detail, set()).add((method, path))
-        # Exactly the routes the test above starts a run on, each of which
-        # answered the 501 it declares. The mail routes' own 501, the read
-        # among them, is proved by
+                declared.setdefault(refusal["description"], set()).add((method, path))
+        # Every route that starts a run declares spec 106's 501: whether a
+        # kind is offered is the table's. The mail routes declare spec 109's
+        # own, the read among them, proved by
         # tests/test_tenant_notifications.py::test_hosted_mail_routes_answer_501.
-        by_detail: dict[str, set[tuple[str, str]]] = {}
-        for case in START_CASES:
-            by_detail.setdefault(case.detail, set()).add(route_of(case))
-        by_detail[GMAIL_NOT_HOSTED_DETAIL].add(("get", "/mail/events"))
-        assert declared == by_detail
+        own = {(case.method.lower(), case.path) for case in START_CASES if case.own_refusal}
+        assert declared == {
+            RUN_NOT_HOSTED_DESCRIPTION: START_ROUTES - own,
+            f"hosted only: {GMAIL_NOT_HOSTED_DETAIL}": own | {("get", "/mail/events")},
+        }
 
 
 # --- locally ---

@@ -28,6 +28,8 @@ error's text with it (spec 135).
 Hosted, logging opens nothing: no database, so no identity values and no
 identity filter, and no file (spec 135). The identity values hosted are the
 owners' rows on Postgres, which the API's login role may not read at start.
+A hosted run is not the hosted API: it reads its owner's identity values
+from its own store (spec 106).
 """
 
 from __future__ import annotations
@@ -39,7 +41,13 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
-from harrier.connection import StoreDatabaseError
+from harrier.connection import (
+    RUN_OWNER_VARIABLE,
+    StoreDatabaseError,
+    StoreError,
+    in_a_hosted_run,
+    open_store,
+)
 from harrier.db import DatabaseOwnedByContainer, DatabaseOwnershipError, connect, data_dir
 from harrier.logredact import ACCESS_QUERY, SecretScrubFilter, forget_all
 
@@ -218,6 +226,15 @@ def _load_identity_values() -> set[str] | None:
     # A read through the connection fails as StoreDatabaseError (spec 112);
     # opening the file still raises the driver's own classes, since
     # `harrier.db` works on the SQLite file itself.
+    if in_a_hosted_run():
+        # The run's own Postgres store as its owner, so the values are the
+        # owner's and no SQLite file is created (spec 106). Any refusal of
+        # the open or the read means no redaction, which the caller says.
+        try:
+            with closing(open_store(owner=os.environ[RUN_OWNER_VARIABLE])) as owned:
+                return identity_values(owned)
+        except StoreError:
+            return None
     try:
         with closing(connect()) as conn:
             return identity_values(conn)

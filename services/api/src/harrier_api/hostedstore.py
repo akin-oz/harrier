@@ -14,6 +14,8 @@ and is the only way a hosted route reaches the store:
 - `RequestTransactionMiddleware`: commits or rolls the transaction back by
   the response's status before the client sees it, and returns the
   connection to the pool.
+- `check_run_login_role`, at start: the run login role of spec 106 passes
+  the same login role checks and is not the API's own.
 
 The middleware, not the dependency's exit, ends the transaction: FastAPI
 runs that exit after the response is sent, and it sees no status, so a 409
@@ -48,6 +50,7 @@ from harrier.pgstore import (
     RequestPool,
     check_no_skipped_versions,
     check_postgres_version,
+    postgres_connect,
     transaction_failed,
 )
 from harrier.tracker.schema import TENANT_ROLE
@@ -104,6 +107,24 @@ ISOLATION_NEEDED = "read committed"
 REQUEST_STATE = "harrier_request_transaction"
 
 
+# The run login's refusals name the variable, never its value (spec 106).
+RUN_LOGIN_VARIABLE = "HARRIER_RUN_DATABASE_URL"
+RUN_LOGIN_UNREACHABLE = (
+    f"the hosted API cannot check the run login role: {RUN_LOGIN_VARIABLE} "
+    "names a store it could not connect to"
+)
+RUN_LOGIN_IS_THE_API_LOGIN = (
+    f"the hosted API refuses {RUN_LOGIN_VARIABLE}: it names the API's own login role; "
+    "runs need a login role of their own"
+)
+
+
+def run_login_refusal(problems: list[LoginRoleProblem]) -> str:
+    return f"the hosted API refuses {RUN_LOGIN_VARIABLE}'s login role: " + "; ".join(
+        map(str, problems)
+    )
+
+
 class HostedStartRefused(RuntimeError):
     """A start check refused the store or the login role. The text names
     the check, and the role a membership reaches, never the URL or a
@@ -129,10 +150,12 @@ def check_failed(check: str, reason: str) -> str:
 
 
 class RequestStore:
-    """The pool, once the start checks passed."""
+    """The pool, once the start checks passed, and the login role it
+    connects as."""
 
-    def __init__(self, pool: RequestPool) -> None:
+    def __init__(self, pool: RequestPool, role: str = "") -> None:
         self.pool = pool
+        self.role = role
 
     def close(self) -> None:
         self.pool.close()
@@ -157,34 +180,37 @@ def open_request_store(url: str) -> RequestStore:
         # Outside the except block, so nothing of the pool's error is chained.
         raise HostedStartRefused(START_UNREACHABLE)
     try:
-        run_start_checks(pool)
+        role = run_start_checks(pool)
     except BaseException:
         pool.close()
         raise
-    return RequestStore(pool)
+    return RequestStore(pool, role)
 
 
 class _CheckedNothingWritten(Exception):
     """Ends the start checks' transaction by rolling it back."""
 
 
-def run_start_checks(pool: RequestPool) -> None:
+def run_start_checks(pool: RequestPool) -> str:
     """Spec 134's start checks, in one transaction that is rolled back.
 
     As the login role: `login_role_problems`, then the store's default
     isolation. Then `SET LOCAL ROLE harrier_tenant`, which is also the check
     that the login role can set it, and the version, read as the tenant
     role: the login role holds no grant of its own, and the tenant may read
-    `schema_version` (spec 105). Requests do not read the version again.
+    `schema_version` (spec 105). Requests do not read the version again. Returns the login role's
+    name, which spec 106's run login must not share.
     """
     driver = pool.lease()
     check = "login role"
     failed = ""
+    role = ""
     try:
         conn = Connection.postgres(cast(Any, driver))
         with conn.transaction():
             row = conn.execute("SELECT current_user::text").fetchone()
-            problems = login_role_problems(conn, str(row[0]) if row else "")
+            role = str(row[0]) if row else ""
+            problems = login_role_problems(conn, role)
             if problems:
                 raise HostedStartRefused(login_role_refusal(problems))
             check = "default isolation"
@@ -207,6 +233,43 @@ def run_start_checks(pool: RequestPool) -> None:
         # Raised after the except block, so the driver's error is not
         # chained to it, and a traceback prints none.
         raise HostedStartRefused(check_failed(check, failed))
+    return role
+
+
+def check_run_login_role(url: str, api_role: str) -> None:
+    """Spec 106's start check of the run login role: the role `url` logs in
+    as passes spec 134's login role checks, `cannot set role
+    harrier_tenant` among them, and is not `api_role`. Raises
+    HostedStartRefused naming `HARRIER_RUN_DATABASE_URL`, never its value.
+    Reads the catalog in one transaction that is rolled back."""
+    driver = None
+    with suppress(StoreConnectionError):
+        driver = postgres_connect(url)
+    if driver is None:
+        # Outside the except block, so nothing of the driver's error is
+        # chained.
+        raise HostedStartRefused(RUN_LOGIN_UNREACHABLE)
+    refusal = ""
+    try:
+        conn = Connection.postgres(cast(Any, driver))
+        with conn.transaction():
+            row = conn.execute("SELECT current_user::text").fetchone()
+            role = str(row[0]) if row else ""
+            if role == api_role:
+                refusal = RUN_LOGIN_IS_THE_API_LOGIN
+            else:
+                problems = login_role_problems(conn, role)
+                if problems:
+                    refusal = run_login_refusal(problems)
+            raise _CheckedNothingWritten
+    except _CheckedNothingWritten:
+        pass
+    except StoreDatabaseError as error:
+        refusal = check_failed("run login role", str(error))
+    finally:
+        driver.close()
+    if refusal:
+        raise HostedStartRefused(refusal)
 
 
 def _store_versions(conn: Connection) -> set[int]:

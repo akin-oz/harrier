@@ -34,6 +34,7 @@ from pg_support import open_owner_store
 from test_hosted_auth import (
     API_HOST,
     CREDENTIALS_KEY_TEXT,
+    RUN_DATABASE_URL,
     SPA_ORIGIN,
     SUPABASE_URL,
     child_environment,
@@ -46,6 +47,7 @@ from test_hosted_requests import (
     create_probes,
     hosted_environment,
     keys_served_here,
+    run_login_for,
     serving,
 )
 from test_hosted_start import start_as_a_process
@@ -470,6 +472,8 @@ def test_a_hosted_start_refuses_prompt_logging(
         # Required since spec 116: without it the start refuses for the
         # credentials key before it reaches the prompt-logging check.
         HARRIER_CREDENTIALS_KEY=CREDENTIALS_KEY_TEXT,
+        # Required since spec 106, for the same reason.
+        HARRIER_RUN_DATABASE_URL=RUN_DATABASE_URL,
         CLAUDE_CLI_DEBUG=" Yes ",
     )
     started = start_api(environ, tmp_path)
@@ -567,16 +571,17 @@ def test_a_hosted_access_line_carries_no_query(
 
     login = server.login_role()
     keys_served_here(monkeypatch)
-    hosted_environment(monkeypatch, login.url)
     # The store password in the query as well: neither it nor the rest of
     # the query reaches the line.
-    hosted = access_line(f"/health?q={query}&p={login.password}", API_HOST)
+    with run_login_for(login.url) as run_url:
+        hosted_environment(monkeypatch, login.url, run_url)
+        hosted = access_line(f"/health?q={query}&p={login.password}", API_HOST)
+        encoded = access_line(f"/health%3F{in_path}?q={query}", API_HOST)
     assert '"GET /health HTTP/1.1" 200' in hosted
     assert query not in hosted
     assert login.password not in hosted
     assert "?" not in hosted
 
     # A `?` the path holds, encoded, is the path's and stays.
-    encoded = access_line(f"/health%3F{in_path}?q={query}", API_HOST)
     assert f"GET /health%3F{in_path} HTTP/1.1" in encoded
     assert query not in encoded

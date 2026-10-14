@@ -16,9 +16,13 @@ from typing import TYPE_CHECKING
 
 from harrier.connection import (
     POSTGRES_NOT_YET,
+    RUN_OWNER_VARIABLE,
     Connection,
+    StoreError,
     StoreLibraryTooOld,
     StoreUrlError,
+    in_a_hosted_run,
+    open_store,
     store_target,
 )
 from harrier.container import CONTAINER_NAME, running_in
@@ -58,12 +62,111 @@ if TYPE_CHECKING:
 
 def load_project_env(path: Path | None = None) -> None:
     """Load .env from the working directory (spec 011; launchd wrappers rely
-    on it). Existing environment variables are never overridden."""
+    on it). Existing environment variables are never overridden. A hosted
+    run never calls it (spec 106)."""
     from harrier.envfile import read_env_file
 
     for key, value in read_env_file(path if path is not None else Path(".env")).items():
         if key not in os.environ:
             os.environ[key] = value
+
+
+# --- a hosted run (spec 106) ---
+
+# The verbs of the run kinds that run hosted (spec 106, "Which kinds run
+# hosted"), by `subcommand_name`. On a Postgres store each runs only as a
+# hosted run, which the API starts for one owner with `HARRIER_RUN_OWNER`.
+# A verb whose kind becomes hosted later joins here in that kind's spec;
+# `tests/test_hosted_runs.py` holds this set to the run manager's table.
+RUN_CLASS: frozenset[str] = frozenset(
+    {
+        "discover",
+        "demo-run",
+        "digest",
+        "config check-feeds",
+        "reconsider",
+        "events backfill",
+        "evaluate-prospects",
+    }
+)
+
+NOT_AN_OWNER = f"{RUN_OWNER_VARIABLE} is not an owner id"
+RUN_STORE_REFUSED = "this run could not open its store"
+OWNER_WITHOUT_POSTGRES = (
+    f"{RUN_OWNER_VARIABLE} is set but HARRIER_DATABASE_URL names no Postgres store"
+)
+
+
+def run_class_refusal(command: str) -> str:
+    """A run command on a Postgres store without an owner. `command` is the
+    command and subcommand words only (spec 061)."""
+    return (
+        f"harrier {command} runs on a Postgres store only as a hosted run, "
+        "which the API starts for one owner (spec 106)"
+    )
+
+
+def _open_store() -> Connection:
+    """The store a run class command opens: the local SQLite file, or, in a
+    hosted run, the Postgres store as the run's owner, every transaction
+    under the owner's identity (spec 106). `main` has checked the owner and
+    the store before any command runs."""
+    if in_a_hosted_run():
+        return open_store(owner=os.environ[RUN_OWNER_VARIABLE])
+    return connect()
+
+
+def _is_owner_id(value: str) -> bool:
+    import uuid
+
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _run_hosted(args: argparse.Namespace) -> int:
+    """A hosted run: `HARRIER_RUN_OWNER` is set (spec 106).
+
+    Refused, exit 1 and before anything opens: an owner that is not a UUID,
+    a store that is not Postgres, and a command outside the run class, the
+    last with spec 112's one text until spec 127 gives each class its own.
+    No lease, no hand-over and no `.env`: those concern the local SQLite
+    file and the operator's machine.
+    """
+    if not _is_owner_id(os.environ[RUN_OWNER_VARIABLE]):
+        print(f"error: {NOT_AN_OWNER}", file=sys.stderr)
+        return 1
+    try:
+        target = store_target()
+    except StoreUrlError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    if not target.is_postgres:
+        print(f"error: {OWNER_WITHOUT_POSTGRES}", file=sys.stderr)
+        return 1
+    if subcommand_name(args) not in RUN_CLASS:
+        print(f"error: {POSTGRES_NOT_YET}", file=sys.stderr)
+        return 1
+    # The run's own log file, under its owner's directory, with the owner's
+    # identity values read from the run's store (spec 106).
+    configure_logging()
+    try:
+        refused = _check_track(args)
+        if refused is not None:
+            return refused
+        result: int = args.func(args)
+    except TrackerError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    except StoreError:
+        # One line, naming nothing of the store: the run's output reaches its
+        # owner, and the store's text names the run login's host and
+        # database (data integrity review of PR #316).
+        print(f"error: {RUN_STORE_REFUSED}", file=sys.stderr)
+        return 1
+    return result
 
 
 def _academic_options(args: argparse.Namespace) -> AcademicOptions:
@@ -131,7 +234,7 @@ def _cmd_discover_configured(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    with closing(connect()) as conn:
+    with closing(_open_store()) as conn:
         reports = run_configured_tracks(conn, _academic_options(args))
     failed = False
     for report in reports:
@@ -164,7 +267,7 @@ def _cmd_discover(args: argparse.Namespace) -> int:
         return _cmd_discover_configured(args)
     resolved = getattr(args, "track_scope", None)
     if isinstance(resolved, Scope) and rules_for(resolved.track.kind).screening == "academic":
-        with closing(connect()) as conn:
+        with closing(_open_store()) as conn:
             return _cmd_discover_academic(conn, resolved, args)
     if args.from_run:
         print("--from-run is for an academic track's source", file=sys.stderr)
@@ -210,7 +313,7 @@ def _cmd_discover(args: argparse.Namespace) -> int:
         print(f"::harrier::{json.dumps(payload)}", flush=True)
         print(f"{source}: {stage}", flush=True)
 
-    with closing(connect()) as conn:
+    with closing(_open_store()) as conn:
         scope = _scope(conn, args)
         aggregate = run_discovery(
             conn,
@@ -644,7 +747,7 @@ def _cmd_evaluate(args: argparse.Namespace) -> int:
 def _cmd_evaluate_prospects(args: argparse.Namespace) -> int:
     from harrier.offers import BatchOptions, evaluate_prospects
 
-    with closing(connect()) as conn:
+    with closing(_open_store()) as conn:
         scope = _scope(conn, args)
         summary = evaluate_prospects(
             conn,
@@ -979,7 +1082,7 @@ def _cmd_digest(args: argparse.Namespace) -> int:
     except ValueError as error:
         print(f"digest failed: invalid --date: {error}", file=sys.stderr)
         return 2
-    with closing(connect()) as conn:
+    with closing(_open_store()) as conn:
         scope = _scope(conn, args)
         digest, rc = run_digest(conn, scope, target_date, dry_run=args.dry_run)
         # Two progress steps on the run protocol, so a browser can tell a
@@ -1115,7 +1218,7 @@ def _check_track(args: argparse.Namespace) -> int | None:
     slug = getattr(args, "track_slug", None)
     if slug is None:
         return None
-    with closing(connect()) as conn:
+    with closing(_open_store()) as conn:
         try:
             scope = resolve_scope(conn, slug)
         except UnknownTrackError as error:
@@ -1639,7 +1742,7 @@ def _cmd_events(args: argparse.Namespace) -> int:
     from harrier.tracker import SelectorError, resolve_selector
     from harrier.tracker.store import backfill_events, list_events
 
-    with closing(connect()) as conn:
+    with closing(_open_store()) as conn:
         scope = _scope(conn, args)
         if args.events_command == "backfill":
             counts = backfill_events(conn, scope, dry_run=args.dry_run)
@@ -1744,7 +1847,7 @@ def _cmd_check_feeds(args: argparse.Namespace) -> int:
         prune_dead,
     )
 
-    conn = connect()
+    conn = _open_store()
 
     try:
         feeds = load_feeds_for_check(conn)
@@ -1831,7 +1934,7 @@ def _cmd_reconsider(args: argparse.Namespace) -> int:
     from harrier.screening.config import load_candidate_config
     from harrier.screening.reconsider import reconsider_source
 
-    conn = connect()
+    conn = _open_store()
 
     scope = _scope(conn, args)
     from harrier.tracks import rules_for
@@ -3074,10 +3177,17 @@ def main(argv: list[str] | None = None) -> int:
     # Before anything can log: `store` and `doctor` never configure logging,
     # so their warnings reach the last-resort handler (spec 133).
     scrub_last_resort()
-    load_project_env()
+    # A hosted run reads no `.env`: its environment is the allowlist the API
+    # built, and a file in its working directory must not add to it (spec
+    # 106). Read before anything else is.
+    hosted_run = in_a_hosted_run()
+    if not hosted_run:
+        load_project_env()
     vector = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
     args = parser.parse_args(vector)
+    if hosted_run:
+        return _run_hosted(args)
     # Which store, decided after .env is loaded so a URL set there counts, and
     # before the lease and the hand-over, which concern the SQLite file. A bad
     # URL or a Postgres one opens nothing here (spec 103).
@@ -3087,6 +3197,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {error}", file=sys.stderr)
         return 1
     if target.is_postgres:
+        if subcommand_name(args) in RUN_CLASS:
+            # A run command needs the owner the API gives a hosted run.
+            print(f"error: {run_class_refusal(subcommand_name(args))}", file=sys.stderr)
+            return 1
         if args.command != "store":
             print(f"error: {POSTGRES_NOT_YET}", file=sys.stderr)
             return 1

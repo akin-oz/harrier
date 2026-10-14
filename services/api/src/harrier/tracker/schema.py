@@ -527,6 +527,9 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
     # Postgres only (spec 116): the per-owner credentials table. Locally
     # credentials stay in .env. Empty on purpose, and declared so.
     (18, []),
+    # Postgres only (spec 106): the per-owner run records. The run journal
+    # file keeps the local equivalent. Empty on purpose, and declared so.
+    (19, []),
 ]
 
 # --- Postgres (spec 103, ADR-013) ---
@@ -708,12 +711,13 @@ MIGRATION_10_OWNED_TABLES: tuple[str, ...] = (
 # Every table with an owner: migration 10's, and each table a later
 # migration created owned (spec 122's `job_eligibility`, migration 15; spec
 # 108's `schedule_state`, migration 17; spec 116's `credentials`,
-# migration 18).
+# migration 18; spec 106's `run_records`, migration 19).
 OWNED_TABLES: tuple[str, ...] = (
     "job_eligibility",
     *MIGRATION_10_OWNED_TABLES,
     "schedule_state",
     "credentials",
+    "run_records",
 )
 
 # Every other table, with the reason it has no owner.
@@ -728,6 +732,7 @@ HOSTED_ONLY_TABLES: dict[str, str] = {
     "schedule_state": "per-owner scheduler state (spec 108); "
     "launchd keeps the local equivalent (ADR-006)",
     "credentials": "per-owner encrypted credentials (spec 116); local credentials live in .env",
+    "run_records": "per-owner run records (spec 106); the journal file keeps the local equivalent",
 }
 
 # Supabase's own functions in public, by signature as `oid::regprocedure`
@@ -802,6 +807,11 @@ SINGLE_DIALECT_MIGRATIONS: dict[int, tuple[Dialect, str]] = {
         "postgres",
         "per-owner encrypted credentials (spec 116); local credentials live in "
         ".env, and a local table would put them in the file just backup copies",
+    ),
+    19: (
+        "postgres",
+        "per-owner run records, so a run cut off by a machine stop is shown "
+        "interrupted (spec 106); the local run journal file keeps them",
     ),
 }
 
@@ -1552,6 +1562,40 @@ POSTGRES_CREDENTIALS: list[str] = [
     f"GRANT SELECT, INSERT, UPDATE, DELETE ON credentials TO {TENANT_ROLE}",
 ]
 
+# Spec 106: one row per hosted run, so a run cut off when the machine stops
+# is shown `interrupted` rather than lost with the machine's disk. Postgres
+# only: locally the run journal file keeps runs (HOSTED_ONLY_TABLES). Spec
+# 105's shape whole, as migration 18's. It holds the run's id, kind,
+# target, state, times and exit code, and the API process that ran it;
+# never a parameter, an event or an output. The states are the run
+# manager's `RunState`, written out in the statement so this migration stays
+# what it was (`tests/test_hosted_runs.py` holds the two together). No DELETE
+# and no TRUNCATE: deleting an owner's rows is spec 111's.
+POSTGRES_RUN_RECORDS: list[str] = [
+    f"""
+    CREATE TABLE run_records (
+        owner_id uuid NOT NULL DEFAULT public.{OWNER_ID_FUNCTION} REFERENCES auth.users (id),
+        run_id text NOT NULL,
+        kind text NOT NULL,
+        target text NOT NULL,
+        state text NOT NULL CHECK (state IN ('queued', 'running', 'succeeded', 'failed',
+            'cancelled', 'interrupted')),
+        api_instance text NOT NULL,
+        created_at text NOT NULL,
+        started_at text,
+        ended_at text,
+        exit_code integer,
+        PRIMARY KEY (owner_id, run_id)
+    )
+    """,
+    "ALTER TABLE run_records ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE run_records FORCE ROW LEVEL SECURITY",
+    f"CREATE POLICY owner_only ON run_records AS PERMISSIVE FOR ALL TO {TENANT_ROLE} "
+    f"USING ({_OWNER_IS_REQUEST}) WITH CHECK ({_OWNER_IS_REQUEST})",
+    f"REVOKE ALL ON run_records FROM {_EVERY_GRANTEE}",
+    f"GRANT SELECT, INSERT, UPDATE ON run_records TO {TENANT_ROLE}",
+]
+
 POSTGRES_MIGRATIONS: list[tuple[int, list[str]]] = [
     (POSTGRES_BASELINE_VERSION, POSTGRES_BASELINE),
     (10, POSTGRES_OWNERS),
@@ -1570,6 +1614,7 @@ POSTGRES_MIGRATIONS: list[tuple[int, list[str]]] = [
     (16, POSTGRES_OWNER_IDENTITY),
     (17, POSTGRES_SCHEDULE_STATE),
     (18, POSTGRES_CREDENTIALS),
+    (19, POSTGRES_RUN_RECORDS),
 ]
 
 

@@ -37,6 +37,7 @@ from typing import Any
 import pytest
 from conftest import DualStore
 from test_hosted_auth import child_environment, complete_hosted_environment, start_api
+from test_hosted_runs import hosted_manager as bound_manager
 from test_run_owner import CONTRACT, hosted_manager, new_owner, owners
 
 from harrier.digest import MAIL_NOT_OFFERED_LINE, run_digest
@@ -51,7 +52,6 @@ from harrier_api.runs import (
     GmailNotHosted,
     RunManager,
     RunParams,
-    RunsNotHosted,
 )
 
 # --- synthetic secrets ---
@@ -227,56 +227,39 @@ def test_hosted_mail_routes_answer_501(monkeypatch: pytest.MonkeyPatch, tmp_path
             assert refusal["description"] == f"hosted only: {GMAIL_NOT_HOSTED_DETAIL}", route
 
 
-@pytest.mark.parametrize("lifted", [False, True], ids=["today", "with spec 106's lift"])
 def test_a_hosted_gmail_watch_run_is_refused_before_it_spawns(
-    lifted: bool, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("HARRIER_AUTH", "supabase")
-    if lifted:
-        # Spec 106 lifts the refusal of every hosted run; the Gmail one
-        # stays.
-        monkeypatch.setattr("harrier_api.runs.refuse_every_hosted_run", lambda: None)
+    """Spec 106 lifts the refusal of every hosted run; the Gmail one stays.
+    The manager serves hosted with its store half in memory, so another
+    kind gets past every refusal to its spawn, and only the Gmail refusal
+    stopped the watch."""
     spawned: list[tuple[object, ...]] = []
 
     async def spawn(*argv: object, **_: object) -> object:
         spawned.append(argv)
         raise OSError("this test spawns nothing")
 
+    manager = bound_manager(tmp_path, monkeypatch, "pass").manager
     monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
-    journal = tmp_path / "journal.jsonl"
-    manager = RunManager(
-        journal_path=journal, kind_commands={"demo": [sys.executable, "-c", "pass"]}
-    )
 
     async def attempt() -> None:
         for params in (RunParams(), RunParams(switches=frozenset({"--dry-run"}))):
             with pytest.raises(GmailNotHosted) as refused:
                 await manager.start("gmail-watch", params, owner=new_owner())
             assert str(refused.value) == GMAIL_NOT_HOSTED_DETAIL
-        if not lifted:
-            # Every other kind meets the refusal spec 106 lifts.
-            with pytest.raises(RunsNotHosted) as other:
-                await manager.start("demo", owner=new_owner())
-            assert not isinstance(other.value, GmailNotHosted)
-            return
-        # Lifted, another kind gets past the refusal to its spawn, so the
-        # lift is real and only the Gmail refusal stopped the watch.
+        # Another kind gets past the refusal to its spawn, so the lift is
+        # real and only the Gmail refusal stopped the watch.
         demo = await manager.start("demo", owner=new_owner())
-        for _ in range(200):
-            if spawned:
-                break
-            await asyncio.sleep(0.01)
+        await manager.wait(demo.id)
         assert [run.kind for run in manager.list_runs()] == [demo.kind] == ["demo"]
 
     asyncio.run(attempt())
 
-    if lifted:
-        assert len(spawned) == 1, spawned
-        assert "gmail-watch" not in " ".join(str(part) for part in spawned[0])
-    else:
-        assert spawned == []
-        assert manager.list_runs() == []
-        assert not journal.exists()
+    assert len(spawned) == 1, spawned
+    assert "gmail-watch" not in " ".join(str(part) for part in spawned[0])
+    # A hosted run writes no journal file (spec 106).
+    assert not (tmp_path / "journal.jsonl").exists()
 
 
 # --- the digest on Postgres ---

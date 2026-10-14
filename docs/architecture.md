@@ -171,15 +171,16 @@ from the session (ADR-012 point 2). The local product described above does
 not change.
 
 A Postgres store can be created, and the domain runs on it. The hosted
-API serves it (below); no command outside `harrier store` reads or writes
-tracker rows there yet.
+API serves it (below); outside `harrier store`, only a hosted run the API
+starts for one owner reads or writes tracker rows there (spec 106, below).
 `HARRIER_DATABASE_URL` chooses the store: unset or empty, the local
 SQLite store; a `postgresql://` URL, the Postgres store; any other value is
 refused (`services/api/src/harrier/connection.py`,
 `services/api/tests/test_postgres_store.py`). `harrier store migrate`
 applies pending migrations and `harrier store status` prints the dialect
-and version. They are the only commands that run on Postgres: every other
-command refuses to start while the URL names it until spec 127, and the
+and version. They are the only commands a person runs on Postgres: a run
+command runs there only as a hosted run, every other command refuses to
+start while the URL names it until spec 127, and the
 API serves it only in hosted mode (`services/api/tests/test_store_cli.py`,
 `services/api/tests/test_hosted_start.py::test_the_api_serves_postgres_only_in_hosted_mode`).
 Opening a Postgres store never migrates it. The Postgres baseline, recorded as version 9, sits in
@@ -231,7 +232,7 @@ tables but `id` (migration 13), so no key a tenant can write into tells one
 owner what another holds
 (`services/api/tests/test_owner_policy.py::test_an_owner_cannot_choose_or_change_an_id`).
 Each owner has their own track 1, and a job or event can reference only its
-own owner's track or job. Migrations 10, 13, 14, 16, 17 and 18 are Postgres only
+own owner's track or job. Migrations 10, 13, 14, 16, 17, 18 and 19 are Postgres only
 (`SINGLE_DIALECT_MIGRATIONS`): SQLite records those versions and changes
 nothing, so the local schema names no tenant. The catalog test,
 `services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared`,
@@ -258,8 +259,9 @@ default privileges, which grant those roles everything the migrating role
 creates, in `public` and in every schema. No migration creates them, and
 migration 10 refuses a store without the roles and the auth objects.
 
-The hosted API is the one path an owner reaches their rows by (below);
-the CLI admits a Postgres URL only for `harrier store` until spec 127. A
+The hosted API is the one path an owner reaches their rows by (below):
+the CLI admits a Postgres URL only for `harrier store` and for the hosted
+runs the API starts (spec 106), until spec 127. A
 role with `BYPASSRLS`, such as Supabase's `service_role`, sees every owner's
 rows
 (`services/api/tests/test_owner_policy.py::test_a_bypassrls_role_sees_every_owner`);
@@ -376,11 +378,70 @@ body is answered with the field and the rule, never the value
 `services/api/tests/test_credentials.py::test_a_refused_credential_body_does_not_echo_the_value`).
 Locally every credentials route answers 404
 (`services/api/tests/test_credentials.py::test_credential_routes_are_not_served_locally`).
-Nothing decrypts a credential yet: spec 106's run start will. A Postgres
+Only a hosted run's start decrypts one (spec 106, below). A Postgres
 store that recorded a version above a declared migration it never applied
 is refused by `harrier store migrate`, the store's opener and the hosted
 start, since the runner applies only higher versions
 (`services/api/tests/test_credentials.py::test_a_store_that_skipped_a_declared_migration_is_refused`).
+
+A hosted run is bound to its owner (spec 106). Spec 106's table,
+`HOSTED_RUN_KINDS` in `services/api/src/harrier_api/runs.py`, gives each
+run kind its hosted answer: discovery, the demo run, the digest, the feed
+check, reconsideration, the events backfill and the prospect evaluation
+run; a kind whose result is a file answers 501 until spec 107, Gmail
+watch is spec 109's, and backup and its verification are local only
+(`services/api/tests/test_hosted_runs.py::test_every_run_kind_declares_its_hosted_answer`,
+`services/api/tests/test_run_owner.py::test_a_kind_not_offered_hosted_answers_501_naming_its_spec`).
+Two owners never join each other's run
+(`services/api/tests/test_hosted_runs.py::test_two_owners_never_join_each_others_run`).
+At start the run manager reads the owner's ciphertexts as the owner,
+decrypts them, refuses with 409 a run that needs a credential that is unset
+or does not decrypt, and inserts the run's row in `run_records`, all in one
+transaction before anything is spawned
+(`services/api/src/harrier_api/hostedruns.py`,
+`services/api/tests/test_hosted_runs_on_postgres.py::test_a_route_refuses_a_run_whose_credential_is_missing_or_unreadable`).
+The child's environment is built, never inherited, by
+`services/api/src/harrier_api/runenv.py`: a short allowlist of
+configuration names, the owner's run directory as `HOME`,
+`HARRIER_DATA_DIR` and working directory, the run login's URL as its
+`HARRIER_DATABASE_URL`, `HARRIER_RUN_OWNER`, and the owner's own
+credentials under the names the domain reads
+(`services/api/tests/test_hosted_runs.py::test_the_child_environment_holds_only_the_allowlist_and_its_owners_values`,
+`services/api/tests/test_hosted_runs.py::test_the_credentials_key_never_reaches_a_run`,
+`services/api/tests/test_hosted_runs.py::test_a_hosted_run_works_in_its_owners_directory`).
+With `HARRIER_RUN_OWNER` set, `harrier_cli` reads no `.env`, runs only the
+run class's verbs, on a Postgres store, and opens it with
+`open_store(owner=...)`, every transaction as the owner
+(`services/api/tests/test_hosted_runs.py::test_a_hosted_run_reads_no_env_file`,
+`services/api/tests/test_hosted_runs.py::test_a_run_command_needs_an_owner_on_postgres`,
+`services/api/tests/test_hosted_runs_on_postgres.py::test_a_run_reads_only_its_owners_rows`).
+A hosted run offers only the API LLM providers
+(`services/api/tests/test_hosted_runs.py::test_hosted_runs_offer_only_the_api_providers`),
+reads its log redaction values from its own store
+(`services/api/tests/test_hosted_runs_on_postgres.py::test_a_hosted_run_redacts_logs_from_its_own_store`),
+and every exact secret value of its owner's credentials is replaced with
+`REDACTED` in its events
+(`services/api/tests/test_hosted_runs.py::test_a_credential_value_never_reaches_the_event_stream`).
+Runs connect as a second login role, named by `HARRIER_RUN_DATABASE_URL`,
+which the API's start holds to the same login role checks and refuses when
+it is the API's own
+(`services/api/tests/test_hosted_runs_on_postgres.py::test_hosted_start_checks_the_run_login_role`).
+While any run is active the run manager sends `GET /health` through Fly's
+proxy so the machine is not stopped under it
+(`services/api/tests/test_hosted_runs.py::test_an_active_run_keeps_the_machine_awake`),
+and a run cut off by a stop anyway is shown `interrupted` from
+`run_records`, migration 19
+(`services/api/tests/test_hosted_runs_on_postgres.py::test_a_run_cut_off_by_a_stop_reads_interrupted`,
+`services/api/tests/test_hosted_runs_on_postgres.py::test_the_stop_signal_records_active_runs_interrupted`).
+
+The trust model bounds all of this (spec 106, The trust model). Row-level
+policy catches a bug in a run: a query that forgets its filter still sees
+only the owner's rows. It does not contain a compromised run. The run
+login can set any owner's claims, and every run and the API are one
+operating system user on one machine, so a hostile run can claim any owner
+in the database and can likely read its siblings' environments. The
+environment allowlist keeps secrets out of logs and child tools; it is not
+a sandbox. Hosted harrier treats its own code and dependencies as trusted.
 
 Gmail watch is local only (spec 109). A hosted watch would store and
 transmit restricted Gmail data on servers, which Google allows only after

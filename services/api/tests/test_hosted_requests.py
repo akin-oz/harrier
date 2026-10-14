@@ -26,7 +26,7 @@ import threading
 import time
 import uuid
 from collections.abc import Generator, Iterator
-from contextlib import closing, contextmanager, suppress
+from contextlib import ExitStack, closing, contextmanager, suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -48,6 +48,7 @@ from test_hosted_auth import (
     API_HOST,
     CREDENTIALS_KEY_TEXT,
     KID,
+    RUN_DATABASE_URL,
     SPA_ORIGIN,
     SUPABASE_URL,
     KeyServer,
@@ -359,8 +360,30 @@ class Hosted:
         return bearer(mint(self.key, claims_for(sub=owner, **overrides)))
 
 
-def hosted_environment(monkeypatch: pytest.MonkeyPatch, database_url: str) -> None:
-    """Complete hosted mode in the process environment, as on Fly."""
+@contextmanager
+def run_login_for(database_url: str) -> Generator[str]:
+    """A run login role on the store `database_url` names, as the API's
+    login role is made: `NOINHERIT`, a member of `harrier_tenant` alone,
+    with a password made at run time (spec 106). Dropped afterwards."""
+    import psycopg
+
+    name = f"harrier_r_{uuid.uuid4().hex[:12]}"
+    password = uuid.uuid4().hex
+    with psycopg.connect(superuser_url(database_url), autocommit=True) as conn:
+        conn.execute(f"CREATE ROLE {name} LOGIN NOINHERIT PASSWORD '{password}'".encode())
+        conn.execute(f"GRANT {TENANT_ROLE} TO {name}".encode())
+    try:
+        yield with_user(database_url, name, password)
+    finally:
+        drop_roles([name])
+
+
+def hosted_environment(
+    monkeypatch: pytest.MonkeyPatch, database_url: str, run_database_url: str | None = None
+) -> None:
+    """Complete hosted mode in the process environment, as on Fly. Without
+    `run_database_url`, the run login names a closed port: enough for a
+    start refused before the store opens."""
     for name, value in list(os.environ.items()):
         if name == "SUPABASE_SERVICE_ROLE_KEY" or value.strip().startswith("sb_secret_"):
             monkeypatch.delenv(name)
@@ -370,6 +393,10 @@ def hosted_environment(monkeypatch: pytest.MonkeyPatch, database_url: str) -> No
     monkeypatch.setenv("HARRIER_CORS_ORIGINS", SPA_ORIGIN)
     monkeypatch.setenv(URL_VARIABLE, database_url)
     monkeypatch.setenv("HARRIER_CREDENTIALS_KEY", CREDENTIALS_KEY_TEXT)
+    monkeypatch.setenv(
+        "HARRIER_RUN_DATABASE_URL",
+        run_database_url if run_database_url is not None else RUN_DATABASE_URL,
+    )
 
 
 def keys_served_here(monkeypatch: pytest.MonkeyPatch) -> ec.EllipticCurvePrivateKey:
@@ -387,16 +414,23 @@ def keys_served_here(monkeypatch: pytest.MonkeyPatch) -> ec.EllipticCurvePrivate
 
 
 @contextmanager
-def serving(monkeypatch: pytest.MonkeyPatch, database_url: str) -> Generator[Hosted]:
-    key = keys_served_here(monkeypatch)
-    hosted_environment(monkeypatch, database_url)
-    app = create_app()
-    store = app.state.request_store
-    assert isinstance(store, RequestStore)
-    try:
-        yield Hosted(app, store, key, add_probe_routes(app))
-    finally:
-        store.close()
+def serving(
+    monkeypatch: pytest.MonkeyPatch, database_url: str, run_database_url: str | None = None
+) -> Generator[Hosted]:
+    """The hosted app as uvicorn builds it, with a run login of its own
+    made for it unless `run_database_url` names one (spec 106)."""
+    with ExitStack() as stack:
+        if run_database_url is None:
+            run_database_url = stack.enter_context(run_login_for(database_url))
+        key = keys_served_here(monkeypatch)
+        hosted_environment(monkeypatch, database_url, run_database_url)
+        app = create_app()
+        store = app.state.request_store
+        assert isinstance(store, RequestStore)
+        try:
+            yield Hosted(app, store, key, add_probe_routes(app))
+        finally:
+            store.close()
 
 
 @pytest.fixture
@@ -845,12 +879,15 @@ def test_an_owner_connection_checks_the_owner_the_policy_reads(case: str, server
     server.migrator(statement)
     owner = server.owner()
 
-    conn = open_store({URL_VARIABLE: server.url}, owner=owner)
-    try:
-        with pytest.raises(StoreDatabaseError) as refused, conn.transaction():
-            conn.execute(f"SELECT nextval('{PROBE_SEQUENCE}')")
-    finally:
-        conn.close()
+    # Opening reads the store's version in an owner transaction (spec 106),
+    # so the identity is refused there, before the probe's own transaction.
+    with pytest.raises(StoreDatabaseError) as refused:
+        conn = open_store({URL_VARIABLE: server.url}, owner=owner)
+        try:
+            with conn.transaction():
+                conn.execute(f"SELECT nextval('{PROBE_SEQUENCE}')")
+        finally:
+            conn.close()
 
     assert str(refused.value) == f"{IDENTITY_DID_NOT_HOLD} ({named})"
     assert owner not in str(refused.value)

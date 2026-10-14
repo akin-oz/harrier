@@ -46,6 +46,7 @@ from harrier.connection import (
     Connection,
     StoreDatabaseError,
     driver_error_text,
+    in_a_hosted_run,
     is_driver_error,
     url_parts,
 )
@@ -253,8 +254,9 @@ SECRET_REDACTION = "REDACTED"
 def _environment_url() -> str:
     """`HARRIER_DATABASE_URL` as `store_target` reads it: the process
     environment, then `.env` in the working directory."""
-    if URL_VARIABLE in os.environ:
-        return os.environ[URL_VARIABLE]
+    if URL_VARIABLE in os.environ or in_a_hosted_run():
+        # A hosted run reads no `.env` (spec 106).
+        return os.environ.get(URL_VARIABLE, "")
     try:
         cwd = os.getcwd()
     except OSError:
@@ -304,6 +306,13 @@ def _password_forms_of(url: str) -> tuple[str, ...]:
         # nothing here may raise on the logging path.
         return ()
     return tuple(dict.fromkeys((*forms, *(q for form in forms for q in _quoted_forms(form)))))
+
+
+def store_password_forms_of(url: str) -> tuple[str, ...]:
+    """Every form of `url`'s password, as `store_password_forms` gives the
+    configured URL's: for a URL this process holds for another, such as a
+    hosted run's login (spec 106). Empty for a URL with none."""
+    return _password_forms_of(url)
 
 
 def store_password_forms() -> tuple[str, ...]:

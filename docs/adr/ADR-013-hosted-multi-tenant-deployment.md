@@ -117,8 +117,20 @@ Postgres hosted), and a JWT boundary the local product never had. Chosen.
    - Scheduled run: the scheduler lists owners with due schedules using the
      service role, then starts each owner's run as that owner. It never
      executes domain code as the service role.
-   - CLI: the hosted deployment has no tenant CLI. Operator commands run as
-     the service role and are named as such.
+   - CLI: the hosted deployment has no tenant CLI a person runs. A run
+     (ADR-004) is a `harrier_cli` process the API starts for one owner: it
+     receives the owner in `HARRIER_RUN_OWNER`, a login role that can only
+     become `harrier_tenant`, and an environment built from an allowlist,
+     and every transaction it opens runs as that owner. On a Postgres
+     store, a run command without an owner is refused, and every other
+     command is refused as spec 112 states. Operator commands are
+     subcommands of one group, `harrier operator`, and each declares the
+     database role it runs as (specs 108 and 111).
+
+   **Amended (spec 106).** This said there is no tenant CLI, while every
+   run is a CLI process. A run is bound to its owner by its parent, the API.
+   Row-level policy then catches a bug in a run; it does not contain a
+   compromised run, which can claim any owner (spec 106, The trust model).
 5. **One write path, per dialect.** `harrier.tracker` stays the only writer
    (ADR-003, ADR-012 point 4). The schema keeps one definition in
    `services/api/src/harrier/tracker/schema.py`: each migration declares
