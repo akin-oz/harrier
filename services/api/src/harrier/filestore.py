@@ -215,7 +215,15 @@ class LocalFileStore:
             # A name no key can hold is not one this system wrote.
             if _SEGMENT.fullmatch(child.name) is None:
                 continue
-            entry = self.stat(join_key(prefix, child.name))
+            try:
+                entry = self.stat(join_key(prefix, child.name))
+            except OSError as error:
+                # A child gone since the listing, or a symlink loop, is not a
+                # file here, as `glob` and `is_file()` read it (CodeRabbit on
+                # PR #361). Any other error still raises.
+                if error.errno in _ABSENT_ERRNOS:
+                    continue
+                raise
             if entry is not None:
                 entries.append(entry)
         return sorted(entries, key=lambda entry: entry.key)

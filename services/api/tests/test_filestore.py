@@ -751,3 +751,20 @@ def test_an_atomic_put_that_fails_keeps_the_earlier_bytes(
     assert sorted(path.name for path in (tmp_path / "discovery").iterdir()) == [
         "greenhouse_seen.json"
     ]
+
+
+def test_a_symlink_loop_in_a_listed_directory_is_skipped(tmp_path: Path) -> None:
+    """A link that points at itself raises ELOOP on stat. The listing skips
+    it and still returns the files beside it, so academic pruning and the
+    newest-export lookup go on (CodeRabbit on PR #361)."""
+    from harrier.filestore import LocalFileStore
+
+    exports = tmp_path / "scoring" / "exports"
+    exports.mkdir(parents=True)
+    (exports / "features-20261001.jsonl").write_text("{}\n", encoding="utf-8")
+    loop = exports / "features-20261002.jsonl"
+    loop.symlink_to(loop.name)
+
+    entries = LocalFileStore(tmp_path).list("scoring/exports")
+
+    assert [entry.name for entry in entries] == ["features-20261001.jsonl"]
