@@ -327,11 +327,11 @@ def store_password_forms() -> tuple[str, ...]:
     return _password_forms_of(_environment_url())
 
 
-def _mask(text: str, forms: tuple[str, ...]) -> str:
-    # The union of every occurrence of every form is replaced, so a form
-    # overlapping another leaves no part of either (the rule
-    # `harrier.pgstore._scrub` follows).
-    spans: list[tuple[int, int]] = []
+def _mask(text: str, forms: tuple[str, ...], spans: list[tuple[int, int]] | None = None) -> str:
+    # The union of every occurrence of every form, and of every span given,
+    # is replaced, so a form overlapping another leaves no part of either
+    # (the rule `harrier.pgstore._scrub` follows).
+    spans = list(spans or ())
     for form in forms:
         start = text.find(form)
         while start >= 0:
@@ -370,6 +370,141 @@ def scrub_outbound(text: str) -> str:
     from harrier.sources import scrub_secrets
 
     return scrub_secrets(_mask(text, store_password_forms()))
+
+
+# --- the store hosts and users, in log records only (spec 145) ---
+
+# Read from the environment only, as `harrier.tracker.importlocal` (spec 141)
+# and `harrier.accountstore` (spec 144) read them. Named here rather than
+# imported: both modules reach the tracker, whose write path imports this one.
+IMPORT_URL_VARIABLE = "HARRIER_IMPORT_DATABASE_URL"
+ACCOUNT_URL_VARIABLE = "HARRIER_ACCOUNT_DATABASE_URL"
+
+# They name no one's server.
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+# Not part of a longer host name: no letter, digit, `-` or `.` before it,
+# and after it no letter, digit or `-`, nor a `.` that another such
+# character follows.
+_HOST_BEFORE = r"(?<![A-Za-z0-9.-])"
+_HOST_AFTER = r"(?![A-Za-z0-9-])(?!\.[A-Za-z0-9])"
+
+
+def _store_urls() -> tuple[str, ...]:
+    """The three store URLs as this process holds them now: the configured
+    store's as `store_target` reads it, the other two from the environment."""
+    urls = (
+        _environment_url(),
+        os.environ.get(IMPORT_URL_VARIABLE, ""),
+        os.environ.get(ACCOUNT_URL_VARIABLE, ""),
+    )
+    return tuple(url.strip() for url in urls if url.strip())
+
+
+def _libpq_reading(url: str) -> dict[str, object] | None:
+    """The URL as libpq reads it, when psycopg is already loaded.
+
+    From `sys.modules`, never imported here: a log record must not import
+    the driver (`harrier.connection._psycopg_error_class`), and a process
+    that never loaded it opened no Postgres store whose repr it could log.
+    """
+    import sys
+
+    conninfo = sys.modules.get("psycopg.conninfo")
+    parse = getattr(conninfo, "conninfo_to_dict", None)
+    if parse is None:
+        return None
+    try:
+        return dict(parse(url))
+    except Exception:
+        return None
+
+
+@functools.lru_cache(maxsize=8)
+def _hosts_and_user_of(url: str) -> tuple[tuple[str, ...], str]:
+    """The hosts and the user name a store URL names (spec 145).
+
+    The hosts are every entry of libpq's `host` and `hostaddr`, split at
+    commas, or the host `urlsplit` reads when libpq cannot read the URL.
+    Loopback names and socket directories are left out.
+    """
+    from urllib.parse import unquote, urlsplit
+
+    if not url.lower().startswith(("postgresql://", "postgres://")):
+        return (), ""
+    read = _libpq_reading(url)
+    if read is not None:
+        entries = [
+            entry.strip()
+            for name in ("host", "hostaddr")
+            for entry in str(read.get(name) or "").split(",")
+        ]
+        user = str(read.get("user") or "")
+    else:
+        try:
+            parts = urlsplit(url)
+            entries = [parts.hostname or ""]
+            user = unquote(parts.username or "")
+        except ValueError:
+            return (), ""
+    hosts = tuple(
+        dict.fromkeys(
+            entry
+            for entry in entries
+            if entry and not entry.startswith("/") and entry.lower() not in _LOOPBACK_HOSTS
+        )
+    )
+    return hosts, user
+
+
+@functools.lru_cache(maxsize=8)
+def _store_identity_pattern(
+    hosts: tuple[str, ...], users: tuple[str, ...]
+) -> re.Pattern[str] | None:
+    """One pattern for every host, in any case, and every user after
+    `user=`, bare or in single quotes, exactly as written. The longest
+    first, so a host is never matched by a shorter one inside it."""
+    alternatives: list[str] = []
+    if hosts:
+        names = "|".join(re.escape(host) for host in sorted(hosts, key=len, reverse=True))
+        alternatives.append(f"{_HOST_BEFORE}(?P<host>(?i:{names})){_HOST_AFTER}")
+    if users:
+        names = "|".join(re.escape(user) for user in sorted(users, key=len, reverse=True))
+        alternatives.append(f"user='(?P<quoted>{names})'")
+        alternatives.append(f"user=(?P<bare>{names})(?=[\\s),']|$)")
+    return re.compile("|".join(alternatives)) if alternatives else None
+
+
+def _store_identity_spans(text: str) -> list[tuple[int, int]]:
+    """Where `text` names a store's host, or its user after `user=`."""
+    hosts: list[str] = []
+    users: list[str] = []
+    for url in _store_urls():
+        url_hosts, user = _hosts_and_user_of(url)
+        hosts.extend(url_hosts)
+        if user:
+            users.append(user)
+    pattern = _store_identity_pattern(tuple(dict.fromkeys(hosts)), tuple(dict.fromkeys(users)))
+    if pattern is None:
+        return []
+    spans: list[tuple[int, int]] = []
+    for found in pattern.finditer(text):
+        group = next(name for name in ("host", "quoted", "bare") if found.group(name) is not None)
+        spans.append(found.span(group))
+    return spans
+
+
+def scrub_logged(text: str) -> str:
+    """Text as a log record may print it: `scrub_outbound`'s masking, and
+    the host and user of each store URL the process holds (spec 145), all
+    replaced in one pass so overlapping spans leave nothing behind.
+
+    Not `scrub_outbound` itself: an HTTP error body and a run event name
+    the store they refused on purpose (spec 103).
+    """
+    from harrier.sources import scrub_secrets
+
+    return scrub_secrets(_mask(text, store_password_forms(), _store_identity_spans(text)))
 
 
 # --- the hosted access line's query (spec 135) ---
@@ -459,7 +594,8 @@ def format_exception_withheld(
 
 class SecretScrubFilter(logging.Filter):
     """Passes a record's message, exception text and stack text through
-    `scrub_outbound` (spec 133), after withholding the text of every driver
+    `scrub_logged`: `scrub_outbound` (spec 133) and the store hosts and
+    users (spec 145), after withholding the text of every driver
     error in the record (spec 135).
 
     Separate from `IdentityRedactionFilter`, which does nothing without
@@ -484,9 +620,9 @@ class SecretScrubFilter(logging.Filter):
             if record.exc_info and not record.exc_text:
                 record.exc_text = format_exception_withheld(record.exc_info)
             if record.exc_text:
-                record.exc_text = scrub_outbound(record.exc_text)
+                record.exc_text = scrub_logged(record.exc_text)
             if record.stack_info:
-                record.stack_info = scrub_outbound(record.stack_info)
+                record.stack_info = scrub_logged(record.stack_info)
         except Exception:
             # Nothing could be checked: drop what could hold the secret
             # rather than let it through or break the caller.
@@ -529,28 +665,25 @@ class SecretScrubFilter(logging.Filter):
             # stderr (privacy review of PR #296). The format string is kept,
             # scrubbed, and the arguments are withheld, so the record renders.
             record.msg = (
-                f"{scrub_outbound(str(record.msg))} "
-                "(arguments withheld: they do not fit the format)"
+                f"{scrub_logged(str(record.msg))} (arguments withheld: they do not fit the format)"
             )
             record.args = ()
             record.__dict__.pop("color_message", None)
             return
-        scrubbed = scrub_outbound(message)
+        scrubbed = scrub_logged(message)
         if scrubbed == message:
             return
         # The arguments one by one first, which keeps a formatter that reads
         # `record.args` itself working: uvicorn's access formatter unpacks
         # five of them, and its request line can carry a query secret.
         if isinstance(record.msg, str) and isinstance(record.args, tuple):
-            args = tuple(
-                scrub_outbound(arg) if isinstance(arg, str) else arg for arg in record.args
-            )
-            fmt = scrub_outbound(record.msg)
+            args = tuple(scrub_logged(arg) if isinstance(arg, str) else arg for arg in record.args)
+            fmt = scrub_logged(record.msg)
             try:
                 rendered: str | None = fmt % args if args else fmt
             except (TypeError, ValueError):
                 rendered = None
-            if rendered is not None and scrub_outbound(rendered) == rendered:
+            if rendered is not None and scrub_logged(rendered) == rendered:
                 record.msg = fmt
                 record.args = args
                 return

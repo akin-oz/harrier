@@ -63,6 +63,8 @@ harrier log line that passes one, would print it unmasked.
 - `services/api/src/harrier/logredact.py`: `SecretScrubFilter` masks the
   hosts described below.
 - Tests in `services/api/tests/test_logging.py`.
+- `services/api/tests/test_store_password_scrub.py`, as the amendment
+  below states.
 
 ## Behavior
 
@@ -143,29 +145,29 @@ refusing, as spec 103 meant.
 - [ ] A record logged through `logging.lastResort` after
   `scrub_last_resort()`, with psycopg's rollback format and a transaction
   repr naming the host of `HARRIER_DATABASE_URL`, prints no host and keeps
-  the port (planned test_the_last_resort_masks_the_store_host).
+  the port (`services/api/tests/test_logging.py::test_the_last_resort_masks_the_store_host`).
 - [ ] The same for a host named by `HARRIER_IMPORT_DATABASE_URL` and by
   `HARRIER_ACCOUNT_DATABASE_URL`, each set alone in the environment
-  (planned test_each_store_url_host_is_masked).
+  (`services/api/tests/test_logging.py::test_each_store_url_host_is_masked`).
 - [ ] `HARRIER_IMPORT_DATABASE_URL` and `HARRIER_ACCOUNT_DATABASE_URL` set
   only in `.env` are not read; `HARRIER_DATABASE_URL` set only in `.env` is
-  (planned test_the_host_variables_are_read_where_their_specs_read_them).
+  (`services/api/tests/test_logging.py::test_the_host_variables_are_read_where_their_specs_read_them`).
 - [ ] The same record prints `user=REDACTED` for the user name of each
   of the three URLs, keeps a bare `postgres` elsewhere in the message, and
   keeps `user=` followed by a name no URL holds
-  (planned test_the_store_user_is_masked_after_user_equals).
+  (`services/api/tests/test_logging.py::test_the_store_user_is_masked_after_user_equals`).
 - [ ] A configured stream handler masks the same record
-  (planned test_a_configured_handler_masks_the_store_host).
+  (`services/api/tests/test_logging.py::test_a_configured_handler_masks_the_store_host`).
 - [ ] `db.example.co` is not masked inside `db.example.com`, is masked in
   upper case, and `localhost` is never masked
-  (planned test_the_host_mask_keeps_its_boundaries).
+  (`services/api/tests/test_logging.py::test_the_host_mask_keeps_its_boundaries`).
 - [ ] Every host of a multi-host URL is masked
-  (planned test_every_host_of_a_multi_host_url_is_masked).
+  (`services/api/tests/test_logging.py::test_every_host_of_a_multi_host_url_is_masked`).
 - [ ] `query cancellation failed: %s` with a psycopg `OperationalError`
   whose text names the host still prints `OperationalError` alone
-  (planned test_a_cancel_failure_prints_no_host).
+  (`services/api/tests/test_logging.py::test_a_cancel_failure_prints_no_host`).
 - [ ] `scrub_outbound` returns a text naming the host unchanged
-  (planned test_scrub_outbound_keeps_the_host).
+  (`services/api/tests/test_logging.py::test_scrub_outbound_keeps_the_host`).
 - [ ] `uv run ruff check`, `uv run pyright` and `just check` pass.
 
 ## Proof / origin
@@ -215,6 +217,34 @@ refusing, as spec 103 meant.
 - The route found is narrow: a failed ROLLBACK on a connection libpq still
   reports as OK. No test drives it against a real server; the tests build
   the repr with `connection_summary` on a stub connection.
+
+## Amendment (2026-10-15): spec 133's log assertions
+
+Found while implementing. Three assertions in
+`services/api/tests/test_store_password_scrub.py` read a log record's text
+for the URL with its password masked and its host kept,
+`postgresql://harrier:REDACTED@db.example.test`. That host is a store
+URL's host, so this spec masks it, and they now read
+`postgresql://harrier:REDACTED@REDACTED:5432/tracker`. They still prove
+what they proved, and now prove this spec on the root handler and the log
+file as well.
+
+`test_a_record_that_cannot_be_scrubbed_is_withheld` replaced
+`scrub_outbound` with a function that raises, to make the filter fail. The
+filter now calls `scrub_logged`, which applies `scrub_outbound`'s masking
+and this spec's, so the test replaces that instead. Its assertions do not
+change.
+
+The assertions on HTTP error bodies and run events keep the host, as
+Behavior says, and pass unchanged.
+
+Behavior said the `urlsplit` reading is used when libpq cannot parse the
+URL. It is also used when psycopg is not loaded in the process: a log
+record never imports the driver (`_psycopg_error_class` in
+`services/api/src/harrier/connection.py`), and a process that has not
+loaded it has opened no Postgres store whose repr it could log. Such a
+process reads a multi-host URL's hosts as `urlsplit` does, which does not
+split them (`_hosts_and_user_of` in `services/api/src/harrier/logredact.py`).
 
 ## Migration
 

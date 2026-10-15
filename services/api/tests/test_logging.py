@@ -438,3 +438,276 @@ def test_configure_logging_closes_its_connection_when_identity_values_fails(
     configure_logging(force=True)
     assert _wal_files(quiet_database) == set()
     assert "identity redaction is unavailable" in capsys.readouterr().err
+
+
+# --- the store host and user (spec 145) ---
+#
+# psycopg logs its own connection, transaction and pipeline objects as
+# arguments when a rollback fails (`psycopg/transaction.py`), and their repr
+# names the host, the port and the user. `harrier store` configures no
+# logging, so such a line goes through the last-resort handler.
+
+DATABASE_URL = "HARRIER_DATABASE_URL"
+IMPORT_URL = "HARRIER_IMPORT_DATABASE_URL"
+ACCOUNT_URL = "HARRIER_ACCOUNT_DATABASE_URL"
+
+# Synthetic stores, one per variable, each with a pooler-shaped user.
+STORES = {
+    DATABASE_URL: ("db.store-one.example", "postgres.storeoneref"),
+    IMPORT_URL: ("db.store-two.example", "postgres.storetworef"),
+    ACCOUNT_URL: ("db.store-three.example", "postgres.storethreeref"),
+}
+
+
+def _store_url(host: str, user: str, port: str = "6543") -> str:
+    return f"postgresql://{user}:synthetic-pw@{host}:{port}/postgres"
+
+
+def _stores(monkeypatch: pytest.MonkeyPatch, **urls: str) -> None:
+    """Set the three store variables: each named one to its URL, the rest
+    empty or absent. `HARRIER_DATABASE_URL` stays set, as the test pin
+    requires; an empty value is the local store."""
+    monkeypatch.setenv(DATABASE_URL, urls.get(DATABASE_URL, ""))
+    for variable in (IMPORT_URL, ACCOUNT_URL):
+        if variable in urls:
+            monkeypatch.setenv(variable, urls[variable])
+        else:
+            monkeypatch.delenv(variable, raising=False)
+
+
+class _Repr:
+    """An object that prints as psycopg's own objects print."""
+
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    def __repr__(self) -> str:
+        return self._text
+
+
+def _transaction(host: str, user: str, port: str = "6543") -> _Repr:
+    """A psycopg transaction as psycopg itself prints one: its repr built by
+    `connection_summary`, on a connection libpq reports as OK."""
+    from types import SimpleNamespace
+    from typing import Any, cast
+
+    from psycopg.pq import ConnStatus, TransactionStatus
+    from psycopg.pq.misc import connection_summary
+
+    pgconn = SimpleNamespace(
+        status=ConnStatus.OK,
+        transaction_status=TransactionStatus.INERROR,
+        pipeline_status=0,
+        host=host.encode(),
+        port=port.encode(),
+        user=user.encode(),
+        db=b"postgres",
+    )
+    summary = connection_summary(cast(Any, pgconn))
+    return _Repr(f"<psycopg.Transaction (ACTIVE) {summary} at 0x1>")
+
+
+def _rollback_failed(transaction: _Repr) -> None:
+    """The line psycopg logs when a rollback fails (`psycopg/transaction.py`)."""
+    from psycopg import OperationalError
+
+    logging.getLogger("psycopg").warning(
+        "error ignored in rollback of %s: %s",
+        transaction,
+        OperationalError("consuming input failed"),
+    )
+
+
+def _last_resort(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A process that configured no logging, as `harrier store` is, with the
+    scrub the CLI installs before any command runs. Called in the test body:
+    pytest adds its own handler to the root when the test starts."""
+    from harrier.logsetup import scrub_last_resort
+
+    handler = logging.lastResort
+    assert handler is not None
+    monkeypatch.setattr(handler, "filters", [])
+    monkeypatch.setattr(logging.getLogger(), "handlers", [])
+    scrub_last_resort()
+
+
+def test_the_last_resort_masks_the_store_host(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _last_resort(monkeypatch)
+    host, user = STORES[DATABASE_URL]
+    _stores(monkeypatch, **{DATABASE_URL: _store_url(host, user)})
+
+    _rollback_failed(_transaction(host, user))
+
+    written = capsys.readouterr().err
+    assert "error ignored in rollback of" in written
+    assert host not in written
+    assert "host=REDACTED port=6543" in written
+
+
+@pytest.mark.parametrize("variable", [IMPORT_URL, ACCOUNT_URL])
+def test_each_store_url_host_is_masked(
+    variable: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _last_resort(monkeypatch)
+    host, user = STORES[variable]
+    _stores(monkeypatch, **{variable: _store_url(host, user)})
+
+    _rollback_failed(_transaction(host, user))
+
+    written = capsys.readouterr().err
+    assert "error ignored in rollback of" in written
+    assert host not in written
+    assert "host=REDACTED" in written
+
+
+@pytest.mark.dotenv_fallback
+def test_the_host_variables_are_read_where_their_specs_read_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`HARRIER_DATABASE_URL` is read as `store_target` reads it, `.env`
+    included. The import and account URLs are read from the environment
+    only, as specs 141 and 144 read them."""
+    _last_resort(monkeypatch)
+    _stores(monkeypatch)
+    # Into tmp_path before the variable goes, so no other `.env` is read.
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(
+        "".join(f"{variable}={_store_url(*STORES[variable])}\n" for variable in STORES),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv(DATABASE_URL)
+
+    hosts = " ".join(host for host, _ in STORES.values())
+    logging.getLogger("harrier.tests.hosts").warning("hosts: %s", hosts)
+
+    written = capsys.readouterr().err
+    assert STORES[DATABASE_URL][0] not in written
+    assert STORES[IMPORT_URL][0] in written
+    assert STORES[ACCOUNT_URL][0] in written
+
+
+def test_the_store_user_is_masked_after_user_equals(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Only after `user=`, so a plain `postgres` user does not mask that word
+    wherever a message uses it."""
+    _last_resort(monkeypatch)
+    direct = "db.direct.example"
+    _stores(
+        monkeypatch,
+        **{
+            DATABASE_URL: _store_url(*STORES[DATABASE_URL]),
+            IMPORT_URL: _store_url(*STORES[IMPORT_URL]),
+            # A direct connection, whose user is the plain role name.
+            ACCOUNT_URL: _store_url(direct, "postgres"),
+        },
+    )
+    one, two = STORES[DATABASE_URL][1], STORES[IMPORT_URL][1]
+
+    logging.getLogger("psycopg").warning(
+        "users: (user=%s) user='%s' user=postgres, the postgres role, user=stranger, user=%sx",
+        one,
+        two,
+        one,
+    )
+
+    written = capsys.readouterr().err
+    assert one not in written.replace(f"user={one}x", "")
+    assert two not in written
+    assert "(user=REDACTED) user='REDACTED' user=REDACTED, the postgres role" in written
+    assert "user=stranger" in written
+    assert f"user={one}x" in written
+
+
+def test_a_configured_handler_masks_the_store_host(
+    db: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    host, user = STORES[DATABASE_URL]
+    written = _capture(monkeypatch)
+    # Set after logging is configured, which runs on the local store; the
+    # scrub reads the URL when a record is logged.
+    _stores(monkeypatch, **{DATABASE_URL: _store_url(host, user)})
+
+    _rollback_failed(_transaction(host, user))
+
+    assert len(written) == 1, "nothing was logged"
+    line = written[0]
+    assert "error ignored in rollback of" in line
+    assert host not in line
+    assert user not in line
+    assert "host=REDACTED port=6543 user=REDACTED" in line
+
+
+def test_the_host_mask_keeps_its_boundaries(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _last_resort(monkeypatch)
+    _stores(
+        monkeypatch,
+        **{
+            DATABASE_URL: _store_url("db.example.co", "harrier"),
+            IMPORT_URL: _store_url("localhost", "harrier"),
+        },
+    )
+
+    logging.getLogger("harrier.tests.hosts").warning(
+        "seen: db.example.com, DB.EXAMPLE.CO, localhost and db.example.co."
+    )
+
+    written = capsys.readouterr().err
+    assert "seen: db.example.com, REDACTED, localhost and REDACTED." in written
+
+
+def test_every_host_of_a_multi_host_url_is_masked(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _last_resort(monkeypatch)
+    hosts = ("db-a.store.example", "db-b.store.example", "192.0.2.10", "192.0.2.11")
+    url = (
+        f"postgresql://harrier:synthetic-pw@{hosts[0]}:5432,{hosts[1]}:5433/postgres"
+        f"?hostaddr={hosts[2]},{hosts[3]}"
+    )
+    _stores(monkeypatch, **{DATABASE_URL: url})
+
+    logging.getLogger("harrier.tests.hosts").warning("hosts: %s", ", ".join(hosts))
+
+    written = capsys.readouterr().err
+    assert "hosts: REDACTED, REDACTED, REDACTED, REDACTED" in written
+
+
+def test_a_cancel_failure_prints_no_host(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The route the privacy review of PR #349 named: a cancel failure is
+    logged with the driver's error, whose libpq text names the host and its
+    address. Spec 135 prints a driver error as the seam's text, so neither
+    appears."""
+    _last_resort(monkeypatch)
+    from psycopg import OperationalError
+
+    host, user = STORES[DATABASE_URL]
+    _stores(monkeypatch, **{DATABASE_URL: _store_url(host, user)})
+    error = OperationalError(
+        f'connection to server at "{host}" (203.0.113.7), port 6543 failed: timeout expired'
+    )
+
+    logging.getLogger("psycopg").warning("query cancellation failed: %s", error)
+
+    written = capsys.readouterr().err
+    assert "query cancellation failed: OperationalError\n" in written
+    assert host not in written
+    assert "203.0.113.7" not in written
+
+
+def test_scrub_outbound_keeps_the_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """HTTP error bodies and run events name the store they refused on
+    purpose (spec 103); only log records mask the host."""
+    from harrier.logredact import scrub_outbound
+
+    host, user = STORES[DATABASE_URL]
+    _stores(monkeypatch, **{DATABASE_URL: _store_url(host, user)})
+    text = f"cannot connect to the Postgres store at {host}:6543/postgres: user={user}"
+
+    assert scrub_outbound(text) == text
