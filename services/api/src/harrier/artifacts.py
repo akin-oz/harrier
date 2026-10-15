@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from harrier.apply.answers import answers_key_for
 from harrier.apply.letters import cover_letter_keys_for
 from harrier.connection import Connection
-from harrier.filestore import files, key_name
+from harrier.filestore import is_present, key_name
 from harrier.offers.evaluate import report_key_for
 from harrier.resume.content import ResumeBundleError, load_bundle
 from harrier.resume.tailor import resume_keys_for
@@ -112,7 +112,7 @@ def _artifact(kind: str, key: str | None) -> Artifact:
     return Artifact(
         kind=kind,
         key=key,
-        exists=key is not None and files().stat(key) is not None,
+        exists=key is not None and is_present(key),
         produced_by=PRODUCED_BY[kind],
         media_type=_MEDIA_TYPES[kind],
     )

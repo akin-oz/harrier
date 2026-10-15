@@ -1036,8 +1036,22 @@ and nothing here changes what PR 2 builds.
   `FileStoreError` for a store with no local files.
 - **`FileStoreUnbound` is not an `OSError`.** It subclasses
   `RuntimeError`, so no caller's `except OSError` can read a missing
-  binding as an absent file or a rules score. It gives the failure mode
-  above: a 500, and nothing written.
+  binding as an absent file or a rules score. PR 1 never raises it:
+  `files()` falls back to the local store in every mode. Two kinds of
+  caller catch `RuntimeError` and so would absorb it once PR 2 raises it,
+  which PR 2 settles: academic discovery's `save_dataset`
+  (`services/api/src/harrier/academic/discovery.py`) records it as a failed
+  source, and the CLI's `RuntimeError` handlers in
+  `services/api/src/harrier_cli/main.py` print it and exit nonzero. The
+  second is acceptable; the first must not read an unbound store as a
+  source failure (data-integrity review of PR #361).
+- **Presence keeps `is_file()`'s tolerance.** The artifact list and the
+  batch evaluator asked `is_file()` and `exists()`, which read a file where
+  a directory should be as absent. They ask `is_present` in
+  `services/api/src/harrier/filestore.py`, which keeps that, while `stat`
+  still raises it for the model cache. Listing the scoring exports reads an
+  unreadable directory as no export, as `glob` did
+  (data-integrity review of PR #361).
 - **Paths that stay in the first table's modules.** An export named with
   `harrier scoring train --export` is read from that path
   (`services/api/src/harrier/scoring/train.py:131-133`). The PDF gate's

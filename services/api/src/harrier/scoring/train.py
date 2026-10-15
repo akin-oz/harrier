@@ -116,10 +116,14 @@ def models_dir() -> Path:
 
 
 def latest_export_key() -> str | None:
-    """The default track's newest export by name, which is by date."""
-    keys = [
-        entry.key for entry in files().list(EXPORTS) if fnmatchcase(entry.name, "features-*.jsonl")
-    ]
+    """The default track's newest export by name, which is by date. A
+    directory that cannot be listed holds no export, as `glob` read it
+    before the seam (data-integrity review of PR #361)."""
+    try:
+        entries = files().list(EXPORTS)
+    except OSError:
+        return None
+    keys = [entry.key for entry in entries if fnmatchcase(entry.name, "features-*.jsonl")]
     return max(keys, default=None)
 
 

@@ -646,3 +646,57 @@ def test_the_local_store_follows_the_data_directory(
         files().put("third.md", b"three", atomic=False)
     assert (tmp_path / "bound" / "third.md").read_bytes() == b"three"
     assert files().local_path("third.md") == tmp_path / "moved" / "third.md"
+
+
+# --- the tolerance the old path checks had (data-integrity review of PR #361) ---
+
+
+def test_a_file_where_a_family_directory_should_be_reads_as_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`is_file()` read a file sitting where `resumes/` should be as "no
+    artifact". The artifact list keeps that answer instead of raising
+    `NotADirectoryError` from `stat`."""
+    from harrier.artifacts import artifacts_for_job
+    from harrier.tracker.actions import add_manually
+    from harrier.tracks import default_scope
+
+    monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
+    conn = connect()
+    try:
+        store_documents(conn, *example_documents())
+        scope = default_scope(conn)
+        _, row = add_manually(conn, scope, company="Example Studio", title="Frontend Developer")
+        assert row is not None
+        for family in ("resumes", "cover-letters", "answers", "reports"):
+            (data_dir() / family).write_text("not a directory", encoding="utf-8")
+
+        artifacts = artifacts_for_job(conn, scope, int(row["id"]))
+    finally:
+        conn.close()
+
+    assert artifacts
+    assert [artifact.exists for artifact in artifacts] == [False] * len(artifacts)
+
+
+def test_an_unlistable_exports_directory_reads_as_no_export(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`glob` read an exports directory it could not list as empty, so
+    training answered "no export found" rather than raising."""
+    from harrier.filestore import LocalFileStore
+
+    monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "data"))
+    listed = LocalFileStore.list
+
+    def unreadable(self: LocalFileStore, prefix: str) -> list[Any]:
+        if prefix == train_module.EXPORTS:
+            raise PermissionError(13, "Permission denied")
+        return listed(self, prefix)
+
+    monkeypatch.setattr(LocalFileStore, "list", unreadable)
+
+    outcome = train_module.train()
+
+    assert outcome.exit_code == train_module.EXIT_UNUSABLE
+    assert outcome.messages == ["no export found; run `harrier scoring export` first"]

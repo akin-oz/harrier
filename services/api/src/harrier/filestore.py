@@ -21,6 +21,7 @@ spec 107's second pull request.
 from __future__ import annotations
 
 import builtins
+import errno
 import json
 import re
 import stat as stat_module
@@ -274,6 +275,26 @@ def local_file(key: str) -> Path:
     if path is None:
         raise FileStoreError(f"{key.split('/', 1)[0]} has no local file in this store")
     return path
+
+
+# The errors `Path.is_file()` and `Path.exists()` read as "not there" rather
+# than raise: a missing entry, a file where a directory should be, a bad
+# descriptor and a symlink loop.
+_ABSENT_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP})
+
+
+def is_present(key: str) -> bool:
+    """Whether a file is at the key, with `Path.is_file()`'s tolerance: an
+    error it read as absent is absent, any other is raised. `stat` itself
+    raises `NotADirectoryError`, which the model cache relies on, so the
+    callers that used `is_file()` or `exists()` ask this instead
+    (data-integrity review of PR #361)."""
+    try:
+        return files().stat(key) is not None
+    except OSError as error:
+        if error.errno in _ABSENT_ERRNOS:
+            return False
+        raise
 
 
 def load_text(key: str) -> str | None:

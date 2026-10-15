@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from harrier.connection import Connection
-from harrier.filestore import files
+from harrier.filestore import files, is_present
 from harrier.offers.evaluate import (
     EvaluationError,
     evaluate_offer,
@@ -71,7 +71,7 @@ def evaluate_prospects(conn: Connection, scope: Scope, options: BatchOptions) ->
         url = row.get("url", "")
         job_id = int(row.get("id", "0"))
 
-        if files().stat(report_key_for(company, title)) is not None and not options.refresh:
+        if is_present(report_key_for(company, title)) and not options.refresh:
             summary.skipped_existing += 1
             summary.lines.append(f"report exists, skipping: {company} | {title}")
             continue
