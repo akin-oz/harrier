@@ -1499,3 +1499,32 @@ Each written by the same change, as one note or line:
 - `services/api/src/harrier/operator.py`,
   `services/api/src/harrier/connection.py` and
   `services/api/src/harrier/tracker/schema.py` (`POSTGRES_ERASURE`).
+
+## Amendment (2026-10-15): the database decides whether a user exists
+
+Found by the first `harrier operator erase-test-owners` run on staging (spec
+143). The erase asked only the auth server whether a user exists, and a 404
+read as "already erased": steps 1, 3 and 4 were skipped and the ledger line
+said complete. Spec 115's test owners were inserted into `auth.users` by SQL
+with only an id, so the auth server answers 404 for them while the database
+still holds them and their rows. The run reported 167 owners erased and
+deleted nothing.
+
+**Behavior after the change.** When the auth server answers 404, the erase
+reads `auth.users` as the operator's login:
+
+- The row is there: the auth server does not know this user. Step 1 is
+  skipped (such a user cannot sign in), step 3 erases the rows, and step 4
+  deletes the `auth.users` row with SQL, since the admin API cannot delete
+  what it cannot see. The output says which.
+- The row is not there: the user is erased already, and steps 1, 3 and 4
+  are skipped as before.
+- The login cannot read `auth.users`: the erase stops at step 1 and says so,
+  because it cannot tell the two cases apart. A dedicated login that is
+  only a member of `service_role` is such a login (spec 143, Amendment);
+  `harrier operator erase` of a user the auth server knows does not reach
+  this read.
+
+`services/api/tests/test_operator_erase_test_owners.py::test_erase_test_owners_erases_owners_the_auth_server_cannot_see`
+proves it, with the fake auth server answering 404 for ids `auth.users`
+holds. The test fails on the code before this change.

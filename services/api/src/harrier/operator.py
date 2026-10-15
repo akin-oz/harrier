@@ -420,6 +420,38 @@ def erase_rows(conn: Connection, user_id: str) -> list[tuple[str, int]]:
     return [(str(name), int(count)) for name, count in counts]
 
 
+UNKNOWN_TO_AUTH = "the auth server does not know this user"
+AUTH_ROW_UNREADABLE = (
+    "the login cannot read auth.users, so a user the auth server does not know "
+    "cannot be told from one already erased"
+)
+
+
+def auth_row_exists(conn: Connection, user_id: str) -> bool:
+    """Whether `auth.users` holds the id, read as the operator's login. Asked
+    only when the auth server answers 404: a row it cannot see (one inserted
+    by SQL, as spec 115's tests do) still owns rows, so the database decides
+    whether there is anything to erase (spec 143, Failure modes)."""
+    try:
+        row = conn.execute("SELECT 1 FROM auth.users WHERE id = ?::uuid", (user_id,)).fetchone()
+    except StoreDatabaseError:
+        raise OperatorError(AUTH_ROW_UNREADABLE, step="ban") from None
+    return row is not None
+
+
+def delete_auth_row(conn: Connection, user_id: str) -> None:
+    """Step 4 for a user the auth server does not know: its admin API cannot
+    delete what it cannot see, so the row is deleted with SQL, as the
+    operator's login."""
+    try:
+        with conn.transaction():
+            conn.execute("DELETE FROM auth.users WHERE id = ?::uuid", (user_id,))
+    except StoreError as error:
+        raise OperatorError(
+            f"auth.users refused the delete ({type(error).__name__})", step="auth"
+        ) from None
+
+
 def erase_owner(
     user_id: str,
     admin: AdminClient,
@@ -440,8 +472,11 @@ def erase_owner(
     5. Storage again, for objects written since step 2.
     6. The ledger line.
 
-    A user that does not exist skips steps 1, 3 and 4, so a re-run after a
-    partial erase finishes the rest. A line is appended to the ledger when
+    A user that exists neither for the auth server nor in `auth.users`
+    skips steps 1, 3 and 4, so a re-run after a partial erase finishes the
+    rest. A user the auth server answers 404 for while `auth.users` still
+    holds it skips the ban, has its rows erased, and has its `auth.users`
+    row deleted with SQL (spec 143, Failure modes). A line is appended to the ledger when
     the run fails after step 3 committed, too: those rows are gone from the
     live copy, and a restore of an older backup must erase them again.
 
@@ -455,10 +490,13 @@ def erase_owner(
         print(text, file=out)
 
     try:
-        exists = admin.user_exists(user_id)
-        if exists:
+        known = admin.user_exists(user_id)
+        exists = known or auth_row_exists(conn, user_id)
+        if known:
             admin.ban_user(user_id)
             say("step 1 ban: banned")
+        elif exists:
+            say(f"step 1 ban: skipped, {UNKNOWN_TO_AUTH}")
         else:
             say("step 1 ban: skipped, no auth user with that id")
         completed.append("ban")
@@ -483,9 +521,12 @@ def erase_owner(
             say("step 3 rows: skipped, no auth user with that id")
         completed.append("rows")
 
-        if exists:
+        if known:
             _delete_auth_user(admin, conn, user_id)
             say("step 4 auth user: deleted")
+        elif exists:
+            delete_auth_row(conn, user_id)
+            say(f"step 4 auth user: deleted from auth.users, as {UNKNOWN_TO_AUTH}")
         else:
             say("step 4 auth user: skipped, no auth user with that id")
         completed.append("auth")

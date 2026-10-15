@@ -249,6 +249,30 @@ def test_erase_test_owners_rechecks_each_owner(
     assert out.splitlines()[-1].startswith("erased 2, skipped 1; rows deleted: ")
 
 
+def test_erase_test_owners_erases_owners_the_auth_server_cannot_see(
+    store: Store, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Staging's case on 2026-10-15: owners inserted by SQL with only an id,
+    which the auth server answers 404 for. Their rows and their `auth.users`
+    rows are erased all the same, and the ledger says complete only because
+    they are. Before this, the 404 read as "already erased": nothing was
+    deleted, and the ledger still recorded every owner as complete."""
+    owners = store.synthetic(3)
+    kept = real_accounts(store)
+    before = {owner: store.rows(owner) for owner in kept}
+    store.fake.unknown.update(owners)
+
+    code, out, err = run(["operator", "erase-test-owners", "--confirm", "3"], capsys)
+
+    assert (code, err) == (0, "")
+    assert out.splitlines()[-1].startswith("erased 3, skipped 0; rows deleted: ")
+    assert not any(owner in store.users() for owner in owners)
+    assert all(store.rows(owner) == 0 for owner in owners)
+    assert {owner: store.rows(owner) for owner in kept} == before
+    assert store.fake.of_kind("ban") == [] and store.fake.of_kind("delete") == []
+    assert [line["complete"] for line in store.ledger()] == [True, True, True]
+
+
 def test_erase_test_owners_resumes_after_a_failure(
     store: Store, capsys: pytest.CaptureFixture[str]
 ) -> None:

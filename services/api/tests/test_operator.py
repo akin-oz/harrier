@@ -92,6 +92,10 @@ class FakeSupabase:
         self.addresses: dict[str, str] = {}
         self.before: dict[str, Callable[[str], None]] = {}
         self.events: list[str] = []
+        # Ids `auth.users` holds that the auth server cannot see: rows a
+        # test inserted by SQL with only an id, as spec 115's staging check
+        # does. Every admin route answers 404 for them (spec 143).
+        self.unknown: set[str] = set()
 
     def client(self) -> httpx.Client:
         return httpx.Client(transport=httpx.MockTransport(self.handler))
@@ -135,6 +139,8 @@ class FakeSupabase:
             if self.db is not None:
                 self.db.execute("INSERT INTO auth.users (id) VALUES (%s)", (identifier,))
             return httpx.Response(200, json={"id": identifier, "email": address})
+        if kind in ("get", "ban", "delete") and user in self.unknown:
+            return httpx.Response(404, json={"error_code": "user_not_found"})
         if kind in ("get", "delete"):
             return self.user_call(kind, user)
         if kind == "ban":
