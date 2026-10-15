@@ -926,6 +926,25 @@ them:
 No recommendation is made in this text. Until this is taken, the
 criterion above states the guarantee only.
 
+### Decision taken (2026-10-15): the run's Storage token
+
+Akin chose in chat on 2026-10-15: a hosted run uses the session token of the
+request that started it. The run manager receives the bearer token of the
+verified request that starts a run, and binds the run's `files()` to a
+`SupabaseFileStore` for that owner and that token, before any domain code
+runs. No signing key is held, and no token is minted.
+
+- A run started from the browser or the API carries the starting request's
+  token, which expires an hour after it was issued (spec 104). A run that is
+  still writing to Storage after that gets `FileStoreDenied`, and fails as
+  any denied write fails.
+- A scheduled run (spec 108) has no request, so it has no token. It binds no
+  store, and `files()` refuses with `FileStoreUnbound`, so it writes no file.
+  The kinds that write files stay refused for scheduled runs until a later
+  spec decides how they reach Storage.
+- The token travels to the run's process in its environment, never in its
+  arguments or its run journal, and the run's logs never print it.
+
 ### Proof / origin (amendment of 2026-10-13)
 
 - `specs/106-tenant-credentials-and-run-isolation.md`, Open decision 8,
