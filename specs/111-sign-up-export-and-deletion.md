@@ -653,6 +653,10 @@ Gates:
 - **A token outlives the ban.** Up to its `exp`, one hour by default
   (spec 104). The erase handles the race by failing and being re-run, not
   by preventing it.
+  For Storage the race does not fail: a token can write an object under the
+  owner's prefix after step 5 has listed it, and no later step finds it.
+  Spec 107's amendment of 2026-10-15 closes it in the policy, which this
+  build does not create (CodeRabbit on PR #348).
 - **No self-service deletion.** An owner asks the operator, out of band.
   The operator's answer time is a human's, measured against Article
   12(3)'s month by nothing in harrier.
