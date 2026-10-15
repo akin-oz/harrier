@@ -259,11 +259,11 @@ def hosted_url(environ: Mapping[str, str]) -> str:
     return target.url
 
 
-def check_login_role(url: str) -> None:
-    """Refuse a login role that can step past the row policy (spec 134's
-    checks, the run login's). Connects as the login role, with no claims,
-    and reads the catalog in a transaction that writes nothing. The
-    migrator's URL fails here, before any owner connection."""
+def login_problems(url: str) -> list[str]:
+    """What spec 134's run-login checks find wrong with the login role `url`
+    names, empty when it passes. Connects as the login role, with no claims,
+    and reads the catalog in a transaction that writes nothing. Shared with
+    spec 144's account commands, which take the same login."""
     from harrier.pgstore import postgres_connect
 
     driver = postgres_connect(url)
@@ -272,13 +272,19 @@ def check_login_role(url: str) -> None:
         with conn.transaction():
             row = conn.execute("SELECT current_user::text").fetchone()
             role = str(row[0]) if row is not None else ""
-            problems = login_role_problems(conn, role)
+            return [str(problem) for problem in login_role_problems(conn, role)]
     finally:
         driver.close()
+
+
+def check_login_role(url: str) -> None:
+    """Refuse a login role that can step past the row policy (spec 134's
+    checks, the run login's). The migrator's URL fails here, before any
+    owner connection."""
+    problems = login_problems(url)
     if problems:
         raise StoreImportRefused(
-            f"{IMPORT_URL_VARIABLE} names a login role the import refuses: "
-            + "; ".join(map(str, problems))
+            f"{IMPORT_URL_VARIABLE} names a login role the import refuses: " + "; ".join(problems)
         )
 
 

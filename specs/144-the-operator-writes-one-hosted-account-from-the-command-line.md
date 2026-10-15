@@ -107,10 +107,10 @@ exit 1.
 - `resume_facts` takes a JSON file and `resume_truth` a Markdown file. Both
   are shared documents, owned by no track, so `--track` is refused for them
   (exit 2).
-- The new document replaces the stored one only if the content check that
-  `profile check` runs passes for every track of the account with the new
-  document in place. A failure prints the check's lines, exits 2, and stores
-  nothing. So a truth edit that leaves a track's bullet without evidence is
+- The new document replaces the stored one only if it gives no track of
+  the account a `profile check` failure that track did not have before
+  (amendment 2). A refusal prints the new failures, each naming its track,
+  exits 2, and stores nothing. So a truth edit that leaves a track's bullet without evidence is
   refused, naming the track and the bullet.
 - On the local store both run as the other `profile put` kinds do: delegated
   into the container when it runs (spec 074).
@@ -133,7 +133,7 @@ document errors.
 | A user id with no account (no track visible) | Refused as an account that does not exist or has not been invited, exit 1 |
 | The hosted store behind the code's schema version | Refused by spec 103's check, exit 1 |
 | A command outside the list, such as `discover` | Refused before anything opens, exit 1 |
-| A second active focused track | Refused as locally (spec 137), exit 1 |
+| A second active focused track | Refused as locally (spec 137), exit 2 (amendment 1) |
 | `move` with a job id not on the source track | Refused, `no job <id> on track <slug>`, exit 1, as locally |
 | `move` with a local job id that names another hosted job on the source track | Runs on that job. The id is the operator's to check; see Honest limitations |
 | `move` into a track that holds the same posting | Refused as a conflict, as locally (spec 138) |
@@ -146,32 +146,33 @@ document errors.
 
 - [ ] `tracks add --kind focused` with `--owner` creates the track in that
       account and in no other, and a second active focused track is refused
-      (planned test_account_writes_adds_a_focused_track_to_one_account).
+      (`services/api/tests/test_account_writes.py::test_account_writes_adds_a_focused_track_to_one_account`).
 - [ ] `profile put screening`, `resume_framing` and `application_profile`
       with `--owner` store the documents for the named track of that
       account, and a focused framing of four profile sentences is refused
       with nothing stored
-      (planned test_account_writes_puts_track_documents).
+      (`services/api/tests/test_account_writes.py::test_account_writes_puts_track_documents`).
 - [ ] `move` with `--owner` moves a hosted job and writes its `moved`
       event, on the CI Postgres service as on SQLite
-      (planned test_account_writes_moves_a_job_on_both_stores).
+      (`services/api/tests/test_account_writes.py::test_account_writes_moves_a_job_on_both_stores`).
 - [ ] `profile put resume_facts` and `profile put resume_truth` replace the
       shared document on both stores, and a truth edit that leaves a
       track's bullet without evidence is refused with exit 2 and nothing
-      stored (planned test_profile_put_shared_documents_checks_every_track).
+      stored (`services/api/tests/test_account_writes.py::test_profile_put_shared_documents_checks_every_track`).
 - [ ] With `--owner`: an unset variable, a variable set only in `.env`,
       the migrator's URL and an unknown user id each exit 1 with nothing
       written; a malformed `--owner` exits 2
-      (planned test_account_writes_refuses_before_writing).
+      (`services/api/tests/test_account_writes.py::test_account_writes_refuses_before_writing`).
 - [ ] `discover` given `--owner` exits 1 with the spec 144 sentence and
-      opens nothing (planned test_account_writes_refuses_other_commands).
+      opens nothing (`services/api/tests/test_account_writes.py::test_account_writes_refuses_other_commands`).
 - [ ] No output line of a run with `--owner` contains the owner id, the URL
-      or the host (planned test_account_writes_prints_no_identity).
+      or the host (`services/api/tests/test_account_writes.py::test_account_writes_prints_no_identity`).
 - [ ] With `--owner`, no host lease is taken and the Docker engine is not
       asked, so the commands run while the local container runs
-      (planned test_account_writes_ignores_the_local_container).
+      (`services/api/tests/test_account_writes.py::test_account_writes_ignores_the_local_container`).
 - [ ] `docs/deploy.md` says how to run these commands against staging, in
-      a section beside "Importing a local store into an account".
+      a section beside "Importing a local store into an account" (section
+      "Writing one account from the command line").
 
 Tests use synthetic owners and rows only, on the CI Postgres service, like
 spec 141's.
@@ -227,6 +228,28 @@ as recommended: the variable is `HARRIER_ACCOUNT_DATABASE_URL`, the
 
 None. Without `--owner` every command behaves as today. The two new
 `profile put` kinds are additions.
+
+## Amendments found while implementing (2026-10-15)
+
+1. **A second focused track exits 2.** The failure table said exit 1. The
+   local command exits 2 for a track the rules refuse
+   (`services/api/tests/test_focused_track.py::test_a_second_focused_track_is_refused`),
+   and "as locally" is the rule, so the account command does too.
+2. **The facts and truth check compares before and after.** "Passes for
+   every track" would refuse every edit while any track already fails its
+   check, such as an archived track with no framing. The check runs each
+   track's `profile check` before and after the write, in one transaction,
+   and refuses when any track gains a failure line it did not have. A
+   failure the store already held does not block an edit, and an edit that
+   adds one is refused, naming the track
+   (`put_shared_resume_document` in `services/api/src/harrier/resume/framing.py`).
+3. **Logging is not set up with `--owner`.** Its setup opens the local store
+   to load the redaction values, and these commands never open it. A
+   refusal prints one line to stderr, as the import's does.
+4. **The login check is shared with the import.** `login_problems` in
+   `services/api/src/harrier/tracker/importlocal.py` returns spec 134's
+   problems; the import and `open_account` in
+   `services/api/src/harrier/accountstore.py` each word their own refusal.
 
 ## Proof / origin
 

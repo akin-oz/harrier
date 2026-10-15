@@ -80,15 +80,16 @@ def load_project_env(path: Path | None = None) -> None:
     """Load .env from the working directory (spec 011; launchd wrappers rely
     on it). Existing environment variables are never overridden. A hosted
     run never calls it (spec 106)."""
+    from harrier.accountstore import ACCOUNT_URL_VARIABLE
     from harrier.envfile import read_env_file
     from harrier.tracker.importlocal import IMPORT_URL_VARIABLE
 
     for key, value in read_env_file(path if path is not None else Path(".env")).items():
         if key in os.environ:
             continue
-        if key == IMPORT_URL_VARIABLE:
-            # The import's hosted URL comes from the shell for the one
-            # command, never from a file that outlives it (spec 141).
+        if key in (IMPORT_URL_VARIABLE, ACCOUNT_URL_VARIABLE):
+            # A hosted account's URL comes from the shell for the one
+            # command, never from a file that outlives it (specs 141, 144).
             continue
         if key == URL_VARIABLE and not _local_store_url(value):
             # Not copied into the environment, where it would look exported
@@ -208,14 +209,64 @@ def operator_group(
     raise LookupError("harrier operator has no subcommands")
 
 
+# The account `--owner` names while one of its commands runs (spec 144), set
+# and cleared by `_run_for_account`; None for every other command.
+_account_owner: str | None = None
+
+
 def _open_store() -> Connection:
-    """The store a run class command opens: the local SQLite file, or, in a
-    hosted run, the Postgres store as the run's owner, every transaction
-    under the owner's identity (spec 106). `main` has checked the owner and
-    the store before any command runs."""
+    """The store a command opens: the local SQLite file; in a hosted run, the
+    Postgres store as the run's owner, every transaction under the owner's
+    identity (spec 106); with `--owner`, that account (spec 144). `main` has
+    checked the owner and the store before any command runs."""
+    if _account_owner is not None:
+        from harrier.accountstore import open_account
+
+        return open_account(_account_owner, os.environ)
     if in_a_hosted_run():
         return open_store(owner=os.environ[RUN_OWNER_VARIABLE])
     return connect()
+
+
+def _run_for_account(args: argparse.Namespace, owner: str) -> int:
+    """A command run against one hosted account (spec 144).
+
+    Refused before anything opens when the command is not one `--owner`
+    runs. Takes no host lease and asks the Docker engine nothing (specs 061,
+    075): this command never opens the local file. Logging is not set up,
+    since its setup reads the local store. A refusal prints one line naming
+    the check, never the owner id, the URL or the host.
+    """
+    global _account_owner
+    from harrier.accountstore import ACCOUNT_COMMANDS, ACCOUNT_URL_VARIABLE, account_refusal
+
+    name = subcommand_name(args)
+    if name not in ACCOUNT_COMMANDS:
+        print(f"error: {account_refusal(name)}", file=sys.stderr)
+        return 1
+    _account_owner = owner
+    try:
+        refused = _check_track(args)
+        if refused is not None:
+            return refused
+        result: int = args.func(args)
+        return result
+    except TrackerError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    except StoreConnectionError:
+        # Built from the host, which names the project: not printed.
+        print(
+            f"error: harrier {name} could not connect to the hosted store; "
+            f"check {ACCOUNT_URL_VARIABLE}",
+            file=sys.stderr,
+        )
+        return 1
+    except StoreError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    finally:
+        _account_owner = None
 
 
 def _is_owner_id(value: str) -> bool:
@@ -567,7 +618,9 @@ def _cmd_profile_put(args: argparse.Namespace) -> int:
     except (OSError, UnicodeError) as error:
         print(f"profile put failed: cannot read --file: {error}", file=sys.stderr)
         return 1
-    with closing(connect()) as conn:
+    if args.kind in SHARED_RESUME_KINDS:
+        return _put_shared_resume_document(args, text)
+    with closing(_open_store()) as conn:
         scope = _scope(conn, args)
         if args.kind == "screening":
             return _put_screening(conn, scope, text)
@@ -575,6 +628,30 @@ def _cmd_profile_put(args: argparse.Namespace) -> int:
             outcome = put_application_profile(conn, scope, path.suffix, text)
         else:
             outcome = put_framing(conn, scope, text)
+    stream = sys.stdout if outcome.exit_code == 0 else sys.stderr
+    for line in outcome.lines:
+        print(line, file=stream)
+    return outcome.exit_code
+
+
+# The shared documents `profile put` stores (spec 144); no track owns them.
+SHARED_RESUME_KINDS = ("resume_facts", "resume_truth")
+
+
+def _put_shared_resume_document(args: argparse.Namespace, text: str) -> int:
+    """`profile put resume_facts|resume_truth` (spec 144): refused with
+    `--track`, and when the edit breaks any track's resume content; either
+    refusal exits 2 and stores nothing."""
+    from harrier.resume.framing import put_shared_resume_document
+
+    if getattr(args, "track_slug", None) is not None:
+        print(
+            f"profile put {args.kind}: a shared document belongs to no track; drop --track",
+            file=sys.stderr,
+        )
+        return 2
+    with closing(_open_store()) as conn:
+        outcome = put_shared_resume_document(conn, args.kind, text)
     stream = sys.stdout if outcome.exit_code == 0 else sys.stderr
     for line in outcome.lines:
         print(line, file=stream)
@@ -606,7 +683,7 @@ def _put_screening(conn: Connection, scope: Scope, text: str) -> int:
 def _cmd_profile_check(args: argparse.Namespace) -> int:
     from harrier.resume.framing import check_resume
 
-    with closing(connect()) as conn:
+    with closing(_open_store()) as conn:
         outcome = check_resume(conn, _scope(conn, args))
     for line in outcome.lines:
         print(line)
@@ -614,7 +691,7 @@ def _cmd_profile_check(args: argparse.Namespace) -> int:
 
 
 def _cmd_profile_list(_args: argparse.Namespace) -> int:
-    with closing(connect()) as conn:
+    with closing(_open_store()) as conn:
         documents = list_documents(conn)
         for doc in documents:
             print(
@@ -1752,7 +1829,7 @@ def _cmd_move(args: argparse.Namespace) -> int:
     )
     from harrier.tracks import UnknownTrackError, resolve_scope
 
-    with closing(connect()) as conn:
+    with closing(_open_store()) as conn:
         scope = _scope(conn, args)
         source = scope.track.slug
         try:
@@ -1798,7 +1875,7 @@ def _cmd_tracks(args: argparse.Namespace) -> int:
         list_tracks,
     )
 
-    with closing(connect()) as conn:
+    with closing(_open_store()) as conn:
         if args.tracks_command == "list":
             for track in list_tracks(conn):
                 print(_track_line(track))
@@ -2985,6 +3062,17 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="SLUG",
         help="the search track to work in (spec 093); the default track when omitted",
     )
+    parser.add_argument(
+        "--owner",
+        dest="account_owner",
+        type=_owner_id,
+        default=None,
+        metavar="USER_ID",
+        help=(
+            "run against this hosted account, its Supabase user id, through "
+            "HARRIER_ACCOUNT_DATABASE_URL (spec 144)"
+        ),
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     migrate_parser = sub.add_parser(
@@ -3036,12 +3124,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     profile_put = profile_sub.add_parser(
         "put",
-        help="store the track's resume framing, application profile or screening document",
+        help=(
+            "store the track's resume framing, application profile or screening document, "
+            "or the shared resume facts or truth"
+        ),
     )
     profile_put.add_argument(
         "kind",
-        choices=["resume_framing", "application_profile", "screening"],
-        help="the document kind; screening is a focused track's (spec 137)",
+        choices=["resume_framing", "application_profile", "screening", *SHARED_RESUME_KINDS],
+        help=(
+            "the document kind; screening is a focused track's (spec 137); "
+            "resume_facts and resume_truth are shared (spec 144)"
+        ),
     )
     profile_put.add_argument(
         "--file",
@@ -3782,6 +3876,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(vector)
     if hosted_run:
         return _run_hosted(args)
+    account_owner = getattr(args, "account_owner", None)
+    if isinstance(account_owner, str):
+        return _run_for_account(args, account_owner)
     # Which store, decided after .env is loaded so a URL set there counts, and
     # before the lease and the hand-over, which concern the SQLite file. A bad
     # URL or a Postgres one opens nothing here (spec 103).
