@@ -1,8 +1,8 @@
 ---
 spec: 145
 title: The log scrub masks the store host and user
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [133, 135, 141, 144]
 ---
