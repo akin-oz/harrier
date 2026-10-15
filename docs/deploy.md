@@ -165,18 +165,34 @@ export HARRIER_DATABASE_URL
 psql "$HARRIER_DATABASE_URL"
 ```
 
-Inside `psql`, for each of `harrier_api`, `harrier_run` and `harrier_scheduler`:
+For each of `harrier_api`, `harrier_run` and `harrier_scheduler`, make the
+role, then set its password from a shell variable. Nothing is pasted:
 
 ```
-CREATE ROLE harrier_api LOGIN NOINHERIT;
-\password harrier_api
+API_PW=$(openssl rand -hex 24)
+psql "$HARRIER_DATABASE_URL" -c 'CREATE ROLE harrier_api LOGIN NOINHERIT'
+V=$(PW="$API_PW" python3 -c 'import os,hashlib,hmac,base64 as b;s=os.urandom(16);k=hashlib.pbkdf2_hmac("sha256",os.environ["PW"].encode(),s,4096);c=hmac.new(k,b"Client Key","sha256").digest();print("SCRAM-SHA-256$4096:"+b.b64encode(s).decode()+"$"+b.b64encode(hashlib.sha256(c).digest()).decode()+":"+b.b64encode(hmac.new(k,b"Server Key","sha256").digest()).decode())')
+psql "$HARRIER_DATABASE_URL" -c "ALTER ROLE harrier_api PASSWORD '$V'"; unset V
 ```
 
-`\password` hashes the password before it leaves `psql`, so no statement or log
-holds it. Make each password with `openssl rand -hex 24` (no character needs
-percent encoding in a URL), copy it with `pbcopy` for the prompt, and keep it
-in a shell variable for the Fly secret in step 3. A password never goes through
-the workflow.
+The Python line computes the SCRAM-SHA-256 verifier that `\password` would
+send, so only the salted hash reaches the server and no statement or log holds
+the password. `openssl rand -hex 24` needs no percent encoding in a URL. Keep
+the variable for the Fly secret in step 3, and check the login before you rely
+on it: `psql "<its URL>" -Atc 'select current_user'` prints the role's name. A
+password never goes through the workflow.
+
+Do not set these passwords by pasting into `\password`. The clipboard holds
+whatever was copied last, and copying the next command from a runbook or a
+chat replaces the password: on 2026-10-15 `\password` stored the wrong value
+twice that way, and the login failed with "password authentication failed".
+The same holds for `read -rs`: copy the command first, run it, then copy the
+secret and paste it at the waiting prompt.
+
+A password manager keeps the URLs past the terminal that made them. With the
+1Password CLI, `op item create --category=password --vault=<vault>
+--title=<name> "password=$URL"` stores one, and `op read op://<vault>/<name>/password`
+reads it back into the one command that needs it.
 
 Do not grant these roles anything yourself. `harrier store grant-tenant` and
 `harrier store grant-schedule-reader` do, and refuse a role that cannot log in,
@@ -540,7 +556,7 @@ it; deploy forward again.
 |---|---|
 | A Fly deploy token | `fly tokens list --app <app>`, then `fly tokens revoke <id>`; make a new one and update the GitHub secret. |
 | The migrator's URL | Reset the `postgres` role's password in the Supabase dashboard (database settings); update `HARRIER_MIGRATE_DATABASE_URL`. |
-| A login role's password | `psql` as the migrator: `\password harrier_api`; end its pooled sessions first (`pg_terminate_backend`); `fly secrets set` the new URL; the machines restart. |
+| A login role's password | As the migrator, set a new one from a shell variable as in step 2 (`ALTER ROLE ... PASSWORD` with the verifier); end its pooled sessions first (`pg_terminate_backend`); `fly secrets set` the new URL; the machines restart. |
 | `HARRIER_CREDENTIALS_KEY` | Rotation is spec 116's, not this pipeline's; setting a new one makes stored credentials unreadable until they are re-entered. |
 | A Vercel token | Delete it in the account's tokens; make a new one; update `VERCEL_TOKEN`. |
 | The publishable key | It is public by design; rotate it in the project's API keys, then update the GitHub variable and the Vercel variable. |
