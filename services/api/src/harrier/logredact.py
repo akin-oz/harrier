@@ -440,7 +440,9 @@ def _libpq_reading(url: str) -> dict[str, object] | None:
 @functools.lru_cache(maxsize=8)
 def _hosts_and_users_of(url: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """The hosts a store URL names, and its user name as libpq reads it, as
-    the URL writes it, and percent-encoded (spec 145).
+    the URL writes it, and percent-encoded (spec 145). Each also as `repr`
+    and `json.dumps` quote it, as the password forms are (spec 133): JSON
+    writes a non-ASCII character as a `\\u` escape.
 
     The hosts are every entry of libpq's `host` and `hostaddr`, split at
     commas, or the host `urlsplit` reads when libpq cannot read the URL.
@@ -483,7 +485,11 @@ def _hosts_and_users_of(url: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
             form for form in (user, written, quote(user, safe="")) if form and user != _PLAIN_ROLE
         )
     )
-    return hosts, users
+    return _with_quoted_forms(hosts), _with_quoted_forms(users)
+
+
+def _with_quoted_forms(forms: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys((*forms, *(q for form in forms for q in _quoted_forms(form)))))
 
 
 @functools.lru_cache(maxsize=8)

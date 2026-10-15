@@ -100,7 +100,10 @@ prints it whenever it differs from the database name.
 
 A user name is replaced with `REDACTED` wherever it stands as a whole
 role name, in any of its forms: as libpq reads it, as the URL writes it,
-and percent-encoded. It stands whole where the character before it and the
+and percent-encoded. Each of those forms, and each host, is also matched as
+`repr` and `json.dumps` quote it, as the password forms are (spec 133):
+JSON writes a non-ASCII character as a `\u` escape, so `café` is
+`caf\u00e9` there. It stands whole where the character before it and the
 character after it cannot continue a role name: neither is a letter, digit,
 `_`, `$` or `-`, and a `.` counts only where another such character follows
 it after the name, or comes before it. A letter or digit before the name
@@ -188,6 +191,9 @@ refusing, as spec 103 meant.
   `<name>@host` without a scheme, a percent-encoded URL and libpq's
   `for user "<name>"`, and is kept inside a longer role name
   (`services/api/tests/test_logging.py::test_the_store_user_is_masked_wherever_it_stands_as_a_role_name`).
+- [ ] A non-ASCII user and host are masked as `json.dumps` and `repr`
+  write them
+  (`services/api/tests/test_logging.py::test_a_non_ascii_user_and_host_are_masked_as_json_and_repr_write_them`).
 - [ ] A host after a written-out backslash escape or a `%40` escape is
   masked
   (`services/api/tests/test_logging.py::test_a_host_after_an_escape_is_masked`).
@@ -267,8 +273,9 @@ Found while implementing. Three assertions in
 `services/api/tests/test_store_password_scrub.py` read a log record's text
 for the URL with its password masked and its host kept,
 `postgresql://harrier:REDACTED@db.example.test`. That host is a store
-URL's host, so this spec masks it, and they now read
-`postgresql://harrier:REDACTED@REDACTED:5432/tracker`, and assert the
+URL's host, so this spec masks it. With the user masked too, by the
+amendment below, they now read
+`postgresql://REDACTED:REDACTED@REDACTED:5432/tracker`, and assert the
 host appears nowhere in the record, its exception and stack text included.
 They still prove what they proved, and prove this spec on the root handler
 and the log file as well. The absence check was added after the local

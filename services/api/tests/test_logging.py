@@ -715,6 +715,33 @@ def test_the_store_user_is_masked_wherever_it_stands_as_a_role_name(
         assert f"{name}: {expected if expected is not None else text}\n" in written, name
 
 
+def test_a_non_ascii_user_and_host_are_masked_as_json_and_repr_write_them(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`json.dumps` writes a non-ASCII character as a `\\u` escape and `repr`
+    may escape it too, as the password forms already allow for (spec 133);
+    the user and the host are masked in those forms as well (CodeRabbit
+    review of PR #360)."""
+    import json
+
+    _last_resort(monkeypatch)
+    user, host = "café.ref", "db.café.example"
+    _stores(
+        monkeypatch,
+        **{DATABASE_URL: f"postgresql://caf%C3%A9.ref:synthetic-pw@{host}:6543/postgres"},
+    )
+    log = logging.getLogger("harrier.tests.users")
+
+    log.warning("json %s", json.dumps({"user": user, "host": host}))
+    log.warning("repr %r", {"user": user, "host": host})
+    log.warning("plain %s %s", user, host)
+
+    written = capsys.readouterr().err
+    assert 'json {"user": "REDACTED", "host": "REDACTED"}\n' in written
+    assert "repr {'user': 'REDACTED', 'host': 'REDACTED'}\n" in written
+    assert "plain REDACTED REDACTED\n" in written
+
+
 def test_a_configured_handler_masks_the_store_host(
     db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
