@@ -181,6 +181,16 @@ changes a decision taken above.
   `test_supabase_project.py` adds an `email` column to the shim itself.
 - Both modes need spec 111's environment, including the secret key, though
   the report makes no admin call: one refusal path for the command.
+- **The login is the migrator's.** Checked on staging on 2026-10-15, read
+  only. A dedicated login made as spec 111's runbook describes
+  (`LOGIN NOINHERIT`, a member of `service_role`) can switch to
+  `service_role` but reads neither `auth.users` nor `auth.identities`, and
+  no owner's rows. The project's `postgres` role can do all three: it can
+  `SET ROLE service_role`, holds `SELECT` on both auth tables, and bypasses
+  row security. So `HARRIER_DATABASE_URL` for this command is the
+  migrator's URL. `harrier operator erase` for one account still works with
+  the dedicated login. `docs/deploy.md`, "Erasing the synthetic test
+  owners", says so.
 
 ## Out of scope
 
