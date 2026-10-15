@@ -1,8 +1,8 @@
 ---
 spec: 146
 title: A local store's artifacts import into one hosted account
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [047, 107, 111, 141]
 ---
@@ -406,6 +406,14 @@ service, with synthetic names and bytes only, like spec 141's.
    counted. Alternative: a flag that overwrites, which spec 107's seam
    already allows (its `put` upserts) and which risks replacing an artifact
    a hosted run made since the rows were imported.
+
+## Decisions taken (2026-10-15)
+
+Akin approved the spec with every open decision taken as recommended: the
+operator's secret key writes, `data/resumes-corrected` is not copied,
+reports stay out, a file not copied exits 1 with `incomplete`, the command is
+a sibling of `import-local`, files no hosted job resolves to are copied, and
+a differing hosted object is never overwritten.
 
 ## Honest limitations
 
