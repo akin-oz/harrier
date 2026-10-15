@@ -1560,5 +1560,12 @@ the other key and leaves the secret key out of the environment, and
 `harrier operator erase` still refuses naming the `.env` file. The
 environment assertion fails on the code before this change.
 
+The loader learns the variable's name from `services/api/src/harrier/envfile.py`,
+not from `harrier.operator`. That module imports `httpx`, which is a dev
+dependency only and absent from the hosted images and the local container,
+and the loader runs before every command, the scheduler machine's included.
+`services/api/tests/test_cli_imports_no_httpx.py::test_loading_dotenv_imports_no_httpx`
+holds the loader to importing no `httpx`.
+
 Limitation: the skip is by name, as it is for the two URLs. A key that holds
 a secret under another name is not caught, and the loader cannot tell.

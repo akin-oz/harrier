@@ -46,11 +46,11 @@ import httpx
 
 from harrier.connection import Connection, StoreDatabaseError, StoreError
 from harrier.db import data_dir
+from harrier.envfile import SECRET_KEY_VARIABLE
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-SECRET_KEY_VARIABLE = "HARRIER_SUPABASE_SECRET_KEY"
 SUPABASE_URL_VARIABLE = "HARRIER_SUPABASE_URL"
 DATABASE_URL_VARIABLE = "HARRIER_DATABASE_URL"
 
