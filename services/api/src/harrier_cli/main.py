@@ -81,9 +81,14 @@ def load_project_env(path: Path | None = None) -> None:
     on it). Existing environment variables are never overridden. A hosted
     run never calls it (spec 106)."""
     from harrier.envfile import read_env_file
+    from harrier.tracker.importlocal import IMPORT_URL_VARIABLE
 
     for key, value in read_env_file(path if path is not None else Path(".env")).items():
         if key in os.environ:
+            continue
+        if key == IMPORT_URL_VARIABLE:
+            # The import's hosted URL comes from the shell for the one
+            # command, never from a file that outlives it (spec 141).
             continue
         if key == URL_VARIABLE and not _local_store_url(value):
             # Not copied into the environment, where it would look exported
@@ -1827,6 +1832,8 @@ def _cmd_store(args: argparse.Namespace) -> int:
     """Migrate the store, or print its dialect and version (spec 103)."""
     from harrier.connection import StoreError
 
+    if args.store_command == "import-local":
+        return _store_import_local(args)
     try:
         target = store_target()
         if args.store_command in STORE_DEPLOY_COMMANDS:
@@ -1849,6 +1856,57 @@ def _cmd_store(args: argparse.Namespace) -> int:
         # Built from host, port and database only, never the URL (spec 035).
         print(f"error: {error}", file=sys.stderr)
         return 1
+
+
+def _store_import_local(args: argparse.Namespace) -> int:
+    """`harrier store import-local --owner <user id>` (spec 141).
+
+    Reads the local store read-only and copies it into one empty hosted
+    account. The hosted URL is `HARRIER_IMPORT_DATABASE_URL`, never
+    `HARRIER_DATABASE_URL`. A refusal prints one line to stderr and exits 1;
+    the output names tables and counts, never the owner, the host or a row.
+    """
+    from harrier.connection import StoreConnectionError, StoreError
+    from harrier.tracker.importlocal import TABLES, import_local
+
+    try:
+        written = import_local(args.owner, os.environ, default_db_path())
+    except DatabaseOwnedByContainer:
+        print(
+            f"error: the {CONTAINER_NAME} container owns the local store; stop it first, "
+            "then run the import again",
+            file=sys.stderr,
+        )
+        return 1
+    except DatabaseOwnershipError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    except StoreConnectionError:
+        # Built from the host, which names the project: not printed.
+        print(
+            "error: harrier store import-local could not connect to the hosted store; "
+            "check HARRIER_IMPORT_DATABASE_URL",
+            file=sys.stderr,
+        )
+        return 1
+    except StoreError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    for table in TABLES:
+        print(f"{table}: {written.counts[table]} copied")
+    print("imported")
+    return 0
+
+
+def _owner_id(value: str) -> str:
+    """`--owner`: a Supabase user id, a UUID. The text of a refusal never
+    quotes the value."""
+    import uuid
+
+    try:
+        return str(uuid.UUID(value))
+    except ValueError:
+        raise argparse.ArgumentTypeError("--owner must be the account's user id, a UUID") from None
 
 
 # The deploy's store steps (spec 110): they run as the migrator on a Postgres
@@ -2818,6 +2876,10 @@ COMMAND_CLASSES: dict[str, CommandClass] = {
     "store grant-tenant": _HOST,
     "store grant-schedule-reader": _HOST,
     "store check-deploy": _HOST,
+    # Reads the local file read-only after the host open rules, which it
+    # applies itself, and writes the hosted account (spec 141). Never
+    # delegated: a container that owns the file is a refusal.
+    "store import-local": _HOST,
     # Read no database: the project's Auth settings, a Fly listing on stdin,
     # Fly's events and figures typed in (spec 110).
     "deploy check-auth-settings": _HOST,
@@ -3315,6 +3377,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         metavar="ROLE",
         help="the scheduler's login role: harrier_tenant and harrier_schedule_reader, no other",
+    )
+    import_local_cmd = store_sub.add_parser(
+        "import-local",
+        help="copy the local store into one empty hosted account, read-only on the local file "
+        "(spec 141)",
+    )
+    import_local_cmd.add_argument(
+        "--owner",
+        required=True,
+        type=_owner_id,
+        metavar="USER_ID",
+        help="the account's Supabase user id, as the dashboard's Users page shows it",
     )
     store_cmd.set_defaults(func=_cmd_store)
 

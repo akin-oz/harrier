@@ -78,10 +78,13 @@ In this order, each refusal naming what failed and writing nothing:
 
 1. The local store's schema version equals the latest the code knows. A
    store behind it is refused with a sentence that says to start the local
-   app once, so it migrates, and stop it again.
-2. The hosted store's version equals the same latest version (spec 103's
-   check).
-3. The login role passes the run login's checks.
+   app once, so it migrates, and stop it again. A local row that names a
+   track or a job the local store does not hold, and an application brief
+   named by no job it holds, are refused here, naming the table (amendment
+   1).
+2. The login role passes the run login's checks.
+3. The hosted store's version equals the same latest version (spec 103's
+   check). Amendment 2 explains the order of 2 and 3.
 4. Inside the owner's transaction, after locking track 1's row
    (`SELECT ... FOR UPDATE`), the owner sees exactly one track, id 1,
    and no row in the other seven tables. An owner that sees no track is
@@ -106,9 +109,11 @@ One owner transaction (`open_store(owner=...)`, spec 106), in this order:
    `job_id` rewritten through the job map. Every other column, `at`
    included, is copied as written, so the history keeps its times and order.
 5. `profile_documents` with `track_id` rewritten through the track map
-   (null stays null). `contacts`, `user_config` and `job_runs` as written.
-   `job_runs.job` names a pipeline job, not a tracker row, and is not
-   rewritten.
+   (null stays null), and the name of an application brief rewritten
+   through the job map (amendment 1). `contacts` with the job ids inside
+   `linked_jobs` rewritten through the job map (amendment 1), then
+   `user_config` and `job_runs` as written. `job_runs.job` names a pipeline
+   job, not a tracker row, and is not rewritten.
 6. Check 4 runs again just before commit, counting only rows this
    transaction did not write. If another writer added a row for the owner
    meanwhile, the transaction rolls back and the import is refused.
@@ -138,6 +143,7 @@ exits 2.
 | Two imports for one owner at once | The second blocks on track 1's row lock and then finds rows, so it is refused |
 | The operator uses the web app during the import | A row it adds fails the pre-commit check; the import rolls back |
 | A local column the hosted schema lacks | Refused before any insert, naming table and column |
+| A local application brief named by a job the local store does not hold | Refused before the hosted store is reached, naming `profile_documents` (amendment 1) |
 | A timeout on the hosted connection | The transaction rolls back like any failure; the honest limit is named below |
 
 ## Acceptance criteria
@@ -147,32 +153,85 @@ exits 2.
       none, and configuration documents imports into an empty account, and
       the owner reads back the same values in every copied column, with
       `job_id` and `track_id` pointing at the hosted rows
-      (planned test_import_local_copies_every_table_and_rewrites_ids).
+      (`services/api/tests/test_import_local.py::test_import_local_copies_every_table_and_rewrites_ids`).
 - [ ] Event and eligibility order and `at` survive the copy
-      (planned test_import_local_keeps_history_times_and_order).
+      (`services/api/tests/test_import_local.py::test_import_local_keeps_history_times_and_order`).
 - [ ] A second owner's rows are untouched and invisible to the import, and
       no imported row carries another owner's id
-      (planned test_import_local_writes_only_the_named_owner).
+      (`services/api/tests/test_import_local.py::test_import_local_writes_only_the_named_owner`).
 - [ ] An account with any row beyond track 1 is refused with exit 1 and no
-      write (planned test_import_local_refuses_an_account_with_rows).
+      write (`services/api/tests/test_import_local.py::test_import_local_refuses_an_account_with_rows`).
 - [ ] A failure on the last table leaves the account as it was, and a second
       run then succeeds
-      (planned test_import_local_rolls_back_whole_and_runs_again).
+      (`services/api/tests/test_import_local.py::test_import_local_rolls_back_whole_and_runs_again`).
 - [ ] A row added for the owner by another connection before commit rolls
       the import back
-      (planned test_import_local_rolls_back_when_the_account_changes).
+      (`services/api/tests/test_import_local.py::test_import_local_rolls_back_when_the_account_changes`).
 - [ ] A local store behind the latest version, a running container, the
       migrator's URL, and an unknown user id are each refused with exit 1
       and nothing written
-      (planned test_import_local_refuses_before_writing).
+      (`services/api/tests/test_import_local.py::test_import_local_refuses_before_writing`).
 - [ ] The local file's bytes and modification time are unchanged by an import
-      (planned test_import_local_never_writes_the_local_store).
+      (`services/api/tests/test_import_local.py::test_import_local_never_writes_the_local_store`).
 - [ ] Output names tables and numbers only
-      (planned test_import_local_prints_no_identity).
-- [ ] `docs/deploy.md` says how to run it against staging and production.
+      (`services/api/tests/test_import_local.py::test_import_local_prints_no_identity`).
+- [ ] The job ids inside a copied contact's `linked_jobs`, and the name of
+      a copied application brief, follow their jobs to the hosted ids; a
+      link to a job the local store does not hold is blanked, and a brief
+      for one is refused (amendment 1;
+      `services/api/tests/test_import_local.py::test_import_local_rewrites_job_ids_named_inside_rows`,
+      `services/api/tests/test_import_local.py::test_import_local_refuses_a_brief_for_no_job`).
+- [ ] A column difference in either direction is refused naming the table
+      and the column, with nothing written
+      (`services/api/tests/test_import_local.py::test_import_local_refuses_a_column_the_hosted_store_lacks`).
+- [ ] An unset `HARRIER_IMPORT_DATABASE_URL` and a missing local store each
+      exit 1, and an `--owner` that is not a UUID, or none, exits 2
+      (`services/api/tests/test_import_local.py::test_import_local_refuses_without_a_url_or_a_local_store`,
+      `services/api/tests/test_import_local.py::test_import_local_usage_errors_exit_2`).
+- [ ] `docs/deploy.md` says how to run it against staging and production
+      (section "Importing a local store into an account").
 
 Tests run on the CI Postgres service, like spec 112's dual-store tests, with
 synthetic rows only.
+
+## Amendments found while implementing (2026-10-15)
+
+1. **Job ids named inside rows follow their jobs.** The spec copied
+   `contacts` and `profile_documents` "as written" apart from `track_id`.
+   Two columns carry a local job id inside their text. A contact's
+   `linked_jobs` is a JSON list whose links name a tracked job by
+   `job_id` (`services/api/src/harrier/outreach/joblink.py`), and an
+   application brief is a `profile_documents` row of kind
+   `application_brief` whose `name` is the job id
+   (`services/api/src/harrier/apply/brief.py`). Copied as written, both
+   would name whichever hosted job now holds that number, and a brief
+   carries the never-name list of its application. Both are rewritten
+   through the job map. A link whose id the local store does not hold is
+   blanked (its company, title and URL stay, as an unresolved link keeps
+   them). A brief named by a job the store does not hold is refused, since
+   no honest name exists for it. The same check refuses a local row naming
+   a track or job the store does not hold, which SQLite's foreign keys
+   already keep from existing in a store the app wrote.
+2. **The login role is checked before the hosted version.** A run login
+   holds no grant of its own and reads `schema_version` only as the tenant,
+   which is the owner connection. The failure table says the migrator's URL
+   is refused before connecting to the owner, so the role check comes first
+   and the version is read when the owner connection opens. The checks
+   still all run before the first insert.
+3. **The pre-commit check counts.** "Rows this transaction did not write"
+   is each table's row count compared with what the import wrote (track 1
+   is updated, so the track count includes it). A second import waits for
+   track 1's lock for `LOCK_WAIT_MS` in
+   `services/api/src/harrier/tracker/importlocal.py`, then is refused as a
+   busy store, rather than for the seam's default of a few seconds.
+4. **`.env` never supplies the import's URL.** Input says the hosted URL is
+   exported in the shell for the one command. The CLI's `.env` loader
+   copied every unset key, so a `HARRIER_IMPORT_DATABASE_URL` line in `.env`
+   would have been read. `load_project_env` in
+   `services/api/src/harrier_cli/main.py` now skips that key, and the import
+   then refuses it as unset; the file's other keys load as before
+   (`services/api/tests/test_import_local.py::test_import_local_never_takes_its_url_from_dotenv`,
+   CodeRabbit on PR #342).
 
 ## Proof / origin
 
@@ -232,6 +291,14 @@ follow-up spec once spec 107 is built.
   both.
 - Nothing proves the local and hosted columns mean the same thing, only that
   their names match. Spec 112's portable SQL is what keeps them aligned.
+- Reading a WAL-mode SQLite file read-only leaves empty `tracker.db-wal` and
+  `tracker.db-shm` files beside it. The database file's bytes and
+  modification time are unchanged, and the next writer's open handles the
+  companions. An immutable open would leave none, and would ignore a WAL
+  left by a crash, so it is not used.
+- A rewritten id is found by its decimal text. A `linked_jobs` or brief name
+  that is not a decimal number names no job, and is treated as one that
+  names a job the store does not hold.
 
 ## Migration
 

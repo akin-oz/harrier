@@ -382,6 +382,64 @@ it until a spec owns the fix:
   (`--tb=line`, so a failed connection prints no URL).
   Record its output, role names only.
 
+## Importing a local store into an account
+
+`harrier store import-local` copies the local store, `data/tracker.db`, into one
+hosted account (spec 141). It copies the rows of `tracks`, `jobs`, `job_events`,
+`job_eligibility`, `contacts`, `profile_documents`, `user_config` and
+`job_runs`, and nothing else: artifacts and other files move in a later spec. The
+account must be empty apart from track 1, which sign-up made. The command
+refuses anything else and writes nothing.
+
+Run it once per account, on the operator's machine, in this order:
+
+1. Stop the local container, so nothing owns the local file:
+   `just container-down`. The import refuses while it runs. Leave it stopped
+   until the import has finished.
+2. Make sure the local store is at the latest version. A store one version
+   behind is refused with a sentence that says to start the local app once, so
+   it migrates, and stop it again.
+3. Find the account's user id on the Supabase dashboard's Users page. It is a
+   UUID. An email address is not accepted.
+4. Read the run login's URL into this shell only, never into `.env` and never as
+   a typed command (the same rule as the migrator's URL, step 2 above). The run
+   login is `harrier_run`, the session pooler URL on port 5432. The migrator's
+   URL is refused, and so is any login that can reach a role past the row
+   policy:
+
+   ```
+   read -rs HARRIER_IMPORT_DATABASE_URL   # paste harrier_run's session pooler URL
+   export HARRIER_IMPORT_DATABASE_URL
+   ```
+
+   `HARRIER_DATABASE_URL` is not read by this command, so the shell may hold it
+   or not.
+5. Run it, with staging's login and the staging account's user id:
+
+   ```
+   uv run --project services/api harrier store import-local --owner <user id>
+   ```
+
+   For production, do the same with production's run login and the production
+   account's user id, once that project exists.
+6. Clear the variable: `unset HARRIER_IMPORT_DATABASE_URL`.
+
+A run that works prints one line per table, `tracks: 3 copied` for example, and
+then `imported`. It prints no name, owner id or host. A refusal prints one line
+on stderr and exits 1; a missing or malformed `--owner` exits 2.
+
+If a run fails, the account is as it was: the copy is one transaction. Fix what
+the line names and run it again. A run for an account that already holds rows is
+refused, naming the first table that holds any; it never merges.
+
+The command reads the local file read-only and does not change it. SQLite may
+leave empty `tracker.db-wal` and `tracker.db-shm` files beside it (spec 141,
+Honest limitations). A long transaction suits a store of a few thousand rows; a
+hosted connection that times out rolls back, and a larger store needs batching
+that the spec does not provide.
+
+The command's tests are in `services/api/tests/test_import_local.py`.
+
 ## A deploy that fails halfway
 
 harrier has no down migrations (spec 090): a bad migration is fixed forward.

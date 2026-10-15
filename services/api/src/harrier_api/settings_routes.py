@@ -88,6 +88,10 @@ _DEPLOY_STORE = (
     "Deploy steps (spec 110): they check a login role, grant it, or check the store as the "
     "migrator, which the deploy workflow and an operator run deliberately."
 )
+_IMPORT = (
+    "One-time import (spec 141): it reads the local file and writes one hosted account, so it "
+    "runs on the operator's machine with the run login's URL in the shell."
+)
 _DEPLOY = (
     "Deploy checks (spec 110): the deploy workflow runs them, and the operator runs the cost "
     "projection once a month from a shell."
@@ -212,6 +216,7 @@ COMMAND_PLACES: dict[str, Place] = {
     "store grant-tenant": TerminalOnly(_DEPLOY_STORE),
     "store grant-schedule-reader": TerminalOnly(_DEPLOY_STORE),
     "store check-deploy": TerminalOnly(_DEPLOY_STORE),
+    "store import-local": TerminalOnly(_IMPORT),
     "deploy check-auth-settings": TerminalOnly(_DEPLOY),
     "deploy check-machine-count": TerminalOnly(_DEPLOY),
     "deploy check-scheduler-tick": TerminalOnly(_DEPLOY),
