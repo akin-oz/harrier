@@ -45,6 +45,7 @@ from harrier.tracker.schema import HOSTED_ONLY_TABLES, OWNED_TABLES, TENANT_ROLE
 from harrier.tracker.store import (
     DuplicateJobError,
     EligibilityAssessment,
+    OtherVerdict,
     add_contact,
     add_job,
     find_duplicate,
@@ -54,7 +55,13 @@ from harrier.tracker.store import (
     set_status,
     update_fields,
 )
-from harrier.tracks import DEFAULT_TRACK_ID, DuplicateTrackError, add_track, archive_track
+from harrier.tracks import (
+    DEFAULT_TRACK_ID,
+    DuplicateTrackError,
+    add_track,
+    archive_track,
+    resolve_scope,
+)
 from harrier.tracks import default_scope as scope_of
 from harrier.userconfig.store import LINKEDIN_SEARCHES, list_config, set_config
 
@@ -221,6 +228,10 @@ def test_no_domain_insert_supplies_an_id(
         {"company": "Larchmere Analytics", "title": "Data Engineer", "url": "https://x.example"},
         scope=scope_of(store),
         eligibility=EligibilityAssessment(verdict="possible", checked_at="2026-10-11T09:30:00Z"),
+        # A shared run's verdict for another track (spec 139).
+        other_verdict=OtherVerdict(
+            track_id=resolve_scope(store, "postdoc-search").track.id, verdict="pass"
+        ),
     )
     set_status(store, scope_of(store), job_id, "shortlisted")
     add_contact(store, {"company": "Larchmere Analytics", "person_name": "Sam Example"})

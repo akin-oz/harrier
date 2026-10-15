@@ -789,6 +789,8 @@ TENANT_MAY_NOT = {
     "track-delete": "tracks",
     "eligibility-update-verdict": "job_eligibility",
     "eligibility-delete": "job_eligibility",
+    "verdict-update": "job_verdicts",
+    "verdict-delete": "job_verdicts",
 }
 
 

@@ -601,6 +601,11 @@ MINIMAL_ROWS: tuple[tuple[str, str, str], ...] = (
         "SELECT * FROM job_eligibility",
     ),
     (
+        "job_verdicts",
+        "INSERT INTO job_verdicts (job_id, track_id, verdict) VALUES (1, 1, 'pass')",
+        "SELECT * FROM job_verdicts",
+    ),
+    (
         "job_runs",
         "INSERT INTO job_runs (job, last_success_at) VALUES ('parity', '2026-10-10 00:00:00')",
         "SELECT * FROM job_runs",
@@ -643,7 +648,7 @@ NOT_UTC_OFFSET_SECONDS = 9 * 3600
 
 def timestamp_shape(table: str, column: str) -> TimestampShape | None:
     """The shape a column's default timestamp must have, or None if not one."""
-    if table in {"job_events", "job_eligibility"} and column == "at":
+    if table in {"job_events", "job_eligibility", "job_verdicts"} and column == "at":
         return ISO_NOW
     if column in {"created_at", "updated_at"}:
         return SQLITE_NOW
@@ -1083,6 +1088,8 @@ def _assessment(
 
 
 ONE_ASSESSMENT = _assessment()
+# A verdict on job 1 for track 1, every store's first track (spec 139).
+ONE_VERDICT = "INSERT INTO job_verdicts (job_id, track_id, verdict) VALUES (1, 1, 'pass')"
 
 
 def _every_eligibility_value() -> tuple[Probe, ...]:
@@ -1333,6 +1340,32 @@ PROBES: tuple[Probe, ...] = (
         refused=True,
         message="job_eligibility is append-only",
         setup=(ONE_JOB, ONE_ASSESSMENT),
+    ),
+    Probe(
+        "verdict-update",
+        "UPDATE job_verdicts SET verdict = 'reject'",
+        refused=True,
+        message="job_verdicts is append-only",
+        setup=(ONE_JOB, ONE_VERDICT),
+    ),
+    Probe(
+        "verdict-delete",
+        "DELETE FROM job_verdicts",
+        refused=True,
+        message="job_verdicts is append-only",
+        setup=(ONE_JOB, ONE_VERDICT),
+    ),
+    Probe(
+        "verdict-twice-for-one-track",
+        "INSERT INTO job_verdicts (job_id, track_id, verdict) VALUES (1, 1, 'reject')",
+        refused=True,
+        setup=(ONE_JOB, ONE_VERDICT),
+    ),
+    Probe(
+        "verdict-unknown",
+        "INSERT INTO job_verdicts (job_id, track_id, verdict) VALUES (1, 1, 'maybe')",
+        refused=True,
+        setup=(ONE_JOB,),
     ),
     *_every_eligibility_value(),
     *_every_status(),

@@ -39,7 +39,19 @@ posting can be moved (spec 138) with the reason in view.
   `review`: the other verdict on each row's line.
 - `services/api/src/harrier/tracks.py`: `discover` on a focused track
   still refused, with a message naming the shared run.
-- Tests: `services/api/tests/test_shared_discovery.py` (new).
+- `services/api/src/harrier/discovery.py`: the run resolves the focused
+  track once, warns once when it has no screening document, and appends
+  each row to its own track with its verdict (amendment 2).
+- `services/api/src/harrier/screening/reconsider.py`,
+  `services/api/src/harrier/screening/policy.py` and the CLI's
+  `reconsider`: `reconsider` on either track (amendment 1).
+- Tests: `services/api/tests/test_shared_discovery.py` (new), with
+  `job_verdicts` added to the per-table lists of
+  `services/api/tests/test_owner_policy.py`,
+  `services/api/tests/test_dialect_parity.py`,
+  `services/api/tests/test_seam_on_both_stores.py` and
+  `services/api/tests/test_domain_sql_on_both_stores.py`, as
+  `job_eligibility` is in each.
 
 ## Behavior
 
@@ -107,29 +119,68 @@ discovered by the shared run: `harrier discover`".
 
 ## Acceptance criteria
 
-- [ ] With no focused track, a discovery fixture run produces byte-identical
-  rows, events and seen records to the same run before this change (planned
-  test_discovery_without_a_focused_track_is_unchanged).
+- [ ] With no focused track, a discovery run writes no `demand` signal and
+  no verdict, and its seen state records the industry policy version, as
+  before this change (amendment 4; `services/api/tests/test_shared_discovery.py::test_discovery_without_a_focused_track_is_unchanged`).
 - [ ] A remote EMEA "Junior Frontend Developer" posting with no broad
   signal lands in the focused track, and its `review` line shows
-  `also <industry slug>: <score>` (planned test_a_bounded_posting_goes_to_the_focused_track).
+  `also <industry slug>: <score>` (`services/api/tests/test_shared_discovery.py::test_a_bounded_posting_goes_to_the_focused_track`).
 - [ ] A remote EMEA "Staff Frontend Engineer" posting lands in the
-  industry track, with a focused verdict on its line (planned
-  test_a_broad_posting_stays_in_industry).
+  industry track, with a focused verdict on its line (`services/api/tests/test_shared_discovery.py::test_a_broad_posting_stays_in_industry`).
 - [ ] A remote EMEA "Senior Frontend Engineer" posting with no broad
-  description signal is `bounded` and lands in the focused track (planned
-  test_a_senior_title_alone_is_not_broad).
+  description signal is `bounded` and lands in the focused track (`services/api/tests/test_shared_discovery.py::test_a_senior_title_alone_is_not_broad`).
 - [ ] A posting whose description says "end-to-end ownership" under a
-  junior title is `broad` and lands in the industry track (planned
-  test_a_description_signal_makes_demand_broad).
+  junior title is `broad` and lands in the industry track (`services/api/tests/test_shared_discovery.py::test_a_description_signal_makes_demand_broad`).
 - [ ] A posting rejected by both writes no row, and its seen record holds
-  both reasons (planned test_a_posting_both_reject_has_no_row).
+  the reason both screens share (amendment 3; `services/api/tests/test_shared_discovery.py::test_a_posting_both_reject_has_no_row`).
+- [ ] A posting only the focused title rule passes lands in the focused
+  track, and its line shows `also <industry slug>: rejected (title)`
+  (`services/api/tests/test_shared_discovery.py::test_a_posting_only_the_focused_track_passes`).
 - [ ] With the focused track's screening document missing, every passing
-  posting lands in industry and the run prints one warning (planned
-  test_discovery_without_focused_configuration_falls_back_to_industry).
+  posting lands in industry and the run prints one warning (`services/api/tests/test_shared_discovery.py::test_discovery_without_focused_configuration_falls_back_to_industry`).
 - [ ] On Postgres, a second owner cannot read the first owner's
-  `job_verdicts` rows (planned test_job_verdicts_are_owned_and_policed).
+  `job_verdicts` rows
+  (`services/api/tests/test_owner_policy.py::test_owner_a_reads_nothing_of_owner_b`,
+  which walks every owned table, `job_verdicts` among them).
+- [ ] `reconsider` on a focused track reads the shared seen state, reopens
+  a rejection a changed focused document made stale, and never reopens a
+  posting rejected by hand on either track (amendment 1; `services/api/tests/test_shared_discovery.py::test_reconsider_on_a_focused_track_reads_the_shared_state`,
+  `services/api/tests/test_shared_discovery.py::test_reconsider_never_reopens_a_focused_rejection`).
 - [ ] `just check` passes.
+
+## Amendments found while implementing (2026-10-14)
+
+1. **`reconsider` runs on either track, over the shared state.** Spec 137's
+   amendment 6 held `reconsider` on the focused kind until this spec, and
+   this spec named it as the operator's tool without saying what it does
+   there. Owner's choice (option 1), 2026-10-14: one discovery run judges a
+   posting for both tracks, so both tracks reconsider the same seen state,
+   the industry track's. The current version is the one a shared run
+   records (amendment 2). A posting rejected by hand on the industry track
+   or on any focused track protects its entry
+   (`reconsider_source(also=...)` in
+   `services/api/src/harrier/screening/reconsider.py`). With no focused
+   track, `reconsider` is what it was.
+2. **A shared run records a shared version.** The seen state's version is
+   what makes a decision stale (spec 031). With a configured focused track,
+   a shared run records a digest of the industry and the focused versions
+   (`shared_policy_version` in `services/api/src/harrier/screening/policy.py`),
+   so a change to the screening document reopens its rejections. Without
+   one, the industry version is recorded unchanged.
+3. **Both screens reject at one gate.** Every gate but the title rule is
+   the same for both kinds (spec 137): the hold list, remote and EMEA
+   scope, dedupe and the LinkedIn page check. So a posting both reject is
+   rejected at the title rule by both, or at one shared gate before either
+   scores, and the seen record's one reason is both screens' reason.
+   `screen_jobs` runs those gates once.
+4. **"Byte-identical" is stated as what a test can check.** The first
+   criterion said a run without a focused track is byte-identical to one
+   before the change. No test can run the old code; the criterion now names
+   what differs when a focused track exists (a `demand` signal, a verdict,
+   a shared version) and checks that none of it appears without one.
+5. **The CLI prints the verdict, not the queue.** `next` and `review` print
+   the `also` line under each row; `services/api/src/harrier/tracker/queue.py`
+   orders rows and is unchanged.
 
 ## Proof / origin
 

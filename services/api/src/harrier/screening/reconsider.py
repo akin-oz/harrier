@@ -167,6 +167,7 @@ def reconsider_source(
     policy: str | None = None,
     track_id: int | None = None,
     protected_keys: frozenset[str] = frozenset(),
+    also: tuple[Scope, ...] = (),
 ) -> ReconsiderReport:
     """Clear rejections recorded under a policy other than the current one.
 
@@ -174,6 +175,11 @@ def reconsider_source(
     stored, only their keys, so what this can do is make them eligible again.
     The next discovery run fetches and judges them under the current rules,
     which is where the decision belongs.
+
+    `also` names more tracks whose human rejections protect an entry. A
+    shared discovery run judges a posting for the industry and the focused
+    track at once, so a person's rejection on either keeps it closed (spec
+    139).
     """
     # An academic track passes its own version and its own seen state
     # (spec 097); the industry track computes the version from its
@@ -185,9 +191,13 @@ def reconsider_source(
     else:
         raise ValueError("reconsider needs a policy or a candidate configuration")
     decisions = load_seen(source, track_id)
-    protected = human_rejected_keys(conn, scope)
-    protected_seen = protected_keys | human_rejected_seen_keys(conn, scope, source)
-    protected_identities = human_rejected_identities(conn, scope)
+    protected: set[str] = set()
+    protected_seen: set[str] = set(protected_keys)
+    protected_identities: set[str] = set()
+    for each in (scope, *also):
+        protected |= human_rejected_keys(conn, each)
+        protected_seen |= human_rejected_seen_keys(conn, each, source)
+        protected_identities |= human_rejected_identities(conn, each)
     report = ReconsiderReport(source=source, current_policy=current, examined=len(decisions))
 
     remaining: dict[str, SeenDecision] = {}

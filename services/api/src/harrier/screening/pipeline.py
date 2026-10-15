@@ -55,10 +55,11 @@ from harrier.screening.seen import (
 from harrier.sources.apify_academic import COMPONENTS as ACADEMIC_COMPONENTS
 from harrier.tracker.schema import NEXT_ACTION_DEFAULTS
 from harrier.tracker.score import score_fields
-from harrier.tracker.store import EligibilityAssessment
+from harrier.tracker.store import EligibilityAssessment, OtherVerdict
 
 if TYPE_CHECKING:
     from harrier.academic.search import SearchEntry
+    from harrier.screening.focused import ScreeningDocument
 
 # A deadline more than this many days before the run's date has passed
 # (spec 097, "The deadline").
@@ -105,6 +106,24 @@ def build_tracker_indexes(rows: list[dict[str, str]]) -> TrackerIndexes:
     return indexes
 
 
+@dataclass(frozen=True)
+class FocusedGates:
+    """A configured focused track, for a shared discovery run (spec 139)."""
+
+    document: ScreeningDocument
+    industry_track_id: int
+    focused_track_id: int
+
+
+@dataclass(frozen=True)
+class Placement:
+    """Which track a new row goes to, and the other track's verdict. On a run
+    with no focused track every row is the industry's and has none."""
+
+    kind: str = "industry"
+    other: OtherVerdict | None = None
+
+
 @dataclass
 class ScreenResult:
     rejected_counts: dict[str, int] = field(default_factory=dict[str, int])
@@ -125,6 +144,8 @@ class ScreenResult:
     linkedin_unverified: int = 0
     # Set by the academic gates only (spec 097).
     academic: AcademicResult | None = None
+    # One per new row, in the same order (spec 139).
+    placements: list[Placement] = field(default_factory=list[Placement])
 
 
 def build_tracker_row(
@@ -205,11 +226,18 @@ def screen_jobs(
     policy: str | None = None,
     linkedin_page_verifier: Callable[[str], str] | None = None,
     academic: AcademicGates | None = None,
+    focused: FocusedGates | None = None,
 ) -> ScreenResult:
     """The one screening path. The scope's kind picks the gates (spec 097):
     `academic` set runs the academic kind's gates; otherwise the industry
     gates run exactly as before, and need the candidate configuration, the
-    hold list and the dedupe indexes."""
+    hold list and the dedupe indexes.
+
+    `focused` set makes the run shared (spec 139): each posting is judged for
+    the industry track and for the focused track. Every gate but the title
+    rule is the same for both kinds, so a posting is rejected at the title
+    gate only when both title rules reject it, and the gates after it run
+    once. A posting both tracks pass is placed by the ownership it demands."""
     if academic is not None:
         return _screen_academic(
             jobs, academic, source_seen, write_rejected_debug=write_rejected_debug
@@ -218,6 +246,13 @@ def screen_jobs(
         raise TypeError("the industry gates need candidate_cfg, hold_companies and indexes")
     result = ScreenResult()
     current_policy = policy if policy is not None else policy_version(candidate_cfg)
+    if focused is not None and policy is None:
+        from harrier.screening.focused import focused_policy_version
+        from harrier.screening.policy import shared_policy_version
+
+        current_policy = shared_policy_version(
+            current_policy, focused_policy_version(focused.document)
+        )
 
     def record(job: NormalizedJob, key: str, verdict: str, reason: str) -> None:
         """Recorded after the decision, never before it (spec 031).
@@ -269,7 +304,11 @@ def screen_jobs(
                 result.rejected_debug_rows.append(_build_rejected_debug_row(job, reject_reason))
             continue
 
-        if not title_allowed(job["title"], candidate_cfg):
+        industry_title = title_allowed(job["title"], candidate_cfg)
+        focused_title = focused is not None and title_allowed(
+            job["title"], focused.document.targets_config()
+        )
+        if not industry_title and not focused_title:
             reject_reason = "title"
             record(job, job_key, REJECTED, reject_reason)
             result.rejected_counts[reject_reason] = result.rejected_counts.get(reject_reason, 0) + 1
@@ -355,21 +394,25 @@ def screen_jobs(
         # `__init__` loads this module. A module-level import is a cycle.
         from harrier.scoring.model import fit_score_for
 
-        fit = fit_score_for(scored_job, candidate_cfg)
         # No cutoff. It could not reject an ATS posting and rejected LinkedIn
         # ones for being region-filtered at query level; the derivation is in
         # rules.py (spec 033).
+        if focused is None:
+            fit = fit_score_for(scored_job, candidate_cfg)
+            score, reasons, version = fit.score, fit.reasons, fit.version
+            result.placements.append(Placement())
+        else:
+            score, reasons, version, placement = _place(
+                scored_job, candidate_cfg, focused, industry_title, focused_title
+            )
+            result.placements.append(placement)
 
         record(job, job_key, ACCEPTED, "passed every gate")
-        result.new_tracker_rows.append(
-            build_tracker_row(scored_job, fit.score, fit.reasons, fit.version)
-        )
+        result.new_tracker_rows.append(build_tracker_row(scored_job, score, reasons, version))
         # After the gates and the score, and judged from the same text the
         # score read. It changes neither (spec 122).
         result.new_eligibility.append(assess_eligibility(scored_job))
-        result.latest_items.append(
-            _build_latest_item(scored_job, fit.score, fit.reasons, remote_reason)
-        )
+        result.latest_items.append(_build_latest_item(scored_job, score, reasons, remote_reason))
         if url_norm:
             indexes.urls.add(url_norm)
         if company_norm and title_norm:
@@ -378,6 +421,54 @@ def screen_jobs(
             indexes.external_keys.add(external_key)
 
     return result
+
+
+def _place(
+    job: NormalizedJob,
+    candidate_cfg: CandidateConfig,
+    focused: FocusedGates,
+    industry_title: bool,
+    focused_title: bool,
+) -> tuple[int, list[str], str, Placement]:
+    """The track a posting goes to on a shared run, its score there, and the
+    other track's verdict (spec 139's placement table). A track whose title
+    rule rejected the posting has a `reject` verdict with the reason `title`;
+    every later gate was the same for both and has already passed."""
+    from harrier.scoring.model import fit_score_for
+    from harrier.screening.focused import focused_score, ownership_demand
+
+    demand = ownership_demand(job, focused.document)
+    industry = fit_score_for(job, candidate_cfg) if industry_title else None
+    bounded = focused_score(job, focused.document) if focused_title else None
+    if industry is not None and bounded is not None:
+        kind = "industry" if demand == "broad" else "focused"
+    else:
+        kind = "industry" if industry is not None else "focused"
+
+    def verdict(track_id: int, scored: tuple[int, list[str], str] | None) -> OtherVerdict:
+        if scored is None:
+            return OtherVerdict(track_id=track_id, verdict="reject", reasons="title")
+        return OtherVerdict(
+            track_id=track_id,
+            verdict="pass",
+            score=str(scored[0]),
+            reasons="|".join(scored[1]),
+            scoring_version=scored[2],
+        )
+
+    industry_scored = (
+        (industry.score, list(industry.reasons), industry.version) if industry else None
+    )
+    focused_scored = (bounded.score, list(bounded.reasons), bounded.version) if bounded else None
+    if kind == "industry":
+        assert industry_scored is not None
+        score, reasons, version = industry_scored
+        other = verdict(focused.focused_track_id, focused_scored)
+    else:
+        assert focused_scored is not None
+        score, reasons, version = focused_scored
+        other = verdict(focused.industry_track_id, industry_scored)
+    return score, [*reasons, f"demand={demand}"], version, Placement(kind=kind, other=other)
 
 
 # --- the academic gates (spec 097) ----------------------------------------------

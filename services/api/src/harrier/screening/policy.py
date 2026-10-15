@@ -167,3 +167,13 @@ def academic_policy_version(fingerprint: dict[str, Any]) -> str:
     payload = {"academic": fingerprint, "model": "none"}
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=True, default=str)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:VERSION_LENGTH]
+
+
+def shared_policy_version(industry: str, focused: str) -> str:
+    """The version a shared discovery run records on a seen decision (spec
+    139): both screens judged the posting, so a change to either track's
+    policy makes the decision stale and `reconsider` can reopen it. Without a
+    configured focused track the industry version is recorded unchanged."""
+    payload = {"industry": industry, "focused": focused}
+    encoded = json.dumps(payload, sort_keys=True, ensure_ascii=True)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:VERSION_LENGTH]

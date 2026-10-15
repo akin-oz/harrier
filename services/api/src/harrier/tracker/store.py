@@ -48,6 +48,7 @@ from harrier.tracker.schema import (
     NOTE_KEYS,
     STATUSES,
     TRACKER_FIELDS,
+    VERDICTS,
 )
 from harrier.tracker.score import score_fields
 from harrier.tracker.transitions import check_transition, fields_a_move_clears
@@ -136,12 +137,26 @@ def find_duplicate(
     return None
 
 
+@dataclass(frozen=True)
+class OtherVerdict:
+    """What a shared discovery run decided for the track a posting did not
+    go to (spec 139): `pass` with that track's score, or `reject` with the
+    gate's reason."""
+
+    track_id: int
+    verdict: str
+    score: str = ""
+    reasons: str = ""
+    scoring_version: str = ""
+
+
 def add_job(
     conn: Connection,
     fields: Mapping[str, str],
     *,
     scope: Scope,
     eligibility: EligibilityAssessment | None = None,
+    other_verdict: OtherVerdict | None = None,
 ) -> int:
     """Insert one job in the scope's track (spec 091).
 
@@ -152,6 +167,8 @@ def add_job(
 
     `eligibility` is the row's first assessment, written in the same
     transaction as the row, so neither exists without the other (spec 122).
+    `other_verdict` is the other track's verdict from a shared discovery
+    run, written in that transaction too (spec 139).
     """
     if eligibility is not None:
         _check_assessment(eligibility)
@@ -237,7 +254,53 @@ def add_job(
         )
         if eligibility is not None:
             _insert_assessment(conn, row_id, eligibility)
+        if other_verdict is not None:
+            _insert_verdict(conn, row_id, scope, other_verdict)
     return row_id
+
+
+def _insert_verdict(conn: Connection, job_id: int, scope: Scope, verdict: OtherVerdict) -> None:
+    """The only INSERT into `job_verdicts`, inside the caller's transaction
+    (spec 139). A verdict for the row's own track says nothing a reader can
+    use, so it is refused."""
+    if verdict.verdict not in VERDICTS:
+        raise TrackerError(f"unknown verdict {verdict.verdict!r}; legal: {', '.join(VERDICTS)}")
+    if verdict.track_id == scope.track.id:
+        raise TrackerError("a verdict is for the track the row did not go to")
+    conn.execute(
+        "INSERT INTO job_verdicts (job_id, track_id, verdict, score, reasons, scoring_version) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            job_id,
+            verdict.track_id,
+            verdict.verdict,
+            verdict.score,
+            verdict.reasons,
+            verdict.scoring_version,
+        ),
+    )
+
+
+def other_verdicts(conn: Connection, scope: Scope) -> dict[int, dict[str, str]]:
+    """For each of the scope's rows that has one, the verdict for a track the
+    row is not in, with that track's slug (spec 139). A row moved into the
+    track its verdict names has none to show (spec 138)."""
+    rows = conn.execute(
+        "SELECT v.job_id, t.slug, v.verdict, v.score, v.reasons "
+        "FROM job_verdicts AS v JOIN jobs AS j ON j.id = v.job_id "
+        "JOIN tracks AS t ON t.id = v.track_id "
+        "WHERE j.track_id = ? AND v.track_id <> j.track_id ORDER BY v.id",
+        (scope.track.id,),
+    ).fetchall()
+    return {
+        int(str(row[0])): {
+            "slug": str(row[1]),
+            "verdict": str(row[2]),
+            "score": str(row[3]),
+            "reasons": str(row[4]),
+        }
+        for row in rows
+    }
 
 
 def _refuse_archived(conn: Connection, scope: Scope) -> None:

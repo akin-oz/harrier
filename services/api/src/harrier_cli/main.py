@@ -1461,6 +1461,13 @@ def _print_job(job: dict[str, str], scope: Scope | None = None, today: str = "")
         print(f"   next: {job['next_action']}")
 
 
+def _verdict_line(verdict: dict[str, str]) -> str:
+    """The other track's verdict on a row a shared run placed (spec 139)."""
+    if verdict["verdict"] == "pass":
+        return f"also {verdict['slug']}: {verdict['score']}"
+    return f"also {verdict['slug']}: rejected ({verdict['reasons']})"
+
+
 def _cmd_tracker_verb(args: argparse.Namespace) -> int:
     """The status transitions, add, and the two read verbs (spec 027)."""
     from harrier.capture import add_captured_job
@@ -1477,6 +1484,7 @@ def _cmd_tracker_verb(args: argparse.Namespace) -> int:
     # them rather than a design decision nobody wrote down (spec 042).
     from harrier.tracker.actions import TrackerActionError, change_status, rescore
     from harrier.tracker.queue import rank_for
+    from harrier.tracker.store import other_verdicts
     from harrier.tracks import rules_for
 
     conn = connect()
@@ -1504,8 +1512,12 @@ def _cmd_tracker_verb(args: argparse.Namespace) -> int:
                 if not ranked:
                     print("nothing active")
                     return 0
+            verdicts = other_verdicts(conn, scope)
             for job in ranked:
                 _print_job(job, scope, today)
+                verdict = verdicts.get(int(job["id"]))
+                if verdict is not None:
+                    print(f"   {_verdict_line(verdict)}")
             return 0
 
         if args.command == "add":
@@ -2358,9 +2370,18 @@ def _cmd_reconsider(args: argparse.Namespace) -> int:
     try:
         candidate_cfg = load_candidate_config(conn)
         sources = [args.source] if args.source else list(SOURCE_ORDER)
+        shared_scope, policy, also = _shared_reconsider(conn)
         total_cleared = 0
         for source in sources:
-            report = reconsider_source(conn, scope, source, candidate_cfg, dry_run=not args.apply)
+            report = reconsider_source(
+                conn,
+                shared_scope,
+                source,
+                candidate_cfg,
+                dry_run=not args.apply,
+                policy=policy,
+                also=also,
+            )
             if report.examined:
                 print(report.describe())
             total_cleared += report.changed
@@ -2378,6 +2399,37 @@ def _cmd_reconsider(args: argparse.Namespace) -> int:
     finally:
         conn.close()
     return 0
+
+
+def _shared_reconsider(conn: Connection) -> tuple[Scope, str | None, tuple[Scope, ...]]:
+    """What `reconsider` reads on an industry or a focused track (spec 139).
+
+    One discovery run judges a posting for both, so both reconsider the same
+    seen state: the industry track's. The current version is the one that
+    run records, which includes the focused track's document when one is
+    configured. A person's rejection on the industry track or on any focused
+    track protects an entry. With no focused track this is the industry
+    reconsideration as it always was.
+    """
+    from harrier.discovery import shared_run
+    from harrier.tracks import list_tracks
+
+    industry = default_scope(conn)
+    focused_scopes = tuple(
+        Scope(track=track) for track in list_tracks(conn) if track.kind == "focused"
+    )
+    run = shared_run(conn, industry)
+    policy: str | None = None
+    if run is not None:
+        from harrier.screening.config import load_candidate_config
+        from harrier.screening.focused import focused_policy_version
+        from harrier.screening.policy import policy_version, shared_policy_version
+
+        policy = shared_policy_version(
+            policy_version(load_candidate_config(conn)),
+            focused_policy_version(run.gates.document),
+        )
+    return industry, policy, focused_scopes
 
 
 def _reconsider_academic(conn: Connection, scope: Scope, args: argparse.Namespace) -> int:

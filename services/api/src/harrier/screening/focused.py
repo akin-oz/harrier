@@ -22,7 +22,7 @@ import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from harrier.connection import Connection
 from harrier.profile.store import owned_documents
@@ -353,6 +353,25 @@ def focused_score(job: NormalizedJob, document: ScreeningDocument) -> FocusedSco
         score -= blocker_penalty(document)
         reasons.extend(f'blocker={kind} "{phrase}"' for kind, phrase in found)
     return FocusedScore(score=score, reasons=reasons, version=focused_policy_version(document))
+
+
+Demand = Literal["broad", "bounded"]
+
+
+def ownership_demand(job: NormalizedJob, document: ScreeningDocument) -> Demand:
+    """`broad` when the title names a broad title signal or the description a
+    broad description signal, else `bounded` (spec 139). Case-insensitive,
+    on whole words, as the score's phrases are."""
+    title = normalize(job["title"])
+    description = normalize(job["description"])
+    if any(contains_word(title, normalize(signal)) for signal in document.broad_title_signals):
+        return "broad"
+    if any(
+        contains_word(description, normalize(signal))
+        for signal in document.broad_description_signals
+    ):
+        return "broad"
+    return "bounded"
 
 
 def failed_gate(
