@@ -9,6 +9,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+# The Supabase secret key's variable. Named here, in a module with no
+# dependency, so the CLI's `.env` loader can skip it without importing
+# `harrier.operator`, whose `httpx` is a dev dependency only and absent from
+# the hosted images (spec 111, Amendment (2026-10-15)).
+SECRET_KEY_VARIABLE = "HARRIER_SUPABASE_SECRET_KEY"
+
 
 def read_env_file(path: Path) -> dict[str, str]:
     """Each `KEY=value` line of `path`, quotes stripped. Empty when absent.

@@ -12,6 +12,7 @@ from __future__ import annotations
 import ast
 import io
 import json
+import os
 import re
 import uuid
 from collections.abc import Callable, Generator, Iterator
@@ -396,6 +397,37 @@ def test_operator_refusals_name_no_secret(
     everything = "".join(texts) + caplog.text
     for secret in (SECRET, "sb_secret_fromfile0", ADDRESS, "not-an-address-xyz", MIGRATOR_PASSWORD):
         assert secret not in everything, secret
+
+
+def test_dotenv_never_supplies_the_secret_key(
+    fake: FakeSupabase,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A `.env` holding the secret key and another key loads the other key
+    and never the secret key, so the key does not reach this process or its
+    children. `harrier operator erase` still refuses, naming the `.env`
+    file, because the operator reads the file itself (spec 111, Amendment
+    (2026-10-15): `.env` never supplies the secret key)."""
+    other = "HARRIER_DOTENV_TEST_OTHER_KEY"
+    configure(monkeypatch, tmp_path)
+    # Set then removed, so the teardown leaves neither in the environment
+    # whatever the loader does.
+    monkeypatch.setenv(other, "x")
+    monkeypatch.delenv(other)
+    monkeypatch.delenv(SECRET_KEY_VARIABLE)
+    (tmp_path / ".env").write_text(
+        f"{SECRET_KEY_VARIABLE}=sb_secret_fromfile0\n{other}=kept\n", encoding="utf-8"
+    )
+    owner = str(uuid.uuid4())
+
+    code, out, err = run(["operator", "erase", owner, "--confirm", owner], capsys)
+
+    assert (code, out, err) == (1, "", f"error: {secret_key_in_dotenv()}\n")
+    assert os.environ.get(other) == "kept"
+    assert SECRET_KEY_VARIABLE not in os.environ
+    assert fake.calls == []
 
 
 def test_the_operator_group_runs_on_postgres_only(

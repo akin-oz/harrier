@@ -81,7 +81,7 @@ def load_project_env(path: Path | None = None) -> None:
     on it). Existing environment variables are never overridden. A hosted
     run never calls it (spec 106)."""
     from harrier.accountstore import ACCOUNT_URL_VARIABLE
-    from harrier.envfile import read_env_file
+    from harrier.envfile import SECRET_KEY_VARIABLE, read_env_file
     from harrier.tracker.importlocal import IMPORT_URL_VARIABLE
 
     for key, value in read_env_file(path if path is not None else Path(".env")).items():
@@ -90,6 +90,12 @@ def load_project_env(path: Path | None = None) -> None:
         if key in (IMPORT_URL_VARIABLE, ACCOUNT_URL_VARIABLE):
             # A hosted account's URL comes from the shell for the one
             # command, never from a file that outlives it (specs 141, 144).
+            continue
+        if key == SECRET_KEY_VARIABLE:
+            # The Supabase secret key is not copied either: it would reach
+            # every command and child process, and the local container reads
+            # this file. The operator commands read the file themselves and
+            # refuse a key defined in it (spec 111, Amendment (2026-10-15)).
             continue
         if key == URL_VARIABLE and not _local_store_url(value):
             # Not copied into the environment, where it would look exported

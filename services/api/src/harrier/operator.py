@@ -46,11 +46,11 @@ import httpx
 
 from harrier.connection import Connection, StoreDatabaseError, StoreError
 from harrier.db import data_dir
+from harrier.envfile import SECRET_KEY_VARIABLE
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-SECRET_KEY_VARIABLE = "HARRIER_SUPABASE_SECRET_KEY"
 SUPABASE_URL_VARIABLE = "HARRIER_SUPABASE_URL"
 DATABASE_URL_VARIABLE = "HARRIER_DATABASE_URL"
 
@@ -303,9 +303,10 @@ def read_admin(environ: Mapping[str, str]) -> Admin:
 
     Refused, naming the variable and never its value, when either is unset or
     malformed, or when the secret key is defined in the working directory's
-    `.env`: `load_project_env` copies that file into the environment, and
-    the local container reads it too (spec 111). The file is read for the
-    variable's presence, whatever the environment holds.
+    `.env`: the local container reads that file (spec 111). The loader never
+    copies this key into the environment (Amendment (2026-10-15)), so the
+    file is read here for the variable's presence, whatever the environment
+    holds.
     """
     from harrier.envfile import read_env_file
 
