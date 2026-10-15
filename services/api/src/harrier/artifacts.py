@@ -1,8 +1,9 @@
 """What a job's generated artifacts are, and where they are (spec 047).
 
 The Apply page shows what an operation produced and serves it back. Both
-questions resolve here, through the same `*_paths_for` helpers the writers
-use, so the reader cannot drift from the writer.
+questions resolve here, through the same `*_keys_for` helpers the writers
+use, so the reader cannot drift from the writer. Whether an artifact exists
+is asked of the storage seam (spec 107).
 
 The kind is a closed set. A caller names an artifact, never a path, which is
 why there is no traversal to defend against: an unknown kind is refused
@@ -12,14 +13,14 @@ before anything touches the filesystem.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 
-from harrier.apply.answers import answers_path_for
-from harrier.apply.letters import cover_letter_paths_for
+from harrier.apply.answers import answers_key_for
+from harrier.apply.letters import cover_letter_keys_for
 from harrier.connection import Connection
-from harrier.offers.evaluate import report_path_for
+from harrier.filestore import files, key_name
+from harrier.offers.evaluate import report_key_for
 from harrier.resume.content import ResumeBundleError, load_bundle
-from harrier.resume.tailor import resume_paths_for
+from harrier.resume.tailor import resume_keys_for
 from harrier.tracker import get_job
 from harrier.tracks import Scope
 
@@ -31,10 +32,16 @@ class UnknownArtifactKind(KeyError):
 @dataclass(frozen=True)
 class Artifact:
     kind: str
-    path: Path
+    # None when no name can be built: a resume without a bundle.
+    key: str | None
     exists: bool
     produced_by: str
     media_type: str
+
+    @property
+    def filename(self) -> str:
+        """The name a person sees: the key's last segment."""
+        return key_name(self.key) if self.key is not None else ""
 
 
 # kind -> the operation that produces it. The Apply page turns a missing
@@ -66,13 +73,11 @@ _MEDIA_TYPES: dict[str, str] = {
 }
 
 
-def _resume_paths(
-    conn: Connection, scope: Scope, company: str, role: str
-) -> dict[str, Path] | None:
+def _resume_keys(conn: Connection, scope: Scope, company: str, role: str) -> dict[str, str] | None:
     """None when the resume bundle is not configured.
 
     The resume filename carries the candidate's name, so without a bundle
-    there is no name and therefore no path to report. That is a real state on
+    there is no name and therefore no key to report. That is a real state on
     a fresh install, and reporting the artifact as simply absent would be a
     guess: nothing can be produced until the bundle exists.
     """
@@ -80,27 +85,37 @@ def _resume_paths(
         bundle = load_bundle(conn, scope)
     except ResumeBundleError:
         return None
-    return resume_paths_for(bundle.name, company, role)
+    return resume_keys_for(bundle.name, company, role)
 
 
-def _paths_by_kind(conn: Connection, scope: Scope, job_id: int) -> dict[str, Path]:
+def _keys_by_kind(conn: Connection, scope: Scope, job_id: int) -> dict[str, str]:
     row = get_job(conn, scope, job_id)
     company = row.get("company", "")
     role = row.get("title", "")
 
-    paths: dict[str, Path] = {}
-    resume = _resume_paths(conn, scope, company, role)
+    keys: dict[str, str] = {}
+    resume = _resume_keys(conn, scope, company, role)
     if resume is not None:
-        paths["resume-pdf"] = resume["pdf"]
-        paths["resume-markdown"] = resume["markdown"]
-        paths["resume-evaluation"] = resume["evaluation"]
+        keys["resume-pdf"] = resume["pdf"]
+        keys["resume-markdown"] = resume["markdown"]
+        keys["resume-evaluation"] = resume["evaluation"]
 
-    letter = cover_letter_paths_for(company, role)
-    paths["cover-letter-pdf"] = letter["pdf"]
-    paths["cover-letter-markdown"] = letter["markdown"]
-    paths["answers"] = answers_path_for(company, role)
-    paths["evaluation"] = report_path_for(company, role)
-    return paths
+    letter = cover_letter_keys_for(company, role)
+    keys["cover-letter-pdf"] = letter["pdf"]
+    keys["cover-letter-markdown"] = letter["markdown"]
+    keys["answers"] = answers_key_for(company, role)
+    keys["evaluation"] = report_key_for(company, role)
+    return keys
+
+
+def _artifact(kind: str, key: str | None) -> Artifact:
+    return Artifact(
+        kind=kind,
+        key=key,
+        exists=key is not None and files().stat(key) is not None,
+        produced_by=PRODUCED_BY[kind],
+        media_type=_MEDIA_TYPES[kind],
+    )
 
 
 def artifacts_for_job(conn: Connection, scope: Scope, job_id: int) -> list[Artifact]:
@@ -110,35 +125,16 @@ def artifacts_for_job(conn: Connection, scope: Scope, job_id: int) -> list[Artif
     what exists and what would produce the rest, and an omitted row cannot
     say the second thing.
     """
-    paths = _paths_by_kind(conn, scope, job_id)
-    found: list[Artifact] = []
-    for kind in ARTIFACT_KINDS:
-        path = paths.get(kind)
-        found.append(
-            Artifact(
-                kind=kind,
-                path=path if path is not None else Path(),
-                exists=path is not None and path.is_file(),
-                produced_by=PRODUCED_BY[kind],
-                media_type=_MEDIA_TYPES[kind],
-            )
-        )
-    return found
+    keys = _keys_by_kind(conn, scope, job_id)
+    return [_artifact(kind, keys.get(kind)) for kind in ARTIFACT_KINDS]
 
 
 def artifact_for_job(conn: Connection, scope: Scope, job_id: int, kind: str) -> Artifact:
     """One artifact by kind.
 
     Raises `UnknownArtifactKind` for anything outside the closed set, which is
-    what a path-shaped kind is. The check happens before any path is built.
+    what a path-shaped kind is. The check happens before any key is built.
     """
     if kind not in PRODUCED_BY:
         raise UnknownArtifactKind(kind)
-    path = _paths_by_kind(conn, scope, job_id).get(kind)
-    return Artifact(
-        kind=kind,
-        path=path if path is not None else Path(),
-        exists=path is not None and path.is_file(),
-        produced_by=PRODUCED_BY[kind],
-        media_type=_MEDIA_TYPES[kind],
-    )
+    return _artifact(kind, _keys_by_kind(conn, scope, job_id).get(kind))

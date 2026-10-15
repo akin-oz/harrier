@@ -17,6 +17,8 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
+from harrier.filestore import FileStoreError, LocalFileStore, bind_files, files
+
 
 def render_pdf(html_text: str, pdf_path: Path, margin_mm: int = 10) -> None:
     try:
@@ -103,21 +105,32 @@ def validate_rendered_pdf(
 
 def render_validated_pdf(
     html_text: str,
-    pdf_path: Path,
+    key: str | Path,
     render: Callable[[str, Path], None],
     validate: Callable[[Path, str], list[str]],
 ) -> list[str]:
-    """Render beside `pdf_path`, gate the result, and move it in only if it passes.
+    """Render beside the file at `key`, gate the result, and move it in only
+    if it passes. A `Path` names a file of the caller's choosing instead of
+    a key, and is rendered the same way beside it.
 
-    The artifact endpoint serves whatever file sits at `pdf_path` (spec 047),
-    so that path must never hold a PDF the gate has not passed: not one that
+    The artifact endpoint serves whatever file the key holds (spec 047), so
+    the key must never hold a PDF the gate has not passed: not one that
     failed, not one still being checked, and not an earlier run's (spec 067).
     The earlier PDF goes first, the render lands on a hidden temporary name
     in the same directory, and a rename moves it in, which is atomic within
     one filesystem. Returns the gate's errors; on any error or exception
     nothing is left at either path.
     """
-    pdf_path.unlink(missing_ok=True)
+    if isinstance(key, Path):
+        with bind_files(LocalFileStore(key.parent)):
+            return render_validated_pdf(html_text, key.name, render, validate)
+    store = files()
+    store.delete(key)
+    pdf_path = store.local_path(key)
+    if pdf_path is None:
+        # A store with no local files renders elsewhere: spec 107's second
+        # pull request. No such store exists yet.
+        raise FileStoreError(f"{key.split('/', 1)[0]}: no local file to render beside")
     # A name the render creates, rather than a file created here, so the PDF
     # keeps the permissions it always had.
     temporary = pdf_path.with_name(f".{pdf_path.name}.{secrets.token_hex(4)}.tmp")

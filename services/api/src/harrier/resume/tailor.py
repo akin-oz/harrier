@@ -15,7 +15,7 @@ from pathlib import Path
 
 from harrier.apply.brief import load_brief
 from harrier.connection import Connection
-from harrier.db import data_dir
+from harrier.filestore import files, files_in, join_key, local_file, save_text
 from harrier.resume.ai import build_ai_tailored_content
 from harrier.resume.content import load_bundle, load_truth_sources
 from harrier.resume.evaluation import evaluate_resume_fit, format_fit_evaluation_markdown
@@ -50,8 +50,29 @@ class TailorResult:
     ai_tailored: bool
 
 
-def resumes_dir() -> Path:
-    return data_dir() / "resumes"
+RESUMES = "resumes"
+
+
+def resume_keys_for(
+    candidate_name: str, company: str, role: str, prefix: str = RESUMES
+) -> dict[str, str]:
+    """Where a tailoring run puts its files, by artifact kind.
+
+    `run_tailor` calls this rather than building the names inline, so the
+    reader that serves an artifact back and the writer that produced it cannot
+    disagree about where it is (spec 047). Duplicating the slug in the reader
+    is the second implementation the spec forbids.
+    """
+    slug = slugify(f"{candidate_name}-{company}-{role}")
+    return {
+        "markdown": join_key(prefix, f"{slug}.md"),
+        "html": join_key(prefix, f"{slug}.html"),
+        "pdf": join_key(prefix, f"{slug}.pdf"),
+        "metadata": join_key(prefix, f"{slug}.metadata.json"),
+        "evaluation": join_key(prefix, f"{slug}.evaluation.md"),
+        # The focused kind's sidecar (spec 140).
+        "missing_keywords": join_key(prefix, f"{slug}.missing-keywords.md"),
+    }
 
 
 def resume_paths_for(
@@ -60,24 +81,10 @@ def resume_paths_for(
     role: str,
     output_dir: Path | None = None,
 ) -> dict[str, Path]:
-    """Where a tailoring run puts its files, by artifact kind.
-
-    `run_tailor` calls this rather than building the names inline, so the
-    reader that serves an artifact back and the writer that produced it cannot
-    disagree about where it is (spec 047). Duplicating the slug in the reader
-    is the second implementation the spec forbids.
-    """
-    directory = output_dir if output_dir is not None else resumes_dir()
-    slug = slugify(f"{candidate_name}-{company}-{role}")
-    return {
-        "markdown": directory / f"{slug}.md",
-        "html": directory / f"{slug}.html",
-        "pdf": directory / f"{slug}.pdf",
-        "metadata": directory / f"{slug}.metadata.json",
-        "evaluation": directory / f"{slug}.evaluation.md",
-        # The focused kind's sidecar (spec 140).
-        "missing_keywords": directory / f"{slug}.missing-keywords.md",
-    }
+    """The local files behind `resume_keys_for`, or in `output_dir`."""
+    with files_in(output_dir, RESUMES) as prefix:
+        keys = resume_keys_for(candidate_name, company, role, prefix)
+        return {kind: local_file(key) for kind, key in keys.items()}
 
 
 def run_tailor(
@@ -154,72 +161,74 @@ def run_tailor(
     html_text = render_html(markdown, bundle, kind=kind)
     fit_evaluation = evaluate_resume_fit(bundle, jd_text, requested_role) if jd_text else None
 
-    directory = output_dir if output_dir is not None else resumes_dir()
-    directory.mkdir(parents=True, exist_ok=True)
-    paths = resume_paths_for(bundle.name, company, requested_role, directory)
-    markdown_path = paths["markdown"]
-    html_path = paths["html"]
-    pdf_path = paths["pdf"]
-    metadata_path = paths["metadata"]
-
-    markdown_path.write_text(markdown + "\n", encoding="utf-8")
-    # From here an earlier run's PDF no longer describes the markdown beside
-    # it, and the artifact endpoint would serve it as current (spec 067).
-    pdf_path.unlink(missing_ok=True)
-    try:
-        html_path.write_text(html_text, encoding="utf-8")
-        metadata = build_internal_metadata(
-            company=company,
-            requested_role=requested_role,
-            visible_role_title=markdown.splitlines()[1],
-            job_url=job_url,
-            tracker_score=row.get("fit_score", ""),
-            jd_source=jd_source,
-            plan=plan,
-            fit_evaluation=fit_evaluation,
-        )
-        metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
-        if not rules.missing_keywords:
-            # The same path an earlier focused run wrote: it would sit beside
-            # this draft as if it were this run's (review of PR #343).
-            paths["missing_keywords"].unlink(missing_ok=True)
-        else:
-            # Beside the draft and never in it: the posting's skills the truth
-            # does not hold (spec 140).
-            paths["missing_keywords"].write_text(
-                missing_keywords_markdown(
-                    company, requested_role, missing_keywords(bundle, sources, jd_text or "")
-                ),
-                encoding="utf-8",
+    # Outside this block the store is the data directory's again: the status
+    # change below reads the description cache.
+    with files_in(output_dir, RESUMES) as prefix:
+        keys = resume_keys_for(bundle.name, company, requested_role, prefix)
+        store = files()
+        save_text(keys["markdown"], markdown + "\n", atomic=False)
+        # From here an earlier run's PDF no longer describes the markdown
+        # beside it, and the artifact endpoint would serve it as current
+        # (spec 067).
+        store.delete(keys["pdf"])
+        try:
+            save_text(keys["html"], html_text, atomic=False)
+            metadata = build_internal_metadata(
+                company=company,
+                requested_role=requested_role,
+                visible_role_title=markdown.splitlines()[1],
+                job_url=job_url,
+                tracker_score=row.get("fit_score", ""),
+                jd_source=jd_source,
+                plan=plan,
+                fit_evaluation=fit_evaluation,
             )
+            save_text(keys["metadata"], json.dumps(metadata, indent=2) + "\n", atomic=False)
+            if not rules.missing_keywords:
+                # The same key an earlier focused run wrote: it would sit
+                # beside this draft as if it were this run's (review of PR
+                # #343).
+                store.delete(keys["missing_keywords"])
+            else:
+                # Beside the draft and never in it: the posting's skills the
+                # truth does not hold (spec 140).
+                save_text(
+                    keys["missing_keywords"],
+                    missing_keywords_markdown(
+                        company, requested_role, missing_keywords(bundle, sources, jd_text or "")
+                    ),
+                    atomic=False,
+                )
 
-        pdf_errors = render_validated_pdf(html_text, pdf_path, render, gate)
-        if pdf_errors:
-            raise RuntimeError("resume render validation failed: " + "; ".join(pdf_errors))
-    except BaseException:
-        # The draft and its sidecar stay for the operator. The HTML is only
-        # an intermediate, and an earlier evaluation report would be served
-        # beside the new draft as if it were this run's.
-        html_path.unlink(missing_ok=True)
-        paths["evaluation"].unlink(missing_ok=True)
-        raise
+            pdf_errors = render_validated_pdf(html_text, keys["pdf"], render, gate)
+            if pdf_errors:
+                raise RuntimeError("resume render validation failed: " + "; ".join(pdf_errors))
+        except BaseException:
+            # The draft and its sidecar stay for the operator. The HTML is
+            # only an intermediate, and an earlier evaluation report would be
+            # served beside the new draft as if it were this run's.
+            store.delete(keys["html"])
+            store.delete(keys["evaluation"])
+            raise
 
-    evaluation_path: Path | None = None
-    if fit_evaluation is not None:
-        evaluation_path = paths["evaluation"]
-        evaluation_path.write_text(
-            format_fit_evaluation_markdown(fit_evaluation, company, requested_role),
-            encoding="utf-8",
-        )
+        evaluation_path: Path | None = None
+        if fit_evaluation is not None:
+            save_text(
+                keys["evaluation"],
+                format_fit_evaluation_markdown(fit_evaluation, company, requested_role),
+                atomic=False,
+            )
+            evaluation_path = local_file(keys["evaluation"])
+        paths = {artifact: local_file(key) for artifact, key in keys.items()}
 
     # The PDF gate passed; only now does the tracker row change. The candidate
     # asked for this CV, so the move is theirs (spec 079).
     set_status(conn, scope, job_id, "tailored_cv_requested", actor="candidate")
     return TailorResult(
-        markdown_path=markdown_path,
-        html_path=html_path,
-        pdf_path=pdf_path,
-        metadata_path=metadata_path,
+        markdown_path=paths["markdown"],
+        html_path=paths["html"],
+        pdf_path=paths["pdf"],
+        metadata_path=paths["metadata"],
         evaluation_path=evaluation_path,
         ai_tailored=plan.ai_ordered,
     )
