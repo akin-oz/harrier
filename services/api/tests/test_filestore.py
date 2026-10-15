@@ -22,7 +22,7 @@ from collections.abc import Callable, Generator
 from contextlib import closing, contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from academic_support import academic_search_entry, fixture_items
@@ -91,6 +91,12 @@ def written(families: set[str]) -> Manifest:
         if path.is_file() and relative.split("/", 1)[0] in families:
             found[relative] = (path.read_bytes(), stat.S_IMODE(path.stat().st_mode))
     return found
+
+
+def as_saved(payload: object) -> bytes:
+    """`payload` as the plain and atomic JSON writers save it: indented by
+    two, UTF-8 and unescaped, with no final newline."""
+    return json.dumps(payload, indent=2, ensure_ascii=False).encode("utf-8")
 
 
 def indented(raw: bytes) -> bytes:
@@ -349,9 +355,19 @@ def case_discovery_seen(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Mani
     decisions = {"key-ü": SeenDecision(REJECTED, "reason", "policy", STAMP, ("identity",))}
     save_seen("greenhouse", decisions)
     save_seen("apify_academic", decisions, 2)
+    # A literal, not `SeenDecision.as_json()`: a field the writer drops must
+    # fail here (test-integrity review of PR #361).
     payload = json.dumps(
         {
-            "decisions": {key: decision.as_json() for key, decision in decisions.items()},
+            "decisions": {
+                "key-ü": {
+                    "verdict": REJECTED,
+                    "reason": "reason",
+                    "policy": "policy",
+                    "at": STAMP,
+                    "identities": ["identity"],
+                }
+            },
             "updated_at": STAMP,
         },
         indent=2,
@@ -381,18 +397,19 @@ def case_incoming(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Manifest:
     )
     monkeypatch.setattr(discovery_module, "fetch_greenhouse_jobs", returning([]))
     with closing(connect()) as conn:
-        run_discovery(
+        aggregate = run_discovery(
             conn,
             default_scope(conn),
             DiscoveryOptions(notify=False, only_sources=frozenset({"greenhouse"})),
         )
-    found: Manifest = {}
-    for name in ("incoming/greenhouse_latest.json", "incoming/job_imports_run.json"):
-        raw = file_bytes(name)
-        assert raw == indented(raw), name
-        found[name] = (raw, file_mode(name))
-    assert {mode for _, mode in found.values()} == {PLAIN}
-    return found
+    # Each file holds the summary the run returned, in the writer's form, so
+    # a writer that saves anything else fails (test-integrity review of PR #361).
+    summaries = cast("list[dict[str, object]]", aggregate["source_summaries"])
+    assert [summary["source"] for summary in summaries] == ["greenhouse"]
+    return {
+        "incoming/greenhouse_latest.json": (as_saved(summaries[0]), PLAIN),
+        "incoming/job_imports_run.json": (as_saved(aggregate), PLAIN),
+    }
 
 
 def _academic_scope(monkeypatch: pytest.MonkeyPatch, conn: Connection) -> Scope:
@@ -410,7 +427,7 @@ def case_academic_incoming(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> M
     dataset.write_text(json.dumps(fixture_items()), encoding="utf-8")
     with closing(connect()) as conn:
         scope = _academic_scope(monkeypatch, conn)
-        run_academic_discovery(
+        summary = run_academic_discovery(
             conn,
             scope,
             AcademicOptions(
@@ -418,10 +435,9 @@ def case_academic_incoming(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> M
             ),
         )
         track_id = scope.track.id
+    assert summary.get("fetched_count")
     name = f"incoming/{track_id}/apify_academic_latest.json"
-    raw = file_bytes(name)
-    assert raw == indented(raw)
-    return {name: (raw, ATOMIC)}
+    return {name: (as_saved(summary), ATOMIC)}
 
 
 def case_academic_runs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Manifest:
@@ -435,11 +451,16 @@ def case_academic_runs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Manif
     run_ids = [f"run{index:02d}" for index in range(SAVED_RUNS_CAP + 1)]
     for age, run_id in enumerate(run_ids):
         save_dataset(scope, run_id, items)
-        # Older first, by modification time, which is what the pruning reads.
-        stamp = datetime(2026, 1, 1, tzinfo=UTC).timestamp() + age * 60
+        # Each later name is older, so the newest by modification time, which
+        # the pruning reads, are the lowest names: pruning by name would keep
+        # the others (test-integrity review of PR #361).
+        stamp = datetime(2026, 1, 1, tzinfo=UTC).timestamp() - age * 60
         os.utime(data_dir() / directory / f"{run_id}.json", (stamp, stamp))
     save_dataset(scope, "runlast", items)
-    kept = [*run_ids[2:], "runlast"]
+    kept = [*run_ids[:-2], "runlast"]
+    assert sorted(entry.name for entry in (data_dir() / directory).iterdir()) == sorted(
+        f"{run_id}.json" for run_id in kept
+    )
     found: Manifest = {}
     for run_id in kept:
         name = f"{directory}/{run_id}.json"
@@ -524,6 +545,10 @@ def case_scoring_models(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Mani
     assert model == (canonical + "\n").encode("utf-8")
     report = file_bytes("scoring/reports/report-20261015.json")
     assert report == indented(report)
+    parsed = json.loads(report)
+    assert parsed["metrics"] == metrics
+    assert parsed["created_at"] == "2026-10-15"
+    assert parsed["model"]["identity"] == identity
     return {
         "scoring/active-model.json": (model, ATOMIC),
         f"scoring/models/job-fit-20261015-{identity}.json": (model, ATOMIC),
@@ -700,3 +725,29 @@ def test_an_unlistable_exports_directory_reads_as_no_export(
 
     assert outcome.exit_code == train_module.EXIT_UNUSABLE
     assert outcome.messages == ["no export found; run `harrier scoring export` first"]
+
+
+def test_an_atomic_put_that_fails_keeps_the_earlier_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An atomic put writes a temporary file and renames it, so a write that
+    fails before the rename leaves the earlier file whole and no temporary
+    file. A put that wrote in place with the same mode would pass every
+    characterization case and fail here (test-integrity review of PR #361)."""
+    import harrier.atomicio as atomicio_module
+    from harrier.filestore import LocalFileStore
+
+    store = LocalFileStore(tmp_path)
+    store.put("discovery/greenhouse_seen.json", b'{"before": true}', atomic=True)
+
+    def failing_sync(descriptor: int) -> None:
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr(atomicio_module.os, "fsync", failing_sync)
+    with pytest.raises(OSError):
+        store.put("discovery/greenhouse_seen.json", b'{"after": true}', atomic=True)
+
+    assert (tmp_path / "discovery" / "greenhouse_seen.json").read_bytes() == b'{"before": true}'
+    assert sorted(path.name for path in (tmp_path / "discovery").iterdir()) == [
+        "greenhouse_seen.json"
+    ]
