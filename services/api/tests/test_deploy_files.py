@@ -633,6 +633,27 @@ def test_no_checkout_leaves_the_token_in_the_checkout() -> None:
                 assert "persist-credentials: false" in step.code, (job, step.name)
 
 
+FLY_CALL = re.compile(r"(?:^|[\s(|;&])fly\s")
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_each_job_names_flyctl_as_fly_before_it_calls_fly(environment: str, tmp_path: Path) -> None:
+    """The setup action installs `flyctl` and no `fly`, so the first staging
+    deploy stopped at `fly deploy` with "command not found" (run
+    38617000034). A step before the first `fly` call makes the name, next to
+    the binary the action put on PATH."""
+    steps = environment_steps(environment)
+    naming = position(steps, "Name flyctl as fly")
+    first_call = min(step.index for step in steps if FLY_CALL.search(step.run))
+    assert naming < first_call
+
+    done = run_step(environment, "Name flyctl as fly", {}, {"flyctl": "echo flyctl"}, tmp_path)
+    assert done.returncode == 0, done.stderr
+    linked = tmp_path / "bin" / "fly"
+    assert linked.is_symlink()
+    assert linked.resolve() == (tmp_path / "bin" / "flyctl").resolve()
+
+
 def test_the_image_is_built_once_and_production_never_builds() -> None:
     production = "\n".join(step.code for step in environment_steps("production"))
     assert "docker build" not in production
