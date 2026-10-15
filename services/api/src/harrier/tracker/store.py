@@ -55,6 +55,8 @@ from harrier.tracker.transitions import check_transition, fields_a_move_clears
 from harrier.tracks import (
     ArchivedTrackError,
     Scope,
+    Track,
+    list_tracks,
     refuse_archived_track,
     refuse_if_archived,
     rules_for,
@@ -411,7 +413,8 @@ def _write_lock(conn: Connection, scope: Scope, job_id: int | None) -> Generator
     transaction committed before it began. Writers of other jobs do not wait.
     A job that does not exist, or is another track's or another owner's,
     locks nothing, and the read that follows raises JobNotFoundError. This is
-    the one place in domain code that reads the dialect.
+    one of the two places in domain code that read the dialect; `lock_tracks`
+    is the other.
     """
     with conn.transaction(immediate=True):
         if conn.dialect == "postgres":
@@ -429,6 +432,20 @@ def _write_lock(conn: Connection, scope: Scope, job_id: int | None) -> Generator
                     (job_id, scope.track.id),
                 ).fetchall()
         yield
+
+
+def lock_tracks(conn: Connection) -> list[Track]:
+    """Every track the connection sees, archived ones too, in id order, held
+    until the caller's transaction ends (spec 144).
+
+    SQLite: the caller's `transaction(immediate=True)` already holds the
+    file's write lock. Postgres: the track rows, `FOR UPDATE` in id order, so
+    two writers that lock them cannot interleave and cannot deadlock. Call it
+    inside the transaction it is to hold for.
+    """
+    if conn.dialect == "postgres":
+        conn.execute("SELECT id FROM tracks ORDER BY id FOR UPDATE").fetchall()
+    return list_tracks(conn)
 
 
 def company_has_responded(conn: Connection, scope: Scope, job_id: int) -> bool:

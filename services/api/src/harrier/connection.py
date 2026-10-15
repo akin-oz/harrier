@@ -138,6 +138,12 @@ class StoreImportRefused(StoreError):
     column, never an owner, a host or a value."""
 
 
+class AccountRefused(StoreError):
+    """A check of a `harrier --owner` command refused it before anything was
+    written (spec 144). The text names the check, never an owner, a host or
+    a value."""
+
+
 class StoreMigrationRefused(StoreError):
     """A migration's own precheck refused this store (spec 105).
 

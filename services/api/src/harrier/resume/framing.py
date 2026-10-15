@@ -5,6 +5,8 @@ application profile (spec 101).
 after checking it against the shared facts. `profile check` reports, for the
 scope's track, whether the resume content is valid and which bullets the
 truth documents support. Neither prints a field value or a bullet's text.
+`profile put resume_facts|resume_truth --file PATH` stores a shared
+document once no track's check gains a failure from it (spec 144).
 """
 
 from __future__ import annotations
@@ -14,9 +16,10 @@ from dataclasses import dataclass
 from typing import cast
 
 from harrier.apply.profile import APPLICATION_PROFILE_KIND
-from harrier.connection import Connection
+from harrier.connection import Connection, by_code_point
 from harrier.profile.store import put_document
 from harrier.resume.content import (
+    RESUME_TRUTH_KIND,
     ResumeBundleError,
     bundle_from_documents,
     framing_name,
@@ -24,7 +27,8 @@ from harrier.resume.content import (
     load_facts,
     load_truth_sources,
 )
-from harrier.resume.documents import FRAMING_KIND
+from harrier.resume.documents import FACTS_KIND, FACTS_NAME, FRAMING_KIND
+from harrier.tracker.store import lock_tracks
 from harrier.tracks import Scope, refuse_if_archived, rules_for
 
 
@@ -120,8 +124,103 @@ def check_resume(conn: Connection, scope: Scope) -> CommandOutcome:
     unsupported = [
         bullet_id for bullet_id, text in bundle.bullet_pool.items() if not sources.contains(text)
     ]
-    lines = [f"resume content for track {scope.track.slug}: valid"]
+    lines = [_valid_line(scope)]
     lines.extend(
         f"bullet {bullet_id}: not supported by the truth documents" for bullet_id in unsupported
     )
     return CommandOutcome(1 if unsupported else 0, tuple(lines))
+
+
+# The shared documents `profile put` stores (spec 144): the format and the
+# name a first copy takes. An existing copy keeps its name.
+SHARED_RESUME_DOCUMENTS = {
+    FACTS_KIND: ("json", FACTS_NAME),
+    RESUME_TRUTH_KIND: ("markdown", "resume-truth-source.md"),
+}
+
+
+class _EditBreaksATrack(Exception):
+    """Raised inside the write's transaction, so the write rolls back."""
+
+    def __init__(self, lines: tuple[str, ...]) -> None:
+        super().__init__("the edit breaks a track's resume content")
+        self.lines = lines
+
+
+def put_shared_resume_document(conn: Connection, kind: str, text: str) -> CommandOutcome:
+    """Store `text` as the shared `resume_facts` or `resume_truth`, as read
+    (spec 144). Refused, exit 2 and nothing stored, when the facts are not a
+    JSON object, the truth is empty, or the new document breaks a track whose
+    resume content loaded before it: the content no longer loads, or a
+    bullet the truth supported is no longer supported. A track whose content
+    did not load before (no facts yet, no framing) cannot be broken by it
+    (amendment 2)."""
+    fmt, first_name = SHARED_RESUME_DOCUMENTS[kind]
+    if fmt == "json":
+        try:
+            raw: object = json.loads(text)
+        except json.JSONDecodeError as exc:
+            return CommandOutcome(2, (f"{kind} file is not valid JSON: {exc}",))
+        if not isinstance(raw, dict):
+            return CommandOutcome(2, (f"{kind} file is not a JSON object",))
+    elif not text.strip():
+        return CommandOutcome(2, (f"{kind} file is empty",))
+    try:
+        with conn.transaction(immediate=True):
+            # Every track, archived ones too, read under the lock: two shared
+            # edits at once each check against the other's result.
+            scopes = [Scope(track) for track in lock_tracks(conn)]
+            before = {scope.track.slug: _check_state(conn, scope) for scope in scopes}
+            name = _shared_name(conn, kind) or first_name
+            put_document(conn, kind, name, fmt, text)
+            broken = tuple(
+                f"track {scope.track.slug}: {line}"
+                for scope in scopes
+                for line in _broken(before[scope.track.slug], _check_state(conn, scope))
+            )
+            if broken:
+                raise _EditBreaksATrack(broken)
+    except _EditBreaksATrack as refused:
+        return CommandOutcome(
+            2, (f"{kind} not stored: it breaks the resume content of a track", *refused.lines)
+        )
+    return CommandOutcome(0, (f"stored {kind}/{name}",))
+
+
+def _shared_name(conn: Connection, kind: str) -> str | None:
+    """The name of the shared copy readers take: the first by code point
+    (`_document_by_kind` in `harrier.resume.content`)."""
+    row = conn.execute(
+        "SELECT name FROM profile_documents WHERE kind = ? AND track_id IS NULL "
+        f"ORDER BY {by_code_point(conn, 'name')} LIMIT 1",
+        (kind,),
+    ).fetchone()
+    return str(row[0]) if row is not None else None
+
+
+@dataclass(frozen=True)
+class _CheckState:
+    """A track's `profile check`: whether its content loaded, and the lines
+    that report a failure (the load error, or each unsupported bullet)."""
+
+    loaded: bool
+    failures: frozenset[str]
+
+
+def _check_state(conn: Connection, scope: Scope) -> _CheckState:
+    outcome = check_resume(conn, scope)
+    valid = _valid_line(scope)
+    loaded = outcome.lines[:1] == (valid,)
+    return _CheckState(loaded, frozenset(line for line in outcome.lines if line != valid))
+
+
+def _broken(before: _CheckState, after: _CheckState) -> list[str]:
+    """What the edit broke in one track: nothing unless its content loaded
+    before; then every failure line it did not have."""
+    if not before.loaded:
+        return []
+    return sorted(after.failures - before.failures)
+
+
+def _valid_line(scope: Scope) -> str:
+    return f"resume content for track {scope.track.slug}: valid"

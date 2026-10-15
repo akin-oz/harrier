@@ -440,6 +440,45 @@ that the spec does not provide.
 
 The command's tests are in `services/api/tests/test_import_local.py`.
 
+## Writing one account from the command line
+
+After an import, the browser still cannot add a focused track, store a
+track's documents or move a job. `harrier --owner <user id> <command>` runs
+six commands against one hosted account instead of the local store
+(spec 144): `tracks add`, `tracks list`, `profile put`, `profile list`,
+`profile check` and `move`. Any other command given `--owner` is refused
+before anything opens.
+
+1. Find the account's user id on the Supabase dashboard's Users page, as for
+   the import.
+2. Read the run login's URL into this shell only, never into `.env` (a line
+   there is skipped) and never as a typed command:
+
+   ```
+   read -rs HARRIER_ACCOUNT_DATABASE_URL   # paste harrier_run's session pooler URL
+   export HARRIER_ACCOUNT_DATABASE_URL
+   ```
+
+   The migrator's URL is refused, as for the import.
+3. Run the commands, `--owner` before the command and `--track` beside it:
+
+   ```
+   uv run --project services/api harrier --owner <user id> tracks add focused-scope --kind focused --label "Focused scope"
+   uv run --project services/api harrier --owner <user id> --track focused-scope profile put screening --file PATH
+   uv run --project services/api harrier --owner <user id> --track focused-scope profile check
+   ```
+
+   `move` takes the job id the web app shows. The import gave every job a new
+   id, so a local id names a different job.
+4. Clear the variable: `unset HARRIER_ACCOUNT_DATABASE_URL`.
+
+Each command prints what it prints locally, and no line names the owner id,
+the URL or the host. The local container may run meanwhile: these commands
+never open the local file. `profile put resume_facts` and `profile put
+resume_truth` store the shared documents, and either is refused, with
+nothing stored, when the edit gives any track's `profile check` a failure it
+did not have. `tests/test_account_writes.py` holds each of these.
+
 ## A deploy that fails halfway
 
 harrier has no down migrations (spec 090): a bad migration is fixed forward.
