@@ -145,14 +145,15 @@ def test_every_operator_subcommand_declares_its_role() -> None:
     """Each `harrier operator` subcommand declares a database role or that it
     opens none, a subcommand added without one is found by the walk, and
     `scheduler` and `schedule-report` each declare `harrier_scheduler`, `erase`
-    declares `service_role` and `invite` declares that it opens no database
-    connection (spec 111)."""
+    and `erase-test-owners` declare `service_role` and `invite` declares that it
+    opens no database connection (specs 111 and 143)."""
     parser = cli.build_parser()
     assert cli.operator_roles(parser) == {
         "scheduler": "harrier_scheduler",
         "schedule-report": "harrier_scheduler",
         "invite": cli.NO_DATABASE,
         "erase": "service_role",
+        "erase-test-owners": "service_role",
     }
     assert cli.undeclared_operator_subcommands(parser) == []
 

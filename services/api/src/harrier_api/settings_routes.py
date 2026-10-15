@@ -235,6 +235,7 @@ COMMAND_PLACES: dict[str, Place] = {
     # never holds (ADR-013 decision 3), so they run on the operator's machine.
     "operator invite": TerminalOnly(_OPERATOR_ADMIN),
     "operator erase": TerminalOnly(_OPERATOR_ADMIN),
+    "operator erase-test-owners": TerminalOnly(_OPERATOR_ADMIN),
     # Spec 098 added this after spec 096 was approved, and named its place.
     "profile split-resume": TerminalOnly(
         "A one-time migration of the stored resume into facts and a framing (spec 098)."

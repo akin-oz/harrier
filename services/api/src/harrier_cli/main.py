@@ -1846,6 +1846,14 @@ def _cmd_operator_erase(args: argparse.Namespace) -> int:
     return run_erase(os.environ, str(args.user_id), str(args.confirm))
 
 
+def _cmd_operator_erase_test_owners(args: argparse.Namespace) -> int:
+    """Report the synthetic test owners, or erase them (spec 143)."""
+    from harrier.operator import run_erase_test_owners
+
+    confirm = None if args.confirm is None else int(args.confirm)
+    return run_erase_test_owners(os.environ, confirm)
+
+
 def _cmd_operator_schedule_report(args: argparse.Namespace) -> int:
     """The hosted schedule, one line per owner and job (spec 108)."""
     from harrier_api.hostedscheduler import run_report
@@ -2868,6 +2876,7 @@ COMMAND_CLASSES: dict[str, CommandClass] = {
     "operator schedule-report": _HOST,
     "operator invite": _HOST,
     "operator erase": _HOST,
+    "operator erase-test-owners": _HOST,
     "schedule install": _HOST,
     "schedule status": _HOST,
     "schedule uninstall": _HOST,
@@ -3542,6 +3551,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--confirm",
         required=True,
         help="the same UUID again, so a pasted id is not run by accident",
+    )
+    # Spec 143: the same login and the same erase, once per synthetic owner.
+    erase_test_cmd = _operator_subcommand(
+        operator_sub,
+        "erase-test-owners",
+        role=SERVICE_ROLE,
+        func=_cmd_operator_erase_test_owners,
+        help="report the synthetic test owners, or erase them with --confirm <n> (spec 143)",
+    )
+    erase_test_cmd.add_argument(
+        "--confirm",
+        type=int,
+        default=None,
+        metavar="N",
+        help="the number the report found, so a stale count erases nothing",
     )
 
     scoring_cmd = sub.add_parser("scoring", help="the learned fit score (spec 077)")
