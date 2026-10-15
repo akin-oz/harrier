@@ -620,6 +620,17 @@ def test_the_store_user_is_masked_after_user_equals(
     assert "user=stranger" in written
     assert f"user={one}x" in written
 
+    # Bare before a closing quote, as a keyword conninfo in a repr reads,
+    # and at the end of the text. Matching is exact, as role names are.
+    logging.getLogger("psycopg").warning(
+        "conninfo 'host=h user=%s' upper user=%s last user=%s", two, one.upper(), one
+    )
+
+    written = capsys.readouterr().err
+    assert (
+        f"conninfo 'host=h user=REDACTED' upper user={one.upper()} last user=REDACTED\n" in written
+    )
+
 
 def test_a_configured_handler_masks_the_store_host(
     db: Connection, monkeypatch: pytest.MonkeyPatch
@@ -649,15 +660,26 @@ def test_the_host_mask_keeps_its_boundaries(
         **{
             DATABASE_URL: _store_url("db.example.co", "harrier"),
             IMPORT_URL: _store_url("localhost", "harrier"),
+            ACCOUNT_URL: "postgresql://harrier@/postgres?host=/var/run/postgresql",
         },
     )
 
     logging.getLogger("harrier.tests.hosts").warning(
         "seen: db.example.com, DB.EXAMPLE.CO, localhost and db.example.co."
     )
+    # A longer name on either side, with a `.` or a `-`, and a socket
+    # directory, which names no server.
+    logging.getLogger("harrier.tests.hosts").warning(
+        "kept: sub.db.example.co x-db.example.co db.example.co.uk db.example.co-x"
+        " /var/run/postgresql"
+    )
 
     written = capsys.readouterr().err
     assert "seen: db.example.com, REDACTED, localhost and REDACTED." in written
+    assert (
+        "kept: sub.db.example.co x-db.example.co db.example.co.uk db.example.co-x"
+        " /var/run/postgresql" in written
+    )
 
 
 def test_every_host_of_a_multi_host_url_is_masked(
@@ -675,6 +697,76 @@ def test_every_host_of_a_multi_host_url_is_masked(
 
     written = capsys.readouterr().err
     assert "hosts: REDACTED, REDACTED, REDACTED, REDACTED" in written
+
+
+def test_a_store_url_is_read_as_libpq_reads_it_before_the_driver_loads(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A record logged before psycopg is loaded, as on the local store
+    during `harrier store import-local`, reads a multi-host URL as libpq
+    does. The reading is cached by URL, so one taken with `urlsplit` would
+    leave every host after the first unmasked once the driver was loaded
+    (privacy review of PR #360)."""
+    import sys
+
+    from harrier.logredact import (
+        _hosts_and_user_of,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    _last_resort(monkeypatch)
+    hosts = ("db-a.store.example", "db-b.store.example")
+    url = f"postgresql://postgres.importref:synthetic-pw@{hosts[0]}:5432,{hosts[1]}:5432/postgres"
+    _stores(monkeypatch, **{IMPORT_URL: url})
+    _hosts_and_user_of.cache_clear()
+    monkeypatch.delitem(sys.modules, "psycopg.conninfo", raising=False)
+    try:
+        logging.getLogger("harrier.tests.hosts").warning("hosts: %s", ", ".join(hosts))
+    finally:
+        _hosts_and_user_of.cache_clear()
+
+    written = capsys.readouterr().err
+    assert "hosts: REDACTED, REDACTED" in written
+
+
+def test_a_url_libpq_cannot_read_is_read_with_urlsplit(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from harrier.logredact import (
+        _hosts_and_user_of,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    _last_resort(monkeypatch)
+    host, user = STORES[DATABASE_URL]
+    _stores(monkeypatch, **{DATABASE_URL: _store_url(host, user)})
+
+    def unreadable(_url: str) -> dict[str, object] | None:
+        return None
+
+    monkeypatch.setattr("harrier.logredact._libpq_reading", unreadable)
+    _hosts_and_user_of.cache_clear()
+    try:
+        _rollback_failed(_transaction(host, user))
+    finally:
+        _hosts_and_user_of.cache_clear()
+
+    written = capsys.readouterr().err
+    assert "host=REDACTED port=6543 user=REDACTED" in written
+
+
+def test_a_format_that_does_not_fit_its_arguments_masks_the_host(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The record keeps its format string, scrubbed, and withholds the
+    arguments (spec 133); the host in the format string is masked too."""
+    _last_resort(monkeypatch)
+    host, user = STORES[DATABASE_URL]
+    _stores(monkeypatch, **{DATABASE_URL: _store_url(host, user)})
+
+    logging.getLogger("harrier.tests.hosts").warning(f"connecting to {host} as %s %s", "one")
+
+    written = capsys.readouterr().err
+    assert "connecting to REDACTED as %s %s (arguments withheld" in written
+    assert host not in written
 
 
 def test_a_cancel_failure_prints_no_host(

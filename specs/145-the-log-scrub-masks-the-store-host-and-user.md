@@ -163,6 +163,14 @@ refusing, as spec 103 meant.
   (`services/api/tests/test_logging.py::test_the_host_mask_keeps_its_boundaries`).
 - [ ] Every host of a multi-host URL is masked
   (`services/api/tests/test_logging.py::test_every_host_of_a_multi_host_url_is_masked`).
+- [ ] A record logged before psycopg is loaded masks every host of a
+  multi-host URL, as libpq reads it
+  (`services/api/tests/test_logging.py::test_a_store_url_is_read_as_libpq_reads_it_before_the_driver_loads`).
+- [ ] A URL libpq cannot read has its `urlsplit` host and user masked
+  (`services/api/tests/test_logging.py::test_a_url_libpq_cannot_read_is_read_with_urlsplit`).
+- [ ] A record whose format string does not fit its arguments keeps the
+  format string with the host masked
+  (`services/api/tests/test_logging.py::test_a_format_that_does_not_fit_its_arguments_masks_the_host`).
 - [ ] `query cancellation failed: %s` with a psycopg `OperationalError`
   whose text names the host still prints `OperationalError` alone
   (`services/api/tests/test_logging.py::test_a_cancel_failure_prints_no_host`).
@@ -225,9 +233,12 @@ Found while implementing. Three assertions in
 for the URL with its password masked and its host kept,
 `postgresql://harrier:REDACTED@db.example.test`. That host is a store
 URL's host, so this spec masks it, and they now read
-`postgresql://harrier:REDACTED@REDACTED:5432/tracker`. They still prove
-what they proved, and now prove this spec on the root handler and the log
-file as well.
+`postgresql://harrier:REDACTED@REDACTED:5432/tracker`, and assert the
+host appears nowhere in the record, its exception and stack text included.
+They still prove what they proved, and prove this spec on the root handler
+and the log file as well. The absence check was added after the local
+review of PR #360 showed that a masked copy of the URL being present did
+not rule out an unmasked one in the exception text.
 
 `test_a_record_that_cannot_be_scrubbed_is_withheld` replaced
 `scrub_outbound` with a function that raises, to make the filter fail. The
@@ -238,13 +249,12 @@ change.
 The assertions on HTTP error bodies and run events keep the host, as
 Behavior says, and pass unchanged.
 
-Behavior said the `urlsplit` reading is used when libpq cannot parse the
-URL. It is also used when psycopg is not loaded in the process: a log
-record never imports the driver (`_psycopg_error_class` in
-`services/api/src/harrier/connection.py`), and a process that has not
-loaded it has opened no Postgres store whose repr it could log. Such a
-process reads a multi-host URL's hosts as `urlsplit` does, which does not
-split them (`_hosts_and_user_of` in `services/api/src/harrier/logredact.py`).
+A store URL is read as libpq reads it whenever psycopg is installed, the
+driver imported if it is not yet loaded, as `url_parts` already does for
+the password forms. A first draft read it only when the driver was already
+loaded and cached the `urlsplit` reading otherwise, so a record logged
+before the driver loaded left every host after the first of a multi-host
+URL unmasked for the rest of the process (privacy review of PR #360).
 
 ## Migration
 

@@ -402,22 +402,17 @@ def _store_urls() -> tuple[str, ...]:
 
 
 def _libpq_reading(url: str) -> dict[str, object] | None:
-    """The URL as libpq reads it, when psycopg is already loaded.
+    """The URL as libpq reads it, or None when libpq cannot read it or
+    psycopg is not installed.
 
-    From `sys.modules`, never imported here: a log record must not import
-    the driver (`harrier.connection._psycopg_error_class`), and a process
-    that never loaded it opened no Postgres store whose repr it could log.
+    Through the store seam's own reader, which `url_parts` uses for the
+    password forms and which imports the driver when it is not yet loaded:
+    the reading is cached by URL, so one taken before the driver was loaded
+    must not differ from one taken after (privacy review of PR #360).
     """
-    import sys
+    from harrier.connection import _libpq_parse  # pyright: ignore[reportPrivateUsage]
 
-    conninfo = sys.modules.get("psycopg.conninfo")
-    parse = getattr(conninfo, "conninfo_to_dict", None)
-    if parse is None:
-        return None
-    try:
-        return dict(parse(url))
-    except Exception:
-        return None
+    return _libpq_parse(url)
 
 
 @functools.lru_cache(maxsize=8)

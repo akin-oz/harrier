@@ -278,6 +278,9 @@ def _through_a_root_handler(
         assert "opening postgresql://harrier:REDACTED@REDACTED:5432/tracker" in written
         assert "the driver said: connection to" in written
         assert "connect('postgresql://harrier:REDACTED@REDACTED:5432/tracker" in written
+        # Nowhere: the message, the chained exception's text and the stack
+        # text (spec 145; local review of PR #360).
+        assert "db.example.test" not in written
     return stderr + logged
 
 
@@ -550,6 +553,7 @@ def test_every_root_handler_scrubs_a_record_on_its_own(
     for written in (stderr, logged):
         # The host too, in a log record (spec 145).
         assert "opening postgresql://harrier:REDACTED@REDACTED:5432/tracker" in written
+        assert "db.example.test" not in written
         assert store_password.leaks(written) == []
 
 
