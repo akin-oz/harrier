@@ -258,21 +258,11 @@ def test_an_archived_focused_track_refuses_its_screening_document(
 # --- what later specs open -----------------------------------------------------------
 
 
-HELD: list[tuple[list[str], str]] = [
-    (["tailor", "--job-id", "1"], "spec 140"),
-    (["cover-letter", "--job-id", "1"], "spec 140"),
-    (["answers", "--job-id", "1", "--question", "Why this role?"], "spec 140"),
-]
-
-
 def test_focused_refuses_what_later_specs_open(
     configured: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    for argv, opened_by in HELD:
-        assert main(["--track", SLUG, *argv]) == 2, argv
-        err = capsys.readouterr().err
-        assert f"is not available on a focused track until {opened_by}" in err, (argv, err)
-    # Spec 139: the focused track is discovered by the industry track's run.
+    """Spec 139 runs discovery for the focused track from the industry track;
+    spec 140 opened the documents, so only `discover` is refused here."""
     assert main(["--track", SLUG, "discover"]) == 2
     err = capsys.readouterr().err
     assert "the focused track is discovered by the shared run: harrier discover" in err

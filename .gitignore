@@ -73,3 +73,8 @@ dist/
 # 137). The document lives in the database; this name is ignored so a copy
 # stays local.
 /config/screening.focused.json
+# An operator's working copies of a focused track's framing and application
+# profile (spec 140). Both live in the database; these names are ignored so a
+# copy stays local.
+/config/resume-framing.focused.json
+/config/application-profile.focused.json

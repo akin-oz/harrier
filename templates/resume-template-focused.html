@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{name}}, Resume</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./resume-template.css" />
+  <style>
+    /* The focused kind's header (spec 140): links in place of location and
+       phone, and the line saying how the candidate contracts beneath them. */
+    .header__entity {
+      margin: 4px 0 0;
+      font-size: 11px;
+      line-height: 1.5;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="header">
+      <div class="header__identity">
+        <h1>{{name}}</h1>
+        <p class="headline">{{headline}}</p>
+        <p class="header__meta">
+          {{contact_html}}
+        </p>
+        {{entity_line_html}}
+      </div>
+    </header>
+
+    <section class="section">
+      <h2 class="section-label">Profile</h2>
+      <p class="summary">{{profile}}</p>
+    </section>
+
+    <section class="section section--highlight">
+      <h2 class="section-label">Selected Achievements</h2>
+      <ul class="compact-list">
+        {{selected_achievements_html}}
+      </ul>
+    </section>
+
+    <section class="section">
+      <h2 class="section-label">Experience</h2>
+      {{experience_html}}
+    </section>
+
+    {{ai_section_html}}
+
+    <section class="section section--highlight">
+      <h2 class="section-label">Technical Skills</h2>
+      <p class="skills-inline">{{technical_skills}}</p>
+    </section>
+
+    <section class="footer-grid">
+      <div class="footer-block">
+        <h2 class="section-label">Education</h2>
+        {{education_html}}
+      </div>
+
+      <div class="footer-block footer-block--highlight">
+        <h2 class="section-label">Certifications</h2>
+        {{certifications_html}}
+      </div>
+    </section>
+  </main>
+</body>
+</html>

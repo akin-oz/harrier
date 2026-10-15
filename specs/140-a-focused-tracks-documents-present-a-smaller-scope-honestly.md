@@ -62,8 +62,23 @@ limits:
 - `config/resume-framing.focused.example.json` and
   `config/application-profile.focused.example.json` (new, public,
   synthetic).
-- Tests: `services/api/tests/test_focused_documents.py` (new), plus
-  additions to `test_resume.py` and `test_resume_documents.py`.
+- `services/api/src/harrier/resume/keywords.py` (new): the sidecar's
+  terms (amendment 1).
+- `services/api/src/harrier/resume/framing.py`: `profile put` refuses a
+  focused profile over three sentences (amendment 4).
+- `services/api/src/harrier/apply/letters.py`: the letter's template by
+  kind, the focused payload's links, and the paragraph-count message
+  (amendments 5 and 6).
+- `config/data-classification.json`, `.gitignore` and `.dockerignore`: the
+  two examples' real names are never-in-git and never in the image
+  (amendment 7). A guarded path; approved under this spec.
+- Tests: `services/api/tests/test_focused_documents.py` (new), with
+  `services/api/tests/test_academic_documents.py` sending each kind's
+  letter its own paragraph count and
+  `services/api/tests/test_focused_track.py` no longer expecting the three
+  documents refused, and the letter renderer's stub in
+  `services/api/tests/test_ui_apply.py` taking the `kind` keyword
+  (amendment 8).
 
 ## Behavior
 
@@ -188,29 +203,70 @@ unchanged.
 ## Acceptance criteria
 
 - [ ] An industry tailor with today's framing and facts produces
-  byte-identical markdown and HTML to the run before this change (planned
-  test_the_industry_cv_is_unchanged).
+  byte-identical markdown and HTML to the run before this change (`services/api/tests/test_focused_documents.py::test_the_industry_cv_is_unchanged`).
 - [ ] A focused tailor prints the framing's `headline` verbatim, and
   GitHub, the links and the entity line in the header, with no location or
-  phone (planned test_the_focused_header_carries_links_and_the_entity_line).
+  phone (`services/api/tests/test_focused_documents.py::test_the_focused_header_carries_links_and_the_entity_line`).
 - [ ] The focused CV's section headings appear in the `cv_sections` order,
-  with the AI section holding the `ai_bullets` lines (planned
-  test_the_focused_cv_has_an_ai_section).
+  with the AI section holding the `ai_bullets` lines (`services/api/tests/test_focused_documents.py::test_the_focused_cv_has_an_ai_section`).
 - [ ] A focused framing whose profile has four sentences is refused
-  (planned test_a_focused_profile_is_at_most_three_sentences).
+  (`services/api/tests/test_focused_documents.py::test_a_focused_profile_is_at_most_three_sentences`).
 - [ ] A posting that asks for Git, against truth sources that name only
   GitHub Actions, yields a CV without "Git" and a sidecar listing it with
-  the posting line (planned test_an_unverified_posting_skill_goes_to_the_sidecar).
+  the posting line (`services/api/tests/test_focused_documents.py::test_an_unverified_posting_skill_goes_to_the_sidecar`).
 - [ ] An industry tailor of the same posting writes no missing-keywords
-  sidecar (planned test_the_sidecar_is_focused_only).
+  sidecar (`services/api/tests/test_focused_documents.py::test_the_sidecar_is_focused_only`).
 - [ ] A focused letter with six paragraphs of at most 320 words passes. A
-  letter with three is refused naming the count (planned
-  test_the_focused_letter_has_six_paragraphs).
+  letter with three is refused naming the count (`services/api/tests/test_focused_documents.py::test_the_focused_letter_has_six_paragraphs`).
 - [ ] A focused letter containing `[[TODO: tax or VAT ID]]` exits 3 with
-  the draft kept and no PDF (planned test_a_focused_letter_placeholder_blocks_the_pdf).
+  the draft kept and no PDF (`services/api/tests/test_focused_documents.py::test_a_focused_letter_placeholder_blocks_the_pdf`).
 - [ ] The focused letter's HTML starts with "Hello <Company> team," and
-  ends with the candidate's name (planned test_the_focused_letter_has_a_salutation).
+  ends with the candidate's name (`services/api/tests/test_focused_documents.py::test_the_focused_letter_has_a_salutation`).
 - [ ] `just check` passes.
+
+## Amendments found while implementing (2026-10-15)
+
+1. **The sidecar matches whole words, in a module of its own.** A truth
+   source naming "GitHub Actions" contains "Git" as a substring, and the
+   truth predicate (`TruthSources.contains`) reads substrings, so the
+   criterion's own example would have found Git held. `harrier.resume.keywords`
+   matches a term on word boundaries, a term of two letters or fewer in its
+   own case, as the claims check does (`harrier.apply.claims`), and reads
+   the truth sources the same way.
+2. **An AI section line is never also an achievement.** `ai_bullets` name
+   pool lines, and `ach_` lines are the achievements' candidates, so one
+   line could print twice. On a kind that renders the AI section,
+   `build_content_plan(exclude=...)` keeps those ids out of the
+   achievements, the fallback included. A kind that does not render the
+   section is unchanged.
+3. **The kind's document choices are `KindRules` fields.** The letter's
+   template (`letter_template`), the profile's sentence limit
+   (`profile_max_sentences`), the sidecar (`missing_keywords`) and the
+   header with links (`header_links`) are named on the kind, as spec 101
+   named the CV's template and pages, so no reader checks a kind's name.
+4. **The three-sentence limit is checked twice.** `profile put
+   resume_framing` refuses a focused framing whose profile (lead,
+   experience sentence and summary) has more than three sentences, so it
+   is never stored; `build_markdown` refuses it again for a framing stored
+   before this change. A stop inside a word, as in "Next.js", ends no
+   sentence.
+5. **The focused letter's payload carries the facts' links.** The closing
+   names the demo and the repository, which the letter's payload did not
+   hold. On a kind with header links it adds `candidate_links` (GitHub and
+   the facts' links); every other kind's payload is unchanged.
+6. **The paragraph count is named.** A focused letter with too few
+   paragraphs was refused as "should contain three short paragraphs". The
+   refusal names the kind's count; the industry wording is unchanged.
+7. **The examples' real names are classified.** As spec 137's amendment 5
+   did for its example, `config/resume-framing.focused.json` and
+   `config/application-profile.focused.json` are never-in-git and kept out
+   of the image
+   (`services/api/tests/test_classification_coverage.py::test_every_example_config_has_its_real_name_classified`).
+   The examples hold synthetic values only.
+8. **The tests are in one new file.** The additions planned for
+   `test_resume.py` and `test_resume_documents.py` are in
+   `services/api/tests/test_focused_documents.py`, which builds the
+   focused bundle once for all of them.
 
 ## Proof / origin
 

@@ -14,8 +14,8 @@ from harrier.resume.content import ResumeBundle, TruthSources, forbidden_hits, y
 from harrier.resume.dashes import dash_marks, describe
 from harrier.resume.facts import role_period_label
 from harrier.resume.heading import role_heading
-from harrier.resume.plan import ContentPlan, validate_content_plan
-from harrier.tracks import INDUSTRY_CV_SECTIONS, rules_for
+from harrier.resume.plan import ContentPlan, sentence_count, validate_content_plan
+from harrier.tracks import AI_CV_SECTION, INDUSTRY_CV_SECTIONS, rules_for
 
 _TR_MAP = str.maketrans("çğıöşüÇĞİÖŞÜ", "cgiosuCGIOSU")
 
@@ -120,6 +120,31 @@ def _education_lines(bundle: ResumeBundle) -> list[str]:
     return lines
 
 
+def contact_labels(bundle: ResumeBundle) -> list[str]:
+    """The visible contact line of a header with links (spec 140): email,
+    LinkedIn, GitHub and each of the facts' links, in that order. An absent
+    one leaves no gap."""
+    labels = [bundle.email, normalize_visible_url_text(bundle.linkedin)]
+    if bundle.github:
+        labels.append(normalize_visible_url_text(bundle.github))
+    labels.extend(normalize_visible_url_text(url) for _, url in bundle.links)
+    return [label for label in labels if label]
+
+
+def _header_lines(bundle: ResumeBundle, *, header_links: bool) -> list[str]:
+    """The lines under the title: today's location, email and LinkedIn line,
+    or on a kind with header links, the contact line and the entity line."""
+    if not header_links:
+        return [
+            f"{bundle.location} | {bundle.email} | {normalize_visible_url_text(bundle.linkedin)}",
+            "",
+        ]
+    lines = [" | ".join(contact_labels(bundle))]
+    if bundle.entity_line:
+        lines.append(bundle.entity_line)
+    return [*lines, ""]
+
+
 def build_markdown(
     bundle: ResumeBundle,
     sources: TruthSources,
@@ -135,15 +160,24 @@ def build_markdown(
     if plan_errors:
         raise ValueError("invalid resume content plan: " + "; ".join(plan_errors))
 
-    order = rules_for(kind).cv_sections
-    if sorted(order) != sorted(INDUSTRY_CV_SECTIONS):
+    rules = rules_for(kind)
+    order = rules.cv_sections
+    if sorted(heading for heading in order if heading != AI_CV_SECTION) != sorted(
+        INDUSTRY_CV_SECTIONS
+    ):
         raise ValueError(f"the {kind} CV section order is not a permutation of the CV sections")
+    limit = rules.profile_max_sentences
+    if limit is not None and sentence_count(plan.profile) > limit:
+        raise ValueError(f"the {kind} CV profile has more than {limit} sentences")
 
+    # A kind that prints the AI-assisted section keeps its lines out of the
+    # achievements, the fallback included (spec 140).
+    printed_elsewhere = set(bundle.ai_bullets) if AI_CV_SECTION in order else set[str]()
     achievements = _section_bullets(
         bundle,
         sources,
         plan.selected_achievements,
-        list(bundle.default_achievements),
+        [item for item in bundle.default_achievements if item not in printed_elsewhere],
     )
     experience = ["## EXPERIENCE", ""]
     for role in bundle.roles:
@@ -176,14 +210,16 @@ def build_markdown(
         "## CERTIFICATIONS": ["## CERTIFICATIONS", *bundle.certifications, ""],
         "## TECHNICAL SKILLS": ["## TECHNICAL SKILLS", ", ".join(plan.skills), ""],
     }
+    if AI_CV_SECTION in order and bundle.ai_bullets:
+        ai_lines, _ = resolve_bullets(bundle, sources, list(bundle.ai_bullets))
+        sections[AI_CV_SECTION] = [AI_CV_SECTION, *[f"- {line}" for line in ai_lines], ""]
     lines = [
         f"# {bundle.name}",
         plan.title,
-        f"{bundle.location} | {bundle.email} | {normalize_visible_url_text(bundle.linkedin)}",
-        "",
+        *_header_lines(bundle, header_links=rules.header_links),
     ]
     for heading in order:
-        lines.extend(sections[heading])
+        lines.extend(sections.get(heading, []))
     if lines[-1] == "":
         lines.pop()
     markdown = "\n".join(lines)

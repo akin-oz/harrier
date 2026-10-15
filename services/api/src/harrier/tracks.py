@@ -110,6 +110,11 @@ INDUSTRY_CV_SECTIONS: tuple[str, ...] = (
     "## TECHNICAL SKILLS",
 )
 
+# A section only a kind that lists it renders (spec 140): the framing's
+# `ai_bullets`. Every kind's `cv_sections` is the six above in some order,
+# with this one or without it.
+AI_CV_SECTION = "## AI-ASSISTED ENGINEERING"
+
 
 @dataclass(frozen=True)
 class KindRules:
@@ -147,6 +152,15 @@ class KindRules:
     # None means the kind has none, and its length is the page gate's.
     letter_paragraphs: int | None = 3
     letter_max_words: int | None = 240
+    # Spec 140: the letter's template; the most sentences the CV's profile
+    # may have (None: no limit); and whether tailoring writes the
+    # missing-keywords sidecar.
+    letter_template: str = "cover-letter-template.html"
+    profile_max_sentences: int | None = None
+    missing_keywords: bool = False
+    # The CV header names email, LinkedIn, GitHub and the facts' links, and
+    # the framing's entity line under them, with no location or phone.
+    header_links: bool = False
 
 
 KIND_RULES: dict[str, KindRules] = {
@@ -221,7 +235,33 @@ KIND_RULES: dict[str, KindRules] = {
 # industry kind does: the same labels, next actions, follow-up and queue. Its
 # own score comes from the screening document the track owns, and its
 # documents arrive with spec 140.
-KIND_RULES["focused"] = replace(KIND_RULES["industry"])
+KIND_RULES["focused"] = replace(
+    KIND_RULES["industry"],
+    # A senior engineer choosing a smaller scope on purpose (spec 140): its own
+    # voices, a header with links and an entity line, an AI-assisted section,
+    # a six-paragraph letter with a salutation, and a sidecar naming the
+    # posting's skills the truth does not hold.
+    tailor_voice=voices.FOCUSED_TAILOR_VOICE,
+    letter_voice=voices.FOCUSED_LETTER_VOICE,
+    answers_voice=voices.FOCUSED_ANSWERS_VOICE,
+    cv_sections=(
+        "## PROFILE",
+        "## SELECTED ACHIEVEMENTS",
+        "## EXPERIENCE",
+        AI_CV_SECTION,
+        "## TECHNICAL SKILLS",
+        "## EDUCATION",
+        "## CERTIFICATIONS",
+    ),
+    cv_template="resume-template-focused.html",
+    pages=(1,),
+    letter_paragraphs=6,
+    letter_max_words=320,
+    letter_template="cover-letter-template-focused.html",
+    profile_max_sentences=3,
+    missing_keywords=True,
+    header_links=True,
+)
 
 
 # What a non-default track may run, by operation name (spec 093, moved here by
@@ -283,13 +323,7 @@ WRITE_OPERATIONS: frozenset[str] = frozenset(
 # Operations a kind may not run yet, each with the spec that opens it
 # (spec 137). The allowlist above is per track; this is per kind, and it
 # empties as those specs land.
-HELD_OPERATIONS: dict[str, dict[str, str]] = {
-    "focused": {
-        "tailor": "spec 140",
-        "cover-letter": "spec 140",
-        "answers": "spec 140",
-    },
-}
+HELD_OPERATIONS: dict[str, dict[str, str]] = {}
 
 # Operations a kind never runs on its own track, each with the sentence that
 # says where it runs instead. A focused track's postings are found by the

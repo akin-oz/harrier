@@ -231,7 +231,13 @@ def build_cover_letter_payload(
     block_raw = candidate.get("candidate")
     block = cast("dict[str, object]", block_raw) if isinstance(block_raw, dict) else {}
     sources = load_truth_sources(conn)
+    links: dict[str, object] = {}
+    if rules_for(scope.track.kind).header_links:
+        # The closing names the demo and the repository (spec 140): the
+        # facts' links, which the operator writes and vouches for.
+        links = {"candidate_links": _candidate_links(conn, scope)}
     return {
+        **links,
         "candidate_name": str(block.get("name", "")),
         "company": company,
         "role": role,
@@ -251,6 +257,19 @@ def build_cover_letter_payload(
             "application_profile_md": load_profile_markdown(conn, scope),
             "application_profile_json": load_profile_json(conn, scope),
         },
+    }
+
+
+def _candidate_links(conn: Connection, scope: Scope) -> dict[str, object]:
+    from harrier.resume.content import ResumeBundleError, load_bundle
+
+    try:
+        bundle = load_bundle(conn, scope)
+    except ResumeBundleError:
+        return {"github": "", "links": []}
+    return {
+        "github": bundle.github,
+        "links": [{"label": label, "url": url} for label, url in bundle.links],
     }
 
 
@@ -332,7 +351,11 @@ def cover_letter_violations(
     if stated.paragraphs is None:
         expected = rules.letter_paragraphs
         if expected is not None and len(paragraphs) < expected:
-            violations.append("cover letter should contain three short paragraphs")
+            violations.append(
+                "cover letter should contain three short paragraphs"
+                if expected == 3
+                else f"cover letter should contain {expected} paragraphs"
+            )
         if expected is not None and len(paragraphs) > expected:
             violations.append(f"too many paragraphs: {len(paragraphs)}, at most {expected}")
     else:
@@ -506,9 +529,14 @@ def render_cover_letter_html(
     role: str,
     full_version: str,
     template_dir: Path | None = None,
+    *,
+    kind: str = "industry",
 ) -> str:
+    """The letter's HTML, in the template the kind names (spec 140). The
+    focused template has no header: a salutation naming the company above the
+    paragraphs, and the candidate's name below them."""
     directory = template_dir if template_dir is not None else TEMPLATE_DIR
-    template = (directory / HTML_TEMPLATE).read_text(encoding="utf-8")
+    template = (directory / rules_for(kind).letter_template).read_text(encoding="utf-8")
     css = (directory / CSS_TEMPLATE).read_text(encoding="utf-8")
     contact = candidate_contact(conn)
     html_text = template.replace(
@@ -526,6 +554,7 @@ def render_cover_letter_html(
         "linkedin_url": html.escape(contact["linkedin_url"]),
         "linkedin_label": html.escape(contact["linkedin_label"]),
         "full_version_html": markdown_to_html_paragraphs(full_version),
+        "company": html.escape(company.strip()),
     }
     for key, value in replacements.items():
         html_text = html_text.replace(f"{{{{{key}}}}}", value)
@@ -580,7 +609,9 @@ def write_cover_letter_artifacts(
     if placeholders:
         raise NeedsInputError(markdown_path, placeholders)
     try:
-        html_text = render_cover_letter_html(conn, company, role, full_version, template_dir)
+        html_text = render_cover_letter_html(
+            conn, company, role, full_version, template_dir, kind=kind
+        )
         html_path.write_text(html_text, encoding="utf-8")
         # The resume path validated its PDF; this one only checked the file
         # existed, so a zero-byte or four-page letter passed. It is the one
