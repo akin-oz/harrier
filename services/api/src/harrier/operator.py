@@ -1,4 +1,5 @@
-"""`harrier operator invite` and `harrier operator erase` (spec 111).
+"""`harrier operator invite` and `harrier operator erase` (spec 111), and
+`harrier operator erase-test-owners` (spec 143).
 
 The operator of a hosted deployment creates a user and removes one. Neither
 is reachable from HTTP (ADR-013 decision 3): both run on the operator's
@@ -12,6 +13,10 @@ password, and prints the user's id. Harrier sends nothing itself.
 `erase` runs six steps in order, each reported on its own line and each a
 no-op on what is already gone, so a re-run resumes (see `erase_owner`).
 
+`erase-test-owners` finds the synthetic owners that spec 115's staging check
+leaves in `auth.users` by a rule on the `auth` tables alone, and runs `erase`'s
+steps for each, one owner at a time (see `run_erase_test_owners`).
+
 Nothing here prints an address, a key, a URL's password or a row's content.
 An error names a step and, for the auth server, an HTTP status.
 
@@ -23,6 +28,7 @@ deletes a row from the Storage objects table with SQL.
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import re
@@ -421,6 +427,7 @@ def erase_owner(
     ledger: Path,
     out: TextIO,
     err: TextIO,
+    row_counts: list[tuple[str, int]] | None = None,
 ) -> int:
     """The six steps of spec 111, "Deletion", in order. Returns the exit
     status: 0 when every step completed, 1 naming the step otherwise.
@@ -437,6 +444,9 @@ def erase_owner(
     partial erase finishes the rest. A line is appended to the ledger when
     the run fails after step 3 committed, too: those rows are gone from the
     live copy, and a restore of an older backup must erase them again.
+
+    `row_counts`, when given, receives each table and the rows step 3 deleted
+    from it, for a caller that totals them (spec 143).
     """
     completed: list[str] = []
     rows_gone = False
@@ -464,6 +474,8 @@ def erase_owner(
             except StoreError as error:
                 raise OperatorError(str(error), step="rows") from None
             rows_gone = True
+            if row_counts is not None:
+                row_counts.extend(counts)
             for table, erased in counts:
                 say(f"step 3 rows: {table} {erased}")
         else:
@@ -516,6 +528,45 @@ def _delete_auth_user(admin: AdminClient, conn: Connection, user_id: str) -> Non
         raise
 
 
+@dataclass
+class OperatorSession:
+    """What a command that erases holds: the project and its key, and the
+    operator's login, already checked by `preflight`."""
+
+    admin: Admin
+    conn: Connection
+
+
+@contextmanager
+def operator_session(environ: Mapping[str, str]) -> Generator[OperatorSession]:
+    """The environment `erase` and `erase-test-owners` share (spec 111, spec
+    143): the project and secret key, the operator's login in
+    `HARRIER_DATABASE_URL`, and the checks of `preflight`. Every refusal is
+    an OperatorError that names a variable or a rule and never a value. The
+    connection is closed when the block ends."""
+    from harrier.connection import StoreUrlError, store_target
+    from harrier.pgstore import postgres_connect
+
+    admin = read_admin(environ)
+    if not environ.get(DATABASE_URL_VARIABLE, "").strip():
+        raise OperatorError(needs(DATABASE_URL_VARIABLE))
+    try:
+        target = store_target(environ)
+    except StoreUrlError as error:
+        raise OperatorError(str(error)) from None
+    if not target.is_postgres:
+        raise OperatorError(f"{DATABASE_URL_VARIABLE} must name a Postgres store")
+    try:
+        conn = Connection.postgres(postgres_connect(target.url))
+    except StoreError as error:
+        raise OperatorError(str(error)) from None
+    try:
+        preflight(conn)
+        yield OperatorSession(admin, conn)
+    finally:
+        conn.close()
+
+
 def run_erase(
     environ: Mapping[str, str],
     user_id: str,
@@ -531,9 +582,6 @@ def run_erase(
     or malformed variable, the secret key in `.env`, a login that cannot act
     as `service_role`, and a store without the erase function.
     """
-    from harrier.connection import StoreUrlError, store_target
-    from harrier.pgstore import postgres_connect
-
     out = out if out is not None else cast("TextIO", sys.stdout)
     err = err if err is not None else cast("TextIO", sys.stderr)
     try:
@@ -542,26 +590,154 @@ def run_erase(
         if not _is_uuid(user_id) or str(uuid.UUID(user_id)) != user_id.lower():
             raise OperatorError(NOT_A_USER_ID)
         owner = str(uuid.UUID(user_id))
-        admin = read_admin(environ)
-        if not environ.get(DATABASE_URL_VARIABLE, "").strip():
-            raise OperatorError(needs(DATABASE_URL_VARIABLE))
-        try:
-            target = store_target(environ)
-        except StoreUrlError as error:
-            raise OperatorError(str(error)) from None
-        if not target.is_postgres:
-            raise OperatorError(f"{DATABASE_URL_VARIABLE} must name a Postgres store")
-        try:
-            conn = Connection.postgres(postgres_connect(target.url))
-        except StoreError as error:
-            raise OperatorError(str(error)) from None
-        try:
-            preflight(conn)
-            with quiet_http_logs(), http_client() as http:
-                client = AdminClient(admin.origin, admin.secret_key, http)
-                return erase_owner(owner, client, conn, ledger_path(), out, err)
-        finally:
-            conn.close()
+        with operator_session(environ) as session, quiet_http_logs(), http_client() as http:
+            client = AdminClient(session.admin.origin, session.admin.secret_key, http)
+            return erase_owner(owner, client, session.conn, ledger_path(), out, err)
     except OperatorError as error:
         print(error.line(), file=err)
         return 1
+
+
+# --- erase-test-owners (spec 143) ---
+
+# The rule of spec 143, "Which owners are synthetic", as a condition on a row
+# of `auth.users` aliased `u`. It reads only that row and `auth.identities`;
+# it reads no row of any owned table. `is_anonymous IS FALSE` and not `NOT
+# is_anonymous`: a null does not match, so the rule errs toward keeping a user.
+SYNTHETIC_OWNER_RULE = """
+    u.email IS NULL AND u.phone IS NULL
+    AND u.is_anonymous IS FALSE
+    AND u.last_sign_in_at IS NULL
+    AND NOT EXISTS (SELECT 1 FROM auth.identities i WHERE i.user_id = u.id)
+"""
+
+# One progress line per this many owners (spec 143).
+PROGRESS_EVERY = 10
+
+RULE_UNREADABLE = (
+    "the login cannot read the columns of auth.users and auth.identities that "
+    "the synthetic owner rule uses"
+)
+
+
+def find_synthetic_owners(conn: Connection) -> list[str]:
+    """The id of every synthetic owner, in `auth.users` id order. Read as the
+    operator's login, which can read `auth.users` (the migrator's login on a
+    Supabase project does)."""
+    try:
+        rows = conn.execute(
+            f"SELECT u.id::text FROM auth.users u WHERE {SYNTHETIC_OWNER_RULE} ORDER BY u.id"
+        ).fetchall()
+    except StoreDatabaseError:
+        raise OperatorError(RULE_UNREADABLE) from None
+    return [str(row[0]) for row in rows]
+
+
+def is_synthetic_owner(conn: Connection, user_id: str) -> bool:
+    """The rule again, for one id, just before it is erased."""
+    try:
+        row = conn.execute(
+            f"SELECT 1 FROM auth.users u WHERE u.id = ?::uuid AND {SYNTHETIC_OWNER_RULE}",
+            (user_id,),
+        ).fetchone()
+    except StoreDatabaseError:
+        raise OperatorError(RULE_UNREADABLE) from None
+    return row is not None
+
+
+def count_owned_rows(conn: Connection) -> list[tuple[str, int]]:
+    """Each owned table and the rows the synthetic owners hold in it. Counts
+    only: no id and no row content is read."""
+    from harrier.tracker.schema import OWNED_TABLES
+
+    counts: list[tuple[str, int]] = []
+    try:
+        for table in OWNED_TABLES:
+            row = conn.execute(
+                f"SELECT count(*) FROM {table} WHERE owner_id IN "
+                f"(SELECT u.id FROM auth.users u WHERE {SYNTHETIC_OWNER_RULE})"
+            ).fetchone()
+            counts.append((table, int(row[0]) if row is not None else 0))
+    except StoreDatabaseError:
+        raise OperatorError(RULE_UNREADABLE) from None
+    return counts
+
+
+def count_mismatch(confirmed: int, found: int) -> str:
+    return (
+        f"--confirm {confirmed} does not match the {found} synthetic owners found now; "
+        "nothing was erased"
+    )
+
+
+def run_erase_test_owners(
+    environ: Mapping[str, str],
+    confirm: int | None,
+    out: TextIO | None = None,
+    err: TextIO | None = None,
+) -> int:
+    """`harrier operator erase-test-owners [--confirm <n>]` (spec 143).
+
+    Without `--confirm`: the count, the rows they hold per owned table, and
+    `nothing erased`. Exit 0, nothing written, no user id printed.
+
+    With `--confirm <n>`: refused with exit 1, before any erase, unless `n`
+    is the count found now. Then each synthetic owner, in id order, is
+    checked against the rule again and erased by `erase_owner`, spec 111's
+    six steps unchanged. The first failure stops the run with exit 1 and the
+    failed step named; a re-run finds the owners that remain.
+    """
+    out = out if out is not None else cast("TextIO", sys.stdout)
+    err = err if err is not None else cast("TextIO", sys.stderr)
+    try:
+        with operator_session(environ) as session:
+            conn = session.conn
+            owners = find_synthetic_owners(conn)
+            if confirm is None:
+                print(f"synthetic test owners: {len(owners)}", file=out)
+                for table, held in count_owned_rows(conn):
+                    print(f"rows held: {table} {held}", file=out)
+                print(f"nothing erased; repeat with --confirm {len(owners)}", file=out)
+                return 0
+            if confirm != len(owners):
+                raise OperatorError(count_mismatch(confirm, len(owners)))
+            with quiet_http_logs(), http_client() as http:
+                client = AdminClient(session.admin.origin, session.admin.secret_key, http)
+                return _erase_each(owners, client, conn, out, err)
+    except OperatorError as error:
+        print(error.line(), file=err)
+        return 1
+
+
+def _erase_each(
+    owners: Sequence[str], client: AdminClient, conn: Connection, out: TextIO, err: TextIO
+) -> int:
+    """The confirmed run: one `erase_owner` per owner still matching the rule.
+    Its per-step lines are dropped; the progress and final lines replace them
+    (spec 143)."""
+    from harrier.tracker.schema import OWNED_TABLES
+
+    erased = 0
+    skipped = 0
+    totals = dict.fromkeys(OWNED_TABLES, 0)
+    ledger = ledger_path()
+    for position, owner in enumerate(owners, start=1):
+        if not is_synthetic_owner(conn, owner):
+            skipped += 1
+        else:
+            counts: list[tuple[str, int]] = []
+            if erase_owner(owner, client, conn, ledger, io.StringIO(), err, counts) != 0:
+                print(
+                    f"stopped after {erased} erased and {skipped} skipped; "
+                    "run the command again to continue",
+                    file=err,
+                )
+                return 1
+            erased += 1
+            for table, rows in counts:
+                totals[table] = totals.get(table, 0) + rows
+        if position % PROGRESS_EVERY == 0:
+            print(f"{position} of {len(owners)} owners done", file=out)
+    held = ", ".join(f"{table} {rows}" for table, rows in totals.items())
+    print(f"erased {erased}, skipped {skipped}; rows deleted: {held}", file=out)
+    return 0

@@ -108,16 +108,16 @@ The environment and refusals are spec 111's: the operator login in
 - [ ] On a store with synthetic owners, an invited user with an email, an
       anonymous user and a user who signed in, the report counts only the
       synthetic owners, and the confirmed run erases only them
-      (planned test_erase_test_owners_matches_only_synthetic_owners).
+      (`services/api/tests/test_operator_erase_test_owners.py::test_erase_test_owners_matches_only_synthetic_owners`).
 - [ ] Without `--confirm` nothing is written, and the output holds counts
       and table names only, no user id
-      (planned test_erase_test_owners_reports_without_writing).
+      (`services/api/tests/test_operator_erase_test_owners.py::test_erase_test_owners_reports_without_writing`).
 - [ ] A `--confirm` number that differs from the count exits 1 and erases
-      nothing (planned test_erase_test_owners_refuses_a_stale_count).
+      nothing (`services/api/tests/test_operator_erase_test_owners.py::test_erase_test_owners_refuses_a_stale_count`).
 - [ ] An owner that stops matching between the report and its turn is
-      skipped (planned test_erase_test_owners_rechecks_each_owner).
+      skipped (`services/api/tests/test_operator_erase_test_owners.py::test_erase_test_owners_rechecks_each_owner`).
 - [ ] A failure partway exits 1, and a re-run finishes the rest
-      (planned test_erase_test_owners_resumes_after_a_failure).
+      (`services/api/tests/test_operator_erase_test_owners.py::test_erase_test_owners_resumes_after_a_failure`).
 - [ ] After a confirmed run on staging, the migrator counts no row in any
       owned table for an owner outside the real accounts, and `auth.users`
       holds the real accounts only. Recorded in the pull request that runs
@@ -155,6 +155,42 @@ admin API faked at its boundary, and synthetic ids only.
 
 Akin approved the spec on 2026-10-15. Decision 1: build spec 111 whole
 first, then this. Decision 2: the rule, as recommended.
+
+## Amendment (2026-10-15), found while building
+
+Building the command settled four points the text above left open. None
+changes a decision taken above.
+
+- The report's lines are `synthetic test owners: <n>`, then one
+  `rows held: <table> <count>` line per owned table in
+  `harrier.tracker.schema.OWNED_TABLES` order, then the instruction line.
+  The test is `services/api/tests/test_operator_erase_test_owners.py::test_erase_test_owners_reports_without_writing`.
+- The rule reads `is_anonymous IS FALSE`, so a null does not match. It errs
+  toward keeping a user.
+- The counts and the rule are read as the operator's login, not as
+  `service_role`: `service_role` holds no privilege on the owned tables
+  (migration 10). The login must be able to read
+  `auth.users` and `auth.identities`; the migrator's login on a Supabase
+  project is expected to. When it cannot, the command exits 1 with a fixed
+  text that names no column value.
+- A failure also prints `stopped after <e> erased and <s> skipped; run the
+  command again to continue` on standard error, after spec 111's step line,
+  so the operator sees how far the run got. It prints no user id.
+- The shim's `auth.users` still holds only an id. The test file adds the
+  four columns and `auth.identities` in its own fixture, because
+  `test_supabase_project.py` adds an `email` column to the shim itself.
+- Both modes need spec 111's environment, including the secret key, though
+  the report makes no admin call: one refusal path for the command.
+- **The login is the migrator's.** Checked on staging on 2026-10-15, read
+  only. A dedicated login made as spec 111's runbook describes
+  (`LOGIN NOINHERIT`, a member of `service_role`) can switch to
+  `service_role` but reads neither `auth.users` nor `auth.identities`, and
+  no owner's rows. The project's `postgres` role can do all three: it can
+  `SET ROLE service_role`, holds `SELECT` on both auth tables, and bypasses
+  row security. So `HARRIER_DATABASE_URL` for this command is the
+  migrator's URL. `harrier operator erase` for one account still works with
+  the dedicated login. `docs/deploy.md`, "Erasing the synthetic test
+  owners", says so.
 
 ## Out of scope
 

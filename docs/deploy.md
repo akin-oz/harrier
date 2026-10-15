@@ -382,6 +382,34 @@ it until a spec owns the fix:
   (`--tb=line`, so a failed connection prints no URL).
   Record its output, role names only.
 
+## Erasing the synthetic test owners
+
+Spec 115's staging check leaves owners in `auth.users` with no email,
+phone, identity or sign-in. `harrier operator erase-test-owners` finds them
+by that rule, reports them, and with `--confirm <n>` erases each through
+`harrier operator erase` (specs 111 and 143).
+
+It reads `auth.users`, `auth.identities` and every owner's rows, so it runs
+with the migrator's login, the project's `postgres` role. That role can
+`SET ROLE service_role`, which the erase needs. A dedicated operator login
+that is only a member of `service_role` cannot read those tables, and the
+command then exits 1 naming the rule (spec 143, Amendment).
+
+In the shell only, never in `.env`:
+
+```
+read -rs HARRIER_DATABASE_URL           # the migrator URL, as in step 2 above
+read -rs HARRIER_SUPABASE_SECRET_KEY    # the project's secret key
+export HARRIER_DATABASE_URL HARRIER_SUPABASE_SECRET_KEY
+export HARRIER_SUPABASE_URL=https://<ref>.supabase.co
+harrier operator erase-test-owners               # the report: writes nothing
+harrier operator erase-test-owners --confirm <n> # <n> is the count it printed
+```
+
+A failure stops at one owner and names the step. Running it again
+continues with the owners that remain. Each erase appends one line to
+`data/hosted/erasures.jsonl`.
+
 ## Importing a local store into an account
 
 `harrier store import-local` copies the local store, `data/tracker.db`, into one
