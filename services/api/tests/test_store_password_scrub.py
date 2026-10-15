@@ -274,10 +274,10 @@ def _through_a_root_handler(
     logged = log_path().read_text(encoding="utf-8")
     for written in (stderr, logged):
         assert "OperationalError" in written, "the chained driver error was not logged"
-        # The host too, in a log record (spec 145).
-        assert "opening postgresql://harrier:REDACTED@REDACTED:5432/tracker" in written
+        # The user and the host too, in a log record (spec 145).
+        assert "opening postgresql://REDACTED:REDACTED@REDACTED:5432/tracker" in written
         assert "the driver said: connection to" in written
-        assert "connect('postgresql://harrier:REDACTED@REDACTED:5432/tracker" in written
+        assert "connect('postgresql://REDACTED:REDACTED@REDACTED:5432/tracker" in written
         # Nowhere: the message, the chained exception's text and the stack
         # text (spec 145; local review of PR #360).
         assert "db.example.test" not in written
@@ -551,8 +551,8 @@ def test_every_root_handler_scrubs_a_record_on_its_own(
     stderr = capsys.readouterr().err
     logged = log_path().read_text(encoding="utf-8")
     for written in (stderr, logged):
-        # The host too, in a log record (spec 145).
-        assert "opening postgresql://harrier:REDACTED@REDACTED:5432/tracker" in written
+        # The user and the host too, in a log record (spec 145).
+        assert "opening postgresql://REDACTED:REDACTED@REDACTED:5432/tracker" in written
         assert "db.example.test" not in written
         assert store_password.leaks(written) == []
 

@@ -632,6 +632,48 @@ def test_the_store_user_is_masked_after_user_equals(
     )
 
 
+def test_the_store_user_is_masked_in_a_url_and_at_every_ending(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """On Supabase's shared pooler the host is regional, so in a logged URL
+    the user is what names the project (spec 145, amendment)."""
+    _last_resort(monkeypatch)
+    host, one = STORES[DATABASE_URL]
+    encoded_host = STORES[IMPORT_URL][0]
+    encoded = "harrier%40ops"
+    _stores(
+        monkeypatch,
+        **{
+            DATABASE_URL: _store_url(host, one),
+            # A user libpq reads as `harrier@ops`, written percent-encoded.
+            IMPORT_URL: _store_url(encoded_host, encoded),
+        },
+    )
+    log = logging.getLogger("harrier.tests.users")
+
+    log.warning("opening %s", _store_url(host, one))
+    log.warning("opening %s", _store_url(encoded_host, encoded))
+    log.warning("json %s", f"postgresql:\\/\\/{one}@{host}")
+    log.warning(
+        'endings ?user=%s&sslmode=require user=%s; user=%s. user="%s" user=%s.more',
+        one,
+        one,
+        one,
+        one,
+        one,
+    )
+
+    written = capsys.readouterr().err
+    assert "opening postgresql://REDACTED:REDACTED@REDACTED:6543/postgres\n" in written
+    assert written.count("opening postgresql://REDACTED:REDACTED@REDACTED:6543/postgres") == 2
+    assert "json postgresql:\\/\\/REDACTED@REDACTED\n" in written
+    assert (
+        "endings ?user=REDACTED&sslmode=require user=REDACTED; user=REDACTED."
+        f' user="REDACTED" user={one}.more\n' in written
+    )
+    assert encoded not in written
+
+
 def test_a_configured_handler_masks_the_store_host(
     db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -682,6 +724,25 @@ def test_the_host_mask_keeps_its_boundaries(
     )
 
 
+def test_a_host_after_an_escape_is_masked(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The letter that ends a written-out `\\n`, and the digit that ends
+    `%40`, are not part of the host (spec 145, amendment)."""
+    _last_resort(monkeypatch)
+    host, user = STORES[DATABASE_URL]
+    _stores(monkeypatch, **{DATABASE_URL: _store_url(host, user)})
+    log = logging.getLogger("harrier.tests.hosts")
+
+    log.warning("repr %r", f"connect failed:\n{host} unreachable")
+    log.warning("encoded next=postgresql%%3A%%2F%%2Fops%%40%s%%3A6543", host)
+
+    written = capsys.readouterr().err
+    assert "repr 'connect failed:\\nREDACTED unreachable'" in written
+    assert "encoded next=postgresql%3A%2F%2Fops%40REDACTED%3A6543" in written
+    assert host not in written
+
+
 def test_every_host_of_a_multi_host_url_is_masked(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -710,19 +771,19 @@ def test_a_store_url_is_read_as_libpq_reads_it_before_the_driver_loads(
     import sys
 
     from harrier.logredact import (
-        _hosts_and_user_of,  # pyright: ignore[reportPrivateUsage]
+        _hosts_and_users_of,  # pyright: ignore[reportPrivateUsage]
     )
 
     _last_resort(monkeypatch)
     hosts = ("db-a.store.example", "db-b.store.example")
     url = f"postgresql://postgres.importref:synthetic-pw@{hosts[0]}:5432,{hosts[1]}:5432/postgres"
     _stores(monkeypatch, **{IMPORT_URL: url})
-    _hosts_and_user_of.cache_clear()
+    _hosts_and_users_of.cache_clear()
     monkeypatch.delitem(sys.modules, "psycopg.conninfo", raising=False)
     try:
         logging.getLogger("harrier.tests.hosts").warning("hosts: %s", ", ".join(hosts))
     finally:
-        _hosts_and_user_of.cache_clear()
+        _hosts_and_users_of.cache_clear()
 
     written = capsys.readouterr().err
     assert "hosts: REDACTED, REDACTED" in written
@@ -732,7 +793,7 @@ def test_a_url_libpq_cannot_read_is_read_with_urlsplit(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from harrier.logredact import (
-        _hosts_and_user_of,  # pyright: ignore[reportPrivateUsage]
+        _hosts_and_users_of,  # pyright: ignore[reportPrivateUsage]
     )
 
     _last_resort(monkeypatch)
@@ -743,11 +804,11 @@ def test_a_url_libpq_cannot_read_is_read_with_urlsplit(
         return None
 
     monkeypatch.setattr("harrier.logredact._libpq_reading", unreadable)
-    _hosts_and_user_of.cache_clear()
+    _hosts_and_users_of.cache_clear()
     try:
         _rollback_failed(_transaction(host, user))
     finally:
-        _hosts_and_user_of.cache_clear()
+        _hosts_and_users_of.cache_clear()
 
     written = capsys.readouterr().err
     assert "host=REDACTED port=6543 user=REDACTED" in written

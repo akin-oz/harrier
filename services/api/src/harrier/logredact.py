@@ -385,9 +385,18 @@ _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 # Not part of a longer host name: no letter, digit, `-` or `.` before it,
 # and after it no letter, digit or `-`, nor a `.` that another such
-# character follows.
-_HOST_BEFORE = r"(?<![A-Za-z0-9.-])"
+# character follows. A letter or digit before it that ends an escape, a
+# written-out backslash escape such as `\n` or a percent escape such as
+# `%40`, is not part of the host (spec 145, amendment).
+_HOST_BEFORE = r"(?:(?<![A-Za-z0-9.-])|(?<=\\[A-Za-z])|(?<=%[0-9A-Fa-f]{2}))"
 _HOST_AFTER = r"(?![A-Za-z0-9-])(?!\.[A-Za-z0-9])"
+
+# Where a user name ends after `user=`: at any character that cannot
+# continue a role name, and at a `.` that no such character follows.
+_ROLE_AFTER = r"(?![A-Za-z0-9_$-])(?!\.[A-Za-z0-9_$-])"
+
+# Right after a URL's `://`, or its JSON-escaped `:\/\/`.
+_USERINFO_BEFORE = r"(?:(?<=://)|(?<=:\\/\\/))"
 
 
 def _store_urls() -> tuple[str, ...]:
@@ -416,17 +425,18 @@ def _libpq_reading(url: str) -> dict[str, object] | None:
 
 
 @functools.lru_cache(maxsize=8)
-def _hosts_and_user_of(url: str) -> tuple[tuple[str, ...], str]:
-    """The hosts and the user name a store URL names (spec 145).
+def _hosts_and_users_of(url: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The hosts a store URL names, and its user name as libpq reads it and
+    percent-encoded, as a URL may write it (spec 145).
 
     The hosts are every entry of libpq's `host` and `hostaddr`, split at
     commas, or the host `urlsplit` reads when libpq cannot read the URL.
     Loopback names and socket directories are left out.
     """
-    from urllib.parse import unquote, urlsplit
+    from urllib.parse import quote, unquote, urlsplit
 
     if not url.lower().startswith(("postgresql://", "postgres://")):
-        return (), ""
+        return (), ()
     read = _libpq_reading(url)
     if read is not None:
         entries = [
@@ -441,7 +451,7 @@ def _hosts_and_user_of(url: str) -> tuple[tuple[str, ...], str]:
             entries = [parts.hostname or ""]
             user = unquote(parts.username or "")
         except ValueError:
-            return (), ""
+            return (), ()
     hosts = tuple(
         dict.fromkeys(
             entry
@@ -449,42 +459,43 @@ def _hosts_and_user_of(url: str) -> tuple[tuple[str, ...], str]:
             if entry and not entry.startswith("/") and entry.lower() not in _LOOPBACK_HOSTS
         )
     )
-    return hosts, user
+    users = tuple(dict.fromkeys(form for form in (user, quote(user, safe="")) if form))
+    return hosts, users
 
 
 @functools.lru_cache(maxsize=8)
 def _store_identity_pattern(
     hosts: tuple[str, ...], users: tuple[str, ...]
 ) -> re.Pattern[str] | None:
-    """One pattern for every host, in any case, and every user after
-    `user=`, bare or in single quotes, exactly as written. The longest
-    first, so a host is never matched by a shorter one inside it."""
+    """One pattern for every host, in any case, and every user exactly as
+    written: after `user=`, bare or quoted, and in a URL's userinfo. The
+    longest first, so a name is never matched by a shorter one inside it."""
     alternatives: list[str] = []
     if hosts:
         names = "|".join(re.escape(host) for host in sorted(hosts, key=len, reverse=True))
         alternatives.append(f"{_HOST_BEFORE}(?P<host>(?i:{names})){_HOST_AFTER}")
     if users:
         names = "|".join(re.escape(user) for user in sorted(users, key=len, reverse=True))
-        alternatives.append(f"user='(?P<quoted>{names})'")
-        alternatives.append(f"user=(?P<bare>{names})(?=[\\s),']|$)")
+        alternatives.append(f"user=['\"]?(?P<user>{names}){_ROLE_AFTER}")
+        alternatives.append(f"{_USERINFO_BEFORE}(?P<userinfo>{names})(?=[:@])")
     return re.compile("|".join(alternatives)) if alternatives else None
 
 
 def _store_identity_spans(text: str) -> list[tuple[int, int]]:
-    """Where `text` names a store's host, or its user after `user=`."""
+    """Where `text` names a store's host, or its user after `user=` or in a
+    URL's userinfo."""
     hosts: list[str] = []
     users: list[str] = []
     for url in _store_urls():
-        url_hosts, user = _hosts_and_user_of(url)
+        url_hosts, url_users = _hosts_and_users_of(url)
         hosts.extend(url_hosts)
-        if user:
-            users.append(user)
+        users.extend(url_users)
     pattern = _store_identity_pattern(tuple(dict.fromkeys(hosts)), tuple(dict.fromkeys(users)))
     if pattern is None:
         return []
     spans: list[tuple[int, int]] = []
     for found in pattern.finditer(text):
-        group = next(name for name in ("host", "quoted", "bare") if found.group(name) is not None)
+        group = next(name for name in ("host", "user", "userinfo") if found.group(name) is not None)
         spans.append(found.span(group))
     return spans
 

@@ -86,9 +86,11 @@ record's message, exception text and stack text, wherever the password is
 masked today, and in the same pass. Matching is case-insensitive. A host is
 replaced only where it is not part of a longer host name: the character
 before it and the character after it are each not a letter, digit or `-`,
-and not a `.` followed by a letter or digit. An IPv6 address is matched
-with and without its brackets. The port and everything else on the line
-stay.
+and not a `.` followed by a letter or digit. A character before the host
+that ends an escape counts as a boundary too: a backslash escape such as
+`\n` written out by `repr`, or a percent escape such as `%40` (`@`) in an
+encoded URL. An IPv6 address is matched with and without its brackets. The
+port and everything else on the line stay.
 
 **The user names.** For the same three variables, the user name is the
 `user` value libpq reads from the URL, or the one `urlsplit` reads when
@@ -96,13 +98,22 @@ libpq cannot parse it. On Supabase's pooler it is `postgres.<project ref>`,
 and the ref names the project as surely as the host does. psycopg's repr
 prints it whenever it differs from the database name.
 
-A user name is replaced with `REDACTED` only where it follows `user=`: the
-characters `user=`, then the name, either bare or in single quotes, then
-whitespace, `)`, `,`, the closing quote or the end of the text. That is the
-shape psycopg's repr and libpq's keyword form both write. Matching is exact,
-as Postgres role names are. A user name elsewhere in the text stays, so a
-plain user such as `postgres` does not mask that word wherever a message
-uses it.
+A user name is replaced with `REDACTED` in two places, and only there:
+
+- **After `user=`**: the characters `user=`, then the name, bare or in
+  single or double quotes. The shape psycopg's repr, libpq's keyword form
+  and a URL's `?user=` query all write. A bare name ends at the first
+  character that cannot continue a role name: anything but a letter, digit,
+  `_`, `$` or `-`, and a `.` only where another such character follows. So
+  `&`, `;`, `"`, a closing quote, whitespace, `)`, `,` and a full stop end
+  it.
+- **In a URL's userinfo**: right after `://` (or its JSON-escaped form
+  `:\/\/`), followed by `:` or `@`. The user as written in the URL, and
+  percent-encoded when that differs.
+
+Matching is exact, as Postgres role names are. A user name elsewhere in the
+text stays, so a plain user such as `postgres` does not mask that word
+wherever a message uses it.
 
 So the line in Problem prints as:
 
@@ -133,7 +144,10 @@ refusing, as spec 103 meant.
 | A multi-host URL (`host1,host2`) | Each host masked |
 | Two variables naming the same host | Masked once; no doubled marker |
 | The host overlaps a password form in the same text | The union of the spans is replaced, as `_mask` does for overlapping password forms |
-| The user name appears in a message without `user=` before it | Not masked |
+| The user name appears in a message without `user=` before it, outside a URL's userinfo | Not masked |
+| A logged store URL, `postgresql://postgres.<ref>:...@host/db` | The user, the password and the host are masked: `postgresql://REDACTED:REDACTED@REDACTED/db` |
+| `user=` followed by the name and `&`, `;`, `.` or a closing `"` | Masked |
+| A host after a written-out escape (`\ndb.example.co`) or a percent escape (`%40db.example.co`) | Masked |
 | `user=` followed by a name that none of the three URLs holds | Not masked |
 | `user=` followed by a longer name that starts with the URL's user (`user=postgres.abcx` for `postgres.abc`) | Not masked: the name must end where the boundary rule says |
 | A URL with no user name | No user masked from it. libpq then connects as the operating system's login name, which the repr may print; see Honest limitations |
@@ -156,6 +170,13 @@ refusing, as spec 103 meant.
   of the three URLs, keeps a bare `postgres` elsewhere in the message, and
   keeps `user=` followed by a name no URL holds
   (`services/api/tests/test_logging.py::test_the_store_user_is_masked_after_user_equals`).
+- [ ] A store URL's user is masked in its userinfo, as written and
+  percent-encoded, and after `user=` before `&`, `;`, `.` and inside
+  double quotes
+  (`services/api/tests/test_logging.py::test_the_store_user_is_masked_in_a_url_and_at_every_ending`).
+- [ ] A host after a written-out backslash escape or a `%40` escape is
+  masked
+  (`services/api/tests/test_logging.py::test_a_host_after_an_escape_is_masked`).
 - [ ] A configured stream handler masks the same record
   (`services/api/tests/test_logging.py::test_a_configured_handler_masks_the_store_host`).
 - [ ] `db.example.co` is not masked inside `db.example.com`, is masked in
@@ -255,6 +276,29 @@ the password forms. A first draft read it only when the driver was already
 loaded and cached the `urlsplit` reading otherwise, so a record logged
 before the driver loaded left every host after the first of a multi-host
 URL unmasked for the rest of the process (privacy review of PR #360).
+
+## Amendment (2026-10-15): the user in a URL, more endings, escapes
+
+The local privacy review of PR #360 found three ways the approved text let
+a store's identity through. Akin chose on 2026-10-15 to close all three:
+
+1. **The user in a URL.** Masking the user only after `user=` left it in a
+   logged URL, `postgresql://postgres.<ref>:REDACTED@REDACTED/...`. On
+   Supabase's shared pooler the host is regional, so there the user is the
+   only part that names the project. It is now masked in a URL's userinfo
+   as well.
+2. **More endings after `user=`.** The first text ended a bare name only
+   at whitespace, `)`, `,`, a closing `'` or the end of the text, so
+   `?user=<name>&sslmode=require`, `user=<name>;`, `user=<name>.` and
+   `user="<name>"` printed it. A bare name now ends at any character that
+   cannot continue a role name, and double quotes are read as single ones
+   are.
+3. **A host after an escape.** The boundary rule read the letter or digit
+   that ends `\n` or `%40` as part of a longer host name, so a host after
+   either printed. Both now count as a boundary.
+
+The spec 133 log assertions read the URL with the user kept; they now
+read `postgresql://REDACTED:REDACTED@REDACTED:5432/tracker`.
 
 ## Migration
 
