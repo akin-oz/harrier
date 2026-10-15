@@ -303,9 +303,10 @@ def read_admin(environ: Mapping[str, str]) -> Admin:
 
     Refused, naming the variable and never its value, when either is unset or
     malformed, or when the secret key is defined in the working directory's
-    `.env`: `load_project_env` copies that file into the environment, and
-    the local container reads it too (spec 111). The file is read for the
-    variable's presence, whatever the environment holds.
+    `.env`: the local container reads that file (spec 111). The loader never
+    copies this key into the environment (Amendment (2026-10-15)), so the
+    file is read here for the variable's presence, whatever the environment
+    holds.
     """
     from harrier.envfile import read_env_file
 

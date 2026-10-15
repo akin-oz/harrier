@@ -1528,3 +1528,37 @@ reads `auth.users` as the operator's login:
 `services/api/tests/test_operator_erase_test_owners.py::test_erase_test_owners_erases_owners_the_auth_server_cannot_see`
 proves it, with the fake auth server answering 404 for ids `auth.users`
 holds. The test fails on the code before this change.
+
+## Amendment (2026-10-15): `.env` never supplies the secret key
+
+The operator commands refuse a `HARRIER_SUPABASE_SECRET_KEY` defined in
+`.env`, but the CLI's loader still copied that key into the environment
+first. `load_project_env` copied every key that was not already set, so a
+secret key in `.env` reached every command and every child process, including
+the ones that never needed it. The refusal fired only on the two operator
+commands. Spec 141 closed the same gap for `HARRIER_IMPORT_DATABASE_URL` and
+spec 144 for `HARRIER_ACCOUNT_DATABASE_URL`.
+
+**Behavior after the change.** `load_project_env` in
+`services/api/src/harrier_cli/main.py` skips `HARRIER_SUPABASE_SECRET_KEY`.
+The file's other keys load as before, and a key the shell already exported
+is untouched. The secret key reaches a command only from the shell that runs
+it. This replaces the sentence that says `load_project_env` copies `.env`
+into the environment, in the Behavior paragraph on the `.env` refusal and in
+item 9 of Amendment (2026-10-15): what building it settled, as far as this
+key is concerned. Nothing else in those two passages changes.
+
+The refusal is unchanged. `read_admin` in `services/api/src/harrier/operator.py`
+reads the file itself for the variable's presence, whatever the environment
+holds, so `harrier operator invite` and `harrier operator erase` still exit 1
+with the text that names the variable and the `.env` file, and never the
+value. It does not depend on the loader.
+
+`services/api/tests/test_operator.py::test_dotenv_never_supplies_the_secret_key`
+proves both halves. A `.env` holding the secret key and another key loads
+the other key and leaves the secret key out of the environment, and
+`harrier operator erase` still refuses naming the `.env` file. The
+environment assertion fails on the code before this change.
+
+Limitation: the skip is by name, as it is for the two URLs. A key that holds
+a secret under another name is not caught, and the loader cannot tell.
