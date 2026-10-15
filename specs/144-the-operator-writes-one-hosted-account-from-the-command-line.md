@@ -107,10 +107,10 @@ exit 1.
 - `resume_facts` takes a JSON file and `resume_truth` a Markdown file. Both
   are shared documents, owned by no track, so `--track` is refused for them
   (exit 2).
-- The new document replaces the stored one only if it gives no track of
-  the account a `profile check` failure that track did not have before
-  (amendment 2). A refusal prints the new failures, each naming its track,
-  exits 2, and stores nothing. So a truth edit that leaves a track's bullet without evidence is
+- The new document replaces the stored one only if it breaks no track of
+  the account whose resume content loaded before it (amendment 2). A
+  refusal prints what broke, each line naming its track, exits 2, and
+  stores nothing. So a truth edit that leaves a track's bullet without evidence is
   refused, naming the track and the bullet.
 - On the local store both run as the other `profile put` kinds do: delegated
   into the container when it runs (spec 074).
@@ -140,7 +140,7 @@ document errors.
 | A truth edit that leaves a bullet without evidence | Refused, naming track and bullet, exit 2; nothing stored |
 | `--track` with `resume_facts` or `resume_truth` | Usage error, exit 2 |
 | The connection drops mid-command | The transaction rolls back; the account is as it was |
-| Two commands for one account at once | Each is one transaction under the store's own locking, as two web requests are |
+| Two commands for one account at once | Each is one transaction under the store's own locking, as two web requests are; two shared edits serialize on the track rows (amendment 5) |
 
 ## Acceptance criteria
 
@@ -197,6 +197,13 @@ spec 141's.
   on track <slug>`), and a wrong move can be moved back. The command prints
   the id and the two tracks, not the company, so the operator reads the id
   from the web app first.
+- `move` with `--owner` rescores from the operator's local description
+  cache, keyed by the posting's URL. A posting with no local copy moves
+  with its score kept and the output says it was not rescored. A local copy
+  of an older version of the posting scores that older text.
+- A shared edit for an account none of whose tracks loads (no framing yet)
+  is checked for shape only: facts must be a JSON object and the truth not
+  empty.
 - The truth check guards against an edit that breaks a track's bullets. It
   cannot tell whether a new truth line is true. That stays the operator's
   judgement, as it is for every truth source.
@@ -238,11 +245,16 @@ None. Without `--owner` every command behaves as today. The two new
 2. **The facts and truth check compares before and after.** "Passes for
    every track" would refuse every edit while any track already fails its
    check, such as an archived track with no framing. The check runs each
-   track's `profile check` before and after the write, in one transaction,
-   and refuses when any track gains a failure line it did not have. A
-   failure the store already held does not block an edit, and an edit that
-   adds one is refused, naming the track
-   (`put_shared_resume_document` in `services/api/src/harrier/resume/framing.py`).
+   track's `profile check` before and after the write, in one transaction.
+   A track whose content loaded before the edit blocks it when the content
+   no longer loads or a bullet loses its support. A track whose content did
+   not load before (no facts yet, no framing) cannot block it, so an empty
+   account takes its facts first. A first version compared the check's
+   lines as text, and the data-integrity review of PR #349 found that it
+   refused an empty account's first facts, because the load error's wording
+   changed (`put_shared_resume_document` in
+   `services/api/src/harrier/resume/framing.py`;
+   `services/api/tests/test_account_writes.py::test_profile_put_shared_documents_start_an_empty_store`).
 3. **Logging is not set up with `--owner`.** Its setup opens the local store
    to load the redaction values, and these commands never open it. A
    refusal prints one line to stderr, as the import's does.
@@ -250,6 +262,21 @@ None. Without `--owner` every command behaves as today. The two new
    `services/api/src/harrier/tracker/importlocal.py` returns spec 134's
    problems; the import and `open_account` in
    `services/api/src/harrier/accountstore.py` each word their own refusal.
+
+5. **Two shared edits at once serialize.** Two-commands-at-once was
+   "the store's own locking", which on Postgres takes no lock for a check
+   that reads before it writes. The facts and truth writer locks every
+   track row first, `FOR UPDATE` in id order (`lock_tracks` in
+   `services/api/src/harrier/tracker/store.py`); on SQLite the immediate
+   transaction holds the file. A framing write takes no such lock, which
+   is safe: `profile put resume_framing` never checks the truth, so its
+   result does not depend on a truth edit racing it. Found by the
+   data-integrity review of PR #349.
+6. **`move` rescores from the local description cache.** `move_job`
+   reads a posting's description from `data/descriptions` on the machine
+   the command runs on. With `--owner` that is the operator's local cache,
+   which holds the same postings when the account was imported from it.
+   See Honest limitations. Found by the data-integrity review of PR #349.
 
 ## Proof / origin
 

@@ -470,3 +470,46 @@ def test_account_writes_ignores_the_local_container(
 
     assert listed.code == 0, listed.err
     assert listed.out.split()[1] == "job"
+
+
+def test_profile_put_shared_documents_start_an_empty_store(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A store with no facts takes them first, then a framing, then the
+    truth: a track whose content did not load cannot be broken. Once it
+    loads, a facts edit that breaks its framing is refused, and an archived
+    track's bullets are guarded like an active one's (spec 144, amendment
+    2; the data-integrity review of PR #349)."""
+    facts, industry = example_documents()
+    focused = focused_framing()
+    assert main(["tracks", "add", SLUG, "--kind", "focused", "--label", "Bounded"]) == 0
+
+    def put(kind: str, path: str, *track: str) -> int:
+        return main([*track, "profile", "put", kind, "--file", path])
+
+    assert put("resume_facts", write_file(tmp_path, "facts.json", json.dumps(facts))) == 0
+    assert put("resume_framing", write_file(tmp_path, "industry.json", json.dumps(industry))) == 0
+    assert put("resume_truth", write_file(tmp_path, "truth.md", "\n".join(truth_lines()))) == 0
+    focused_path = write_file(tmp_path, "focused.json", json.dumps(focused))
+    assert put("resume_framing", focused_path, "--track", SLUG) == 0
+    capsys.readouterr()
+
+    # Facts that drop a role the framing names: the content no longer loads.
+    roles = cast("list[dict[str, Any]]", facts["roles"])
+    fewer = {**facts, "roles": roles[1:]}
+    assert put("resume_facts", write_file(tmp_path, "fewer.json", json.dumps(fewer))) == 2
+    err = capsys.readouterr().err
+    assert "resume_facts not stored" in err
+    assert "track job: " in err
+
+    # An archived track's bullets still count.
+    assert main(["tracks", "archive", SLUG]) == 0
+    industry_lines = set(cast("dict[str, str]", industry["bullet_pool"]).values())
+    focused_pool = cast("dict[str, str]", focused["bullet_pool"])
+    only_focused = next(
+        (bullet, text) for bullet, text in focused_pool.items() if text not in industry_lines
+    )
+    short = "\n".join(line for line in truth_lines() if line != only_focused[1])
+    capsys.readouterr()
+    assert put("resume_truth", write_file(tmp_path, "short.md", short)) == 2
+    assert f"track {SLUG}: bullet {only_focused[0]}" in capsys.readouterr().err
