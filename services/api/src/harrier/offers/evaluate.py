@@ -16,7 +16,7 @@ from typing import cast
 
 from harrier.apply.profile import load_candidate_document
 from harrier.connection import Connection
-from harrier.db import data_dir
+from harrier.filestore import files_in, join_key, local_file, save_text
 from harrier.llm import LLMClientError, generate_text
 from harrier.llm.jsonparse import loads_tolerant
 from harrier.offers.report import ARCHETYPES, build_report
@@ -104,8 +104,7 @@ class EvaluationError(RuntimeError):
     pass
 
 
-def reports_dir() -> Path:
-    return data_dir() / "reports"
+REPORTS = "reports"
 
 
 def slugify(text: str) -> str:
@@ -113,8 +112,16 @@ def slugify(text: str) -> str:
     return re.sub(r"-{2,}", "-", value)
 
 
+def _report_name(company: str, role: str) -> str:
+    return f"{slugify(f'{company}-{role}')}.md"
+
+
+def report_key_for(company: str, role: str) -> str:
+    return join_key(REPORTS, _report_name(company, role))
+
+
 def report_path_for(company: str, role: str) -> Path:
-    return reports_dir() / f"{slugify(f'{company}-{role}')}.md"
+    return local_file(report_key_for(company, role))
 
 
 def build_system_prompt(conn: Connection) -> str:
@@ -223,10 +230,10 @@ def evaluate_offer(
     if data is None:
         raise EvaluationError("failed to parse AI response as JSON")
 
-    directory = output_dir if output_dir is not None else reports_dir()
-    directory.mkdir(parents=True, exist_ok=True)
-    report_path = directory / f"{slugify(f'{company}-{role}')}.md"
-    report_path.write_text(build_report(data, company, role, job_url), encoding="utf-8")
+    with files_in(output_dir, REPORTS) as prefix:
+        report_key = join_key(prefix, _report_name(company, role))
+        save_text(report_key, build_report(data, company, role, job_url), atomic=False)
+        report_path = local_file(report_key)
 
     stories_raw = data.get("block_e")
     stories = (

@@ -20,7 +20,7 @@ from harrier.apply.profile import (
     load_profile_markdown,
 )
 from harrier.connection import Connection
-from harrier.db import data_dir
+from harrier.filestore import local_file, save_json, save_text
 from harrier.llm import LLMClientError, generate_text
 from harrier.llm.jsonparse import loads_tolerant
 from harrier.outreach.messages import (
@@ -120,8 +120,7 @@ FORMATTING: Never use em dashes anywhere in the output. Use commas, semicolons, 
 """
 
 
-def outreach_drafts_dir() -> Path:
-    return data_dir() / "outreach"
+OUTREACH = "outreach"
 
 
 def infer_audience(contact_role: str) -> str:
@@ -523,11 +522,9 @@ def _draft_slug(company: str, role: str, payload: dict[str, object]) -> str:
 
 
 def write_outreach_draft(company: str, role: str, payload: dict[str, object]) -> dict[str, Path]:
-    directory = outreach_drafts_dir()
-    directory.mkdir(parents=True, exist_ok=True)
     slug = _draft_slug(company, role, payload)
-    json_path = directory / f"{slug}.json"
-    md_path = directory / f"{slug}.md"
-    json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    md_path.write_text(render_outreach_markdown(payload), encoding="utf-8")
-    return {"json": json_path, "markdown": md_path}
+    json_key = f"{OUTREACH}/{slug}.json"
+    md_key = f"{OUTREACH}/{slug}.md"
+    save_json(json_key, payload, atomic=False)
+    save_text(md_key, render_outreach_markdown(payload), atomic=False)
+    return {"json": local_file(json_key), "markdown": local_file(md_key)}

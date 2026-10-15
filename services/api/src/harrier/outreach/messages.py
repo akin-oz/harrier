@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from harrier.connection import Connection
-from harrier.db import data_dir
+from harrier.filestore import files, local_file, save_json, save_text
 from harrier.profile.store import get_document
 
 OUTREACH_CONFIG_DIR = Path("config") / "outreach"
@@ -447,36 +447,31 @@ def render_bundle_json(
     }
 
 
-def messages_dir() -> Path:
-    return data_dir() / "outreach" / "messages"
+MESSAGES = "outreach/messages"
+TARGETS_KEY = "outreach/targets.json"
 
 
 def save_generated_bundle(
     request: OutreachRequest, bundle: dict[str, list[MessageVariant]]
 ) -> dict[str, Path]:
-    directory = messages_dir()
-    directory.mkdir(parents=True, exist_ok=True)
     stem = request.slug()
-    json_path = directory / f"{stem}.json"
-    md_path = directory / f"{stem}.md"
-    json_path.write_text(
-        json.dumps(render_bundle_json(request, bundle), indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    md_path.write_text(render_bundle_markdown(request, bundle), encoding="utf-8")
-    return {"json": json_path, "markdown": md_path}
+    json_key = f"{MESSAGES}/{stem}.json"
+    md_key = f"{MESSAGES}/{stem}.md"
+    save_json(json_key, render_bundle_json(request, bundle), atomic=False)
+    save_text(md_key, render_bundle_markdown(request, bundle), atomic=False)
+    return {"json": local_file(json_key), "markdown": local_file(md_key)}
 
 
 def target_store_path() -> Path:
-    return data_dir() / "outreach" / "targets.json"
+    return local_file(TARGETS_KEY)
 
 
 def load_target_store() -> list[dict[str, Any]]:
-    path = target_store_path()
-    if not path.exists():
-        return []
     try:
-        payload: object = json.loads(path.read_text(encoding="utf-8"))
+        raw = files().read(TARGETS_KEY)
+        if raw is None:
+            return []
+        payload: object = json.loads(raw.decode("utf-8"))
     except (OSError, json.JSONDecodeError):
         return []
     if not isinstance(payload, list):
@@ -489,9 +484,7 @@ def load_target_store() -> list[dict[str, Any]]:
 
 
 def save_target_store(items: list[dict[str, Any]]) -> None:
-    path = target_store_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(items, indent=2, ensure_ascii=False), encoding="utf-8")
+    save_json(TARGETS_KEY, items, atomic=False)
 
 
 def save_target(request: OutreachRequest) -> dict[str, Any]:
