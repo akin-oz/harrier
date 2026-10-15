@@ -1,8 +1,8 @@
 ---
 spec: 143
 title: The synthetic test owners are erased from a project
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M9
 depends: [105, 111, 115]
 ---
@@ -150,6 +150,11 @@ admin API faked at its boundary, and synthetic ids only.
 2. **The rule above, rather than a list of ids.** Recommended: the rule
    can be checked again per owner and needs no file of ids. A list would
    come from the test runs, which never recorded their ids.
+
+## Decisions taken (2026-10-15)
+
+Akin approved the spec on 2026-10-15. Decision 1: build spec 111 whole
+first, then this. Decision 2: the rule, as recommended.
 
 ## Out of scope
 
