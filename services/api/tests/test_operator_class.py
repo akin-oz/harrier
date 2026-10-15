@@ -35,6 +35,22 @@ OPERATOR_COMMANDS = {
     "scheduler": ["operator", "scheduler"],
     "schedule-report": ["operator", "schedule-report"],
 }
+LOCAL_REFUSALS = {
+    "scheduler": SQLITE_REFUSAL.format(command="scheduler"),
+    "schedule-report": SQLITE_REFUSAL.format(command="schedule-report"),
+    "invite": (
+        "error: harrier operator invite runs only against a hosted store; "
+        "HARRIER_DATABASE_URL selects one\n"
+    ),
+    "erase": (
+        "error: harrier operator erase runs only against a hosted store; "
+        "HARRIER_DATABASE_URL selects one\n"
+    ),
+    "erase-test-owners": (
+        "error: harrier operator erase-test-owners runs only against a hosted store; "
+        "HARRIER_DATABASE_URL selects one\n"
+    ),
+}
 OWNER = "7f4f7b0e-1d2b-4c3a-9a55-0d4a1f6c2b11"
 
 
@@ -77,6 +93,39 @@ def tripwire(opened: list[str], name: str) -> Callable[..., object]:
         raise AssertionError(f"{name} was called")
 
     return trip
+
+
+@pytest.mark.parametrize(
+    ("subcommand", "argv"),
+    [
+        ("scheduler", ["operator", "scheduler"]),
+        ("schedule-report", ["operator", "schedule-report"]),
+        ("invite", ["operator", "invite"]),
+        ("erase", ["operator", "erase", OWNER, "--confirm", OWNER]),
+        ("erase-test-owners", ["operator", "erase-test-owners"]),
+    ],
+)
+def test_each_operator_command_refuses_a_local_store_for_its_own_reason(
+    subcommand: str,
+    argv: list[str],
+    recorder: Recorder,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """Beside SQLite the scheduler and its report say the local schedule is
+    launchd (spec 108). `invite`, `erase` and `erase-test-owners` have no
+    local schedule: they say the command needs a hosted store and name
+    `HARRIER_DATABASE_URL`, the variable that selects one (spec 111,
+    Amendment (2026-10-15)). Nothing is run."""
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(argv) == 1
+    captured = capsys.readouterr()
+    assert (captured.out, captured.err) == ("", LOCAL_REFUSALS[subcommand])
+    assert recorder.calls == []
+    if subcommand not in ("scheduler", "schedule-report"):
+        assert "launchd" not in captured.err
+        assert "HARRIER_DATABASE_URL" in captured.err
 
 
 def test_the_operator_class_runs_only_on_postgres(

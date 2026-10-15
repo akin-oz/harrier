@@ -155,13 +155,24 @@ NO_DATABASE = "opens no database connection"
 SCHEDULER_LOGIN = "harrier_scheduler"
 
 
+# The operator subcommands whose local counterpart is launchd (spec 108).
+# The others (spec 111) have no local counterpart to name.
+SCHEDULE_OPERATOR_COMMANDS: frozenset[str] = frozenset(
+    {"operator scheduler", "operator schedule-report"}
+)
+
+
 def operator_refusal(command: str) -> str:
     """An operator subcommand beside SQLite. `command` is the command and
-    subcommand words only (spec 061)."""
-    return (
-        f"harrier {command} runs only against a hosted store; "
-        "locally the schedule is launchd (harrier schedule)"
-    )
+    subcommand words only (spec 061). The scheduler and its report name
+    launchd (spec 108); every other operator subcommand names the variable
+    that selects a hosted store (spec 111, Amendment (2026-10-15))."""
+    if command in SCHEDULE_OPERATOR_COMMANDS:
+        return (
+            f"harrier {command} runs only against a hosted store; "
+            "locally the schedule is launchd (harrier schedule)"
+        )
+    return f"harrier {command} runs only against a hosted store; {URL_VARIABLE} selects one"
 
 
 def _operator_subcommand(

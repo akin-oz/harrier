@@ -450,7 +450,7 @@ def test_the_operator_group_runs_on_postgres_only(
         assert (code, out) == (1, "")
         assert err == (
             f"error: harrier {name} runs only against a hosted store; "
-            "locally the schedule is launchd (harrier schedule)\n"
+            "HARRIER_DATABASE_URL selects one\n"
         )
     monkeypatch.setenv(URL_VARIABLE, UNREACHABLE_URL)
     monkeypatch.setenv(RUN_OWNER_VARIABLE, owner)

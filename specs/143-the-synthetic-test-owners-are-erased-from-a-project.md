@@ -118,10 +118,10 @@ The environment and refusals are spec 111's: the operator login in
       skipped (`services/api/tests/test_operator_erase_test_owners.py::test_erase_test_owners_rechecks_each_owner`).
 - [ ] A failure partway exits 1, and a re-run finishes the rest
       (`services/api/tests/test_operator_erase_test_owners.py::test_erase_test_owners_resumes_after_a_failure`).
-- [ ] After a confirmed run on staging, the migrator counts no row in any
+- [x] After a confirmed run on staging, the migrator counts no row in any
       owned table for an owner outside the real accounts, and `auth.users`
       holds the real accounts only. Recorded in the pull request that runs
-      it, as counts only.
+      it, as counts only: see "Staging run (2026-10-15)" below.
 
 Tests use the same shimmed Postgres as spec 111's erase tests, with the
 admin API faked at its boundary, and synthetic ids only.
@@ -226,3 +226,16 @@ case this spec's failure table says must still erase the rows. Spec 111's
 amendment of 2026-10-15 fixes the erase; the run is repeated after it lands.
 The ledger's 167 lines from that run are false; the repeated run appends a
 true line for each id.
+
+## Staging run (2026-10-15)
+
+The repeated run, after spec 111's amendment of 2026-10-15 landed (PR #353),
+exited 0 and reported 167 owners erased and none skipped, with rows deleted
+from every owned table those owners held. Read afterwards as the migrator:
+
+- `auth.users` holds one user, the operator's own account.
+- No owned table holds a row whose `owner_id` is another user.
+- The real account's rows were not touched by the run.
+
+The first run's 167 false ledger lines stay in `data/hosted/erasures.jsonl`;
+the repeated run appended a true line for each id after them.
