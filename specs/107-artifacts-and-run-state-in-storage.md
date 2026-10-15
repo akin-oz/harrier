@@ -932,3 +932,22 @@ criterion above states the guarantee only.
   Behavior ("The run's Storage identity"), and its Amendment
   (2026-10-13), decision 3.
 - Akin's decision in chat on 2026-10-13, relayed by the coordinator.
+
+## Note (2026-10-15): spec 111's operator erase
+
+Spec 111 asked two things of this spec, and its Amendment (2026-10-15) says
+what that spec does until this one is built. Nothing else here changes.
+
+- **The seam can list and delete every object under one owner's prefix for
+  an operator command that holds a secret key, outside any request.** Spec
+  107 as refined sends no secret key and binds a store only to a request's
+  token, so this is a new way to bind it. Spec 111's `harrier operator
+  erase` needs it (its Deletion, steps 2 and 5).
+- **This spec's build replaces spec 111's list-only check.** Until the seam
+  exists, `harrier operator erase` lists the owner's prefix with
+  `POST /storage/v1/object/list/harrier-files` and refuses when anything is
+  there. It deletes no object. When the seam lands, its build replaces that
+  check with the delete spec 111's steps 2 and 5 describe, and updates the
+  test that pins the list-only behavior,
+  `services/api/tests/test_operator.py::test_this_build_deletes_no_storage_object`,
+  in the same change.

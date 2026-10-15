@@ -755,7 +755,7 @@ build order in decision 1: 103, then 105, then 112, then 104.
 - The scheduler's service-role reads: spec 108.
 - The Data API exposure setting and a staging run of these tests: spec
   110.
-- Sign-up, export and deletion: spec 111.
+- Sign-up and deletion: spec 111. Export: spec 117.
 - Per-owner ids for tables other than `tracks`.
 - Re-ordering the existing non-unique indexes for owner-filtered queries.
 
@@ -1872,4 +1872,23 @@ keeps its frozen list, and `HOSTED_ONLY_TABLES` declares it. The tenant
 role holds `SELECT`, `INSERT` and `UPDATE` on it, and no `DELETE`
 (`services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared`,
 `services/api/tests/test_owner_policy.py::test_owner_a_reads_nothing_of_owner_b`).
+Nothing else in this spec changes.
+
+## Note (2026-10-15): spec 111's erasure
+
+Spec 111 is built, and its "Changes to approved specs" line for this spec
+is written here. `service_role` now holds `EXECUTE` on
+`harrier_erase_owner(uuid)` and nothing else: still no privilege on any
+table, column or sequence. The catalog allows that one grant, declares
+`harrier_erase_owner` a definer function, and fails when any harrier
+function is executable by `harrier_tenant`, or when `harrier_erase_owner` is
+executable by anyone but `service_role` and its owner
+(`services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared`,
+`services/api/tests/test_owner_policy.py::test_the_catalog_names_each_breach`).
+`harrier_refuse()` lets the delete of one owner's rows through, for the
+role that owns the table, while the transaction-local setting
+`harrier.erase_owner` names that owner, and refuses everything else as
+before: no trigger is dropped, disabled or recreated
+(`services/api/tests/test_owner_erasure.py::test_the_erase_setting_lets_through_only_its_owners_deletes`,
+`services/api/tests/test_owner_erasure.py::test_the_erasure_migration_leaves_every_trigger_in_place`).
 Nothing else in this spec changes.

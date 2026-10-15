@@ -635,6 +635,10 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
             """,
         ],
     ),
+    # Postgres only (spec 111): one owner's erasure. The local store has one
+    # owner, who deletes the file. Empty on purpose, and declared so in
+    # SINGLE_DIALECT_MIGRATIONS.
+    (22, []),
 ]
 
 # --- Postgres (spec 103, ADR-013) ---
@@ -923,6 +927,10 @@ SINGLE_DIALECT_MIGRATIONS: dict[int, tuple[Dialect, str]] = {
         "postgres",
         "per-owner run records, so a run cut off by a machine stop is shown "
         "interrupted (spec 106); the local run journal file keeps them",
+    ),
+    22: (
+        "postgres",
+        "owner erasure (spec 111); the local store has one owner, who deletes the file",
     ),
 }
 
@@ -1753,6 +1761,145 @@ POSTGRES_JOB_VERDICTS: list[str] = [
     tenant_writes_all_but_id("job_verdicts", ("INSERT",)),
 ]
 
+# --- one owner's erasure (spec 111) ---
+
+# The role Supabase's Data API reaches with the secret key, and the only
+# grantee of `harrier_erase_owner`. The operator's login switches to it for
+# one transaction (`transaction(service_role=True)`).
+SERVICE_ROLE = "service_role"
+
+# The setting that names the one owner an erasure is deleting, local to the
+# transaction. `harrier_refuse()` reads it, and `harrier_erase_owner` sets it.
+ERASE_SETTING = "harrier.erase_owner"
+ERASE_FUNCTION = "harrier_erase_owner(uuid)"
+
+# The tables `harrier_erase_owner` deletes from, as migration 22 wrote them,
+# in the order it deletes: a referencing row before the row it references
+# (`job_eligibility`, `job_verdicts` and `job_events` to `jobs`; `jobs`,
+# `job_verdicts` and `profile_documents` to `tracks`). Frozen like
+# MIGRATION_10_OWNED_TABLES: a migration's text is history, so a table a
+# later migration owns replaces the function in its own migration, and
+# `tests/test_owner_erasure.py` fails until it does.
+MIGRATION_22_OWNED_TABLES: tuple[str, ...] = (
+    "job_eligibility",
+    "job_verdicts",
+    "job_events",
+    "jobs",
+    "contacts",
+    "profile_documents",
+    "user_config",
+    "job_runs",
+    "tracks",
+    "schedule_state",
+    "credentials",
+    "run_records",
+)
+
+# The erase deletes as the role that owns the tables, which is the role that
+# runs this migration, so every owned table must have that one owner.
+ERASURE_MIXED_OWNERS = (
+    "the erasure migration found owned tables with different owners; "
+    "every owned table must have one owner"
+)
+
+ERASE_NEEDS_ROW_SECURITY_BYPASS = (
+    "harrier_erase_owner runs as a role that does not bypass row security; it would erase nothing"
+)
+
+
+def _erase_deletes() -> str:
+    return "\n".join(
+        f"""
+    DELETE FROM public.{table} WHERE owner_id = target;
+    GET DIAGNOSTICS counted = ROW_COUNT;
+    table_name := '{table}';
+    erased := counted;
+    RETURN NEXT;"""
+        for table in MIGRATION_22_OWNED_TABLES
+    )
+
+
+POSTGRES_ERASURE: list[str] = [
+    # Before anything is created: a store whose owned tables have more than
+    # one owner would refuse its first erase on the table the other role
+    # owns, with that table's append-only text, which names the wrong cause.
+    # The tables are named, never the roles.
+    f"""
+    DO $$
+    DECLARE
+        differing text;
+    BEGIN
+        SELECT pg_catalog.string_agg(c.relname, ', ' ORDER BY c.relname) INTO differing
+        FROM pg_catalog.pg_class c
+        WHERE c.relnamespace = 'public'::regnamespace
+            AND c.relname IN ({_quoted_list(MIGRATION_22_OWNED_TABLES)})
+            AND c.relowner <> (
+                SELECT r.oid FROM pg_catalog.pg_roles r WHERE r.rolname = current_user
+            );
+        IF differing IS NOT NULL THEN
+            RAISE EXCEPTION '{ERASURE_MIXED_OWNERS} (%)', differing;
+        END IF;
+    END
+    $$
+    """,
+    # The refusal stands aside for one thing: a row-level DELETE of a row
+    # whose owner the transaction-local setting names, by the role that owns
+    # the table. CREATE OR REPLACE keeps the function's owner and its revoked
+    # grants. No trigger is dropped, disabled or recreated. TRUNCATE is a
+    # statement trigger, where OLD is null, so it never matches.
+    f"""
+    CREATE OR REPLACE FUNCTION public.harrier_refuse() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+    BEGIN
+        IF TG_OP = 'DELETE' AND TG_LEVEL = 'ROW'
+           AND (pg_catalog.to_jsonb(OLD) ->> 'owner_id')
+               = pg_catalog.current_setting('{ERASE_SETTING}', true)
+           AND current_user = (
+               SELECT pg_catalog.pg_get_userbyid(relowner)
+               FROM pg_catalog.pg_class WHERE oid = TG_RELID
+           )
+        THEN
+            RETURN OLD;
+        END IF;
+        RAISE EXCEPTION '%', TG_ARGV[0];
+    END
+    $$
+    """,
+    # `#variable_conflict use_variable`: run_records has a column named
+    # `target`, and the parameter keeps the name the spec gives it.
+    f"""
+    CREATE FUNCTION public.harrier_erase_owner(target uuid)
+    RETURNS TABLE (table_name text, erased bigint)
+    LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+    #variable_conflict use_variable
+    DECLARE
+        counted bigint;
+    BEGIN
+        IF target IS NULL THEN
+            RAISE EXCEPTION 'harrier_erase_owner needs an owner';
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_roles
+            WHERE rolname = current_user AND (rolsuper OR rolbypassrls)
+        ) THEN
+            RAISE EXCEPTION '{ERASE_NEEDS_ROW_SECURITY_BYPASS}';
+        END IF;
+        PERFORM pg_catalog.set_config('{ERASE_SETTING}', target::pg_catalog.text, true);
+        {_erase_deletes()}
+        PERFORM pg_catalog.set_config('{ERASE_SETTING}', '', true);
+    END
+    $$
+    """,
+    # In the migration's own transaction, as PostgreSQL advises for a
+    # definer function. The one privilege service_role holds in harrier's
+    # schema: a door that erases an owner, not a table.
+    (
+        f"REVOKE ALL ON FUNCTION public.{ERASE_FUNCTION} "
+        f"FROM PUBLIC, anon, authenticated, service_role, {TENANT_ROLE}"
+    ),
+    f"GRANT EXECUTE ON FUNCTION public.{ERASE_FUNCTION} TO {SERVICE_ROLE}",
+]
+
 POSTGRES_MIGRATIONS: list[tuple[int, list[str]]] = [
     (POSTGRES_BASELINE_VERSION, POSTGRES_BASELINE),
     (10, POSTGRES_OWNERS),
@@ -1794,6 +1941,8 @@ POSTGRES_MIGRATIONS: list[tuple[int, list[str]]] = [
     # Spec 139: SQLite's migration 21, owned and policed as every personal
     # table is (spec 105), on the shape of migration 15's job_eligibility.
     (21, POSTGRES_JOB_VERDICTS),
+    # Spec 111: one owner's erasure.
+    (22, POSTGRES_ERASURE),
 ]
 
 

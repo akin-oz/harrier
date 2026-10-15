@@ -48,7 +48,7 @@ from harrier.profile import export_to, import_from, list_documents
 from harrier.tracker.export import export_csv
 from harrier.tracker.migrate_legacy import MigrationError, migrate
 from harrier.tracker.reasons import REASON_CODES
-from harrier.tracker.schema import ELIGIBILITY_ROUTES, ELIGIBILITY_VERDICTS
+from harrier.tracker.schema import ELIGIBILITY_ROUTES, ELIGIBILITY_VERDICTS, SERVICE_ROLE
 from harrier.tracker.store import EligibilityAssessment, TrackerError
 from harrier.tracks import (
     NON_DEFAULT_OPERATIONS,
@@ -1832,6 +1832,20 @@ def _cmd_operator_scheduler(args: argparse.Namespace) -> int:
     return run_scheduler(os.environ, handle_signals=True)
 
 
+def _cmd_operator_invite(args: argparse.Namespace) -> int:
+    """Create a confirmed user from an address read on standard input (spec 111)."""
+    from harrier.operator import run_invite
+
+    return run_invite(os.environ)
+
+
+def _cmd_operator_erase(args: argparse.Namespace) -> int:
+    """Erase one owner: ban, rows, auth user, ledger (spec 111)."""
+    from harrier.operator import run_erase
+
+    return run_erase(os.environ, str(args.user_id), str(args.confirm))
+
+
 def _cmd_operator_schedule_report(args: argparse.Namespace) -> int:
     """The hosted schedule, one line per owner and job (spec 108)."""
     from harrier_api.hostedscheduler import run_report
@@ -2852,6 +2866,8 @@ COMMAND_CLASSES: dict[str, CommandClass] = {
     # before delegation is asked, and refuse a SQLite store (spec 108).
     "operator scheduler": _HOST,
     "operator schedule-report": _HOST,
+    "operator invite": _HOST,
+    "operator erase": _HOST,
     "schedule install": _HOST,
     "schedule status": _HOST,
     "schedule uninstall": _HOST,
@@ -3505,6 +3521,27 @@ def build_parser() -> argparse.ArgumentParser:
         role=SCHEDULER_LOGIN,
         func=_cmd_operator_schedule_report,
         help="one line per owner and job; exit 1 when anything needs the operator (spec 108)",
+    )
+    # Spec 111: invite opens no database connection; erase acts as service_role.
+    _operator_subcommand(
+        operator_sub,
+        "invite",
+        role=NO_DATABASE,
+        func=_cmd_operator_invite,
+        help="create a confirmed user from an address on standard input (spec 111)",
+    )
+    erase_cmd = _operator_subcommand(
+        operator_sub,
+        "erase",
+        role=SERVICE_ROLE,
+        func=_cmd_operator_erase,
+        help="erase one owner: ban, rows, auth user and ledger (spec 111)",
+    )
+    erase_cmd.add_argument("user_id", help="the auth user's UUID, never an email address")
+    erase_cmd.add_argument(
+        "--confirm",
+        required=True,
+        help="the same UUID again, so a pasted id is not run by accident",
     )
 
     scoring_cmd = sub.add_parser("scoring", help="the learned fit score (spec 077)")

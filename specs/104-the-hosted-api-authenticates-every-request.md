@@ -856,7 +856,7 @@ it is used:
 - Grants to `harrier_tenant`, `owner_id`, and row-level policies: spec 105.
 - A run's database identity and credentials, and lifting the 501: spec 106.
 - Files in Storage: spec 107.
-- Sign-up, invitations, export and deletion: spec 111.
+- Sign-up, invitations and deletion: spec 111. Export: spec 117.
 - The SPA: sign-in, sending the bearer token, the API base URL, `fetch`
   streaming, and a hosted capture page: spec 114 (Open decision 8).
 - Creating the Supabase project, the `harrier_api` role, Fly secrets and

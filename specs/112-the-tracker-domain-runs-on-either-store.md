@@ -738,7 +738,7 @@ rewrites the three upserts.
   seen-state) on a hosted store: spec 107.
 - Connection pooling, Supabase's pooler, and the runtime image installing
   psycopg: spec 110.
-- A tenant export: spec 111. `harrier export` stays local.
+- A tenant export: spec 117. `harrier export` stays local.
 - Native timestamp types, and any schema change.
 - Found while drafting, each for its own spec:
   - Screening dedupe folds Unicode case (`screening/normalized.py:37-38`)
@@ -2641,3 +2641,16 @@ role may set the reader, with synthetic values only:
   list, which this amendment does not need.
 - The read-back compares `current_user` only. The reader holds `EXECUTE`
   on one function and no claim, so there is nothing else to read.
+
+## Note (2026-10-15): spec 111's `service_role` transaction
+
+Spec 111 is built. `Connection.transaction` takes one more role, beside
+`tenant` and `schedule_reader`: `service_role=True`, for `harrier operator
+erase`. It is sent as `SET LOCAL ROLE service_role` after the lock timeout,
+read back before the commit, and refused with another role, nested, on
+SQLite, and on a connection opened with an owner's claims
+(`services/api/tests/test_operator.py::test_the_seam_takes_service_role_for_one_transaction`).
+The operator class of this spec's Amendment (2026-10-11) now holds `invite`
+and `erase`, with the roles they declare
+(`services/api/tests/test_operator_class.py::test_every_operator_subcommand_declares_its_role`).
+Nothing else here changes.

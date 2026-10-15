@@ -20,24 +20,21 @@ sign-up until export and deletion ship (spec 102, open decision 5).
 ADR-013's Consequences say "a tenant's data can be exported and deleted on
 request; spec 111 owns it".
 
-Line numbers below are from `main` at `44ac0d7` on 2026-10-10, except the
-`harrier_cli/main.py` ones, refreshed to `main` at `a7b9998`, the
-`schema.py` ones, refreshed to `main` at `5c3d083` after
-migration 16, and the `pgstore.py` one, refreshed by PR #245.
-The stub cited
-older ones (`schema.py:441-445`, `:463`, `:545`, `:549`, `:776`, `:780`); the
-same statements now sit at the lines given here, found with `grep -n` for
-`harrier_refuse`, `CREATE TRIGGER` and `TRUNCATE` in
-`services/api/src/harrier/tracker/schema.py`.
+Line numbers below were refreshed on 2026-10-15, by the change that builds
+this spec (decision D9), to the files as that change leaves them. The stub
+cited older ones (`schema.py:441-445`, `:463`, `:545`, `:549`, `:776`,
+`:780`), and each refresh since moved them again; the same statements are
+found with `grep -n` for `harrier_refuse`, `CREATE TRIGGER` and `TRUNCATE`
+in `services/api/src/harrier/tracker/schema.py`.
 
 **Deletion collides with the store's own refusals.** The post-merge review
 of PRs #194 and #207 (architecture 5, 2026-10-10) found it. On Postgres,
 `job_events` is append-only and `tracks` are never deleted, enforced by one
-function, `harrier_refuse()` (`schema.py:563-567`), which raises its trigger
+function, `harrier_refuse()` (`schema.py:682-686`), which raises its trigger
 argument unconditionally. It sits behind row triggers
-`tracks_are_never_deleted` (`:584-585`), `job_events_append_only_update`
-(`:666-667`) and `job_events_append_only_delete` (`:670-671`) and, since
-spec 105, statement triggers on TRUNCATE (`:975-976`, `:979-980`), which
+`tracks_are_never_deleted` (`:703-704`), `job_events_append_only_update`
+(`:785-786`) and `job_events_append_only_delete` (`:789-790`) and, since
+spec 105, statement triggers on TRUNCATE (`:1142-1143`, `:1146-1147`), which
 fire even for a superuser
 (`services/api/tests/test_owner_policy.py::test_truncate_cannot_empty_events_or_tracks`).
 An owner's events and tracks cannot be deleted at all. Spec 079 made
@@ -46,7 +43,7 @@ append-only a database rule, not a convention
 written since says when, if ever, it yields.
 
 The one way through today is the one migration 10 used for the seeded
-track: `ALTER TABLE tracks DISABLE TRIGGER` (`schema.py:904-906`). That
+track: `ALTER TABLE tracks DISABLE TRIGGER` (`schema.py:1071-1073`). That
 statement takes a `SHARE ROW EXCLUSIVE` lock (PostgreSQL, ALTER TABLE),
 which conflicts with the `ROW EXCLUSIVE` lock every insert, update and
 delete takes. In a migration that is fine. To delete one owner while others
@@ -55,10 +52,10 @@ and while the trigger is off it is off for every session.
 
 **No auth user can be deleted.** Every owned table carries `owner_id uuid
 NOT NULL DEFAULT auth.uid() REFERENCES auth.users (id)` with no `ON DELETE`
-action (`schema.py:907-913`, and `:1287` for spec 122's `job_eligibility`;
+action (`schema.py:1076-1080`, and `:1454` for spec 122's `job_eligibility`;
 spec 105). Deleting a user who owns rows is
 refused. The post-merge review of PR #216 (2026-10-10) added that the
-sign-up trigger, `harrier_new_owner()` (`schema.py:987-999`), gives every
+sign-up trigger, `harrier_new_owner()` (`schema.py:1154-1166`), gives every
 user a track 1 the moment the user row is inserted. So every auth user owns
 a row, including one who was invited and never signed in, and the Supabase
 dashboard's delete fails the same way: Supabase's own troubleshooting guide
@@ -97,8 +94,8 @@ Open decision 1).
 
 ## Scope
 
-1. **A new Postgres-only migration (its version is the next free one when
-   implemented), called "the erasure migration" below.**
+1. **A new Postgres-only migration (version 22, the next free one when
+   it was built), called "the erasure migration" below.**
    `POSTGRES_MIGRATIONS` in `services/api/src/harrier/tracker/schema.py`
    gains it, with the statements under Behavior. `MIGRATIONS` gains the
    same version with no statements, and `SINGLE_DIALECT_MIGRATIONS`
@@ -127,7 +124,7 @@ Open decision 1).
    the database role it runs as (decision D2, 2026-10-11): `erase` runs
    as `service_role`; `invite` declares that it opens no database
    connection. The CLI gate
-   (`harrier_cli/main.py:3091-3094` today, restructured by spec 112) gains
+   (`harrier_cli/main.py:3838-3842` today, restructured by spec 112) gains
    the class "operator: each subcommand runs as its declared role",
    written into spec 112 as its Amendment (2026-10-11) with its planned
    test_the_postgres_gate_has_operator_and_run_classes.
@@ -146,8 +143,9 @@ Open decision 1).
    Problem and headline under "Export" in Behavior. `specs/README.md`'s M10
    line lists it.
 10. **ADR-013 Consequences** gain an "Amended (spec 111)" note: export is
-    spec 117's, deletion is this spec's, and `job_events` and `tracks`
-    yield to one owner's erasure and to nothing else.
+    spec 117's, deletion is this spec's, and `job_events`, `job_eligibility`,
+    `job_verdicts` and `tracks` yield to one owner's erasure and to nothing
+    else.
 11. **`docs/architecture.md`'s hosted section** names invite-only sign-up,
     the two operator commands, the erasure order, the erasure ledger, and
     the backup limitation, each with its test.
@@ -231,7 +229,7 @@ accident. The command needs, from the process environment:
 
 It refuses to run when `HARRIER_SUPABASE_SECRET_KEY` is defined in the
 working directory's `.env`. `load_project_env` copies `.env` into the
-environment (`harrier_cli/main.py:53-60`), and `docker-compose.yml` hands
+environment (`harrier_cli/main.py:79-99`), and `docker-compose.yml` hands
 `.env` to the local container (spec 110), so a secret key written
 there would sit in the local container's environment. The text names the
 variable, never its value.
@@ -248,12 +246,14 @@ The steps, each reported on its own line:
    bucket (ADR-013 decision 6) is deleted through spec 107's seam, which
    calls the Storage API. Supabase warns never to delete rows from
    `storage.objects` with SQL, because the files stay behind (Supabase,
-   Storage troubleshooting).
+   Storage troubleshooting). Until spec 107's seam exists this step lists
+   the prefix and refuses when anything is there: Amendment (2026-10-15):
+   the erase before spec 107 is built.
 3. **Rows.** One transaction, as `service_role`:
    `SET LOCAL ROLE service_role`, a read-back that `current_user` is
    `service_role` (refusing otherwise, as spec 104's request transaction
    does), `SET LOCAL lock_timeout` to `BUSY_TIMEOUT_MS`
-   (`services/api/src/harrier/db.py:32`), then `SELECT * FROM
+   (`services/api/src/harrier/db.py:33`), then `SELECT * FROM
    harrier_erase_owner(<id>)`, then commit.
 4. **Auth user.** `DELETE /auth/v1/admin/users/{user_id}`, a hard delete
    (`should_soft_delete` false). Supabase documents that a user who owns
@@ -262,7 +262,8 @@ The steps, each reported on its own line:
    longer refuse.
 5. **Stragglers.** The owner's prefix is listed again and anything found is
    deleted, for objects written between step 2 and step 4 with a token
-   issued before the ban.
+   issued before the ban. Until spec 107's seam exists, anything found
+   refuses the step (Amendment (2026-10-15), as for step 2).
 6. **Ledger.** One line appended to `data/hosted/erasures.jsonl`: the user
    id, the time in UTC, and which steps completed. No email, no row
    content. See "Backups" below for why it exists and why it is not in the
@@ -309,7 +310,7 @@ It lets a row through only when all four hold:
   DEFINER` function owned by the migrating role runs as;
 - implicitly, the session holds `DELETE` on the table, which no grantee
   does: `harrier_tenant` holds `SELECT, INSERT` on `job_events` and
-  `SELECT, INSERT, UPDATE` on `tracks` (`schema.py:1044-1045`), and
+  `SELECT, INSERT, UPDATE` on `tracks` (`schema.py:1211-1212`), and
   `service_role` holds nothing. The privilege check refuses before any
   trigger fires (spec 105, Amendment).
 
@@ -339,27 +340,28 @@ In order:
 2. If the role it runs as is neither superuser nor `BYPASSRLS`, it raises
    `harrier_erase_owner runs as a role that does not bypass row security;
    it would erase nothing`. Every owned table forces row security
-   (`schema.py:1008-1016`, `:1305-1308`) with a policy only for `harrier_tenant`, so a
+   (`schema.py:1175-1184`, `:1472-1475`) with a policy only for `harrier_tenant`, so a
    definer subject to it would see no rows, delete none, and report
    success.
 3. `pg_catalog.set_config('harrier.erase_owner', target::text, true)`.
 4. Deletes `WHERE owner_id = target` from each owned table in
-   `OWNED_TABLES` order: `job_events`, `jobs`,
-   `contacts`, `profile_documents`, `user_config`, `job_runs`, `tracks`.
-   (This cited `schema.py:606-614`. Since spec 122, 2026-10-11, those
-   seven are `MIGRATION_10_OWNED_TABLES`, `:691-699`, and `OWNED_TABLES`,
-   `:703`, puts `job_eligibility` before them.)
-   That order deletes a referencing row before the row it references
-   (`job_events` to `jobs`, `jobs` and `profile_documents` to `tracks`).
-   One result row per table, with the count `GET DIAGNOSTICS ... ROW_COUNT`
-   reports.
+   `OWNED_TABLES` order: `job_eligibility`, `job_verdicts`, `job_events`,
+   `jobs`, `contacts`, `profile_documents`, `user_config`, `job_runs`,
+   `tracks`, `schedule_state`, `credentials`, `run_records`. (The stub's
+   text named migration 10's seven. Spec 122 put `job_eligibility` first,
+   and specs 139, 108, 116 and 106 added the other four before the
+   erasure migration was written: Amendment (2026-10-15): what building it
+   settled, item 1.) That order deletes a referencing row before the row it
+   references (`job_eligibility`, `job_verdicts` and `job_events` to `jobs`;
+   `jobs`, `job_verdicts` and `profile_documents` to `tracks`). One result
+   row per table, with the count `GET DIAGNOSTICS ... ROW_COUNT` reports.
 5. `pg_catalog.set_config('harrier.erase_owner', '', true)`, so a statement
    later in the caller's transaction is refused again.
 
 The table list is written literally into the erasure migration, not
 generated at run time, because a migration's text is history. A later
-owned table (spec 116's `credentials`, or spec 108's `schedule_state`)
-replaces the function in its own migration; the test under Acceptance
+owned table after migration 22 replaces the function in its own
+migration; the test under Acceptance
 criteria that fills every table in `OWNED_TABLES` and erases fails until
 it does.
 
@@ -512,8 +514,9 @@ never exported by value. The SPA's control for it is spec 114's or later.
   any user with rows, which is every user. `docs/architecture.md` says the
   dashboard delete is not the path and names the command.
 - **A later owned table not added to the function.** Its rows survive the
-  erase and step 4 fails on that table's foreign key. The planned test that
-  fills every table in `OWNED_TABLES` fails first, in CI.
+  erase and step 4 fails on that table's foreign key. The test that fills
+  every table in `OWNED_TABLES` fails first, in CI
+  (`services/api/tests/test_owner_erasure.py::test_erase_removes_one_owner_from_every_owned_table`).
 - **A restore from a backup older than an erasure.** The erased person's
   rows come back. The documented restore procedure re-runs the ledger's
   erasures before the API serves. Nothing enforces that the operator
@@ -525,56 +528,56 @@ never exported by value. The SPA's control for it is spec 114's or later.
 
 Migration and database:
 
-- [ ] `POSTGRES_MIGRATIONS` has the erasure migration with the
+- [x] `POSTGRES_MIGRATIONS` has the erasure migration with the
       statements under Behavior; `MIGRATIONS` has the same version with
       no statements; `SINGLE_DIALECT_MIGRATIONS` declares it Postgres only
       with its reason;
       `services/api/tests/test_postgres_store.py::test_every_new_migration_declares_both_dialects`
       passes.
-- [ ] `harrier store migrate` on a shimmed store at the version before
+- [x] `harrier store migrate` on a shimmed store at the version before
       the erasure migration prints `postgres <previous> -> <new>`; a fresh
       store reaches `target_version()`; a SQLite store records the new
       version and changes nothing
-      (planned test_the_erasure_migration_is_postgres_only).
-- [ ] No statement in the erasure migration contains `DISABLE TRIGGER`,
+      (`services/api/tests/test_owner_erasure.py::test_the_erasure_migration_is_postgres_only`).
+- [x] No statement in the erasure migration contains `DISABLE TRIGGER`,
       `DROP TRIGGER` or `ALTER TABLE`, and every trigger present before it
       is present and enabled after it
-      (planned test_the_erasure_migration_leaves_every_trigger_in_place).
-- [ ] As the test superuser, without the setting, deleting a `job_events`
+      (`services/api/tests/test_owner_erasure.py::test_the_erasure_migration_leaves_every_trigger_in_place`).
+- [x] As the test superuser, without the setting, deleting a `job_events`
       row and a `tracks` row is still refused with the existing messages,
       and `TRUNCATE job_events` and `TRUNCATE tracks CASCADE` still are
       (`services/api/tests/test_owner_policy.py::test_truncate_cannot_empty_events_or_tracks`
-      unchanged, plus planned test_refusals_hold_without_the_erase_setting).
-- [ ] With `harrier.erase_owner` set to owner A, the table owner's delete
+      unchanged, plus `services/api/tests/test_owner_erasure.py::test_refusals_hold_without_the_erase_setting`).
+- [x] With `harrier.erase_owner` set to owner A, the table owner's delete
       of owner B's event and track is refused, an update of A's event is
       refused, and `TRUNCATE` is refused
-      (planned test_the_erase_setting_lets_through_only_its_owners_deletes).
-- [ ] As `harrier_tenant` with the setting set to its own id, a delete on
+      (`services/api/tests/test_owner_erasure.py::test_the_erase_setting_lets_through_only_its_owners_deletes`).
+- [x] As `harrier_tenant` with the setting set to its own id, a delete on
       `job_events` and on `tracks` is refused; with `DELETE` granted to it
       inside the test, still refused by the trigger
-      (planned test_the_erase_setting_alone_lets_no_tenant_delete).
-- [ ] With two owners whose rows fill every table in `OWNED_TABLES`,
+      (`services/api/tests/test_owner_erasure.py::test_the_erase_setting_alone_lets_no_tenant_delete`).
+- [x] With two owners whose rows fill every table in `OWNED_TABLES`,
       `harrier_erase_owner(A)` as `service_role` leaves no row of A in any
       of them, leaves every row of B unchanged, returns one count per
       table, and leaves `harrier.erase_owner` empty afterwards
-      (planned test_erase_removes_one_owner_from_every_owned_table).
-- [ ] After that erase, deleting A from the shim's `auth.users` succeeds;
+      (`services/api/tests/test_owner_erasure.py::test_erase_removes_one_owner_from_every_owned_table`).
+- [x] After that erase, deleting A from the shim's `auth.users` succeeds;
       before it, the same delete is refused by the foreign key
-      (planned test_an_erased_owner_can_be_deleted).
-- [ ] While one transaction holds an uncommitted erase of A, owner B
+      (`services/api/tests/test_owner_erasure.py::test_an_erased_owner_can_be_deleted`).
+- [x] While one transaction holds an uncommitted erase of A, owner B
       inserts a job, an event and a track with `lock_timeout` of 100 ms,
-      and each succeeds (planned test_erasing_one_owner_never_waits_for_another).
-- [ ] `harrier_erase_owner` executed as `harrier_tenant`, `authenticated`
+      and each succeeds (`services/api/tests/test_owner_erasure.py::test_erasing_one_owner_never_waits_for_another`).
+- [x] `harrier_erase_owner` executed as `harrier_tenant`, `authenticated`
       and `anon` is refused with `permission denied`
-      (planned test_only_service_role_can_erase).
-- [ ] A definer without `BYPASSRLS` raises the "would erase nothing"
+      (`services/api/tests/test_owner_erasure.py::test_only_service_role_can_erase`).
+- [x] A definer without `BYPASSRLS` raises the "would erase nothing"
       message and deletes nothing
-      (planned test_erase_refuses_a_definer_bound_by_row_security).
-- [ ] An erase that fails part way (an event inserted for one of A's jobs
+      (`services/api/tests/test_owner_erasure.py::test_erase_refuses_a_definer_bound_by_row_security`).
+- [x] An erase that fails part way (an event inserted for one of A's jobs
       between its two deletes, simulated with a trigger in the test)
       leaves every one of A's rows in place
-      (planned test_a_failed_erase_deletes_nothing).
-- [ ] The catalog test passes, and fails when `harrier_erase_owner` is
+      (`services/api/tests/test_owner_erasure.py::test_a_failed_erase_deletes_nothing`).
+- [x] The catalog test passes, and fails when `harrier_erase_owner` is
       granted to `harrier_tenant`, and when a second definer function
       appears
       (`services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared`
@@ -584,48 +587,50 @@ Migration and database:
 Operator commands (admin and Storage calls through an injected `httpx`
 transport; no test reaches the network):
 
-- [ ] `harrier operator invite` reads the address from standard input,
+- [x] `harrier operator invite` reads the address from standard input,
       posts the admin user creation with `email_confirm` true and no
       password, prints the user id and no link, and the address appears
-      in no argument, log record or error text (decision D6; planned
-      test_invite_creates_a_confirmed_user_and_never_prints_the_address).
-- [ ] No `generate_link` call and no `redirect_to` appears in
+      in no argument, log record or error text (decision D6; `services/api/tests/test_operator.py::test_invite_creates_a_confirmed_user_and_never_prints_the_address`).
+- [x] No `generate_link` call and no `redirect_to` appears in
       `harrier/operator.py`, and no hosted SPA route is an invitation page
-      (decision D6).
-- [ ] An address with an account exits 1 with the fixed text and prints no
-      user id (planned test_invite_refuses_an_existing_address).
-- [ ] `harrier operator erase` runs ban, Storage, rows, auth delete and
+      (decision D6;
+      `services/api/tests/test_operator.py::test_no_link_and_no_invitation_page_exist`).
+- [x] An address with an account exits 1 with the fixed text and prints no
+      user id (`services/api/tests/test_operator.py::test_invite_refuses_an_existing_address`).
+- [x] `harrier operator erase` runs ban, Storage, rows, auth delete and
       stragglers in that order, appends one ledger line with no email, and
-      exits 0 (planned test_erase_runs_its_steps_in_order).
-- [ ] A failure at each step exits 1 naming it, and a re-run with the same
+      exits 0 (`services/api/tests/test_operator.py::test_erase_runs_its_steps_in_order`).
+- [x] A failure at each step exits 1 naming it, and a re-run with the same
       id completes the remaining steps without repeating a failed delete
-      (planned test_erase_resumes_after_a_failed_step).
-- [ ] A row written after step 3 makes step 4 exit 1 with the "run it again"
-      text (planned test_erase_reports_rows_written_after_it).
-- [ ] Missing variables, a mismatched `--confirm`, a login that cannot act
+      (`services/api/tests/test_operator.py::test_erase_resumes_after_a_failed_step`).
+- [x] A row written after step 3 makes step 4 exit 1 with the "run it again"
+      text (`services/api/tests/test_operator.py::test_erase_reports_rows_written_after_it`).
+- [x] Missing variables, a mismatched `--confirm`, a login that cannot act
       as `service_role`, and the secret key defined in `.env` each exit 1
       before any call, and no output contains the key, the URL's password
-      or an address (planned test_operator_refusals_name_no_secret).
-- [ ] `harrier operator` runs on a Postgres URL; `erase` declares
+      or an address (`services/api/tests/test_operator.py::test_operator_refusals_name_no_secret`).
+- [x] `harrier operator` runs on a Postgres URL; `erase` declares
       `service_role` and `invite` declares that it opens no database
-      connection; every command outside the classes of spec 112's
-      Amendment (2026-10-11) still refuses (decision D2; spec 112's
-      planned test_the_postgres_gate_has_operator_and_run_classes).
+      connection; both are refused beside SQLite before anything is read or
+      called; every command outside the classes still refuses (decision D2;
+      `services/api/tests/test_operator_class.py::test_every_operator_subcommand_declares_its_role`,
+      `services/api/tests/test_operator_class.py::test_the_operator_class_runs_only_on_postgres`,
+      `services/api/tests/test_operator.py::test_the_operator_group_runs_on_postgres_only`).
 
 Documents and other specs:
 
-- [ ] Once approved, the specs named under "Changes to approved specs"
+- [x] Once approved, the specs named under "Changes to approved specs"
       carry those lines, and nothing else in them changes.
-- [ ] ADR-013's Consequences carry the "Amended (spec 111)" note.
-- [ ] `docs/architecture.md`'s hosted section states the sign-up settings,
+- [x] ADR-013's Consequences carry the "Amended (spec 111)" note.
+- [x] `docs/architecture.md`'s hosted section states the sign-up settings,
       the two commands, the erasure order, the ledger and the restore
       procedure, naming the tests above.
 
 Gates:
 
-- [ ] `uv run ruff check` and `uv run pyright` pass on the service.
-- [ ] CI's `check-python` job runs the new Postgres tests, none skipped.
-- [ ] `just check` passes.
+- [x] `uv run ruff check` and `uv run pyright` pass on the service.
+- [x] CI's `check-python` job runs the new Postgres tests, none skipped.
+- [x] `just check` passes.
 
 ## Honest limitations
 
@@ -635,7 +640,7 @@ Gates:
   print; it cannot narrow what the platform shows its project owner.
 - **The table owner can still bypass the refusals.** The role that owns the
   tables can set `harrier.erase_owner` by hand, or disable or drop the
-  triggers, as migration 10 did (`schema.py:904-906`). The refusals guard
+  triggers, as migration 10 did (`schema.py:1071-1073`). The refusals guard
   against application code and every other role, not against the schema
   owner.
 - **Erasure is not instant everywhere.** Backups keep erased rows until
@@ -666,8 +671,9 @@ Gates:
 - **Invitations wait on the sign-in sender.** An invitee signs in with spec
   114's emailed code (decision D6), so an invitation works only where that
   sender reaches the invitee.
-- The line numbers cited here are refreshed by the change that implements
-  this spec, not before (decision D9, 2026-10-11).
+- The line numbers cited here were refreshed by the change that implements
+  this spec (decision D9, 2026-10-11; done 2026-10-15). They move with
+  every later edit to those files.
 
 ## Migration
 
@@ -683,9 +689,11 @@ invitation is sent, spec 110 turns sign-up and anonymous sign-ins off.
 
 ## Changes to approved specs
 
-Each line below is a change this spec asks of an approved spec. None is
-written into that spec here; each is an amendment Akin approves with this
-spec.
+Each line below is a change this spec asks of an approved spec. None was
+written into that spec when this text was approved. The change that builds
+this spec writes them (2026-10-15), where they were not written already:
+spec 110 carried its lines from its Amendment (2026-10-11); specs 104, 105,
+107 and 112, spec 122's note and ADR-013 gain theirs; spec 117 existed.
 
 - **Spec 104:** its Out of scope gives "Sign-up, invitations, export and
   deletion" to spec 111. Export now reads spec 117.
@@ -845,18 +853,18 @@ Repository:
 - `specs/079-decisions-are-recorded-as-events.md:149-150`: append-only is a
   database rule.
 - `services/api/src/harrier/tracker/schema.py`: `harrier_refuse()` at
-  `:563-567`; the refusal triggers at `:584-585`, `:666-667`, `:670-671`,
-  `:975-976`, `:979-980`; `MIGRATION_10_OWNED_TABLES` at `:691-699` and
-  `OWNED_TABLES` at `:703` (one list, `OWNED_TABLES` at `:606-614`, until
+  `:682-686`; the refusal triggers at `:703-704`, `:785-786`, `:789-790`,
+  `:1142-1143`, `:1146-1147`; `MIGRATION_10_OWNED_TABLES` at `:810-818` and
+  `OWNED_TABLES` at `:825-832` (one list, `OWNED_TABLES` at `:606-614`, until
   spec 122 split it; noted 2026-10-11); the disabled trigger at
-  `:904-906`; the `owner_id` foreign key at `:907-913`;
-  `harrier_new_owner()` at `:987-999`; the grants at `:1028-1051`;
-  `POSTGRES_MIGRATIONS` at `:1395-1411`, whose latest version
-  `target_version()` returns (`services/api/src/harrier/pgstore.py:84-88`).
+  `:1071-1073`; the `owner_id` foreign key at `:1076-1080`;
+  `harrier_new_owner()` at `:1154-1166`; the grants at `:1196-1218`;
+  `POSTGRES_MIGRATIONS` at `:1903-1946`, whose latest version
+  `target_version()` returns (`services/api/src/harrier/pgstore.py:156-160`).
 - `services/api/tests/test_owner_policy.py`: `catalog_problems`, its
   definer allowlist and `NO_PRIVILEGE_ROLES`.
-- `services/api/src/harrier_cli/main.py`: `load_project_env` at `:53-60`,
-  the Postgres gate at `:3091-3094`.
+- `services/api/src/harrier_cli/main.py`: `load_project_env` at `:79-99`,
+  the Postgres gate at `:3838-3842`.
 - The post-merge reviews of PRs #194 and #207 (architecture 5) and of PR
   #216, 2026-10-10, as routed into the stub.
 
@@ -975,19 +983,19 @@ at `f26abe0`).
 
 Spec 122 added an owned table after this spec was approved:
 `job_eligibility`, migration 15 (`POSTGRES_JOB_ELIGIBILITY`,
-`services/api/src/harrier/tracker/schema.py:1280-1315`). It holds one
+`services/api/src/harrier/tracker/schema.py:1447-1482`). It holds one
 owner's eligibility assessments of their jobs, with posting excerpts as
 evidence. Three facts about it meet this spec's erase:
 
 - It is in `OWNED_TABLES`, first: `("job_eligibility",
-  *MIGRATION_10_OWNED_TABLES)` (`schema.py:703`). Its `owner_id`
-  references `auth.users (id)` with no `ON DELETE` action (`:1287`), like
+  *MIGRATION_10_OWNED_TABLES)` (`schema.py:825-832`). Its `owner_id`
+  references `auth.users (id)` with no `ON DELETE` action (`:1454`), like
   every other owned table.
 - Its rows reference a job of the same owner: `FOREIGN KEY (owner_id,
-  job_id) REFERENCES jobs (owner_id, id)` (`:1288`).
+  job_id) REFERENCES jobs (owner_id, id)` (`:1455`).
 - It is append-only, as `job_events` is. Row triggers refuse `UPDATE` and
   `DELETE` and a statement trigger refuses `TRUNCATE`, each through
-  `harrier_refuse('job_eligibility is append-only')` (`:1294-1303`).
+  `harrier_refuse('job_eligibility is append-only')` (`:1461-1471`).
 
 Behavior, "`harrier_erase_owner(target uuid)`", step 4, names the seven
 tables migration 10 owned and deletes in that order. Built as it
@@ -998,8 +1006,8 @@ with such a row since spec 122 has some. For that owner the function's
 transaction rolls back, and the command exits 1 at its step 3 on every
 run. Nothing is erased, and a re-run cannot help.
 
-The planned test_erase_removes_one_owner_from_every_owned_table already
-fills every table in `OWNED_TABLES`, and `fill` in
+`services/api/tests/test_owner_erasure.py::test_erase_removes_one_owner_from_every_owned_table`
+already fills every table in `OWNED_TABLES`, and `fill` in
 `services/api/tests/test_owner_policy.py` writes a `job_eligibility` row
 for each owner, so that test would fail. This amendment makes the text
 say what the test already demands.
@@ -1029,7 +1037,7 @@ are refused as today, with `job_eligibility is append-only`.
 
 **No session but the erase holds `DELETE` on it.** `harrier_tenant`
 holds `SELECT`, and `INSERT` on every column but `id`
-(`schema.py:1313-1314`). `service_role` holds nothing. As for
+(`schema.py:1480-1481`). `service_role` holds nothing. As for
 `job_events`, the privilege check refuses a tenant's delete before the
 trigger fires.
 
@@ -1067,48 +1075,48 @@ and a re-run erases both.
 - **`TRUNCATE job_eligibility` during an erase.** Refused as today; the
   statement trigger never stands aside.
 - **A later owned table.** Unchanged from Failure modes: it replaces the
-  function in its own migration, and the planned test that fills every
-  table in `OWNED_TABLES` fails until it does.
+  function in its own migration, and the test that fills every table in
+  `OWNED_TABLES` fails until it does.
 
 ### Acceptance criteria
 
 These add to the criteria under "Migration and database". Where one
-names an existing planned test, that test gains the case.
+names an existing test, that test gains the case.
 
-- [ ] The erasure migration's `harrier_erase_owner` lists the eight
+- [x] The erasure migration's `harrier_erase_owner` lists the eight
       tables of `OWNED_TABLES` in its order, `job_eligibility` first; a
       test compares the list in the migration's text with `OWNED_TABLES`
-      (planned test_the_erase_lists_every_owned_table_in_order).
-- [ ] With two owners whose rows fill every table in `OWNED_TABLES`,
+      (`services/api/tests/test_owner_erasure.py::test_the_erase_lists_every_owned_table_in_order`).
+- [x] With two owners whose rows fill every table in `OWNED_TABLES`,
       `harrier_erase_owner(A)` returns eight rows, the first
       `job_eligibility` with a count of at least one, and leaves no
       `job_eligibility` row of A and every one of B
-      (planned test_erase_removes_one_owner_from_every_owned_table).
-- [ ] As the table owner with `harrier.erase_owner` set to A: deleting
+      (`services/api/tests/test_owner_erasure.py::test_erase_removes_one_owner_from_every_owned_table`).
+- [x] As the table owner with `harrier.erase_owner` set to A: deleting
       A's assessment passes; deleting B's is refused with
       `job_eligibility is append-only`; updating A's is refused; and
       `TRUNCATE job_eligibility` is refused
-      (planned test_the_erase_setting_lets_through_only_its_owners_deletes).
-- [ ] Without the setting, the table owner's delete of a `job_eligibility`
+      (`services/api/tests/test_owner_erasure.py::test_the_erase_setting_lets_through_only_its_owners_deletes`).
+- [x] Without the setting, the table owner's delete of a `job_eligibility`
       row is refused with `job_eligibility is append-only`
-      (planned test_refusals_hold_without_the_erase_setting), and
+      (`services/api/tests/test_owner_erasure.py::test_refusals_hold_without_the_erase_setting`), and
       `services/api/tests/test_owner_policy.py::test_truncate_cannot_empty_events_or_tracks`
       and `services/api/tests/test_eligibility.py::test_eligibility_history_is_append_only`
       pass unchanged.
-- [ ] As `harrier_tenant` with the setting set to its own id, a delete on
+- [x] As `harrier_tenant` with the setting set to its own id, a delete on
       `job_eligibility` is refused; with `DELETE` granted to it inside the
       test, still refused by the trigger
-      (planned test_the_erase_setting_alone_lets_no_tenant_delete).
-- [ ] An assessment inserted for one of A's jobs between the erase's
+      (`services/api/tests/test_owner_erasure.py::test_the_erase_setting_alone_lets_no_tenant_delete`).
+- [x] An assessment inserted for one of A's jobs between the erase's
       `job_eligibility` delete and its `jobs` delete (simulated with a
       trigger in the test) leaves every one of A's rows in place
-      (planned test_a_failed_erase_deletes_nothing).
-- [ ] The erasure migration on a store where `job_eligibility` has a
+      (`services/api/tests/test_owner_erasure.py::test_a_failed_erase_deletes_nothing`).
+- [x] The erasure migration on a store where `job_eligibility` has a
       different owner from the other owned tables refuses with the text
       under Failure modes and creates no function
-      (planned test_the_erasure_migration_refuses_mixed_table_owners).
-- [ ] `harrier operator erase` prints a `job_eligibility` line before the
-      `job_events` line (planned test_erase_runs_its_steps_in_order).
+      (`services/api/tests/test_owner_erasure.py::test_the_erasure_migration_refuses_mixed_table_owners`).
+- [x] `harrier operator erase` prints a `job_eligibility` line before the
+      `job_events` line (`services/api/tests/test_operator.py::test_erase_runs_its_steps_in_order`).
 
 ### Changes to approved specs
 
@@ -1171,13 +1179,319 @@ as before.
 - `specs/122-each-posting-says-whether-it-can-hire-from-turkiye.md`:
   Scope (migration 15, `OWNED_TABLES`), Storage ("Append-only by trigger
   on both dialects"), and Amendment item 2 (the frozen lists).
-- `services/api/src/harrier/tracker/schema.py`: `OWNED_TABLES` at `:703`,
-  `POSTGRES_JOB_ELIGIBILITY` at `:1280-1315`, the `owner_id` and job
-  references at `:1287-1288`, the refusal triggers at `:1294-1303`, the
-  tenant's grants at `:1313-1314`.
+- `services/api/src/harrier/tracker/schema.py`: `OWNED_TABLES` at `:825-832`,
+  `POSTGRES_JOB_ELIGIBILITY` at `:1447-1482`, the `owner_id` and job
+  references at `:1454-1455`, the refusal triggers at `:1461-1471`, the
+  tenant's grants at `:1480-1481`.
 - `services/api/tests/test_owner_policy.py`: `REQUIRED`, `fill` and
   `JOB_HISTORY_TABLES`, which already write and treat `job_eligibility`
   as an owned history table; `test_truncate_cannot_empty_events_or_tracks`.
 - `specs/117-an-owner-exports-everything-they-own.md`: Acceptance
   criteria ("one JSON Lines file per table in `OWNED_TABLES`").
 - PR #253's out-of-scope note, which found the gap.
+
+## Amendment (2026-10-15): the erase before spec 107 is built
+
+Akin decided this in chat on 2026-10-15: amend this spec instead of
+building spec 107 first. This line records it. Nothing here changes an
+accepted decision of the stub, and the amendment below it (what building
+this spec settled) is separate.
+
+### Problem
+
+Spec 107 (Storage) is approved and not built. No code writes to the
+`harrier-files` bucket, and there is no Storage seam. Behavior, "Deletion",
+steps 2 (Storage) and 5 (stragglers) assume that seam: each deletes every
+object under the owner's prefix "through spec 107's seam". With no seam
+and no object ever written by harrier, the steps would have nothing to call.
+This spec does not build the seam.
+
+### Behavior until spec 107's seam exists
+
+Steps 2 and 5 do this and nothing more:
+
+- **List, read only.** The command lists the owner's prefix, `<owner>/`, in
+  the bucket `harrier-files` through the Storage API, with
+  `HARRIER_SUPABASE_SECRET_KEY`. The call is `POST
+  {HARRIER_SUPABASE_URL}/storage/v1/object/list/harrier-files`, the header
+  `apikey` carrying the key, and the JSON body `{"prefix": "<owner>",
+  "limit": 1, "offset": 0}`, where `<owner>` is the user id. The body holds
+  the id without a trailing slash, the way the reference's own example,
+  `folder/subfolder`, writes a prefix, and the list is of what is inside
+  that folder. A limit of one is enough: the answer is only empty or not.
+- **Any entry refuses the step.** If the listing holds anything, the erase
+  stops at that step with exit 1 and `error: step 2 (storage): objects
+  exist under the owner's prefix that this build cannot delete (spec 111,
+  Amendment (2026-10-15)); nothing was deleted here` (step 5 for the second
+  listing). Nothing is deleted at that step. Storage shows a folder entry
+  only when an object lies under it, so a folder entry counts.
+- **An empty listing passes the step.**
+- **Nothing here deletes a Storage object.** No call to a Storage delete
+  route is made, and nothing deletes a row from `storage.objects` with SQL,
+  which Supabase warns leaves the files behind (step 2 above).
+- **What it costs.** An owner who has objects cannot be erased by this
+  build, and the command says so at step 2, before any row is deleted. At
+  step 2 nothing but the ban has happened, and the ban is idempotent. At
+  step 5 the rows and the auth user are already gone. Supabase refuses to
+  delete a user who owns objects (Managing user data), so in practice step
+  4 fails first and a re-run reaches step 2 again.
+- **Replaced when spec 107's seam lands.** Its build replaces this check
+  with the delete that "Deletion", steps 2 and 5, describe, and updates the
+  test that pins this behavior,
+  `services/api/tests/test_operator.py::test_this_build_deletes_no_storage_object`.
+  Spec 107 carries a line saying so (Changes to approved specs, below).
+
+### Where the request shape comes from
+
+Read 2026-10-15, from Supabase's own pages:
+
+- Storage Server Reference, "Search for objects under a prefix": `POST
+  /object/list/{bucketName}`, body `prefix` (required), `limit`, `offset`,
+  `sortBy` and `search`, answering an array of entries.
+  https://supabase.com/docs/reference/self-hosting-storage/v1/search-for-objects-under-a-prefix
+- Storage server source, `src/http/routes/object/listObjects.ts`: the route
+  `POST /list/:bucketName`, with the body schema (`prefix` required, `limit`
+  an integer of at least 1, `offset` an integer of at least 0). The reference
+  above is for the self-hosted server. This spec assumes the hosted API
+  serves the same routes under `/storage/v1`, and spec 110's staging check
+  confirms it.
+  https://github.com/supabase/storage/blob/master/src/http/routes/object/listObjects.ts
+- JavaScript reference, `list`: "Lists all the files and folders within a
+  path of the bucket"; a folder entry has `id` and `metadata` null.
+  https://supabase.com/docs/reference/javascript/storage-from-list
+- API keys guide: a secret key goes in the `apikey` header, not in
+  `Authorization: Bearer`, because it is not a JWT.
+  https://supabase.com/docs/guides/api/api-keys
+
+### Failure modes
+
+- **Objects under the prefix.** Exit 1 at step 2 or 5 with the text above.
+  Nothing is deleted at that step.
+- **The Storage call fails.** Exit 1 at the step, naming the HTTP status and
+  nothing the server sent.
+- **The answer is not a list.** Exit 1 at the step.
+- **The prefix form is wrong for the hosted server.** An unrecognized form
+  could list nothing for an owner who has objects. The erase would then
+  reach step 4, where Supabase refuses to delete a user who owns objects,
+  and exit 1 there. Spec 110's staging check confirms the form (assumption
+  at the end of this amendment).
+
+### Acceptance criteria
+
+- [x] With an object listed at step 2, the erase exits 1 at step 2 with the
+      text above, deletes nothing at that step, and makes no auth delete or
+      row call
+      (`services/api/tests/test_operator.py::test_erase_resumes_after_a_failed_step`).
+- [x] With an empty listing the step passes and the run goes on
+      (`services/api/tests/test_operator.py::test_erase_runs_its_steps_in_order`).
+- [x] A full erase and a refused one make no Storage call but the list, the
+      list's request has the shape above, and the operator module names no
+      `storage.objects` and no Storage delete route
+      (`services/api/tests/test_operator.py::test_this_build_deletes_no_storage_object`).
+
+### Out of scope
+
+- The Storage seam, and deleting an object: spec 107.
+- A copy of the owner's objects before an erase: spec 117 (export).
+
+### Assumption for spec 110's staging check, unconfirmed
+
+- The hosted Storage server lists an owner's objects for `POST
+  /storage/v1/object/list/harrier-files` with the prefix written as the bare
+  user id, and answers an empty array when none exist.
+
+## Amendment (2026-10-15): what building it settled
+
+Written by the change that builds this spec, which found these gaps. Each
+amends the text above where the two differ. Nothing here widens what the
+commands may do.
+
+1. **The erase covers twelve tables, not eight.** The amendment of
+   2026-10-11 counts eight (`job_eligibility` and migration 10's seven).
+   Four owned tables landed before the erasure migration: `job_verdicts`
+   (spec 139, migration 21), `schedule_state` (spec 108, migration 17),
+   `credentials` (spec 116, migration 18) and `run_records` (spec 106,
+   migration 19). Behavior says a later owned table replaces the function in
+   its own migration. These came earlier, so the first version of the
+   function lists them. It deletes from `job_eligibility`, `job_verdicts`,
+   `job_events`, `jobs`, `contacts`, `profile_documents`, `user_config`,
+   `job_runs`, `tracks`, `schedule_state`, `credentials` and `run_records`,
+   in `OWNED_TABLES` order: a referencing row before the row it references
+   (`job_verdicts` to `jobs` and `tracks`). It returns twelve rows, and
+   `harrier operator erase` prints twelve table lines. `job_verdicts` is
+   append-only by trigger, as `job_eligibility` is, and stands aside the
+   same way: `harrier_refuse()` decides by the operation, the row's owner,
+   the setting and the role, not by the table. The tenant role holds no
+   `DELETE` on `job_verdicts`, `schedule_state` or `run_records` (specs 139,
+   108 and 106 left deletion to this spec).
+2. **The owner check compares with the migrating role.** The check in the
+   amendment of 2026-10-11 compared tables with each other. The function is
+   owned by the role that runs the migration, and the refusal compares the
+   role it runs as with each table's owner, so the check names every owned
+   table whose owner is not that role. A store whose tables all had one
+   other owner would otherwise pass and fail at its first erase. The text
+   is as stated, followed by the table names in parentheses, and no role
+   name.
+3. **The parameter keeps its name.** `run_records` has a column named
+   `target`, which collides with the parameter in `WHERE owner_id = target`.
+   The function body opens with `#variable_conflict use_variable`, so the
+   name Behavior gives is kept.
+4. **The seam takes `service_role` for a transaction.** Step 3 needs `SET
+   LOCAL ROLE service_role` and a read-back, and `Connection.execute`
+   refuses a `SET` (spec 112, amendment of 2026-10-14: the session).
+   `transaction(service_role=True)` in
+   `services/api/src/harrier/connection.py` sends the `SET LOCAL ROLE` after
+   the lock timeout and reads `current_user` back before the commit, as
+   `schedule_reader` does. It is refused with another role, nested, on
+   SQLite, and on a connection with an owner's claims. The command also
+   reads the role back before the function runs, so a transaction that did
+   not take the role raises before anything is deleted (`erase_rows` in
+   `services/api/src/harrier/operator.py`).
+5. **A preflight comes before the first call.** After the refusals that need
+   no connection (a mismatched `--confirm`, an id that is not a UUID, a
+   missing or malformed variable, the secret key in `.env`), the command
+   opens the connection and checks that the login may `SET ROLE
+   service_role` and that `harrier_erase_owner(uuid)` exists, reading only
+   the catalog. Either failing exits 1 before any auth or Storage call:
+   `error: harrier operator needs a login that can act as service_role`, or
+   `error: the store has no harrier_erase_owner(uuid); run harrier store
+   migrate first`. The text above ran the role check "before Storage". The
+   ban is step 1, so it now runs before the ban. The store's version is not
+   read, because `service_role` may not read `schema_version`, and the
+   operator's login need not either.
+6. **A user that exists is found by a read.** Step 1 reads the user
+   (`GET /auth/v1/admin/users/{id}`) before it bans, and a 404 means the user
+   is gone: steps 1, 3 and 4 are skipped, each said on its own line.
+7. **A refused auth delete is read.** When step 4's delete is refused, the
+   command runs the erase function once more in a transaction of its own. If
+   it deletes any row, rows were written after step 3, and the command says
+   so: `error: step 4 (auth): rows were written after the erase; run it
+   again after the user's last token expires`. The late rows are already
+   erased, so a re-run completes. If it deletes none, the refusal is the
+   server's, reported as `error: step 4 (auth): the server answered
+   <status>`.
+8. **The ledger records a run that failed after step 3.** Rows erased from
+   the live copy are what a restore must erase again, whether or not the run
+   finished. So a run that fails after step 3 committed also appends a line,
+   with `"complete": false` and the steps that completed. A run that
+   finishes appends one with `"complete": true`. Each line holds `user_id`,
+   `at`, `completed` and `complete`, and nothing about the owner. A re-run
+   appends its own line, and a restore that re-runs the erase for every id
+   in the ledger finds duplicates harmless. A ledger that cannot be written
+   exits 1 naming step 6.
+9. **The `.env` check reads the file.** `load_project_env` copies `.env` into
+   the environment before the command runs, so the environment cannot tell a
+   key the operator exported from one the file put there. The check reads the
+   file in the working directory for the variable's presence, whatever the
+   environment holds, and refuses on a key defined there, even with an empty
+   value.
+10. **`invite` needs a Postgres URL and does not use it.** The operator group
+    runs only on a Postgres store (spec 108, Amendment (2026-10-14)), so
+    `HARRIER_DATABASE_URL` must name one for `invite` to run at all. The
+    command opens no connection to it.
+11. **Nothing is logged.** Neither command configures logging, and the HTTP
+    client's request log is not emitted at the default level, so no id,
+    address or key reaches a log. Errors are the printed lines only, and
+    carry a step, a variable name or an HTTP status.
+12. **The admin calls.** The secret key travels in the `apikey` header, as
+    the API keys guide says, and no `Authorization` header is sent. Creation
+    posts `{"email": <address>, "email_confirm": true}`. A 422 whose
+    `error_code` is `email_exists` is an address that has an account. Ban is
+    `PUT` with `{"ban_duration": "876000h"}`. The delete is `DELETE` with
+    `{"should_soft_delete": false}`, and a 404 on it counts as done. These
+    shapes are read from the auth server's source (`internal/api/admin.go`,
+    read 2026-10-15) and are not run until spec 110's staging check.
+13. **`harrier store check-deploy` allows the one grant.** Its data API
+    roles check (spec 110) fails when `service_role` holds `EXECUTE` on any
+    function in `public`, which every deploy meets once migration 22 is
+    applied. It now exempts `service_role`'s `EXECUTE` on
+    `harrier_erase_owner(uuid)` and nothing else: the same function held by
+    `anon`, `authenticated` or `PUBLIC` is still a finding. Its passing line
+    says so: `data api roles: anon, authenticated, service_role hold nothing
+    in public but service_role's EXECUTE on harrier_erase_owner(uuid)`
+    (`services/api/src/harrier/storedeploy.py`, `_check_data_api_roles`).
+    This was found by `services/api/tests/test_store_deploy.py` failing.
+
+### Acceptance criteria
+
+- [x] The erase function lists the twelve tables of `OWNED_TABLES` in its
+      order and returns twelve rows
+      (`services/api/tests/test_owner_erasure.py::test_the_erase_lists_every_owned_table_in_order`,
+      `services/api/tests/test_owner_erasure.py::test_erase_removes_one_owner_from_every_owned_table`).
+- [x] The migration refuses when an owned table is not owned by the
+      migrating role, naming the table
+      (`services/api/tests/test_owner_erasure.py::test_the_erasure_migration_refuses_mixed_table_owners`).
+- [x] The function holds `EXECUTE` for `service_role` alone, even where the
+      migrating role's default privileges grant it to others
+      (`services/api/tests/test_owner_erasure.py::test_the_erase_function_holds_only_the_grant_the_migration_gives`).
+- [x] `transaction(service_role=True)` runs as `service_role`, is refused as
+      stated, and a role that moved inside the block is found before the
+      commit. A transaction that did not take the role raises before the
+      function runs
+      (`services/api/tests/test_operator.py::test_the_seam_takes_service_role_for_one_transaction`,
+      `services/api/tests/test_operator.py::test_erase_refuses_a_transaction_that_did_not_act_as_service_role`).
+- [x] A refused auth delete after a late write exits 1 with the "run it
+      again" text, and a run that fails after step 3 appends an incomplete
+      ledger line
+      (`services/api/tests/test_operator.py::test_erase_reports_rows_written_after_it`,
+      `services/api/tests/test_operator.py::test_erase_resumes_after_a_failed_step`).
+- [x] An id with no auth user skips steps 1, 3 and 4 and still writes the
+      ledger
+      (`services/api/tests/test_operator.py::test_erase_of_an_id_with_no_user_still_clears_storage_and_writes_the_ledger`).
+- [x] A ledger that cannot be written fails step 6
+      (`services/api/tests/test_operator.py::test_a_ledger_that_cannot_be_written_fails_step_six`).
+- [x] Both commands are refused beside SQLite before anything is read or
+      called
+      (`services/api/tests/test_operator.py::test_the_operator_group_runs_on_postgres_only`).
+- [x] `harrier store check-deploy` passes on a migrated store with the one
+      grant, and still names the erase function held by `authenticated` or
+      by `PUBLIC`
+      (`services/api/tests/test_store_deploy.py::test_check_deploy_passes_on_a_migrated_granted_store`,
+      `services/api/tests/test_store_deploy.py::test_check_deploy_reads_the_data_api_roles_effective_privileges`).
+
+### Changes to approved specs
+
+Each written by the same change, as one note or line:
+
+- **Spec 107:** a note that its build replaces spec 111's list-only check
+  with the delete and updates the test that pins it, and that the seam can
+  list and delete every object under one owner's prefix for an operator
+  command that holds a secret key, outside any request. The second is the
+  line "Changes to approved specs" above always asked of it.
+- **Spec 112:** a note that `transaction` takes `service_role` (item 4), and
+  its Out of scope line, "A tenant export", now reads spec 117.
+- **Spec 110:** a note that its `check-deploy` data API roles check allows
+  `service_role`'s `EXECUTE` on `harrier_erase_owner(uuid)` (item 13).
+- **Spec 139:** a note that on Postgres one owner's erasure removes that
+  owner's `job_verdicts` rows, as it does for `job_eligibility` (item 1).
+- **Specs 104, 105 and 122, and ADR-013:** the lines "Changes to approved
+  specs" and the amendment of 2026-10-11 ask of them.
+
+### Limitations
+
+- **The shim is not Supabase.** The fake auth server is backed by the shim's
+  `auth.users`. The admin and Storage routes, their headers, the shape of a
+  duplicate-address answer and the Storage prefix form are read from
+  documentation and source, not run.
+- **No Storage object is deleted here.** Until spec 107, an owner who has
+  objects is refused at step 2, not erased.
+- **A test cannot show `harrier.erase_owner` is transaction-local.** The
+  function resets the setting before it returns, and a rollback reverts any
+  setting, so a session-level setting would behave the same in every case a
+  test can build. The rollback test pins that the rows and the setting go
+  back together.
+
+### Proof / origin
+
+- Akin's decision of 2026-10-15, in chat: amend this spec rather than build
+  spec 107 first.
+- The Supabase pages and source named under "Where the request shape comes
+  from", and the auth server's `internal/api/admin.go` (read 2026-10-15):
+  `adminUserCreate` answers 422 with `error_code` `email_exists` for a
+  duplicate address, `adminUserDelete` takes `should_soft_delete` and
+  `loadUser` answers 404 `user_not_found` for an unknown id, and
+  `adminUserUpdate` takes `ban_duration`.
+  https://github.com/supabase/auth/blob/master/internal/api/admin.go
+- `services/api/src/harrier/operator.py`,
+  `services/api/src/harrier/connection.py` and
+  `services/api/src/harrier/tracker/schema.py` (`POSTGRES_ERASURE`).

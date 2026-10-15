@@ -29,7 +29,13 @@ from harrier.loginrole import (
     login_role_problems,
 )
 from harrier.pgstore import check_postgres_version, postgres_connect
-from harrier.tracker.schema import OWNED_TABLES, SCHEDULE_READER_ROLE, TENANT_ROLE
+from harrier.tracker.schema import (
+    ERASE_FUNCTION,
+    OWNED_TABLES,
+    SCHEDULE_READER_ROLE,
+    SERVICE_ROLE,
+    TENANT_ROLE,
+)
 
 # The roles Supabase's Data API uses. Spec 105 grants them nothing in
 # `public`; `check-deploy` reads that from the live catalog.
@@ -193,7 +199,10 @@ def _check_data_api_roles(conn: Connection) -> str:
     on any table, sequence or function in `public`: a grant to them, to
     `PUBLIC`, or through a role they are members of. Supabase's event
     trigger function and extension members are not harrier's and are not
-    read (spec 105, N2)."""
+    read (spec 105, N2). The one exception is `service_role`'s `EXECUTE` on
+    `harrier_erase_owner(uuid)`, the door `harrier operator erase` uses and
+    nothing else (spec 111). The same function held by `anon`,
+    `authenticated` or `PUBLIC` is still a finding."""
     placeholders = ", ".join("?" for _ in DATA_API_ROLES)
     held = conn.execute(
         "SELECT r.rolname, c.relname, 'table' FROM pg_catalog.pg_roles r "
@@ -216,9 +225,16 @@ def _check_data_api_roles(conn: Connection) -> str:
         "AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend d "
         "WHERE d.classid = 'pg_catalog.pg_proc'::regclass AND d.objid = p.oid "
         "AND d.deptype = 'e') "
+        "AND NOT (r.rolname = ? AND p.oid = pg_catalog.to_regprocedure(?)) "
         "AND pg_catalog.has_function_privilege(r.oid, p.oid, 'EXECUTE') "
         "ORDER BY 1, 3, 2",
-        (*DATA_API_ROLES, *DATA_API_ROLES, *DATA_API_ROLES),
+        (
+            *DATA_API_ROLES,
+            *DATA_API_ROLES,
+            *DATA_API_ROLES,
+            SERVICE_ROLE,
+            f"public.{ERASE_FUNCTION}",
+        ),
     ).fetchall()
     if held:
         role, name, kind = (str(part) for part in held[0])
@@ -226,7 +242,10 @@ def _check_data_api_roles(conn: Connection) -> str:
         raise StoreDeployRefused(
             f"check-deploy: data api roles: {role} holds a privilege on {kind} {name}{more}"
         )
-    return f"data api roles: {', '.join(DATA_API_ROLES)} hold nothing in public"
+    return (
+        f"data api roles: {', '.join(DATA_API_ROLES)} hold nothing in public "
+        f"but {SERVICE_ROLE}'s EXECUTE on {ERASE_FUNCTION}"
+    )
 
 
 def _check_row_security(conn: Connection) -> str:
