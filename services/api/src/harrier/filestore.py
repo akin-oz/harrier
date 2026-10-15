@@ -95,6 +95,10 @@ def key_name(key: str) -> str:
     return PurePosixPath(key).name
 
 
+# Locally `(st_ino, st_mtime_ns, st_size)`; a hosted store's own version.
+FileVersion = tuple[int, int, int] | str
+
+
 @dataclass(frozen=True)
 class Entry:
     """One file: its key, its size, when it last changed, and a version that
@@ -103,7 +107,7 @@ class Entry:
     key: str
     size: int
     mtime: float
-    version: tuple[int, int, int] | str
+    version: FileVersion
 
     @property
     def name(self) -> str:

@@ -14,16 +14,18 @@ rules score the job, and the row says which scorer produced it and why.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import logging
 import math
+import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
-from harrier.db import data_dir
+from harrier.filestore import FileVersion, files, local_file
 from harrier.scoring.features import (
     FEATURE_ORDER,
     NUMERIC_FEATURES,
@@ -67,13 +69,17 @@ def model_blocker_penalty() -> int:
     return high - low + 1
 
 
+# Everything spec 077 writes: never-in-git, under `data/` (ADR-008).
+SCORING = "scoring"
+ACTIVE_MODEL_KEY = f"{SCORING}/active-model.json"
+
+
 def scoring_dir() -> Path:
-    """Everything spec 077 writes: never-in-git, under `data/` (ADR-008)."""
-    return data_dir() / "scoring"
+    return local_file(SCORING)
 
 
 def active_model_path() -> Path:
-    return scoring_dir() / "active-model.json"
+    return local_file(ACTIVE_MODEL_KEY)
 
 
 class ModelInvalidError(ValueError):
@@ -252,11 +258,18 @@ def dump_model(document: Mapping[str, object]) -> bytes:
 
 # --- the active model -----------------------------------------------------------
 
-_cache: dict[str, tuple[tuple[int, int, int], Model | ModelInvalidError]] = {}
-_warned: set[tuple[str, str, tuple[int, int, int] | None]] = set()
+# Keyed by the store's qualified name for the model's key, and checked
+# against the store's version of the file (spec 107).
+_cache: dict[str, tuple[FileVersion, Model | ModelInvalidError]] = {}
+_warned: set[tuple[str, str, FileVersion | None]] = set()
 
 
-def _warn_once(reason: str, path: Path, detail: str, key: tuple[int, int, int] | None) -> None:
+def _absent() -> FileNotFoundError:
+    """What reading a file that vanished after its stat raised."""
+    return FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT))
+
+
+def _warn_once(reason: str, path: str, detail: str, key: FileVersion | None) -> None:
     """Once per process for each file state: a run that scores hundreds of
     postings says it once. The path and the failed check only; nothing about
     any posting or person.
@@ -266,7 +279,7 @@ def _warn_once(reason: str, path: Path, detail: str, key: tuple[int, int, int] |
     anyone watching the log, which `tests/test_demo.py` holds a demo run to.
     A file that exists and is refused is a real fault, and warns.
     """
-    marker = (reason, str(path), key)
+    marker = (reason, path, key)
     if marker in _warned:
         return
     _warned.add(marker)
@@ -282,22 +295,26 @@ def _warn_once(reason: str, path: Path, detail: str, key: tuple[int, int, int] |
 
 def load_active_model() -> tuple[Model | None, str | None]:
     """The active model, or the fallback that applies when there is none."""
-    path = active_model_path()
+    store = files()
+    path = store.qualified_name(ACTIVE_MODEL_KEY)
     try:
-        stat = path.stat()
-    except FileNotFoundError:
-        _warn_once(MODEL_MISSING, path, "no model file", None)
-        return None, MODEL_MISSING
+        entry = store.stat(ACTIVE_MODEL_KEY)
     except OSError as error:
         _warn_once(MODEL_INVALID, path, f"unreadable ({error.strerror})", None)
         return None, MODEL_INVALID
-    key = (stat.st_ino, stat.st_mtime_ns, stat.st_size)
-    cached = _cache.get(str(path))
+    if entry is None:
+        _warn_once(MODEL_MISSING, path, "no model file", None)
+        return None, MODEL_MISSING
+    key = entry.version
+    cached = _cache.get(path)
     if cached is not None and cached[0] == key:
         result = cached[1]
     else:
         try:
-            result = parse_model(path.read_bytes())
+            raw = store.read(ACTIVE_MODEL_KEY)
+            if raw is None:
+                raise _absent()
+            result = parse_model(raw)
         except ModelInvalidError as error:
             result = error
         except OSError as error:
@@ -309,8 +326,8 @@ def load_active_model() -> tuple[Model | None, str | None]:
         # The file was read, so the next failure is a new episode and is said
         # again. The marker outlived the outage, and a later one was silent
         # (spec 077 amendment).
-        _warned.discard((MODEL_INVALID, str(path), None))
-        _cache[str(path)] = (key, result)
+        _warned.discard((MODEL_INVALID, path, None))
+        _cache[path] = (key, result)
     if isinstance(result, ModelInvalidError):
         _warn_once(MODEL_INVALID, path, str(result), key)
         return None, MODEL_INVALID
@@ -341,7 +358,10 @@ def active_model_info() -> ActiveModelInfo:
     if model is None:
         return ActiveModelInfo(state=reason or MODEL_MISSING, trained_at=None, version=None)
     try:
-        parsed: object = json.loads(active_model_path().read_bytes())
+        raw = files().read(ACTIVE_MODEL_KEY)
+        if raw is None:
+            raise _absent()
+        parsed: object = json.loads(raw)
     except (OSError, ValueError):
         # Loaded a moment ago and unreadable now: the file changed under us.
         return ActiveModelInfo(state=MODEL_INVALID, trained_at=None, version=None)
