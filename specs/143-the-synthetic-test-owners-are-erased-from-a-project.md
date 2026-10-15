@@ -215,3 +215,14 @@ changes a decision taken above.
 
 None. The operator runs the command once per project that ran spec 115's
 staging check.
+
+## Note (2026-10-15): the first staging run
+
+The first run with `--confirm 167` exited 0, printed "erased 167", and
+deleted nothing: every row count was 0, `auth.users` still held all 167, and
+the ledger recorded each as complete. The auth server answers 404 for these
+owners, and spec 111's erase read that as "already erased", which is the
+case this spec's failure table says must still erase the rows. Spec 111's
+amendment of 2026-10-15 fixes the erase; the run is repeated after it lands.
+The ledger's 167 lines from that run are false; the repeated run appends a
+true line for each id.
